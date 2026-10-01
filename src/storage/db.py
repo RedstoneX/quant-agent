@@ -1095,6 +1095,37 @@ class Database:
         # column existed. See `TradeDecision.structural_ceiling` in models.py
         # and `src.risk.constants.is_trend_trade`.
         _ensure_column("trades", "structural_ceiling", "structural_ceiling INTEGER")
+        # Board item 218 (owner ruling 2026-10-01). The parity refusal is
+        # an explicitly PROVISIONAL trial — "for now ... see if that
+        # improves the desk purchases" — so the thing it refused has to be
+        # recoverable as NUMBERS, not as prose. One row per refused name per
+        # run, every quantity in its own column, so "did refusing these
+        # improve the desk's purchases" is a query and not a grep. Nothing
+        # reads this table yet by design: it is the evidence the owner's own
+        # question will be answered from.
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trade_refusals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                run_id TEXT,
+                symbol TEXT NOT NULL,
+                direction TEXT,
+                refusal TEXT NOT NULL,
+                stage TEXT,
+                entry_price REAL,
+                stop_price REAL,
+                level_used REAL,
+                reward_risk REAL,
+                threshold REAL,
+                level_was_measured INTEGER
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trade_refusals_symbol_ts "
+            "ON trade_refusals (symbol, timestamp)"
+        )
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
@@ -1160,7 +1191,14 @@ class Database:
         # Did the SEAT accept this answer, and if not why — the fact `status`
         # never carried (`status` only ever meant "the call returned"). NULL
         # on every legacy row and on any site not yet instrumented; readers
-        # must treat NULL as unknown, never as accepted.
+        # must treat NULL as unknown, never as accepted. Board item 188:
+        # for the three DECISION seats `acceptance_reason` now carries the
+        # gate's OWN machine-readable word (pm_/risk_/review_ prefixed) when
+        # the gate named one, so the refusal says which way the answer was
+        # unusable. RECORDING ONLY: nothing may read either column back into
+        # a sizing, stop, exit or routing decision, and neither may be swept
+        # for an optimal threshold — they exist to make a model's
+        # usable-answer rate computable from the desk's own rows.
         _ensure_column("agent_logs", "acceptance", "acceptance TEXT")
         _ensure_column("agent_logs", "acceptance_reason", "acceptance_reason TEXT")
         # Whether the provider's answer carried usage information:
@@ -1713,6 +1751,52 @@ class Database:
             self.conn.commit()
             return cur.lastrowid
         return self._locked_write(_do, label="insert_trade")
+
+    def insert_trade_refusal(
+        self, *, symbol: str, direction: str | None, refusal: str,
+        entry_price: float | None = None, stop_price: float | None = None,
+        level_used: float | None = None, reward_risk: float | None = None,
+        threshold: float | None = None, level_was_measured: bool | None = None,
+        stage: str | None = None, run_id: str | None = None,
+    ) -> int | None:
+        """Record one NAMED refusal with its numbers in their own columns.
+
+        Board item 218. `PortfolioConstructor.last_refusals` keeps the human
+        sentence and is drained only for the symbols that reach
+        `constructor_dropped`; this is the durable half, written at the
+        moment of refusal, and it stores no English at all. A trial the
+        owner asked to judge later ("see if that improves the desk
+        purchases") is judged from these columns.
+        """
+        def _do():
+            cur = self.conn.execute(
+                "INSERT INTO trade_refusals (timestamp, run_id, symbol, "
+                "direction, refusal, stage, entry_price, stop_price, "
+                "level_used, reward_risk, threshold, level_was_measured) "
+                "VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (run_id, str(symbol or "").strip().upper(), direction,
+                 refusal, stage, entry_price, stop_price, level_used,
+                 reward_risk, threshold,
+                 None if level_was_measured is None else int(bool(level_was_measured))),
+            )
+            self.conn.commit()
+            return cur.lastrowid
+        return self._locked_write(_do, label="insert_trade_refusal")
+
+    def get_trade_refusals(
+        self, *, refusal: str | None = None, limit: int = 500,
+    ) -> list[dict]:
+        """Read back the durable refusal rows, newest first."""
+        sql = "SELECT * FROM trade_refusals"
+        args: list = []
+        if refusal:
+            sql += " WHERE refusal = ?"
+            args.append(refusal)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(int(limit))
+        cur = self.conn.execute(sql, tuple(args))
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
 
     def update_open_stop_loss(
         self, symbol: str, new_stop_price: float, *, action: str | None = None,

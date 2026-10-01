@@ -1008,9 +1008,16 @@ def test_reprotect_residual_is_idempotent_against_existing_broker_stop():
     pipeline._format_qty = lambda q: str(q)
 
     # Broker already has a SELL stop at $90 on this symbol (residual of a
-    # prior reprotect that survived the kill).
+    # prior reprotect that survived the kill). It is a DIFFERENT order from
+    # the one this run cancelled ("s1") and it is in a live state — both
+    # matter since 2026-09-30: a stop is only proof of protection when it
+    # can be shown not to be the one this same run just cancelled, and not
+    # to be dying. Without an id and a status this order is unidentifiable,
+    # and unidentifiable now means submit.
     existing = MagicMock()
     existing.stop_price = "90.00"
+    existing.id = "prior-attempt-order"
+    existing.status = "accepted"
     pipeline.broker._list_open_sell_stop_orders.return_value = [existing]
 
     cancelled = [{"id": "s1", "qty": 10, "stop_price": 90.0, "limit_price": 88.0}]
@@ -1034,8 +1041,9 @@ def test_reprotect_residual_submits_when_existing_stop_has_different_price():
 
     cancelled = [{"id": "s1", "qty": 10, "stop_price": 90.0, "limit_price": 88.0}]
     pipeline._reprotect_residual_after_partial_sell("NVDA", 10.0, cancelled)
-    pipeline.broker._submit_stop_limit_order.assert_called_once_with(
-        symbol="NVDA", qty=10.0, stop_price=90.0,
+    pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="NVDA", qty=10.0, stop_price=90.0, limit_price=None,
+        side="sell",
     )
 
 
@@ -1055,8 +1063,9 @@ def test_reprotect_residual_picks_highest_stop_price_among_specs():
     ]
     pipeline._reprotect_residual_after_partial_sell("AMZN", 41.0, cancelled)
 
-    pipeline.broker._submit_stop_limit_order.assert_called_once_with(
-        symbol="AMZN", qty=41.0, stop_price=248.5,
+    pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="AMZN", qty=41.0, stop_price=248.5, limit_price=None,
+        side="sell",
     )
 
 
@@ -1092,7 +1101,7 @@ def test_reprotect_residual_swallows_submit_failure_with_loud_warning(caplog):
     the warning needs to be loud enough that operators notice."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.broker = MagicMock()
-    pipeline.broker._submit_stop_limit_order.side_effect = RuntimeError("api error")
+    pipeline.broker._submit_protective_stop_retrying.side_effect = RuntimeError("api error")
     pipeline._format_qty = lambda q: str(q)
 
     cancelled = [{"id": "stop-1", "qty": 51, "stop_price": 248.5}]
@@ -1263,8 +1272,9 @@ def test_partial_trim_reprotects_residual_after_partial_trim_fills(tmp_path):
     orders = _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     assert len(orders) == 1
-    pipeline.broker._submit_stop_limit_order.assert_called_once_with(
-        symbol="NVDA", qty=85.0, stop_price=95.0,
+    pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="NVDA", qty=85.0, stop_price=95.0, limit_price=None,
+        side="sell",
     )
     db.close()
 
@@ -1780,8 +1790,8 @@ def test_finalize_clips_residual_when_concurrent_path_partially_exited(tmp_path)
 
     assert ok is True
     # Reprotect was called with clipped qty (20), not naive residual (70).
-    pipeline.broker._submit_stop_limit_order.assert_called_once()
-    kwargs = pipeline.broker._submit_stop_limit_order.call_args.kwargs
+    pipeline.broker._submit_protective_stop_retrying.assert_called_once()
+    kwargs = pipeline.broker._submit_protective_stop_retrying.call_args.kwargs
     assert kwargs["qty"] == 20.0, f"expected clipped qty=20, got {kwargs['qty']}"
     db.close()
 
@@ -1829,8 +1839,8 @@ def test_finalize_collapses_to_reprotect_when_concurrent_reduced_position_no_fil
     assert ok is True
     # Should have collapsed to a SINGLE reprotect, not called restore.
     pipeline.broker._restore_stop_orders.assert_not_called()
-    pipeline.broker._submit_stop_limit_order.assert_called_once()
-    kwargs = pipeline.broker._submit_stop_limit_order.call_args.kwargs
+    pipeline.broker._submit_protective_stop_retrying.assert_called_once()
+    kwargs = pipeline.broker._submit_protective_stop_retrying.call_args.kwargs
     assert kwargs["qty"] == 40.0
     # Best stop_price among cancelled specs is 96.0 (most protective).
     assert kwargs["stop_price"] == 96.0
@@ -1938,7 +1948,7 @@ def test_finalize_persists_recovery_when_reprotect_raises_in_non_drain_path(tmp_
     pipeline.broker.get_order_fill_info.return_value = {
         "status": "canceled", "filled_qty": "12", "filled_avg_price": "117.5",
     }
-    pipeline.broker._submit_stop_limit_order.side_effect = RuntimeError("rejected")
+    pipeline.broker._submit_protective_stop_retrying.side_effect = RuntimeError("rejected")
 
     ok, _retry_specs = pipeline._finalize_protection_after_sell(
         order_id="alpaca-partial",
@@ -2069,7 +2079,7 @@ def test_drain_keeps_row_when_restore_raises(tmp_path):
 
 def test_drain_keeps_row_when_reprotect_raises_for_partial_fill(tmp_path):
     """Drain partial-fill branch: fill_qty=12 of 100 → reprotect on
-    residual=88. If _submit_stop_limit_order raises (broker rejects),
+    residual=88. If _submit_protective_stop_retrying raises (broker rejects),
     finalize returns False → drain keeps the row."""
     from src.storage.db import Database
     import json as _json
@@ -2089,7 +2099,7 @@ def test_drain_keeps_row_when_reprotect_raises_for_partial_fill(tmp_path):
     pipeline.broker.get_order_fill_info.return_value = {
         "status": "canceled", "filled_qty": "12", "filled_avg_price": "117.5",
     }
-    pipeline.broker._submit_stop_limit_order.side_effect = RuntimeError("api error")
+    pipeline.broker._submit_protective_stop_retrying.side_effect = RuntimeError("api error")
     pipeline._format_qty = lambda q: str(q)
 
     drained = pipeline._drain_pending_protection_restores()
@@ -2238,8 +2248,9 @@ def test_partial_trim_reprotects_actual_residual_on_partial_fill(tmp_path):
     _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     # Actual residual = 100 - 12 = 88 (NOT 100 - 15 = 85).
-    pipeline.broker._submit_stop_limit_order.assert_called_once_with(
-        symbol="NVDA", qty=88.0, stop_price=95.0,
+    pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="NVDA", qty=88.0, stop_price=95.0, limit_price=None,
+        side="sell",
     )
     pipeline.broker._restore_stop_orders.assert_not_called()
     db.close()
