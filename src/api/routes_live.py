@@ -63,6 +63,7 @@ from src.api.schemas import (
     DailyPnlPoint,
     ExposureBreakdown,
     HealthResponse,
+    SuppressedAlertsResponse,
     LiquidityBreakdown,
     LiveQuote,
     LiveQuotesResponse,
@@ -181,6 +182,24 @@ def _deploy_drift_state() -> dict:
         return record
     except Exception:
         return {"status": "unknown", "reason": "drift state read failed"}
+
+
+@router.get("/alerts/suppressed", response_model=SuppressedAlertsResponse)
+def get_suppressed_alerts(limit: int = 50) -> SuppressedAlertsResponse:
+    """Item 211 — everything the desk decided not to say twice.
+
+    Alerts can be muted; the board cannot. A suppressed alert that is
+    readable nowhere is a lost alert, so this endpoint exists to make the
+    suppression record visible without a Telegram channel.
+    """
+
+    from src.api.db_reads import get_suppressed_alerts as _read
+
+    try:
+        payload = _read(limit=limit)
+    except Exception:
+        return SuppressedAlertsResponse()
+    return SuppressedAlertsResponse(**payload)
 
 
 @router.get("/health", response_model=HealthResponse)
