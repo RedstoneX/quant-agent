@@ -14415,6 +14415,7 @@ class TradingPipeline:
 
         evidence = verdict.to_evidence()
         _record(None, evidence.pop("outcome"), evidence.pop("reason"), **evidence)
+        self._record_name_coverage(ctx, _record)
         if not verdict.skip:
             if verdict.advisory_lost:
                 # Owner mandate 2026-09-18: only the technical seat halts the
@@ -14511,6 +14512,69 @@ class TradingPipeline:
         self._attach_universe_changes(result)
         self._persist_session_report("morning", result)
         return result
+
+    def _record_name_coverage(self, ctx, _record) -> None:
+        """Write down, per candidate name, which seats answered ABOUT it.
+
+        The counting half of docs/WORK.md item 20. It is a RECORD, not a
+        bar: no ratio, no minimum, nothing refused here. Both attempts at
+        deriving a coverage bar failed and the reasons are written down in
+        `src/evidence_gate.py` beside `name_coverage`; this is the
+        instrument that would let one be measured from the desk's own data
+        instead of picked. Fail-soft — a forensic record must never be able
+        to break the trading path it reports on.
+        """
+        from src import evidence_gate
+
+        try:
+            seat_symbols: dict[str, set] = {}
+            seat_symbols["tech"] = {
+                getattr(a, "symbol", "") for a in (getattr(ctx, "analyses", None) or ())
+            }
+            seat_symbols["earnings"] = {
+                (r.get("symbol") if isinstance(r, dict) else getattr(r, "symbol", ""))
+                for r in (getattr(ctx, "earnings_results", None) or ())
+            }
+            smart: set = set()
+            for bucket in ("smart_money_observations", "smart_money_findings"):
+                for item in (getattr(ctx, bucket, None) or ()):
+                    smart.add(
+                        item.get("symbol") if isinstance(item, dict)
+                        else getattr(item, "symbol", "")
+                    )
+            seat_symbols["smart_money"] = smart
+            intel = getattr(ctx, "news_intel", None)
+            if intel is not None:
+                # Absent `news_intel` means the news seat recorded no
+                # per-name coverage at all, which `name_coverage` reports as
+                # uncovered rather than assuming complete.
+                seat_symbols["news"] = set(getattr(intel, "stock_news", None) or {})
+
+            universe: set = set()
+            for names in seat_symbols.values():
+                universe |= {n for n in names if n}
+            universe |= {
+                str(s) for s in (getattr(ctx, "admitted_symbols", None) or set())
+            }
+            try:
+                universe |= {str(s) for s in self.config.trading.universe}
+            except Exception:  # noqa: BLE001 — config shape is not this record's job
+                pass
+
+            for name, coverage in evidence_gate.name_coverage(
+                universe, seat_symbols
+            ).items():
+                record = coverage.to_evidence()
+                _record(
+                    name,
+                    "recorded",
+                    record.pop("summary"),
+                    stage="evidence_gate",
+                    gate="name_coverage",
+                    **record,
+                )
+        except Exception as exc:  # noqa: BLE001 — never break the decision
+            logger.warning("evidence gate: name coverage write failed: %s", exc)
 
     def _attach_evidence_freshness(self, result) -> None:
         """Carry this run's evidence-freshness disclosure out to the owner.

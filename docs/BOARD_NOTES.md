@@ -236,9 +236,31 @@ are not the same thing and the rule itself says so. It is now its own
 category; it still counts as a degraded run and it is now named to you
 explicitly whenever a decision leans on one.
 
-**The decision —** Still yours, and now the only thing left in this item:
-whether *partial* evidence should also stop a decision, and if so, where the
-line sits. Not "did the seat answer" — that is settled and built, morning
+**The counting half, settled 2026-10-01 — it is a RECORD, not a bar.** We
+tried twice to source the number and failed twice, and both failures are
+written down in the code: nothing published says what share of a candidate
+list a research seat must cover, and our own record cannot say either,
+because the news seat has never once written down WHICH companies it looked
+at, and the macro seat covers at most half. Fitting a bar to that would be
+fitting it to a hole. So the question was not answered with a number, it was
+dissolved the same way the first half was: asked once per company instead of
+once per list. "Did this seat answer about THIS company" is a yes-or-no
+fact. The desk now writes that down for every candidate on every decision —
+which seats spoke about that name, which said nothing about it, and which
+seats are about the market rather than any one name. It refuses nothing and
+holds no minimum. The one per-name coverage rule you already have still
+bites: a company with no chart read cannot be bought or shorted.
+
+**What that leaves for you —** nothing on counting; the paragraph below is
+superseded and kept only so the history reads straight. One unrelated
+question is still open in this item: whether the thirty-minute scan's chart
+seat should be able to report a lost answer at all. Today it cannot, and
+since the chart seat is the only one that can stop the desk, that scan can
+never be stopped by missing evidence. That is a consequence of your own
+"only technical analysis can stop the desk" ruling, so no agent may widen
+it.
+
+The superseded question, kept for the record: Not "did the seat answer" — that is settled and built, morning
 and the later scan alike — but "the seat answered about 40 of 65 companies,
 is that enough?". Nothing published answers that, so it either gets a
 number from you or a ruling that partial coverage should never stop a
