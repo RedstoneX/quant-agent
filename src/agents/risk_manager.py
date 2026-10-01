@@ -396,8 +396,9 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 cash_bit = f" | Cash (deployable this session): ${cash:,.0f} ({cash_pct:.1f}%)"
             if reserve_balance > 0:
                 cash_bit += (
-                    f" (incl. ${reserve_balance:,.0f} sweep-parked, "
-                    f"auto-liquidated before any BUY executes)"
+                    f" (a further ${reserve_balance:,.0f} is held in the "
+                    f"cash-equivalent sweep vehicle; it is NOT sold to fund "
+                    f"a BUY and is NOT part of the cash above)"
                 )
             account_section = (
                 f"## Account\n- Total equity: ${total_value:,.0f}{cash_bit}\n"

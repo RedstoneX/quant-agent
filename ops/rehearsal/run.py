@@ -117,6 +117,16 @@ def build_parser() -> argparse.ArgumentParser:
             "ops/rehearsal/faults.py"
         ),
     )
+    parser.add_argument(
+        "--allow-degraded",
+        action="store_true",
+        help=(
+            "accept a replay in which the recording could not supply something "
+            "the session asked for. Off by default: the gaps are reported but "
+            "never filled in, and without this flag they fail the run. It does "
+            "NOT relax the network wall - any outbound attempt voids the run."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="emit JSON as well")
     return parser
 
@@ -175,7 +185,9 @@ def main(argv: list[str] | None = None) -> int:
     _bootstrap()
     args = build_parser().parse_args(argv)
 
-    from ops.rehearsal.isolation import Sandbox
+    from ops.rehearsal.isolation import (
+        HermeticBreach, MissingRecordedInput, Sandbox,
+    )
     from ops.rehearsal.runner import run_rehearsal
 
     sandbox_root = Path(args.sandbox) if args.sandbox else Path(
@@ -201,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.pricing_cache_age_hours
             ),
             provider_faults=args.provider_faults,
+            allow_degraded=args.allow_degraded,
         )
         print(report.render())
         if args.json:
@@ -210,6 +223,17 @@ def main(argv: list[str] | None = None) -> int:
         # it" (2) without parsing prose. 2 is not a softer 1 — it means no
         # judgement was reached and the run has to be repeated properly.
         return {"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}.get(report.verdict, 1)
+    except (HermeticBreach, MissingRecordedInput) as exc:
+        # The replay is void, not merely degraded: it either left the box or
+        # was asked for something the recording does not hold. Print the
+        # report anyway so the operator can see what the run did, then say
+        # plainly why no verdict may be read off it (board item 202). Exit 2
+        # — "the rig could not judge it" — never 0.
+        attached = getattr(exc, "report", None)
+        if attached is not None:
+            print(attached.render())
+        print(f"\nREHEARSAL VOID — {type(exc).__name__}: {exc}")
+        return 2
     finally:
         if not args.keep_sandbox and not args.sandbox:
             shutil.rmtree(sandbox_root, ignore_errors=True)

@@ -235,6 +235,31 @@ _CLEAN_FACTOR = 5.0
 #: ATRs. Deliberately looser than the measured-move projection — see the note
 #: on asymmetry in the target section.
 MAX_REACH_ATR_MULTIPLE = 1.5
+#
+# KEPT ON PURPOSE, 2026-10-01 (docs/WORK.md item 218). The question was
+# whether this multiple can be replaced by READING the instrument -- each
+# name's own realised favourable excursion over a hold of the stated
+# length -- so no multiple need be chosen at all. It was measured, on the
+# 400-bar daily set for 101 symbols the desk already holds: over a
+# 15-session hold the MEDIAN per-name realised excursion is 1.93 ATR and
+# the per-name MAXIMUM is 8.78 ATR, against this cap's 1.5*sqrt(15) =
+# 5.81 ATR [measured 2026-10-01, rolling windows, ATR(14)].
+#
+# Two findings, both against replacing it:
+#   1. The cap is NOT the binding constraint it was believed to be. At a
+#      typical hold it sits at ~5.8 ATR while the instrument's own typical
+#      advance is ~1.9 ATR, and recorded target distance is a median 3.25
+#      ATR. It binds only in the tail, not on the ordinary trade. Said
+#      plainly, because an earlier diagnosis in this repo says otherwise:
+#      this cap is NOT what holds the desk's targets close.
+#   2. A measured replacement still needs a QUANTILE -- median (1.93) and
+#      maximum (8.78) differ by 4.5x and sit either side of today's value.
+#      Picking between them is exactly the appetite choice the doctrine
+#      bars, and the only choice-free statistic (the sample maximum) is an
+#      outlier support bound, not a reach estimate.
+# So the purpose cannot be served by reading the instrument without
+# inventing a number, and the cap stays. Recorded rather than silently
+# left alone.
 
 #: Ceiling on `expected_horizon_sessions` before it enters the sqrt() travel
 #: estimate. An analyst claiming a 250-session horizon would otherwise
@@ -1333,3 +1358,155 @@ def derive_structural_target(
         model_target=guess,
         divergence_pct=_divergence(price),
     )
+
+
+# ---------------------------------------------------------------------------
+# Item 55 recording — WHAT the stop was actually based on, pinned at entry.
+# ---------------------------------------------------------------------------
+#
+# FALSIFICATION ONLY. This record exists so the question "what IS a structural
+# level — how many bars make a swing point, and how wide is a level's zone?"
+# can one day be answered from the desk's OWN record of what its levels did,
+# instead of from argument. It may be read to show that the CURRENT definition
+# is WRONG: that stops sitting on supposedly-real levels were broken as often
+# as stops that sat on nothing, that a zone of a given width held no better
+# than a wider or narrower one, that a pivot confirmed by N bars predicted
+# nothing.
+#
+# IT MAY NEVER BE SWEPT FOR A BETTER NUMBER. Choosing `PIVOT_WINDOW` or
+# `CLUSTER_TOLERANCE_PCT` by trying candidate values against the outcomes
+# stored here is FITTING A NUMBER TO THIS DESK'S OWN HISTORY, which this desk
+# bars outright ("no fitting, only reading"). A replacement for either number
+# comes from published evidence or from a measurement made on data that is not
+# this book's trading record. A pass that lowers a window because the record
+# "says so" is the defect, not the finding.
+#
+# NO INVENTED THRESHOLDS. Nothing here classifies an outcome as "respected",
+# "pierced" or "broken", because every one of those words needs a cutoff that
+# nobody can source today. Only RAW DISTANCES in price units are stored; the
+# classification is derived later, by a reader who states and defends its own
+# cutoff, from numbers that were never rounded to it. Anything genuinely
+# unknown at write time is stored as JSON null and never substituted.
+
+#: Schema version for `describe_stop_level_basis`. Bumped only when a FIELD is
+#: added or its meaning changes, so a later reader can tell which rows carry
+#: which facts rather than guessing from absence.
+STOP_LEVEL_BASIS_VERSION = 1
+
+
+def describe_stop_level_basis(
+    *,
+    level_price: float | None,
+    stop_loss: float,
+    entry_price: float,
+    computed_levels: Sequence[float] | None = None,
+    computed_level_touches: dict | None = None,
+    is_short: bool = False,
+    pivot_window: int = PIVOT_WINDOW,
+    tolerance_pct: float = CLUSTER_TOLERANCE_PCT,
+) -> dict:
+    """The identity of the level standing behind a stop, as plain facts.
+
+    RECORDING ONLY — reads the inputs it is handed and computes nothing the
+    desk acts on. Nothing in this function decides whether a stop is
+    level-backed, how wide a zone is, or where a level sits; it is handed the
+    answer the live code already reached and writes down what that answer was
+    made of. Read the module note above for the falsification-only limit.
+
+    `level_price` is whatever `PortfolioConstructor._level_backing_stop`
+    returned — the computed level the shipping stop sits at, or None when no
+    computed level stood behind it. None is a FACT worth recording, not a
+    missing value: it is the control group without which "levels hold" cannot
+    be falsified, so the record is written either way.
+
+    Fields, all in price units unless stated:
+      `level_backed`        — whether a computed level stood behind the stop.
+      `level_price`         — that level's price, or null.
+      `level_kind`          — "support" for a long, "resistance" for a short,
+                              which is the side `_level_backing_stop` searches;
+                              null when there is no level.
+      `level_touches`       — how many pivots clustered into it, i.e. how many
+                              separate times price turned there. Null when the
+                              analysis carried no touch count for that price.
+      `pivot_window_bars`   — bars required EITHER SIDE of a bar for it to
+                              count as a swing point, and `pivot_confirm_bars`
+                              the whole confirmation span (window*2+1). This is
+                              the "how many bars make a swing point" half of
+                              the open question, recorded as it stood at entry.
+      `zone_low`/`zone_high`/`zone_width` — the level's own zone, the "how wide
+                              is a level's zone" half, as the live
+                              `level_zone_halfwidth` drew it at entry.
+      `stop_to_level`       — signed distance from the stop to the level price,
+                              positive when the stop sits BEYOND the level (further
+                              from entry, the protective side) and negative when it
+                              sits short of it. Sign is taken per side.
+      `stop_inside_zone`    — whether the stop fell inside the level's zone.
+      `entry_to_level`      — distance from entry to the level, same sign rule.
+      `tolerance_pct`       — the clustering tolerance in force at entry, so a
+                              later reader knows which definition produced the
+                              level rather than assuming today's.
+      `schema_version`      — `STOP_LEVEL_BASIS_VERSION`.
+    """
+    def _f(value) -> float | None:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return None
+        return out if math.isfinite(out) else None
+
+    stop = _f(stop_loss)
+    entry = _f(entry_price)
+    price = _f(level_price)
+    record: dict = {
+        "schema_version": STOP_LEVEL_BASIS_VERSION,
+        "level_backed": price is not None,
+        "level_price": price,
+        "level_kind": None if price is None else ("resistance" if is_short else "support"),
+        "level_touches": None,
+        "pivot_window_bars": int(pivot_window),
+        "pivot_confirm_bars": int(pivot_window) * 2 + 1,
+        "zone_low": None,
+        "zone_high": None,
+        "zone_width": None,
+        "zone_tolerance_pct": _f(tolerance_pct),
+        "stop_loss": stop,
+        "entry_price": entry,
+        "stop_to_level": None,
+        "entry_to_level": None,
+        "stop_inside_zone": None,
+        "computed_level_count": (
+            None if computed_levels is None else len(list(computed_levels))
+        ),
+    }
+    if price is None:
+        return record
+
+    touches = None
+    if computed_level_touches:
+        # The touch map is keyed by the same float the level list carries, so
+        # an exact hit is the normal case; a tolerant match covers a key that
+        # survived a round-trip through JSON at a different precision. No
+        # match stores null rather than a guessed count.
+        for key, count in computed_level_touches.items():
+            key_f = _f(key)
+            if key_f is not None and math.isclose(key_f, price, rel_tol=1e-9, abs_tol=1e-9):
+                try:
+                    touches = int(count)
+                except (TypeError, ValueError):
+                    touches = None
+                break
+    record["level_touches"] = touches
+
+    half = level_zone_halfwidth(price, tolerance_pct)
+    record["zone_low"] = price - half
+    record["zone_high"] = price + half
+    record["zone_width"] = half * 2.0
+    if stop is not None:
+        # "Beyond" is below the level for a long and above it for a short.
+        record["stop_to_level"] = (price - stop) if not is_short else (stop - price)
+        record["stop_inside_zone"] = bool(
+            record["zone_low"] <= stop <= record["zone_high"]
+        )
+    if entry is not None:
+        record["entry_to_level"] = (entry - price) if not is_short else (price - entry)
+    return record
