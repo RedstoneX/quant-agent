@@ -2753,9 +2753,18 @@ def describe_target_revisions(result: dict | None) -> list[str]:
     if not rows:
         return []
     applied = [r for r in rows if r.get("applied")]
-    if not applied:
+    pending = [
+        r for r in rows
+        if not r.get("applied")
+        and str(r.get("code") or "").upper().endswith("_PENDING_CONFIRMATION")
+    ]
+    if not applied and not pending:
         return []
-    lines = [f"🎯 Target revised: {len(applied)} position(s)"]
+    lines: list[str] = []
+    if not applied:
+        lines.append("🎯 Target: no revision applied this session")
+    if applied:
+        lines.append(f"🎯 Target revised: {len(applied)} position(s)")
     for row in applied:
         symbol = str(row.get("symbol") or "?").upper()
         prior = row.get("prior_price")
@@ -2780,7 +2789,29 @@ def describe_target_revisions(result: dict | None) -> list[str]:
         if basis:
             text += f"; measured from the chart as {basis}"
         lines.append(_clip_text(text, 420))
-    held = len(rows) - len(applied)
+    if pending:
+        # A PENDING CONFIRMATION IS A HOLD ON A STALE NUMBER, caused by
+        # this desk's own brake, so it is named rather than counted. The
+        # owner is still being quoted a target the desk has itself stopped
+        # believing, and a bare count cannot tell him WHICH position that
+        # is. These are listed even on a session where nothing was
+        # applied, which is now the common case.
+        lines.append(
+            f"   ⏸️ {len(pending)} position(s) on a target the desk has "
+            f"stopped believing, waiting one more close to confirm:"
+        )
+        for row in pending:
+            symbol = str(row.get("symbol") or "?").upper()
+            prior = row.get("prior_price")
+            quoted = ""
+            try:
+                if prior:
+                    quoted = f" (still quoted ${float(prior):,.2f})"
+            except (TypeError, ValueError):
+                quoted = ""
+            why = _pending_confirmation_reason(str(row.get("code") or ""))
+            lines.append(_clip_text(f"      • {symbol}{quoted} — {why}", 420))
+    held = len(rows) - len(applied) - len(pending)
     if held:
         lines.append(
             f"   ({held} other position(s) measured, target unchanged)"
@@ -2790,6 +2821,31 @@ def describe_target_revisions(result: dict | None) -> list[str]:
         "still exits only when the trend itself is over."
     )
     return lines
+
+
+def _pending_confirmation_reason(code: str) -> str:
+    """Plain words for why a revision the desk wanted to make is being held
+    one more session. Unknown codes return the code rather than silence."""
+    c = (code or "").strip().upper()
+    if c == "REFUSAL_WALL_PENDING_CONFIRMATION":
+        return (
+            "a new ceiling appeared between the buy price and the target on "
+            "today's close; the desk waits for a second day's close to agree "
+            "before moving the number"
+        )
+    if c == "REFUSAL_REACH_PENDING_CONFIRMATION":
+        return (
+            "today's daily range puts the target out of reach for the holding "
+            "period; the desk waits for a second day's close to agree before "
+            "moving the number"
+        )
+    if c == "REFUSAL_BREAK_PENDING_CONFIRMATION":
+        return (
+            "the ceiling this target was measured against was closed through "
+            "today; the desk waits for a second day's close to agree before "
+            "moving the number"
+        )
+    return c
 
 
 def _target_revision_reason(trigger: str) -> str:

@@ -4103,24 +4103,50 @@ class Database:
         if exclude_run_id:
             sql += " AND run_id != ?"
             params.append(exclude_run_id)
-        sql += " ORDER BY timestamp DESC, id DESC LIMIT 500"
+        # KEYED ON THE CLOSE, NOT ON THE LAST ROW WRITTEN.
+        #
+        # This used to take the most recent row by timestamp. That is not
+        # "the prior trading day's close": several intraday cycles can
+        # re-read one close, and whichever of them happened to run last
+        # then decided the flag for the next day. The confirmation is a
+        # statement about a CLOSE, so it is now keyed on `bar_date` — the
+        # latest bar date strictly before today's that actually ANSWERED
+        # this question — and, among several readings of that same close,
+        # the EARLIEST recorded one (lowest id). Earliest, because it is
+        # the reading taken closest to the close itself and because it is
+        # the one choice that does not depend on how many cycles ran.
+        #
+        # A row that does not carry `flag` at all is a row that could not
+        # answer this question, and is SKIPPED rather than read as False —
+        # otherwise a degraded cycle's silence would erase an answer.
+        #
+        # [MEASURED 2026-10-01, production DB read-only] the stop-side
+        # twin holds 6 rows, exactly one per symbol+bar_date, and the
+        # target-side kind holds none at all, so no production row set is
+        # affected by this change today; it is a correctness fix against
+        # the intraday re-read, not a repair of an observed wrong answer.
+        sql += " ORDER BY id ASC LIMIT 500"
         with self._lock:
             rows = self.conn.execute(sql, tuple(params)).fetchall()
-        latest: dict[str, bool] = {}
+        best: dict[str, tuple[str, bool]] = {}
         for row in rows:
             row = dict(row)
             sym = row["symbol"]
-            if sym in latest:
-                continue
             try:
                 payload = json.loads(row.get("evidence_json") or "{}")
                 bar_date = payload.get("bar_date")
             except (TypeError, ValueError):
                 continue
-            if not bar_date or bar_date >= today_bar_date:
+            if not bar_date or str(bar_date) >= str(today_bar_date):
                 continue
-            latest[sym] = bool(payload.get(flag))
-        return latest
+            if flag not in payload:
+                continue
+            prior = best.get(sym)
+            # Rows arrive id-ascending, so the first one seen for a given
+            # bar date wins it; a strictly later bar date replaces it.
+            if prior is None or str(bar_date) > prior[0]:
+                best[sym] = (str(bar_date), bool(payload.get(flag)))
+        return {sym: val for sym, (_bd, val) in best.items()}
 
     def record_target_revision(
         self, *, run_id: str, symbol: str, code: str, seat: str,

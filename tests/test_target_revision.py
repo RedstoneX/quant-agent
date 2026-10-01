@@ -1240,3 +1240,135 @@ def test_a_session_with_no_applied_revision_says_nothing():
         {"symbol": "TEST", "applied": False, "code": tr.REVISION_NO_TRIGGER},
     ]}) == []
     assert notifier.describe_target_revisions({}) == []
+
+
+# ---------------------------------------------------------------------------
+# item 194 ROUND 3 — four defects the adversary traced in the brake itself.
+# ---------------------------------------------------------------------------
+
+
+def test_a_missing_level_set_cannot_persist_no_wall_as_a_fact():
+    """DEFECT 1. `levels_still_in_the_way([])` is `[]` and `walls_between`
+    on `[]` is a definite "no wall", so a degraded bar fetch used to write
+    False and erase a genuine True recorded earlier the same day. An
+    absent reading must never produce an action."""
+    for levels in (None, []):
+        flags = tr.raw_trigger_flags(
+            entry_price=100.0, stored_target=110.0, target_level=110.0,
+            atr=2.5, close_price=101.0, horizon_sessions=10,
+            levels=levels, is_short=False,
+        )
+        assert flags["raw_wall"] is None, levels
+    # A real level set still answers the question both ways.
+    assert tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=2.5, close_price=101.0, horizon_sessions=10,
+        levels=[105.0, 110.0], is_short=False,
+    )["raw_wall"] is True
+    assert tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=2.5, close_price=101.0, horizon_sessions=10,
+        levels=[110.0], is_short=False,
+    )["raw_wall"] is False
+
+
+def test_an_unconfirmed_trigger_cannot_suppress_a_confirmed_one():
+    """DEFECT 3. A confirmed wall plus a one-day reach blip used to yield
+    no revision at all, and when it finally fired it fired under the reach
+    trigger — so the owner was handed the reach reason for a change the
+    wall caused."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=101.0,
+        break_seen_prior_close=False,
+        reach_seen_prior_close=False, wall_seen_prior_close=True, **_COMMON,
+    )
+    assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
+    assert out.revised
+    assert out.new_price == pytest.approx(105.0)
+
+
+def test_a_pending_trigger_is_reported_as_pending_not_as_no_trigger():
+    """A hold on a number the desk has stopped believing is not a clean
+    bill of health, and only a chart with no trigger at all may say so."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        wall_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_WALL_PENDING_CONFIRMATION
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_NO_TRIGGER
+
+
+def test_the_confirmation_is_keyed_on_the_close_not_on_the_last_row(tmp_path):
+    """DEFECT 2. Several intraday cycles can re-read one close; whichever
+    ran last used to decide the flag. The reading is now the earliest row
+    recorded for the latest prior bar date, and a row that does not answer
+    the question is skipped rather than read as False."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    # Two cycles re-read the SAME prior close and disagree. The first
+    # reading of that close wins, whichever ran last.
+    db.save_target_level_break(
+        run_id="r1", symbol="TEST", bar_date="2026-09-29",
+        raw_broken=True, raw_wall=True,
+    )
+    db.save_target_level_break(
+        run_id="r2", symbol="TEST", bar_date="2026-09-29",
+        raw_broken=False, raw_wall=False,
+    )
+    for flag in ("raw_broken", "raw_wall"):
+        got = db.get_prior_target_level_break(
+            ["TEST"], today_bar_date="2026-09-30", flag=flag,
+        )
+        assert got.get("TEST") is True, flag
+    # A degraded later cycle that could not answer the wall question must
+    # not erase the answer already given for that close.
+    db.save_target_level_break(
+        run_id="r3", symbol="TEST", bar_date="2026-09-29",
+        raw_broken=False, raw_wall=None,
+    )
+    assert db.get_prior_target_level_break(
+        ["TEST"], today_bar_date="2026-09-30", flag="raw_wall",
+    ).get("TEST") is True
+    # Today's own close never confirms itself.
+    assert db.get_prior_target_level_break(
+        ["TEST"], today_bar_date="2026-09-29", flag="raw_wall",
+    ) == {}
+
+
+def test_a_session_that_applied_nothing_still_names_a_held_target():
+    """DEFECT 4. The brake makes an all-refused session the common case,
+    and the owner was told nothing at all while positions sat on quoted
+    targets the desk had stopped believing."""
+    from src import notifier
+
+    lines = notifier.describe_target_revisions({"target_revisions": [
+        {"symbol": "TEST", "applied": False, "prior_price": 110.0,
+         "code": tr.REVISION_WALL_PENDING_CONFIRMATION},
+        {"symbol": "OTHR", "applied": False, "code": tr.REVISION_NO_TRIGGER},
+    ]})
+    body = "\n".join(lines)
+    assert "TEST" in body                      # named, not counted
+    assert "$110.00" in body                   # the number he is still quoted
+    assert "second day's close" in body        # why it is being held
+    assert "OTHR" not in body                  # a clean name is not noise
+    assert "1 other position(s) measured" in body
+
+
+def test_every_pending_code_the_module_can_emit_has_owner_words():
+    from src.notifier import _pending_confirmation_reason
+
+    for code in (
+        tr.REVISION_BREAK_PENDING_CONFIRMATION,
+        tr.REVISION_REACH_PENDING_CONFIRMATION,
+        tr.REVISION_WALL_PENDING_CONFIRMATION,
+    ):
+        words = _pending_confirmation_reason(code)
+        assert words and words != code and "close" in words
