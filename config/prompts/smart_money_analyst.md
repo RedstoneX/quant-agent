@@ -9,7 +9,7 @@ Return JSON only:
 in your own words, written now. One condition, not two: do not join clauses
 with "or". Make it something the desk can actually check against data it holds
 — a named price level or a moving average (MA20/MA50/MA200) when your call
-really does rest on price, otherwise the single concrete, observable Form 4
+really does rest on price — or a named macro level the desk already fetches every run (VIX, DXY, HY OAS, IG OAS, fed funds, core CPI, unemployment rate, 10y, 2y), stating the unit ('420bps', '4.5%'), because an unlabelled spread number is refused rather than assumed, otherwise the single concrete, observable Form 4
 fact whose arrival kills the case (e.g. "the same officer files an open-market
 sale of comparable size"). It is checked by `src/risk/exit_guard.py` in the
 same shape the Technical seat's is: a price-level or MA condition is evaluated

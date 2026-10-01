@@ -888,3 +888,103 @@ def test_health_never_crashes_when_broker_check_raises_unexpectedly(client, seed
     body = r.json()
     assert body["status"] == "degraded"
     assert body["broker_reachable"] is None
+
+
+# ---------------------------------------------------------------------------
+# A reported status must be TRUE and must say why. Two separate defects were
+# live on this route: "degraded" with no reason field at all (the reader had
+# to guess which of five sub-fields caused it), and a deliberate operator
+# mute being recorded and rendered as a BROKEN alert channel.
+# ---------------------------------------------------------------------------
+
+def test_health_ok_carries_no_reason(client, seeded_db, stub_broker):
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    assert body["reason"] is None
+
+
+def test_health_degraded_names_the_field_that_caused_it(client, seeded_db, stub_broker, monkeypatch):
+    def _boom():
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(db_reads, "session_prefixes_logged_on", _boom)
+    body = client.get("/health").json()
+    assert body["status"] == "degraded"
+    assert "database unreachable" in body["reason"]
+
+
+def test_health_reason_names_a_broken_alert_channel(client, seeded_db, stub_broker, monkeypatch):
+    monkeypatch.setattr(
+        routes_live, "check_broker_reachable", lambda: True, raising=False,
+    )
+    import src.api.db_reads as _db_reads
+    monkeypatch.setattr(
+        _db_reads, "get_alert_channel_health",
+        lambda: {"status": "broken", "last_stage": "credentials"},
+    )
+    body = client.get("/health").json()
+    assert body["status"] == "degraded"
+    assert "alert channel broken" in body["reason"]
+
+
+def test_deliberate_mute_is_reported_as_muted_not_broken():
+    """TELEGRAM_DISABLED is the operator choosing silence. Recording his own
+    instruction as a broken channel is a false statement about the desk."""
+    from src.notifier import TelegramNotifier
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    notifier.muted = True
+    result = notifier.probe()
+    assert result.ok is False
+    assert result.stage == "muted"
+    assert "TELEGRAM_DISABLED" in result.detail
+
+
+def test_missing_credentials_is_still_broken_not_muted():
+    from src.notifier import TelegramNotifier
+
+    notifier = TelegramNotifier(token="", chat_id="")
+    notifier.muted = False
+    result = notifier.probe()
+    assert result.stage == "credentials"
+
+
+def test_muted_check_history_reads_as_muted_and_is_still_degraded(tmp_path):
+    from src.alert_watchdog import read_health, record_check
+
+    db = str(tmp_path / "muted.db")
+    record_check(ok=False, stage="muted", detail="TELEGRAM_DISABLED is set",
+                 residue=False, source="test", db_path=db)
+    health = read_health(db)
+    assert health.status == "muted"
+    # Nothing is broken, but no alarm reaches the operator either.
+    assert health.degraded is True
+
+
+def test_broken_check_history_still_reads_as_broken(tmp_path):
+    from src.alert_watchdog import read_health, record_check
+
+    db = str(tmp_path / "broken.db")
+    record_check(ok=False, stage="credentials", detail="no token", residue=False,
+                 source="test", db_path=db)
+    health = read_health(db)
+    assert health.status == "broken"
+    assert health.degraded is True
+
+
+def test_exchange_day_window_contains_now_at_every_hour_of_the_clock():
+    """The /health session filter dates by the EXCHANGE day while the rows it
+    reads are stamped with SQLite's UTC `datetime('now')`. Pin the invariant
+    across all 24 hours: between 00:00 and 04:00 UTC the UTC calendar day and
+    the ET trading day disagree, and a window built from the wrong one would
+    silently report "no sessions today" for four hours every night."""
+    from datetime import datetime, timedelta, timezone
+    from src.api.db_reads import _et_day_utc_bounds
+    from src.trading_calendar import to_et
+
+    base = datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    for minutes in range(0, 24 * 60, 15):
+        instant = base + timedelta(minutes=minutes)
+        start_utc, end_utc = _et_day_utc_bounds(to_et(instant).date())
+        stamp = instant.strftime("%Y-%m-%d %H:%M:%S")
+        assert start_utc <= stamp < end_utc, (stamp, start_utc, end_utc)

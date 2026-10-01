@@ -3499,3 +3499,70 @@ def test_no_durable_record_surface_still_latches(tmp_path):
 
     with pytest.raises(PaidAnalysisSuspended):
         circuit.require_paid_analysis("analysis")
+
+
+def test_operator_reset_records_duration_and_tells_the_owner(tmp_path):
+    """A manual reset must be as observable as the automatic one: the event
+    row carries how long the suspension lasted and the suspension's own alert
+    state, and the owner gets the resume note he gets for an auto-clear."""
+
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = _latch_on_failed_call(path, notifier=notifier)
+    # Short of the auto-clear cooldown, so this is the operator path and the
+    # elapsed figure is a real backdated interval rather than ~0.
+    _age_latch(path, 7)
+    assert any("SUSPENDED" in m for m in notifier.messages)
+
+    circuit.reset("operator verified the provider fault and cleared it")
+
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = dict(conn.execute(
+            "SELECT * FROM llm_circuit_events WHERE event_type='reset'"
+        ).fetchone())
+    assert "operator reset after a suspension of" in row["detail"]
+    assert "7." in row["detail"] or "6." in row["detail"]
+    # Captured before the UPDATE zeroed it, so the pairing rule is answered
+    # from what was true, not from the column default.
+    assert row["suspension_alert_state"] == 1
+    assert row["recovery_alert_state"] == 1
+
+    resumed = [m for m in notifier.messages if "RESUMED" in m]
+    assert len(resumed) == 1
+    assert "after an operator reset" in resumed[0]
+    assert "no operator reset was needed" not in resumed[0]
+    assert "operator reset after a suspension of" in resumed[0]
+
+    # Idempotent: a second boundary must not re-announce the same reset.
+    circuit._notify_auto_resets_if_needed()
+    assert len([m for m in notifier.messages if "RESUMED" in m]) == 1
+
+
+def test_pre_existing_operator_resets_are_not_re_announced(tmp_path):
+    """Resets already on the books cleared before this alert existed; the
+    one-time backfill marks them handled so no stale 'RESUMED' burst fires."""
+
+    path = _db_path(tmp_path)
+    with sqlite3.connect(path) as conn:
+        # Simulate a database written before this change: the row is pending
+        # (0) and the schema counter has not been stamped.
+        conn.execute(
+            "INSERT INTO llm_circuit_events "
+            "(event_type, detail, run_id, mode, agent_name, attempts, "
+            "session_cost_usd, daily_cost_usd, recovery_alert_state) VALUES "
+            "('reset', 'old operator reset', 'r', 'operator', 'operator', "
+            "0, 0, 0, 0)"
+        )
+        conn.execute("PRAGMA user_version = 0")
+
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _cooldown_config(), notifier)
+    circuit._notify_auto_resets_if_needed()
+    assert not [m for m in notifier.messages if "RESUMED" in m]
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT recovery_alert_state FROM llm_circuit_events "
+            "WHERE event_type='reset'"
+        ).fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
