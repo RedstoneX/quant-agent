@@ -46,6 +46,11 @@ from src.models import (
 
 class HealthResponse(BaseModel):
     status: str  # "ok" | "degraded" — process can respond while decisions are broken
+    # WHY the status is what it is, assembled from the fields already in
+    # this payload — never a new judgement and never a new severity scale.
+    # None when nothing is wrong. A bare "degraded" makes the reader guess
+    # which sub-field caused it, and a guess is not a status report.
+    reason: str | None = None
     db_reachable: bool
     broker_reachable: bool | None = None  # None = not checked (e.g. no keys)
     paper: bool | None = None  # honest echo of config.alpaca.paper; never fabricated
@@ -59,6 +64,12 @@ class HealthResponse(BaseModel):
     # of ok / broken / stale / unknown — "unknown" means no check has been
     # recorded, which is deliberately NOT the same as healthy.
     alert_channel: dict | None = None
+    # Is the code running here the code that was merged? Written by
+    # scripts/check_deploy_drift.py on its timer, never inferred here.
+    # `status` is one of in_sync / behind / unknown. Telegram alerts can be
+    # muted and a repeated message changed nothing five times in one day, so
+    # the drift state must live on the board the desk already looks at.
+    deploy_drift: dict | None = None
     timestamp: str
 
 
@@ -1227,10 +1238,6 @@ class AnalystScorecardResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Generic error envelope (used by exception handlers, not returned inline)
 # ---------------------------------------------------------------------------
-
-class ErrorResponse(BaseModel):
-    detail: str
-
 
 # --- holding "why do we hold this" view (2026-09-18) -------------------
 # Assembled by `src.api.holding_why.build_holding_why` from what is

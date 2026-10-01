@@ -162,6 +162,10 @@ numbers:
       the advisory, or not at all. That retirement touches roughly 187
       references across `src/pipeline.py`, `src/pipeline_stages.py`, the API
       and nine test modules, and is its own job; it was NOT started here.
+      UPDATE 2026-09-30, board item 190 step 1: the deployment-gap advisory no
+      longer reads this row; its band moved, value unchanged, to
+      `DeploymentGapConfig.band_pct`. Only the sweeper and the /account
+      `reserve_usd` display still read this one.
     open_question: >-
       What is the largest observed shortfall between an order's sized cost and
       its settled cost on this account - fees, slippage and partial fills
@@ -169,6 +173,25 @@ numbers:
     cost_while_unanswered: >-
       Too low and a funded order fails for want of cash; too high and equity
       sits in raw cash earning nothing.
+  - id: src.config.DeploymentGapConfig.band_pct
+    value: 1
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Tolerance band, in percentage points under 100% invested, for the
+      `deployment_gap` advisory (PM facts block and pre-trade advisory).
+      Board item 190 step 1 (2026-09-30): carried over UNCHANGED at 1.0 from
+      `CashSweepConfig.reserve_pct` so the advisory no longer reads the
+      retiring cash-sweep feature. It is an owner-appetite number ("how far
+      under 100% still counts as fully invested"), not a measured one; the
+      move sources nothing new and changes no behaviour.
+    open_question: >-
+      How far under fully invested is the book allowed to sit before idle
+      cash is a drag worth flagging, read off this account's actual fee and
+      slippage drag on a full rebalance?
+    cost_while_unanswered: >-
+      Too narrow and the advisory nags on noise; too wide and real idle cash
+      goes unflagged.
   - id: src.config.EventRiskConfig.calendar_deadline_s
     value: 20
     status: not-trade-governing
@@ -296,6 +319,21 @@ numbers:
       rests unfilled at the ceiling is now a recorded outcome rather than a
       refusal, so the rate at which 40bp is too tight to fill becomes
       measurable from the desk's own orders for the first time.
+      RATIFIED 2026-09-30 as owner appetite, board item 183, the last of
+      that item's five order-placement gates: the 2026-09-26 measurement
+      leaves a band of roughly 32bp to 390bp inside which the desk's own
+      filled and refused orders decide every observed case identically,
+      so nothing in the data or in published practice picks a figure and
+      40 is a choice, not a derivation. It is recorded as a dial rather
+      than changed, because inventing a replacement inside an
+      indifference band would be the same arbitrary act with a newer
+      date. Two successor routes stay open and are written into the
+      board item rather than lost here: reading the ceiling off each
+      name's own Corwin & Schultz half-spread once the reference-to-
+      submission drift term has its own instrument-read basis, and re-
+      measuring the untruncated fill rate now that the deleted 2% ask-
+      skip lets a too-tight entry rest and be recorded instead of being
+      pre-refused.
     open_question: >-
       The distribution is now measured and it does not pick a percentile,
       because the belt censors its own tail. Answering this needs data the
@@ -412,6 +450,13 @@ numbers:
       the owner to move"); as of 2026-09-25 it IS owner-ratified appetite
       (delegated to the adversary), value unchanged. Ratified, not sourced: no
       measurement picks 90 over any other terminal cap.
+      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
+      is never a global dial and re-affirmed as OUT of its scope. This is an
+      AGGREGATE rationing ceiling over the whole book, not a per-name risk
+      read: there is no single instrument whose behaviour it could be read
+      off, so the ruling's remedy (read it per name) does not apply and it is
+      not converted into a defect. It remains owner-ratified appetite with no
+      measurement behind it, which is why the status stays `arbitrary`.
     open_question: >-
       What terminal sector concentration does the owner accept, given the spec
       left the bound unstated?
@@ -502,6 +547,13 @@ numbers:
       read from the book's own correlation-distance tree (see the removal
       note further down this file), so the 40% now applies to a structural
       cluster rather than to a 0.7-threshold one.
+      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
+      is never a global dial and re-affirmed as OUT of its scope. This is an
+      AGGREGATE rationing ceiling over the whole book, not a per-name risk
+      read: there is no single instrument whose behaviour it could be read
+      off, so the ruling's remedy (read it per name) does not apply and it is
+      not converted into a defect. It remains owner-ratified appetite with no
+      measurement behind it, which is why the status stays `arbitrary`.
     open_question: >-
       What share of the total risk budget can one correlated cluster take
       before the book stops being several bets and becomes one?
@@ -533,6 +585,13 @@ numbers:
       capital-at-risk ceiling is the loss across the whole book the owner
       accepts in one correlated event, but no measurement of this account's
       correlated-gap behaviour stands behind the magnitude.
+      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
+      is never a global dial and re-affirmed as OUT of its scope. This is an
+      AGGREGATE rationing ceiling over the whole book, not a per-name risk
+      read: there is no single instrument whose behaviour it could be read
+      off, so the ruling's remedy (read it per name) does not apply and it is
+      not converted into a defect. It remains owner-ratified appetite with no
+      measurement behind it, which is why the status stays `arbitrary`.
     open_question: >-
       What total at-risk figure across the book corresponds to a loss the
       owner would accept in a single correlated event?
@@ -625,6 +684,24 @@ numbers:
     value: 2.5
     status: arbitrary
     site: src/config.py
+    settles_by:
+      kind: recording
+      state: built
+      where: src/storage/db.py
+      records: >-
+        Per CLOSED trade: entry price, entry ATR, the entry stop and the basis
+        it was computed from, and the maximum ADVERSE and FAVOURABLE excursions
+        (`trades.max_adverse_excursion` and its favourable mirror, written by
+        `src/storage/db.py`), alongside the realised outcome and stop-hit
+        category already stored. The realised ATR multiple is RECOMPUTED from
+        those columns and is deliberately not stored again.
+      closes_when: >-
+        Enough closed trades carry the excursion columns to answer the only
+        question doctrine allows of them -- was the floor ever VIOLATED in
+        practice -- which falsifies the floor or leaves it standing. It may
+        NOT be optimised against: fitting a number to this desk's own trading
+        record is barred outright (docs/OUTCOME.md), and that is how the 1.5
+        was produced in the first place.
     note: >-
       Minimum stop distance in ATRs where no real level backs the stop, a
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
@@ -832,14 +909,23 @@ numbers:
       first version quoted "until a separate pass re-examines it" as text at
       this site; that phrase is in docs/, not in src/config.py.
     open_question: >-
-      Unchanged in substance, now with its blocker named: by how much does
-      overnight gap risk on a short exceed a long's, measured at a matched
-      adverse tail percentile on the gap distribution of the names this desk
-      shorts? Answerable only after a stored-bar build, since no bar table
-      exists. Until then it is OWNER APPETITE, and the question to route is:
-      how much smaller do you want a short to open than a long carrying the
-      same stated risk, given the loss above the stop is unbounded? Today's
-      1.5 means a short opens at two-thirds the size.
+      NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that risk is
+      never a global dial: it is read per name off that instrument's own
+      behaviour now and off how convicted the seats are on it. So the
+      appetite question previously routed here ("how much smaller should a
+      short open") is WITHDRAWN, not pending, and no value may be picked to
+      settle it. What replaces it is a per-name read: this stock's own
+      overnight-gap magnitude relative to its own stop distance, so a
+      tight-stopped name is haircut harder than a wide-stopped one. That read
+      is BLOCKED ON DATA and on nothing else. Verified 2026-09-30 at the two
+      live sizing sites (src/portfolio_constructor.py, the short branch and
+      the risk-plan loop): they are handed `analysis.atr_14` and a stop
+      price, never bars, and the database still holds no OHLCV table, so the
+      gap term cannot be read at sizing time. Writing the gap as some
+      multiple of ATR would invent that multiple, which is the exact failure
+      this ledger exists to stop, so 1.5 STANDS UNCHANGED and labelled rather
+      than being replaced by a better-dressed guess. Unblocked by a stored
+      daily-bar table and by nothing else.
     cost_while_unanswered: >-
       Shorts are sized by a haircut whose direction is arithmetic and whose
       magnitude is neither sourced nor measured.
@@ -2064,6 +2150,13 @@ numbers:
       percent non-arbitrary (docs/OUTCOME.md). Board item 104 separately
       records that the prompts describe the soft bound as if it were the hard
       one.
+      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
+      is never a global dial and re-affirmed as OUT of its scope. This is an
+      AGGREGATE rationing ceiling over the whole book, not a per-name risk
+      read: there is no single instrument whose behaviour it could be read
+      off, so the ruling's remedy (read it per name) does not apply and it is
+      not converted into a defect. It remains owner-ratified appetite with no
+      measurement behind it, which is why the status stays `arbitrary`.
     open_question: >-
       What terminal sector notional does the owner accept?
     cost_while_unanswered: >-
@@ -2268,9 +2361,37 @@ numbers:
       it replaces one arbitrary literal with a live dependency on this row
       and on `min_stop_atr_multiple`, both still arbitrary and both still
       carrying open questions. Board item 185 stays open.
+      ITEM 185, 2026-10-01 — this row's open question is now INHERITED BY
+      ITEM 185 as well as item 90, because item 185's own ceiling (1 / 3.00)
+      cannot be resolved while this factor is unresolved. Measured the same
+      day off the desk's own stored daily bars (101 symbols, 276 sessions to
+      2026-09-30, ATR(14)/price with `src.data.technical.atr_series`): median
+      2.53%, p90 5.50%, max 8.33%, and NOT ONE name reaches even 10%. The
+      ceiling this row's 1.20 helps set is therefore four times beyond the
+      most volatile instrument the desk looks at, so moving this scaler does
+      not move the screen in practice - it moves every live stop.
     open_question: >-
-      By how much should stop width scale with volatility regime, measured on
-      this desk's own maximum adverse excursion by regime?
+      REPLACED 2026-10-01 (item 185). The previous wording asked for a
+      measurement over this desk's own maximum adverse excursion by regime;
+      that is FITTING to this desk's own trade record, which `docs/OUTCOME.md`
+      bars outright, and it is the same barred question already deleted from
+      `min_stop_atr_multiple` on 2026-09-30. It is replaced by a question that
+      can be read off the instrument: ATR(14) is itself a trailing volatility
+      measurement that re-reads every session, so a regime scaler on top of it
+      is only defensible as a LAG correction - how far does ATR(14) understate
+      a name's current daily range in the first sessions after the tape turns
+      risk-off? That is answerable per name from daily bars alone (ATR(14)
+      against a short-window range over the turn), with no reference to what
+      this desk traded or earned. If the lag gap is small, the honest fix is
+      to DELETE the scaler as double-counting rather than to re-pick it; if it
+      is large, the scaler should be a per-name read of that gap and not a
+      global 1.2, per the owner's 2026-09-30 ruling that risk is per name.
+      THE RECORDING THAT WOULD SETTLE IT, which does not exist today: persist,
+      per name and per session, the regime label this desk assigned alongside
+      that name's own ATR(14) and realised daily range, so the lag gap can be
+      measured against the desk's own live regime calls from instrument data
+      only. Nothing in `data/quant_agent.db` stores the regime label next to a
+      per-name volatility reading today, which is why this stays open.
     cost_while_unanswered: >-
       Every stop in a high-volatility regime is widened by a scaler no
       measurement supports (src/portfolio_constructor.py:636-646 says exactly
@@ -2288,7 +2409,10 @@ numbers:
       sourced: no measured regime/MAE breakdown exists in this repo. These
       multiply into every stop distance.
     open_question: >-
-      Same question, the elevated-regime rung.
+      Same question as the risk-off rung above, as replaced on 2026-10-01 by
+      item 185 (the lag-correction reading off the instrument, never a
+      maximum-adverse-excursion study over this desk's own trades), the
+      elevated-regime rung.
     cost_while_unanswered: >-
       As above.
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]
@@ -2304,8 +2428,9 @@ numbers:
       sourced: no measured regime/MAE breakdown exists in this repo. These
       multiply into every stop distance.
     open_question: >-
-      Same question, the calm-regime rung - and whether tightening in calm
-      regimes is right at all.
+      Same question as the risk-off rung above, as replaced on 2026-10-01 by
+      item 185, the calm-regime rung - and whether tightening in calm regimes
+      is right at all.
     cost_while_unanswered: >-
       As above, and this rung TIGHTENS stops, so an error here moves exits
       inside noise.
@@ -2827,32 +2952,38 @@ numbers:
     cost_while_unanswered: >-
       As above.
   - id: src.risk.rules.GROSS_LADDER_ALERT_PCT
-    value: -20
-    status: arbitrary
+    value: -10
+    status: sourced
     site: src/risk/rules.py
+    source: >-
+      Article 62(1) of Commission Delegated Regulation (EU) 2017/565 (the
+      MiFID Org Regulation), reproduced in the FCA Handbook as COBS
+      16A.4.3UK: a firm providing portfolio management "shall inform the
+      client where the overall value of the portfolio ... depreciates by
+      10 % and thereafter at multiples of 10 %, no later than the end of the
+      business day in which the threshold is exceeded". Fetched 2026-09-30
+      via https://www.fca.org.uk/news/statements/10-per-cent-depreciation-notifications
+      and the FCA Handbook COBS 16A.4. This is the only published standard
+      found that fixes a LOSS-NOTIFICATION threshold to the owner of the
+      money, independently of what the manager does to exposure -- which is
+      exactly the question this row carried open. Value moved -20 -> -10.
     note: >-
-      The drawdown at which the OWNER IS TOLD (resolve_gross_ceiling sets
-      alert_owner). A round percentage, not read off the account or off a
-      cited source. It happens to equal the de-levering ladder's deepest
-      rung, but it answers a different question from the ladder -- the same
-      function also sets alert_owner=True on the unmeasurable-drawdown
-      branch, where no rung fires at all. A 2026-09-30 change (board item
-      182) deleted this row and set the constant to min(GROSS_LADDER
-      thresholds); it was REVERTED the same day because the trigger
-      (drawdown <= this) is monotone, so freezing the value can never
-      produce silence at a deeper drawdown, while tying it to the deepest
-      rung WOULD go silent across any band between -20% and a newly added
-      deeper rung. Setting one arbitrary number equal to another arbitrary
-      number is deduplication, not sourcing, so the question below stays
-      open either way. The stale-prose defect that change was really
-      chasing is fixed in the reason string instead, which now names the
-      rung the ladder is actually on.
-    open_question: >-
-      At what drawdown must the owner be told, independently of what the
-      ladder does to exposure?
-    cost_while_unanswered: >-
-      The owner either hears about ordinary volatility or first hears at the
-      floor rung.
+      Three differences from the cited rule are recorded rather than hidden.
+      (a) The rule measures depreciation from the START of the reporting
+      period; this desk measures peak-to-trough drawdown, which is always at
+      least as deep, so -10% peak-to-trough fires no later than the rule
+      would. (b) It is a RETAIL investor-protection rule and the UK FCA
+      revoked COBS 16A.4.3UK from 23 October 2025 as a firm-burden measure,
+      not as a finding that 10% is wrong; the EU Article 62 text stands. It
+      is cited as published practice, not as a rule binding this desk. (c)
+      The desk alerts on every session past the threshold, more often than
+      "thereafter at multiples of 10%" demands, so it clears the floor. The
+      change is strictly LOUDER: the trigger is monotone and -10 is
+      shallower than -20, so no drawdown that alerted before stops
+      alerting. This row no longer equals the ladder's deepest rung, which
+      removes the coincidence that made the two look like one number; the
+      six GROSS_LADDER values remain owner-ratified appetite and are
+      untouched.
   - id: src.risk.rules.SEAT_WEIGHT
     value: 1
     status: sourced
@@ -2941,19 +3072,67 @@ numbers:
       not per-order fees. That leaves the number exactly where the
       2026-09-25 adversary ruling put it: a chosen churn-appetite threshold,
       ratified, neither sourceable nor measurable.
+      ATR RE-EXPRESSION ATTEMPTED AND FAILED 2026-09-30. The doctrine
+      objection was tested, not waved through: expressed in each name's own
+      ATR(14), "2% of the live stop" demands 0.31 ATR on MRVL, 0.33 on NET,
+      0.34 on RKLB, 0.47 on AMD, 0.52 on META and 0.91 on AAPL — the same
+      nominal rule asking for a ratchet nearly three times larger on one name
+      than another, which is exactly the incoherence the doctrine names. The
+      repair `k * ATR` was then measured against the seven production
+      refusals whose candidate could be reconstructed from daily bars, and it
+      does not work: every refused tighten fell between 0.12 and 0.50 ATR, so
+      any k >= 0.75 blocks all seven (strictly MORE than the flat 2%, which
+      lets one through) and only k <= 0.5 admits anything — and picking 0.25
+      to admit three of seven is fitting the constant to the outcomes the
+      data liked, the same failure as the 2.0 it would replace. No published
+      work fetched fixes a minimum stop-ADJUSTMENT size; the stop literature
+      addresses distance from price, which the noise band and the chandelier
+      already answer. Deleting the gate was rejected on a measured cost, not
+      a preference: `AlpacaBroker.replace_stop_loss` cannot edit an Alpaca OTO
+      stop leg in place, so every replace is cancel-then-resubmit with a real
+      window in which the position carries no protective order, and removing
+      the gate would have added seven such windows across nine evaluation
+      runs on an eleven-name book. The value stays 2.0 and the failure is on
+      file rather than quietly dropped.
+      CONTINGENCY RECORDED 2026-09-30 (second pass, same day): the rejection
+      of "delete the gate" rests ENTIRELY on that naked-protection window,
+      and that window is being removed. Open PR 806
+      (`fix/atomic-stop-amend`, "Move a protective stop in place instead of
+      cancel+resubmit") adds `_amend_resting_stop_price` to
+      `src/execution/broker.py`; it is NOT on main (verified 2026-09-30, zero
+      occurrences on `origin/main`), which is why nothing changed here today.
+      If and when it merges, a price amend is atomic and there is no instant
+      at which the position is unprotected, the money cost of a replace is
+      already established as zero, and the deterministic trail is evaluated
+      once per session per position so the amend count is bounded at one per
+      session whatever this floor is. At that point this gate has no
+      surviving cost to defend and the honest floor becomes the venue
+      minimum price increment -- one tick, SEC Rule 612 / Alpaca's published
+      $0.01-at-or-above-$1 and $0.0001-below split, which
+      `src/execution/broker.py::_quantize_price` and
+      `src/execution/stop_records.py::_prices_match` already carry. That is
+      a reading off the instrument rather than a picked percentage, and it
+      is the same shape as item 183's removal of the picked
+      `min_trade_weight_delta` churn floor. Do NOT make that change while
+      806 is open; re-read this entry when it lands.
     open_question: >-
-      RATIFIED — no value question remains. One structural question is left,
-      and it is about redundancy, not magnitude: whether
-      this gate is REDUNDANT given the two other clamps already on the same
-      TRAIL_STOP path: the ~2-4-session ratchet cooldown
-      (`_trail_tightened_recently`, 4 calendar days) and the 1.25x-ATR14
-      noise-band clamp — three churn-limiting gates stacked on one action
-      may be doing overlapping work. That is answerable from the desk's own
-      TRAIL_STOP refusal logs — which gate refused each trail — without any
-      new number and without owner input.
+      CLOSED 2026-09-30 — both halves are now answered from the desk's own
+      refusal record, with no new number and no owner input, exactly as this
+      question proposed. (1) The premise was wrong: there are TWO gates on
+      the deterministic path, not three. The ~2-4-session ratchet cooldown
+      (`_trail_tightened_recently`) is reached only from the discretionary
+      midday `TRAIL_STOP` branch in `src/pipeline.py` and never from
+      `_apply_deterministic_trails`, so it has never refused a deterministic
+      trail. (2) The two that ARE stacked are not redundant: all seven
+      reconstructed refusals sat OUTSIDE the 1.25x-ATR noise band, so the
+      noise band would have admitted every one of them and this gate is
+      doing independent work. No value question remains; the number is
+      ratified churn appetite and the ATR re-expression above failed on
+      measurement.
     cost_while_unanswered: >-
-      A genuine ratchet may be skipped by whichever of the three stacked
-      gates binds first, with no record of which one it was.
+      None outstanding. The refusal codes written to `specialist_evidence`
+      (`kind='trail_state'`, `src/risk/trailing.py::TRAIL_CODE_*`) already
+      name which gate refused each trail, which is what this entry wanted.
   - id: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
     value: 1.25
     status: arbitrary
@@ -4767,14 +4946,25 @@ numbers:
       position for at all. So the cap is conservative on the desk's own
       scale. That is a cross-check, not a source. NO VALUE PICKED.
     open_question: >-
-      OWNER APPETITE, and it is a loss tolerance rather than a weight: how
-      much of total equity may the desk lose overnight on ONE name whose
-      just-filed 10-Q or 10-K nobody has read, accepting that the protective
-      stop does not hold through a gap? Set that tolerance L and this cap
-      stops being a chosen number — it reads L divided by the expected
-      absolute earnings-day move, and L = 0.25% reproduces today's 5% cap.
-      The move term can be sourced (~5.07% published) or later measured per
-      name; only L is yours.
+      NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that a global
+      constant governing risk is a defect to be replaced by a per-name read,
+      never an appetite to be answered, so the loss-tolerance L previously
+      routed here is WITHDRAWN and no value may be picked for it. Two honest
+      replacements were examined 2026-09-30. (a) The direct per-name read —
+      cap the weight at this name's own expected absolute earnings-day move
+      rather than at a share of the book — is BLOCKED ON DATA: the desk has
+      no implied-move feed and no stored history of past earnings-day
+      reactions, so the move term cannot be read per name, only imported from
+      a published cross-firm average that measures a different universe. (b)
+      A threshold-free alternative that needs NO number exists and is
+      recorded so it is not lost: an unread filing means the fundamental seat
+      is not convicted on that name, and standing doctrine already requires
+      all five seats to be right to enter, so the correct behaviour is to
+      REFUSE the BUY rather than to cap it at any percentage. That converts a
+      size cap into a block on live capital, so it goes in front of the
+      adversary before it ships and was deliberately NOT applied in this
+      pass. Until one of the two lands, 5 STANDS UNCHANGED and labelled. NO
+      VALUE PICKED, NO APPETITE ASKED.
     cost_while_unanswered: >-
       A name with an unread filing is capped at 5% of the book whatever its
       stop distance, so the cap is either looser or tighter than the risk

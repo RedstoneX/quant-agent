@@ -36,6 +36,16 @@ logger = logging.getLogger(__name__)
 #: Why a position's stop did or did not trail, recorded on a CHANGE of
 #: reason only — see `record_trail_state_changes`.
 TRAIL_STATE_KIND = "trail_state"
+#: One row per run holding the COUNT of every trail outcome that run
+#: produced. `record_trail_state_if_changed` deliberately writes nothing
+#: when a stock refuses for the same reason two runs running, so it can
+#: say WHY a stop has not moved but never HOW OFTEN — which is why the
+#: frequency of `inside_noise_band` was unmeasurable (item 196). The
+#: census is bounded the other way: one row per run regardless of book
+#: size, and no per-stock detail.
+TRAIL_CENSUS_KIND = "trail_code_census"
+#: `_insert` needs a non-empty symbol; the census is portfolio-scoped.
+CENSUS_SYMBOL = "PORTFOLIO"
 #: One row per stop repair that did not fully close its gap.
 STOP_REPAIR_REFUSAL_KIND = "stop_repair_refusal"
 #: One row per protective stop the desk's own kill switch refused to send.
@@ -110,6 +120,24 @@ def record_trail_state(
     }
     return _insert(db, run_id=run_id, kind=TRAIL_STATE_KIND, symbol=symbol,
                    payload=payload)
+
+
+def record_trail_code_census(
+    db: Any, *, run_id: str, counts: dict[str, int],
+) -> bool:
+    """Write one row counting every trail outcome this run produced.
+
+    Recording only — nothing reads it back to decide anything. Written
+    even when a count is zero-length is pointless, so an empty census
+    writes nothing.
+    """
+    tally = {str(k): int(v) for k, v in (counts or {}).items() if int(v) > 0}
+    if not tally:
+        return False
+    return _insert(
+        db, run_id=run_id, kind=TRAIL_CENSUS_KIND, symbol=CENSUS_SYMBOL,
+        payload={"counts": tally, "evaluations": sum(tally.values())},
+    )
 
 
 def record_trail_state_if_changed(

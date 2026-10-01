@@ -306,6 +306,34 @@ NOT_A_REFUSAL_STAGE_OUTCOMES = frozenset({
     ("specialist", "failed"),
 })
 
+#: SEAT ACCEPTANCE (the enabler job). `agent_logs.status` records only that
+#: the provider call RETURNED; it has never recorded whether the seat could
+#: USE the answer. These two words are that second, missing fact, and they
+#: are deliberately a CLOSED pair so no unregistered word can enter the
+#: column the way unregistered `outcome` words have corrupted refusal
+#: counting before (see NOT_A_REFUSAL_OUTCOMES above).
+#:
+#: They are NOT pipeline-event `outcome` words and must never be added to the
+#: sets above: those classify what a STAGE ruled about a candidate, while
+#: these classify what a SEAT did with its own model's reply.
+SEAT_ACCEPTED = "accepted"
+SEAT_REFUSED = "refused"
+SEAT_ACCEPTANCE_WORDS = frozenset({SEAT_ACCEPTED, SEAT_REFUSED})
+
+#: The refusal REASON codes the instrumented call sites can write. Every one
+#: already existed in the desk's vocabulary before this column did — they are
+#: the `status` literals and `pipeline_event` reasons those same sites
+#: already assign on their refusal path. Nothing here is a new word.
+SEAT_REFUSAL_REASONS = frozenset({
+    "agent_failure",                   # smart_money / risk status literal
+    "failed",                          # data_status["tech"] / evening literal
+    "no_valid_grounded_decision",      # pipeline_event portfolio_manager|failed
+    "risk_manager_unparseable_output", # pipeline_event risk|failed
+    "position_review_parse_error",     # review_log_kwargs status literal
+    "evening_parse_error",             # _ev_log_kwargs status literal
+})
+
+
 #: The desk's OWN recorded words for a run that stopped before the decision
 #: stage. This detector's premise is "the candidates varied, the outcome did
 #: not, therefore the gate is jammed" — and that premise is only about runs
@@ -707,11 +735,6 @@ def streak_and_skipped(
     streak.reverse()
     skipped.reverse()
     return streak, skipped
-
-
-def unvarying_streak(sessions: list[SessionShape]) -> list[SessionShape]:
-    """Just the streak — see `streak_and_skipped`."""
-    return streak_and_skipped(sessions)[0]
 
 
 # ---------------------------------------------------------------------------
