@@ -1114,6 +1114,10 @@ class Database:
         # must treat NULL as unknown, never as accepted.
         _ensure_column("agent_logs", "acceptance", "acceptance TEXT")
         _ensure_column("agent_logs", "acceptance_reason", "acceptance_reason TEXT")
+        # Whether the provider's answer carried usage information:
+        # complete / no_cost / no_usage. NULL on every legacy row and where no
+        # request was made; NULL is unknown, never "complete" and never free.
+        _ensure_column("agent_logs", "telemetry", "telemetry TEXT")
         _ensure_column("trades", "decision_id", "decision_id TEXT")
         _ensure_column("trades", "realized_pnl", "realized_pnl REAL")
         # Stage 3 (shorts): which side the protective stop being restored
@@ -2718,7 +2722,8 @@ class Database:
                          truncated: bool | None = None,
                          decision_id: str | None = None,
                          acceptance: str | None = None,
-                         acceptance_reason: str | None = None):
+                         acceptance_reason: str | None = None,
+                         telemetry: str | None = None):
         """`model` remains the ACTUAL responding model (Stage 0.5 contract —
         unchanged). The Stage 1 kwargs below are additive and all default to
         None so every pre-Stage-1 caller keeps working unmodified; omitting
@@ -2731,8 +2736,8 @@ class Database:
                    provider_requests,
                    requested_provider, requested_model, actual_provider,
                    prompt_version, latency_s, status, finish_reason, truncated,
-                   decision_id, acceptance, acceptance_reason)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   decision_id, acceptance, acceptance_reason, telemetry)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (agent_name, run_id, input_summary, input_message, output_summary,
                  full_response, model, tokens_used,
                  input_tokens, output_tokens, cost_usd,
@@ -2740,7 +2745,7 @@ class Database:
                  requested_provider, requested_model, actual_provider,
                  prompt_version, latency_s, status,
                  finish_reason, None if truncated is None else int(truncated),
-                 decision_id, acceptance, acceptance_reason),
+                 decision_id, acceptance, acceptance_reason, telemetry),
             )
             self.conn.commit()
         self._locked_write(_do, label="insert_agent_log")
