@@ -7388,7 +7388,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Window of the PM's own hit-rate/return calibration note
-      (src/pipeline.py:8588-8593). Its only caller passes nothing, so this
+      (src/pipeline_prompt_facts.py:3037-3042). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7418,7 +7418,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:8145-8148). The LIVE number is the keyword literal at
+      (src/pipeline_prompt_facts.py:2145-2148). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
@@ -7458,7 +7458,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:8145-8148). The LIVE number is the keyword literal at
+      (src/pipeline_prompt_facts.py:2145-2148). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
@@ -7500,7 +7500,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:8145-8148). The LIVE number is the keyword literal at
+      (src/pipeline_prompt_facts.py:2145-2148). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_own_recent_decisions(limit)
@@ -7844,14 +7844,14 @@ numbers:
       bid, whose displayed size is finite, so this is a reachable state, not
       a theoretical one. Booking from the filled quantity and continuing to
       sell while the deficit stands would delete this haircut entirely.
-  - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
+  - id: src.pipeline_risk_gate.RiskGateMixin._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary
-    site: src/pipeline.py
+    site: src/pipeline_risk_gate.py
     note: >-
       Research pre-filter: a symbol whose MA20/MA50 spread is under 0.5 x
       ATR14 counts as having an actionable signal and is sent to the technical
-      seat (src/pipeline.py:2973-2976). The same function has further inline
+      seat (src/pipeline_risk_gate.py:878-882). The same function has further inline
       thresholds (50% volume change, 2% MA spread) that no rule sees because
       they are comparisons, not multipliers. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive 0.5 from the ledgered noise-band multiple of 1.25 ATR as a half-band. FAILED -- the noise band bounds a STOP against daily range, this bounds a moving-average SPREAD; they share a unit and nothing else. Attempt (2): treat it as a sort-key position with no magnitude, the shape that explained eight rows in tranche 1. FAILED -- checked at the definition site and it is a genuine magnitude: it is compared against a computed spread and decides inclusion, it is not a position in any ordering. Value unchanged.
     open_question: >-
@@ -7933,7 +7933,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       Window of the quarterly meta-reflection digest
-      (src/pipeline.py:8731-8745). Its output reaches a prompt only as a
+      (src/pipeline.py:7847-7861). Its output reaches a prompt only as a
       STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]

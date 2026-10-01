@@ -7,7 +7,7 @@ resolves to "Unknown" — and `RiskRuleEngine.check`'s sector-concentration
 rule (rule 5, spec §12.2/§10.3) used to read `new_sector != "Unknown"` as
 "skip this check entirely", i.e. EXEMPT from BOTH the soft concentration
 target (`max_sector_pct`, advisory) and the absolute hard ceiling
-(`max_sector_hard_pct`, a real HARD BLOCK — see `src.pipeline.HARD_BLOCK_RULES`).
+(`max_sector_hard_pct`, a real HARD BLOCK — see `src.pipeline_risk_gate.HARD_BLOCK_RULES`).
 Symmetrically, a HELD position stamped sector="Unknown" the same way was
 excluded by `sector_side_gross`'s default (`include_unknown=False`) and
 vanished from every sector's exposure. With margin arriving at 2.0x, a
@@ -34,7 +34,7 @@ import pytest
 
 from src.config import RiskConfig
 from src.models import Position, TradeDecision
-from src.pipeline import HARD_BLOCK_RULES
+from src.pipeline_risk_gate import HARD_BLOCK_RULES
 from src.risk.rules import RiskRuleEngine
 
 

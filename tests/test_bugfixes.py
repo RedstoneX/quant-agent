@@ -329,7 +329,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_sector_buy():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Technology"), patch(
+    with patch("src.pipeline_risk_gate._get_sector", return_value="Technology"), patch(
         "src.execution.broker._get_sector", return_value="Technology"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -367,7 +367,7 @@ def test_pipeline_hard_risk_filter_no_longer_vetoes_at_the_sector_target():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Technology"), patch(
+    with patch("src.pipeline_risk_gate._get_sector", return_value="Technology"), patch(
         "src.execution.broker._get_sector", return_value="Technology"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -573,7 +573,7 @@ def test_morning_prefilter_requires_real_macd_histogram_crossover(monkeypatch):
         atr_14=10.0, volume_change_pct=0.0,
     )
     monkeypatch.setattr(
-        "src.pipeline.compute_indicators",
+        "src.pipeline_risk_gate.compute_indicators",
         lambda _symbol, _bars: TechnicalIndicators(
             symbol="SPY", macd_hist=0.2,
         ),
@@ -593,7 +593,7 @@ def test_morning_prefilter_accepts_macd_histogram_sign_change(monkeypatch):
         atr_14=10.0, volume_change_pct=0.0,
     )
     monkeypatch.setattr(
-        "src.pipeline.compute_indicators",
+        "src.pipeline_risk_gate.compute_indicators",
         lambda _symbol, _bars: TechnicalIndicators(
             symbol="SPY", macd_hist=-0.2,
         ),
@@ -613,7 +613,7 @@ def test_morning_prefilter_rejects_unchanged_zero_macd_histogram(monkeypatch):
         atr_14=10.0, volume_change_pct=0.0,
     )
     monkeypatch.setattr(
-        "src.pipeline.compute_indicators",
+        "src.pipeline_risk_gate.compute_indicators",
         lambda _symbol, _bars: TechnicalIndicators(
             symbol="SPY", macd_hist=0.0,
         ),

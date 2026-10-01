@@ -22,7 +22,6 @@
           "_admit_transient_smart_money_symbols",
           "_alert_form4_backlog_before_open",
           "_another_session_recently_active",
-          "_apply_risk_modifications",
           "_atr_for_symbol",
           "_attach_cost_circuit_to_agents",
           "_attach_evidence_freshness",
@@ -47,7 +46,6 @@
           "_evidence_gate_skip",
           "_execution_stage",
           "_expected_sessions_missing_today",
-          "_filter_hard_risk_decisions",
           "_filter_supported_symbols",
           "_findings_from_specialist_evidence",
           "_forced_close_side_and_qty",
@@ -56,7 +54,6 @@
           "_form4_known_accessions",
           "_format_qty",
           "_full_sell_qty",
-          "_has_actionable_signal_fn",
           "_heal_lost_research_seats",
           "_insider_same_session",
           "_install_sigterm_unwind",
@@ -87,14 +84,12 @@
           "_peek_news_headlines",
           "_peeked_news_wire_text",
           "_persist_evening_report",
-          "_persist_hard_risk_block",
           "_persist_heal_call",
           "_persist_healed_macro_store",
           "_persist_intra_check_report",
           "_persist_review_metrics",
           "_persist_session_report",
           "_recently_intraday_evaluated",
-          "_reconcile_size_to_risk_budget",
           "_record_account_snapshot",
           "_record_congressional_refresh",
           "_record_form4_backlog",
@@ -104,13 +99,11 @@
           "_record_short_overnight_gaps",
           "_reduce_sell_qty",
           "_refresh_account_state",
-          "_refuse_queued_earnings_buys",
           "_release_retired_cash_park",
           "_require_paid_analysis",
           "_resolve_live_context",
           "_restore_sigterm",
           "_retired_cash_park_symbol",
-          "_risk_mod_floor_breach",
           "_risk_stage",
           "_run_earnings_preprocess_body",
           "_run_evening_body",
@@ -299,6 +292,20 @@
           "_surface_reconcile_outcomes",
           "_wire_protective_stop_block_recorder",
           "_write_ahead_protection_restore"
+        ]
+      }
+    },
+    "src/pipeline_risk_gate.py": {
+      "module_functions": [],
+      "classes": {
+        "RiskGateMixin": [
+          "_apply_risk_modifications",
+          "_filter_hard_risk_decisions",
+          "_has_actionable_signal_fn",
+          "_persist_hard_risk_block",
+          "_reconcile_size_to_risk_budget",
+          "_refuse_queued_earnings_buys",
+          "_risk_mod_floor_breach"
         ]
       }
     },
