@@ -563,6 +563,35 @@ run is dispatched for it, and the job exits non-zero so the scheduled
 `stale-ci` workflow goes red in the Actions tab. A cancelled run counts as
 stale; it is not an answer.
 
+**main's own post-merge run is now watched too (2026-10-01).** Branch
+protection reads a pull request's `pytest` check and does NOT require the
+branch to be current with main first (`strict: false`, verified by API), and
+nothing read the run main produces after a merge. On 2026-10-01 main sat red
+on thirteen cost-circuit tests while every open PR showed green: each PR's
+own run had legitimately passed earlier, against a different wall clock. The
+tests were not the defect; nothing watching main was. `scripts/check_main_red.py`
+now asks whether main's newest COMPLETED push run of `tests` succeeded, and
+the `main-red` job in the scheduled `stale-ci` workflow runs it every half
+hour. A non-success answer prints the failing commit, its subject, the run
+URL and how long the branch has been red, writes the same record to the
+workflow run summary, and exits non-zero so the job goes red in the Actions
+tab. It never re-dispatches: a red main is an answer, not a flake. A
+cancelled newest run counts as red, a `pull_request` run is never a verdict
+on main, and a GitHub read that fails exits 2 rather than claiming health.
+
+**Those thirteen tests were a two-clock bug, not a regression.** The circuit
+dated the ET day from Python and `suspended_at`/`created_at` from SQLite's
+`'now'`. In production that is one OS clock and they cannot disagree; a test
+could freeze only the Python half, so for the first quarter-hour of each ET
+day the two landed on different days and the self-clear refused — correctly,
+given what it was shown. `src.cost_circuit._now_utc()` is now the module's
+single clock: replace it and `_connect` pins SQLite's `'now'` (and the
+`created_at` column default) to the same instant. Production is unchanged —
+with the real clock in place the bare connection is returned and every SQL
+`'now'` still reads SQLite's own clock. `tests/desk_clock.py::freeze_desk_day`
+is the one way to freeze the desk's day, after three clock-class bugs in one
+night.
+
 **Correction (2026-08-31): the drift alarm could not actually send.** The unit
 installed on 2026-08-27 declared no `EnvironmentFile` and invoked the venv
 Python directly on the script, unlike the session units which go through an
