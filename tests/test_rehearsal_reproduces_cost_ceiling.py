@@ -273,17 +273,17 @@ def _reached_provider(report, agent: str) -> bool:
 
 @pytest.mark.xfail(
     reason=(
-        "Board item 202: the rehearsal harness is not hermetic. It claims a "
-        "socket wall and replaces the market-data provider with one that "
-        "fetches nothing (ops/rehearsal/broker.py::blocked_market_data), yet "
-        "price data was still reaching it through curl_cffi -- which the "
-        "suite's outbound-HTTP guard did not cover until now. With the hole "
-        "genuinely closed the session degrades to status='no_data' and never "
-        "reaches the Portfolio Manager, so this test's 'before' case cannot "
-        "be built offline. It ALSO fails on origin/main today (measured "
-        "2026-09-30, ~196s of live fetching), so this is pre-existing and not "
-        "caused by closing the hole. NOT a flake marker: it flips to XPASS "
-        "the moment item 202 serves recorded market data, which is the point."
+        "Board item 202, second half. The curl_cffi hole is closed and the "
+        "market data is now served from the recording, and as of today the "
+        "rebind reaches the stage that holds its own provider reference, so "
+        "tech_analyst runs offline instead of the session dying at "
+        "status='no_data' [measured 2026-10-01: agents_ran now includes "
+        "tech_analyst]. It still does not reach the Portfolio Manager: the "
+        "run ends 'APIConnectionError: Connection error.' and other "
+        "components still build their own live MarketDataProvider, whose "
+        "blocked yfinance crumb fetches retry one symbol at a time. NOT a "
+        "flake marker: it flips to XPASS once those two leaks are served "
+        "from the recording too, which is what is left of item 202."
     ),
     strict=False,
 )

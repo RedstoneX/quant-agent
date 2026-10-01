@@ -253,15 +253,19 @@ def test_a_credential_less_session_is_recorded_as_broken(db, monkeypatch):
 def test_a_muted_channel_is_reported_broken_not_healthy(db, telegram_env, monkeypatch):
     """TELEGRAM_DISABLED is an operator convenience, but while it is set the
     desk genuinely cannot raise an alarm. Reporting that as healthy would be
-    the same lie in a friendlier costume."""
+    the same lie in a friendlier costume — so it stays degraded. It is
+    reported under its OWN status rather than as `broken`, because nothing
+    is broken and the repair is "unset the kill switch", not "fix the
+    credentials"."""
     monkeypatch.setenv("TELEGRAM_DISABLED", "1")
 
     with patch("src.notifier.requests.post") as post:
         result = alert_watchdog.verify_alert_channel(source="morning")
 
     assert post.call_count == 0
-    assert result.stage == "credentials"
-    assert alert_watchdog.read_health().status == "broken"
+    assert result.stage == "muted"
+    assert alert_watchdog.read_health().status == "muted"
+    assert alert_watchdog.read_health().degraded is True
 
 
 # ===========================================================================
