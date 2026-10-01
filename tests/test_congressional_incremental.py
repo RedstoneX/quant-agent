@@ -337,7 +337,7 @@ def test_a_newly_filed_disclosure_of_an_old_trade_is_not_labelled_fresh(tmp_path
 
 
 def test_the_counts_are_recorded_where_the_desk_records_its_status(tmp_path):
-    from src.pipeline import TradingPipeline
+    from src.pipeline_research_continuity import ResearchContinuityMixin
 
     provider = _provider(tmp_path, _Server([_kadoa(1)], [_cw(1)]))
     combined = CombinedSmartMoneyProvider([provider])
@@ -350,7 +350,7 @@ def test_the_counts_are_recorded_where_the_desk_records_its_status(tmp_path):
         def insert_specialist_evidence(self, **kwargs):
             rows.append(kwargs)
 
-    record = TradingPipeline._record_congressional_refresh.__get__(SimpleNamespace(db=_Db()))
+    record = ResearchContinuityMixin._record_congressional_refresh.__get__(SimpleNamespace(db=_Db()))
     record("run-1", refresh)
     record("run-2", {"status": "ok"})  # switch off: no congressional block
     assert len(rows) == 1

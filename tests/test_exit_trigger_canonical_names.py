@@ -26,7 +26,7 @@ below rather than left to whatever the code happens to do.
 
 import pytest
 
-from src.pipeline import _HARD_TRIGGER_KEYWORDS, _reason_cites_hard_trigger
+from src.pipeline_exits import _HARD_TRIGGER_KEYWORDS, _reason_cites_hard_trigger
 from src.risk.exit_refusal import classify_trigger_reason
 from src.risk.exit_trigger import (
     CANONICAL_NAME_NOT_MATCHED_IN_PROSE,
@@ -197,7 +197,7 @@ def assert_trigger_vocabulary_matches_executor_gate() -> None:
     never a second list -- except for the CHART-VERIFIED names, which are
     namable in the phrase table but must never be hard-trigger keywords,
     because a keyword is a bypass bought with prose alone."""
-    from src.pipeline import _CHART_VERIFIED_TRIGGER_NAMES
+    from src.pipeline_exits import _CHART_VERIFIED_TRIGGER_NAMES
 
     for name in CANONICAL_TRIGGER_NAMES:
         if name in _CHART_VERIFIED_TRIGGER_NAMES:

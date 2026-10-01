@@ -32,7 +32,7 @@ from unittest.mock import patch
 
 from src.config import RiskConfig
 from src.models import Position, TradeDecision
-from src.pipeline import HARD_BLOCK_RULES
+from src.risk.rules import HARD_BLOCK_RULES
 from src.risk.rules import RiskRuleEngine, sector_allowance_pct
 
 EQUITY = 100_000.0
