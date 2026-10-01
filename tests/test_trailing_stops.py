@@ -499,13 +499,35 @@ def test_a_stop_already_above_every_available_level_produces_nothing():
 
 
 def test_a_move_smaller_than_the_ratchet_threshold_is_not_worth_an_order():
-    """Otherwise every session nudges the stop a few cents."""
+    """Otherwise every session nudges the stop a few cents.
+
+    The gate is per CANDIDATE, not per evaluation. Until board item 196 this
+    test passed with `atr=2.0` because the structural pivot at 110 failed the
+    gate and the chandelier was never built — the rejected first candidate
+    ended the search. It is now built, and on these bars it clears both the
+    gate and the noise band, so it is rightly taken. Nothing in the
+    production record changes: the structural leg has never once produced a
+    candidate there, so the chandelier was already the candidate in every
+    recorded `below_min_ratchet` refusal.
+    """
+    stop = 110.0 / (1 + MIN_RATCHET_PCT / 100.0) + 0.01
+
+    # Structure alone (no ATR, so no chandelier leg): the gate still refuses.
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="breakout", entry=100.0, current_price=125.0,
+        current_stop=stop, reference_target=None,
+        bars=_rising_with_higher_lows(), atr=None,
+    ) is None
+
+    # With an ATR the second leg exists and is worth an order on its own.
     proposal = compute_trailing_stop(
         symbol="AAA", setup_type="breakout", entry=100.0, current_price=125.0,
-        current_stop=110.0 / (1 + MIN_RATCHET_PCT / 100.0) + 0.01,
-        reference_target=None, bars=_rising_with_higher_lows(), atr=2.0,
+        current_stop=stop, reference_target=None,
+        bars=_rising_with_higher_lows(), atr=2.0,
     )
-    assert proposal is None
+    assert proposal is not None
+    assert proposal.source == "chandelier"
+    assert proposal.new_stop > stop * (1 + MIN_RATCHET_PCT / 100.0)
 
 
 def test_a_stop_is_never_placed_inside_the_atr_noise_band():
