@@ -580,7 +580,11 @@ quant-agent/
 │   ├── pipeline_prompt_facts.py   # PromptFactsMixin — read-only DB/broker reads turned into LLM prompt context
 │   ├── pipeline_intraday.py       # IntradayMixin — intra-check session, scan locks, paid-scan slot, intraday opportunity scan
 │   ├── pipeline_research_continuity.py  # ResearchContinuityMixin — change detectors, carry-forward, Form-4 backlog, seat healing
-│   ├── pipeline_stages.py         # MorningResearch / Decision / Risk / Execution stage classes
+│   ├── pipeline_stages.py         # shared stage helpers; re-exports the four stage classes below
+│   ├── stage_morning_research.py # MorningResearchStage (moved verbatim, item 210 step 10)
+│   ├── stage_decision.py         # DecisionStage (moved verbatim, item 210 step 10)
+│   ├── stage_risk.py             # RiskStage + its 5 private helpers (moved verbatim)
+│   ├── stage_execution.py        # ExecutionStage (moved verbatim, item 210 step 10)
 │   ├── pipeline_context.py        # RunContext dataclass — explicit shared state across stages
 │   ├── notifier.py                # Telegram session-status push (opt-in via env vars; per-mode noise policy)
 │   ├── portfolio_constructor.py   # Deterministic Target → TradeDecision translator (risk-budget sizing)

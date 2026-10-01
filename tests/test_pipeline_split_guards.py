@@ -129,8 +129,10 @@ def test_method_names_are_unique_across_the_recorded_classes() -> None:
 def test_inventory_guard_can_actually_fail(tmp_path: Path) -> None:
     """A guard that cannot fail is worthless: add, remove and rename a method in a
     copy of the real module and prove each one is detected."""
-    source = (REPO_ROOT / "src" / "pipeline_stages.py").read_text(encoding="utf-8")
-    baseline = module_inventory(REPO_ROOT / "src" / "pipeline_stages.py")
+    # 2026-10-01, item 210 step 10: `RiskStage` moved verbatim to
+    # `src/stage_risk.py`, so the mutation test reads it there.
+    source = (REPO_ROOT / "src" / "stage_risk.py").read_text(encoding="utf-8")
+    baseline = module_inventory(REPO_ROOT / "src" / "stage_risk.py")
     victim = next(
         name
         for name in baseline["classes"]["RiskStage"]
@@ -194,7 +196,10 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 25
-    assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 22
+    # 2026-10-01, item 210 step 10: the 2 `ExecutionStage._run_session` ids moved
+    # with the class into `src.stage_execution`, so 22 -> 20 + 2.
+    assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 20
+    assert len(ledger_ids_for_module("src.stage_execution", ledger)) == 2
 
 
 def test_module_prefix_does_not_swallow_the_sibling_module() -> None:

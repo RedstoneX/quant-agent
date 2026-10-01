@@ -728,7 +728,12 @@ def _recorded_skip_reasons_outside_the_rotation_gate() -> set[str]:
     outside `_rotation_buy_leg_projected_refusal` is what makes the
     comparison mean anything.
     """
-    tree = ast.parse((REPO_ROOT / "src" / "pipeline_stages.py").read_text())
+    # `ExecutionStage` moved to `src/stage_execution.py` verbatim (item 210,
+    # step 10); the rotation gate stayed in `pipeline_stages.py`.
+    tree = ast.parse(
+        (REPO_ROOT / "src" / "pipeline_stages.py").read_text()
+        + (REPO_ROOT / "src" / "stage_execution.py").read_text()
+    )
     excluded = set()
     for node in ast.walk(tree):
         if (isinstance(node, ast.FunctionDef)
@@ -1109,7 +1114,10 @@ def test_the_sell_loop_still_consults_the_wire_barrier():
     ranked-margin close reaching the broker is one `continue` in a long
     loop; if a future edit removes it, `rotation_sell_reason`'s raise is
     never reached and the object guard becomes decorative."""
-    source = (REPO_ROOT / "src" / "pipeline_stages.py").read_text()
+    source = (
+        (REPO_ROOT / "src" / "pipeline_stages.py").read_text()
+        + (REPO_ROOT / "src" / "stage_execution.py").read_text()
+    )
     assert "rotation_final_reason = _rotation_ranked_margin_sell_reason(" in source
     assert "if rotation_final_reason is _ROTATION_SELL_REFUSED:" in source
     barrier = source.index("if rotation_final_reason is _ROTATION_SELL_REFUSED:")

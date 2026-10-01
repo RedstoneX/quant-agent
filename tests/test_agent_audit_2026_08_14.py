@@ -538,7 +538,13 @@ def test_f4_decision_stage_logs_all_nine_fields(caplog) -> None:
             "a", "b", "c", "d", "e", "f", "g",
             "" or "[MISSING]", "" or "[MISSING]", "" or "[MISSING]",
         )
-    source = Path(ps.__file__).read_text()
+    # `DecisionStage` moved to `src/stage_decision.py` verbatim (item 210,
+    # step 10); the log line travelled with it.
+    from src import stage_decision as _stage_decision
+
+    source = (
+        Path(ps.__file__).read_text() + Path(_stage_decision.__file__).read_text()
+    )
     # Every field the schema lets default to "" must appear here, or the log
     # cannot tell a performed audit step from a skipped one. `macro_audit`
     # joined them 2026-09-14 (item 18e).

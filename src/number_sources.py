@@ -230,6 +230,13 @@ SCOPED_PATHS: tuple[str, ...] = (
     # Decides whether an APPROVED trade is actually sent
     # (`MAX_ENTRY_SLIPPAGE_BPS`), and carries the sizing fallback.
     "src/pipeline_stages.py",
+    # 2026-10-01, board item 210 step 10: the four stage classes moved out of
+    # `src/pipeline_stages.py` verbatim. Same code, same scope -- these paths
+    # keep their numbers inside the ledger instead of dropping out silently.
+    "src/stage_morning_research.py",
+    "src/stage_decision.py",
+    "src/stage_risk.py",
+    "src/stage_execution.py",
     "src/execution/cash_sweep.py",
     "src/execution/stop_records.py",
     # 2026-09-19, board item 130: `broker.py` IS the broker order -- the
