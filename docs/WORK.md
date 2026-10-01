@@ -68,14 +68,6 @@ DONE WHEN:
   - [ ] when he does: the record-keeping circuit-breaker trip is shown reaching him on the second channel while Telegram delivery is failing, which is the exact live pairing that went unnoticed
 detail: docs/BOARD_NOTES.md (item 17)
 
-**19. The model's consistency is an ASSET — three uses. UNBLOCKED 2026-09-30 — the item-18 dependency is removed.** Measured: 5 blinded runs, two arms, quality identical to four decimal places. Unblocked 2026-09-30: this item only ever waited on item 18's prompt-bulk defect, whose core cause merged 2026-09-04 (PR #252) and whose earnings share was re-measured down from 70% to 18.6% on 2026-09-30; item 18's three residuals (ranking arithmetic, an out-of-repo spend cap, a paid-benchmark-blocked reorder) moved to item 208 and touch nothing item 19 does.
-
-DONE WHEN:
-  - [ ] (a) a repeat-run check exists that proves a pipeline change actually reached the model — identical inputs, and the answer moves only when the pipeline did
-  - [ ] (b) the no-variance measurement is recorded against the desk's own blinded/unblinded five-run pairs BEFORE any paid repeat is dropped, or a recorded decision that repeats stay
-  - [ ] (c) the stable famous-name bias is subtracted arithmetically inside the ratified weighted composite, or recorded as not worth doing — three prompt-wording fixes already measured no-change, so a fourth wording attempt does not tick this
-detail: docs/BOARD_NOTES.md (item 19)
-
 **20. GATE THE DECISION ON EVIDENCE COVERAGE — owner's design, 2026-09-02; the COUNTING half is all that is left, and it is his, not an agent's. Do not trade on partial evidence. Detail: `docs/BOARD_NOTES.md` ("item 20").** His ruling is that a decision on incomplete evidence is fabricated, not degraded.
 
 DONE WHEN:
@@ -358,6 +350,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 182
 - retired queue: 195
 - retired queue: 109
+- retired queue: 19
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
