@@ -327,7 +327,7 @@ def _gate_pipeline(monkeypatch, *, sector="Utilities", broker_eligible=True,
     )
     pipeline.market = MagicMock()
     pipeline.market.get_ohlcv.return_value = bars if bars is not None else _bars(30)
-    monkeypatch.setattr("src.pipeline._get_sector", lambda _symbol: sector)
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: sector)
     return pipeline
 
 
@@ -419,7 +419,7 @@ def test_smart_money_admission_lane_behaves_identically_after_refactor(monkeypat
         "exchange": "nyse",
     }
     pipeline.market = MagicMock()
-    monkeypatch.setattr("src.pipeline._get_sector", lambda _symbol: "Utilities")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: "Utilities")
     pipeline.market.get_ohlcv.return_value = _bars(30)
     observations = [SimpleNamespace(
         symbol="VST", transaction_code="P", admission_eligible=True,

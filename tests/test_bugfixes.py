@@ -499,7 +499,7 @@ def test_transient_admission_requires_sec_purchase_broker_and_market_quality(mon
         "exchange": "nyse",
     }
     pipeline.market = MagicMock()
-    monkeypatch.setattr("src.pipeline._get_sector", lambda _symbol: "Utilities")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: "Utilities")
     pipeline.market.get_ohlcv.return_value = [
         OHLCV(
             date=date.today() - timedelta(days=30 - i), open=100, high=102,

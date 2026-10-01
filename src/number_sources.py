@@ -265,6 +265,11 @@ SCOPED_PATHS: tuple[str, ...] = (
     # The intra-check session and the intraday opportunity scan -- moved here
     # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
     "src/pipeline_intraday.py",
+    # 2026-10-01, board item 210 step 6: the universe-admission cluster --
+    # the external-nomination gates, the screen and its admission -- moved
+    # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
+    # scoped.
+    "src/pipeline_admission.py",
     "src/pipeline_prompt_facts.py",
     # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
     # application moved here out of `src/pipeline.py`.
