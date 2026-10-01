@@ -48,6 +48,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 DEFAULT_REPO_PATH = "/home/qamc/quant-agent"
 WORK_MD_RELPATH = "docs/WORK.md"
+
+# The board is assembled from one file per item (scripts/board_source.py).
+try:  # imported as part of the `scripts` package
+    from scripts import board_source as _board_source
+except ImportError:  # loaded by path, outside the package
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "board_source", str(Path(__file__).resolve().parent / "board_source.py"))
+    _board_source = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_board_source)
 CAP_TEST_RELPATH = "tests/test_status_board.py"
 #: The exact test function that owns the cap. Scoping the regex search to
 #: this function's own body (rather than the whole test file) stops an
@@ -140,7 +150,7 @@ def find_parked_finished_items(repo_path: Path) -> tuple[list[str], str | None]:
     check = _finished_item_check_override or _load_finished_item_check()
     if check is None:
         return [], "could not import the finished-item check"
-    work_md = repo_path / WORK_MD_RELPATH
+    work_md = _board_source.work_md_path(repo_path)
     try:
         return check(work_md), None
     except Exception as exc:  # noqa: BLE001 — must not crash a nightly read-only check
@@ -169,7 +179,7 @@ def build_report(repo_path: str = DEFAULT_REPO_PATH) -> BoardHygieneReport:
     report.cap_error = cap_error
     if cap is not None:
         report.cap_bytes = cap
-        work_md = repo_dir / WORK_MD_RELPATH
+        work_md = _board_source.work_md_path(repo_dir)
         if work_md.is_file():
             report.size_bytes = work_md.stat().st_size
         else:

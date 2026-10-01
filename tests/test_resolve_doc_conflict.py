@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from scripts import board_source as _board_source
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCRIPT = REPO_ROOT / "scripts" / "resolve_doc_conflict.py"
@@ -453,7 +454,8 @@ def test_the_real_documents_round_trip_byte_for_byte(kind: str, rel: str):
     diff, and a resolver that reshapes the board while merging it is its own
     kind of silent damage.
     """
-    path = REPO_ROOT / rel
+    path = (_board_source.work_md_path(REPO_ROOT) if rel == "docs/WORK.md"
+            else REPO_ROOT / rel)
     if not path.exists():
         pytest.skip(f"{rel} is not present in this checkout")
     text = path.read_text()
@@ -461,7 +463,7 @@ def test_the_real_documents_round_trip_byte_for_byte(kind: str, rel: str):
 
 
 def test_the_real_documents_agree_with_each_other_through_this_tool():
-    work = REPO_ROOT / "docs" / "WORK.md"
+    work = _board_source.work_md_path(REPO_ROOT)
     notes_dir = REPO_ROOT / "docs" / "board_notes"
     if not (work.exists() and notes_dir.is_dir()):
         pytest.skip("board documents are not present in this checkout")

@@ -138,6 +138,16 @@ from zoneinfo import ZoneInfo
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# The board is assembled from one file per item (scripts/board_source.py).
+try:  # imported as part of the `scripts` package
+    from scripts import board_source as _board_source
+except ImportError:  # loaded by path, outside the package
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "board_source", str(Path(__file__).resolve().parent / "board_source.py"))
+    _board_source = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_board_source)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -3247,7 +3257,7 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     # sessions at once. A malformed edit must produce a page that SAYS it
     # could not read the backlog — it must never produce a stack trace on his
     # phone, because a board that 500s is a board he stops trusting.
-    work_md = work_md or (REPO_ROOT / "docs" / "WORK.md")
+    work_md = work_md or _board_source.work_md_path(REPO_ROOT)
     # docs/board_notes/ carries only the owner-facing prose, keyed by each
     # item's number and section (see `load_board_notes`). It is read
     # defensively too, for the same reason: a broken notes file must fall

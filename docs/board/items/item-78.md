@@ -1,0 +1,8 @@
+**78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle.** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank. Heal outcome now recorded durably (recording only, 2026-10-01); blank rate re-measured 68% on 30 Sep, unchanged, so the isolate stays.
+
+DONE WHEN:
+  - [ ] the never-blank path is live: a falsifier blanked by a later wipe is healed back from the sentence the model already wrote, the seat is re-asked once (paid), and a still-blank name is REFUSED before the book — never invented, and never with skip-and-continue as the product
+  - [ ] LIVE-BLOCKED, the same shape item 86 was before a live log line retired it on 2026-09-26: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py`) is deleted only once a real live session records the seats filling the box, and the item stays OPEN until a live session proves it
+  - [ ] MEASURED 2026-09-30 against the live database, condition NOT met: the technical seat still returns a blank `thesis_invalid_if` on 60% of the stocks it answered on 2026-09-29 (134 of 223) and 54% on 2026-09-28 (14 of 26), which is no better than the 30-73% daily range it ran at before the wrapper-object schema landed on 2026-09-25, so the tightened answer format did not make the seat produce a falsifier; Detail in the note.
+  - [ ] MEASURED AGAIN 2026-10-01 against the live database (specialist_evidence, 13,815 rows total; Detail in the note.
+detail: docs/board_notes/item-078.md

@@ -84,6 +84,16 @@ from scripts.board_numbers import (  # noqa: E402
 )
 
 DEFAULT_WORK_MD = "docs/WORK.md"
+
+# The board is assembled from one file per item (scripts/board_source.py).
+try:  # imported as part of the `scripts` package
+    from scripts import board_source as _board_source
+except ImportError:  # loaded by path, outside the package
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "board_source", str(Path(__file__).resolve().parent / "board_source.py"))
+    _board_source = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_board_source)
 DEFAULT_BOARD_REF = "origin/main"
 
 
@@ -108,7 +118,11 @@ def main(argv: list[str] | None = None) -> int:
     if not work_md.is_file():
         print(f"next_board_number: {work_md} not found", file=sys.stderr)
         return 3
-    text = work_md.read_text()
+    text = _board_source.work_md_text_for(work_md)
+    if text is None:
+        print(f"next_board_number: {work_md} could not be read",
+              file=sys.stderr)
+        return 3
 
     retired = retired_item_numbers(text)
     if retired.error:

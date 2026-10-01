@@ -94,6 +94,16 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# The board is assembled from one file per item (scripts/board_source.py).
+try:  # imported as part of the `scripts` package
+    from scripts import board_source as _board_source
+except ImportError:  # loaded by path, outside the package
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "board_source", str(Path(__file__).resolve().parent.parent / "scripts" / "board_source.py"))
+    _board_source = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_board_source)
 from zoneinfo import ZoneInfo
 
 from src.notifier import TelegramNotifier
@@ -975,9 +985,8 @@ def board_state(work_md: Path | None = None) -> tuple[set[int], set[int]]:
     the message claim work is happening that is not.
     """
     path = Path(work_md or PROJECT_ROOT / "docs" / "WORK.md")
-    try:
-        text = path.read_text()
-    except OSError:
+    text = _board_source.work_md_text_for(path)
+    if text is None:
         return set(), set()
     on_board = {int(m) for m in re.findall(r"^\*\*(\d+)[.:]", text, re.MULTILINE)}
     in_tiers: set[int] = set()

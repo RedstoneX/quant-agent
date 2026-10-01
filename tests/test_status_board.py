@@ -41,6 +41,21 @@ sb = _load()
 # a bent ruler is not a broken system
 # --------------------------------------------------------------------------
 import re as _re_mod
+from scripts import board_source as _board_source
+
+
+def _show_board(repo, base):
+    """The whole assembled board as `base` has it, shaped like the
+    `subprocess.run` these tests used to call. The board is one file per
+    item now (scripts/board_source.py), so reading `docs/WORK.md` alone at a
+    ref would see the scaffold and none of the items."""
+    from types import SimpleNamespace
+    text = _board_source.work_md_text_at_ref(base, Path(repo))
+    if text is None:
+        return SimpleNamespace(returncode=1, stdout="")
+    return SimpleNamespace(returncode=0, stdout=text)
+
+
 
 
 def test_prose_where_a_test_name_belongs_is_unknown_not_failure():
@@ -589,7 +604,7 @@ def test_no_board_item_disappears_without_being_retired():
     import subprocess
 
     repo = Path(__file__).resolve().parents[1]
-    work_md = repo / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(repo)
     if not work_md.exists():
         return
     base = _work_md_base_ref()
@@ -639,7 +654,7 @@ def test_retired_bullet_lines_are_never_edited_or_removed():
     import subprocess
 
     repo = Path(__file__).resolve().parents[1]
-    work_md = repo / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(repo)
     if not work_md.exists():
         return
     base = _work_md_base_ref()
@@ -758,7 +773,7 @@ def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
     import subprocess
 
     repo = Path(__file__).resolve().parents[1]
-    work_md = repo / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(repo)
     if not work_md.exists():
         return
     base = _work_md_base_ref()
@@ -828,7 +843,7 @@ def _work_md_shrank_in_this_change():
     before = _work_md_base_size()
     if before is None:
         return False
-    after = (repo / "docs" / "WORK.md").stat().st_size
+    after = (_board_source.work_md_path(repo)).stat().st_size
     return sb.work_md_cap_blocker(before, after) is None and after > sb.WORK_MD_GROWTH_CAP_BYTES
 
 
@@ -904,7 +919,7 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
     crept back in and needs the same cut-and-move treatment again — check
     for stale CLOSED/DECISION sections before raising this number.
     """
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     if not work_md.exists():
         return
     size = work_md.stat().st_size
@@ -1072,7 +1087,7 @@ def _per_item_failure_message(offenders, budget):
 
 def test_every_work_md_item_stays_within_its_per_item_budget():
     """The real docs/WORK.md, every item block, against the chosen budget."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     if not work_md.exists():
         return
     budget = _work_md_item_budget_bytes()
@@ -1082,7 +1097,7 @@ def test_every_work_md_item_stays_within_its_per_item_budget():
 
 def test_the_grandfathered_list_cannot_outlive_the_items_on_it():
     """A ratchet that never releases is just a permanent exemption."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     if not work_md.exists():
         return
     budget = _work_md_item_budget_bytes()
@@ -1110,7 +1125,7 @@ def test_the_grandfathered_list_cannot_outlive_the_items_on_it():
 def test_every_work_md_item_points_at_its_own_board_note_file():
     """An item may be short only because its detail lives somewhere; the
     pointer is what makes that true, so it is resolved, not assumed."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     if not work_md.exists():
         return
     missing = _items_missing_their_note(work_md.read_text(), _notes_present())
@@ -1553,7 +1568,7 @@ def test_no_pending_decision_is_overdue():
     import datetime as _dt
     import re as _re
 
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     if not work_md.exists():
         return
 
@@ -1598,7 +1613,7 @@ def test_the_real_backlog_still_parses():
     Not a synthetic fixture — the real file, because the thing that breaks is
     the real file being edited into a shape the parser no longer recognises.
     """
-    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     items, problem = sb.load_funnel_queue(work)
     assert problem is None, problem
     assert len(items) >= 10, f"only {len(items)} queue items parsed"
@@ -1703,7 +1718,7 @@ def test_nothing_waiting_says_so_rather_than_showing_a_blank(tmp_path):
 def test_the_real_backlog_has_no_item_contradicting_its_own_title():
     """The real docs/WORK.md, not a fixture — the failure mode is real items
     drifting out of sync with their own `~~done~~` marker over time."""
-    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     flagged = sb.find_closed_items_not_marked_done(work)
     assert not flagged, (
         "these backlog items claim to be finished in their own title but are "
@@ -1750,7 +1765,7 @@ def test_the_real_backlog_has_no_near_duplicate_open_items():
     """The real docs/WORK.md, not a fixture -- the guard exists to catch a
     duplicate filing landing on the live board, so it has to run clean
     against the live board first."""
-    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     flagged = sb.find_near_duplicate_open_items(work)
     assert not flagged, (
         "these open backlog items look like the same finding filed twice:\n  "
@@ -2161,7 +2176,7 @@ def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
     instance of exactly the failure this check exists to catch, and must
     still fail CI.
     """
-    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     notes = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
     flagged = sb.find_finished_items_still_on_board(work, notes)
     flagged_refs = set()
@@ -2201,7 +2216,7 @@ def test_the_real_pm_gate_parses_clear_or_declares_at_least_one_open_item():
     docs/INCIDENT_HISTORY.md — see the doctrine note below). Either way, the
     real file being edited into a shape the parser no longer recognises is
     the thing this test exists to catch."""
-    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     items, problem = sb.load_pm_gate(work)
     assert problem is None, problem
     if not items:
@@ -2699,7 +2714,7 @@ def test_the_real_backlog_shows_more_items_than_the_strict_shape_would():
     """Guards the actual regression this fixed. If someone narrows the item
     regex back to the strict shape, the owner's board silently loses items
     again — so assert the widened parser finds strictly more of them."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     items, problem = sb.load_funnel_queue(work_md)
     assert problem is None
     body = work_md.read_text().split(sb._QUEUE_HEADING, 1)[1]
@@ -2927,7 +2942,7 @@ def test_widening_the_renderer_did_not_widen_the_build_failing_check(tmp_path):
 
 def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     """The live outcome, pinned. These are the exact items the owner named."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     items, problem = sb.load_funnel_queue(work_md)
     assert problem is None
     by_rank = {i.rank: i for i in items}
@@ -3033,7 +3048,7 @@ def _parse_retired_numbers(work_md_text: str) -> tuple[list[int], list[int]]:
 def test_the_retired_numbers_line_parses_as_a_clean_integer_list():
     """No stray values: a bare word, a double comma, or trailing junk in
     either list must fail this test rather than parse as a smaller list."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     queue_nums, gate_nums = _parse_retired_numbers(work_md.read_text())
     assert queue_nums, "no funnel-queue numbers were retired numbers at all"
     assert gate_nums, "no PM-gate numbers were retired numbers at all"
@@ -3052,7 +3067,7 @@ def test_no_retired_number_names_an_item_that_is_still_live():
     exactly why the two lists are checked against their own scheme's live
     items, never against each other's.
     """
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     text = work_md.read_text()
     queue_retired, gate_retired = _parse_retired_numbers(text)
 
@@ -3129,7 +3144,7 @@ def test_two_numbered_sequences_do_not_share_an_identifier():
 
 
 def test_the_real_backlog_gives_every_item_a_unique_quotable_identifier():
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     queue, qp = sb.load_funnel_queue(work_md)
     gate, gp = sb.load_pm_gate(work_md)
     assert qp is None and gp is None
@@ -3334,7 +3349,7 @@ def test_a_cause_that_is_by_design_is_listed_but_never_queued(headline):
 
 def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     """The live outcome, pinned, on the items the owner would name."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     items, problem = sb.load_funnel_queue(work_md)
     assert problem is None
     by_rank = {i.rank: i for i in items}
@@ -3953,7 +3968,7 @@ def test_the_real_backlog_flags_only_genuine_self_contradictions():
     """Pins the live outcome so a widened word list cannot quietly reintroduce
     false positives on the owner's own page. Reads the RENDERING vocabulary,
     which is the one the page is drawn from."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    work_md = _board_source.work_md_path(Path(__file__).resolve().parents[1])
     items, problem = sb.load_funnel_queue(work_md)
     assert problem is None
     # An EMPTY list is the healthy state — it means no finished work is still
@@ -4046,7 +4061,7 @@ def test_no_board_note_is_orphaned_in_the_real_repository():
 
     That is a rule no session should have to remember. This is the check.
     """
-    work = sb.REPO_ROOT / "docs" / "WORK.md"
+    work = _board_source.work_md_path(sb.REPO_ROOT)
     notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "board_notes")
     queue, _ = sb.load_funnel_queue(work, notes)
     gate, _ = sb.load_pm_gate(work, notes)
@@ -4075,7 +4090,7 @@ def test_every_rendered_entry_carries_a_reference_handle():
     this test's job, because an entry silently losing its handle would look
     fine on the page and only surface as the owner being unable to name it.
     """
-    work = sb.REPO_ROOT / "docs" / "WORK.md"
+    work = _board_source.work_md_path(sb.REPO_ROOT)
     notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "board_notes")
     queue, _ = sb.load_funnel_queue(work, notes)
     gate, _ = sb.load_pm_gate(work, notes)
@@ -4463,7 +4478,7 @@ def test_the_retired_line_carries_no_per_item_reason():
     `scripts/resolve_doc_conflict.py::parse_retired_lines`).
     """
     line = next(
-        (l for l in (Path(__file__).resolve().parents[1] / "docs" / "WORK.md").read_text().splitlines()
+        (l for l in (_board_source.work_md_path(Path(__file__).resolve().parents[1])).read_text().splitlines()
          if l.startswith("**Retired item numbers")), "")
     assert line, "the retired-item-numbers line is missing from docs/WORK.md"
     offenders = _RETIRED_REASON_SENTENCE.findall(line)

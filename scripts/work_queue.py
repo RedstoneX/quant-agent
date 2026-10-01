@@ -150,6 +150,16 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# The board is assembled from one file per item (scripts/board_source.py).
+try:  # imported as part of the `scripts` package
+    from scripts import board_source as _board_source
+except ImportError:  # loaded by path, outside the package
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "board_source", str(Path(__file__).resolve().parent / "board_source.py"))
+    _board_source = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_board_source)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -293,7 +303,12 @@ def _git_board(ref: str, dest: Path) -> tuple[Path, Path]:
                               stderr=subprocess.DEVNULL, timeout=20).stdout
 
     work_md = dest / "WORK.md"
-    work_md.write_bytes(git("show", f"{ref}:docs/WORK.md"))
+    # Assembled from the item files at that same ref; a ref predating the
+    # split has none and assembles to itself.
+    _assembled = _board_source.work_md_text_at_ref(ref, REPO_ROOT)
+    if _assembled is None:
+        _assembled = git("show", f"{ref}:docs/WORK.md").decode()
+    work_md.write_text(_assembled)
 
     notes_dir = dest / "board_notes"
     notes_dir.mkdir()
@@ -324,7 +339,7 @@ def build_queue(work_md: Path | None = None,
                 ref_work_md, ref_notes = _git_board(BOARD_REF, Path(tmp))
             except Exception as exc:  # noqa: BLE001 - never block a session
                 fallback = _build_queue_from(
-                    REPO_ROOT / "docs" / "WORK.md",
+                    _board_source.work_md_path(REPO_ROOT),
                     REPO_ROOT / "docs" / "board_notes")
                 fallback.source = (
                     f"this checkout's working tree — {BOARD_REF} could not be "
@@ -335,7 +350,7 @@ def build_queue(work_md: Path | None = None,
             return queue
 
     queue = _build_queue_from(
-        work_md or (REPO_ROOT / "docs" / "WORK.md"),
+        work_md or _board_source.work_md_path(REPO_ROOT),
         board_notes or (REPO_ROOT / "docs" / "board_notes"))
     queue.source = "the paths this run was given"
     return queue

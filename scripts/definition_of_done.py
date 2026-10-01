@@ -131,6 +131,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORK_MD = "docs/WORK.md"
 
+# The board is assembled from one file per item (scripts/board_source.py).
+try:  # imported as part of the `scripts` package
+    from scripts import board_source as _board_source
+except ImportError:  # loaded by path, outside the package
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "board_source", str(Path(__file__).resolve().parent / "board_source.py"))
+    _board_source = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_board_source)
+
 # ---------------------------------------------------------------------------
 # git reads
 # ---------------------------------------------------------------------------
@@ -382,8 +392,9 @@ class Change:
             base=base,
             paths=changed_paths(base, repo),
             messages=commit_messages(base, repo),
-            work_md_before=file_at(base, WORK_MD, repo),
-            work_md_after=after.read_text() if after.exists() else None,
+            work_md_before=_board_source.work_md_text_at_ref(base, repo),
+            work_md_after=(_board_source.work_md_text(repo)
+                           if after.exists() else None),
             tree=repo,
         )
 

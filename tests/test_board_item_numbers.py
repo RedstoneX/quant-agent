@@ -28,9 +28,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from scripts import board_numbers as bn
+from scripts import board_source as _board_source
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORK_MD = REPO_ROOT / "docs" / "WORK.md"
+WORK_MD = _board_source.work_md_path(REPO_ROOT)
 
 
 # ---------------------------------------------------------------------------

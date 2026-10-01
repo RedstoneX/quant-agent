@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from scripts import definition_of_done as dod
+from scripts import board_source as _board_source
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -129,7 +130,9 @@ def test_the_real_board_parses_into_items_and_retired_numbers():
     heading or retired-line shape ever changes, this fails here instead of
     the whole gate silently matching nothing and passing everything.
     """
-    work_md = (REPO / dod.WORK_MD).read_text()
+    # The board is one file per item now; read it assembled, which is
+    # exactly what the gate itself reads.
+    work_md = _board_source.work_md_text(REPO)
     blocks = dod.item_blocks(work_md)
     assert len(blocks) >= 10, "docs/WORK.md item headings no longer parse"
     retired = dod.retired_numbers(work_md)

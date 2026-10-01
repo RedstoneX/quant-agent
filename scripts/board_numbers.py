@@ -65,6 +65,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 WORK_MD_RELPATH = "docs/WORK.md"
 
+# The board is assembled from one file per item (scripts/board_source.py).
+try:  # imported as part of the `scripts` package
+    from scripts import board_source as _board_source
+except ImportError:  # loaded by path, outside the package
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "board_source", str(Path(__file__).resolve().parent / "board_source.py"))
+    _board_source = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_board_source)
+
 #: The exact heading shape `scripts/status_board.py` parses EVERY numbered
 #: item with (`_ITEM_OPEN_RE`, the parser behind `_parse_numbered_items` —
 #: the board's real, general item parser) — imported, never re-typed, so a
@@ -216,14 +226,15 @@ def live_numbers_that_are_retired(work_md_text: str) -> list[int]:
 #: Matches an ADDED heading line in a unified diff patch, e.g.
 #: `+**188. Some new item.**` — deliberately reuses the same numeral+dot
 #: shape as the board's own heading regex rather than a hand-rolled one.
-_PATCH_ADDED_ITEM_RE = re.compile(r"^\+\*\*(?:~~)?(\d+)\.\s+")
+_PATCH_ADDED_ITEM_RE = re.compile(
+    r"^\+(?:\*\*(?:~~)?(\d+)\.\s+|<!-- item (\d+)(?:\([a-z]\))? -->\s*$)")
 
 
 def claims_from_patch(patch: str) -> set[int]:
     """Item numbers a unified diff patch of `docs/WORK.md` ADDS. Only `+`
     lines count: a PR that merely touches an existing item's body without
     adding a new heading claims nothing."""
-    return {int(m.group(1)) for line in patch.splitlines()
+    return {int(m.group(1) or m.group(2)) for line in patch.splitlines()
             if (m := _PATCH_ADDED_ITEM_RE.match(line))}
 
 
@@ -352,7 +363,14 @@ def read_ref_work_md(work_md: Path, ref: str = "origin/main",
         detail = (shown.stderr or "").strip().splitlines()
         return RefBoard(ref=ref, problem=(
             detail[0] if detail else f"could not read {ref}:{relpath}"))
-    return RefBoard(text=shown.stdout, ref=ref)
+    # The board is assembled from one file per item, so the ref read has
+    # to pull the item files at that same ref too. A ref from before the
+    # split has no item files and assembles to itself.
+    repo_root = str(Path(directory))
+    assembled = _board_source.work_md_text_at_ref(ref, Path(repo_root),
+                                                  run=run)
+    return RefBoard(text=assembled if assembled is not None
+                    else shown.stdout, ref=ref)
 
 
 def next_free_number(work_md_text: str, pr_claims: OpenPrClaims | None = None,

@@ -1,0 +1,8 @@
+**187. FRED fetch reliability — the chronic `fetch_deadline_exceeded` failure and required series left un-fetched — OPEN, filed 2026-09-25, carried out of item 175. Item 175 covered the weekend/holiday overdue-date roll; this is the separate, still-open half. Detail: `docs/board_notes/` ("item 187").** Every FRED failure in the retained log is `fetch_deadline_exceeded`; 4 of 12 runs reached full coverage, worst 5 of 15 [measured 09-17..23]. Owned by the approved fetch redesign.
+
+DONE WHEN:
+  - [ ] the `fetch_deadline_exceeded` rate is understood and either brought down or shown to recover cleanly inside the existing time ceiling, measured against real runs rather than a healthy mid-morning batch
+  - [x] the FRED SERIES half is fixed and live: fair-share reserves plus the pre-open series cache; the deployed box ran 2026-09-30 with no series skipped.
+  - [x] the EVENT-CALENDAR half is fixed here: the seven `/fred/release/dates` calls move off the trading path onto the existing pre-open prefetch timer and are served from `data/macro/release_schedule_cache.json` at the open; a release in neither cache nor wire stays a named failure and is never defaulted.
+  - [ ] ONE morning open (N = 1, the number this item already stated) recorded in the production table `fred_fetch_coverage_runs` with `full_coverage = 1`: all configured series returned, `series_not_attempted` empty, and every configured release returned with `releases_from_cache` equal to `releases_configured`. Check: `SELECT * FROM fred_fetch_coverage_runs ORDER BY id DESC`. Rows exist only from the first open after this deploys; a row with `full_coverage = 0` does not count, and a missing row is not a pass.
+detail: docs/board_notes/item-187.md

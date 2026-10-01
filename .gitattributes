@@ -15,3 +15,10 @@ docs/INCIDENT_HISTORY.md merge=docsmerge
 # both append one entry at the end, and union merge keeps both instead of
 # raising a conflict on the same last line. See the header of that file.
 config/number_ledger_history.yaml merge=union
+
+# Board ITEM FILES are deliberately NOT given the item-aware driver. One file
+# per board item (docs/board/items/, assembled by scripts/board_source.py)
+# means two branches editing two different items touch two different files,
+# so git's ordinary merge resolves them with nothing installed and GitHub
+# resolves them server-side. Only two branches editing the SAME item can
+# still collide, and that collision is real disagreement, not bookkeeping.
