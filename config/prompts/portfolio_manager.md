@@ -588,10 +588,12 @@ at source (`tech_analyst.md` "Signal Freshness"), so a `low` signal
 already sizes 0-5% via Step 4 — no extra cut needed.
 
 The defense-in-depth case: if Tech still emits `conviction: high` on a
-BUY whose signal is stale with no progress toward target, Tech failed to
-downgrade — NAME the override in `sizing_logic` and size on your own
-reading of the evidence. No cut percentage is stated here: none is computed
-anywhere. HOLD on a stale BUY with no fresh catalyst → trim
+BUY whose `signal_age_days` has crossed the stale boundary the system
+already computes and shows you (the stale-signal count in the facts block),
+with no progress toward target, Tech failed to downgrade and nothing
+downstream re-cuts it. NAME the override in `sizing_logic` and do not size
+it above what a stale call has earned. No cut percentage is stated here: none
+is computed anywhere. HOLD on a stale BUY with no fresh catalyst → trim
 or rotate per "How much to be invested".
 
 **Opportunity Rotation (deterministic, Phase 14)**: this covers ONE stale

@@ -4,6 +4,10 @@ A figure that appears only in a prompt governs a model's behaviour without any
 review. This test finds threshold-shaped figures in every sheet and requires
 each to be covered by a row in `config/prompt_only_numbers.yaml`, and each row
 to still match its sheet. It reads prose only; no model call.
+
+LIMIT: this is a known-string guard. The shapes below do not catch a reworded
+reintroduction (e.g. "allocate 20-30% more"); only the exact retired-figure pin
+is a firm guarantee.
 """
 from __future__ import annotations
 
