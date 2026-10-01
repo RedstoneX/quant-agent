@@ -4180,6 +4180,35 @@ class TradingPipeline:
         """Push the NO-STOP-AT-ALL escalation to the owner. Never raises."""
         try:
             from src import notifier as _notifier
+            from src.coverage_watchdog import claim_typed_alert
+
+            # DEFECT 6 (adversary round 3). This escalation had no claim of
+            # its own while every neighbouring one -- unreadable stop,
+            # repair failure, elected-but-unfilled, kill-switch block --
+            # claims the symbol for the trading day on the shared state
+            # file. Four callers reach it (the coverage sweep at every
+            # session entry, the standalone watchdog every thirty minutes,
+            # the reprotect drain, and the in-flight branch added for defect
+            # 3), `send_owner_alert` has no throttle of its own, and a
+            # position that stays naked stays naked -- so the same true
+            # statement could be sent without limit until the owner stops
+            # reading it. Same `kind`-scoped claim, same per-symbol
+            # per-trading-day discipline, same fail-towards-telling-him-
+            # twice behaviour when the state file cannot be read. A gap
+            # carrying no symbol cannot be claimed and is always sent.
+            claimable = sorted({
+                str(g.get("symbol", "")).strip().upper() for g in naked
+                if str(g.get("symbol", "")).strip()
+            })
+            if claimable:
+                fresh = set(claim_typed_alert("no_stop_at_all", claimable))
+                if not fresh:
+                    return
+                naked = [
+                    g for g in naked
+                    if str(g.get("symbol", "")).strip().upper() in fresh
+                    or not str(g.get("symbol", "")).strip()
+                ]
 
             # The refusal REASON, not just the shortfall (docs/WORK.md item
             # 88). "The automatic repair could not restore one" was true of a
@@ -5940,11 +5969,17 @@ class TradingPipeline:
         # stop covers and which this desk never decided to hold. That is
         # not "recoverable"; it is a new unbounded position.
         #
-        # So the ordering of the two harms is: a naked position is worse
-        # than a duplicate, AND both are bad enough that the check below
-        # avoids each of them by IDENTITY rather than by choosing which to
-        # accept. It fails toward submitting only where identity genuinely
-        # cannot be established.
+        # DEFECT 5 (adversary round 3). This comment used to close with
+        # "a naked position is worse than a duplicate". That ranking is
+        # NOT measured anywhere in this repository -- the refusal record
+        # written below says so in as many words -- so asserting it here
+        # and denying it forty lines later cannot both be honest. The
+        # ranking is withdrawn. What is left is the only claim the code
+        # actually relies on: BOTH outcomes are unacceptable, so the check
+        # below separates them by IDENTITY rather than by preferring one,
+        # and it falls toward submitting only where identity genuinely
+        # cannot be established -- an ordering of last resort, recorded as
+        # an ambiguity each time it is used, not a measured preference.
         from src.execution.broker import (
             PROTECTIVE_ORDER_ACTIVE_STATUSES as _ACTIVE_STATUSES,
             PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES as _IN_FLIGHT_STATUSES,
@@ -5997,6 +6032,16 @@ class TradingPipeline:
         # now decided BEFORE any order is examined, and its reason is
         # written to the append-only per-symbol refusal record rather than
         # living only in a log line.
+        # DEFECT 4 (adversary round 3). This branch used to set
+        # `existing = []`, which threw away EVERY broker record -- including
+        # the in-flight (`pending_new`) and under-covering cases below, whose
+        # whole purpose is to stop this run acting on a state it cannot act
+        # on safely. Unprovable identity is a reason not to BANK an open stop
+        # as protection; it is not a reason to go blind to what the broker
+        # just said. The records are kept and the inability to prove
+        # ownership is carried as a flag, consulted at the one point where it
+        # matters: immediately before banking.
+        identity_unprovable = False
         if existing and not ids_complete:
             logger.warning(
                 "Reprotect for %s will SUBMIT despite %d open stop(s) at "
@@ -6019,7 +6064,7 @@ class TradingPipeline:
                 f"protective stop may now rest on {symbol} and nothing in "
                 f"this desk reconciles one.",
             )
-            existing = []
+            identity_unprovable = True
         for o in existing or []:
             try:
                 existing_sp = float(getattr(o, "stop_price", 0) or 0)
@@ -6048,8 +6093,15 @@ class TradingPipeline:
             # Rather than guess the number, the need for it is REMOVED:
             # identity, status and quantity decide, and the price that is
             # recorded is the one actually resting at the broker.
-            if existing_sp <= 0:
-                continue
+            # DEFECT 1 (adversary round 3). `if existing_sp <= 0: continue`
+            # used the TRIGGER PRICE as a presence test: a stop whose price
+            # read as zero or negative was treated as though no order
+            # existed at all, and the run submitted a second stop over it --
+            # while a stop reading one cent was banked as full protection.
+            # An unreadable price says nothing about whether an order is
+            # resting on these shares. Presence, identity, status and
+            # quantity decide; the price is consulted only at the point it
+            # is actually needed, which is the write-back below.
             order_id = _real_order_id(getattr(o, "id", None))
             status_attr = getattr(o, "status", None)
             status = str(
@@ -6125,6 +6177,28 @@ class TradingPipeline:
                     f"still {status} at ${existing_sp:.2f}; the recovery "
                     f"intent was kept rather than banked as protection.",
                 )
+                # DEFECT 3 (adversary round 3). Every other branch that
+                # leaves this method with the residual unprotected pages the
+                # owner; this one did not. A `pending_new` stop can still be
+                # rejected, the coverage sweep DEFERS repair while a trading
+                # session holds the lock, and this path runs inside exactly
+                # that window -- so the only thing standing between the
+                # position and no protection at all was a log line. It uses
+                # the same escalation and the same per-symbol per-day claim
+                # as every other no-stop page, so a drain that replays does
+                # not page twice.
+                self._alert_owner_no_stop([{
+                    "symbol": symbol,
+                    "held_qty": self._format_qty(residual_qty),
+                    "covered_qty": "unconfirmed",
+                    "repair_refusal": (
+                        f"a replacement stop (order {order_id}) is still "
+                        f"{status} at ${existing_sp:.2f} — received by the "
+                        f"broker, not yet working, and still able to be "
+                        f"rejected; the desk did not place a second stop "
+                        f"over it and will re-read on the next pass"
+                    ),
+                }])
                 return False
             if status not in _ACTIVE_STATUSES:
                 logger.warning(
@@ -6134,10 +6208,76 @@ class TradingPipeline:
                     symbol, existing_sp, order_id, status or "unknown",
                 )
                 continue
-            # Identity-proven, live, and covering the residual: this is a
-            # PREVIOUS attempt's stop. Record the trigger the broker is
-            # actually holding, never the one this run wanted -- they can
-            # differ, and the desk's record must say what rests.
+            if identity_unprovable:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT over an open, live stop "
+                    "(order %s, status %s) at $%.2f: this run could not "
+                    "prove the stop is not one it just cancelled, so it "
+                    "may not be banked as protection. The ambiguity is on "
+                    "the per-symbol refusal record.",
+                    symbol, order_id, status or "unknown", existing_sp,
+                )
+                continue
+            # DEFECT 1, second half. The order is identity-proven, live and
+            # covers the residual, so the position IS protected and a second
+            # stop must NOT be submitted over it. But the trigger could not
+            # be read, so there is no honest number to write into the desk's
+            # own record -- writing $0.00 is the fabricated-stop defect the
+            # owner-message audit already recorded. Bank nothing, submit
+            # nothing, keep the recovery intent so the next pass re-reads.
+            if existing_sp <= 0:
+                logger.error(
+                    "Reprotect for %s is NOT complete: a live stop from a "
+                    "previous attempt (order %s, status %s) rests over the "
+                    "residual, but its trigger price read as %r. Not "
+                    "submitting a second stop over a live one, and not "
+                    "recording a trigger this desk cannot read. The "
+                    "recovery intent stays alive.",
+                    symbol, order_id, status or "unknown", existing_sp,
+                )
+                self._record_reprotect_identity_gap(
+                    symbol,
+                    f"a live stop (order {order_id}) rests over the "
+                    f"residual but its trigger price was unreadable; "
+                    f"nothing was banked and the recovery intent was kept.",
+                )
+                self._alert_owner_unreadable_stop([{
+                    "symbol": symbol, "held_qty": residual_qty,
+                    "read_error": (
+                        f"a live protective stop (order {order_id}, status "
+                        f"{status or 'unknown'}) rests at the broker but its "
+                        f"trigger price could not be read"
+                    ),
+                }])
+                return False
+            # DEFECT 2 (adversary round 3) -- CONSCIOUSLY LEFT OPEN, not
+            # missed. The objection is real: an identity-proven stop is
+            # banked as this position's protection at ANY level, so a stop
+            # resting looser than the one this run derived lets the position
+            # lose more than the desk decided. A level test was written and
+            # then REVERTED, because the repository's own specification
+            # forbids it: `tests/test_reprotect_cancelled_stop_identity.py`
+            # ::test_identity_decides_even_when_the_price_differs requires a
+            # one-cent-looser identity-proven stop to be banked, with the
+            # RESTING trigger recorded. That test exists because a
+            # half-penny price window was the exact filter that produced the
+            # 2026-09-30 naked incident, and any level comparison -- with a
+            # tolerance or without -- puts price back into a decision the
+            # incident proved it must stay out of. Refusing instead would
+            # trade a too-wide stop for no stop, which is strictly worse.
+            # Closing this properly means AMENDING the resting stop to the
+            # wanted trigger in place (the measured-safe mechanism PR #806
+            # landed; a refused amend leaves the original resting), not
+            # refusing to bank it. That is a change to the specification and
+            # to the test, so it belongs to its own item with the owner's
+            # sight of it -- not to a defect sweep. Until then the warning
+            # below is the only record, and it says in terms that the
+            # coverage sweep will not correct the level.
+            # Identity-proven, live and covering the residual: this is a
+            # PREVIOUS attempt's stop. Record the
+            # trigger the broker is actually holding, never the one this run
+            # wanted -- they can differ, and the desk's record must say what
+            # rests.
             if existing_sp != best_stop:
                 logger.warning(
                     "Reprotect NOT submitting for %s: a live stop from a "

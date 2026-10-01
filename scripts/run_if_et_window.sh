@@ -72,12 +72,22 @@ TIMEOUT="${TIMEOUT_OVERRIDE:-timeout}"
 LAST_RUN_DIR="${LAST_RUN_DIR_OVERRIDE:-${HOME}/.cache/quant-agent}"
 MIN_GAP_SEC="${MIN_GAP_SEC_OVERRIDE:-3600}"  # don't fire same mode twice within an hour
 SESSION_LOCK_DIR="${LAST_RUN_DIR}/active-session.lock"
-# Stale-lock cleanup ceiling. The launchd outer kill is 1200s (20 min); a
-# process still alive past that is impossible, so anything older than
-# 1800s (30 min) is definitely a crashed-without-cleanup leftover. Keeping
-# this tight matters because a stale lock would otherwise block the next
-# legitimate session for the full ceiling window.
-SESSION_LOCK_MAX_AGE_SEC="${SESSION_LOCK_MAX_AGE_SEC_OVERRIDE:-1800}"
+# Session run ceiling, enforced below by `timeout`. This is the ONE place
+# the number is written; the stale-lock ceiling is derived from it rather
+# than restated, because the two drifting apart is what makes a stale lock
+# either block a legitimate session or clear a live one.
+SESSION_RUN_TIMEOUT_SEC="${SESSION_RUN_TIMEOUT_SEC_OVERRIDE:-1200}"
+SESSION_RUN_KILL_AFTER_SEC="${SESSION_RUN_KILL_AFTER_SEC_OVERRIDE:-30}"
+# Stale-lock cleanup ceiling. DEFECT 9 (adversary round 3): this was a
+# hand-written 1800 sitting directly on the duplicate-stop hazard -- too
+# low and a still-running session's lock is cleared, so a second session
+# starts and both place protective stops on the same shares; too high and
+# a crashed session blocks the next legitimate one for the whole window.
+# It is no longer a number at all. The hard upper bound on a live session
+# is exactly what this script enforces one screen below: SIGTERM at
+# SESSION_RUN_TIMEOUT_SEC, SIGKILL SESSION_RUN_KILL_AFTER_SEC later. A
+# process alive past their sum cannot exist, and nothing shorter is safe.
+SESSION_LOCK_MAX_AGE_SEC="${SESSION_LOCK_MAX_AGE_SEC_OVERRIDE:-$(( SESSION_RUN_TIMEOUT_SEC + SESSION_RUN_KILL_AFTER_SEC ))}"
 
 mkdir -p "$LAST_RUN_DIR"
 
@@ -277,7 +287,7 @@ ping_healthcheck() {
     curl -fsS --max-time 10 --retry 2 "${HEALTHCHECKS_URL}${suffix}" >/dev/null 2>&1 || true
 }
 
-if "$TIMEOUT" --kill-after=30 1200 "$PYTHON" main.py --mode "$MODE"; then
+if "$TIMEOUT" --kill-after="$SESSION_RUN_KILL_AFTER_SEC" "$SESSION_RUN_TIMEOUT_SEC" "$PYTHON" main.py --mode "$MODE"; then
     # intra_check is intentionally guard-less (see last-run guard block above) —
     # we don't write the marker for it, so the next 30-min tick can fire freely.
     if [[ "$MODE" != "intra_check" ]]; then
