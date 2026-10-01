@@ -61,13 +61,6 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 
 **Top of the backlog. Work the PRIORITY ORDER above; do not reorder from intuition.** The original census items (ranks 1-8) are all retired and written up; the measured census that ranked them is in `docs/INCIDENT_HISTORY.md`.
 
-**17. Backup alert channel — OWNER DECISION, deferred, no due date.** No channel exists beyond Telegram, so an alert that cannot reach Telegram reaches nobody.
-
-DONE WHEN:
-  - [ ] OWNER'S CALL — his own 2026-09-03 deferral, no due date: a second alert channel is new scope and, for anything but plain email, a new paid dependency, so nobody proposes it and it closes only when he raises it
-  - [ ] when he does: the record-keeping circuit-breaker trip is shown reaching him on the second channel while Telegram delivery is failing, which is the exact live pairing that went unnoticed
-detail: docs/board_notes/item-017.md
-
 **55. What IS a structural level — how many bars make a swing point, and how wide is a level's zone? OPEN, filed 2026-09-13.** Touch count is settled and pinned by a test: two touches, sourced (Tsinaslanidis 2012) — do not tighten it.
 
 DONE WHEN:
@@ -212,7 +205,7 @@ DONE WHEN:
 
 detail: docs/board_notes/item-201.md
 
-**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. FRED and 20 news feeds are still unrecorded, so a real run is still correctly voided. detail: docs/board_notes/item-202.md
+**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
 
 DONE WHEN:
   - [x] 2026-10-01 the run reaches the Portfolio Manager OFFLINE.
@@ -221,7 +214,8 @@ DONE WHEN:
   - [x] 2026-10-01 a missing recorded input stops the replay instead of being filled in or quietly degraded.
   - [x] 2026-10-01 the rot guard exercises every installed HTTP transport against TEST-NET-1.
   - [x] 2026-10-01 every OTHER test that still reaches the network is NAMED: the conftest guard now journals each blocked attempt to `QAMC_NETWORK_JOURNAL` before raising, so a test that SWALLOWS the error is no longer invisible; one full-suite run measured 1139 blocked attempts from 247 tests in 45 files (1034 Yahoo, 99 the LiteLLM price table, 6 OpenRouter), none of which fail the suite.
-  - [ ] STILL OPEN: a real rehearsal against the production snapshot returns a verdict it is entitled to give. The run was PERFORMED 2026-10-01 and VOIDED on the wall, as expected: the full session completed end to end including the Portfolio Manager, production was byte-identical afterwards and no order was placed anywhere, but 11 endpoints (FRED plus ten news/reference hosts) have no recording. Recording them — plus the pinned recording's zero sectors and the offline asset directory — is what is left.
+  - [x] 2026-10-01 FRED and the news/reference feeds replay from a recording and never reach the network, by the same patch-where-the-client-is-built pattern the bars and sectors use; recorded FAILURES replay as failures, credentials are stripped from the key, and a gap RAISES rather than fetching or substituting [measured 2026-10-01: 7 tests inside the rehearsal's own network wall, empty journal].
+  - [ ] STILL OPEN: a real rehearsal against the production snapshot returns a verdict it is entitled to give. The run was PERFORMED 2026-10-01 and VOIDED on the wall, as expected: the full session completed end to end including the Portfolio Manager, production was byte-identical afterwards and no order was placed anywhere, but 11 endpoints (FRED plus ten news/reference hosts) had no recording. Those are now recorded (box above); what is left is the pinned recording's zero sectors, the offline Alpaca asset directory, and repeating the settling run — not done here, and no verdict is claimed from the unrepeated one.
 
 **208. Item 18's three residuals, carried forward — filed 2026-09-30 when item 18 was retired. The prompt-bulk defect that item 18 was opened for no longer applies and was re-measured under that item; these three leftovers remain OPEN, share no subject with it and were blocking item 19 for no reason. Detail: `docs/board_notes/` (item 208).** One changes what the ranking seat decides, one is an account setting outside this repo, and one cannot be closed by building at all.
 
@@ -332,6 +326,7 @@ detail: docs/board_notes/item-219.md
 - retired queue: 220
 - retired queue: 190
 - retired queue: 211
+- retired queue: 17
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
