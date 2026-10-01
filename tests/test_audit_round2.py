@@ -105,15 +105,6 @@ def _park_pipeline():
     return p
 
 
-def test_park_excess_parks_cash_over_the_reserve():
-    """Renamed 2026-09-20. It was `..._without_breach`, and the pairing it
-    named — a sibling asserting the daily-loss breach BLOCKED the park — was
-    deleted with the account-level loss alarm (retired item 32). Nothing
-    gates the sweep on an account-level loss reading any more, so the claim
-    left standing is the plain one: cash above the reserve gets parked."""
-    from src.pipeline_context import RunContext
-    p = _park_pipeline()
-    assert p.cash_sweeper.park_excess(RunContext.start("midday")) is not None
 
 
 # ---------- multi-stop: highest wins; ex-div shifts each ----------

@@ -326,7 +326,7 @@ class RunContext:
     # inside the already-approved ceiling is a safety net only, not the
     # product. Repeg stays off. Submit deadline is the sum of programmed
     # waits (auth reconnect-max if the socket was not started during Risk,
-    # plus the ratified funding timeouts when fund_buys runs).
+    # plus the ratified funding timeouts when a funding sale runs).
     desk_latency_stall: bool = False
     catch_up_used: dict[str, bool] = field(default_factory=dict)
     entry_submit_budget_s: float = 0.0

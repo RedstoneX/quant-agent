@@ -1758,7 +1758,7 @@ def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     Auth is omitted when the kept socket already started during Risk — that
     budget began at hub open. Funding timeouts are the cash-sweep step's
     own ceiling; they must not be added as leftover slack on the submit
-    path after fund_buys has already returned. Call this AFTER funding
+    path after the funding step has already returned. Call this AFTER funding
     with will_fund=False.
 
     Auth is also omitted when the socket is switched off entirely
@@ -6367,10 +6367,11 @@ class DecisionStage:
             ctx.macro_analysis, ctx.total_value, ctx.deployable_cash,
             ctx.last_equity
 
-    `ctx.deployable_cash`, NOT `ctx.cash` — this stage sizes a plan, and the
-    plan may spend the sweep vehicle because `fund_buys` converts it before
-    the BUY phase. Raw broker cash here would hide the parked book from PM
-    and RM and cap the desk at its reserve. The docstring said `ctx.cash`;
+    `ctx.deployable_cash`, NOT `ctx.cash` — this stage sizes a plan against
+    everything the account owns, parked sweep value included. Raw broker cash
+    here would hide the parked book from PM and RM and cap the desk at its
+    reserve. Since item 190 nothing converts the vehicle automatically before
+    the BUY phase. The docstring said `ctx.cash`;
     the code has read `deployable_cash` since the 2026-08-19 tranche.
     Writes: ctx.portfolio_decision (with .targets AND .decisions populated),
             ctx.facts
@@ -8994,12 +8995,11 @@ class ExecutionStage:
         # PM/RM/the hard gate size BUYs against
         # `deployable_cash` (raw cash + convertible sweep value), so on any
         # session with meaningful BUYs this sale IS load-bearing — the raw
-        # cash on hand is typically just the reserve. `fund_buys` sells
-        # enough of the vehicle to cover the planned notional, then waits
-        # for the fill and CONFIRMS the observed rise in broker cash (a
-        # filled sale credits `cash` immediately; the 2026-08-19 loss of a
-        # fully-approved plan was a 51s fill outliving a 15s wait, not
-        # settlement — see cash_sweep._FUND_TERMINAL_TIMEOUT_S).
+        # cash on hand is typically just the reserve. The pre-BUY funding
+        # sale that used to cover the planned notional was removed in item
+        # 190, so nothing converts the vehicle automatically now (the
+        # 2026-08-19 loss of a fully-approved plan was a 51s fill outliving
+        # a 15s wait, not settlement).
         #
         # Since margin went on (2026-09-02) the sale is no longer what makes
         # a BUY POSSIBLE — the entry budget below is ladder headroom, and a
@@ -9010,73 +9010,16 @@ class ExecutionStage:
         # loan is what is left over.
         # isinstance guard: stage tests stub `pipeline` with MagicMock.
         if buy_decisions:
-            from src.execution.cash_sweep import CashSweeper
             _pin_approved_entry_ceilings(pipeline, ctx, buy_decisions)
             _warm_trade_updates(pipeline, ctx)
-            sweeper = getattr(pipeline, "_sweeper", None)
-            sweeper = sweeper() if callable(sweeper) else None
-            if not isinstance(sweeper, CashSweeper):
-                sweeper = None
-            if sweeper is not None:
-                planned_notional = sum(
-                    fundable_notional.get(d.symbol, 0.0) for d in buy_decisions
+            # The cash-sweep funding step (sell the T-bill vehicle before a BUY)
+            # was retired with the sweeper (board item 190 step 3); raw cash is
+            # the only funding source, so there is nothing to record as freed.
+            for d in buy_decisions:
+                _record_pipeline_event(
+                    pipeline, ctx, d.symbol, "funding", "not_required",
+                    "cash_sweep_disabled", raw_cash=cash,
                 )
-                for d in buy_decisions:
-                    _record_pipeline_event(
-                        pipeline, ctx, d.symbol, "funding", "attempted",
-                        "cash_sweep_funding", planned_notional=planned_notional,
-                    )
-                try:
-                    freed = sweeper.fund_buys(ctx, planned_notional)
-                except Exception as e:
-                    logger.warning("cash sweep: fund_buys failed (BUYs will "
-                                   "use raw cash only): %s", e)
-                    freed = 0.0
-                    for d in buy_decisions:
-                        _record_pipeline_event(
-                            pipeline, ctx, d.symbol, "funding", "failed",
-                            "cash_sweep_exception", detail=str(e),
-                        )
-                else:
-                    # Adopt whatever the sweeper refreshed REGARDLESS of the
-                    # confirmed amount. `fund_buys` re-reads the broker into
-                    # ctx before it decides what it can confirm, so on the
-                    # zero-confirmed path ctx already held fresher figures
-                    # than these locals — and the locals, not ctx, govern the
-                    # BUY loop's entry budget. Refreshing only on the
-                    # success path meant an unconfirmed funding attempt left
-                    # the loop sizing against a pre-sale cash reading; if
-                    # anything had DRAWN cash in between, that reading is
-                    # stale-HIGH and the clamp stops protecting anything.
-                    # ctx is unchanged when fund_buys bailed early, so this
-                    # is a no-op in the ordinary case.
-                    if isinstance(getattr(ctx, "cash", None), (int, float)):
-                        cash = ctx.cash
-                    if isinstance(getattr(ctx, "total_value", None), (int, float)):
-                        total_value = ctx.total_value
-                    if ctx.positions is not None:
-                        positions = ctx.positions
-                if freed > 0:
-                    positions = ctx.positions
-                    cash = ctx.cash
-                    total_value = ctx.total_value
-                    for d in buy_decisions:
-                        _record_pipeline_event(
-                            pipeline, ctx, d.symbol, "funding", "funded",
-                            "cash_sweep_confirmed", freed_cash=freed,
-                        )
-                elif buy_decisions:
-                    for d in buy_decisions:
-                        _record_pipeline_event(
-                            pipeline, ctx, d.symbol, "funding", "no_additional_cash",
-                            "cash_sweep_released_zero", raw_cash=cash,
-                        )
-            else:
-                for d in buy_decisions:
-                    _record_pipeline_event(
-                        pipeline, ctx, d.symbol, "funding", "not_required",
-                        "cash_sweep_disabled", raw_cash=cash,
-                    )
             _adopt_stream_stall(pipeline, ctx)
             # Encode AFTER funding so the fund step's own 180s/30s ceiling
             # cannot sit as leftover slack on a fast no-op. Remaining

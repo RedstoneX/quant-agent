@@ -203,109 +203,18 @@ def _funding_pipeline():
     return p
 
 
-def test_fund_buys_releases_enough_for_planned_notional():
-    p = _funding_pipeline()
-    ctx = RunContext.start("morning")
-    ctx.cash = 1_000.0
-    ctx.positions = [SGOV, NVDA]
-
-    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=30_000.0)
-
-    assert freed > 0
-    kwargs = p._submit_protected_sell.call_args.kwargs
-    assert kwargs["symbol"] == "SGOV"
-    assert kwargs["label"] == "SWEEP_SELL"
-    # needed = 30k + max(50, 1%·30k=300) - 1k = 29.3k → ceil(29300/100.6)=292
-    assert kwargs["qty"] == 292
-    p._finalize_pending_protections.assert_called_once()
-    assert ctx.cash == 50_000.0  # refreshed from broker
 
 
-def test_fund_buys_noop_when_cash_already_covers():
-    p = _funding_pipeline()
-    ctx = RunContext.start("morning")
-    ctx.cash = 50_000.0
-    ctx.positions = [SGOV, NVDA]
-    assert p.cash_sweeper.fund_buys(ctx, planned_notional=10_000.0) == 0.0
-    p._submit_protected_sell.assert_not_called()
 
 
-def test_fund_buys_caps_at_full_position():
-    """Needing more than parked → full exit via _full_sell_qty, no oversell."""
-    p = _funding_pipeline()
-    ctx = RunContext.start("morning")
-    ctx.cash = 0.0
-    ctx.positions = [SGOV, NVDA]
-    p.cash_sweeper.fund_buys(ctx, planned_notional=200_000.0)
-    kwargs = p._submit_protected_sell.call_args.kwargs
-    assert kwargs["qty"] == SGOV.qty
 
 
-def test_fund_buys_noop_without_vehicle_position():
-    p = _funding_pipeline()
-    ctx = RunContext.start("morning")
-    ctx.cash = 0.0
-    ctx.positions = [NVDA]
-    assert p.cash_sweeper.fund_buys(ctx, planned_notional=10_000.0) == 0.0
 
 
-def test_fund_buys_slow_fill_confirmed_by_settle_poll(monkeypatch):
-    """2026-08-19 incident regression: the funding sell filled 51s after
-    submit — past the old 15s wait — so a single account read saw pre-fill
-    cash and every risk-approved BUY was skipped as unfunded. The settle
-    poll must keep re-reading cash until the credit appears (or budget
-    runs out), not conclude from one pre-fill snapshot."""
-    monkeypatch.setattr(cash_sweep_module, "_FUND_CASH_SETTLE_TIMEOUT_S", 5.0)
-    p = _funding_pipeline()
-    p.broker.wait_for_order_terminal.return_value = "filled"
-    # First two account reads land BEFORE the cash credit; third sees it.
-    pre = {"cash": 1_000.0, "portfolio_value": 100_000.0}
-    post = {"cash": 31_000.0, "portfolio_value": 100_000.0}
-    p.broker.get_account.side_effect = [pre, pre, post]
-    ctx = RunContext.start("morning")
-    ctx.cash = 1_000.0
-    ctx.positions = [SGOV, NVDA]
-
-    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=25_000.0)
-
-    assert freed == pytest.approx(30_000.0)
-    assert ctx.cash == 31_000.0
-    assert p.broker.get_account.call_count == 3
-    # Terminal wait for the funding sell used the extended budget, not the default.
-    kwargs = p.broker.wait_for_order_terminal.call_args.kwargs
-    assert kwargs.get("timeout_seconds") == cash_sweep_module._FUND_TERMINAL_TIMEOUT_S
 
 
-def test_fund_buys_unconfirmed_cash_reports_zero(monkeypatch):
-    """Sale never credits within the budget → confirmed $0, fail closed:
-    the BUY phase must be governed by the deterministic cash check."""
-    p = _funding_pipeline()
-    p.broker.wait_for_order_terminal.return_value = "canceled"
-    p.broker.get_account.return_value = {
-        "cash": 1_000.0, "portfolio_value": 100_000.0,
-    }
-    ctx = RunContext.start("morning")
-    ctx.cash = 1_000.0
-    ctx.positions = [SGOV, NVDA]
-
-    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=25_000.0)
-
-    assert freed == 0.0
-    assert ctx.cash == 1_000.0  # refreshed, pre-sale value — no phantom credit
 
 
-def test_fund_buys_broker_down_whole_window_fails_closed():
-    p = _funding_pipeline()
-    p.broker.wait_for_order_terminal.side_effect = RuntimeError("api down")
-    p.broker.get_account.side_effect = RuntimeError("api down")
-    ctx = RunContext.start("morning")
-    ctx.cash = 1_000.0
-    ctx.positions = [SGOV, NVDA]
-
-    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=25_000.0)
-
-    assert freed == 0.0
-    assert ctx.cash == 1_000.0  # never overwritten with an estimate
 
 
 # ---------- park_excess ----------
@@ -322,57 +231,16 @@ def _parking_pipeline(cash=90_000.0, total=100_000.0, pending=0.0):
     return p
 
 
-def test_park_excess_buys_vehicle_with_idle_cash():
-    p = _parking_pipeline(cash=90_000.0, total=100_000.0)
-    ctx = RunContext.start("morning")
-    order = p.cash_sweeper.park_excess(ctx)
-    assert order is not None and order["action"] == "SWEEP_BUY"
-    kwargs = p.broker.submit_order.call_args.kwargs
-    assert kwargs["symbol"] == "SGOV" and kwargs["side"] == "buy"
-    # excess = 90k - 1%·100k - 0 = 89k; sized on the LIMIT price
-    # (100.60×1.001 → 100.70) so a padded fill can't overdraw raw cash:
-    # int(89000/100.70) = 883 shares
-    assert kwargs["qty"] == 883
-    assert kwargs["stop_loss_price"] is None      # deliberately stopless
-    p.db.confirm_trade_submitted.assert_called_once()
 
 
-def test_park_excess_subtracts_open_buy_holds():
-    """Cash reserved by still-open BUY limits must not be swept."""
-    p = _parking_pipeline(cash=90_000.0, total=100_000.0, pending=88_600.0)
-    ctx = RunContext.start("morning")
-    assert p.cash_sweeper.park_excess(ctx) is None   # 90k-1k-88.6k = 400 < 500
 
 
-def test_park_excess_skips_when_open_orders_unknowable():
-    p = _parking_pipeline()
-    p.broker.open_buy_notional.return_value = None   # query failed
-    ctx = RunContext.start("morning")
-    assert p.cash_sweeper.park_excess(ctx) is None
-    p.broker.submit_order.assert_not_called()
 
 
-def test_park_excess_respects_min_order():
-    p = _parking_pipeline(cash=1_400.0, total=100_000.0)  # excess 400 < 500
-    ctx = RunContext.start("morning")
-    assert p.cash_sweeper.park_excess(ctx) is None
 
 
-def test_park_excess_marks_row_failed_on_reject():
-    p = _parking_pipeline()
-    p._order_accepted = MagicMock(return_value=False)
-    ctx = RunContext.start("morning")
-    assert p.cash_sweeper.park_excess(ctx) is None
-    p.db.mark_trade_submit_failed.assert_called_once_with(42)
-    p.db.confirm_trade_submitted.assert_not_called()
 
 
-def test_park_excess_disabled_is_inert():
-    p = _parking_pipeline()
-    p.config.cash_sweep = CashSweepConfig(enabled=False)
-    ctx = RunContext.start("morning")
-    assert p.cash_sweeper.park_excess(ctx) is None
-    p.broker.get_account.assert_not_called()
 
 
 # ---------- config ----------
@@ -389,67 +257,6 @@ def test_cash_sweep_config_uppercases_symbol():
 
 # ---------- session integration: reviewer never sees the vehicle; midday parks ----------
 
-def test_position_review_hides_vehicle_and_parks_at_end(tmp_path):
-    """End-to-end through run_midday: (a) the reviewer's position list must
-    exclude the sweep vehicle (it would otherwise hold-grade / sell parked
-    cash), (b) the session bookend parks idle cash left by sells."""
-    from unittest.mock import patch
-    from src.models import PositionReview, PositionReasoningChain
-    from src.storage.db import Database
-
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-
-    p = _sweep_pipeline()
-    p.db = db
-    p.broker.is_trading_day.return_value = True
-    p.broker.get_session_close = MagicMock(return_value=None)
-    p.broker.get_account.return_value = {
-        "cash": 85_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
-    }
-    p.broker.get_positions.return_value = [SGOV, NVDA]
-    p.broker.open_buy_notional.return_value = 0.0
-    p.broker.get_latest_price.return_value = 100.60
-    p.broker.submit_order.return_value = {"id": "sweep-1", "status": "accepted"}
-    p.broker.snapshot_protective_stops.return_value = (True, [])
-    p.macro = MagicMock()
-    p.macro.get_macro_summary.return_value = {}
-    p.macro_store = MagicMock()
-    p.macro_store.load_last_state.return_value = None
-    p.config.llm = MagicMock()
-    p.config.llm.position_reviewer_model = "test-model"
-    p._handle_ex_dividends = MagicMock(return_value=[])
-    p._run_news_update = MagicMock(return_value=(None, None))
-    p._load_earnings_analyses = MagicMock(return_value=(None, []))
-    p._midday_execute_llm_actions = MagicMock(return_value=[])
-    p._reconcile_stop_coverage = MagicMock(return_value=[])
-    p.risk_engine = MagicMock()
-    p.position_reviewer = MagicMock()
-    p.position_reviewer.review.return_value = (
-        PositionReview(
-            reasoning_chain=PositionReasoningChain(
-                macro_continuity_check="x", thesis_progress_check="x",
-                thesis_integrity_check="x", winners_discipline_check="x",
-                session_disposition_check="x", execution_rationale="x",
-            ),
-            actions=[], overall_assessment="stable", risk_level="low",
-        ),
-        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
-                  input_tokens=1, output_tokens=1, cost_usd=0.0,
-                  model="test-model",
-                  requested_provider="anthropic", requested_model="test-model",
-                  actual_provider="anthropic", used_fallback=False,
-                  prompt_version="test-version", latency_s=0.1,
-                  finish_reason=None, truncated=False),
-    )
-
-    result = p.run_midday()
-
-    assert result["status"] == "reviewed"
-    seen = p.position_reviewer.review.call_args.kwargs["positions"]
-    assert [x.symbol for x in seen] == ["NVDA"], "reviewer must not see SGOV"
-    # bookend parked the idle cash: a SWEEP_BUY order rides in the result
-    assert any(o.get("action") == "SWEEP_BUY" for o in result["orders"])
 
 
 # ---------- defect (e): capped per-symbol news must not spend a slot on the ----------
@@ -827,59 +634,10 @@ def test_deployable_cash_fails_closed_on_non_finite_cash():
     assert p._compute_deployable_cash(float("nan"), [SGOV]) == 0.0
 
 
-def test_fund_buys_reports_only_confirmed_proceeds():
-    """The execution condition QAMC must verify: raw broker `cash`
-    actually rose after the funding sale. fund_buys reports the OBSERVED
-    increase, not the notional of the order it submitted."""
-    p = _funding_pipeline()
-    # Broker confirms only $12,000 landed even though a larger sale was sent.
-    p.broker.get_account.return_value = {
-        "cash": 13_000.0, "portfolio_value": 100_000.0,
-    }
-    ctx = RunContext.start("morning")
-    ctx.cash = 1_000.0
-    ctx.positions = [SGOV, NVDA]
-
-    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=30_000.0)
-
-    assert freed == 12_000.0, "must report the confirmed delta, not the order size"
-    assert ctx.cash == 13_000.0
 
 
-def test_fund_buys_reports_zero_when_the_sale_did_not_fill():
-    """The incident's failure mode: the funding sale doesn't fill, so cash
-    never rises. fund_buys must report $0 rather than claiming the order's
-    notional was freed — otherwise the BUY phase sizes against money the
-    broker never credited."""
-    p = _funding_pipeline()
-    p.broker.get_account.return_value = {   # unchanged cash: no fill
-        "cash": 1_000.0, "portfolio_value": 100_000.0,
-    }
-    ctx = RunContext.start("morning")
-    ctx.cash = 1_000.0
-    ctx.positions = [SGOV, NVDA]
-
-    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=30_000.0)
-
-    assert freed == 0.0
-    assert ctx.cash == 1_000.0, "cash must not be optimistically inflated"
 
 
-def test_fund_buys_fails_closed_when_it_cannot_confirm():
-    """If the post-sale account refresh fails we cannot CONFIRM proceeds
-    landed, so report $0 and leave cash at its pre-sale value — the
-    deterministic cash check then governs the BUY phase. The old code
-    optimistically set cash = cash + estimate here."""
-    p = _funding_pipeline()
-    p.broker.get_account.side_effect = ConnectionError("broker unreachable")
-    ctx = RunContext.start("morning")
-    ctx.cash = 1_000.0
-    ctx.positions = [SGOV, NVDA]
-
-    freed = p.cash_sweeper.fund_buys(ctx, planned_notional=30_000.0)
-
-    assert freed == 0.0
-    assert ctx.cash == 1_000.0
 
 
 # ---------- sweep retired (owner mandate 2026-09-17: fully invested) ----------
