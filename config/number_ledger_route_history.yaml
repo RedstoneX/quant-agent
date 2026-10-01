@@ -73,3 +73,18 @@ changes:
       the algebraic cancellations: 25 is five full-size names at the ratified
       5% per-trade envelope, and 40% of 25% is exactly two, so deriving
       either reduces to picking a name count.
+  - delta: -1
+    date: "2026-10-01"
+    why: |
+      Board item 190: `CashSweepConfig.min_order_usd` (500) gains a settlement
+      route. The row previously claimed the value's only live job was gating
+      the retired cash sweep; measurement found the sweep job gone and two
+      trade-governing consumers missed -- the short scale-in add it refuses
+      outright as `below_min_notional`, and the `funding` binding constraint
+      the rotation report renders. The value did not move and no appetite was
+      routed to the owner. The route names the execution-skip recording that
+      already collects every refusal, and the row records BOTH failed
+      derivation attempts plus the algebra check: the dollar floor does NOT
+      cancel to a constant fraction of equity, so it is not a disguised global
+      dial but a bound whose effective weight drifts inversely with account
+      size.
