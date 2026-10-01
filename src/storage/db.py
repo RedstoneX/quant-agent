@@ -1201,6 +1201,42 @@ class Database:
             "alignment_exit_readings", "not_evaluated_reason",
             "not_evaluated_reason TEXT",
         )
+        # --- Item 78 evidence: what the MECHANICAL soft-exit heal actually
+        # did, one row per time it ran.
+        # RECORDING ONLY (2026-10-01). Nothing may read these rows back
+        # into a trading decision, and they may NEVER be swept for a
+        # threshold, a rate or a gate.
+        #
+        # The heal restores a `thesis_invalid_if` that a later null-wipe
+        # blanked, from the sentence the model itself already wrote. It
+        # never invents one. Two of item 78's three removal criteria are
+        # claims about this heal, and until now it wrote nothing down at
+        # all, so neither could be judged — not because the condition was
+        # unmet but because nobody could see it.
+        #
+        # Unknown stays NULL. A payload that carries no symbol records a
+        # NULL symbol; `source` is NULL unless something was really
+        # restored, because "healed from the model's own words" and
+        # "nothing to heal" are different facts and neither is a zero.
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS soft_exit_heal_restores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                run_id TEXT,
+                session_date TEXT,
+                symbol TEXT,                 -- NULL when the payload had none
+                blank_found INTEGER,         -- 1/0: falsifier blank on entry
+                healed INTEGER,              -- 1/0: heal filled it
+                source TEXT,                 -- NULL unless healed
+                dropped_before INTEGER       -- observations lost to the cap
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_soft_exit_heal_restores_date "
+            "ON soft_exit_heal_restores (session_date, symbol)"
+        )
         # --- Item 224 evidence: the REALISED sector mix of the orders the
         # constructor actually built, one row per run.
         # RECORDING ONLY (2026-10-01).
@@ -3075,6 +3111,59 @@ class Database:
                 "alignment-exit reading for %s was not recorded (%s)", sym, e,
             )
             return False
+
+    def record_soft_exit_heal_restores(
+        self, *, observations, run_id: str | None = None,
+        session_date: str | None = None, dropped: int = 0,
+    ) -> int:
+        """Record what the mechanical soft-exit heal did. Returns rows written.
+
+        ITEM 78 RECORDING, RECORDING ONLY, and it decides nothing. Read the
+        `soft_exit_heal_restores` note in `_migrate` for why it exists and
+        for the hard limit on its use: nothing may read these rows back
+        into a trading decision, and they may never be swept for a
+        threshold, a rate or a gate.
+
+        Unknown stays NULL throughout — a missing symbol is NULL, not a
+        guess, and `source` is NULL when nothing was restored.
+        """
+        rows = []
+        first = True
+        for obs in list(observations or []):
+            if not isinstance(obs, dict):
+                continue
+            sym = obs.get("symbol")
+            sym = sym.strip().upper() if isinstance(sym, str) and sym.strip() else None
+            blank = obs.get("blank_found")
+            healed = obs.get("healed")
+            src = obs.get("source")
+            rows.append((
+                self._sqlite_utc_timestamp(datetime.now(UTC)),
+                run_id or None,
+                session_date or str(et_today()),
+                sym,
+                None if blank is None else int(bool(blank)),
+                None if healed is None else int(bool(healed)),
+                src if isinstance(src, str) and src.strip() else None,
+                int(dropped) if first else None,
+            ))
+            first = False
+        if not rows:
+            return 0
+        try:
+            with self._lock:
+                self.conn.executemany(
+                    "INSERT INTO soft_exit_heal_restores ("
+                    "  timestamp, run_id, session_date, symbol,"
+                    "  blank_found, healed, source, dropped_before"
+                    ") VALUES (?,?,?,?,?,?,?,?)",
+                    rows,
+                )
+                self.conn.commit()
+            return len(rows)
+        except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
+            logger.warning("soft-exit heal restores were not recorded (%s)", e)
+            return 0
 
     #: The unit and denominator every `realised_sector_weights` row is
     #: expressed in, stored on the row itself. Same unit and same

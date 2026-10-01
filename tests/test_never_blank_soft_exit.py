@@ -635,3 +635,106 @@ def test_pm_records_a_retry_that_ran_and_still_produced_nothing():
     heals = agent.drain_soft_exit_heals()
     assert heals["MRVL"]["outcome"] == HEAL_FAILED
     assert "WAS attempted" in heals["MRVL"]["detail"]
+
+
+def test_mechanical_restore_outcome_is_recorded_durably():
+    """Item 78: the mechanical heal writes down what it did, every time.
+
+    RECORDING ONLY — these rows decide nothing. The test proves the write
+    is reached, that a heal and a no-op are distinguishable, and that an
+    unknown symbol stays NULL instead of being filled with a guess.
+    """
+    import sqlite3
+
+    from src.pipeline_stages import _record_mechanical_soft_exit_restores
+    from src.seat_heal import (
+        drain_restore_observations,
+        restore_stated_soft_exits,
+    )
+
+    drain_restore_observations()  # start from a clean buffer
+
+    # 1. a real heal: the canonical field was blanked, the raw still has it
+    healed, restored = restore_stated_soft_exits(
+        {"symbol": "mrvl", "thesis_invalid_if": None},
+        {"thesis_invalid_if": "close below the 50-day"},
+    )
+    assert healed["thesis_invalid_if"] == "close below the 50-day"
+    assert "thesis_invalid_if" in restored
+    # 2. nothing to heal, and no symbol on the payload
+    restore_stated_soft_exits(
+        {"thesis_invalid_if": "already stated"},
+        {"thesis_invalid_if": "already stated"},
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE soft_exit_heal_restores ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, run_id TEXT,"
+        " session_date TEXT, symbol TEXT, blank_found INTEGER,"
+        " healed INTEGER, source TEXT, dropped_before INTEGER)"
+    )
+    written: dict = {}
+
+    def _writer(*, observations, run_id=None, dropped=0):
+        rows = [
+            (
+                o.get("symbol"), int(bool(o.get("blank_found"))),
+                int(bool(o.get("healed"))), o.get("source"), run_id, dropped,
+            )
+            for o in observations
+        ]
+        conn.executemany(
+            "INSERT INTO soft_exit_heal_restores"
+            " (symbol, blank_found, healed, source, run_id, dropped_before)"
+            " VALUES (?,?,?,?,?,?)", rows,
+        )
+        written["n"] = len(rows)
+        return len(rows)
+
+    pipeline = SimpleNamespace(
+        db=SimpleNamespace(record_soft_exit_heal_restores=_writer),
+    )
+    _record_mechanical_soft_exit_restores(pipeline, RunContext.start("morning"))
+    assert written["n"] == 2
+
+    rows = conn.execute(
+        "SELECT symbol, blank_found, healed, source FROM"
+        " soft_exit_heal_restores ORDER BY id"
+    ).fetchall()
+    assert rows[0] == ("MRVL", 1, 1, "raw_model_output")
+    # Unknown stays NULL: no symbol on the payload, nothing healed.
+    assert rows[1] == (None, 0, 0, None)
+
+    # Drained: a second pass must not re-file the same observations.
+    written.clear()
+    _record_mechanical_soft_exit_restores(pipeline, RunContext.start("morning"))
+    assert not written
+
+
+def test_real_database_records_mechanical_restores(tmp_path):
+    """The real storage method writes the row, and unknown stays NULL."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    n = db.record_soft_exit_heal_restores(
+        observations=[
+            {
+                "symbol": "mrvl", "blank_found": True, "healed": True,
+                "source": "raw_model_output",
+            },
+            {"symbol": None, "blank_found": False, "healed": False,
+             "source": None},
+        ],
+        run_id="run-1", dropped=3,
+    )
+    assert n == 2
+    rows = [
+        tuple(r) for r in db.conn.execute(
+            "SELECT symbol, blank_found, healed, source, run_id,"
+            " dropped_before FROM soft_exit_heal_restores ORDER BY id"
+        ).fetchall()
+    ]
+    assert rows[0] == ("MRVL", 1, 1, "raw_model_output", "run-1", 3)
+    assert rows[1] == (None, 0, 0, None, "run-1", None)
