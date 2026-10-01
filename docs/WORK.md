@@ -124,13 +124,6 @@ DONE WHEN:
   - [ ] nothing here ships alone and nothing is fitted to ORCL — one number changed by itself is the patch this item exists to prevent
 detail: docs/BOARD_NOTES.md (item 75)
 
-**76. PM-input shape: the one open piece is whether the PM uses its new macro-audit channel. OPEN, moved out of the PM TEST GATE 2026-09-14.** Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14.
-
-DONE WHEN:
-  - [ ] BLOCKED and cannot close by building — a before/after benchmark of whether the PM actually uses `reasoning_chain.macro_audit` is a paid run, and the owner's 2026-09-15 decision is that no test-environment work happens unless he asks. Same blocker as the model-seat decision line at the top of this file and 18(a); one authorisation would release all three.
-  - [ ] it is not reopened as a prompt-size problem
-detail: docs/BOARD_NOTES.md (item 76)
-
 **78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle.** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank.
 
 DONE WHEN:
@@ -351,6 +344,7 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 182
 - retired queue: 192
 - retired queue: 195
+- retired queue: 76
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
