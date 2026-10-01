@@ -17,6 +17,7 @@ import types
 import pytest
 
 from src.risk import alignment_exit as ae
+from tests.pipeline_factory import build_pipeline
 from src.risk.exit_trigger import ExitTrigger
 
 
@@ -92,12 +93,16 @@ class _Bar:
         self.date, self.close = date, close
 
 
+def _market(**methods):
+    """A market stand-in carrying what the REAL constructor calls on it."""
+    return types.SimpleNamespace(set_fallback_bars=lambda fn: None, **methods)
+
+
 def _pipeline_stub(monkeypatch, *, basis, broken_level, closes, atr=1.0):
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
     bars = [_Bar(i, c) for i, c in enumerate(closes)]
-    p.market = types.SimpleNamespace(get_ohlcv=lambda s, n: bars)
+    p = build_pipeline(market=_market(get_ohlcv=lambda s, n: bars))
     p.config = types.SimpleNamespace(trading=types.SimpleNamespace(lookback_days=200))
     p._structural_protection_for_holding = lambda **kw: types.SimpleNamespace(
         basis=basis, broken_level=broken_level,
@@ -170,10 +175,9 @@ def test_unreadable_chart_is_unparseable_never_a_silent_clear(kwargs, code):
 def test_chart_read_failure_degrades_to_unparseable(monkeypatch):
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.market = types.SimpleNamespace(
+    p = build_pipeline(market=_market(
         get_ohlcv=lambda s, n: (_ for _ in ()).throw(RuntimeError("feed down")),
-    )
+    ))
     p.config = types.SimpleNamespace(trading=types.SimpleNamespace(lookback_days=200))
     v = p._alignment_exit_for_holding(
         symbol="X", thesis_invalid_if=None, is_short=False,
@@ -214,7 +218,7 @@ def _scan_pipeline(verdicts: dict):
     replaced by a per-symbol canned verdict."""
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     seen = []
 
     def _chart(*, symbol, **kw):
@@ -283,7 +287,7 @@ def test_scan_raises_nothing_on_hold_or_unreadable_chart():
 def test_scan_failure_holds_and_does_not_stop_the_other_names():
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
 
     def _chart(*, symbol, **kw):
         if symbol == "BOOM":
@@ -344,7 +348,7 @@ def test_scan_supersedes_hold_because_the_chart_decides_not_the_prose():
 def test_verdict_is_read_once_per_position_per_run():
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     calls = []
 
     def _chart(*, symbol, **kw):
@@ -370,7 +374,7 @@ def test_scanned_sale_reaches_the_real_sell_path_with_the_reason_voiced():
     from src.models import PositionReasoningChain, PositionReview
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     p.broker = MagicMock()
     p.db = MagicMock()
     p.db.get_trades.return_value = []
@@ -415,7 +419,7 @@ def _scan_shell(*, status="EXIT", buy_ts="2020-01-01 10:00:00", calls=None):
     """A pipeline shell with only what `_alignment_exit_scan` touches."""
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     verdict = types.SimpleNamespace(
         status=status, exit_cleared=(status == "EXIT"),
         reason="the chart says so", code="c", owner_reason="because",
