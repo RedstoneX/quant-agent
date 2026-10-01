@@ -22,6 +22,19 @@ what would catch it next time.
 
 ---
 
+### 2026-10-01 — item 208(a): reward:risk and net evidence do NOT join the ranking composite (decision)
+
+**In plain words:** the ranking seat orders ideas by strength plus conviction, summed across seats at the published seat weights. Two more signals were on the table: reward-to-risk and net independent evidence. Decision: neither joins; both keep the job they already do.
+
+**Reward:risk stays a within-tier tiebreak only.** It is derived from the trade's target, and the owner ruled on 2026-09-30 that a target is a made-up number (exit on alignment, never on a target). A trend or breakout name has no overhead level, so a score term would need a neutral placeholder, which is another invented number (the item 1(d) finding). As a tiebreak it only reorders names the score already ties.
+
+**Net evidence stays a gate and a size ceiling only.** It already refuses a name below 1 (rule R5) and sets the agreement ceiling on size; scoring it too would count one piece of evidence in the rank, the gate and the size. The summed seat score already pays for breadth.
+
+**Verified against live code (origin/main 2026-10-01):** the composite is `score_verdict` strength plus conviction, weighted by `SEAT_WEIGHT` in `rank_verdicts`; reward:risk is read only in the sort key after the score; net evidence appears only in the R5 gate. The prompt's ranking section states the 1.2/1.0/0.8 weights, and those match the code. Per-seat sizing weights stay refused, unchanged.
+
+**Revisit only on a measurement:** the tie rate of the current four-key sort on real sessions is not measured here (the 9-of-12 figure predates the tiebreaks); if it is high, reopen with that number.
+
+**What would catch it next time.** `tests/test_ranking_composite_inputs.py` fails if reward:risk becomes a score input or stops being a tiebreak. Items 208(b) (provider-console spend cap) and 208(c) (paid benchmark) remain open.
 ### 2026-09-30 — ROOT CAUSE of the protective-stop failures: the desk cancels when it only needs to amend
 Owner ruling that produced this entry (Rex, 2026-09-30): "whatever the desk
 wants, there is substantial reason that we've spent a lot of time and resources
@@ -133,11 +146,6 @@ a winner other than the trailing stop.
 stops-and-exits rule: exits read live from the instrument in front of you —
 its volatility, its levels, its trend — never fitted to past trades and never a
 fixed number. A target is the exact thing that rule bars.
-### 2026-09-30 — the scale-in "stop did not go back on" owner alert existed and was never called
-
-**In plain words:** the scale-in path must cancel the resting protective sell to add to a holding (the broker will not hold a protective sell and a new buy on the same symbol at once). Its own design says a failed rearm is a fail-closed owner page. The page — `src/execution/scale_in.py::alert_rearm_failed` — had ZERO callers, so both real failure paths only wrote a log line: the crash-recovery drain's "rearm FAILED", and `restore_after_failed_add` whose own comment reads "OWNER must be alerted". A position could sit at the broker with nothing standing watch and nobody told.
-
-**Fixed.** Both paths now call it. The alert writes a durable `specialist_evidence` row (`agent_name="scale_in_rearm_failure"`, `position_protected: false`) on EVERY occurrence, so the fault survives Telegram being muted (it is, as of today) and shows on the surface the API/journal already reads; the Telegram page itself is claimed at most once per symbol per trading day through the new `src/coverage_watchdog.py::claim_typed_alert`, the generic form of the existing per-type claim helpers, so one naked position cannot page 44 times. `tests/test_scale_in.py::test_drain_rearm_failure_pages_the_owner` was confirmed to FAIL with the call removed.
 ### 2026-09-30 — the desk was turning away approved trades because one exchange's price display was wrong (item 183, the ask-skip half FIXED)
 
 **In one line:** eight times, the desk decided not to buy a stock it had already approved, on the grounds that the price had run away from it — and every one of those eight times the price had not moved at all; the desk was reading a broken price display from a single small exchange.
@@ -17589,3 +17597,8 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** the owner muted Telegram (`TELEGRAM_DISABLED`, no code change) and the mandatory paid-analysis circuit refused to start, latching durably at 2026-09-30T15:45:42Z with "mandatory cost-circuit Telegram alerts are not configured/enabled". Every session since returned `paid_analysis_suspended` — no paid analysis at all for hours. The circuit's real requirement is that a mandatory alert is durably recorded and visible to the owner, which the `.llm-circuit-unavailable` sidecar already provides and which `src/api/db_reads.py::get_llm_circuit_health()` already surfaces to the dashboard as `decision_path_status=degraded_cost_circuit_unavailable`. The precondition now checks that that record can be written; a muted transport downgrades to a warning and cannot suspend trading, while having nowhere at all to deliver or record still fails closed.
 
 **Verified on main.** `src/cost_circuit.py::_durable_alert_surface_ok` gates the startup check; `tests/test_cost_circuit.py::test_muted_transport_does_not_suspend_paid_analysis` fails on the previous code and `test_no_durable_record_surface_still_latches` keeps the genuine latch. Clearing the existing production latch requires `scripts/cost_circuit.py reset` AFTER this deploy, because the reset path itself builds a breaker and would re-latch on the old precondition.
+### 2026-09-30 — the scale-in "stop did not go back on" owner alert existed and was never called
+
+**In plain words:** the scale-in path must cancel the resting protective sell to add to a holding (the broker will not hold a protective sell and a new buy on the same symbol at once). Its own design says a failed rearm is a fail-closed owner page. The page — `src/execution/scale_in.py::alert_rearm_failed` — had ZERO callers, so both real failure paths only wrote a log line: the crash-recovery drain's "rearm FAILED", and `restore_after_failed_add` whose own comment reads "OWNER must be alerted". A position could sit at the broker with nothing standing watch and nobody told.
+
+**Fixed.** Both paths now call it. The alert writes a durable `specialist_evidence` row (`agent_name="scale_in_rearm_failure"`, `position_protected: false`) on EVERY occurrence, so the fault survives Telegram being muted (it is, as of today) and shows on the surface the API/journal already reads; the Telegram page itself is claimed at most once per symbol per trading day through the new `src/coverage_watchdog.py::claim_typed_alert`, the generic form of the existing per-type claim helpers, so one naked position cannot page 44 times. `tests/test_scale_in.py::test_drain_rearm_failure_pages_the_owner` was confirmed to FAIL with the call removed.
