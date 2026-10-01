@@ -213,13 +213,33 @@ class _Analysis:
         self.atr_14 = 2.0
 
 
-@pytest.mark.parametrize("gap", [0.0, 0.5, 0.99, 1.0, 1.01, 1.5, 5.0])
+# gap -> the answer, written out BY HAND from the bar range stated in the
+# test's own docstring. Deliberately NOT recomputed from `bar_low`/`bar_high`
+# at assert time: the previous version did exactly that and the comparison
+# became true by construction, so the test could no longer fail if the
+# matcher's rule changed underneath it.
+_MATCH_TRUTH_TABLE = {
+    0.0: 100.0,    # stop 100.00 — inside the bar
+    0.5: 100.0,    # stop  99.50 — inside the bar
+    0.99: 100.0,   # stop  99.01 — inside the bar, a cent above its low
+    1.0: 100.0,    # stop  99.00 — exactly ON the bar's low, inclusive
+    1.01: None,    # stop  98.99 — a cent BELOW the bar's low
+    1.5: None,     # stop  98.50 — outside
+    5.0: None,     # stop  95.00 — far outside
+}
+
+
+@pytest.mark.parametrize("gap", sorted(_MATCH_TRUTH_TABLE))
 def test_constructor_and_exit_guard_match_identically(gap):
     """Straddles the FORMING BAR's low — inside, on it, and outside.
 
     Item 215: the boundary both implementations must agree on is no longer
     the zone's edge but the low of a bar that drew the level. The bar here
     traded 99.0-100.5, so gaps up to 1.0 rest on it and larger ones do not.
+
+    The zone here is 1.50 wide against a stop distance of at least 9.50, so
+    the item-55 precision bound admits every case and this test is measuring
+    only the membership boundary, which is what it is for.
     """
     level_price = 100.0
     stop = level_price - gap
@@ -239,41 +259,120 @@ def test_constructor_and_exit_guard_match_identically(gap):
         level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
     )
     assert from_constructor == from_exit_guard
-
-    expected = level_price if bar_low <= stop <= bar_high else None
-    assert from_constructor == expected
+    assert from_constructor == _MATCH_TRUTH_TABLE[gap]
 
 
 def test_boundary_scales_with_price_in_both_implementations():
-    """The bound is each level's OWN bar, so it cannot be one fraction of
-    price for every name.
+    """NO single fraction of price can reproduce the matcher's answers.
 
-    Item 215 replaced "inside the zone" with "inside the range of a bar that
-    drew the level". That keeps the property this test was written for — a
-    tolerance can never be inside one level's structure and outside
-    another's on the same day — and strengthens it: the widths below are
-    deliberately NOT a constant fraction of price, because the instrument
-    does not trade one.
+    This is the property the file was written to defend and it is stated as
+    something that can FAIL. The previous version hand-supplied a bar and
+    asserted that a point inside that bar matched, which is true by
+    construction whatever the rule is; its docstring still claimed to be
+    strengthening the price-scaling property. Restored here as a search: if
+    ANY constant percentage-of-price tolerance could reproduce every answer
+    below, the matcher is secretly a fixed fraction of price again and this
+    test fails and names the fraction.
+
+    The three bars below are real-shaped, not constant-shaped: 0.7%, 1.9%
+    and 0.4% of their own price. Both implementations are checked, because
+    `src/risk/exit_guard.py` keeps a hand-copy of the rule.
     """
     cases = {
         10.0: (9.93, 10.02),      # 0.7% below the level
         100.0: (98.10, 100.40),   # 1.9% below
         1000.0: (996.00, 1002.0), # 0.4% below
     }
+    observed: list[tuple[float, float, bool]] = []
     for level_price, (bar_low, bar_high) in cases.items():
         touches = {level_price: 5}
         bars = {level_price: [(bar_low, bar_high)]}
         entry = level_price * 1.2
         c = _constructor()
+        for stop, inside in (
+            (bar_low + (bar_high - bar_low) * 0.01, True),
+            (bar_low - (bar_high - bar_low) * 0.01, False),
+        ):
+            from_ctor = c._level_backing_stop(
+                _Analysis([level_price], touches, bars), entry, stop, False,
+            )
+            from_guard = _structural_level_backing_stop(
+                entry_price=entry, stop_loss=stop, is_short=False,
+                computed_levels=[level_price], computed_level_touches=touches,
+                computed_level_bars=bars, min_level_touches=5,
+                level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
+            )
+            assert from_ctor == from_guard, (level_price, stop)
+            assert (from_ctor == level_price) is inside, (level_price, stop)
+            observed.append(
+                (abs(stop - level_price) / level_price * 100.0, level_price, inside)
+            )
 
-        just_inside = bar_low + (bar_high - bar_low) * 0.01
-        just_outside = bar_low - (bar_high - bar_low) * 0.01
-        assert c._level_backing_stop(
-            _Analysis([level_price], touches, bars), entry, just_inside, False,
-        ) == level_price
-        assert c._level_backing_stop(
-            _Analysis([level_price], touches, bars), entry, just_outside, False,
-        ) is None
+    # The search. A constant-fraction rule would accept exactly the cases
+    # whose gap is at or under some single percentage; sweep every candidate
+    # boundary the observations themselves offer and require all of them to
+    # misclassify something.
+    candidates = sorted({round(g, 10) for g, _, _ in observed})
+    reproducing = [
+        pct for pct in candidates
+        if all((gap <= pct + 1e-12) is inside for gap, _, inside in observed)
+    ]
+    assert not reproducing, (
+        "the matcher is reproducible by a constant %-of-price tolerance "
+        f"{reproducing} — the price-scaling property is gone"
+    )
+
+
+def test_stop_to_level_distance_is_bounded_by_the_trade_own_risk():
+    """NOTHING previously pinned a maximum stop-to-level distance.
+
+    Found by the adversary pass on PR 880: bar membership alone has no
+    outward ceiling, because the zone's edges ARE bar extremes, so the
+    furthest passing stop sits a full zone halfwidth from the level — median
+    3.33% of price and up to 36.07% on the desk's own 704-level set, against
+    a hard 1.00% before. The break check then evaluates the LEVEL, so the
+    desk could report structure intact with the stop a fifth of the price
+    away. Item 55's bound: the level's measured zone must be strictly
+    narrower than the trade's own risk, which makes
+    ``abs(stop - level) < abs(entry - stop)`` a guarantee rather than a hope.
+    """
+    level_price, entry = 100.0, 110.0
+    touches = {level_price: 5}
+    c = _constructor()
+
+    def match(bar, stop):
+        bars = {level_price: [bar]}
+        from_ctor = c._level_backing_stop(
+            _Analysis([level_price], touches, bars), entry, stop, False,
+        )
+        from_guard = _structural_level_backing_stop(
+            entry_price=entry, stop_loss=stop, is_short=False,
+            computed_levels=[level_price], computed_level_touches=touches,
+            computed_level_bars=bars, min_level_touches=5,
+            level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
+        )
+        assert from_ctor == from_guard, (bar, stop)
+        return from_ctor
+
+    # A 25-wide turning point. The stop rests inside it, so the item-215
+    # membership test alone would call this level-backed with the level 15.0
+    # away on a 25.0 risk. Refused.
+    assert match((80.0, 105.0), 85.0) is None
+    # Same bar, same membership, but the risk is now wider than the zone.
+    assert match((80.0, 105.0), 74.0) is None  # outside the bar: still no
+    # A precise turning point backing the same stop: admitted.
+    assert match((84.5, 86.0), 85.0) == level_price
+
+    # The guarantee itself, swept over widths either side of the boundary.
+    for half in (0.5, 2.0, 5.0, 11.9, 12.4, 12.5, 12.6, 20.0):
+        stop = entry - 25.0  # 85.0, risk 25.0
+        bar = (stop - half, stop + half)
+        got = match(bar, stop)
+        if got is not None:
+            assert abs(stop - got) < abs(entry - stop), half
+            assert 2 * half < abs(entry - stop), half
+        else:
+            assert 2 * half >= abs(entry - stop), half
 
 # ---------------------------------------------------------------------------
 # 4. Mechanical guards — the rules in section 1 only hold if nobody quietly

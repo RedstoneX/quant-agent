@@ -145,7 +145,10 @@ CLUSTER_TOLERANCE_PCT = CLUSTER_TOLERANCE_PCT_FALLBACK
 
 
 def stop_rests_on_level(
-    stop_price: float, pivot_bars: "tuple | list | None"
+    stop_price: float,
+    pivot_bars: "tuple | list | None",
+    *,
+    stop_distance: float | None = None,
 ) -> bool:
     """Is `stop_price` AT this level, rather than merely inside its band?
 
@@ -164,11 +167,55 @@ def stop_rests_on_level(
     read off the same bars `find_structural_levels` clustered, so it can never
     drift from the object it is matching.
 
-    Fail closed: no bar ranges, or a non-finite stop, means NOT backed, which
-    routes the stop to the ordinary ATR floor exactly as an unmatched stop
-    does today.
+    **THE OUTWARD BOUND (adversary pass, 2026-09-30).** Bar membership alone
+    is NOT enough, and on its own it is a one-way loosening. The furthest a
+    stop can sit from `Level.price` and still pass the membership test is the
+    zone halfwidth exactly, because the zone edges ARE bar extremes and an
+    extreme always lies inside some bar. Measured over the 704 levels this
+    desk's own 400-bar set produces under the clustering in `_cluster`: median
+    halfwidth 3.33% of price, p90 9.41%, max 36.07%; restricted to levels with
+    at least 5 touches, median 4.31% and 38% of them above 5%. Against a hard
+    1.00% on the prior rule. With the break check evaluating the matched LEVEL
+    price rather than the stop, that permits "structure intact" reported with
+    the stop a fifth of the price away. So membership needs a ceiling.
+
+    `stop_distance` is that ceiling and it introduces NO number. It is
+    ``abs(entry_price - stop_loss)`` — the trade's own risk, already decided
+    before this question is asked. The rule: **the level must be more precise
+    than the thing it is backing.** The level's measured zone (``min(low)`` to
+    ``max(high)`` over `pivot_bars`, the same span `cluster_span` reports) must
+    be STRICTLY NARROWER than the stop distance. Because the stop-to-level gap
+    can never exceed that span, the bound guarantees
+    ``abs(stop - level) < abs(entry - stop)``: the level a stop claims to rest
+    on is never further from the stop than the stop is from the entry. The
+    bound is a property of the trade, not a constant, so there is nothing to
+    sweep and nothing to ratify.
+
+    What it admits and refuses, measured on the same 704 levels, using the
+    desk's own two existing stop floors as the stop distance (no new number is
+    introduced by the measurement either): at a 1.0-ATR stop it admits 33/704
+    levels (5%), and 1/154 of the >=5-touch levels; at a 2.5-ATR stop it admits
+    465/704 (66%), and 63/154 (41%) of the >=5-touch levels. The levels it
+    refuses at 2.5 ATR have median halfwidth 5.64% of price and reach 36.07%;
+    the widest level it admits has halfwidth 13.41%, which is still inside the
+    trade's own risk by construction. The exemption therefore becomes rare on
+    tight stops, which is the honest consequence of refusing to pick a width:
+    a level too vague to be more precise than the stop cannot earn a stop the
+    right to be tighter than the noise floor.
+
+    Fail closed, in both directions: no bar ranges, a non-finite stop, or a
+    `stop_distance` that is missing, non-finite or non-positive all mean NOT
+    backed, which routes the stop to the ordinary ATR floor exactly as an
+    unmatched stop does today.
     """
     if not math.isfinite(stop_price):
+        return False
+    if stop_distance is None or not math.isfinite(stop_distance) or stop_distance <= 0:
+        return False
+    zone_low, zone_high = _pivot_bar_span(pivot_bars)
+    if zone_low is None or zone_high is None:
+        return False
+    if (zone_high - zone_low) >= stop_distance:
         return False
     for rng in pivot_bars or ():
         try:
@@ -180,6 +227,31 @@ def stop_rests_on_level(
         if low <= stop_price <= high:
             return True
     return False
+
+
+def _pivot_bar_span(
+    pivot_bars: "tuple | list | None",
+) -> "tuple[float | None, float | None]":
+    """``(min low, max high)`` over a level's forming bars, or ``(None, None)``.
+
+    The same span `cluster_span` computes, recovered from the ``(low, high)``
+    pairs that travel with the level on `TechAnalysisResult.computed_level_bars`
+    rather than from the cluster object, which the risk seats never see.
+    """
+    lows: list[float] = []
+    highs: list[float] = []
+    for rng in pivot_bars or ():
+        try:
+            low, high = float(rng[0]), float(rng[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+            continue
+        lows.append(low)
+        highs.append(high)
+    if not lows or not highs:
+        return None, None
+    return min(lows), max(highs)
 
 
 def level_zone_halfwidth(
@@ -597,12 +669,26 @@ def _cluster(
     pivots belong to the same level when the price RANGES their bars actually
     traded overlap.
 
-    **COMPLETE LINKAGE, and that is the load-bearing word.** A pivot joins a
-    level only if its bar range overlaps the range of EVERY member already
-    in it — never merely the nearest one. Equivalently, the members' ranges
-    must share at least one common price: the running intersection
-    ``[max(low), min(high))]`` stays non-empty. So every level names a price
-    band that every one of its bars actually traded.
+    **THE ACCEPTANCE TEST IS ALL-MEMBERS; THE PARTITION IS GREEDY FIRST-FIT,
+    AND THE DIFFERENCE IS STATED HERE RATHER THAN GLOSSED.** A pivot joins a
+    level only if its bar range overlaps the range of EVERY member already in
+    it — never merely the nearest one. Equivalently, the members' ranges must
+    share at least one common price: the running intersection
+    ``[max(low), min(high)]`` stays non-empty. So every level names a price
+    band that every one of its bars actually traded, and that invariant holds
+    unconditionally.
+
+    What this is NOT is agglomerative complete-linkage clustering, and an
+    earlier version of this docstring said it was. The loop below sweeps the
+    pivots in ascending price and puts each into the FIRST existing level that
+    accepts it, so a pivot whose bar overlaps two levels joins the
+    lower-priced one and the partition depends on the sweep order. True
+    complete linkage would merge the globally closest pair at every step and
+    is order-independent. The all-members acceptance test is what buys the
+    anti-chaining property described below; the first-fit assignment is a
+    deliberate, cheaper choice and the resulting partition is not claimed to
+    be optimal. An untrue description of an algorithm is the same class of
+    defect as an untrue alert, so it is written down rather than implied.
 
     Single linkage (chaining a pivot in when it reaches any one member) was
     tried first and is WRONG here for the reason this desk already wrote

@@ -2409,7 +2409,19 @@ class PortfolioConstructor:
             # to the ordinary ATR floor, exactly as an unmatched stop does.
             # The measured zone stays on the level for reporting; it is no
             # longer what decides the exemption.
-            if not stop_rests_on_level(stop_loss, bars_by_price.get(price)):
+            # ...AND the level must be more precise than the trade it is
+            # backing: its measured zone strictly narrower than the stop
+            # distance. Bar membership alone put NO ceiling on how far the
+            # stop could sit from the level (the zone edges are bar extremes,
+            # so the furthest passing stop is the halfwidth exactly — median
+            # 3.33% of price and up to 36.07% on this desk's own 704-level
+            # set), while the break check reads the LEVEL price. No number is
+            # introduced: the ceiling is this trade's own risk.
+            if not stop_rests_on_level(
+                stop_loss,
+                bars_by_price.get(price),
+                stop_distance=abs(entry_price - stop_loss),
+            ):
                 continue
             gap = abs(stop_loss - price)
             if gap < best_gap:

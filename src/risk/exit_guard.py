@@ -1977,8 +1977,30 @@ def _structural_level_backing_stop(
         # full only because this module imports nothing.
         if price * level_cluster_tolerance_pct / 100.0 <= 0:
             continue
-        rests = False
+        # OUTWARD BOUND, mirroring `src.data.levels.stop_rests_on_level`: the
+        # level's measured zone must be STRICTLY NARROWER than the trade's own
+        # risk. Membership in a forming bar alone has no ceiling — the zone
+        # edges ARE bar extremes — so without this a stop could be reported
+        # level-backed a fifth of the price away from the level the break
+        # check then evaluates. Fail closed when the risk is unusable.
+        stop_distance = abs(entry_price - stop_loss)
+        if not math.isfinite(stop_distance) or stop_distance <= 0:
+            continue
+        ranges = []
         for rng in (bars_by_price.get(price) or ()):
+            try:
+                low, high = float(rng[0]), float(rng[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+                continue
+            ranges.append((low, high))
+        if not ranges:
+            continue
+        if (max(h for _, h in ranges) - min(l for l, _ in ranges)) >= stop_distance:
+            continue
+        rests = False
+        for rng in ranges:
             try:
                 low, high = float(rng[0]), float(rng[1])
             except (TypeError, ValueError, IndexError):
@@ -2199,7 +2221,10 @@ def check_structural_protection(
             cur = _finite(current_price)
             # NOTE: matching WHICH level backs the stop (above, via
             # `_structural_level_backing_stop`) asks an IDENTITY question
-            # and is answered inside that level's own 1%-of-price zone.
+            # and is answered by whether the stop rests on a BAR that drew
+            # that level, with the level's measured zone required to be
+            # narrower than the trade's own risk (items 55 and 215). No
+            # percentage of price is involved on that side any more.
             # Deciding whether that level has since BROKEN is a different
             # question — it is about whether an adverse move is real, which
             # IS a volatility question — so it uses a wider, decisive

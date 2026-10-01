@@ -827,8 +827,19 @@ numbers:
       relevant at all - scales off this one number.
   - id: src.config.RiskConfig.min_level_touches_for_stop_honor
     value: 5
-    status: sourced
+    status: arbitrary
     site: src/config.py
+    downgraded: >-
+      WAS `sourced`. DOWNGRADED 2026-10-01 (docs/WORK.md item 55), because the
+      input its source was measured on no longer exists. The table below was
+      built with levels clustered by the flat 1%-of-price rule; item 55 deletes
+      that rule and clusters on the overlap of the bars that made each pivot
+      instead, so the OBJECT the touch count is counting changed. docs/OUTCOME.md
+      requires every number derived from a changed input to be re-checked, and
+      the re-derivation was attempted twice and FAILED both times -- both
+      reasons recorded in docs/WORK.md item 55 rather than glossed. The value
+      stays at 5 because moving it would be inventing a number; the status no
+      longer claims a measurement that stands.
     source: >-
       In-repo measured study at src/config.py:722-740 (Phase 12.1, 2026-09-03,
       docs/RESEARCH_FINDINGS.md section 7): a real-vs-shuffled bounce-probability
@@ -846,8 +857,21 @@ numbers:
       chosen: below it a stop is not treated as level-backed and falls back to
       the unbacked-stop floor exactly as any unbacked stop does.
     open_question: >-
-      Whether that table -- 101 symbols over 5 years of daily bars -- transfers
-      to the holding periods and names this desk actually trades.
+      Does the real-versus-shuffled separation survive the new overlap
+      clustering, and at what touch count? Unanswered: the attempt on the
+      276-bar panel this repo holds yields n=27 real observations at 5 touches
+      against n=400+ in the original, and the shuffled control scored HIGHER
+      than real at every touch count, which means the reconstruction is not
+      the original test. docs/WORK.md item 55 names the recording that would
+      settle it. The older open question stands too: whether a table over 101
+      symbols and 5 years of daily bars transfers to the holding periods and
+      names this desk actually trades.
+    cost_while_unanswered: >-
+      Five touches is the bar a level must clear before a stop resting on it
+      earns the tight-stop exemption (1.0 ATR instead of 2.5 ATR), so an
+      unproven bar decides how tight a live stop may be. Set too low, a stop is
+      honoured against a separation that could be noise; set too high, real
+      structure is ignored and every stop is widened to the unbacked floor.
   - id: src.config.RiskConfig.min_position_risk_pct
     value: 0.5
     status: derived
