@@ -4331,6 +4331,39 @@ def _targets_admitted_to_book(
     return admitted, refused
 
 
+def _record_mechanical_soft_exit_restores(pipeline, ctx) -> None:
+    """Write down what the MECHANICAL soft-exit heal did this run.
+
+    Board item 78. `src.seat_heal.restore_stated_soft_exits` puts back a
+    `thesis_invalid_if` that a later null-wipe blanked, using the sentence
+    the model itself already wrote, and it never invents one. It runs
+    inside a Pydantic validator, so it has no run id and no database
+    handle and has never recorded a single thing. Two of item 78's three
+    removal criteria are claims about this heal, so they could not be
+    judged at all.
+
+    RECORDING ONLY. Nothing reads these rows back into a trading
+    decision and they may never be swept for a threshold. Never raises.
+    """
+    try:
+        from src.seat_heal import drain_restore_observations
+
+        observations, dropped = drain_restore_observations()
+        if not observations:
+            return
+        db = getattr(pipeline, "db", None)
+        writer = getattr(db, "record_soft_exit_heal_restores", None)
+        if not callable(writer):
+            return
+        writer(
+            observations=observations,
+            run_id=getattr(ctx, "run_id", None),
+            dropped=dropped,
+        )
+    except Exception as exc:  # noqa: BLE001 — a recording never blocks a trade
+        logger.error("mechanical soft-exit heal recording failed: %s", exc)
+
+
 def _record_soft_exit_heals(pipeline, ctx) -> None:
     """Drain the PM's per-name soft-exit heal outcomes onto ctx and to disk.
 
@@ -4347,6 +4380,7 @@ def _record_soft_exit_heals(pipeline, ctx) -> None:
     carries the same fact forward so the refusal can quote what really
     happened instead of asserting a retry. Recording only; never raises.
     """
+    _record_mechanical_soft_exit_restores(pipeline, ctx)
     try:
         agent = getattr(pipeline, "portfolio_manager", None)
         drain = getattr(agent, "drain_soft_exit_heals", None)
