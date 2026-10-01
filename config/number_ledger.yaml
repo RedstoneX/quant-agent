@@ -7063,7 +7063,7 @@ numbers:
     note: >-
       Size assumed for every BUY-rated candidate in the sector-concentration
       preview the PM reads before deciding (src/pipeline.py:6150-6160); the
-      one caller (src/pipeline_stages.py:4942) passes nothing. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): take the size from `_clamp_queued_earnings_buys(max_pct)`, the other 5.0 in this file. FAILED -- same digits, different quantity (a cap on resulting weight versus an assumed fresh buy), and tying them would invent a relationship the code does not have. Attempt (2): derive it from the constructor's own sizing. FAILED as a derivation but SURVIVES as the measurement below, because the constructor sizes off a stop distance this preview has not computed yet, so there is no arithmetic -- only a side-by-side read. Value unchanged.
+      one caller (src/pipeline_stages.py:4942) passes nothing. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): take the size from `_clamp_queued_earnings_buys(max_pct)`, the other 5.0 in this file. FAILED -- same digits, different quantity (a cap on resulting weight versus an assumed fresh buy), and tying them would invent a relationship the code does not have. Attempt (2): derive it from the constructor's own sizing. FAILED as a derivation but SURVIVES as the measurement below, because the constructor sizes off a stop distance this preview has not computed yet, so there is no arithmetic -- only a side-by-side read. Value unchanged. NOTE 2026-10-01: that row no longer exists -- board item 186 deleted the 5%-of-book clamp rather than re-deriving it, and an unread filing now refuses the BUY outright, so this attempt cannot be revived from it.
     open_question: >-
       Should the preview size each candidate at the size the constructor would
       actually give it (its risk budget over its stop distance) rather than a
@@ -7257,76 +7257,6 @@ numbers:
       caller in the trading path, and the only caller
       (scripts/watchlist_candidates.py:127) passes it explicitly. It proposes
       names for a human to add; it never adds one.
-  - id: src.pipeline.TradingPipeline._clamp_queued_earnings_buys(max_pct)
-    value: 5
-    status: arbitrary
-    site: src/pipeline.py
-    note: >-
-      Resulting-weight cap on a BUY whose earnings filing is queued but not
-      yet analysed (src/pipeline.py:5109-5125). The one caller
-      (src/pipeline_stages.py:5679) passes nothing, so this default is the
-      live cap. The PM prompt asks for the same 5.0 in prose; that is the same
-      number restated, not a source.
-      ITEM 186 PASS 2026-09-26 — RESEARCHED, and the near-miss is written
-      down so that nobody adopts it later. The published quantity sitting
-      closest is the average one-day ABSOLUTE earnings-announcement return,
-      about 5.07% per firm in the asset-pricing-on-earnings-announcement-days
-      literature. It is NOT this number and must never be cited as its
-      source: 5.07% is the size of a MOVE, while 5.0 here is a share of the
-      BOOK. The two agreeing to two digits is a coincidence of units, and
-      adopting it would be exactly the "cited figure measures a different
-      quantity" error.
-      The derivation from the desk's own envelope was tried and does not
-      produce 5 either. The per-trade envelope `max_position_risk_pct` is 5%
-      of equity at risk if the stop is hit, but a gap through a stop on an
-      unread filing is precisely the case the stop does not cover, so the
-      bound is weight x move <= tolerable loss. Run forward with the
-      published ~5.07% move, a 5% loss tolerance would permit a weight near
-      100%: the per-trade envelope does not bind here at all and cannot be
-      this cap's parent.
-      Run BACKWARD it is informative, as arithmetic on this repo's own live
-      numbers rather than as a source: today's 5% cap times a ~5.07% move
-      implies the desk accepts roughly 0.25% of equity of unprotected
-      overnight exposure on a name nobody has read — about HALF
-      `min_position_risk_pct` (0.5%), the smallest risk this desk will open a
-      position for at all. So the cap is conservative on the desk's own
-      scale. That is a cross-check, not a source. NO VALUE PICKED. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. The item-186 pass above is derivation attempt (1) and it failed (5.07% is the size of a MOVE, not a share of the BOOK). Attempt (2): derive the cap from a ledgered per-name weight bound. FAILED -- the sector and position bounds in this ledger are themselves owner-ratified appetite with no measurement behind them, so the arithmetic would inherit an unsourced parent. Two attempts is the limit; the gap measurement below is the route. Value unchanged.
-    open_question: >-
-      NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that a global
-      constant governing risk is a defect to be replaced by a per-name read,
-      never an appetite to be answered, so the loss-tolerance L previously
-      routed here is WITHDRAWN and no value may be picked for it. Two honest
-      replacements were examined 2026-09-30. (a) The direct per-name read —
-      cap the weight at this name's own expected absolute earnings-day move
-      rather than at a share of the book — is BLOCKED ON DATA: the desk has
-      no implied-move feed and no stored history of past earnings-day
-      reactions, so the move term cannot be read per name, only imported from
-      a published cross-firm average that measures a different universe. (b)
-      A threshold-free alternative that needs NO number exists and is
-      recorded so it is not lost: an unread filing means the fundamental seat
-      is not convicted on that name, and standing doctrine already requires
-      all five seats to be right to enter, so the correct behaviour is to
-      REFUSE the BUY rather than to cap it at any percentage. That converts a
-      size cap into a block on live capital, so it goes in front of the
-      adversary before it ships and was deliberately NOT applied in this
-      pass. Until one of the two lands, 5 STANDS UNCHANGED and labelled. NO
-      VALUE PICKED, NO APPETITE ASKED.
-    cost_while_unanswered: >-
-      A name with an unread filing is capped at 5% of the book whatever its
-      stop distance, so the cap is either looser or tighter than the risk
-      envelope for that name, unknowably.
-    settles_by:
-      kind: "measurement"
-      state: "specified"
-      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
-      records: >-
-        the overnight gap each queued-but-unanalysed filing actually produced on this desk's own universe, read from
-        the price record rather than from any trade of ours, paired with the resulting weight this cap refused on that
-        name and the weight it allowed
-      closes_when: >-
-        the recorded gap distribution shows the resulting weight at which an unread filing's worst plausible overnight
-        move stays inside the per-name risk the desk already accepts; the cap is then read off those gaps instead of
-        being the PM prompt's own prose restated back at it
   - id: src.pipeline.TradingPipeline._force_delever:factor[0]
     value: 0.97
     status: derived

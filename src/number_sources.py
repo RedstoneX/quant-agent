@@ -243,10 +243,12 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/execution/broker.py",
     "src/execution/stop_repair.py",
     "src/coverage_watchdog.py",
-    # The pipeline's own decision/execution glue. `_clamp_queued_earnings_
-    # buys`' `max_pct=5.0` is a function-parameter default and the de-lever
-    # and midday order-price buffers are inline multipliers; rules (c) and
-    # (e) see them since 2026-09-19.
+    # The pipeline's own decision/execution glue. The de-lever and midday
+    # order-price buffers are inline multipliers and rule (e) has seen them
+    # since 2026-09-19; rule (c) (function-parameter defaults) was added the
+    # same day for `_clamp_queued_earnings_buys`' `max_pct=5.0`, which no
+    # longer exists — that gate refuses the BUY instead of sizing it (board
+    # item 186, 2026-10-01) — and the rule stays because the shape recurs.
     "src/pipeline.py",
     # Every seat's prompt-construction and LLM-call code -- the path from
     # evidence to a seat's verdict the scope rule names. Most of what lives
