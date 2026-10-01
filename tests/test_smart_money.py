@@ -742,3 +742,86 @@ def test_bullish_buy_value_term_is_unchanged_by_the_direction_channel():
     # The sale's contribution to that same term is neutralised to 0.
     sell = _insider(direction="sell", value=750_000)
     assert SmartMoneyAnalystAgent._transaction_rank(sell)[5] == 0
+
+
+def test_sale_census_counts_and_samples_sales_by_holdings_band():
+    """Board item 63: the sale side must be recorded even though it is
+    truncated out of what the analyst ever sees."""
+    from src.data.smart_money import _sale_census
+
+    buy = _insider(direction="buy", accession="0000000001-26-000010")
+    sale_small = _insider(
+        direction="sell", accession="0000000001-26-000011",
+    ).model_copy(update={
+        "holdings_fraction": 0.04, "holdings_fraction_band": "under_10pct",
+    })
+    sale_large = _insider(
+        direction="sell", accession="0000000001-26-000012",
+    ).model_copy(update={
+        "holdings_fraction": 0.80, "holdings_fraction_band": "over_50pct",
+    })
+
+    census = _sale_census([buy, sale_small, sale_large])
+
+    assert census["parsed_rows"] == 3
+    assert census["buy_rows"] == 1
+    assert census["sale_rows"] == 2
+    assert census["band_counts"] == {"under_10pct": 1, "over_50pct": 1}
+    # The forward return is forward: it is NOT computed here, and the
+    # recording says so rather than implying it holds one.
+    assert census["forward_return_joined"] is False
+    bands = {row["holdings_fraction_band"] for row in census["rows"]}
+    assert bands == {"under_10pct", "over_50pct"}
+    assert all(row["reference_price"] is not None for row in census["rows"])
+    assert all(row["transaction_date"] for row in census["rows"])
+    # No buy leaks into a recording whose whole purpose is the sale side.
+    assert len(census["rows"]) == 2
+
+
+def test_sale_census_is_empty_when_nothing_sold():
+    from src.data.smart_money import _sale_census
+
+    census = _sale_census([_insider(direction="buy")])
+    assert census["sale_rows"] == 0
+    assert census["rows"] == []
+
+
+def test_sale_census_row_sample_is_bounded():
+    from src.data.smart_money import MAX_SALE_CENSUS_ROWS, _sale_census
+
+    sales = [
+        _insider(
+            direction="sell", accession=f"0000000001-26-{index:06d}",
+        ).model_copy(update={"holdings_fraction_band": "over_50pct"})
+        for index in range(MAX_SALE_CENSUS_ROWS + 25)
+    ]
+    census = _sale_census(sales)
+    assert census["sale_rows"] == MAX_SALE_CENSUS_ROWS + 25
+    assert len(census["rows"]) == MAX_SALE_CENSUS_ROWS
+
+
+def test_fetch_stashes_the_sale_census_even_when_truncation_drops_sales(tmp_path):
+    """The measured production failure, reproduced: with more
+    admission-eligible buys than `max_observations` slots, no sale survives
+    into what the analyst sees -- but the census still records it."""
+    provider = SECForm4Provider(data_dir=str(tmp_path), max_observations=1)
+    rows = [
+        _insider(
+            symbol="NVDA", owner="1", direction="buy", value=9_000_000,
+            accession="0000000001-26-000021",
+        ).model_dump(mode="json"),
+        _insider(
+            symbol="NVDA", owner="2", direction="sell", value=5_000_000,
+            accession="0000000001-26-000022", row=1,
+        ).model_dump(mode="json"),
+    ]
+    (tmp_path / "smart_money").mkdir(parents=True, exist_ok=True)
+    provider.observations_path.parent.mkdir(parents=True, exist_ok=True)
+    provider.observations_path.write_text(json.dumps(rows))
+
+    observations, _error = provider.fetch(["NVDA"])
+
+    assert [item.direction for item in observations] == ["buy"]
+    assert provider.last_sale_census is not None
+    assert provider.last_sale_census["sale_rows"] == 1
+    assert provider.last_sale_census["buy_rows"] == 1
