@@ -12,12 +12,18 @@ Clamping a bad generator is not the same as having a good one.
 The rule depends on how the position is MANAGED, which the Technical Analyst
 decides at entry and which is pinned to the trade row alongside the horizon:
 
-**Type A — `range`.** There is structure on both sides and the target is a
-level someone is defending. Do not trail STRUCTURALLY until price EXCEEDS
-that target; the stop stays where it was placed at entry until then, so a
-position gets stopped out inside the very range it was bought to traverse
-if it trails on every wiggle. (Short mirror: the target is a level BELOW
-the short, and the stop does not move until price falls PAST it.)
+**Type A — `range`.** There is structure on both sides. The structural trail
+USED TO BE gated behind the recorded take-profit target, on the reasoning
+that a position which trails on every wiggle gets stopped out inside the very
+range it was bought to traverse. That gate was REMOVED on 2026-10-01 (item
+212, see `docs/INCIDENT_HISTORY.md`): the target is an unsourced number that
+never reaches the broker, and the structural trail now runs from entry on
+Type A exactly as it does on Type B. What the gate was really protecting
+against is now carried by the invariants every leg must clear — the ATR
+noise band, the minimum ratchet, and the minimum bar count below — not by a
+target. The paragraphs that follow describe the R-multiple ratchets, which
+are UNCHANGED; where they say the structural trail does not run below the
+target, that sentence is superseded by this one.
 
 2026-09-04 audit fix #3: "no trailing until the target is exceeded" used to
 mean a Type A trade got ZERO profit protection for its entire life until it
@@ -30,8 +36,8 @@ Elder's "Triple Screen"; the same R-multiple convention this codebase's own
 docs already use elsewhere) is to move the stop to breakeven once a trade
 has banked a defensible fraction of its planned risk — commonly +1R (one
 initial-risk-unit of profit). `compute_trailing_stop` now does exactly that
-for Type A specifically, ADDITIVE to the existing "no structural trail below
-target" rule above, which is unchanged: once price reaches entry +/- 1R (see
+for Type A specifically, ADDITIVE to the structural trail (which, since item
+212, runs from entry on Type A too): once price reaches entry +/- 1R (see
 `RANGE_BREAKEVEN_R_MULTIPLE`), the stop ratchets to breakeven if it hasn't
 already reached breakeven or better; once price then goes on to exceed the
 full target, the pre-existing structural/chandelier trail below takes back
