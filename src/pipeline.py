@@ -42,6 +42,7 @@ from src.data.earnings import EarningsDataProvider
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     GROSS_LADDER,
+    GROSS_LADDER_ALERT_PCT,
     GrossCeiling,
     RiskRuleEngine,
     apply_gross_ceiling,
@@ -13406,6 +13407,10 @@ class TradingPipeline:
             "drawdown_pct": ceiling.drawdown_pct,
             "rung": ceiling.rung,
             "alert_owner": ceiling.alert_owner,
+            # The level the alert fired at, carried so the owner message
+            # can state it instead of restating a literal that goes stale
+            # the day the sourced threshold moves (board item 182).
+            "alert_pct": GROSS_LADDER_ALERT_PCT,
             "reason": ceiling.reason,
             "distance_to_forced_liquidation_pct":
                 distance_to_forced_liquidation_pct(
