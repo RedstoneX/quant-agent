@@ -450,6 +450,13 @@ numbers:
       the owner to move"); as of 2026-09-25 it IS owner-ratified appetite
       (delegated to the adversary), value unchanged. Ratified, not sourced: no
       measurement picks 90 over any other terminal cap.
+      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
+      is never a global dial and re-affirmed as OUT of its scope. This is an
+      AGGREGATE rationing ceiling over the whole book, not a per-name risk
+      read: there is no single instrument whose behaviour it could be read
+      off, so the ruling's remedy (read it per name) does not apply and it is
+      not converted into a defect. It remains owner-ratified appetite with no
+      measurement behind it, which is why the status stays `arbitrary`.
     open_question: >-
       What terminal sector concentration does the owner accept, given the spec
       left the bound unstated?
@@ -540,6 +547,13 @@ numbers:
       read from the book's own correlation-distance tree (see the removal
       note further down this file), so the 40% now applies to a structural
       cluster rather than to a 0.7-threshold one.
+      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
+      is never a global dial and re-affirmed as OUT of its scope. This is an
+      AGGREGATE rationing ceiling over the whole book, not a per-name risk
+      read: there is no single instrument whose behaviour it could be read
+      off, so the ruling's remedy (read it per name) does not apply and it is
+      not converted into a defect. It remains owner-ratified appetite with no
+      measurement behind it, which is why the status stays `arbitrary`.
     open_question: >-
       What share of the total risk budget can one correlated cluster take
       before the book stops being several bets and becomes one?
@@ -571,6 +585,13 @@ numbers:
       capital-at-risk ceiling is the loss across the whole book the owner
       accepts in one correlated event, but no measurement of this account's
       correlated-gap behaviour stands behind the magnitude.
+      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
+      is never a global dial and re-affirmed as OUT of its scope. This is an
+      AGGREGATE rationing ceiling over the whole book, not a per-name risk
+      read: there is no single instrument whose behaviour it could be read
+      off, so the ruling's remedy (read it per name) does not apply and it is
+      not converted into a defect. It remains owner-ratified appetite with no
+      measurement behind it, which is why the status stays `arbitrary`.
     open_question: >-
       What total at-risk figure across the book corresponds to a loss the
       owner would accept in a single correlated event?
@@ -870,14 +891,23 @@ numbers:
       first version quoted "until a separate pass re-examines it" as text at
       this site; that phrase is in docs/, not in src/config.py.
     open_question: >-
-      Unchanged in substance, now with its blocker named: by how much does
-      overnight gap risk on a short exceed a long's, measured at a matched
-      adverse tail percentile on the gap distribution of the names this desk
-      shorts? Answerable only after a stored-bar build, since no bar table
-      exists. Until then it is OWNER APPETITE, and the question to route is:
-      how much smaller do you want a short to open than a long carrying the
-      same stated risk, given the loss above the stop is unbounded? Today's
-      1.5 means a short opens at two-thirds the size.
+      NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that risk is
+      never a global dial: it is read per name off that instrument's own
+      behaviour now and off how convicted the seats are on it. So the
+      appetite question previously routed here ("how much smaller should a
+      short open") is WITHDRAWN, not pending, and no value may be picked to
+      settle it. What replaces it is a per-name read: this stock's own
+      overnight-gap magnitude relative to its own stop distance, so a
+      tight-stopped name is haircut harder than a wide-stopped one. That read
+      is BLOCKED ON DATA and on nothing else. Verified 2026-09-30 at the two
+      live sizing sites (src/portfolio_constructor.py, the short branch and
+      the risk-plan loop): they are handed `analysis.atr_14` and a stop
+      price, never bars, and the database still holds no OHLCV table, so the
+      gap term cannot be read at sizing time. Writing the gap as some
+      multiple of ATR would invent that multiple, which is the exact failure
+      this ledger exists to stop, so 1.5 STANDS UNCHANGED and labelled rather
+      than being replaced by a better-dressed guess. Unblocked by a stored
+      daily-bar table and by nothing else.
     cost_while_unanswered: >-
       Shorts are sized by a haircut whose direction is arithmetic and whose
       magnitude is neither sourced nor measured.
@@ -2102,6 +2132,13 @@ numbers:
       percent non-arbitrary (docs/OUTCOME.md). Board item 104 separately
       records that the prompts describe the soft bound as if it were the hard
       one.
+      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
+      is never a global dial and re-affirmed as OUT of its scope. This is an
+      AGGREGATE rationing ceiling over the whole book, not a per-name risk
+      read: there is no single instrument whose behaviour it could be read
+      off, so the ruling's remedy (read it per name) does not apply and it is
+      not converted into a defect. It remains owner-ratified appetite with no
+      measurement behind it, which is why the status stays `arbitrary`.
     open_question: >-
       What terminal sector notional does the owner accept?
     cost_while_unanswered: >-
@@ -2944,6 +2981,27 @@ numbers:
       the gate would have added seven such windows across nine evaluation
       runs on an eleven-name book. The value stays 2.0 and the failure is on
       file rather than quietly dropped.
+      CONTINGENCY RECORDED 2026-09-30 (second pass, same day): the rejection
+      of "delete the gate" rests ENTIRELY on that naked-protection window,
+      and that window is being removed. Open PR 806
+      (`fix/atomic-stop-amend`, "Move a protective stop in place instead of
+      cancel+resubmit") adds `_amend_resting_stop_price` to
+      `src/execution/broker.py`; it is NOT on main (verified 2026-09-30, zero
+      occurrences on `origin/main`), which is why nothing changed here today.
+      If and when it merges, a price amend is atomic and there is no instant
+      at which the position is unprotected, the money cost of a replace is
+      already established as zero, and the deterministic trail is evaluated
+      once per session per position so the amend count is bounded at one per
+      session whatever this floor is. At that point this gate has no
+      surviving cost to defend and the honest floor becomes the venue
+      minimum price increment -- one tick, SEC Rule 612 / Alpaca's published
+      $0.01-at-or-above-$1 and $0.0001-below split, which
+      `src/execution/broker.py::_quantize_price` and
+      `src/execution/stop_records.py::_prices_match` already carry. That is
+      a reading off the instrument rather than a picked percentage, and it
+      is the same shape as item 183's removal of the picked
+      `min_trade_weight_delta` churn floor. Do NOT make that change while
+      806 is open; re-read this entry when it lands.
     open_question: >-
       CLOSED 2026-09-30 — both halves are now answered from the desk's own
       refusal record, with no new number and no owner input, exactly as this
@@ -4775,14 +4833,25 @@ numbers:
       position for at all. So the cap is conservative on the desk's own
       scale. That is a cross-check, not a source. NO VALUE PICKED.
     open_question: >-
-      OWNER APPETITE, and it is a loss tolerance rather than a weight: how
-      much of total equity may the desk lose overnight on ONE name whose
-      just-filed 10-Q or 10-K nobody has read, accepting that the protective
-      stop does not hold through a gap? Set that tolerance L and this cap
-      stops being a chosen number — it reads L divided by the expected
-      absolute earnings-day move, and L = 0.25% reproduces today's 5% cap.
-      The move term can be sourced (~5.07% published) or later measured per
-      name; only L is yours.
+      NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that a global
+      constant governing risk is a defect to be replaced by a per-name read,
+      never an appetite to be answered, so the loss-tolerance L previously
+      routed here is WITHDRAWN and no value may be picked for it. Two honest
+      replacements were examined 2026-09-30. (a) The direct per-name read —
+      cap the weight at this name's own expected absolute earnings-day move
+      rather than at a share of the book — is BLOCKED ON DATA: the desk has
+      no implied-move feed and no stored history of past earnings-day
+      reactions, so the move term cannot be read per name, only imported from
+      a published cross-firm average that measures a different universe. (b)
+      A threshold-free alternative that needs NO number exists and is
+      recorded so it is not lost: an unread filing means the fundamental seat
+      is not convicted on that name, and standing doctrine already requires
+      all five seats to be right to enter, so the correct behaviour is to
+      REFUSE the BUY rather than to cap it at any percentage. That converts a
+      size cap into a block on live capital, so it goes in front of the
+      adversary before it ships and was deliberately NOT applied in this
+      pass. Until one of the two lands, 5 STANDS UNCHANGED and labelled. NO
+      VALUE PICKED, NO APPETITE ASKED.
     cost_while_unanswered: >-
       A name with an unread filing is capped at 5% of the book whatever its
       stop distance, so the cap is either looser or tighter than the risk
