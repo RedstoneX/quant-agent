@@ -15110,14 +15110,33 @@ class TradingPipeline:
             universe |= {
                 str(s) for s in (getattr(ctx, "admitted_symbols", None) or set())
             }
+            # HELD NAMES ARE IN THE UNIVERSE (board item 220). The rule binds
+            # on STAYING as well as entering, and a held name that no seat
+            # answered about this review was previously absent from this
+            # record entirely — the one case where "no row" meant "nothing to
+            # see" rather than "nobody looked".
+            for pos in (getattr(ctx, "positions", None) or ()):
+                sym = (
+                    pos.get("symbol") if isinstance(pos, dict)
+                    else getattr(pos, "symbol", "")
+                )
+                if sym:
+                    universe.add(str(sym))
+            # A name whose technical row came back unreadable may be in no
+            # other list at all, and it is the one name that must not vanish.
+            unreadable_by_seat = {
+                "tech": set(getattr(ctx, "tech_unreadable", None) or {}),
+            }
+            universe |= {str(s) for s in unreadable_by_seat["tech"]}
             try:
                 universe |= {str(s) for s in self.config.trading.universe}
             except Exception:  # noqa: BLE001 — config shape is not this record's job
                 pass
 
-            for name, coverage in evidence_gate.name_coverage(
-                universe, seat_symbols
-            ).items():
+            coverage_by_name = evidence_gate.name_coverage(
+                universe, seat_symbols, unreadable_by_seat=unreadable_by_seat,
+            )
+            for name, coverage in coverage_by_name.items():
                 record = coverage.to_evidence()
                 _record(
                     name,
@@ -15126,6 +15145,31 @@ class TradingPipeline:
                     stage="evidence_gate",
                     gate="name_coverage",
                     **record,
+                )
+
+            # The per-name reading of the owner's blocking-seat mandate,
+            # carried out of here so the entry bar and the holding review
+            # both read a MISSING seat rather than an absent objection.
+            # Nothing is refused here; the categorical refusals already
+            # exist (`risk.rules.own_bar_block_reason` for entry, rotation's
+            # `ineligible_hold` tier for the held side) and both already
+            # treat "no technical read this review" as blocking.
+            gaps = evidence_gate.names_missing_blocking_seat(coverage_by_name)
+            ctx.name_coverage_blocking_gaps = dict(gaps)
+            if gaps:
+                logger.warning(
+                    "evidence gate: %d name(s) have NO answer from a seat that "
+                    "may stop the desk — treated as a missing seat, never as "
+                    "agreement: %s%s",
+                    len(gaps),
+                    "; ".join(
+                        f"{n}={','.join(seats)}" for n, seats in sorted(gaps.items())
+                    ),
+                    (
+                        " (returned-but-unreadable: "
+                        + ", ".join(sorted(unreadable_by_seat["tech"])) + ")"
+                        if unreadable_by_seat["tech"] else ""
+                    ),
                 )
         except Exception as exc:  # noqa: BLE001 — never break the decision
             logger.warning("evidence gate: name coverage write failed: %s", exc)

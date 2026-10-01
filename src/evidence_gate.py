@@ -754,31 +754,80 @@ class NameCoverage:
     covered: list[str] = field(default_factory=list)
     uncovered: list[str] = field(default_factory=list)
     run_scoped: list[str] = field(default_factory=list)
+    #: Seats that DID return something about this name which could not be
+    #: read. A strict subset of `uncovered` — an answer that cannot be read
+    #: is not an answer (board item 220). Carried separately only so the
+    #: record tells the TRUE story: this seat spoke and the desk lost it,
+    #: rather than this seat was never asked. Neither reads as agreement.
+    unreadable: list[str] = field(default_factory=list)
 
     def to_evidence(self) -> dict:
         return {
             "symbol": self.symbol,
             "covered_seats": list(self.covered),
             "uncovered_seats": list(self.uncovered),
+            "unreadable_seats": list(self.unreadable),
+            "blocking_seats_missing": list(self.blocking_missing),
             "run_scoped_seats": list(self.run_scoped),
             "summary": self.summary,
         }
 
     @property
+    def blocking_missing(self) -> list[str]:
+        """Uncovered seats that are allowed to stop the desk on this name.
+
+        `BLOCKING_SEATS` is the owner's 2026-09-18 mandate set; a seat in it
+        that did not answer ABOUT THIS NAME is a missing veto, never a
+        satisfied one.
+        """
+        return sorted(set(self.uncovered) & set(BLOCKING_SEATS))
+
+    @property
     def summary(self) -> str:
+        unread = (
+            f" (returned an unreadable answer: {', '.join(self.unreadable)})"
+            if self.unreadable else ""
+        )
         return (
             f"{self.symbol}: answered about this name by "
             f"{', '.join(self.covered) or 'no seat'}; no answer about this "
-            f"name from {', '.join(self.uncovered) or 'no seat'}; "
+            f"name from {', '.join(self.uncovered) or 'no seat'}{unread}; "
             f"market-wide seats not scoped to a name: "
             f"{', '.join(self.run_scoped) or 'none'}"
         )
+
+
+def names_missing_blocking_seat(coverage: dict) -> dict:
+    """{name: [blocking seats that did not answer about it]}, non-empty only.
+
+    Board item 220. The run-level `evaluate` asks whether a seat answered AT
+    ALL this tick; it cannot see a seat that answered about nine names and
+    lost the tenth. This is the per-name reading of the same mandate, and it
+    is what lets the entry and the stay paths treat a lost row as a MISSING
+    seat instead of as an absent objection.
+
+    Disclosure, like everything else in the per-name half: it reports, it
+    does not refuse. The refusals already exist and are categorical —
+    `risk.rules.own_bar_block_reason` blocks ENTRY on "no technical read
+    this review", and rotation's `ineligible_hold` tier drops a held name
+    that fails that same bar out of the ranked survivors. NEVER raises.
+    """
+    try:
+        return {
+            name: list(cov.blocking_missing)
+            for name, cov in (coverage or {}).items()
+            if getattr(cov, "blocking_missing", None)
+        }
+    except Exception as exc:  # noqa: BLE001 — a record must never break a run
+        logger.warning("evidence gate: blocking-gap read failed: %s", exc)
+        return {}
 
 
 def name_coverage(
     universe,
     seat_symbols,
     run_scoped=RUN_SCOPED_SEATS,
+    unreadable_by_seat=None,
 ) -> dict:
     """Record, per name, which name-scoped seats answered about it.
 
@@ -801,6 +850,13 @@ def name_coverage(
                 for s in (symbols or ())
                 if str(s).strip()
             }
+        unread_map = {}
+        for seat, symbols in dict(unreadable_by_seat or {}).items():
+            unread_map[str(seat)] = {
+                str(s).strip().upper()
+                for s in (symbols or ())
+                if str(s).strip()
+            }
         scoped = sorted({str(s) for s in (run_scoped or ())})
         out = {}
         for name in names:
@@ -809,9 +865,16 @@ def name_coverage(
                 if name in mapping.get(seat, set())
             )
             uncovered = sorted(set(NAME_SCOPED_SEATS) - set(covered))
+            # An unreadable answer is NOT coverage: the seat stays in
+            # `uncovered` and is additionally named here. Reporting it as
+            # covered would be the exact fabrication item 220 exists to stop.
+            unreadable = sorted(
+                seat for seat in uncovered
+                if name in unread_map.get(seat, set())
+            )
             out[name] = NameCoverage(
                 symbol=name, covered=covered, uncovered=uncovered,
-                run_scoped=scoped,
+                run_scoped=scoped, unreadable=unreadable,
             )
         return out
     except Exception as exc:  # noqa: BLE001 — a record must never break a run

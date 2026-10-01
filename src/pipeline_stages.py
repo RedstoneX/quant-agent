@@ -5258,6 +5258,9 @@ class MorningResearchStage:
                     for s in symbols_data if s["symbol"] in live_context
                 },
             )
+            ctx.tech_unreadable = dict(
+                getattr(self.tech_analyst, "last_unreadable", None) or {}
+            )
             resolved = [a for a in analyses_map.values() if a is not None]
             if resolved:
                 try:
@@ -6281,6 +6284,9 @@ class MorningResearchStage:
             prior_macro_outlook=prior_macro_state.get("equity_outlook"),
             # Same live-price rule as the main morning Tech pass (2026-09-14).
             intraday_context=self._live_context([s["symbol"] for s in symbols_data]),
+        )
+        ctx.tech_unreadable = dict(
+            getattr(self.tech_analyst, "last_unreadable", None) or {}
         )
         resolved = [a for a in analyses_map.values() if a is not None]
         if resolved:

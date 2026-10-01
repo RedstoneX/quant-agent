@@ -108,6 +108,11 @@ class RunContext:
     fomc_coverage: "FOMCCoverage | None" = None
     news_intel: "NewsIntelligenceReport | None" = None
     analyses: list = field(default_factory=list)  # list[TechAnalysisResult]
+    #: {symbol: why} — the technical seat returned a row for this name and
+    #: the row could not be read. Board item 220. Distinct from a name the
+    #: seat was never asked about: both are "no answer", but only this one
+    #: had an answer and lost it, and the owner-facing record must say which.
+    tech_unreadable: dict = field(default_factory=dict)
     earnings_results: list[dict] = field(default_factory=list)
     smart_money_observations: list = field(default_factory=list)
     smart_money_findings: list = field(default_factory=list)
@@ -116,6 +121,10 @@ class RunContext:
     # admission. Never written back to config.trading.universe and never
     # authored by an LLM.
     admitted_symbols: set[str] = field(default_factory=set)
+    #: {symbol: [blocking seats that did not answer about it]} — the per-name
+    #: reading of `evidence_gate.BLOCKING_SEATS`, written by
+    #: `_record_name_coverage`. Board item 220.
+    name_coverage_blocking_gaps: dict = field(default_factory=dict)
     smart_money_admissions: dict[str, dict] = field(default_factory=dict)
     # Conviction ledger (spec §9.5): {SYMBOL: {seat: {"conviction", "observation"}}}
     # for every raw nomination this run produced, seat names already
