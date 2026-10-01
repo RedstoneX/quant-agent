@@ -454,6 +454,8 @@ FAMILIES: tuple[FaultFamily, ...] = (
             # fault eight times in the retained logs before this was caught.
             r"Macro coverage: \d+/\d+ FRED series.*FAILED:",
         ),
+        # Item 119 retired 2026-10-01; the FRED-fetch reliability work it
+        # named now lives under item 187, so this family points there.
         board_item=187,
         measure_duration=True,
     ),
