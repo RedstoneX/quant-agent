@@ -455,10 +455,22 @@ suppressed. Second reviewer and a rehearsal-account dry run required.
 step.
 *Measured:* 4,438 lines (the 7th-largest tracked Python file), 39 distinct
 `self.` names, 4 foreign calls, collaborators `broker`, `db`, `market`.
-*Constructor:* `ProtectionService(orders: OrderPort, positions: PositionsPort,
-journal, quotes: QuotePort, clock)`. Only 4 foreign calls (`_format_qty`,
-`_record_exit_refusal`, `_retired_cash_park_symbol`, `_sweeper`) — shallow for its
-size, which is why it precedes exits.
+*Constructor (as built, 2026-10-01):* `ProtectionService(*, broker, db, journal,
+market, config, format_qty, record_exit_refusal, sweeper, retired_cash_park_symbol,
+state)`. Re-measured before building: 41 methods of which 9 are `@staticmethod`
+(the plan did not say), 39 `self.` names and the 4 foreign calls as planned, plus a
+FIFTH collaborator the plan missed — `config`, read through `getattr` in the
+orphan-submit reconciler. The journal port could NOT replace `self.db`: the bodies
+call 21 distinct `Database` methods (restore WAL rows, repegs, trades, fills), only
+3 of which are evidence rows the port could take; routing those is a body change
+and is left for its own reviewed step, so `db` stays a parameter and `journal` is
+held unused. `state` is where the two lazily-created names (`_unsettled_exit_orders`,
+`_last_stop_clear_refusal`) live: the host pipeline when delegated, so a method
+patched on the host that writes one mid-call is seen live. `TradingPipeline` keeps a
+thin delegating `ProtectionMixin` (`src/pipeline_protection_mixin.py`) that rebuilds
+the service from live collaborators per call, dispatches through a module function
+(tests bind these onto `MagicMock` hosts, where `self.<helper>` would be a mock), and
+sets `__wrapped__` so source-inspecting tests still read the moved bodies.
 *Proof:* standard, plus a replay in which every stop amendment, cancellation and
 resubmission is captured and compared field-by-field, and an explicit check that
 no stop moves in a direction it could not move before. Second reviewer and a

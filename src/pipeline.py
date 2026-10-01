@@ -53,8 +53,8 @@ from src.execution.broker import (
 from src.pipeline_context import PMFacts, RunContext, SessionType
 # Step 1 of docs/PIPELINE_SPLIT_PLAN.md: these moved to a mixin module and are
 # re-exported here because tests and other modules import them from `src.pipeline`.
+from src.pipeline_protection_mixin import ProtectionMixin
 from src.pipeline_protection import (  # noqa: F401
-    ProtectionMixin,
     _WAL_SELL_SENTINEL,
     _classify_coverage_gap,
     _finite_float_or_none,

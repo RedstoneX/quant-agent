@@ -264,7 +264,8 @@
         "_reconciled_exit_action"
       ],
       "classes": {
-        "ProtectionMixin": [
+        "ProtectionService": [
+          "__init__",
           "_alert_owner_elected_unfilled",
           "_alert_owner_exit_declined",
           "_alert_owner_kill_switch_blocked",
@@ -290,6 +291,48 @@
           "_open_exit_relief",
           "_order_accepted",
           "_parse_broker_fill_timestamp",
+          "_persist_orphaned_protection_restore",
+          "_reconcile_fills",
+          "_reconcile_orphan_pending_submits",
+          "_reconcile_stop_coverage",
+          "_reconcile_stop_out_fills",
+          "_record_reprotect_identity_gap",
+          "_register_exit_settlement",
+          "_repair_stop_coverage",
+          "_reprotect_residual_after_partial_sell",
+          "_resolve_wal_row_side",
+          "_restore_after_unconfirmed_sell",
+          "_still_uncovered",
+          "_submit_protected_sell",
+          "_surface_reconcile_outcomes",
+          "_wire_protective_stop_block_recorder",
+          "_write_ahead_protection_restore"
+        ]
+      }
+    },
+    "src/pipeline_protection_mixin.py": {
+      "module_functions": [
+        "_call"
+      ],
+      "classes": {
+        "ProtectionMixin": [
+          "_alert_owner_reprotect_left_naked",
+          "_alert_owner_session_repair_failed",
+          "_build",
+          "_cancel_stops_with_write_ahead",
+          "_cancel_stray_stops_on_flat",
+          "_current_position_qty_for_finalize",
+          "_delete_repeg_row",
+          "_derive_close_side_for_drain",
+          "_drain_pending_protection_restores",
+          "_drain_pending_repegs",
+          "_elected_unfilled_stop_row",
+          "_finalize_pending_protections",
+          "_finalize_protection_after_sell",
+          "_finalize_protection_after_sell_core",
+          "_flag_stop_out_anomaly",
+          "_handle_ex_dividends",
+          "_open_exit_relief",
           "_persist_orphaned_protection_restore",
           "_reconcile_fills",
           "_reconcile_orphan_pending_submits",

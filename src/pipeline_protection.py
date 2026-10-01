@@ -1,36 +1,19 @@
 """Protective stops and broker reconciliation: everything that places, cancels,
 restores or reconciles a protective stop or a sell against the broker.
-
-Step 2 of `docs/PIPELINE_SPLIT_PLAN.md` (board item 210). Moved verbatim out of
-`src/pipeline.py` as a mixin, so `TradingPipeline` keeps every one of these as
-its own attribute and every test that patches or calls them is untouched.
-
-This is the live-money code: the stop-coverage reconciler, the repair path, the
-protected sell, the write-ahead cancel/restore legs, the repeg and restore
-drains, the residual re-protection after a partial sell, the fill/stop-out
-reconcilers, and `_handle_ex_dividends` -- which the plan REASSIGNED here out of
-step 1's prompt-facts cluster because it shifts live stops down by the dividend
-(plan S1 correction, 2026-10-01). A stop-moving method does not belong in a
-module advertised as read-only.
-
-The module-level helpers travel with it: `_WAL_SELL_SENTINEL`,
-`_market_is_open_now`, `_price_is_through_stop`, `_position_notional`,
-`_classify_coverage_gap`, `_reconciled_exit_action` and the broker-fill float
-coercion `_finite_float_or_none`. All are re-exported from `src.pipeline` so
-`from src.pipeline import ...` keeps working -- but a test that PATCHES one of
-them on `src.pipeline` no longer reaches this module's code and must patch it
-here instead (plan S5, silent-behaviour risk 1).
-
-Nothing here may import `src.pipeline`: this module is one of its bases.
-"""
+Conversion step 12: `ProtectionService` (was `ProtectionMixin`) takes keyword-only
+collaborators; `TradingPipeline` reaches it via `src/pipeline_protection_mixin.py`.
+Bodies are byte-for-byte; module helpers are re-exported by `src.pipeline` but must
+be PATCHED here. May not import `src.pipeline`."""
 
 import json as _json
 import logging
 import math
+from types import SimpleNamespace as _SimpleNamespace
 
 from src.execution.broker import AlpacaBroker, _split_protective_qty
 from src.models import TradeDecision
 from src.pipeline_context import RunContext
+from src.ports.event_journal import EventJournal
 from src.storage.db import Database
 from src.trading_calendar import et_now, et_today
 
@@ -242,16 +225,33 @@ def _reconciled_exit_action(order_type: str | None) -> str:
     return "RECONCILED_EXIT"
 
 
-class ProtectionMixin:
-    """See the module docstring. Methods are the moved text, byte-for-byte."""
+class ProtectionService:
+    """Bodies byte-for-byte; `db` still read directly (21 methods); `journal` held."""
 
-    # Statuses Alpaca uses for terminal/non-terminal orders. Kept as a
-    # class attribute so tests can introspect the exact set the
-    # finalizer treats as "done".
+    # Alpaca's terminal order statuses; a class attribute so tests can read it.
     _TERMINAL_ORDER_STATUSES = {
         "filled", "canceled", "cancelled", "expired", "rejected",
         "done_for_day", "replaced",
     }
+
+    def __init__(
+        self, *, broker, db, journal: EventJournal, market=None, config=None,
+        format_qty, record_exit_refusal, sweeper, retired_cash_park_symbol,
+        state=None,
+    ) -> None:
+        self.broker, self.db, self.journal = broker, db, journal
+        self.market, self.config = market, config  # config is read via getattr
+        self._format_qty, self._record_exit_refusal = format_qty, record_exit_refusal
+        self._sweeper = sweeper
+        self._retired_cash_park_symbol = retired_cash_park_symbol
+        self._state = state if state is not None else _SimpleNamespace()  # home of the 2 lazy state names below (the host when delegated, so patched-host writes are seen live)
+
+    _unsettled_exit_orders = property(
+        lambda s: getattr(s._state, "_unsettled_exit_orders"),
+        lambda s, v: setattr(s._state, "_unsettled_exit_orders", v))
+    _last_stop_clear_refusal = property(
+        lambda s: getattr(s._state, "_last_stop_clear_refusal"),
+        lambda s, v: setattr(s._state, "_last_stop_clear_refusal", v))
 
     def _current_position_qty_for_finalize(self, symbol: str) -> float | None:
         """Re-read broker position for finalize residual / restore math.
