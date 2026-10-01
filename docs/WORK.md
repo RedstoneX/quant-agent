@@ -295,13 +295,11 @@ DONE WHEN:
 - [ ] no retry, no JSON repair and no new refusal is added by this change, and the entry and stay refusals keep the behaviour the 2026-09-25 ruling gave them
 
 
-**221. The sector preview sizes every candidate at a flat 5% while the constructor would size each one off its own stop distance, so the portfolio manager self-corrects against a mix no candidate is ever given — filed 2026-10-01.** Found during item 90's second routing tranche and deliberately not fixed there. The preview the portfolio manager reads to judge sector crowding assumes one identical position size for every candidate; the constructor that actually places the orders sizes each name from its own stop distance, so a wide-stopped name gets far less than the preview showed and a tight-stopped name far more. The manager therefore trims, drops or reorders names against a portfolio that will never exist. It governs how much money goes into each name, so it is a sizing defect, not a display one. Detail in `docs/board_notes/` item 221.
+
+**224. The desk records no realised sector weights, so concentration can only be guessed before the fact and never read after it -- filed 2026-10-01 from item 221.** Item 221 established that the pre-decision preview cannot project a sector mix at all, because sizing depends on a PM target that does not exist when the preview is built; what the desk could record instead, and does not, is the sector weights of the orders the constructor ACTUALLY built, once per run. Without that row nobody can say afterwards whether a session concentrated the book or not. Detail in `docs/board_notes/item-221.md`.
 
 DONE WHEN:
-- [ ] the sector preview sizes each candidate the same way the constructor would, from that candidate's own stop distance, and a test asserts the two agree on a candidate set with deliberately unequal stop distances
-- [ ] no flat per-candidate size survives anywhere in the preview path, proven by a test that fails if the preview's size for a candidate is independent of its stop distance
-- [ ] a recorded run shows the preview's sector weights and the constructor's realised sector weights for the same candidate set, and the gap between them is reported rather than assumed to be zero
-- [ ] no traded value is changed by the fix itself: the constructor's sizing rule is untouched and only the preview moves to match it
+- [ ] one durable row per run carries the realised `(sector, side)` weights of the orders the constructor built that session, written from executable product code with its call site named, and classified POPULATING rather than UNPROVEN against a real session
 
 **210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are.
 
@@ -370,6 +368,7 @@ DONE WHEN:
 - retired queue: 217
 - retired queue: 194
 - retired queue: 200
+- retired queue: 221
 - retired queue: 223
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
