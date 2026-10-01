@@ -674,8 +674,11 @@ missing evidence.
 
 If `risk` lands below **{{risk.min_position_risk_pct}}**, do not emit the target at all. Below the
 floor the idea is not worth trading: it pays full commission and full
-attention for an immaterial payoff, and the constructor will deny it
-anyway.
+attention for an immaterial payoff. Do not rely on the constructor to
+catch it — the risk-budget floor there only denies a grant the budget
+had to CUT below the floor, so a sub-floor request that fits the
+remaining headroom is granted in full and sized as asked. This floor
+is yours.
 
 **Nothing in this formula refers to the stop distance, the share price
 or the position's weight.** That is deliberate. Those belong to the
@@ -1006,7 +1009,9 @@ Semantics of `risk_allocation_pct`:
   gap-risk haircut further reduce a short's actual size — see "Shorting"
 - Never emit a target below `min_position_risk_pct`
   ({{risk.min_position_risk_pct}}) — under the floor the idea is not
-  worth trading and the constructor will deny it
+  worth trading, and the constructor will NOT catch it for you: its
+  floor only denies a grant the risk budget had to cut, so a sub-floor
+  request that fits the headroom is sized as asked
 - **All weights are GROSS-leverage weights.** The `Weight:` tag on each
   position (and the current weight the constructor diffs your target
   against) multiplies a leveraged/inverse ETF's market value by

@@ -187,3 +187,45 @@ def test_meta_reflector_contract_names_protected_agents() -> None:
         "rejects edits to them; the prompt should not silently allow "
         "the LLM to discover this through validation failure."
     )
+
+
+# ---------------------------------------------------------------------------
+# Board item 217: a prompt sentence saying some OTHER part of the desk already
+# handles a problem is code — the seat stands down on the strength of it. These
+# pin the wording of the three portfolio-manager claims checked against the
+# live constructor on 2026-10-01. A pinned string catches only the wording it
+# knows: a reworded false claim, or a new one, passes these untouched.
+# ---------------------------------------------------------------------------
+
+def _pm_prompt_flat() -> str:
+    from pathlib import Path as _P
+    src = (_P(__file__).resolve().parents[1]
+           / "config/prompts/portfolio_manager.md").read_text()
+    return " ".join(src.split())
+
+
+def test_pm_not_told_constructor_denies_a_sub_floor_request():
+    """FALSE as written, corrected 2026-10-01. `allocate_risk_budget`
+    (`src/risk/budget.py`, the `requested <= allowed` branch) grants a
+    sub-floor request IN FULL; `floor_pct` only denies a grant the budget
+    had to CUT below the floor, and the allocator does not run at all when
+    book risk is unreadable (`src/portfolio_constructor.py`)."""
+    flat = _pm_prompt_flat()
+    assert "the constructor will deny it anyway" not in flat
+    assert "worth trading and the constructor will deny it" not in flat
+    assert "only denies a grant the budget had to CUT below the floor" in flat
+    assert "its floor only denies a grant the risk budget had to cut" in flat
+
+
+def test_pm_still_told_a_wrong_side_short_stop_is_rejected_outright():
+    """TRUE as written, confirmed 2026-10-01 against
+    `src/portfolio_constructor.py`: a short stop at or below entry is
+    refused rather than widened, and a None stop drops the target."""
+    assert ("the constructor REJECTS the trade outright" in _pm_prompt_flat())
+
+
+def test_pm_still_told_a_side_flip_is_not_done_in_one_session():
+    """TRUE as written, confirmed 2026-10-01 against rule D3 in
+    `src/portfolio_constructor.py`: a sign-crossing target emits only the
+    flattening leg."""
+    assert "the constructor will NOT flip it in a single session" in _pm_prompt_flat()
