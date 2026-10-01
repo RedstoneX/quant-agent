@@ -240,6 +240,16 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 201)
 
+**200. The status board's own file was one change away from blocking every other change — filed 2026-09-30. OPEN: the move is made, the guard against it recurring is not.**
+
+DONE WHEN:
+  - [x] `docs/WORK.md` is back under 70% of its cap by MOVING argument, history and measurement out of open items — not deleting it, not raising the cap — with every moved byte proved verbatim in `docs/BOARD_NOTES.md` by a line-level diff and the rendered owner prose unchanged block-for-block
+  - [x] the cap and the growth budget are named as what they are: both PICKED, not derived (100,000 gave ~5% headroom over a measured 94,801; the 0.5 growth share calls itself provisional), and both allowed to be picked because a documentation size limit governs no money
+  - [ ] the move is REPEATABLE without a human deciding what to carve: nothing yet stops the same items re-accreting history in place, so the next time the cap binds it will again be hand-work
+   — the file passing (say) 80% should say so in the same place the growth-budget failure already speaks, rather than the first warning being a blocked merge
+
+detail: docs/BOARD_NOTES.md (item 200)
+
 **202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, and (2026-10-01) rebinding the market provider on the morning-research stage, which held its own reference and so kept the live one after the swap — tech_analyst now runs offline [measured 2026-10-01]. `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis` still XFAILs. detail: docs/BOARD_NOTES.md (item 202)
 
 DONE WHEN:
@@ -266,6 +276,14 @@ DONE WHEN:
   - [ ] (b) the chosen answer is live for Type A entries and a range position between entry and its target is observably protected by something that reads off the instrument, not by an unsourced level.
 detail: docs/BOARD_NOTES.md (item 212)
 
+
+**211. Alert coalescing was keyed to the wrong quantity, the unprotected-position alert was deduped per DAY not per symbol, and the mute dropped messages before recording them — re-opened 2026-10-01 after measurement.** The 2026-10-01 coalescing shipped and SAVES NOTHING on real data: all 22 suspension episodes of 26-30 Sep ran 24 to 253 minutes, none was inside the 15-minute self-clear window it keys on, so all 44 of 107 messages still paged [measured, production `llm_circuit_events` + `notifier_sends`, read-only]. Suppression now spans the EPISODE — same trigger code, same ET budget day, resolved or not — with no duration invented. detail: docs/BOARD_NOTES.md (item 211)
+
+DONE WHEN:
+- [x] a re-latch of one unresolved fault inside its budget day pages the owner once, not once per flap, and the hold is written to the event record with its reason
+- [x] the "position is unprotected" owner alert is deduped per symbol per day like its two siblings, so a second name going naked the same day still pages
+- [x] every message the global mute drops is recorded with its type, symbols and timestamp; nothing is un-muted and no configuration is touched
+- [ ] the owner is shown what the mute has been swallowing since 30 September
 
 **217. Prompt claims that another part of the desk "handles" something — verify each against the code (filed 2026-10-01 after the risk seat was told a thin reward:risk had been "paid for in size by the constructor"; it had not, and that sentence is corrected).** The sweep was by text search only, so claims phrased differently may remain. Not yet verified: the portfolio-manager prompt's statements that "the constructor will deny it" (immaterial-payoff trades), "the constructor REJECTS the trade outright" (stop on the wrong side of entry), and "the constructor will NOT flip" a held short in one session.
 
@@ -376,21 +394,19 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
-- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 193
+- retired queue: 157
 - retired queue: 119
-- retired queue: 211
-- retired queue: 185
-- retired queue: 214
+- retired queue: 193
 - retired queue: 107
+- retired queue: 185
 - retired queue: 76
-- retired queue: 174
+- retired queue: 214
 - retired queue: 199
-- retired queue: 20
 - retired queue: 212
-- retired queue: 200
+- retired queue: 174
+- retired queue: 20
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

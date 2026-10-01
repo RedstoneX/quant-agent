@@ -3567,3 +3567,50 @@ def test_pre_existing_operator_resets_are_not_re_announced(tmp_path):
             "WHERE event_type='reset'"
         ).fetchone()[0] == 1
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+def test_a_relatch_of_the_same_fault_in_one_episode_pages_the_owner_once(
+    tmp_path, monkeypatch,
+):
+    """Item 211 defect 1. The first coalescing attempt keyed suppression to
+    the self-clear WINDOW, which is a duration and the wrong quantity: on
+    production data all 22 suspension episodes of 26-30 Sep ran 24 to 253
+    minutes, so not one was inside its window and all 44 messages still
+    paged [measured, production `llm_circuit_events`].
+
+    Suppression now spans the EPISODE — one trigger code inside one ET
+    budget day, the boundary `_episode_facts_locked` already reports on.
+    The owner is told once when the fault starts; a re-latch of the same
+    unresolved fault is not a second incident. No duration is invented.
+
+    Fails on the old behaviour: the second durable latch sent a second
+    "SUSPENDED" note.
+    """
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+
+    # First latch of the day: durable, so it earns its page.
+    circuit = _latch_on_failed_call(path, notifier=notifier, durable=True)
+    assert len([m for m in notifier.messages if "SUSPENDED" in m]) == 1
+    _age_latch(path, 16)
+    assert circuit.status()["suspended"] is False
+    assert len([m for m in notifier.messages if "RESUMED" in m]) == 1
+
+    # Same fault latches again, same budget day, and outlasts its window
+    # exactly as every real episode did.
+    circuit = _latch_on_failed_call(path, notifier=notifier, durable=True)
+    assert len([m for m in notifier.messages if "SUSPENDED" in m]) == 1, (
+        "a re-latch of one unresolved fault must not page the owner twice"
+    )
+
+    # Nothing vanished: the suppression is on the record.
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        held = [
+            row["detail"] for row in conn.execute(
+                "SELECT detail FROM llm_circuit_events "
+                "WHERE event_type='suspend_alert_deferred'"
+            )
+        ]
+    assert any("already paged him in this ET budget day" in d for d in held)
