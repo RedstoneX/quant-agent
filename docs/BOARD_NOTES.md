@@ -954,3 +954,29 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
 ## item 195 — RETIRED 2026-09-30, the window-start inconsistency it named is fixed and merged, and the only remaining lever on the structural leg is barred
 
 The measured finding stands and is preserved in the retired item's own text: the structural pivot has never produced a candidate, because a confirmed pivot needs `2 * PIVOT_WINDOW + 1` = 7 bars and a scale-in additionally reset the caller's bar window to zero. That second half was the defect in how the candidate is FOUND and it is fixed on main (`Database.get_position_open_timestamp`, `tests/test_position_open_timestamp.py`); re-running all 21 recorded refusals through the new window flipped none. The first half is arithmetic reach, and the only way to shorten it is to move `PIVOT_WINDOW`, which the module documents as unsourceable in the literature — moving it to obtain a result the data would like is picking a number, which doctrine bars. The leg is NOT deleted: item 196's change means it now competes with the chandelier on equal terms instead of pre-empting it, and `tests/test_trailing_candidate_set.py` pins that it is still preferred where it does produce a usable pivot.
+
+## item 218
+
+The parity refusal is the whole of the change; everything else in item 218 is
+a measurement that decided NOT to change something.
+
+Where it sits: `_widen_stop_past_noise`, immediately after the existing
+`_reward_risk_at` call on the stop that will actually ship - the same place
+the retired 1.5 floor used to sit, behind the same `reward_risk_floor_applies`
+scope test, filing the same `_GEOMETRY_REFUSAL_BY_RULE` codes that were left
+in the file with no caller. Returning `None` from that function is how every
+other named stop refusal there expresses itself.
+
+The objection to expect, and the answer. "Parity is still a number you
+picked." It is not a point chosen on a preference axis; it is where the
+required hit rate crosses 50%. Any other value encodes a belief about how
+often the desk is right, and the desk has never measured that. Parity encodes
+only the refusal to assume an edge it cannot show.
+
+The second objection. "Three of 33 is not worth a gate." The gate is not
+sized by how often it fires; a trade whose target is nearer than its stop is
+arithmetically a losing proposition without an unproven edge, and the desk
+previously had no mechanism at all to decline one.
+
+Unmeasurable reward:risk is still NOT a refusal (owner 2026-09-17) and that
+branch is untouched.
