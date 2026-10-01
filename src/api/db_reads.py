@@ -1429,3 +1429,224 @@ def get_suppressed_alerts(limit: int = 50) -> dict:
                 }
     out["suppressed_repeats"] = cleaned
     return out
+
+
+# --- item 211: the backlog the global mute swallowed -----------------------
+#
+# The owner muted every desk alert on 2026-09-30 (docs/WORK.md item 211).
+# Until 2026-10-01 the mute dropped each message BEFORE anything was written
+# down, so the swallowed messages of that first day do not exist anywhere and
+# cannot be recovered. From the commit that added the `status="muted"` branch
+# in `src/notifier.py` onward, every dropped message lands in `notifier_sends`
+# with its kind, text, symbols and timestamp. This read turns that record into
+# the one thing the owner actually asked for: would turning alerts back on
+# flood him again, and did he miss anything about unprotected money.
+#
+# It un-mutes nothing, sends nothing and reads nothing but the database.
+
+#: When the muted-message record began, from the commit that added the
+#: recording branch (`0de4c45`, authored 2026-10-01 02:25:46 -0400). Stored as
+#: UTC because `notifier_sends.timestamp` is written by `datetime('now')`.
+MUTE_RECORD_BEGINS_AT = "2026-10-01T06:25:46+00:00"
+
+#: The day the owner muted the desk (docs/WORK.md item 211). Anything the mute
+#: dropped between this date and `MUTE_RECORD_BEGINS_AT` was never recorded.
+MUTE_BEGAN_ON = "2026-09-30"
+
+
+def _live_risk_headlines() -> tuple[str, ...]:
+    """The owner-facing headlines that mean "protection is gone or absent".
+
+    NOT a new classification. These are the literal first lines the desk's
+    own live-risk alerts write — the three per-symbol-per-day siblings of
+    item 211 plus their relatives in `src/coverage_watchdog.py` and
+    `src/notifier.py`. A headline announcing that a gap CLOSED ("A MISSING
+    STOP WAS PUT BACK", "PROTECTION RESTORED") is deliberately absent: it is
+    good news about a gap, not an open one.
+    """
+
+    return (
+        "EXIT NOT PLACED",
+        "PROTECTIVE STOP UNREADABLE",
+        "STOP UNREADABLE",
+        "POSITION UNGUARDED LONGER THAN EVER MEASURED",
+        "UNPROTECTED SHARES, AND THE DESK IS NOT RUNNING",
+        "COULD NOT PUT THE PROTECTIVE STOP BACK",
+    )
+
+
+def is_live_risk_message(text: str | None) -> bool:
+    """True when this muted message was about unprotected money.
+
+    Two sources, both of them the desk's existing idea of the class, neither
+    invented here: the `MONEY_UNPROTECTED` fault families in
+    `src/log_health.py` (the module that already owns "a position was left
+    without the protective stop the desk believes is on it"), and the
+    owner-facing headlines those same alerts print. The log-health patterns
+    are written against log lines and the headlines against owner prose, so
+    both are needed to cover a record that holds owner prose written from
+    the same events.
+    """
+
+    body = (text or "").strip()
+    if not body:
+        return False
+    upper = body.upper()
+    if any(head in upper for head in _live_risk_headlines()):
+        return True
+    try:
+        from src.log_health import FAMILIES, MONEY_UNPROTECTED
+    except Exception:
+        return False
+    for family in FAMILIES:
+        if getattr(family, "reason", None) != MONEY_UNPROTECTED:
+            continue
+        for pattern in getattr(family, "patterns", ()) or ():
+            if pattern.search(body):
+                return True
+    return False
+
+
+def _muted_symbols(detail: str | None) -> list[str]:
+    """The symbols the mute recorded alongside a dropped message."""
+
+    raw = (detail or "")
+    marker = "symbols:"
+    if marker not in raw:
+        return []
+    tail = raw.split(marker, 1)[1]
+    return [s.strip().upper() for s in tail.split(",") if s.strip()]
+
+
+def _headline(text: str | None) -> str:
+    """First line of a message, trimmed — enough to recognise it by."""
+
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()[:160]
+    return ""
+
+
+def get_muted_backlog() -> dict:
+    """Item 211 — what the global mute has swallowed, grouped to be judged.
+
+    Grouping answers the owner's two real questions rather than counting.
+    `by_kind` and `by_day` answer "would I be flooded again"; `live_risk`
+    answers "did I miss anything that mattered" and is a LIST, never folded
+    into either total, because one unprotected position is not one message.
+
+    `coverage_complete` is False whenever the record begins after the mute
+    did, which it does; the gap is stated in the payload so no caller can
+    present a partial list as the whole story.
+
+    DELIBERATELY UNCAPPED. An earlier draft read only the most recent 200
+    rows, which would have let a flood of ordinary messages push live-risk
+    ones out of the list and out of the counts — burying the important ones
+    in volume, the exact failure that made the owner mute the desk. The
+    record holds one row per message the mute dropped and nothing else, so
+    reading all of it is cheap; a cap here would be a silent lie.
+    """
+
+    out: dict = {
+        "record_available": False,
+        "record_begins_at": MUTE_RECORD_BEGINS_AT,
+        "mute_began_on": MUTE_BEGAN_ON,
+        "coverage_complete": False,
+        "coverage_gap": (
+            "Alerts were muted on "
+            + MUTE_BEGAN_ON
+            + ", but the desk only began recording dropped messages on "
+            + MUTE_RECORD_BEGINS_AT[:10]
+            + ". Anything the mute dropped before then was never written "
+            "down and cannot be shown here."
+        ),
+        "total": 0,
+        "live_risk_total": 0,
+        "by_kind": [],
+        "by_day": [],
+        "live_risk": [],
+        "oldest": None,
+        "newest": None,
+    }
+    conn = None
+    try:
+        conn = _connect()
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='notifier_sends'"
+        ).fetchone()
+        if not exists:
+            return out
+        out["record_available"] = True
+        rows = conn.execute(
+            "SELECT kind, text, detail, timestamp FROM notifier_sends "
+            "WHERE status = 'muted' ORDER BY timestamp DESC"
+        ).fetchall()
+    except Exception:
+        return out
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    rows = list(rows)
+    if not rows:
+        return out
+
+    by_kind: dict[str, dict[str, int]] = {}
+    by_day: dict[str, dict[str, int]] = {}
+    stamps: list[str] = []
+    for kind, text, detail, stamp in rows:
+        kind = str(kind or "unknown")
+        stamp = str(stamp or "")
+        stamps.append(stamp)
+        live = is_live_risk_message(text)
+        day = _et_day(stamp)
+        for bucket, key in ((by_kind, kind), (by_day, day)):
+            slot = bucket.setdefault(key, {"count": 0, "live_risk_count": 0})
+            slot["count"] += 1
+            if live:
+                slot["live_risk_count"] += 1
+        out["total"] += 1
+        if live:
+            out["live_risk_total"] += 1
+            out["live_risk"].append({
+                "timestamp": stamp,
+                "day": day,
+                "kind": kind,
+                "symbols": _muted_symbols(detail),
+                "headline": _headline(text),
+            })
+
+    out["by_kind"] = [
+        {"kind": k, **v} for k, v in
+        sorted(by_kind.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
+    ]
+    out["by_day"] = [
+        {"day": d, **v} for d, v in sorted(by_day.items(), reverse=True)
+    ]
+    if stamps:
+        out["oldest"] = min(stamps)
+        out["newest"] = max(stamps)
+    return out
+
+
+def _et_day(stamp: str) -> str:
+    """The ET calendar day a UTC `notifier_sends.timestamp` falls on.
+
+    The owner reads days as his own days; a message dropped at 01:00 UTC
+    belongs to the previous evening for him. An unparseable stamp is
+    reported as "unknown" rather than guessed at.
+    """
+
+    raw = (stamp or "").strip()
+    if not raw:
+        return "unknown"
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return "unknown"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(ZoneInfo("America/New_York")).date().isoformat()
