@@ -543,7 +543,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     p.execution_stage = MagicMock()
 
     ctx = RunContext.start("intra_check")
-    with patch("src.pipeline.compute_indicators", return_value=MagicMock()):
+    with patch("src.pipeline_intraday.compute_indicators", return_value=MagicMock()):
         result = p._run_intraday_opportunity_scan(ctx)
 
     assert result["status"] == "hard_risk_block"
