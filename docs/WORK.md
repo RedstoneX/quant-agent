@@ -254,15 +254,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 194)
 
-**193. The scale-in cancel-to-rearm window leaves the WHOLE held position unprotected, and it is now measured — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 193").**
-
-DONE WHEN:
-  - [x] the window is measured from the broker's own cancel and rearm acknowledgements rather than from database write times, so the figure bounds real exposure instead of event bookkeeping — every scale-in now emits its own measured window (2026-09-30)
-  - [ ] the gap between write-ahead-log row ids and filed cancel events is explained, so the pair count is known to be complete rather than a floor
-  - [x] the desk can answer "is any position naked right now, and for how long" without a one-off query, whether by an alert, a dashboard line or a periodic check — every coverage sweep now names each symbol it deliberately skipped for a live scale-in, with its held quantity and roughly how long its protection has been down, in the run record and in the one greppable log line; a window longer than the longest the desk has ever measured pages the owner once per symbol per day, and with no measured history nothing is called overdue (2026-09-30)
-
-detail: docs/BOARD_NOTES.md (item 193)
-
 **199. Read the unbacked-stop floor off the chart instead of off an ATR multiple — filed 2026-09-30, carried out of item 90's `min_stop_atr_multiple` pass. TIER 1.** Detail: `docs/BOARD_NOTES.md` ("item 199").
 DONE WHEN:
   - [x] 2026-09-30, the RECORDING exists, and it — not another re-derivation — is what this item now turns on: every position the desk opens pins its entry price, entry ATR, the stop placed at entry and that stop's basis (the constructor's own `stop_rule`, which already separates a stop sitting on a COMPUTED structural level from one set by the ATR band), and every position accumulates its worst AND best excursion while open, joining the realised outcome and the `broker_stop_fill` category already on the exit row. The stop's distance in ATR multiples is RECOMPUTED from entry price, entry stop and entry ATR rather than stored a second time, per "never store what code can recompute". Anything genuinely unavailable at that moment is stored NULL, never substituted. Two hard caveats any reader must carry: the excursions are accumulated from session snapshots, so each is a FLOOR on the true figure (a reading that says the floor WAS violated is trustworthy; one that says it was not is only "not observed"), and legacy rows predating the columns are NULL. FALSIFICATION ONLY — this record may show whether the ratified floor was ever violated in practice and may NOT be swept for a better multiplier; doctrine bars fitting a number to this desk's history.
@@ -348,6 +339,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 157
 - retired queue: 196
 - retired queue: 99
+- retired queue: 193
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

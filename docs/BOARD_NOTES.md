@@ -595,7 +595,7 @@ The trigger sets how many movers *qualify*; the cap decides how many of those ar
 2. **Every intra-preamble job on its own schedule.** Not attempted. Splitting fill reconcile, stop-out reconcile, protection-restore drain and repeg drain out of `run_intra_check` onto their own timers is a real infrastructure change across `src/pipeline.py`, `scripts/run_if_et_window.sh` and four new unit pairs, and it is the *precondition* for ever cutting the paid cadence — today the free safety work and the paid scan are welded to one 13-tick schedule.
 3. **A correction the ledger needs and this change could not make** (`config/number_ledger.yaml` is held by another change): the `source:` on `src.config.INTRA_CHECK_TICK_MINUTES` names `src/scheduler.py:56` as "the authority for how often the intraday control actually fires". That is **false in production** — `src/scheduler.py` is the `--mode live` path and the box runs the systemd timer. The row's status can stay `sourced`; the source text should name `scripts/systemd/quant-agent-intra_check.timer` crossed with `run_if_et_window.sh`'s window, with `src/scheduler.py` as the live-mode mirror, and cite `tests/test_systemd_units.py` for the pin that now holds all three sites together.
 
-## item 193
+## item 193 — RETIRED 2026-10-01, the write-ahead row-id gap is explained: the id sequence is shared with the ordinary protective-sell restore path, every one of the 15 production cancels carries its own row id, and all 15 pair with a later rearm, so the pair count is complete and not a floor
 
 Measurement only. No production code was written or changed for it; both events already exist.
 
@@ -676,7 +676,41 @@ scale-in adds routinely are. A test now pins that the path never reaches for
 `replace_order_by_id` at all, so the refusal cannot be hit and the resting stop
 is never left in an unknown state.
 
-**Still open.** The second DONE WHEN (explaining the historical write-ahead-log
+**2026-10-01 — the row-id gap is EXPLAINED, and the pair count is COMPLETE.**
+Measured read-only against the production database
+(`/home/qamc/quant-agent/data/quant_agent.db`, snapshot taken 2026-10-01; the
+repo-local DB is empty): 15 `scale_in|protective_sell_cancelled` events exist
+(2026-09-17..2026-09-30, one more than the 14 of the first pass), ALL 15 pair
+with a later same-run same-symbol `protection|placed`, and ZERO
+`scale_in|skipped` events of any reason have ever been filed, so no preparation
+has yet aborted between the write-ahead insert and the confirmed cancel. Each
+cancel event now carries the row id it allocated: 5, 6, 7, 9, 10, 11, 12, 13,
+14, 15, 16, 18, 19, 20, 23, against an AUTOINCREMENT sequence standing at 23.
+The eight ids scale-in does not hold — 1, 2, 3, 4, 8, 17, 21, 22 — belong to the
+OTHER writer of the same table, the ordinary protective-sell restore path in
+`src/pipeline.py`. The sequence is shared, so the highest row id was never a
+count of scale-ins and the apparent "20 ids vs 14 events" shortfall was an
+artefact of reading one writer's census off two writers' counter. The census
+that is correct filters on the sentinel `sell_order_id`, and
+`tests/test_scale_in_wal_row_id_census.py` pins both properties so the argument
+stays mechanical. No production code was changed by this pass and no broker
+order was placed.
+
+**The amend merged to main does not reach this path — verified in code, not
+assumed.** `_amend_resting_stop_price` in `src/execution/broker.py` has exactly
+one caller, the trailing-stop re-price, and it amends a stop's PRICE. A price
+amend leaves the protective SELL resting, which is the thing that collides with
+the BUY add, so it cannot replace the cancel; the quantity amend that would
+cover an enlarged position is refused by this broker on a fractional order
+(42210000). `tests/test_scale_in.py` already pins that the scale-in path never
+reaches for `replace_order_by_id`. The window is therefore still real, and this
+item closes on measurement and detection, not on removal.
+
+**Nothing remains open** (the paragraph below is kept as the record of what was
+open on 2026-09-30; the second DONE WHEN was settled on 2026-10-01 above, and
+the third was met on 2026-09-30 by the coverage sweep's named skips).
+
+**Was open on 2026-09-30.** The second DONE WHEN (explaining the historical write-ahead-log
 row-id gap, so the 14-pair count is known complete rather than a floor) is
 unaddressed: the new event makes FUTURE pairs complete by construction but says
 nothing about the rows already filed. The third (answering "is any position
