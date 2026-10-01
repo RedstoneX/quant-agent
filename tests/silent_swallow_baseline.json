@@ -3,7 +3,7 @@
  "keys": [
   "src/execution/broker.py::_existing_stop_covering_qty#1",
   "src/execution/broker.py::_fell_back_to_deprecated_auth#1",
-  "src/execution/broker.py::_fetch#1",
+  "src/execution/broker.py::_fetch#1@b07a4028",
   "src/execution/broker.py::_fetch_batch#1",
   "src/execution/broker.py::_get_order_status_once#1",
   "src/execution/broker.py::_list_open_sell_stop_orders#1",
@@ -26,7 +26,7 @@
   "src/execution/broker.py::get_margin_interest_activities#1",
   "src/execution/broker.py::get_order_fill_info#1",
   "src/execution/broker.py::get_recent_daily_closes#1",
-  "src/execution/broker.py::get_session_open#1",
+  "src/execution/broker.py::get_session_open#1@a7353947",
   "src/execution/broker.py::get_top_movers#1",
   "src/execution/broker.py::get_top_movers#2",
   "src/execution/broker.py::is_last_trading_day_of_quarter#1",

@@ -99,3 +99,48 @@ def test_quiet_on_reraise_narrow_except_or_non_empty_return():
 def test_keys_are_stable_across_line_shifts():
     body = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n"
     assert _hits(body) == _hits("# moved\n\n\n" + body) == ["x.py::f#1"]
+
+
+# --- key scheme: rename-proof AND collision-proof ---
+
+_TWO_CLASSES = (
+    "class {a}:\n"
+    "    def f(self, b):\n        try:\n            return b.stop()\n"
+    "        except Exception:\n            logger.warning('a')\n            return None\n"
+    "class {b}:\n"
+    "    def f(self, b):\n        try:\n            return b.stop()\n"
+    "        except Exception:\n            logger.warning('b')\n            return []\n"
+)
+
+
+def test_same_named_handlers_in_two_classes_of_one_module_get_distinct_keys():
+    keys = _hits(_TWO_CLASSES.format(a="Mixin", b="Service"))
+    assert len(keys) == 2 and len(set(keys)) == 2, keys
+    assert all(k.startswith("x.py::f#1@") for k in keys), keys
+
+
+def test_renaming_or_reordering_classes_does_not_churn_keys():
+    renamed = _hits(_TWO_CLASSES.format(a="ProtectionService", b="Other"))
+    assert sorted(renamed) == sorted(_hits(_TWO_CLASSES.format(a="Mixin", b="Service")))
+    # A method moving to another class keeps its key: only the function
+    # name, its handler ordinal and (when the name is shared) the handler
+    # body take part.
+    one_class = "class K:\n    def g(self, b):\n        try:\n            return b.stop()\n        except Exception:\n            return None\n"
+    assert _hits(one_class) == _hits(one_class.replace("class K", "class Renamed")) == ["x.py::g#1"]
+
+
+def test_identical_same_named_handlers_stay_distinct_and_unique_names_carry_no_digest():
+    dup = _TWO_CLASSES.format(a="A", b="B").replace("return []", "return None").replace("'b'", "'a'")
+    keys = _hits(dup)
+    assert len(set(keys)) == 2 and keys[1] == keys[0] + "~2", keys
+    assert _hits("def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n") == ["x.py::f#1"]
+
+
+def test_ordinal_is_per_definition_not_per_name():
+    src = (
+        "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n"
+        "class C:\n    def f(self, b):\n        try:\n            return b.stop()\n"
+        "        except Exception:\n            return {}\n"
+    )
+    assert all(k.startswith("x.py::f#1@") for k in _hits(src)), _hits(src)
+

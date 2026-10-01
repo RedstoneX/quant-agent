@@ -32,6 +32,7 @@ after fixing a handler. Never add an entry; fix the handler instead.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -138,31 +139,69 @@ def _swallows_and_returns_empty(handler: ast.ExceptHandler) -> bool:
     return returns_empty
 
 
+def _digest(node: ast.AST) -> str:
+    """Short, line-stable fingerprint of a node: `ast.dump` carries no positions."""
+    return hashlib.sha1(ast.dump(node).encode()).hexdigest()[:8]
+
+
 class _Finder(ast.NodeVisitor):
+    """Keys a handler by what it IS, not where it sits in a class hierarchy:
+
+        <file>::<function>#<ordinal>[@<digest>][~<n>]
+
+    `function` is the innermost enclosing def (`<module>` outside any); the
+    enclosing class is deliberately NOT part of the key, so renaming a class or
+    moving a method between classes in one module (every conversion step in
+    this rebuild does both) leaves the key untouched. `ordinal` is the handler's
+    position among the broad handlers of THAT def, counted per definition, so
+    it never depends on which same-named def came first in the file.
+
+    When a module defines the same function name more than once (`_fetch`
+    appears three times in `broker.py`: a method and two nested helpers), the
+    bare key would merge them, so `@<digest>` -- a hash of the handler's own
+    body -- is appended ONLY for names the module defines more than once. Two
+    same-named defs with byte-identical handlers are literal duplicates; `~2`,
+    `~3` keeps even those distinct. Nothing in the key moves with line numbers.
+    """
+
     def __init__(self, rel: str) -> None:
-        self.rel, self.scope, self.hits, self.ordinal = rel, [], [], {}
+        self.rel, self.hits, self.dup_names = rel, [], set()
+        self._frames: list[list] = []  # [function name, broad-handler count]
+        self._module_ordinal = 0
 
-    def _enter(self, node):
-        self.scope.append(node.name)
+    def visit_Module(self, node: ast.Module) -> None:
+        names: dict[str, int] = {}
+        for n in ast.walk(node):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                names[n.name] = names.get(n.name, 0) + 1
+        self.dup_names = {n for n, c in names.items() if c > 1}
         self.generic_visit(node)
-        self.scope.pop()
+        seen: dict[str, int] = {}
+        for i, (key, line) in enumerate(self.hits):
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] > 1:
+                self.hits[i] = (f"{key}~{seen[key]}", line)
 
-    visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _enter
+    def _enter_function(self, node):
+        self._frames.append([node.name, 0])
+        self.generic_visit(node)
+        self._frames.pop()
+
+    visit_FunctionDef = visit_AsyncFunctionDef = _enter_function
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if is_broad(node) and _swallows_and_returns_empty(node):
-            # Key on the FUNCTION name only, not the enclosing class. A
-            # method moving from a mixin to a service class is the same
-            # handler in the same file; keying on the class made every such
-            # rename look like a fresh batch of silent swallows and blocked
-            # the conversion this guard is meant to run alongside. The
-            # ordinal still separates several handlers in one function, and
-            # two same-named functions in one module stay distinguishable
-            # by it.
-            qual = self.scope[-1] if self.scope else "<module>"
-            k = (self.rel, qual)
-            self.ordinal[k] = self.ordinal.get(k, 0) + 1
-            self.hits.append((f"{self.rel}::{qual}#{self.ordinal[k]}", node.lineno))
+            if self._frames:
+                frame = self._frames[-1]
+                frame[1] += 1
+                name, ordinal = frame
+            else:
+                self._module_ordinal += 1
+                name, ordinal = "<module>", self._module_ordinal
+            key = f"{self.rel}::{name}#{ordinal}"
+            if name in self.dup_names:
+                key += "@" + _digest(node)
+            self.hits.append((key, node.lineno))
         self.generic_visit(node)
 
 

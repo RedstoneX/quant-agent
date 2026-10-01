@@ -234,3 +234,34 @@ def test_a_failing_alert_never_breaks_the_kill_switch_refusal(tmp_path, state_pa
         )
 
     assert result["status"] == "kill_switch_halted" and result["id"] is None
+
+
+def _blocked_rows(db: Database) -> int:
+    return db.conn.execute(
+        "SELECT COUNT(*) FROM specialist_evidence WHERE kind = 'protective_stop_blocked'"
+    ).fetchone()[0]
+
+
+def test_the_recorder_reads_db_and_the_alert_hook_off_the_live_pipeline_not_the_wiring_call(
+    tmp_path, state_path,
+):
+    """The recorder is wired through a service rebuilt and discarded per call;
+    it must still see a `db` assigned to the pipeline AFTER wiring and a hook
+    patched on the pipeline after wiring, exactly as the long-lived pipeline
+    did before the conversion."""
+    broker = _halted_broker(tmp_path)
+    first, pipeline = _db(tmp_path), TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker, pipeline.db = broker, first
+    pipeline._wire_protective_stop_block_recorder()
+
+    second = Database(str(tmp_path / "second.db"))
+    second.initialize()
+    pipeline.db = second
+    pipeline._alert_owner_kill_switch_blocked = MagicMock(name="patched_hook")
+    with patch("src.notifier.send_owner_alert") as send:
+        broker._submit_stop_limit_order(symbol="AAA", qty=5, stop_price=90.0, side="sell")
+
+    assert (_blocked_rows(second), _blocked_rows(first)) == (1, 0)
+    pipeline._alert_owner_kill_switch_blocked.assert_called_once()
+    assert pipeline._alert_owner_kill_switch_blocked.call_args.kwargs["symbol"] == "AAA"
+    send.assert_not_called()

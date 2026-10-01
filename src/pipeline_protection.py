@@ -2,8 +2,9 @@
 restores or reconciles a protective stop or a sell against the broker.
 Conversion step 12: `ProtectionService` (was `ProtectionMixin`) takes keyword-only
 collaborators; `TradingPipeline` reaches it via `src/pipeline_protection_mixin.py`.
-Bodies are byte-for-byte; module helpers are re-exported by `src.pipeline` but must
-be PATCHED here. May not import `src.pipeline`."""
+Bodies are byte-for-byte bar `_wire_protective_stop_block_recorder` (reads the live
+host, not the per-call service); module helpers are re-exported by `src.pipeline` but
+must be PATCHED here. May not import `src.pipeline`."""
 
 import json as _json
 import logging
@@ -244,7 +245,7 @@ class ProtectionService:
         self._format_qty, self._record_exit_refusal = format_qty, record_exit_refusal
         self._sweeper = sweeper
         self._retired_cash_park_symbol = retired_cash_park_symbol
-        self._state = state if state is not None else _SimpleNamespace()  # home of the 2 lazy state names below (the host when delegated, so patched-host writes are seen live)
+        self._state, self._host = (state, state) if state is not None else (_SimpleNamespace(), self)  # _state: home of the 2 lazy state names below (the host when delegated, so patched-host writes are seen live); _host: the LONG-LIVED object a broker callback reads `db` and hooks from at call time (the pipeline when delegated -- this service is rebuilt and discarded per call -- else this service)
 
     _unsettled_exit_orders = property(
         lambda s: getattr(s._state, "_unsettled_exit_orders"),
@@ -1454,18 +1455,17 @@ class ProtectionService:
 
     def _wire_protective_stop_block_recorder(self) -> None:
         """The broker holds no database, so a protective stop its kill
-        switch refuses is recorded through this pipeline's one
-        (`kind='protective_stop_blocked'`, `src/execution/exit_path_records.py`).
-        Also pages the owner (`_alert_owner_kill_switch_blocked`) — a
-        recorded row nobody reads is not an alert, and until this was
-        wired a kill-switch refusal left the position naked with no owner
-        notice at all. `self.db` is read at call time, not captured, so a
-        later swap of the handle is honoured."""
+        switch refuses is recorded through the pipeline's one
+        (`kind='protective_stop_blocked'`, `src/execution/exit_path_records.py`)
+        and the owner is paged (`_alert_owner_kill_switch_blocked`): a row
+        nobody reads is not an alert. The callback reads `db` and the hook off
+        the LIVE HOST (`self._host`) at call time, never off the service that
+        wired it -- a delegated service is rebuilt and discarded per call."""
         from src.execution.exit_path_records import record_protective_stop_blocked
-
+        host = self._host
         def _on_blocked(**facts) -> None:
-            record_protective_stop_blocked(self.db, **facts)
-            self._alert_owner_kill_switch_blocked(**facts)
+            record_protective_stop_blocked(host.db, **facts)
+            host._alert_owner_kill_switch_blocked(**facts)
 
         self.broker.protective_stop_block_recorder = _on_blocked
 
