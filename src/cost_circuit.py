@@ -202,8 +202,24 @@ def _unknown_cost_row_expr(conn: sqlite3.Connection) -> str:
         columns = set()
     if not {"provider_requests", "status"} <= columns:
         return "CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
+    # Item 203: a provider request that HAPPENED and came back with no token
+    # counts at all is recorded by `src/agents/base.py:usage_telemetry_word`
+    # as `telemetry='no_usage'`. Such a row's `cost_usd` may be a literal 0.0
+    # rather than NULL -- written because nothing was reported, not because
+    # anything was measured -- and the plain `cost_usd IS NULL` test would
+    # bank it as a proven free call. It is not proven free and it is not
+    # priced: this desk refuses to substitute a list rate, an average or any
+    # other invented price for a number the provider did not return, so the
+    # row is counted as UNKNOWN and the day loses `costs_exact`. Disjoint from
+    # `_PROVEN_ZERO_ROW_SQL` by construction (that needs provider_requests=0,
+    # this word is only written when a request was made), and the clause is
+    # dropped entirely on an older `agent_logs` that has no `telemetry`
+    # column, where the absence of the proof leaves only the NULL test.
+    no_usage_sql = (
+        "WHEN telemetry = 'no_usage' THEN 1 " if "telemetry" in columns else ""
+    )
     return f"CASE WHEN ({_PROVEN_ZERO_ROW_SQL}) THEN 0 " \
-           "WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
+           f"{no_usage_sql}WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
 
 
 def _trigger_scope(code: Any) -> str:
@@ -477,8 +493,24 @@ class CallReservation:
     attempt_count: int = 0
 
 
+def _pinned_if_clock_replaced(conn: Any) -> Any:
+    """Wrap a RAW connection when a caller has supplied a clock.
+
+    Schema DDL is reached with connections this module did not open (the
+    shared bootstrap passes its own), and `created_at TEXT NOT NULL DEFAULT
+    (datetime('now'))` bakes a clock into the table at CREATE time. Left
+    unwrapped, every event row is dated by the OS while the rest of the
+    circuit is dated by the caller's clock, and a dedup that compares the
+    two never matches. Production never takes this branch.
+    """
+    if _now_utc is _REAL_NOW_UTC or not isinstance(conn, sqlite3.Connection):
+        return conn
+    return _ClockPinnedConnection(conn, _now_utc().strftime("%Y-%m-%d %H:%M:%S"))
+
+
 def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
     """Create the additive breaker schema on an existing SQLite connection."""
+    conn = _pinned_if_clock_replaced(conn)
 
     expected_breaker_tables = {
         "llm_budget_days", "llm_budget_sessions",
@@ -732,6 +764,21 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
             "INTEGER NOT NULL DEFAULT 1"
         )
 
+    # Operator resets only became owner-notifiable here; every 'reset' row
+    # already on the books cleared before that, so firing "RESUMED" for them
+    # now would announce recoveries from incidents that ended weeks ago --
+    # the same stale-alert defect the auto_reset backfill above guards
+    # against, and it is marked handled the same way. SQLite's own
+    # `user_version` counter is the one-time hook (nothing else in this
+    # schema reads or writes it, so it is 0 on every existing database);
+    # the backfill therefore runs exactly once per database.
+    if int(conn.execute("PRAGMA user_version").fetchone()[0] or 0) < 1:
+        conn.execute(
+            "UPDATE llm_circuit_events SET recovery_alert_state=1 "
+            "WHERE event_type='reset'"
+        )
+        conn.execute("PRAGMA user_version = 1")
+
     # Migrate a latch created by the original one-state implementation.  Known
     # quota triggers retain their full audit snapshot but cease to masquerade
     # as hard infrastructure incidents.  Unknown codes deliberately remain
@@ -793,8 +840,81 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _now_utc() -> datetime:
+    """The one clock this module reads.
+
+    PRODUCTION BEHAVIOUR IS UNCHANGED BY THIS INDIRECTION. Left alone, this
+    is `datetime.now(timezone.utc)` and `_connect` hands back the bare
+    sqlite3 connection, so every SQL `'now'` still reads SQLite's own clock
+    exactly as it always has -- the same OS clock, the same instant.
+
+    WHY IT EXISTS. The circuit dates two different ways: the ET day comes
+    from Python here, and `suspended_at` / `created_at` come from SQLite's
+    `'now'`. In production those are the same clock and cannot disagree. In
+    a test they can, because a test freezes the Python side and cannot
+    freeze SQLite's -- and a few minutes after ET midnight the two land on
+    different ET days, which is what reds this module's self-clear tests
+    for the first quarter-hour of every ET day. Replacing this function is
+    the single, caller-side way to pin BOTH at once: `_connect` notices it
+    has been replaced and pins SQLite's `'now'` to the same instant.
+    """
+    return datetime.now(timezone.utc)
+
+
+#: Identity of the unreplaced clock. `_connect` compares against this rather
+#: than against a flag, so there is no way to be in "pinned" mode without a
+#: caller having actually supplied a clock.
+_REAL_NOW_UTC = _now_utc
+
+
+class _ClockPinnedConnection:
+    """A sqlite3 connection whose `'now'` is the caller's clock, not the OS.
+
+    Only ever constructed when `_now_utc` has been replaced. It rewrites the
+    literal `'now'` in SQL this module issues, so the ET day derived in
+    Python and every timestamp written or compared in SQLite come from one
+    instant. Everything else is the real connection, untouched.
+    """
+
+    def __init__(self, conn: sqlite3.Connection, stamp: str) -> None:
+        self.__dict__["_conn"] = conn
+        self.__dict__["_stamp"] = stamp
+
+    def _pin(self, sql: str) -> str:
+        # Both of SQLite's clocks, not just one. `'now'` is read in queries
+        # and updates; `CURRENT_TIMESTAMP` is the column default that stamps
+        # `created_at` on every event row. Pinning only the first leaves the
+        # event log dated by the OS while everything else is dated by the
+        # caller's clock -- the same two-clock split this whole mechanism
+        # exists to remove.
+        literal = "'" + self._stamp + "'"
+        return sql.replace("'now'", literal).replace("CURRENT_TIMESTAMP", literal)
+
+    def execute(self, sql, *args, **kwargs):
+        return self._conn.execute(self._pin(sql), *args, **kwargs)
+
+    def executemany(self, sql, *args, **kwargs):
+        return self._conn.executemany(self._pin(sql), *args, **kwargs)
+
+    def executescript(self, sql):
+        return self._conn.executescript(self._pin(sql))
+
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._conn.__exit__(*exc)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._conn, name, value)
+
+
 def _et_day_and_utc_bounds(now: datetime | None = None) -> tuple[str, str, str]:
-    now = now or datetime.now(timezone.utc)
+    now = now or _now_utc()
     local = now.astimezone(_ET)
     day = local.date()
     start = datetime.combine(day, dt_time.min, tzinfo=_ET).astimezone(timezone.utc)
@@ -941,7 +1061,7 @@ def _record_alert_attempt(
                 delivered
             )
             payload["last_alert_attempt_at"] = (
-                now or datetime.now(timezone.utc)
+                now or _now_utc()
             ).isoformat()
             tmp = latch_path.with_name(
                 f".{latch_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
@@ -1345,12 +1465,20 @@ class LLMCostCircuitBreaker:
         )
         return self
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> Any:
         conn = sqlite3.connect(
             self.db_path, timeout=10.0, uri=self.db_path.startswith("file:qamc-cost-")
         )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=10000")
+        # Production takes this branch: the clock is the real one, so the
+        # bare connection is returned and SQLite's `'now'` is SQLite's own
+        # clock, unchanged. Only a caller that supplied a clock gets the
+        # wrapper, and then both clocks are that one instant.
+        if _now_utc is not _REAL_NOW_UTC:
+            return _ClockPinnedConnection(
+                conn, _now_utc().strftime("%Y-%m-%d %H:%M:%S")
+            )
         return conn
 
     def _best_effort_emergency_snapshot(self, run_id: str) -> dict[str, Any]:
@@ -1491,7 +1619,7 @@ class LLMCostCircuitBreaker:
                 return
             payload = json.dumps(
                 {
-                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                    "recorded_at": _now_utc().isoformat(),
                     "error": f"{type(error).__name__}: {str(error)[:500]}",
                     "run_id": run_id,
                     "mode": mode,
@@ -2566,6 +2694,158 @@ class LLMCostCircuitBreaker:
             )
         return True
 
+    def _self_clear_window_minutes(self) -> float:
+        """The circuit's OWN self-clear timing, not a number chosen here.
+
+        `_auto_clear_transient_latch_locked` will not retire a transient
+        latch until `transient_latch_cooldown_minutes` of wall clock have
+        passed. That is already the desk's ratified answer to "how long
+        before this stops being a blip", so the durability threshold for
+        PAGING the owner is the same quantity read from the same config
+        field. Change one and both move together, which is the point.
+        """
+        return float(
+            getattr(self.config, "transient_latch_cooldown_minutes", 15.0)
+        )
+
+    def _suspension_still_inside_self_clear_window_locked(
+        self, conn: sqlite3.Connection, state: dict[str, Any],
+    ) -> bool:
+        """True while this latch could still retire itself without a human.
+
+        Only for `_SELF_CLEARING_HARD_TRIGGERS`. Every other code needs an
+        operator reset, so there is no window it can expire inside and
+        deferring its alert would only delay a page that has to happen.
+        An unreadable or future `suspended_at` returns False — err towards
+        telling the owner.
+        """
+        if str(state.get("trigger_code") or "") not in _SELF_CLEARING_HARD_TRIGGERS:
+            return False
+        suspended_at = state.get("suspended_at")
+        if not suspended_at:
+            return False
+        row = conn.execute(
+            "SELECT (julianday('now') - julianday(?)) * 1440.0 AS minutes",
+            (suspended_at,),
+        ).fetchone()
+        elapsed = row["minutes"] if row is not None else None
+        if elapsed is None:
+            return False
+        return 0.0 <= float(elapsed) < self._self_clear_window_minutes()
+
+    def _record_suspension_deferral_locked(
+        self, conn: sqlite3.Connection, state: dict[str, Any],
+    ) -> None:
+        """Write the deferral down once per latch, so it is never invisible.
+
+        Once per latch, not once per authorization boundary: a suspended
+        desk can hit this path many times a minute and a row each time is
+        the same noise moved into the database.
+        """
+        suspended_at = state.get("suspended_at")
+        existing = conn.execute(
+            "SELECT 1 FROM llm_circuit_events WHERE event_type='suspend_alert_deferred' "
+            "AND created_at >= ? LIMIT 1",
+            (suspended_at,),
+        ).fetchone()
+        if existing is not None:
+            return
+        window = self._self_clear_window_minutes()
+        conn.execute(
+            "INSERT INTO llm_circuit_events "
+            "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "
+            "session_cost_usd, daily_cost_usd) VALUES "
+            "('suspend_alert_deferred', ?, ?, ?, ?, 'episode_coalescing', ?, ?, ?)",
+            (
+                state.get("trigger_code"),
+                (
+                    f"owner alert held: latch is inside its own {window:.0f}-minute "
+                    "self-clear window and may expire without a human; it pages "
+                    "if it is still suspended after that. Suspension is in force "
+                    "and recorded either way"
+                ),
+                state.get("run_id"), state.get("mode"),
+                int(state.get("session_attempts") or 0),
+                float(state.get("session_cost_usd") or 0.0),
+                float(state.get("daily_cost_usd") or 0.0),
+            ),
+        )
+
+    def _episode_facts_locked(
+        self, conn: sqlite3.Connection, state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """How long this fault has been running today and how often it flapped.
+
+        An EPISODE is every suspension and self-clear of one trigger code on
+        one ET budget day. That boundary is not invented here: the auto-clear
+        allowance (`max_transient_latch_auto_clears_per_day`) is already
+        counted per ET day against this same table, so the day is the unit
+        the circuit already reasons about a recurring fault in.
+        """
+        code = str(state.get("trigger_code") or "")
+        if not code:
+            return {}
+        _, utc_start, utc_end = _et_day_and_utc_bounds()
+        row = conn.execute(
+            "SELECT MIN(created_at) AS first_at, COUNT(*) AS events, "
+            "SUM(CASE WHEN event_type='auto_reset' THEN 1 ELSE 0 END) AS clears "
+            "FROM llm_circuit_events WHERE trigger_code=? "
+            "AND created_at BETWEEN ? AND ?",
+            (code, utc_start, utc_end),
+        ).fetchone()
+        if row is None or not row["first_at"]:
+            return {}
+        elapsed = conn.execute(
+            "SELECT (julianday('now') - julianday(?)) * 1440.0 AS minutes",
+            (row["first_at"],),
+        ).fetchone()
+        return {
+            "episode_first_at": str(row["first_at"]),
+            "episode_self_clears": int(row["clears"] or 0),
+            "episode_events": int(row["events"] or 0),
+            "episode_minutes": (
+                float(elapsed["minutes"]) if elapsed and elapsed["minutes"] is not None
+                else None
+            ),
+            "episode_window_minutes": self._self_clear_window_minutes(),
+        }
+
+    @staticmethod
+    def _format_episode_line(facts: dict[str, Any]) -> str:
+        """One line the owner can read without opening anything."""
+        if not facts.get("episode_first_at"):
+            return ""
+        minutes = facts.get("episode_minutes")
+        clears = int(facts.get("episode_self_clears") or 0)
+        window = float(facts.get("episode_window_minutes") or 0.0)
+        duration = (
+            f"{float(minutes):.0f} min" if minutes is not None else "unknown"
+        )
+        return (
+            f"episode: running {duration} since {facts['episode_first_at']} UTC, "
+            f"{clears} self-clear{'s' if clears != 1 else ''} inside it today; "
+            f"reported now because it outlasted the circuit's own "
+            f"{window:.0f}-minute self-clear window (shorter blips are recorded, "
+            "not sent)\n"
+        )
+
+    @staticmethod
+    def _format_episode_summary(facts: dict[str, Any]) -> str:
+        """The closing line of an episode: how long, and how often it flapped."""
+        if not facts.get("episode_first_at"):
+            return ""
+        minutes = facts.get("episode_minutes")
+        clears = int(facts.get("episode_self_clears") or 0)
+        duration = (
+            f"{float(minutes):.0f} min" if minutes is not None else "an unknown time"
+        )
+        return (
+            f"episode: this fault ran {duration} from "
+            f"{facts['episode_first_at']} UTC and self-cleared {clears} "
+            f"time{'s' if clears != 1 else ''} inside it today; the ones that "
+            "cleared inside the self-clear window were recorded, not sent\n"
+        )
+
     def _notify_if_needed(self) -> None:
         if not self.enabled:
             return
@@ -2581,12 +2861,39 @@ class LLMCostCircuitBreaker:
             self._refresh_latched_snapshot_locked(conn)
             state = self._state_row(conn)
             if int(state.get("suspended") or 0):
-                cur = conn.execute(
-                    "UPDATE llm_circuit_state SET alert_state=-1, updated_at=datetime('now') "
-                    "WHERE singleton=1 AND suspended=1 AND (alert_state=0 OR "
-                    "(alert_state=-1 AND updated_at <= datetime('now', '-2 minutes')))"
-                )
-                claimed = cur.rowcount == 1
+                if self._suspension_still_inside_self_clear_window_locked(
+                    conn, state
+                ):
+                    # === docs/WORK.md item 208 ===
+                    # Do not page yet. A latch of a self-clearing code that
+                    # is still inside its OWN self-clear window has not yet
+                    # been shown to be anything but a provider blip, and
+                    # `_auto_clear_transient_latch_locked` may retire it
+                    # without a human. Paging here and again on the clear
+                    # turned one flapping fault into 44 of the 107 messages
+                    # the owner received between 26 and 29 Sep [measured,
+                    # production `notifier_sends`], and he muted the desk.
+                    #
+                    # This defers; it never cancels. `alert_state` stays 0,
+                    # so the very next authorization boundary after the
+                    # window expires claims and sends it, and the existing
+                    # item-174 pairing reads that same 0 to suppress the
+                    # matching "RESUMED" note — so a blip that self-clears
+                    # inside its window is ONE recorded episode and ZERO
+                    # messages, not two. Nothing is dropped: the trip event,
+                    # the deferral event below and the CRITICAL log line all
+                    # remain.
+                    self._record_suspension_deferral_locked(conn, state)
+                else:
+                    cur = conn.execute(
+                        "UPDATE llm_circuit_state SET alert_state=-1, updated_at=datetime('now') "
+                        "WHERE singleton=1 AND suspended=1 AND (alert_state=0 OR "
+                        "(alert_state=-1 AND updated_at <= datetime('now', '-2 minutes')))"
+                    )
+                    claimed = cur.rowcount == 1
+                    if claimed:
+                        state = dict(state)
+                        state.update(self._episode_facts_locked(conn, state))
             conn.commit()
         if claimed:
             text = self.format_alert(state)
@@ -2701,7 +3008,11 @@ class LLMCostCircuitBreaker:
         Item 174: the suspension path reaches the owner (`_notify_if_needed`
         / the sentinel's `_alert`), but `_auto_clear_transient_latch_locked`
         used to write only an `auto_reset` DB event and a log line, so the
-        owner saw "desk suspended" and never "desk back live." This mirrors
+        owner saw "desk suspended" and never "desk back live." The
+        operator's manual `reset` had the identical hole and is carried by
+        this same scan ('reset' rows alongside 'auto_reset'), so a desk
+        restarted by hand announces itself on the same footing as one that
+        recovered on its own. This mirrors
         `_notify_quota_recoveries_if_needed` exactly -- same claim/retry state
         machine, same notifier -- so a crash between the auto-clear and the
         send, or a Telegram outage, leaves the alert pending for the next
@@ -2714,7 +3025,8 @@ class LLMCostCircuitBreaker:
             with self._connect() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
-                    "SELECT * FROM llm_circuit_events WHERE event_type='auto_reset' "
+                    "SELECT * FROM llm_circuit_events "
+                    "WHERE event_type IN ('auto_reset','reset') "
                     "AND (recovery_alert_state=0 OR (recovery_alert_state=-1 AND "
                     "recovery_alert_updated_at <= datetime('now', '-2 minutes'))) "
                     "ORDER BY id LIMIT 1"
@@ -2757,6 +3069,12 @@ class LLMCostCircuitBreaker:
                     )
                     conn.commit()
                 continue
+            # item 208: the resume note is the END of an episode, so it
+            # carries how long the episode ran and how often the same fault
+            # flapped inside it. Read at send time from the same table the
+            # auto-clear allowance is already counted against.
+            with self._connect() as conn:
+                event.update(self._episode_facts_locked(conn, event))
             message = self.format_auto_reset_alert(event)
             logger.info("\n%s", message)
             sent = False
@@ -2777,7 +3095,14 @@ class LLMCostCircuitBreaker:
 
     @staticmethod
     def format_auto_reset_alert(event: dict[str, Any]) -> str:
-        code = str(event.get("trigger_code") or "transient provider latch")
+        # A manual reset also clears an inexact day or a durable marker, which
+        # carry no trigger code at all; say so rather than borrowing the
+        # auto path's wording for a latch that may not have existed.
+        code = str(event.get("trigger_code") or "").strip() or (
+            "not recorded"
+            if str(event.get("event_type") or "") == "reset"
+            else "transient provider latch"
+        )
         session_cost = float(event.get("session_cost_usd") or 0.0)
         daily_cost = float(event.get("daily_cost_usd") or 0.0)
         # "When" is read from the event row's own `created_at` (UTC, written by
@@ -2786,14 +3111,31 @@ class LLMCostCircuitBreaker:
         # than the resume it describes.
         resumed_at = str(event.get("created_at") or "").strip()
         when = f"resumed at: {resumed_at} UTC\n" if resumed_at else ""
+        # The two paths share one notification, but the closing line must say
+        # which one actually happened: "no operator reset was needed" is
+        # false of a manual reset, and an owner-facing statement the row
+        # cannot support is a lie, not a rounding.
+        manual = str(event.get("event_type") or "") == "reset"
+        if manual:
+            default_reason = "operator reset"
+            how = (
+                "status: paid analysis is live again after an operator reset. "
+            )
+        else:
+            default_reason = "transient provider latch auto-expired"
+            how = (
+                "status: paid analysis is live again; no operator reset was "
+                "needed. "
+            )
         return (
             "🟢 QAMC PAID ANALYSIS RESUMED\n"
             f"previous suspension: {code}\n"
             f"{when}"
-            f"reason: {event.get('detail') or 'transient provider latch auto-expired'}\n"
+            f"{LLMCostCircuitBreaker._format_episode_summary(event)}"
+            f"reason: {event.get('detail') or default_reason}\n"
             f"settled spend at resume: {_fmt_settled(session_cost)} this run · "
             f"{_fmt_settled(daily_cost)} today\n"
-            "status: paid analysis is live again; no operator reset was needed. "
+            f"{how}"
             "Session, call-count, attempt, and daily limits remain enforced and "
             "re-latch instantly if real settled spend is over a cap."
         )
@@ -2875,6 +3217,7 @@ class LLMCostCircuitBreaker:
         return (
             "🔴 QAMC PAID ANALYSIS SUSPENDED\n"
             f"trigger: {state.get('trigger_detail') or state.get('trigger_code') or 'safety limit'}\n"
+            f"{LLMCostCircuitBreaker._format_episode_line(state)}"
             f"affected run: {state.get('run_id') or 'unknown'} "
             f"({state.get('mode') or 'unknown'} / {state.get('agent_name') or 'unknown'})\n"
             f"{attempts_line}\n"
@@ -3582,16 +3925,47 @@ class LLMCostCircuitBreaker:
                         "current ET day's accounting is exact; scoped quota "
                         "holds expire only with their budget window"
                     )
+                # Same observability as `_auto_clear_transient_latch_locked`,
+                # and derived the same way: the elapsed figure comes from the
+                # singleton's own `suspended_at` against SQLite's clock, with
+                # no threshold of its own invented here. `suspended_at` is
+                # NULL whenever this reset is clearing an inexact day or a
+                # durable marker with no live suspension, and in that case no
+                # duration is appended at all rather than a zero or a guess.
+                suspended_at = state.get("suspended_at")
+                elapsed_minutes: float | None = None
+                if suspended_at:
+                    elapsed_row = conn.execute(
+                        "SELECT (julianday('now') - julianday(?)) * 1440.0 "
+                        "AS minutes",
+                        (suspended_at,),
+                    ).fetchone()
+                    if elapsed_row is not None and elapsed_row["minutes"] is not None:
+                        elapsed_minutes = float(elapsed_row["minutes"])
+                event_detail = reason
+                if elapsed_minutes is not None:
+                    event_detail = (
+                        f"{reason} [operator reset after a suspension of "
+                        f"{elapsed_minutes:.1f} min, latched at "
+                        f"{suspended_at} UTC]"
+                    )
                 conn.execute(
                     "INSERT INTO llm_circuit_events "
                     "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "
-                    "session_cost_usd, daily_cost_usd) VALUES "
-                    "('reset', ?, ?, ?, ?, 'operator', ?, ?, ?)",
+                    "session_cost_usd, daily_cost_usd, suspension_alert_state) VALUES "
+                    "('reset', ?, ?, ?, ?, 'operator', ?, ?, ?, ?)",
                     (
-                        state.get("trigger_code"), reason, run_id, mode,
+                        state.get("trigger_code"), event_detail, run_id, mode,
                         int(state.get("session_attempts") or 0),
                         float(state.get("session_cost_usd") or 0),
                         float(state.get("daily_cost_usd") or 0),
+                        # Item 174 pairing, for the same reason as the auto
+                        # path: the UPDATE below zeroes `alert_state`, so this
+                        # is the last moment it is knowable whether the owner
+                        # ever received the matching "SUSPENDED" note. The
+                        # column DEFAULTs to 1 ("he was told"), which for a
+                        # manual reset was a claim nothing had checked.
+                        int(state.get("alert_state") or 0),
                     ),
                 )
                 updated_state = conn.execute(
@@ -3628,6 +4002,14 @@ class LLMCostCircuitBreaker:
         with self._infrastructure_lock:
             self._infrastructure_error = None
             self._unavailable_sentinel = None
+        # Tell the owner the desk is back, on the same footing as the
+        # automatic path (which fires this from `_notify_if_needed`). Outside
+        # the file lock and the transaction on purpose: the reset is already
+        # durable, and a Telegram outage must not roll it back. The claim /
+        # retry state machine in there makes a second call a no-op, and a row
+        # whose suspension note never reached the owner resolves as unpaired
+        # instead of announcing a recovery from an incident he never heard of.
+        self._notify_auto_resets_if_needed()
 
 
 def activate_paid_call_session(

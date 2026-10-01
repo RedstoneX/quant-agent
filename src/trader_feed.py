@@ -1865,20 +1865,6 @@ def _looked_at_block(
     return _tier4()
 
 
-def _append_looked_at(
-    lines: list[str], rows: list[dict], profiles: dict,
-    snap: dict[str, Any] | None = None, budget: int | None = None,
-) -> None:
-    """`_looked_at_block`, appended in place — the `_new_block` shape.
-
-    The two formatters that carry a candidate list no longer call this:
-    they go through `_budgeted_sections`, which has to know the block's
-    size before deciding where to put it. Kept as the in-place form for
-    any caller that wants the block with no budget at all.
-    """
-    lines.extend(_looked_at_block(rows, profiles, snap, budget))
-
-
 def _append_rotation(lines: list[str], snap: dict[str, Any] | None) -> None:
     """The opportunity-rotation pre-check, said to the owner.
 
@@ -1897,9 +1883,13 @@ def _append_rotation(lines: list[str], snap: dict[str, Any] | None) -> None:
     nothing for a run with no pre-check row (every session before this
     shipped, and any stored report replayed from one).
     """
-    from src.rotation import owner_precheck_lines
+    from src.rotation import owner_precheck_lines, pruning_pass_lines
 
-    lines.extend(owner_precheck_lines((snap or {}).get("rotation")))
+    record = (snap or {}).get("rotation")
+    lines.extend(owner_precheck_lines(record))
+    # Board item 219. The pruning pass itself — that it ran, over what, what
+    # it cut and why, what it kept, and that the second tier is off.
+    lines.extend(pruning_pass_lines(record))
 
 
 def _append_held(lines: list[str], symbols: list[str], profiles: dict) -> None:

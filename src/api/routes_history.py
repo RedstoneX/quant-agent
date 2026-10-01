@@ -113,7 +113,27 @@ def get_run_detail(run_id: str) -> RunDetailResponse:
         decision_id=detail["decision_id"],
         total_cost_usd=detail["total_cost_usd"],
         hard_risk_block_recorded=hard_risk_block_recorded,
+        rotation_lines=_rotation_lines(run_id),
     )
+
+
+def _rotation_lines(run_id: str) -> list[str]:
+    """Board item 219 — the pruning pass, for the dashboard.
+
+    Reuses the session message's own plumbing end to end: the same snapshot
+    reader, the same durable row, the same sentences. Never raises — the
+    run detail must not disappear because one bookkeeping row did.
+    """
+    try:
+        from src.rotation import owner_precheck_lines, pruning_pass_lines
+        from src.trader_feed import _read_run
+
+        record = (_read_run(run_id) or {}).get("rotation")
+        return list(owner_precheck_lines(record)) + list(
+            pruning_pass_lines(record)
+        )
+    except Exception:  # noqa: BLE001
+        return []
 
 
 @router.get("/decisions/{decision_id}", response_model=DecisionDetailResponse)

@@ -447,6 +447,94 @@ def _git_merge_file(base: str, ours: str, theirs: str,
         return proc.stdout, proc.returncode == 0
 
 
+def _conflict_hunks(diff3: str):
+    """Split git's --diff3 output into ('text', chunk) and ('hunk', (o,b,t))."""
+    out = []
+    plain: list[str] = []
+    lines = diff3.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("<<<<<<< "):
+            o: list[str] = []
+            b: list[str] = []
+            t: list[str] = []
+            cur = o
+            i += 1
+            while i < len(lines) and not lines[i].startswith(">>>>>>> "):
+                if lines[i].startswith("||||||| "):
+                    cur = b
+                elif lines[i].startswith("======="):
+                    cur = t
+                else:
+                    cur.append(lines[i])
+                i += 1
+            i += 1  # step over the >>>>>>> line
+            out.append(("text", "".join(plain)))
+            plain = []
+            out.append(("hunk", ("".join(o), "".join(b), "".join(t))))
+        else:
+            plain.append(lines[i])
+            i += 1
+    out.append(("text", "".join(plain)))
+    return out
+
+
+def _unique_lines(side: str, base: str) -> list[str]:
+    base_lines = set(base.splitlines())
+    return [ln for ln in side.splitlines() if ln.strip() and ln not in base_lines]
+
+
+def merge_block(base: str, ours: str, theirs: str) -> str | None:
+    """Three-way merge one keyed block, or None if it cannot be done safely.
+
+    `merge_keyed` used to refuse the moment the two sides' text for one key
+    differed at all, while `merge_text` — doing the same job for unkeyed
+    prose — first asked git for a line-level three-way merge. That asymmetry
+    is what blocked the PR queue: a board note is one block that grows by
+    APPENDING an UPDATE paragraph, so two branches that each append their own
+    paragraph, touching nothing the other touched, were reported as a NUMBER
+    COLLISION and sent for a hand renumber that nothing about them needed.
+
+    Two rules, in order, and neither may drop a line:
+
+      * whatever git's own line-level merge resolves cleanly is taken as-is;
+      * a hunk git could not resolve is taken from BOTH sides, ours then
+        theirs, but ONLY when its base side is EMPTY — that is, when each
+        side purely INSERTED text at the same point and neither changed nor
+        removed anything the other relied on. Any hunk whose base side has
+        content is a real two-sided edit of the same lines, and that still
+        refuses.
+
+    Finally every line either side added relative to the base must appear in
+    the result, or the merge is discarded. Losing a line silently is the one
+    outcome worse than refusing.
+    """
+    merged, clean = _git_merge_file(base, ours, theirs)
+    if not clean:
+        parts = _conflict_hunks(merged)
+        rebuilt: list[str] = []
+        for kind, payload in parts:
+            if kind == "text":
+                rebuilt.append(payload)
+                continue
+            o, b, t = payload
+            if b.strip():
+                return None  # a genuine two-sided edit of the same lines
+            rebuilt.append(o)
+            if not o.endswith("\n") and o:
+                rebuilt.append("\n")
+            rebuilt.append(t)
+        merged = "".join(rebuilt)
+    if any(merged.startswith(m) or ("\n" + m) in merged
+           for m in CONFLICT_MARKERS) or "\n=======\n" in merged:
+        return None
+    for side in (ours, theirs):
+        for ln in _unique_lines(side, base):
+            if ln not in merged:
+                return None
+    return merged
+
+
 def merge_keyed(base: dict, ours: dict, theirs: dict,
                 base_order: list, ours_order: list, theirs_order: list,
                 what: str, append_only: bool = False):
@@ -472,6 +560,8 @@ def merge_keyed(base: dict, ours: dict, theirs: dict,
                 merged[k] = theirs[k]
             elif in_b and same_text(theirs[k], base[k]):
                 merged[k] = ours[k]
+            elif in_b and (blended := merge_block(base[k], ours[k], theirs[k])) is not None:
+                merged[k] = blended
             else:
                 raise Refusal(
                     f"NUMBER COLLISION on {what} {k!r}: the two sides carry "

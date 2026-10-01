@@ -83,9 +83,31 @@ are not the same thing and the rule itself says so. It is now its own
 category; it still counts as a degraded run and it is now named to you
 explicitly whenever a decision leans on one.
 
-**The decision —** Still yours, and now the only thing left in this item:
-whether *partial* evidence should also stop a decision, and if so, where the
-line sits. Not "did the seat answer" — that is settled and built, morning
+**The counting half, settled 2026-10-01 — it is a RECORD, not a bar.** We
+tried twice to source the number and failed twice, and both failures are
+written down in the code: nothing published says what share of a candidate
+list a research seat must cover, and our own record cannot say either,
+because the news seat has never once written down WHICH companies it looked
+at, and the macro seat covers at most half. Fitting a bar to that would be
+fitting it to a hole. So the question was not answered with a number, it was
+dissolved the same way the first half was: asked once per company instead of
+once per list. "Did this seat answer about THIS company" is a yes-or-no
+fact. The desk now writes that down for every candidate on every decision —
+which seats spoke about that name, which said nothing about it, and which
+seats are about the market rather than any one name. It refuses nothing and
+holds no minimum. The one per-name coverage rule you already have still
+bites: a company with no chart read cannot be bought or shorted.
+
+**What that leaves for you —** nothing on counting; the paragraph below is
+superseded and kept only so the history reads straight. One unrelated
+question is still open in this item: whether the thirty-minute scan's chart
+seat should be able to report a lost answer at all. Today it cannot, and
+since the chart seat is the only one that can stop the desk, that scan can
+never be stopped by missing evidence. That is a consequence of your own
+"only technical analysis can stop the desk" ruling, so no agent may widen
+it.
+
+The superseded question, kept for the record: Not "did the seat answer" — that is settled and built, morning
 and the later scan alike — but "the seat answered about 40 of 65 companies,
 is that enough?". Nothing published answers that, so it either gets a
 number from you or a ruling that partial coverage should never stop a
@@ -101,4 +123,6 @@ agent has widened the rule to work around it.
 **Technical detail, moved from `docs/WORK.md` 2026-09-24 —** The mandate is declared in `evidence_gate.BLOCKING_SEATS` and may only be widened by the owner's ruling; every other seat's lost answer is still recorded, logged, and reaches the unsuppressible data-quality alert, but no longer halts. Two things shipped with it: (a) `expired` is no longer classified as LOST — it means the desk holds a good answer and knows a newer one exists, which is neither absence nor a lost answer, and is still counted as degraded; (b) every decision now discloses its own evidence freshness — how many seats were read on this tick versus carried from earlier versus absent — durably in the decision's record and in the owner's message, with no threshold invented. Also open, surfaced by the mandate change and not acted on: on the intraday scan the technical seat's status is hard-coded to `partial`/`ok` (`src/pipeline.py`, the intra `data_status` literal), so the only blocking seat can never be lost there — a consequence of the mandate, not a defect, needing the owner's ruling rather than an agent's second blocking seat.
 
 **Moved from WORK.md (2026-09-24) —** The categorical half is live on morning and the intraday scan since 2026-09-14. **MANDATE CHANGE, owner, 2026-09-18: "Only technical analysis can stop the desk"** — declared in `evidence_gate.BLOCKING_SEATS`, every other seat advisory. **Still open and still his:** the counting half — no published source gives a minimum count of usable reads, and fitting one to the desk's history is forbidden. Settles with his ratified number, or a ruling that partial coverage never gates. Never ship a placeholder. **Also open, surfaced by the mandate change and NOT acted on:** the intraday scan's technical-seat status is hard-coded, so the only blocking seat can never be lost there — needs his ruling, not an agent's second blocking seat.
+
+**Re-verified against live code, 2026-09-30 — nothing here has rotted, and no agent may close either box.** Both halves were checked on `origin/main`, not from the note above. The CATEGORICAL half is live and firing: `TradingPipeline._evidence_gate_skip` calls `evidence_gate.evaluate` before the paid decision step on morning and on the intraday scan, and the production log line "EVIDENCE GATE — decision skipped: N blocking seat(s) were asked and their answers were unusable" is that call and no other mechanism. The COUNTING half exists as DATA and as REPORTING only: per-seat freshness (`evidence_gate.freshness`, read-this-tick vs carried vs absent) is computed, attached to every decision and named to the owner through the feed and the alerts, and per-symbol coverage is counted in `RunContext.tech_bars_coverage` and `TechAnalysisResult.levels_coverage`. NOTHING COMPARES ANY OF THOSE COUNTS AGAINST A BAR, deliberately — `partial` classifies as an answer that ARRIVED, so partial coverage cannot refuse a decision today. So the state is "the counting exists, nothing acts on it", which is exactly what the two open boxes say. The unsourceable number, named precisely so it is not re-derived a third time: the minimum fraction of a seat's own intended scope that must come back usable before that seat's answer may be leaned on (the "40 of 65 companies" case). Nothing published gives it, the desk's own history cannot supply it without fitting, and it is a risk-appetite dial. Deliberately NOT done in this pass: no threshold invented, no seat added to `BLOCKING_SEATS`, and the existing refusal left exactly as strong as it was.
 

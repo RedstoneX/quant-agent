@@ -6,6 +6,7 @@ import os
 import random
 import re
 import threading
+import itertools
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -266,9 +267,14 @@ _LLM_HTTP_TIMEOUT = 300.0
 # Why 480: it must leave room for one full failover call inside the wrapper's
 # 1200s kill. Worst-case failover = one Anthropic call bounded by
 # _LLM_HTTP_TIMEOUT (300s), so 480 + 300 = 780s per agent, ~420s of headroom
-# for the rest of the session. And 480s still allows 2-4 real primary attempts
-# even in the slow-failure mode (~120-380s each), so a transient blip is
-# ridden out before the failover engages.
+# for the rest of the session. How many primary attempts 480s buys depends on
+# the failure mode and is NOT a fixed 2-4 (an earlier version of this comment
+# claimed that while the loop was hard-capped at _max_retries()=2 regardless).
+# In the slow-failure mode each attempt burns ~120-380s, so the deadline is
+# what stops the loop; on a fast capacity refusal the attempts are cheap and
+# `capacity_max_attempts()` derives how many the backoff schedule fits inside
+# this same deadline. Either way the deadline, not a hand-picked count, is the
+# bound.
 #
 # Overridable via QUANT_AGENT_RETRY_DEADLINE_S (read at call time, like
 # _max_retries, so tests can monkeypatch per case).
@@ -405,6 +411,23 @@ def classify_backoff(exc: Exception) -> tuple[str, float | None]:
     return BACKOFF_JITTER, None
 
 
+def is_capacity_refusal(exc: Exception) -> bool:
+    """True when the provider refused because IT was busy, not because the
+    request was bad: an explicit 429 or one of `_CAPACITY_STATUS_CODES`.
+
+    This is the narrow class in which a refused attempt is provably unbilled
+    — the provider produced no tokens — and in which the provider's own
+    statement ("spikes in demand are usually temporary") says waiting is the
+    remedy. A transport blip, a stream cut or a degenerate 200 is NOT in this
+    class: the request may well have been charged, and nothing in it says
+    waiting helps.
+    """
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int) or isinstance(status, bool):
+        return False
+    return status == 429 or status in _CAPACITY_STATUS_CODES
+
+
 def error_aware_backoff_seconds(attempt: int, exc: Exception) -> float | None:
     """Seconds to sleep before the next attempt, or None to STOP retrying.
 
@@ -425,10 +448,7 @@ def error_aware_backoff_seconds(attempt: int, exc: Exception) -> float | None:
     # else — a transport blip, a degenerate 200, a stream cut — gets pure
     # Full Jitter, because no provider publishes a minimum for those and
     # inventing one would be exactly the arbitrary number this desk forbids.
-    status = getattr(exc, "status_code", None)
-    is_capacity = (isinstance(status, int) and not isinstance(status, bool)
-                   and (status == 429 or status in _CAPACITY_STATUS_CODES))
-    if is_capacity:
+    if is_capacity_refusal(exc):
         return max(_MIN_CAPACITY_BACKOFF_S, wait)
     return wait
 
@@ -945,11 +965,6 @@ _TOKEN_GOVERNORS = {
 }
 
 
-def token_governor_snapshots() -> list[dict]:
-    """Every governor's current state, for status reporting."""
-    return [g.snapshot() for g in _TOKEN_GOVERNORS.values()]
-
-
 # finish/stop reasons that mean "output hit a ceiling mid-generation".
 # Shared by the truncation flag in _execute() and the empty-content guards:
 # an empty body WITH one of these reasons is a legitimate truncation (e.g. a
@@ -1025,6 +1040,42 @@ def _max_retries() -> int:
     return max(1, n)
 
 
+def capacity_max_attempts() -> int:
+    """Primary attempts a CAPACITY refusal (429/5xx) may spend.
+
+    DERIVED, not picked. The retry loop already owns two published numbers:
+    the full-jitter schedule in `_retry_backoff_seconds` (upper bounds
+    1, 2, 4, 8, ... capped at `_BACKOFF_CAP_S`) and the wall-clock
+    `_retry_deadline_s()`. This returns the number of attempts whose
+    worst-case cumulative sleep still fits inside that deadline. Nothing new
+    is chosen here; change either published number and this moves with it.
+
+    WHY IT IS NOT `_max_retries()`. Measured from this desk's own production
+    log, 2026-09-29 and 2026-09-30: the tech seat's Google 503 "this model is
+    currently experiencing high demand ... spikes in demand are usually
+    temporary" spent BOTH permitted attempts two seconds apart, inside a 480s
+    deadline that was never approached; the paid failover and tertiary routes
+    were out of credit (402), the blocking seat produced nothing, and the
+    morning session reported FAILED. The same model answered normally later in
+    the same session, so the spike was transient and the desk simply did not
+    wait for it. Two attempts two seconds apart does not measure whether a
+    capacity spike has passed.
+
+    Non-capacity failures keep `_max_retries()`: a degenerate 200 or a
+    transport blip carries no provider statement that waiting helps.
+    """
+    deadline = _retry_deadline_s()
+    total = 0.0
+    attempts = 1
+    while True:
+        wait = min(_BACKOFF_CAP_S, float(2 ** (attempts - 1)))
+        if total + wait > deadline:
+            break
+        total += wait
+        attempts += 1
+    return max(_max_retries(), attempts)
+
+
 def provider_attempt_budget(*, failover_available: bool,
                             tertiary_available: bool = False) -> int:
     """Worst-case provider attempts ONE logical agent call can make.
@@ -1072,7 +1123,7 @@ def provider_attempt_budget(*, failover_available: bool,
     entirely, so a demoted call spends at most 2 (secondary + tertiary),
     below this ceiling. The ceiling describes the undemoted worst case.
     """
-    return (_max_retries()
+    return (capacity_max_attempts()
             + (1 if failover_available else 0)
             + (1 if tertiary_available else 0))
 
@@ -1212,6 +1263,57 @@ _RETRYABLE_EXC_NAMES = frozenset({
 })
 
 
+# --- 402 "fewer max_tokens" shrink-retry -------------------------------------
+#
+# MEASURED 2026-09-30, production log: OpenRouter refuses a call on a
+# near-empty balance with HTTP 402 and a message that NAMES the output
+# allowance it would still serve, e.g.
+#   "This request requires more credits, or fewer max_tokens. You requested
+#    up to 16000 tokens, but can only afford 775."
+# Observed affordable figures on the same day: 10125, 5062, 4655, 1622,
+# 1551, 811, 775 — every one of them against the same 16000 ask. The desk
+# asked for 16000 every time and never re-asked, so a balance that could
+# have answered refused outright.
+#
+# We retry ONCE with the provider's OWN stated figure. We never invent a
+# fallback size: no figure in the message means no shrink-retry, and the
+# call fails exactly as it does today (the caller logs the refusal).
+#
+# This does NOT weaken the "refuse to decide on unusable evidence"
+# doctrine. A smaller allowance can cut the answer off; the existing
+# truncation detection (`_TRUNCATION_FINISH_REASONS`) still sees the
+# max_tokens/length finish reason and the answer is still discarded
+# unused. A seat whose prompt cannot fit the affordable allowance — the
+# tech_analyst 25-symbol batch is the known case — therefore fails
+# HONESTLY on truncation rather than being salvaged, and we deliberately
+# do NOT shrink its batch to fit: re-cutting the batch to whatever a
+# balance can afford would make the work depend on the wallet, and the
+# batch size is the caller's decision, not this retry loop's.
+_INSUFFICIENT_CREDIT_STATUS = 402
+
+_AFFORDABLE_MAX_TOKENS_RE = re.compile(
+    r"can only afford\s+(\d+)", re.IGNORECASE,
+)
+
+
+def _affordable_max_tokens(exc: Exception) -> int | None:
+    """The output allowance a credit-refusal says it WOULD have served.
+
+    Returns the provider's own stated figure, or None when the refusal is
+    not a credit refusal or names no figure. Never guesses.
+    """
+    if getattr(exc, "status_code", None) != _INSUFFICIENT_CREDIT_STATUS:
+        return None
+    m = _AFFORDABLE_MAX_TOKENS_RE.search(str(exc))
+    if not m:
+        return None
+    try:
+        value = int(m.group(1))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def _is_retryable(exc: Exception) -> bool:
     """Decide whether an LLM-call exception is worth retrying.
 
@@ -1333,6 +1435,12 @@ class AgentResult:
     # post-hoc.
     input_tokens: int = 0
     output_tokens: int = 0
+    # Board item 188 (RECORDING ONLY): the machine-readable reason this
+    # seat's OWN acceptance gate refused the answer, set by the seat on its
+    # rejection path and persisted to `agent_logs.acceptance_reason`. None
+    # means the answer was used, or that this seat does not yet name its
+    # reasons — never "accepted".
+    gate_reason: str | None = None
     cost_usd: float | None = None
     # Provider stop/finish reason + a derived flag. `truncated` is True when
     # the model hit the token ceiling mid-output (Anthropic stop_reason
@@ -1730,6 +1838,26 @@ class AgentResult:
         return RowSalvage(rows=rows, malformed=malformed)
 
 
+def usage_telemetry_word(input_tokens, output_tokens, cost_usd,
+                         provider_requests) -> str | None:
+    """Did the provider's answer carry usage information? — recorded, never inferred.
+
+    A response with no token counts used to be stored as 0 tokens and a NULL
+    cost, which reads the same as a measured zero. This names the case:
+    "complete" (tokens and cost known), "no_cost" (tokens known, no price),
+    "no_usage" (no token counts at all). None when no provider request was made
+    or the values are not numbers (legacy/replay fixtures): unknown, not guessed.
+    Recording only; nothing reads it to decide anything.
+    """
+    def num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    if provider_requests == 0 or not (num(input_tokens) and num(output_tokens)):
+        return None
+    if input_tokens == 0 and output_tokens == 0:
+        return "no_usage"
+    return "complete" if num(cost_usd) else "no_cost"
+
+
 def agent_log_kwargs(result: AgentResult) -> dict:
     """Common Stage 1 telemetry kwargs for Database.insert_agent_log(),
     derived from an AgentResult. Callers add agent_name/run_id/decision_id
@@ -1754,6 +1882,12 @@ def agent_log_kwargs(result: AgentResult) -> dict:
     if not isinstance(truncated, bool):
         truncated = None
     return dict(
+        telemetry=usage_telemetry_word(
+            getattr(result, "input_tokens", None),
+            getattr(result, "output_tokens", None),
+            getattr(result, "cost_usd", None),
+            provider_requests,
+        ),
         requested_provider=text_or_none(getattr(result, "requested_provider", None)),
         requested_model=text_or_none(getattr(result, "requested_model", None)),
         actual_provider=text_or_none(getattr(result, "actual_provider", None)),
@@ -1764,6 +1898,48 @@ def agent_log_kwargs(result: AgentResult) -> dict:
         finish_reason=text_or_none(getattr(result, "finish_reason", None)),
         truncated=truncated,
     )
+
+
+def seat_acceptance_kwargs(refusal_reason: str | None, result=None) -> dict:
+    """Did the SEAT accept its own model's answer? — the fact `status` never held.
+
+    `status` says the provider call returned. It says nothing about whether
+    the seat could use what came back, which is why 15/15 portfolio-manager
+    rows and 19/55 risk-manager rows sit at "success" holding bodies that are
+    not the seat's format at all, and why no usable-answer rate is computable
+    for any model today. Pass the refusal reason the call site ALREADY has on
+    its rejection path, or None when the answer was used.
+
+    Board item 188: pass the seat's `AgentResult` too and, when the gate
+    that refused set its own machine-readable `gate_reason`, THAT word is
+    stored instead of the call site's one-word-per-seat summary. The three
+    decision seats reject for several different causes and most of those
+    causes previously survived only as prose in a log line; the column must
+    carry the reason the gate itself produced, not a restatement of "it
+    failed". An absent or non-string `gate_reason` falls back to the call
+    site's word — never to a guess.
+
+    Recording only. This decides nothing and changes nothing: a seat that
+    refuses an unusable answer behaves exactly as it did before. Nothing
+    reads these two columns back into a sizing, stop, exit or routing
+    decision, and they must never be swept for a threshold.
+    """
+    from src.refusal_signature import (
+        SEAT_ACCEPTED, SEAT_REFUSED, SEAT_REFUSAL_REASONS,
+    )
+    if not refusal_reason:
+        return {"acceptance": SEAT_ACCEPTED, "acceptance_reason": None}
+    gate_reason = getattr(result, "gate_reason", None)
+    reason = (
+        gate_reason if isinstance(gate_reason, str) and gate_reason
+        else str(refusal_reason)
+    )
+    if reason not in SEAT_REFUSAL_REASONS:
+        # An unregistered word must not silently enter the column: record the
+        # refusal (true, and the load-bearing half) and flag the reason rather
+        # than inventing vocabulary.
+        reason = "unregistered:" + reason
+    return {"acceptance": SEAT_REFUSED, "acceptance_reason": reason}
 
 
 def _build_llm_client(provider: str, api_key: str):
@@ -2290,7 +2466,12 @@ class BaseAgent(ABC):
                 "at the secondary route without attempting it.",
                 self.name, self._provider, self.model,
             )
-        for attempt in range(max_retries):
+        # One-shot latch for the 402 shrink-retry below, and the ask we
+        # restore afterwards so a single poor-balance call cannot silently
+        # shrink every later call on this seat.
+        shrunk_for_credit = False
+        configured_max_tokens = self.max_tokens
+        for attempt in itertools.count():
             try:
                 if self._use_deepseek:
                     (raw_text, input_tokens, output_tokens, finish_reason,
@@ -2345,15 +2526,62 @@ class BaseAgent(ABC):
                 # Non-retryable (auth / bad-request / 4xx / context-length):
                 # stop retrying — sleeping won't help. (Was: raise. Now we
                 # break so the cross-provider failover below can still try.)
+                # Credit refusal that NAMES a smaller allowance it would
+                # serve: re-ask once at exactly that figure instead of
+                # treating the call as dead. One shot only, and only
+                # downwards. See `_affordable_max_tokens`.
+                affordable = _affordable_max_tokens(e)
+                if (affordable is not None and not shrunk_for_credit
+                        and affordable < self.max_tokens
+                        and attempt < max_retries - 1):
+                    shrunk_for_credit = True
+                    logger.warning(
+                        "Agent %s attempt %d: provider refused for "
+                        "insufficient credit but stated it can serve "
+                        "%d output tokens (we asked for %d). Retrying once "
+                        "at the provider's stated allowance. A cut-off "
+                        "answer is still discarded unused.",
+                        self.name, attempt + 1, affordable, self.max_tokens,
+                    )
+                    self.max_tokens = affordable
+                    continue
                 if not _is_retryable(e):
+                    if (affordable is None
+                            and getattr(e, "status_code", None)
+                            == _INSUFFICIENT_CREDIT_STATUS):
+                        logger.warning(
+                            "Agent %s attempt %d: insufficient-credit refusal "
+                            "names no servable allowance — not guessing one. "
+                            "Failing this route.", self.name, attempt + 1,
+                        )
                     logger.warning(
                         "Agent %s attempt %d hit a non-retryable error: %s. "
                         "No more retries.", self.name, attempt + 1, e,
                     )
                     break
-                # Last attempt: stop — sleeping then giving up wastes the
-                # final backoff on nothing.
-                if attempt == max_retries - 1:
+                # Attempt budget. For a CAPACITY refusal (429/5xx — the
+                # provider saying "busy now, usually temporary") the bound is
+                # the wall-clock deadline below, NOT this count. Measured from
+                # this desk's own production log 2026-09-29/30: the tech
+                # seat's Google 503 "experiencing high demand ... usually
+                # temporary" burned both attempts 2 SECONDS apart inside a
+                # 480s deadline, fell through to paid routes that were out of
+                # credit, and the blocking seat produced nothing — while the
+                # same model answered normally later in the same session. Two
+                # attempts two seconds apart is not a measure of whether a
+                # capacity spike has passed. The class is deliberately
+                # NARROW — `is_capacity_refusal`, i.e. an explicit 429/5xx —
+                # because only there is the refused attempt provably unbilled
+                # and the provider itself saying to wait. Everything else (a
+                # degenerate 200, a transport blip, a stream cut) keeps the
+                # original count, unchanged. The growing
+                # full-jitter sleep and the existing deadline bound this; no
+                # new number is introduced.
+                capacity_class = (is_capacity_refusal(e)
+                                  and not single_provider_attempt)
+                attempt_cap = (capacity_max_attempts() if capacity_class
+                               else max_retries)
+                if attempt >= attempt_cap - 1:
                     logger.warning("Agent %s attempt %d failed: %s. Primary exhausted.",
                                    self.name, attempt + 1, e)
                     break
@@ -2407,6 +2635,10 @@ class BaseAgent(ABC):
                         "%.1fs...", self.name, attempt + 1, e, wait,
                     )
                 time.sleep(wait)
+
+        # Restore the configured ask: the shrunken allowance belonged to the
+        # one refusal that named it, not to this seat forever.
+        self.max_tokens = configured_max_tokens
 
         # Model that actually produced the output — primary unless a backup wins.
         actual_model = self.model

@@ -5,5 +5,5 @@
 **The decision —** None for you right now. Already decided, 2026-09-03: not now, bigger problems to solve first. No due date; revisit only at your discretion. This line used to describe it as open — it wasn't kept in sync with your own ruling, corrected 2026-09-13.
 **Recommendation —** Nothing to approve right now. Bring it back yourself when you want to revisit it.
 
-**Moved from WORK.md (2026-09-24) —** Recommendation: `docs/board_notes/` ("item 17").
+**Moved from WORK.md (2026-09-24) —** Recommendation: `docs/BOARD_NOTES.md` ("item 17").
 

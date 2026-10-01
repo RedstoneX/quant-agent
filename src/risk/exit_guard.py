@@ -40,6 +40,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from datetime import date
+from collections.abc import Mapping
 from typing import Literal
 
 __all__ = [
@@ -1032,6 +1033,129 @@ _DIRECTION_PRICE_RE = re.compile(
 _SUPPORTED_MA_PERIODS = (20, 50, 200)
 
 
+# ---------------------------------------------------------------------------
+# Named macro-series levels — the third checkable shape (item 99, 2026-09-30)
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. The two shapes above were measured when `tech_analyst` was
+# the only seat that stated a falsifier at all, and a technical falsifier is
+# always about price. Four more seats — news, earnings, macro, smart_money —
+# now state their own, and their prompts' own worked examples are not price:
+# `config/prompts/macro_analyst.md` ships "HY OAS widens back above 420bps".
+# Under the two price shapes that comes back UNPARSEABLE, which is a
+# falsifier in name only.
+#
+# This adds NO new comparison and NO tolerance. It is the SAME strict
+# above/below test already applied to price and to an MA, pointed at a level
+# the desk already fetches every run: the FRED series in
+# `src/data/macro.py::MacroCoverage.get_macro_summary()`, the same numbers the
+# macro seat is shown when it writes the condition. Nothing new is computed,
+# fetched or derived here — the caller passes values it already holds, exactly
+# as it already does for `current_price` and the MAs.
+#
+# UNITS ARE NOT GUESSED. A spread series is stored in basis points and a rate
+# series in percent. bps<->% is an exact definitional conversion (1% = 100bps),
+# so it is applied; anything else is refused. For a bps series a bare number
+# with no unit ("HY OAS above 420" — 420bps? 420%?) is UNPARSEABLE rather than
+# assumed, and no threshold is invented to disambiguate it.
+#
+# A named macro series WINS over the bare-price shape and is checked before
+# it. That also closes a latent mis-comparison: "HY OAS above 420.5bps" would
+# otherwise have matched `_DIRECTION_PRICE_RE` and been compared against the
+# stock's own price, producing a confident, wrong answer.
+
+#: Canonical macro key -> the unit the desk stores that series in.
+#: "bps" = basis points, "pct" = percent, "index" = bare index points.
+#: The caller maps `get_macro_summary()` onto these keys; this module never
+#: reaches for macro data itself, for the same reason it never fetches price.
+_MACRO_SERIES_UNITS: dict[str, str] = {
+    "vix": "index",
+    "dollar_index": "index",
+    "credit_spread": "bps",
+    "ig_credit_spread": "bps",
+    "fed_funds_rate": "pct",
+    "inflation": "pct",
+    "unemployment": "pct",
+    "treasury_10y": "pct",
+    "treasury_2y": "pct",
+}
+
+#: How each series is actually written in English by the seats that cite it.
+#: Deliberately narrow: only spellings that cannot mean anything else. An
+#: unrecognised macro-sounding phrase stays UNPARSEABLE rather than being
+#: pattern-matched optimistically. Order matters: the investment-grade
+#: spelling is tried before the high-yield one so "IG spread" cannot be
+#: swallowed by a looser pattern.
+_MACRO_SERIES_RE: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("vix", re.compile(r"\bVIX\b", re.IGNORECASE)),
+    ("dollar_index", re.compile(r"\b(?:DXY|dollar\s+index)\b", re.IGNORECASE)),
+    ("ig_credit_spread", re.compile(
+        r"\b(?:IG\s+(?:OAS|credit\s+spread|spread)"
+        r"|investment[\s-]grade\s+(?:OAS|spread))\b", re.IGNORECASE)),
+    ("credit_spread", re.compile(
+        r"\b(?:HY\s+(?:OAS|credit\s+spread|spread)"
+        r"|high[\s-]yield\s+(?:OAS|spread))\b", re.IGNORECASE)),
+    ("fed_funds_rate", re.compile(r"\bfed\s+funds(?:\s+rate)?\b", re.IGNORECASE)),
+    ("inflation", re.compile(r"\bcore\s+CPI\b", re.IGNORECASE)),
+    ("unemployment", re.compile(
+        r"\b(?:UNRATE|unemployment\s+rate)\b", re.IGNORECASE)),
+    ("treasury_10y", re.compile(
+        r"\b10[\s-]?(?:y|yr|year)\b", re.IGNORECASE)),
+    ("treasury_2y", re.compile(
+        r"\b2[\s-]?(?:y|yr|year)\b", re.IGNORECASE)),
+)
+
+#: A number with an optional explicit unit suffix. Integers ARE allowed here
+#: (unlike the bare-price shapes) because the named series has already removed
+#: the ambiguity that the decimal requirement existed to guard against.
+_MACRO_NUMBER_RE = re.compile(
+    r"([\d,]+(?:\.\d+)?)\s*(bps|bp|%|percent)?", re.IGNORECASE,
+)
+
+
+def _macro_threshold_in_series_unit(
+    text: str, series_unit: str, series_span: "tuple[int, int]",
+) -> "tuple[float | None, str]":
+    """The stated threshold converted into `series_unit`, or (None, why).
+
+    The number is looked for AFTER the series name first and only then
+    before it, because several series names contain a digit of their own
+    ("10y", "2y") and that digit is not a threshold.
+
+    Only the exact bps<->percent definition is applied. No other conversion,
+    no tolerance, and no assumption about a missing unit on a bps series.
+    """
+    start, end = series_span
+    for window in (text[end:], text[:start]):
+        m = _MACRO_NUMBER_RE.search(window)
+        if m is None:
+            continue
+        value = _clean_number(m.group(1))
+        raw_unit = (m.group(2) or "").lower()
+        unit = {"bp": "bps", "bps": "bps", "%": "pct",
+                "percent": "pct"}.get(raw_unit)
+        if series_unit == "index":
+            if unit is not None:
+                return None, (
+                    f"index-valued series quoted in '{raw_unit}' — "
+                    "not converting"
+                )
+            return value, ""
+        if series_unit == "bps":
+            if unit == "bps":
+                return value, ""
+            if unit == "pct":
+                return value * 100.0, ""
+            return None, (
+                "spread threshold has no unit — 'bps' or '%' must be stated, "
+                "the unit is not being guessed"
+            )
+        if unit == "bps":
+            return value / 100.0, ""
+        return value, ""
+    return None, "no numeric threshold found alongside the macro series"
+
+
 @dataclass(frozen=True)
 class ThesisInvalidationCheck:
     """Result of checking one `thesis_invalid_if` string against real data.
@@ -1077,23 +1201,29 @@ def check_thesis_invalid_if(
     ma_20: float | None = None,
     ma_50: float | None = None,
     ma_200: float | None = None,
+    macro_levels: Mapping[str, float | None] | None = None,
 ) -> ThesisInvalidationCheck:
     """Check whether a `thesis_invalid_if` condition has become true.
 
-    Covers exactly two shapes, chosen because they are both the common real
-    cases (see the module-level note above for the measured counts) and
-    checkable without guessing:
+    Covers exactly three shapes, chosen because they are the real cases the
+    seats actually write (see the module-level notes above for the measured
+    counts) and are checkable without guessing:
 
       - a bare numeric price level ("closes below the $218.51 support
         level", "loses the $142 level") — checked against `current_price`.
       - a moving-average reference ("closes below MA20", "the 50-day
         average") for period 20, 50 or 200 — checked against the matching
         `ma_20` / `ma_50` / `ma_200` the caller supplies.
+      - a named macro series with a level ("HY OAS widens back above
+        420bps", "VIX above 30") — checked against the matching entry in
+        `macro_levels`, which the caller fills from the macro summary it
+        already fetched. Same strict above/below test; bps<->% is the only
+        conversion applied and an unlabelled spread number is refused.
 
     Everything else — a compound "A or B" condition, an unsupported MA
     period, an indicator threshold (RSI/MACD/Bollinger), a qualitative or
-    news-based condition, or a required price/MA value the caller left as
-    None — returns UNPARSEABLE. This function never fetches or computes
+    news-based condition, or a required price/MA/macro value the caller left
+    as None — returns UNPARSEABLE. This function never fetches or computes
     market data itself; it only compares numbers the caller already has.
     """
     text = (thesis_invalid_if or "").strip()
@@ -1140,10 +1270,39 @@ def check_thesis_invalid_if(
             f"'{direction}'",
         )
 
+    for key, pattern in _MACRO_SERIES_RE:
+        series_match = pattern.search(text)
+        if series_match is None:
+            continue
+        level = _finite((macro_levels or {}).get(key))
+        if level is None:
+            return ThesisInvalidationCheck(
+                "UNPARSEABLE",
+                f"'{key}' condition recognised but the caller supplied no "
+                f"current {key} level",
+            )
+        series_unit = _MACRO_SERIES_UNITS[key]
+        macro_threshold, why = _macro_threshold_in_series_unit(
+            text, series_unit, series_match.span(),
+        )
+        if macro_threshold is None:
+            return ThesisInvalidationCheck("UNPARSEABLE", why)
+        fired = (
+            level < macro_threshold if direction == "down"
+            else level > macro_threshold
+        )
+        return ThesisInvalidationCheck(
+            "TRIGGERED" if fired else "NOT_TRIGGERED",
+            f"{key} {level} vs level {macro_threshold} ({series_unit}), "
+            f"condition was '{direction}'",
+        )
+
     threshold = _extract_price_threshold(text)
     if threshold is None:
         return ThesisInvalidationCheck(
-            "UNPARSEABLE", "no MA reference or numeric price level found in text",
+            "UNPARSEABLE",
+            "no MA reference, named macro series or numeric price level "
+            "found in text",
         )
     if cur is None:
         return ThesisInvalidationCheck(
@@ -1717,6 +1876,12 @@ class StructuralProtectionCheck:
         "noise_band_unevaluable_no_data",
     ]
     detail: str
+    #: The structural level price this read found CONFIRMED broken, on the
+    #: `structural_level_broken` basis only; None on every other basis.
+    #: Added 2026-09-30 so a caller can name WHICH level broke instead of
+    #: guessing one by proximity to the close (the alignment exit did
+    #: exactly that and could admit an overhead level that never broke).
+    broken_level: float | None = None
     #: True when TODAY's close (independent of the confirmation gate below)
     #: found the thesis/level basis broken. Callers must persist this value
     #: keyed by symbol AND today's close date, so it can be fed back in as
@@ -2060,6 +2225,34 @@ def check_structural_protection(
                     ),
                     raw_broken=False,
                 )
+            # BOARD ITEM 70, THE SETTLEMENT RECORDING (2026-10-01). The break
+            # margin is `arbitrary` and, worse, UNIDENTIFIABLE in its own
+            # units: every published answer to "how far beyond a level is a
+            # real break" is a PERCENTAGE of price scaled by how important the
+            # level is (Edwards & Magee ~3% major / ~1% short-term), never an
+            # ATR multiple. Nothing in the desk's record said what 1.0 ATR
+            # actually amounted to in those units at the moment of a decision,
+            # so the number could never be compared against the only
+            # literature that measures the same quantity. Every break
+            # evaluation now records the margin in BOTH units, plus the touch
+            # count that is the desk's only level-importance signal. This is a
+            # RECORDING ONLY — `break_margin` above is unchanged and nothing
+            # about when the desk sells moves. It accrues the observations in
+            # the literature's units that would let this constant be settled
+            # (or replaced) on evidence rather than re-searched a third time.
+            _margin_pct = (break_margin / cur * 100.0) if cur > 0 else float("nan")
+            _level_touches = None
+            if computed_level_touches:
+                _level_touches = computed_level_touches.get(level)
+            break_margin_payload = (
+                f"rule=break_confirmation_margin "
+                f"margin_atr_multiple={BREAK_CONFIRMATION_ATR_MULTIPLE:g} "
+                f"atr14={atr_f:.4g} margin_price={break_margin:.4g} "
+                f"margin_pct_of_close={_margin_pct:.3g} "
+                f"level={level:g} level_touches={_level_touches} "
+                f"min_level_touches={min_level_touches} "
+                f"regime={trend_context} | "
+            )
             if is_short:
                 broken = cur >= level + break_margin
             else:
@@ -2089,7 +2282,9 @@ def check_structural_protection(
                 if confirmed:
                     return StructuralProtectionCheck(
                         protected=False, basis="structural_level_broken",
+                        broken_level=_finite(level),
                         detail=(
+                            break_margin_payload +
                             f"structural level {level} backing the stop has "
                             f"closed beyond it on {closes_seen} confirming "
                             f"trading-day close(s) (regime: {trend_context}"
@@ -2119,6 +2314,7 @@ def check_structural_protection(
                     protected=True,
                     basis="structural_level_pending_confirmation",
                     detail=(
+                        break_margin_payload +
                         f"structural level {level} backing the stop closed "
                         f"beyond it today ({pending_reason}, regime: "
                         f"{trend_context}) — still protected pending "
@@ -2143,6 +2339,7 @@ def check_structural_protection(
             return StructuralProtectionCheck(
                 protected=True, basis="structural_level_intact",
                 detail=(
+                    break_margin_payload +
                     f"structural level {level} backing the stop is intact: "
                     f"close {cur} vs level {level} (break margin "
                     f"{break_margin:.4g})"

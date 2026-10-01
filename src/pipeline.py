@@ -20,7 +20,9 @@ from src.data.news import NewsCoverage, NewsDataProvider
 from src.data.news_store import NewsStore
 from src.data.macro_store import MacroStore
 from src.data.tech_store import TechStore
-from src.agents.base import AgentResult, BaseAgent, agent_log_kwargs
+from src.agents.base import (
+    AgentResult, BaseAgent, agent_log_kwargs, seat_acceptance_kwargs,
+)
 from src.agents.tech_analyst import TechAnalystAgent
 # Re-exported for backward-compat with tests that patch
 # `src.pipeline.compute_indicators` (the name historically lived here).
@@ -37,9 +39,11 @@ from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.congressional_trading import CombinedSmartMoneyProvider, CongressionalTradingProvider
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
+from src.risk.metrics import drift_flag as _drift_flag_check
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     GROSS_LADDER,
+    GROSS_LADDER_ALERT_PCT,
     GrossCeiling,
     RiskRuleEngine,
     apply_gross_ceiling,
@@ -225,6 +229,16 @@ from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 from src.risk.exit_trigger import (  # noqa: E402
     CANONICAL_TRIGGER_NAMES as _CANONICAL_TRIGGER_NAMES,
 )
+from src.risk.exit_trigger import (  # noqa: E402
+    VERIFIED_ON_CHART as _VERIFIED_ON_CHART,
+    canonical_prose_names as _canonical_prose_names,
+)
+
+#: Canonical prose spellings of the triggers whose truth is decided by
+#: READING THE CHART. Never hard-trigger keywords — see the note below.
+_CHART_VERIFIED_TRIGGER_NAMES: frozenset[str] = frozenset(
+    n for t in _VERIFIED_ON_CHART for n in _canonical_prose_names(t)
+) | {"trend alignment over", "alignment exit"}
 
 
 # Named exit triggers — the vocabulary of NEW INFORMATION.
@@ -369,9 +383,20 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
 # untrue of four of them, in the one comment block whose entire job is to
 # record that bar. Overstating a finding is the same failure as understating
 # one, so the claim now lives in a constant a test checks.
+#
+# CHART-VERIFIED TRIGGERS ARE EXCLUDED, AND THIS IS LOAD-BEARING. A name in
+# this tuple is a BYPASS: `_reason_cites_hard_trigger` waves the reason past
+# the SELL/REDUCE noise band AND past the TRAIL_STOP ratchet cooldown and the
+# 1.25xATR trail clamp, on the strength of prose alone. The alignment exit is
+# the one trigger whose whole point is that prose is NOT enough — it is
+# granted its bypass by `_alignment_exit_for_holding` reading the chart, and
+# by nothing else. Letting its canonical name in here would hand a model a
+# second, unverified way to buy the same bypass on the trail path, which runs
+# no chart check at all.
 _HARD_TRIGGER_KEYWORDS = _HARD_TRIGGER_KEYWORDS + tuple(
     name for name in _CANONICAL_TRIGGER_NAMES
     if name not in _HARD_TRIGGER_KEYWORDS
+    and name not in _CHART_VERIFIED_TRIGGER_NAMES
 )
 
 
@@ -937,6 +962,62 @@ def _reconciled_exit_action(order_type: str | None) -> str:
     return "RECONCILED_EXIT"
 
 
+def _actions_with_scan_fallback(items, displaced: dict, orders: list):
+    """The midday action queue, with the SAFETY FALLBACK for scan-raised
+    sales.
+
+    A sale the alignment scan raised REPLACED whatever the review proposed
+    for that symbol. Every layer below may refuse it — an unnamed trigger,
+    the metric-contradiction veto, the AI Risk seat, the qty-sign gate, the
+    confirmer's own verdict. If that happens the symbol must not be left
+    with nothing: the action the scan displaced (in practice a TRAIL_STOP,
+    the only thing besides HOLD it may overwrite) goes back on the queue and
+    is executed normally, so a REFUSED scan sale leaves the position exactly
+    as well protected as the scan found it — never worse.
+
+    "Refused" is read off the only durable evidence available at this level:
+    the sale appended no order to `orders`. A submitted sale always appends
+    one; were it somehow not to, the fallback re-protects a position that is
+    closing, which is the harmless direction to be wrong in.
+
+    A generator so the executor loop is unchanged: it resumes here after the
+    body has run, whichever `continue` the body took to get out.
+    """
+    queue = list(items)
+    while queue:
+        item = queue.pop(0)
+        orders_before = len(orders)
+        yield item
+        if not item.get("_alignment_scan_raised"):
+            continue
+        if len(orders) > orders_before:
+            continue
+        fallback = displaced.pop((item.get("symbol") or "").strip().upper(), None)
+        if fallback is None:
+            continue
+        logger.warning(
+            "Alignment scan: the %s it raised for %s was refused downstream "
+            "— restoring the %s the review asked for, so the position is not "
+            "left unprotected",
+            item.get("action"), item.get("symbol"), fallback.get("action"),
+        )
+        queue.append(fallback)
+
+
+def _reason_claims_alignment_exit(reason: str, exit_trigger: object = None) -> bool:
+    """Does this sale claim the TREND IS OVER (the alignment exit)?
+
+    Read from the STRUCTURED trigger first and the prose only as a
+    fallback, same precedence the holding-discipline fact-check uses.
+    """
+    from src.risk.exit_trigger import ExitTrigger
+    t = getattr(exit_trigger, "value", exit_trigger)
+    if isinstance(t, str) and t.strip().lower() == ExitTrigger.TREND_ALIGNMENT_OVER.value:
+        return True
+    low = (reason or "").lower()
+    return "trend alignment over" in low or "alignment exit" in low
+
+
 class TradingPipeline:
     #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
     #: instance built without __init__ (tests do this) reads None rather than
@@ -1418,6 +1499,9 @@ class TradingPipeline:
         # ceiling is the one `verify_commissioning.py` can see.
         self.portfolio_constructor = PortfolioConstructor(
             build_constructor_config(config, self.risk_engine.config),
+            # Board item 218: the parity refusal is a TRIAL and must leave a
+            # durable, numeric, per-symbol record or it cannot be judged.
+            db=self.db,
         )
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.
@@ -1564,10 +1648,11 @@ class TradingPipeline:
           size against them — that is borrowed money by definition.
 
         Deployable is therefore raw `cash` plus the market value of the
-        cash-equivalent sweep vehicle, which `CashSweeper.fund_buys`
-        liquidates before the BUY phase and whose proceeds land in `cash`
-        on fill. Both components are assets QAMC already owns, so the sum
-        can never exceed equity and never creates leverage.
+        cash-equivalent sweep vehicle. Both components are assets QAMC
+        already owns, so the sum can never exceed equity and never creates
+        leverage. NOTE (item 190): nothing sells the vehicle before the BUY
+        phase any more, so the parked component is owned but not
+        automatically converted; see docs/WORK.md item 190.
 
         This is a PLANNING figure for PM / RM / the pre-trade gate. It is
         not authoritative for execution, and — stale since the 2026-09-02
@@ -1580,7 +1665,7 @@ class TradingPipeline:
         `allow_margin` false the old description still holds: cash is the
         hard ceiling. Either way, this function itself never reads
         `buying_power` / `regt_buying_power` — see above — that boundary is
-        unrelated to and unmoved by the ladder. See `CashSweeper.fund_buys`.
+        unrelated to and unmoved by the ladder.
 
         The arithmetic itself lives in `src.quantities.deployable_cash` —
         one definition, shared with Mission Control's "Deployable" tile,
@@ -2467,8 +2552,8 @@ class TradingPipeline:
             )
             projected_invested_pct = projected.deployed_pct
             deviation = projected_invested_pct - invested_target_pct
-            # The band is the desk's own sourced cash reserve
-            # (`cash_sweep.reserve_pct`), not an invented number — see
+            # The band is the owner-set advisory band
+            # (`deployment_gap.band_pct`), not an invented number — see
             # `deployment_gap_band_pct`. An UNDER-deployed book beyond that
             # reserve is the drag this advisory exists to surface. The OVER
             # branch that told RM to "consider scale_all_buys" was deleted
@@ -4177,6 +4262,38 @@ class TradingPipeline:
         """Push the NO-STOP-AT-ALL escalation to the owner. Never raises."""
         try:
             from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                claim_typed_alert, release_typed_alert,
+            )
+
+            fresh: set[str] = set()
+            # DEFECT 6 (adversary round 3). This escalation had no claim of
+            # its own while every neighbouring one -- unreadable stop,
+            # repair failure, elected-but-unfilled, kill-switch block --
+            # claims the symbol for the trading day on the shared state
+            # file. Four callers reach it (the coverage sweep at every
+            # session entry, the standalone watchdog every thirty minutes,
+            # the reprotect drain, and the in-flight branch added for defect
+            # 3), `send_owner_alert` has no throttle of its own, and a
+            # position that stays naked stays naked -- so the same true
+            # statement could be sent without limit until the owner stops
+            # reading it. Same `kind`-scoped claim, same per-symbol
+            # per-trading-day discipline, same fail-towards-telling-him-
+            # twice behaviour when the state file cannot be read. A gap
+            # carrying no symbol cannot be claimed and is always sent.
+            claimable = sorted({
+                str(g.get("symbol", "")).strip().upper() for g in naked
+                if str(g.get("symbol", "")).strip()
+            })
+            if claimable:
+                fresh = set(claim_typed_alert("no_stop_at_all", claimable))
+                if not fresh:
+                    return
+                naked = [
+                    g for g in naked
+                    if str(g.get("symbol", "")).strip().upper() in fresh
+                    or not str(g.get("symbol", "")).strip()
+                ]
 
             # The refusal REASON, not just the shortfall (docs/WORK.md item
             # 88). "The automatic repair could not restore one" was true of a
@@ -4190,7 +4307,7 @@ class TradingPipeline:
                 + (f" — {g['repair_refusal']}" if g.get("repair_refusal") else "")
                 for g in naked
             )
-            _notifier.send_owner_alert(
+            landed = _notifier.send_owner_alert(
                 # Item 21b: shape, not colour — the owner is red-green
                 # colour blind, so severity is carried by HOW MANY marks
                 # there are, not which one. This alert used a single 🔴
@@ -4208,8 +4325,89 @@ class TradingPipeline:
                 "Place a protective stop manually or flatten the position.",
                 symbols=[str(g.get("symbol")) for g in naked if g.get("symbol")],
             )
+            # FAULT 2 (adversary round 4). The claim above is saved before
+            # the send is attempted and was kept whether or not it landed,
+            # so a muted or failed delivery burned the symbol's one page for
+            # the whole trading day and nothing retried. Telegram is MUTED
+            # on this desk today, which turns that from a rare case into the
+            # normal one. `send_owner_alert` logs at CRITICAL before it
+            # sends, so the journal record survives either way -- but the
+            # CLAIM must not, or the 30-minute watchdog and the next session
+            # entry both find the symbol already spoken for and say nothing.
+            if claimable and not landed:
+                release_typed_alert("no_stop_at_all", sorted(fresh))
         except Exception as exc:  # noqa: BLE001
             logger.error("no-stop owner alert failed: %s", exc)
+
+    @staticmethod
+    def _alert_owner_stop_pending_acceptance(
+        symbol: str, residual_qty: str, order_id: str, status: str,
+        stop_price: float,
+    ) -> None:
+        """Page the owner that a replacement protective stop has been
+        RECEIVED by the broker but is not yet working. Never raises.
+
+        FAULTS 2 and 3 (adversary round 4). This condition first borrowed
+        `_alert_owner_no_stop`, and that was wrong twice over.
+
+        It was UNTRUE. That message reads "NO STOP AT ALL ... there is
+        nothing standing watch", and here the broker holds the order -- it
+        simply has not routed it yet, and it may still be rejected. The
+        desk's standing rule is to report the true state, never an
+        approximation of it that sounds more urgent; a false alert is a
+        root-cause defect in its own right.
+
+        And it SILENCED the page that matters. `no_stop_at_all` is claimed
+        per symbol per trading day. A benign pending stop at 09:35 took the
+        symbol's only claim, so when that same order was later rejected and
+        the position really was naked, the coverage sweep and the
+        thirty-minute watchdog both found the claim held and told nobody.
+        The two conditions therefore get two keys: an unconfirmed stop can
+        never consume the claim belonging to no stop at all.
+
+        Like every other page here it claims the symbol first so two
+        processes cannot both send, and hands the claim back when the send
+        does not land -- which on this desk today is every time, Telegram
+        being muted. `send_owner_alert` logs at CRITICAL before sending, so
+        the journal keeps the record regardless.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                claim_typed_alert, release_typed_alert,
+            )
+
+            sym = str(symbol).strip().upper()
+            if not sym:
+                return
+            if not claim_typed_alert("stop_pending_acceptance", [sym]):
+                return
+            # Two marks, not three: `_alert_owner_no_stop` uses three for
+            # "there is nothing standing watch", and this is the strictly
+            # weaker condition -- an order exists and may yet work. Severity
+            # is carried by how many marks there are (item 21b, the owner is
+            # red-green colour blind), so ranking this below the real thing
+            # is the point.
+            landed = _notifier.send_owner_alert(
+                "🛑🛑 PROTECTIVE STOP NOT YET WORKING\n"
+                f"{sym}: a replacement protective stop for {residual_qty} "
+                f"share(s) at ${stop_price:.2f} (order {order_id}) has been "
+                f"RECEIVED by the broker and is still {status} — accepted "
+                "into the book but not yet routed, and an order in that "
+                "state can still be rejected.\n"
+                "This is NOT a confirmed naked position and it is NOT "
+                "confirmed protection: the desk did not place a second stop "
+                "over it, because two live stops on one position sell the "
+                "shares twice. The recovery intent is kept and the next "
+                "pass re-reads the order's status.\n"
+                "Check that the order reached working state; if it was "
+                "rejected, place a protective stop manually or flatten.",
+                symbols=[sym],
+            )
+            if not landed:
+                release_typed_alert("stop_pending_acceptance", [sym])
+        except Exception as exc:  # noqa: BLE001
+            logger.error("pending-stop owner alert failed: %s", exc)
 
     @staticmethod
     def _alert_owner_unreadable_stop(rows: list[dict]) -> None:
@@ -5894,6 +6092,10 @@ class TradingPipeline:
                 [s.get("stop_price") for s in cancelled_specs],
                 self._format_qty(residual_qty),
             )
+            self._alert_owner_reprotect_left_naked(
+                symbol, residual_qty, 0.0,
+                "cancelled stop specs carried no usable trigger price",
+            )
             return False
         best_stop = min(usable) if side == "buy" else max(usable)
 
@@ -5906,6 +6108,75 @@ class TradingPipeline:
         # Audit 2026-05-27: matches the discipline _restore_stop_orders
         # already enforces via its `check_idempotency` flag for the
         # restore-originals branch.
+        #
+        # INCIDENT 2026-09-30 (AAPL): the check as written could not tell
+        # the replay case above from THIS run's own cancel. Alpaca's cancel
+        # is asynchronous and its OPEN order filter includes the
+        # transitional `pending_cancel` state, so a stop cancelled 486ms
+        # earlier in this same run was still listed as open, matched
+        # `best_stop` exactly (it IS the spec best_stop came from), and the
+        # skip returned True — which made the drain caller delete the
+        # recovery intent and left ~$2,500 naked with no record that a stop
+        # was still owed. The distinction is made by IDENTITY, not by
+        # timing and not by a tolerance: `cancelled_specs` already carry the
+        # broker order `id` (stamped by `_snapshot_stop_order`), which is
+        # the same discipline `replace_stop_loss` has enforced since PR #75.
+        # Ambiguity fails toward SUBMITTING.
+        #
+        # WHAT A DUPLICATE STOP ACTUALLY COSTS -- corrected 2026-09-30.
+        # This comment used to assert "a duplicate stop is recoverable, a
+        # naked position is not". Nothing in this repository makes the
+        # first half of that true: `src/coverage_watchdog.py` states at its
+        # top that it never cancels or modifies anything, and the only
+        # duplicate handling anywhere is an owner message asking for the
+        # extra order to be cancelled BY HAND. Two sell stops resting over
+        # one long, both elected on the same gap, sell the shares twice:
+        # the second fill opens a SHORT of the position's size, which no
+        # stop covers and which this desk never decided to hold. That is
+        # not "recoverable"; it is a new unbounded position.
+        #
+        # DEFECT 5 (adversary round 3). This comment used to close with
+        # "a naked position is worse than a duplicate". That ranking is
+        # NOT measured anywhere in this repository -- the refusal record
+        # written below says so in as many words -- so asserting it here
+        # and denying it forty lines later cannot both be honest. The
+        # ranking is withdrawn. What is left is the only claim the code
+        # actually relies on: BOTH outcomes are unacceptable, so the check
+        # below separates them by IDENTITY rather than by preferring one,
+        # and it falls toward submitting only where identity genuinely
+        # cannot be established -- an ordering of last resort, recorded as
+        # an ambiguity each time it is used, not a measured preference.
+        from src.execution.broker import (
+            PROTECTIVE_ORDER_ACTIVE_STATUSES as _ACTIVE_STATUSES,
+            PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES as _IN_FLIGHT_STATUSES,
+            real_broker_order_id as _real_order_id,
+        )
+        # `_snapshot_stop_order` stamps `str(order.id)`, so an absent id
+        # arrives here as the TRUTHY string "None". Filtering on
+        # truthiness let such a spec count toward `ids_complete` and then
+        # match no open order at all, which sent every replay straight into
+        # the submit branch -- entering the duplicate case through the
+        # wrong door. Judge the value.
+        real_ids = [_real_order_id(spec.get("id")) for spec in cancelled_specs]
+        cancelled_ids = {oid for oid in real_ids if oid}
+        # If ANY cancelled spec arrived without a real id we cannot prove
+        # that a matching open stop isn't one of ours, so no open stop may
+        # satisfy the check at all. Counted over the LIST, not the set: two
+        # specs sharing one id is also a state we cannot reason from.
+        missing_ids = sum(1 for oid in real_ids if not oid)
+        ids_complete = missing_ids == 0 and len(cancelled_ids) == len(cancelled_specs)
+        # Alpaca's OPEN filter includes transitional statuses, and the
+        # two named sets in `src/execution/broker.py` are read SEPARATELY
+        # here (adversary round 2, defect 2). A `pending_new` stop has been
+        # received but not routed, and `pending_new` can still become
+        # `rejected`: it is therefore neither protection this run may bank
+        # nor an order this run may safely place a second stop over. That
+        # third state gets its own outcome below -- no write-back, no
+        # drain, return False -- so the recovery intent SURVIVES and the
+        # next pass re-reads a status that has by then resolved. Nothing
+        # here waits, retries or times out: no such number is derivable
+        # and none is invented. `pending_cancel` is in neither set.
+        # No literal is copied.
         try:
             if side == "buy":
                 existing = self.broker._list_open_protective_stop_orders(symbol, side="buy")
@@ -5918,68 +6189,460 @@ class TradingPipeline:
                 "exists)", symbol, exc,
             )
             existing = []
+        # HOISTED out of the per-order loop (adversary round 2, defect 4).
+        # `ids_complete` does not depend on `o`. Evaluated inside the loop
+        # it was only ever consulted for an order that had already passed
+        # the price and quantity filters, so the case it exists for -- this
+        # run cannot prove which stops are its own -- submitted in exactly
+        # the silence that preceded the fix whenever nothing matched. It is
+        # now decided BEFORE any order is examined, and its reason is
+        # written to the append-only per-symbol refusal record rather than
+        # living only in a log line.
+        # DEFECT 4 (adversary round 3). This branch used to set
+        # `existing = []`, which threw away EVERY broker record -- including
+        # the in-flight (`pending_new`) and under-covering cases below, whose
+        # whole purpose is to stop this run acting on a state it cannot act
+        # on safely. Unprovable identity is a reason not to BANK an open stop
+        # as protection; it is not a reason to go blind to what the broker
+        # just said. The records are kept and the inability to prove
+        # ownership is carried as a flag, consulted at the one point where it
+        # matters: immediately before banking.
+        identity_unprovable = False
+        if existing and not ids_complete:
+            logger.warning(
+                "Reprotect for %s will SUBMIT despite %d open stop(s) at "
+                "the broker: %d of %d cancelled spec(s) carried no broker "
+                "order id, so this run cannot prove an open stop is not "
+                "the one it just cancelled. Submitting risks a duplicate "
+                "stop, which nothing in this desk reconciles; skipping "
+                "risks a naked position. The ordering of those two harms "
+                "is NOT measured anywhere in this repo, so this branch "
+                "does not rank them -- it records the ambiguity and fails "
+                "toward the position having a stop.",
+                symbol, len(existing), missing_ids, len(cancelled_specs),
+            )
+            self._record_reprotect_identity_gap(
+                symbol,
+                f"{missing_ids} of {len(cancelled_specs)} cancelled stop "
+                f"spec(s) carried no broker order id; submitted a fresh "
+                f"stop at ${best_stop:.2f} over {len(existing)} open "
+                f"broker stop(s) that could not be identified. A DUPLICATE "
+                f"protective stop may now rest on {symbol} and nothing in "
+                f"this desk reconciles one.",
+            )
+            identity_unprovable = True
         for o in existing or []:
             try:
                 existing_sp = float(getattr(o, "stop_price", 0) or 0)
             except (TypeError, ValueError):
                 continue
-            # Half-penny tolerance covers Alpaca's float<->Decimal round-trip.
-            if existing_sp > 0 and abs(existing_sp - best_stop) < 0.005:
+            # MEASURED against the broker 2026-09-30 on the separate
+            # rehearsal account (id deliberately not written down: this
+            # repository is public): immediately after a cancel the dead
+            # stop is STILL LISTED with status "new", and Alpaca ACCEPTS a
+            # second stop placed in that window. So a duplicate is not theoretical
+            # and nothing here reconciles one.
+            #
+            # PRICE DOES NOT PARTICIPATE IN THIS DECISION AT ALL (adversary
+            # round 2, defects 1 and 3). The old check compared the resting
+            # trigger with the wanted one inside a half-penny window, which
+            # made a prior attempt's stop that landed a cent away invisible
+            # and put a second live stop on the same shares -- the
+            # incident's own root filter. The window also required a
+            # tolerance constant, and the only justification ever offered
+            # for its size was an ASSERTED float<->Decimal round-trip that
+            # nobody measured. Two honest attempts to derive it failed: the
+            # production database at /home/qamc/quant-agent/data holds no
+            # record of a broker-returned trigger beside the submitted one
+            # (nothing stores the pair), and the rehearsal account is not
+            # usable for it here because this task forbids placing orders.
+            # Rather than guess the number, the need for it is REMOVED:
+            # identity, status and quantity decide, and the price that is
+            # recorded is the one actually resting at the broker.
+            # DEFECT 1 (adversary round 3). `if existing_sp <= 0: continue`
+            # used the TRIGGER PRICE as a presence test: a stop whose price
+            # read as zero or negative was treated as though no order
+            # existed at all, and the run submitted a second stop over it --
+            # while a stop reading one cent was banked as full protection.
+            # An unreadable price says nothing about whether an order is
+            # resting on these shares. Presence, identity, status and
+            # quantity decide; the price is consulted only at the point it
+            # is actually needed, which is the write-back below.
+            order_id = _real_order_id(getattr(o, "id", None))
+            status_attr = getattr(o, "status", None)
+            status = str(
+                getattr(status_attr, "value", status_attr) or ""
+            ).lower()
+            if not order_id:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT: an open stop at $%.2f "
+                    "carries no readable order id, so it cannot be "
+                    "distinguished from the stop this run just cancelled.",
+                    symbol, existing_sp,
+                )
+                continue
+            if order_id in cancelled_ids:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT: the open stop at $%.2f "
+                    "(order %s) is one THIS run just cancelled and is still "
+                    "being listed as open — not a prior successful attempt. "
+                    "Skipping here is what leaves the position naked.",
+                    symbol, existing_sp, order_id,
+                )
+                continue
+            # QUANTITY, not just existence. The coverage sweep compares
+            # covered_qty against held_qty and never reads stop_price
+            # (grep: zero references), so a leftover 1-share sliver stop
+            # from the fractional stop-repair path would otherwise satisfy
+            # this check for a whole position and be reported as covered
+            # forever. An order that does not cover the residual is not
+            # this position's protection.
+            try:
+                existing_qty = abs(float(getattr(o, "qty", 0) or 0))
+            except (TypeError, ValueError):
+                existing_qty = 0.0
+            if existing_qty + 1e-9 < float(residual_qty):
+                logger.warning(
+                    "Reprotect for %s: an open stop (order %s) at $%.2f "
+                    "covers only %s of the %s residual shares, so it is "
+                    "not this position's protection and does not make "
+                    "this run idempotent.",
+                    symbol, order_id, existing_sp,
+                    self._format_qty(existing_qty),
+                    self._format_qty(residual_qty),
+                )
+                continue
+            if status in _IN_FLIGHT_STATUSES:
+                # DEFECT 2, adversary round 2. `pending_new` is a stop the
+                # broker has received and not yet routed, and it can still
+                # go to `rejected`. Counting it as protection drained the
+                # recovery intent and wrote a stop price into the desk's
+                # own record that the broker may refuse seconds later, with
+                # only the coverage sweep to notice -- and that sweep
+                # DEFERS repair while a trading session holds the lock,
+                # which is precisely when this path runs. Neither banking
+                # it nor placing a second stop over it is safe, so this
+                # returns False WITHOUT a write-back: the caller keeps the
+                # persisted recovery intent, and the next pass reads a
+                # status that has resolved one way or the other. No timeout
+                # and no retry count is invented to close the window; the
+                # surviving intent is what closes it.
+                logger.warning(
+                    "Reprotect for %s is NOT complete: a stop from a "
+                    "previous attempt (order %s) is still %s at $%.2f — "
+                    "received by the broker but not yet working, and a "
+                    "%s order can still be rejected. Not recording it as "
+                    "protection and not placing a second stop over it; "
+                    "the recovery intent stays alive so the next pass "
+                    "re-reads it.",
+                    symbol, order_id, status, existing_sp, status,
+                )
+                self._record_reprotect_identity_gap(
+                    symbol,
+                    f"a previous attempt's stop (order {order_id}) was "
+                    f"still {status} at ${existing_sp:.2f}; the recovery "
+                    f"intent was kept rather than banked as protection.",
+                )
+                # DEFECT 3 (adversary round 3), corrected in round 4.
+                # Every other branch that leaves this method with the
+                # residual unprotected pages the owner; this one did not,
+                # and the only thing standing between the position and no
+                # protection at all was a log line. It first reused the
+                # NO-STOP-AT-ALL page, which was untrue here and which
+                # consumed that page's per-symbol daily claim, so a later
+                # REJECTION of this very order would have gone unreported.
+                # It now has its own message, saying what is actually true,
+                # under its own claim key.
+                self._alert_owner_stop_pending_acceptance(
+                    symbol, self._format_qty(residual_qty), order_id,
+                    status or "unknown", existing_sp,
+                )
+                return False
+            if status not in _ACTIVE_STATUSES:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT: the open stop at $%.2f "
+                    "(order %s) is in status %r, not a live protective "
+                    "state — a dying order is not coverage.",
+                    symbol, existing_sp, order_id, status or "unknown",
+                )
+                continue
+            # DEFECT 1, second half. The order is identity-proven, live and
+            # covers the residual, so the position IS protected and a second
+            # stop must NOT be submitted over it. But the trigger could not
+            # be read, so there is no honest number to write into the desk's
+            # own record -- writing $0.00 is the fabricated-stop defect the
+            # owner-message audit already recorded. Bank nothing, submit
+            # nothing, keep the recovery intent so the next pass re-reads.
+            if existing_sp <= 0:
+                logger.error(
+                    "Reprotect for %s is NOT complete: a live stop from a "
+                    "previous attempt (order %s, status %s) rests over the "
+                    "residual, but its trigger price read as %r. Not "
+                    "submitting a second stop over a live one, and not "
+                    "recording a trigger this desk cannot read. The "
+                    "recovery intent stays alive.",
+                    symbol, order_id, status or "unknown", existing_sp,
+                )
+                self._record_reprotect_identity_gap(
+                    symbol,
+                    f"a live stop (order {order_id}) rests over the "
+                    f"residual but its trigger price was unreadable; "
+                    f"nothing was banked and the recovery intent was kept.",
+                )
+                self._alert_owner_unreadable_stop([{
+                    "symbol": symbol, "held_qty": residual_qty,
+                    "read_error": (
+                        f"a live protective stop (order {order_id}, status "
+                        f"{status or 'unknown'}) rests at the broker but its "
+                        f"trigger price could not be read"
+                    ),
+                }])
+                return False
+            # FAULT 5 (adversary round 4). This bail-out used to run
+            # BEFORE the unreadable-price branch below, so an open stop that
+            # was BOTH unreadable and unprovable fell straight through to
+            # the submit at the bottom: two stops resting on the same
+            # shares, neither with a price this desk can read, and nothing
+            # anywhere that reconciles a duplicate. Price is checked first,
+            # because "a live order rests here and I cannot read it" is a
+            # reason to place nothing whatever its identity turns out to be.
+            if identity_unprovable:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT over an open, live stop "
+                    "(order %s, status %s) at $%.2f: this run could not "
+                    "prove the stop is not one it just cancelled, so it "
+                    "may not be banked as protection. The ambiguity is on "
+                    "the per-symbol refusal record.",
+                    symbol, order_id, status or "unknown", existing_sp,
+                )
+                continue
+            # DEFECT 2 (adversary round 3) -- CONSCIOUSLY LEFT OPEN, not
+            # missed. The objection is real: an identity-proven stop is
+            # banked as this position's protection at ANY level, so a stop
+            # resting looser than the one this run derived lets the position
+            # lose more than the desk decided. A level test was written and
+            # then REVERTED, because the repository's own specification
+            # forbids it: `tests/test_reprotect_cancelled_stop_identity.py`
+            # ::test_identity_decides_even_when_the_price_differs requires a
+            # one-cent-looser identity-proven stop to be banked, with the
+            # RESTING trigger recorded. That test exists because a
+            # half-penny price window was the exact filter that produced the
+            # 2026-09-30 naked incident, and any level comparison -- with a
+            # tolerance or without -- puts price back into a decision the
+            # incident proved it must stay out of. Refusing instead would
+            # trade a too-wide stop for no stop, which is strictly worse.
+            # Closing this properly means AMENDING the resting stop to the
+            # wanted trigger in place (the measured-safe mechanism PR #806
+            # landed; a refused amend leaves the original resting), not
+            # refusing to bank it. That is a change to the specification and
+            # to the test, so it belongs to its own item with the owner's
+            # sight of it -- not to a defect sweep. Until then the warning
+            # below is the only record, and it says in terms that the
+            # coverage sweep will not correct the level.
+            # Identity-proven, live and covering the residual: this is a
+            # PREVIOUS attempt's stop. Record the
+            # trigger the broker is actually holding, never the one this run
+            # wanted -- they can differ, and the desk's record must say what
+            # rests.
+            if existing_sp != best_stop:
+                logger.warning(
+                    "Reprotect NOT submitting for %s: a live stop from a "
+                    "PREVIOUS attempt (order %s, status %s) already rests "
+                    "at $%.2f, while this run wanted $%.2f. Submitting "
+                    "would leave TWO live stops on the same shares, which "
+                    "the broker accepts and nothing here reconciles. The "
+                    "resting stop is left in place and is what gets "
+                    "recorded. NOTE: the coverage sweep will NOT correct "
+                    "the price -- it compares quantity only and never "
+                    "reads stop_price -- so a wider-than-wanted stop "
+                    "persists until the trail moves it.",
+                    symbol, order_id, status or "unknown",
+                    existing_sp, best_stop,
+                )
+            else:
                 logger.info(
-                    "Reprotect skipped for %s — a stop at $%.2f already "
-                    "exists at the broker (idempotent re-run)",
-                    symbol, best_stop,
+                    "Reprotect skipped for %s — a stop at $%.2f (order %s, "
+                    "status %s) placed by a PREVIOUS attempt is live at the "
+                    "broker and is not one this run cancelled (idempotent "
+                    "re-run)",
+                    symbol, existing_sp, order_id, status,
                 )
-                from src.execution.stop_records import write_back_stop_loss
-                write_back_stop_loss(
-                    getattr(self, "db", None), symbol, best_stop,
-                    is_short=(side == "buy"),
-                )
-                return True
-
-        side_kwargs = {} if side == "sell" else {"side": side}
-        # Spec §11.1: a FRACTIONAL residual is re-protected by the hybrid
-        # pair (durable GTC over the whole shares, DAY over the sub-share
-        # remainder), not by one fractional order that the broker will only
-        # accept as DAY and that would therefore take the whole position's
-        # protection with it at 16:00 ET. A whole-share residual submits
-        # exactly one GTC order with exactly the same arguments as before.
-        whole, frac = _split_protective_qty(residual_qty)
-        legs = [whole] if whole >= 1 else []
-        if frac > 0:
-            legs.append(frac)
-        if not legs:
-            legs = [residual_qty]
-        last_order = None
-        try:
-            for leg_qty in legs:
-                last_order = self.broker._submit_stop_limit_order(
-                    symbol=symbol, qty=leg_qty, stop_price=best_stop, **side_kwargs,
-                )
-            logger.info(
-                "Re-protected %s residual qty=%s @ stop $%.2f after partial exit",
-                symbol, self._format_qty(residual_qty), best_stop,
+            from src.execution.stop_records import write_back_stop_loss
+            write_back_stop_loss(
+                getattr(self, "db", None), symbol, existing_sp,
+                is_short=(side == "buy"),
             )
-        except Exception as exc:
+            return True
+
+        # SUBMIT THROUGH THE RETRYING PATH, not the raw one (2026-09-30).
+        #
+        # This loop used to call `_submit_stop_limit_order` directly and
+        # place its OWN legs. Three things were wrong with that, and this
+        # PR routes far more traffic through them:
+        #
+        #   * no retry burst and no `held_for_orders` reconciliation, so a
+        #     transient refusal -- or a refusal caused by a stop another
+        #     path had already placed over these very shares -- ended as a
+        #     naked residual when the broker was in fact already covered;
+        #   * it placed the whole-share GTC leg BEFORE the fractional
+        #     sliver, which is MEASURED-bad: 2026-09-16, the GTC hold
+        #     reserved the position and Alpaca refused the 0.4393 BRK-B DAY
+        #     sliver with held_for_orders (see `_submit_stop_legs`). The
+        #     shared path places the DAY remainder FIRST for that reason;
+        #   * a half-placed pair was silently reported as full success.
+        #
+        # `_submit_protective_stop_retrying` is the desk's one protective
+        # submit. It is used here in preference to `_submit_stop_legs`
+        # (the all-or-nothing variant `replace_stop_loss` uses) on purpose:
+        # rolling a landed whole-share GTC leg back to ZERO coverage
+        # because the sub-share sliver was refused would make the residual
+        # fully naked, which is the worse of the two states. Instead the
+        # partial is REPORTED with the quantity actually covered, and the
+        # sliver is left to the coverage sweep that already owns DAY-leg
+        # re-placement. It never raises; None means nothing was placed.
+        from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
+
+        # `_submit_protective_stop_retrying` documents that it never
+        # raises, but this function's own contract is that the SELL has
+        # already succeeded and nothing here may propagate — so an
+        # unexpected raise is caught and reported as no coverage rather
+        # than escaping into the drain caller.
+        try:
+            placed = self.broker._submit_protective_stop_retrying(
+                symbol=symbol, qty=residual_qty, stop_price=best_stop,
+                limit_price=None, side=side,
+            )
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Re-protect failed for %s residual=%s @ $%.2f: %s — position "
                 "is unprotected until the next session re-attaches a stop",
                 symbol, self._format_qty(residual_qty), best_stop, exc,
             )
-            return False
-        from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
-        if isinstance(last_order, dict) and not accepted_stop_order(last_order):
-            logger.warning(
-                "Re-protect for %s @ $%.2f returned no accepted order id — "
-                "not recording a live stop the broker does not hold",
-                symbol, best_stop,
+            self._alert_owner_reprotect_left_naked(
+                symbol, residual_qty, 0.0,
+                f"the protective stop submit at ${best_stop:.2f} raised: {exc}",
             )
             return False
+        if placed is None or (
+            isinstance(placed, dict) and not accepted_stop_order(placed)
+        ):
+            logger.warning(
+                "Re-protect failed for %s residual=%s @ $%.2f — the "
+                "protective submit placed nothing the broker acknowledged; "
+                "the position is unprotected until it is re-attached",
+                symbol, self._format_qty(residual_qty), best_stop,
+            )
+            self._alert_owner_reprotect_left_naked(
+                symbol, residual_qty, 0.0,
+                f"the protective stop submit at ${best_stop:.2f} placed "
+                "nothing the broker acknowledged",
+            )
+            return False
+        # Whole-share submits return the broker's own response untouched
+        # (no `covered_qty` key) -- that shape means one GTC leg over the
+        # whole quantity, so the covered quantity IS the residual.
+        covered_qty, uncovered_qty = float(residual_qty), 0.0
+        if isinstance(placed, dict):
+            covered_qty = float(placed.get("covered_qty", residual_qty) or 0.0)
+            uncovered_qty = float(placed.get("uncovered_qty", 0.0) or 0.0)
+        # A stop IS live at this trigger, so record it either way -- the
+        # write-back is what the next sweep compares the book against.
         write_back_stop_loss(
             getattr(self, "db", None), symbol, best_stop,
             is_short=(side == "buy"),
         )
+        if uncovered_qty > 0:
+            logger.error(
+                "Re-protect for %s is PARTIAL @ stop $%.2f: %s of %s "
+                "share(s) are covered, %s are NOT — reporting the real "
+                "coverage rather than a naked-or-covered guess.",
+                symbol, best_stop, self._format_qty(covered_qty),
+                self._format_qty(residual_qty),
+                self._format_qty(uncovered_qty),
+            )
+            self._alert_owner_reprotect_left_naked(
+                symbol, residual_qty, covered_qty,
+                f"the stop at ${best_stop:.2f} covers only part of the "
+                "residual after a partial exit",
+            )
+            return False
+        logger.info(
+            "Re-protected %s residual qty=%s @ stop $%.2f after partial exit",
+            symbol, self._format_qty(residual_qty), best_stop,
+        )
         return True
+
+    def _record_reprotect_identity_gap(self, symbol: str, detail: str) -> None:
+        """Durable, append-only, per-symbol record of a reprotect ambiguity.
+
+        Adversary round 2, defect 4: the reason this path could not prove
+        what rests at the broker was a log WARNING and nothing else, so it
+        existed only in a rotated file nobody reads per symbol. It is now
+        written through `src/risk/exit_refusal.py`, the desk's existing
+        append-only per-symbol refusal record, so the next reader of the
+        symbol sees why a duplicate may rest or why an intent survived.
+
+        The run id is synthesised from the symbol and the UTC instant
+        because this function runs inside broker restore/drain, which
+        carries no run context to thread one from; the row is forensic and
+        keyed by symbol, not joined to a pipeline run. Never raises: the
+        SELL already succeeded and a forensic write must not unwind it.
+        """
+        try:
+            from datetime import datetime, timezone
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            self._record_exit_refusal(
+                symbol=symbol,
+                run_id=f"reprotect-{str(symbol).strip().upper()}-{stamp}",
+                action="REPROTECT",
+                code="reprotect_broker_state_unprovable",
+                dropped=False,
+                detail=detail,
+                layer="execution",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "reprotect ambiguity record failed for %s: %s", symbol, exc,
+            )
+
+    def _alert_owner_reprotect_left_naked(
+        self, symbol: str, residual_qty: float, covered_qty: float,
+        reason: str,
+    ) -> None:
+        """Page the owner when reprotect ends with the residual UNPROTECTED.
+
+        INCIDENT 2026-09-30: reprotect wrongly skipped as an "idempotent
+        re-run", the recovery intent was deleted, and the only trace was a
+        single INFO log line. The desk's rule is that a position left
+        without a stop is never a log line only, so every path out of
+        `_reprotect_residual` that does NOT end with a live stop now goes
+        down the SAME `_alert_owner_no_stop` escalation the coverage sweep
+        uses — no new channel, no new throttle, and the `repair_refusal`
+        field carries the reason so the owner knows which of the three
+        different actions to take. Never raises: the SELL already
+        succeeded and a failed page must not unwind it.
+
+        `covered_qty` is what the broker is ACTUALLY watching, passed in by
+        the caller. It was hardcoded to 0 when this helper was written,
+        which told the owner a whole-share leg that HAD landed did not
+        exist -- an untrue statement about how exposed he is, on the one
+        alert whose entire job is to state that exposure. Nothing here
+        assumes; it reports the number the submit path returned.
+        """
+        try:
+            held = float(residual_qty or 0.0)
+            covered = max(0.0, min(float(covered_qty or 0.0), held))
+            self._alert_owner_no_stop([{
+                "symbol": symbol,
+                "held_qty": self._format_qty(held),
+                "covered_qty": self._format_qty(covered),
+                "repair_refusal": f"re-protect after partial exit: {reason}",
+            }])
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "reprotect naked-position alert failed for %s: %s",
+                symbol, exc,
+            )
 
     @staticmethod
     def _order_accepted(order: dict, symbol: str, side: str) -> bool:
@@ -7014,9 +7677,43 @@ class TradingPipeline:
                 logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
                 continue
             from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
+            if isinstance(order, dict):
+                # Item 201: the per-leg outcome is a ROW, not a log line, and it
+                # is written whatever the outcome — a shift that refused is the
+                # case that most needs to survive the session.
+                from src.execution.exit_path_records import (
+                    record_stop_shift_legs, stop_shift_incomplete_text,
+                )
+                shift_status = str(order.get("status") or "")
+                record_stop_shift_legs(
+                    self.db, symbol=p.symbol, amount=amount,
+                    mode=str(order.get("mode") or ""), status=shift_status,
+                    shifted=int(order.get("shifted") or 0),
+                    total=int(order.get("total") or 0),
+                    legs=order.get("legs"), run_id=run_id,
+                )
+                if shift_status in ("partial", "refused", "unknown", "naked"):
+                    # An un-shifted stop across an ex-dividend open is wrong by
+                    # exactly the dividend IN THE DIRECTION THAT TRIGGERS IT, so
+                    # this is an owner-visible change in protection, not a nit.
+                    try:
+                        from src.notifier import send_owner_alert
+                        send_owner_alert(
+                            stop_shift_incomplete_text(
+                                p.symbol, shift_status,
+                                int(order.get("shifted") or 0),
+                                int(order.get("total") or 0),
+                            ),
+                            symbols=[p.symbol],
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("ex-div: owner alert failed for %s: %s", p.symbol, e)
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
+                # A partial, a refusal or an unknown carries no order id, so no
+                # stop level is written back and no TRAIL_STOP row is filed —
+                # the desk must not record a stop it did not confirm moving.
                 continue
             try:
                 write_back_stop_loss(self.db, p.symbol, new_stop, is_short=False)
@@ -9552,7 +10249,7 @@ class TradingPipeline:
             if total_value > 0:
                 weight = position_weight_pct(p, total_value)
                 pnl_pct = unrealized_pnl_pct(p)
-                if weight > 12 and pnl_pct is not None and pnl_pct > 10:
+                if _drift_flag_check(weight, pnl_pct):
                     f.positions_drift_flagged += 1
 
         # Signal freshness
@@ -9843,8 +10540,45 @@ class TradingPipeline:
                 else self.broker.get_positions()
             )
             self.db.sync_positions(snapshot)
+            self._record_short_overnight_gaps(snapshot)
         except Exception as exc:  # noqa: BLE001
             logger.error("local positions table refresh failed: %s", exc)
+
+    def _record_short_overnight_gaps(self, positions) -> None:
+        """Store the adverse overnight gap suffered by each held SHORT.
+
+        SHORT-SIDE GAP EVIDENCE, RECORDING ONLY — item 186. The short-side
+        sizing haircut is unsourced and two attempts to read it off the
+        instrument have failed; both failed because this desk has never
+        kept a record of what a short actually suffers overnight. Bars are
+        fetched live and discarded and there is no OHLCV table, so the
+        evidence has to be captured beside the trade while the trade is
+        open. Nothing reads this back: no threshold, no gate, no sizing
+        change. See `TradeStore.record_overnight_gap` for the hard limit on
+        its use.
+
+        Shorts only, because only a short's loss above its stop is
+        unbounded and only the short-side multiple is the open question.
+        Held shorts are a handful at most, so the two-bar fetch per name is
+        cheap. Fail-soft per symbol and as a whole: a recording problem
+        must never disturb a trading session.
+        """
+        for p in positions or []:
+            try:
+                if float(getattr(p, "qty", 0) or 0) >= 0:
+                    continue
+                bars = self.market.get_ohlcv(p.symbol, 7) or []
+                if len(bars) < 2:
+                    continue
+                prev_bar, today = bars[-2], bars[-1]
+                self.db.record_overnight_gap(
+                    p.symbol, prev_bar.close, today.open, str(today.date),
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "overnight-gap recording skipped for %s",
+                    getattr(p, "symbol", "?"), exc_info=True,
+                )
 
     def _run_news_update(
         self, run_id: str, session: str = "morning",
@@ -9938,6 +10672,7 @@ class TradingPipeline:
                 logger.info("[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
                             session, intel_report.market_sentiment, n_changes, n_stocks)
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("agent_failure" if not intel_report else None),
                 agent_name=f"news_analyst_{session}", run_id=run_id,
                 input_summary=(
                     f"{len(news_items)} news items "
@@ -10166,7 +10901,16 @@ class TradingPipeline:
     def _adjudicate_target_revision_flags(
         self, review, positions, *, run_id: str, seat: str,
     ) -> list[dict]:
-        """Adjudicate this review's take-profit revision flags.
+        """Re-measure every open position's take-profit, every session.
+
+        THE WAY IN IS THE OPEN BOOK, NOT A FLAG (item 194, 2026-10-01).
+        Every held position is adjudicated on every run. A seat raising
+        `src.models.TargetRevisionFlag` no longer decides WHETHER a symbol
+        is measured, only the seat label and prose evidence recorded
+        against it; a flag for a symbol the broker does not show as held is
+        still filed as its own finding. Widening the way in added no
+        number: the flag carries symbol and evidence and no price, so it
+        never fed the arithmetic, and the derivation itself is unchanged.
 
         A seat raises `src.models.TargetRevisionFlag` — SYMBOL AND EVIDENCE,
         no price; the schema has no price field. This method supplies
@@ -10182,8 +10926,11 @@ class TradingPipeline:
         `metric_deltas` built before this point, so a revision cannot reach
         them even in principle. That is the second of two independent
         defences; the first is that progress/pace are measured against the
-        PINNED `initial_take_profit` (see `_build_position_facts`), so a
-        revision cannot move a guarded metric at all.
+        entry `initial_take_profit` (see `_build_position_facts`), so a
+        revision cannot move a guarded metric at all. It can still reach
+        a LATER session's reviewing model as prose, through
+        `distance_to_target_pct`; what no deterministic gate does is read
+        it.
 
         EVERY flag produces a durable row — a re-derivation, a named refusal,
         or a named data fault. Never a silent no-op and never a blank.
@@ -10201,15 +10948,91 @@ class TradingPipeline:
             MIN_TARGET_ATR_MULTIPLE,
         )
         from src.risk.target_revision import (
+            SEAT_STRUCTURAL_SWEEP,
+            SWEEP_EVIDENCE,
             assess_target_revision,
             level_backing_target,
             target_level_broken,
         )
         from src.trading_calendar import et_today
 
-        flags = list(getattr(review, "target_revision_flags", None) or [])
-        if not flags:
+        # Direction comes from BROKER TRUTH (the sign of the held qty), never
+        # from the flag — the seat names a symbol, not a side.
+        held: dict[str, object] = {}
+        for p in positions or []:
+            _sym = str(getattr(p, "symbol", "") or "").strip().upper()
+            if _sym:
+                held[_sym] = p
+
+        # THE WAY IN (item 194). Every OPEN POSITION is adjudicated every
+        # session, not only the symbols a seat happened to raise. A seat
+        # flag carries symbol and evidence and no price, so it contributes
+        # nothing to the arithmetic below and widening the way in
+        # introduces NO new number: the sweep makes the identical call with
+        # the identical ratified bars. What the flag-only gate produced was
+        # not safety but arbitrary coverage — a position that quietly grew
+        # a wall between its entry and its stored target kept quoting a
+        # target aimed past that wall for as long as nobody mentioned the
+        # ticker, and the stored target decides which trailing-stop regime
+        # a range trade is in (`src/risk/trailing.py`), so the stale number
+        # was already governing a live stop.
+        work: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for flag in list(getattr(review, "target_revision_flags", None) or []):
+            sym = str(getattr(flag, "symbol", "") or "").strip().upper()
+            if not sym or sym in seen:
+                continue
+            seen.add(sym)
+            work.append((sym, seat, str(getattr(flag, "evidence", "") or "")))
+        for sym in sorted(held):
+            if sym in seen:
+                continue
+            seen.add(sym)
+            work.append((sym, SEAT_STRUCTURAL_SWEEP, SWEEP_EVIDENCE))
+        if not work:
             return []
+
+        # ONE batched bar read for the whole sweep (item 194 fault 3). The
+        # seat flag used to ration a serial per-name fetch; removing the
+        # gate without removing the serialism would have turned one or two
+        # round trips a session into one per held name. `get_ohlcv_batch`
+        # already exists and is what the rest of the desk uses for a
+        # multi-name read. A miss falls through to the per-name fetch
+        # below, so a provider that cannot batch is degraded, not broken.
+        # NO timeout number is introduced: any seconds value would be an
+        # invented constant, and batching removes the serial exposure that
+        # motivated one.
+        batched_bars: dict[str, list] = {}
+        serial_bar_read = False
+        try:
+            batched_bars = dict(self.market.get_ohlcv_batch(
+                [sym for sym, _, _ in work],
+                self.config.trading.lookback_days,
+            ) or {})
+        except Exception as exc:  # noqa: BLE001
+            serial_bar_read = True
+            logger.warning(
+                "target revision: batched bar read failed (%s) — falling "
+                "back to a per-name fetch", exc,
+            )
+
+        # FAULT 6: an unchanged, unapplied, fully recomputable outcome is
+        # not re-filed every session. Same intent as the trail's own
+        # `record_trail_state_if_changed`: the row says WHEN a thing
+        # changed, and a book of eleven names filing an identical
+        # no-pinned-horizon refusal daily is storage of recomputable state.
+        prior_codes: dict[str, str] = {}
+        try:
+            for _sym, _rows in (self.db.get_target_revisions(
+                    [sym for sym, _, _ in work]) or {}).items():
+                if _rows:
+                    prior_codes[str(_sym).upper()] = str(
+                        _rows[0].get("code") or "")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "target revision: prior-outcome read failed (%s) — every "
+                "outcome is filed this session", exc,
+            )
 
         risk_cfg = getattr(getattr(self, "risk_engine", None), "config", None)
         target_cfg = {
@@ -10224,230 +11047,267 @@ class TradingPipeline:
                 risk_cfg, "max_target_horizon_sessions", MAX_HORIZON_SESSIONS),
         }
 
-        # Direction comes from BROKER TRUTH (the sign of the held qty), never
-        # from the flag — the seat names a symbol, not a side.
-        held: dict[str, object] = {}
-        for p in positions or []:
-            held[str(getattr(p, "symbol", "")).upper()] = p
+        # FAULT 5 (item 194): the batch fallback must not degrade
+        # silently. When the batched read failed, every outcome this
+        # session carries the fact in its durable detail text.
+        _serial_note = (
+            " [the batched bar read was unavailable this session, so this "
+            "position's bars were fetched one name at a time]"
+        ) if serial_bar_read else ""
 
         outcomes: list[dict] = []
-        seen: set[str] = set()
-        for flag in flags:
-            sym = str(getattr(flag, "symbol", "") or "").strip().upper()
-            evidence = str(getattr(flag, "evidence", "") or "")
-            if not sym or sym in seen:
-                continue
-            seen.add(sym)
-            position = held.get(sym)
-            if position is None:
-                # The seat flagged something not held. Filed, not silently
-                # dropped, because a flag on a symbol that is not in the
-                # book is itself a finding about the seat's view of the book.
-                outcomes.append(self._file_target_revision(
-                    run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
-                    code="REFUSAL_NOT_HELD", applied=False,
-                    detail=(
-                        "the seat flagged a take-profit revision for a symbol "
-                        "the broker does not show as held"
-                    ),
-                ))
-                continue
-
-            is_short = float(getattr(position, "qty", 0) or 0) < 0
+        for sym, flag_seat, evidence in work:
+            # FAULT 4 (item 194): every name is adjudicated inside its own
+            # guard. Before this, one unexpected exception anywhere in the
+            # body unwound to the single try at the call site, which logs
+            # and returns an empty list — and because the work list is
+            # sorted, the SAME tail of the book was silently dropped every
+            # time, each dropped name keeping a stored target the record
+            # did not mark as unmeasured. A failure now costs exactly one
+            # name, and that name gets a durable row saying so.
             try:
-                buy = self.db.get_symbol_last_buy(
-                    sym, action="SHORT" if is_short else None,
-                ) if is_short else self.db.get_symbol_last_buy(sym)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "target revision: opening-row lookup failed for %s (%s)",
-                    sym, exc,
-                )
-                buy = None
-            buy = buy or {}
-
-            # Same bars, same window, same helpers as
-            # `_structural_protection_for_holding` — and the same rule that
-            # the price fed to a break test is the latest COMPLETED DAILY
-            # CLOSE, never a live quote.
-            levels: list[float] = []
-            atr = close_price = bar_date = None
-            coverage = None
-            try:
-                bars = self.market.get_ohlcv(
-                    sym, self.config.trading.lookback_days,
-                ) or []
-                from src.data.levels import (
-                    find_structural_levels,
-                    structure_coverage,
-                )
-                from src.data.technical import compute_indicators
-                # What the bar history behind `levels` was, so an empty list
-                # from a dead feed is a DATA fault and one from a measured,
-                # structureless chart is a refusal — the same distinction
-                # `_derive_target` passes at entry.
-                coverage = structure_coverage(bars)
-                if bars:
-                    last_bar = sorted(bars, key=lambda b: b.date)[-1]
-                    close_price = float(last_bar.close)
-                    bar_date = str(last_bar.date)
-                    atr = compute_indicators(sym, bars).atr_14
-                    supports, resistances = find_structural_levels(bars)
-                    levels = sorted(lv.price for lv in (*supports, *resistances))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "target revision: bars/indicator fetch failed for %s (%s) "
-                    "— the flag is filed as a data fault, not judged",
-                    sym, exc,
-                )
-
-            stored_target = None
-            try:
-                stored_target = float(buy.get("take_profit") or 0) or None
-            except (TypeError, ValueError):
-                stored_target = None
-
-            # Which level this target was measured against, recovered by the
-            # same identity test the stop side uses. None for a measured-move
-            # target, which is correct: it never sat on a level.
-            target_level = level_backing_target(
-                stored_target=stored_target,
-                computed_levels=levels,
-                # NOT a knob — the exact constant `find_structural_levels`
-                # clustered these zones with (docs/WORK.md item 46).
-                level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
-            )
-
-            # Cross-day confirmation, keyed off THIS READ's own bar_date so
-            # several intraday cycles re-reading one close are never
-            # miscounted as two confirming days.
-            effective_bar_date = bar_date or str(et_today())
-            break_seen_prior_close = False
-            try:
-                prior = self.db.get_prior_target_level_break(
-                    [sym], today_bar_date=effective_bar_date,
-                    exclude_run_id=run_id,
-                )
-                break_seen_prior_close = bool(prior.get(sym, False))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "target revision: prior-close read failed for %s (%s) — "
-                    "today's break, if any, starts unconfirmed", sym, exc,
-                )
-
-            # Sessions this position has already spent out of its pinned
-            # horizon — the HOLIDAY-AWARE broker count (item 165), the same
-            # `broker.trading_sessions_held` the reviewer's own facts and
-            # the exit guard's noise band read; never a calendar-day count
-            # and never a default. It is what lets a target the price has
-            # run past be re-anchored on the close over the REMAINING
-            # horizon (item 114); a None here simply means no re-anchor is
-            # attempted and the existing refusal stands.
-            sessions_held: int | None = None
-            entry_ts = (buy.get("timestamp") or "")[:10]
-            if entry_ts:
-                try:
-                    from datetime import date as _date
-                    sessions_held = self.broker.trading_sessions_held(
-                        _date.fromisoformat(entry_ts), et_today(),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "target revision: sessions-held read failed for %s "
-                        "(%s) — no remaining horizon, so a target behind "
-                        "price is refused rather than re-anchored", sym, exc,
-                    )
-                    sessions_held = None
-
-            outcome = assess_target_revision(
-                symbol=sym,
-                direction="short" if is_short else "long",
-                entry_price=float(getattr(position, "avg_entry", 0) or 0) or None,
-                stored_target=stored_target,
-                target_level=target_level,
-                pinned_horizon_sessions=buy.get("expected_horizon_sessions"),
-                setup_type=buy.get("setup_type") or None,
-                levels=levels,
-                atr=atr,
-                close_price=close_price,
-                levels_coverage=coverage or COVERAGE_UNKNOWN,
-                break_seen_prior_close=break_seen_prior_close,
-                sessions_held=sessions_held,
-                # The same ratified derivation bars the constructor passes at
-                # entry, read off `risk_engine.config` (what
-                # `ConstructorConfig` itself mirrors). Read defensively
-                # because this method must survive a lightweight pipeline
-                # double in unit tests that never built a real risk_engine;
-                # the fallbacks are `src.data.levels`' own module constants,
-                # not a second invented set of numbers.
-                **target_cfg,
-            )
-
-            # File today's raw break state for the NEXT trading day to
-            # confirm against — the same read/persist shape as
-            # `_structural_protection_for_holding`. A `None` from the break
-            # test means the question could not be asked; nothing is filed,
-            # so a missing input can never become half of a confirmation.
-            raw_broken = target_level_broken(
-                target_level=target_level, close_price=close_price,
-                atr=atr, is_short=is_short,
-            )
-            if raw_broken is not None and bar_date:
-                try:
-                    self.db.save_target_level_break(
-                        run_id=run_id, symbol=sym,
-                        raw_broken=bool(raw_broken), bar_date=bar_date,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "target revision: failed to persist %s break state "
-                        "(%s) — tomorrow's read starts unconfirmed", sym, exc,
-                    )
-
-            applied = False
-            if outcome.revised and outcome.new_price:
-                try:
-                    applied = bool(self.db.update_open_take_profit(
-                        sym, outcome.new_price,
-                        action="SHORT" if is_short else "BUY",
+                position = held.get(sym)
+                if position is None:
+                    # The seat flagged something not held. Filed, not silently
+                    # dropped, because a flag on a symbol that is not in the
+                    # book is itself a finding about the seat's view of the book.
+                    outcomes.append(self._file_target_revision(
+                        run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
+                        code="REFUSAL_NOT_HELD", applied=False,
+                        detail=(
+                            "the seat flagged a take-profit revision for a symbol "
+                            "the broker does not show as held"
+                        ),
                     ))
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "target revision: write-back failed for %s (%s) — "
-                        "the stored target stands", sym, exc,
-                    )
-                    applied = False
-                if applied:
-                    logger.info(
-                        "Target revised: %s $%.2f -> $%.2f (%s, %s) — "
-                        "progress/pace stay measured against the pinned "
-                        "entry target",
-                        sym, outcome.prior_price or 0.0, outcome.new_price,
-                        outcome.basis, outcome.trigger,
-                    )
-            if not applied and outcome.revised:
-                # The derivation succeeded but the row did not move. Recorded
-                # as its own outcome so the record can never claim a revision
-                # the trade row does not carry.
-                outcomes.append(self._file_target_revision(
-                    run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
-                    code="FAULT_REVISION_WRITE_FAILED", applied=False,
-                    trigger=outcome.trigger, prior_price=outcome.prior_price,
-                    detail=(
-                        f"{outcome.trigger} fired and re-derived "
-                        f"${outcome.new_price:,.2f}, but the opening row could "
-                        f"not be updated — the stored target stands"
-                    ),
-                ))
-                continue
+                    continue
 
-            outcomes.append(self._file_target_revision(
-                run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
-                code=outcome.code, applied=applied, trigger=outcome.trigger,
-                prior_price=outcome.prior_price, new_price=outcome.new_price,
-                basis=outcome.basis, level_used=outcome.level_used,
-                detail=outcome.detail,
-            ))
+                is_short = float(getattr(position, "qty", 0) or 0) < 0
+                try:
+                    buy = self.db.get_symbol_last_buy(
+                        sym, action="SHORT" if is_short else None,
+                    ) if is_short else self.db.get_symbol_last_buy(sym)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "target revision: opening-row lookup failed for %s (%s)",
+                        sym, exc,
+                    )
+                    buy = None
+                buy = buy or {}
+
+                # Same bars, same window, same helpers as
+                # `_structural_protection_for_holding` — and the same rule that
+                # the price fed to a break test is the latest COMPLETED DAILY
+                # CLOSE, never a live quote.
+                levels: list[float] = []
+                atr = close_price = bar_date = None
+                coverage = None
+                try:
+                    bars = batched_bars.get(sym)
+                    if bars is None:
+                        bars = self.market.get_ohlcv(
+                            sym, self.config.trading.lookback_days,
+                        ) or []
+                    from src.data.levels import (
+                        find_structural_levels,
+                        structure_coverage,
+                    )
+                    from src.data.technical import compute_indicators
+                    # What the bar history behind `levels` was, so an empty list
+                    # from a dead feed is a DATA fault and one from a measured,
+                    # structureless chart is a refusal — the same distinction
+                    # `_derive_target` passes at entry.
+                    coverage = structure_coverage(bars)
+                    if bars:
+                        last_bar = sorted(bars, key=lambda b: b.date)[-1]
+                        close_price = float(last_bar.close)
+                        bar_date = str(last_bar.date)
+                        atr = compute_indicators(sym, bars).atr_14
+                        supports, resistances = find_structural_levels(bars)
+                        levels = sorted(lv.price for lv in (*supports, *resistances))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "target revision: bars/indicator fetch failed for %s (%s) "
+                        "— the flag is filed as a data fault, not judged",
+                        sym, exc,
+                    )
+
+                stored_target = None
+                try:
+                    stored_target = float(buy.get("take_profit") or 0) or None
+                except (TypeError, ValueError):
+                    stored_target = None
+
+                # Which level this target was measured against, recovered by the
+                # same identity test the stop side uses. None for a measured-move
+                # target, which is correct: it never sat on a level.
+                target_level = level_backing_target(
+                    stored_target=stored_target,
+                    computed_levels=levels,
+                    # NOT a knob — the exact constant `find_structural_levels`
+                    # clustered these zones with (docs/WORK.md item 46).
+                    level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
+                )
+
+                # Cross-day confirmation, keyed off THIS READ's own bar_date so
+                # several intraday cycles re-reading one close are never
+                # miscounted as two confirming days.
+                effective_bar_date = bar_date or str(et_today())
+                break_seen_prior_close = False
+                try:
+                    prior = self.db.get_prior_target_level_break(
+                        [sym], today_bar_date=effective_bar_date,
+                        exclude_run_id=run_id,
+                    )
+                    break_seen_prior_close = bool(prior.get(sym, False))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "target revision: prior-close read failed for %s (%s) — "
+                        "today's break, if any, starts unconfirmed", sym, exc,
+                    )
+
+                # Sessions this position has already spent out of its pinned
+                # horizon — the HOLIDAY-AWARE broker count (item 165), the same
+                # `broker.trading_sessions_held` the reviewer's own facts and
+                # the exit guard's noise band read; never a calendar-day count
+                # and never a default. It is what lets a target the price has
+                # run past be re-anchored on the close over the REMAINING
+                # horizon (item 114); a None here simply means no re-anchor is
+                # attempted and the existing refusal stands.
+                sessions_held: int | None = None
+                entry_ts = (buy.get("timestamp") or "")[:10]
+                if entry_ts:
+                    try:
+                        from datetime import date as _date
+                        sessions_held = self.broker.trading_sessions_held(
+                            _date.fromisoformat(entry_ts), et_today(),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "target revision: sessions-held read failed for %s "
+                            "(%s) — no remaining horizon, so a target behind "
+                            "price is refused rather than re-anchored", sym, exc,
+                        )
+                        sessions_held = None
+
+                outcome = assess_target_revision(
+                    symbol=sym,
+                    direction="short" if is_short else "long",
+                    entry_price=float(getattr(position, "avg_entry", 0) or 0) or None,
+                    stored_target=stored_target,
+                    target_level=target_level,
+                    pinned_horizon_sessions=buy.get("expected_horizon_sessions"),
+                    setup_type=buy.get("setup_type") or None,
+                    levels=levels,
+                    atr=atr,
+                    close_price=close_price,
+                    levels_coverage=coverage or COVERAGE_UNKNOWN,
+                    break_seen_prior_close=break_seen_prior_close,
+                    sessions_held=sessions_held,
+                    # The same ratified derivation bars the constructor passes at
+                    # entry, read off `risk_engine.config` (what
+                    # `ConstructorConfig` itself mirrors). Read defensively
+                    # because this method must survive a lightweight pipeline
+                    # double in unit tests that never built a real risk_engine;
+                    # the fallbacks are `src.data.levels`' own module constants,
+                    # not a second invented set of numbers.
+                    **target_cfg,
+                )
+
+                # File today's raw break state for the NEXT trading day to
+                # confirm against — the same read/persist shape as
+                # `_structural_protection_for_holding`. A `None` from the break
+                # test means the question could not be asked; nothing is filed,
+                # so a missing input can never become half of a confirmation.
+                raw_broken = target_level_broken(
+                    target_level=target_level, close_price=close_price,
+                    atr=atr, is_short=is_short,
+                )
+                if raw_broken is not None and bar_date:
+                    try:
+                        self.db.save_target_level_break(
+                            run_id=run_id, symbol=sym,
+                            raw_broken=bool(raw_broken), bar_date=bar_date,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "target revision: failed to persist %s break state "
+                            "(%s) — tomorrow's read starts unconfirmed", sym, exc,
+                        )
+
+                applied = False
+                if outcome.revised and outcome.new_price:
+                    try:
+                        applied = bool(self.db.update_open_take_profit(
+                            sym, outcome.new_price,
+                            action="SHORT" if is_short else "BUY",
+                        ))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "target revision: write-back failed for %s (%s) — "
+                            "the stored target stands", sym, exc,
+                        )
+                        applied = False
+                    if applied:
+                        logger.info(
+                            "Target revised: %s $%.2f -> $%.2f (%s, %s) — "
+                            "progress/pace stay measured against the pinned "
+                            "entry target",
+                            sym, outcome.prior_price or 0.0, outcome.new_price,
+                            outcome.basis, outcome.trigger,
+                        )
+                if not applied and outcome.revised:
+                    # The derivation succeeded but the row did not move. Recorded
+                    # as its own outcome so the record can never claim a revision
+                    # the trade row does not carry.
+                    outcomes.append(self._file_target_revision(
+                        run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
+                        code="FAULT_REVISION_WRITE_FAILED", applied=False,
+                        trigger=outcome.trigger, prior_price=outcome.prior_price,
+                        detail=(
+                            f"{outcome.trigger} fired and re-derived "
+                            f"${outcome.new_price:,.2f}, but the opening row could "
+                            f"not be updated — the stored target stands"
+                        ),
+                    ))
+                    continue
+
+                outcomes.append(self._file_target_revision(
+                    run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
+                    code=outcome.code, applied=applied, trigger=outcome.trigger,
+                    prior_price=outcome.prior_price, new_price=outcome.new_price,
+                    basis=outcome.basis, level_used=outcome.level_used,
+                    detail=(
+                        outcome.detail + _serial_note
+                    ) if _serial_note else outcome.detail,
+                    # A degraded session is never deduped away: the whole
+                    # point of recording it is that somebody measuring a
+                    # slow session later can see WHY it was slow.
+                    prior_code=None if serial_bar_read else prior_codes.get(sym),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "target revision: %s could not be adjudicated (%s) — "
+                    "filed as unmeasured; the stored target stands", sym, exc,
+                )
+                try:
+                    outcomes.append(self._file_target_revision(
+                        run_id=run_id, symbol=sym, seat=flag_seat,
+                        evidence=evidence, code="FAULT_POSITION_NOT_MEASURED",
+                        applied=False,
+                        detail=(
+                            "this position could not be adjudicated this "
+                            "session, so its stored target is unverified "
+                            "rather than confirmed" + _serial_note
+                        ),
+                    ))
+                except Exception as exc2:  # noqa: BLE001
+                    # The filing itself sat unguarded inside this handler,
+                    # so a failure HERE unwound the remaining names after
+                    # all — the sorted-tail truncation, one layer deeper.
+                    logger.error(
+                        "target revision: could not even file %s as "
+                        "unmeasured (%s); the sweep continues", sym, exc2,
+                    )
         return outcomes
 
     def _file_target_revision(
@@ -10455,6 +11315,7 @@ class TradingPipeline:
         code: str, applied: bool, trigger: str = "",
         prior_price: float | None = None, new_price: float | None = None,
         basis: str = "", level_used: float | None = None, detail: str = "",
+        prior_code: str | None = None,
     ) -> dict:
         """Write one adjudicated flag and return its payload.
 
@@ -10469,6 +11330,16 @@ class TradingPipeline:
             "prior_price": prior_price, "new_price": new_price,
             "level_used": level_used, "applied": bool(applied),
         }
+        # FAULT 6 (item 194): an unapplied outcome identical to this
+        # symbol's last one is recomputable state, and the sweep would
+        # otherwise re-file it for every held name every session forever.
+        # Same rule the trail's `record_trail_state_if_changed` applies:
+        # the row marks a CHANGE. An applied revision is always written.
+        if not applied and prior_code is not None and prior_code == code:
+            payload["evidence_id"] = None
+            payload["unchanged_since_last_session"] = True
+            return payload
+
         evidence_id = None
         try:
             evidence_id = self.db.record_target_revision(
@@ -10648,6 +11519,7 @@ class TradingPipeline:
                 self.db.save_holding_protection_break(
                     run_id=run_id, symbol=symbol, raw_broken=check.raw_broken,
                     bar_date=effective_bar_date, close=close_price,
+                    basis=check.basis, detail=check.detail,
                 )
         except Exception as e:  # noqa: BLE001
             logger.warning(
@@ -10896,6 +11768,10 @@ class TradingPipeline:
 
         try:
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs(
+                    "position_review_parse_error" if not reasked else None,
+                    result=reask_result,
+                ),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=f"exit-trigger re-ask | {', '.join(sorted(pending))}",
                 input_message=reask_result.user_message,
@@ -11297,16 +12173,23 @@ class TradingPipeline:
             recorded_initial_stop, replace_stop_and_record,
         )
         from src.execution.exit_path_records import (
-            last_trail_states, record_trail_state_if_changed,
+            last_trail_states, record_trail_code_census,
+            record_trail_state_if_changed,
         )
         from src.risk.trailing import TRAIL_CODE_TRAILED, evaluate_trailing_stop
 
         orders: list[dict] = []
+        # Item 196: the per-stock record above is deduplicated by code, so
+        # it cannot answer how OFTEN an outcome occurs. This counts every
+        # evaluation this run, written once at the end of the pass.
+        from collections import Counter as _Counter
+        code_census: _Counter = _Counter()
         last_codes = last_trail_states(
             self.db, [getattr(p, "symbol", "") for p in positions],
         )
 
         def _note(symbol: str, code: str, detail: str = "", **facts) -> None:
+            code_census[str(code)] += 1
             record_trail_state_if_changed(
                 self.db, last_codes, run_id=run_id, symbol=symbol,
                 code=code, detail=detail, **facts,
@@ -11337,6 +12220,30 @@ class TradingPipeline:
             if not buy:
                 _note(symbol, "no_opening_buy_row")
                 continue
+
+            # Every field read off `buy` below is pinned AT ENTRY — the
+            # reference target (`take_profit`), the denominator of R
+            # (`initial_stop_loss`, via `recorded_initial_stop`), the
+            # setup label and the measured breakout verdict — and a
+            # scale-in writes a SECOND opening row. Reading them off the
+            # newest add let the reference target sit above current price
+            # and measured R from a stop this trade never opened with.
+            # Item 195 fixed only the bar window; these read the same
+            # wrong row. `get_position_open_row` resolves the chain by
+            # `position_id` and returns None when it cannot, so an
+            # unchainable or legacy row keeps exactly today's behaviour.
+            try:
+                _open_row = self.db.get_position_open_row(buy)
+                # Same `isinstance` discipline the bar-window lookup above
+                # uses: anything that is not a real row leaves `buy` alone.
+                if isinstance(_open_row, dict):
+                    buy = _open_row
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "trail: position-open row lookup failed for %s (%s) — "
+                    "falling back to the last opening row",
+                    symbol, e,
+                )
             try:
                 current_stop = self.broker.get_current_stop_price(symbol)
             except Exception as e:  # noqa: BLE001
@@ -11346,10 +12253,59 @@ class TradingPipeline:
 
             # Only bars SINCE ENTRY matter: a swing low from before the
             # position existed is not a level this trade ever defended.
+            #
+            # "Since entry" means since the POSITION opened, not since the
+            # most recent add. `get_symbol_last_buy` returns the LATEST
+            # opening row, so slicing from it made a scale-in erase the
+            # trade's whole bar history — while the entry PRICE handed to
+            # the trail below is `position.avg_entry`, blended across every
+            # add. The window and the price disagreed by construction.
+            #
+            # Measured 2026-09-30 against the live DB: the structural pivot
+            # has produced ZERO of the 9 deterministic stops ever placed
+            # (all 9 came from the chandelier or the breakeven ratchet),
+            # and in all 11 recorded `no_structure_and_no_usable_chandelier`
+            # refusals the window held 0-6 bars against the 7 that
+            # `src/risk/trailing.py::_swing_lows` needs before it can
+            # confirm a single pivot. MRVL on 2026-09-23 is the clearest
+            # case: a position opened 2026-09-17 was evaluated with zero
+            # bars because it had been added to that morning.
+            #
+            # This is NOT a risk-free change, and an earlier version of
+            # this comment claimed it was. A longer window can only RAISE
+            # `highest`, which raises `chandelier = highest - 3*ATR`; a
+            # higher candidate can rise THROUGH the noise floor, and
+            # `evaluate_trailing_stop` then refuses OUTRIGHT
+            # (`inside_noise_band`) rather than falling back to a lower
+            # candidate the shorter window would have accepted. Worked
+            # case: price 100, ATR 4, live stop 90. A window whose high is
+            # 106 proposes 94 and the stop tightens 90 -> 94; a longer
+            # window that sees a pre-add high of 108 proposes 96, which is
+            # above the 95 noise floor, so nothing is placed and the stop
+            # stays at 90. The wider window LOSES a tighten the narrower
+            # one took.
+            #
+            # The justification is therefore consistency, not safety: the
+            # old window disagreed BY CONSTRUCTION with the entry price the
+            # same call uses (`position.avg_entry`, blended across every
+            # add). Measured 2026-09-30 against all 21 recorded refusals,
+            # the exposure is currently zero — see `_swing_lows` in
+            # `src/risk/trailing.py` for that measurement. No new constant.
             bars = []
             try:
                 all_bars = self.market.get_ohlcv(symbol, 120) or []
-                entry_ts = (buy or {}).get("timestamp") or ""
+                try:
+                    opened_ts = self.db.get_position_open_timestamp(buy)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "trail: position-open lookup failed for %s (%s) — "
+                        "falling back to the last opening row's date",
+                        symbol, e,
+                    )
+                    opened_ts = None
+                if not isinstance(opened_ts, str):
+                    opened_ts = None
+                entry_ts = opened_ts or (buy or {}).get("timestamp") or ""
                 entry_day = entry_ts[:10]
                 bars = [
                     b for b in all_bars
@@ -11376,7 +12332,40 @@ class TradingPipeline:
                 entry=position.avg_entry,
                 current_price=position.current_price,
                 current_stop=current_stop,
-                reference_target=(buy or {}).get("take_profit"),
+                # THE ENTRY TARGET, never the live `take_profit` (item
+                # 194, 2026-10-01). The comment above says every field read
+                # off `buy` is pinned at entry; `take_profit` stopped being
+                # so the moment `update_open_take_profit` existed. That
+                # mattered once the re-derivation swept the whole book: a
+                # target revised DOWN crosses a range trade from the
+                # below-target breakeven/+2R ratchets into the structural
+                # trail, the trail only ever ratchets toward price, and so
+                # restoring the target on the next session does NOT give
+                # the stop back — the tightening accumulated instead of
+                # cancelling.
+                #
+                # THIS MOVES PROTECTION IN BOTH DIRECTIONS AND BOTH ARE
+                # INTENDED. It removes a ratchet that could never be given
+                # back; it also LOOSENS the boundary case, because where a
+                # revised target sits below the entry target, a fall to
+                # just under the old boundary used to hand the stop to the
+                # structural trail and now leaves it in the earlier
+                # ratchets. Less tightening there is a real loosening of
+                # future protection, accepted because the ratchet it
+                # replaces was irreversible and this one is not.
+                #
+                # "PINNED" IS THE INTENT OF THE COLUMN, NOT A VERIFIED
+                # PROPERTY OF EVERY ROW: the `initial_take_profit`
+                # migration backfilled it FROM `take_profit` for every
+                # legacy row carrying a target, so a row revised before
+                # that migration ran was backfilled with an already-revised
+                # number. Whether any such row exists is UNVERIFIED. The
+                # null fallback below is safe either way — it only applies
+                # to rows the migration left empty.
+                reference_target=(
+                    (buy or {}).get("initial_take_profit")
+                    or (buy or {}).get("take_profit")
+                ),
                 bars=bars,
                 atr=self._atr_for_symbol(symbol),
                 # Shorts-safe (Stage 2): `qty` supplies only the side so a
@@ -11402,6 +12391,7 @@ class TradingPipeline:
                     setup_type=(buy or {}).get("setup_type"),
                 )
                 continue
+            code_census[TRAIL_CODE_TRAILED] += 1
             logger.info("Deterministic trail: %s", proposal.reason)
             try:
                 from src.execution.stop_records import accepted_stop_order
@@ -11418,12 +12408,62 @@ class TradingPipeline:
                     proposed_stop=proposal.new_stop, current_stop=current_stop,
                 )
                 continue
+            if isinstance(order, dict) and order.get("legs"):
+                # Item 201: the trailing path now amends every resting leg in
+                # place, so the per-leg outcome is recorded here too. This is
+                # the evidence that settles whether a fractional position's two
+                # hybrid legs both amend — the ex-dividend shift alone would
+                # never produce it (0 of 80 production trades between
+                # 2026-09-02 and 2026-09-30 were ex-dividend shifts).
+                from src.execution.exit_path_records import record_stop_shift_legs
+                _legs = order.get("legs") or []
+                _ok = [l for l in _legs if l.get("outcome") == "amended"]
+                # `amend_status` is the AMEND's own verdict. The broker status
+                # on a live replacement is "new"/"accepted"/..., so reading
+                # that would call an ordinary success a failure.
+                _astatus = str(order.get("amend_status") or (
+                    "accepted" if len(_ok) == len(_legs) else "partial"))
+                record_stop_shift_legs(
+                    self.db, symbol=symbol, amount=0.0, mode="trail_amend",
+                    status=_astatus, shifted=len(_ok), total=len(_legs),
+                    legs=_legs, run_id=run_id,
+                )
+                if _astatus in ("partial", "refused", "unknown", "naked"):
+                    # Telegram is muted, so this row and this alert are the
+                    # whole evidence that a leg did not move.
+                    try:
+                        from src.notifier import send_owner_alert
+                        from src.execution.exit_path_records import (
+                            stop_shift_incomplete_text,
+                        )
+                        send_owner_alert(
+                            stop_shift_incomplete_text(
+                                symbol, _astatus, len(_ok), len(_legs)),
+                            symbols=[symbol],
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("trail: owner alert failed for %s: %s", symbol, e)
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
+                _detail = str((order or {}).get("status") or "") if isinstance(order, dict) else ""
+                if isinstance(order, dict) and order.get("legs"):
+                    # `record_trail_state_if_changed` writes nothing when the
+                    # code repeats, and a bare status names no leg, no level
+                    # and no order id. Spell the outcome out here as well.
+                    _detail = "; ".join(
+                        [_detail or "amend did not fully land"]
+                        + [
+                            f"leg {l.get('id')} qty {l.get('qty')} "
+                            f"{l.get('old_stop')}->{l.get('new_stop')} "
+                            f"{l.get('outcome')}"
+                            + (f" (new id {l.get('new_id')})" if l.get("new_id") else "")
+                            + (f": {l.get('detail')}" if l.get("detail") else "")
+                            for l in (order.get("legs") or [])
+                        ]
+                    )
                 _note(
-                    symbol, "replace_not_accepted",
-                    str((order or {}).get("status") or "") if isinstance(order, dict) else "",
+                    symbol, "replace_not_accepted", _detail,
                     proposed_stop=proposal.new_stop, current_stop=current_stop,
                 )
                 continue
@@ -11443,6 +12483,10 @@ class TradingPipeline:
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: trade row write failed for %s: %s", symbol, e)
+
+        record_trail_code_census(
+            self.db, run_id=run_id, counts=dict(code_census),
+        )
         return orders
 
     def _exit_event_risk_block(self, symbols: list[str]) -> str:
@@ -11505,6 +12549,269 @@ class TradingPipeline:
         return getattr(
             getattr(self, "portfolio_constructor", None), "cfg", None,
         )
+
+    #: Per-run memo for the alignment verdict, keyed
+    #: (run_id, symbol, is_short). The scan below and the confirmer inside
+    #: `_midday_execute_llm_actions` ask the SAME question about the same
+    #: position in the same pass; the chart read behind it costs bars plus a
+    #: structural-protection evaluation, so it is computed once. Same inputs,
+    #: same deterministic answer — this changes no verdict, only the count of
+    #: reads. Declared at class level so an instance built without __init__
+    #: (tests do this) still reads a value rather than raising.
+    _alignment_exit_memo: dict | None = None
+
+    def _alignment_exit_cached(
+        self, *, symbol: str, thesis_invalid_if: str | None, is_short: bool,
+        entry_price: float | None, stop_loss: float | None, run_id: str,
+    ):
+        """`_alignment_exit_for_holding`, computed at most once per
+        (run, symbol, side). Never raises: a memo failure just recomputes."""
+        key = (run_id, symbol, bool(is_short))
+        memo = self._alignment_exit_memo
+        if not isinstance(memo, dict):
+            memo = {}
+            self._alignment_exit_memo = memo
+        if key in memo:
+            return memo[key]
+        verdict = self._alignment_exit_for_holding(
+            symbol=symbol, thesis_invalid_if=thesis_invalid_if,
+            is_short=is_short, entry_price=entry_price, stop_loss=stop_loss,
+            run_id=run_id,
+        )
+        memo[key] = verdict
+        return verdict
+
+    def _alignment_exit_scan(
+        self, positions, best_by_symbol: dict, *, run_id: str,
+        position_facts: dict | None, priority: dict,
+        displaced: dict | None = None,
+    ) -> None:
+        """Read EVERY held position's own chart and raise a sale on the ones
+        the chart says are finished — whether or not any model mentioned them.
+
+        THE DEFECT THIS CLOSES. `check_alignment_exit` shipped wired only as
+        a CONFIRMER: it ran solely on positions the review had already named,
+        and only GATED the ones whose prose already claimed the alignment
+        exit. Nothing ever asked the question of a position the models were
+        silent about, so the owner-ratified "sell when the chart says the
+        trend is over" rule could never START a sale, and the desk still had
+        no sanctioned way to bank a gain on its own.
+
+        HOW IT REACHES THE SELL PATH. It does not open one. A cleared verdict
+        becomes an ordinary action item in `best_by_symbol` — the same dict
+        the review's own actions land in, resolved by the same
+        SELL/COVER > REDUCE > TRAIL_STOP > HOLD priority — so it is then
+        subject, unchanged and in order, to every protection an LLM-proposed
+        exit gets: the same-day-trim discipline, the spent-trigger layer, the
+        named-trigger phrase gate, the exit guard's metric-contradiction
+        veto, the AI Risk seat's veto, the qty-sign gate, and the alignment
+        verdict itself re-read as the confirmer. A sale this scan raises can
+        be refused by any one of them.
+
+        ONE PROTECTION IS DELIBERATELY BYPASSED, and only one: the
+        entry-anchored noise band, which asks how far price has travelled
+        from WHAT THE DESK PAID. Under the owner's 2026-09-30 ruling the
+        alignment exit sells because the move ended on the chart, and what
+        the desk paid says nothing about that, so a chart-verified
+        alignment sale is not judged against it. Every other layer applies
+        unchanged. (Chosen over keeping the band for scan-raised sales
+        because a band anchored to the entry would silently veto exactly
+        the exits the ruling exists to allow — the ones taken at a gain.)
+
+        WHEN A REFUSAL HAPPENS, THE DISPLACED ACTION COMES BACK. Raising a
+        sale overwrites whatever the review proposed for that symbol; if
+        that was a TRAIL_STOP and the sale is then refused downstream, the
+        position would end the session neither sold nor re-protected —
+        strictly worse than the state the scan found. The displaced item is
+        therefore kept in `displaced` and re-queued by the executor when a
+        scan-raised sale produces no order.
+
+        A model action of EQUAL OR HIGHER priority always wins: the scan
+        never overwrites a SELL, COVER or REDUCE the review asked for, and
+        never rewrites its reason. It supersedes only HOLD and TRAIL_STOP,
+        because under the owner's ruling the END OF A MOVE is decided by
+        reading the chart rather than by whether a model mentioned it — and
+        a stop adjustment on a position being closed is moot. The prose is
+        not irrelevant: when a thesis names an average the desk computes,
+        that average is the first mark. It is no longer REQUIRED — a thesis
+        naming none falls back to the chart's own averages, so coverage no
+        longer depends on model wording.
+
+        A POSITION OPENED IN TODAY'S SESSION IS NOT ELIGIBLE. Nothing in the
+        entry path requires a candidate to be above any average, so a name
+        can be bought while already below one, and without this the scan
+        could close it the same session on a chart the entry seats had
+        already read. Date equality only, on the recorded buy.
+
+        FAIL CLOSED. Only `status == "EXIT"` raises a sale. Missing bars, a
+        missing ATR, an unresolvable chart mark and every other degraded
+        state come back HOLD or UNPARSEABLE and raise nothing, exactly as
+        today. Per-symbol failures are swallowed so one unreadable name
+        cannot suppress the others — swallowing means NOT selling.
+
+        No new number, no new threshold and no extra agreement requirement:
+        what counts as the end of a move is entirely
+        `check_alignment_exit`'s decision, read as given.
+        """
+        from src.risk.exit_trigger import ExitTrigger
+
+        for position in (positions or []):
+            try:
+                symbol = (getattr(position, "symbol", "") or "").strip().upper()
+                if not symbol:
+                    continue
+                try:
+                    qty = float(getattr(position, "qty", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if qty == 0:
+                    continue
+                is_short = qty < 0
+                # COVER is the only lever the exit path has on a held short
+                # (the executor's qty-sign gate rejects a SELL on one).
+                act = "COVER" if is_short else "SELL"
+                existing = best_by_symbol.get(symbol)
+                if existing is not None and priority.get(
+                    existing.get("action"), 99,
+                ) <= priority.get(act, 99):
+                    continue
+                facts = (position_facts or {}).get(symbol, {}) or {}
+                verdict = self._alignment_exit_cached(
+                    symbol=symbol,
+                    thesis_invalid_if=getattr(position, "thesis_invalid_if", None)
+                    or facts.get("thesis_invalid_if"),
+                    is_short=is_short,
+                    entry_price=getattr(position, "avg_entry", None),
+                    stop_loss=getattr(position, "stop_loss", None)
+                    or facts.get("stop_loss"),
+                    run_id=run_id,
+                )
+                if not verdict.exit_cleared:
+                    continue
+                if self._position_opened_today(symbol):
+                    logger.info(
+                        "Alignment scan: %s was opened in today's session — "
+                        "no same-session close is raised for it", symbol,
+                    )
+                    continue
+                if existing is not None and isinstance(displaced, dict):
+                    displaced[symbol] = existing
+                # The reason NAMES the trigger in the desk's own accepted
+                # wording, and the structured trigger says the same thing, so
+                # the confirmer downstream recognises the claim and appends
+                # the chart's own owner-facing sentence
+                # (`AlignmentExitCheck.owner_reason`) to it. The sentence is
+                # not pasted here as well, or the owner would read it twice.
+                best_by_symbol[symbol] = {
+                    "symbol": symbol,
+                    "action": act,
+                    "reason": (
+                        "Trend alignment over — raised by the desk's own scan "
+                        "of this position's chart, not by a model."
+                    ),
+                    "exit_trigger": ExitTrigger.TREND_ALIGNMENT_OVER.value,
+                    "trigger_evidence": (verdict.reason or "")[:2000],
+                    # Read by the executor: if this item produces no order,
+                    # the action it displaced is put back on the queue.
+                    "_alignment_scan_raised": True,
+                }
+                logger.info(
+                    "Alignment scan: raising %s %s — %s",
+                    act, symbol, verdict.reason,
+                )
+            except Exception as e:  # noqa: BLE001 — a failure here HOLDS
+                logger.warning(
+                    "Alignment scan: %s could not be evaluated (%s) — no sale "
+                    "is raised for it",
+                    getattr(position, "symbol", "?"), e,
+                )
+
+    def _position_opened_today(self, symbol: str) -> bool:
+        """Was this position bought in TODAY's session? DATE EQUALITY ONLY.
+
+        No recorded buy at all means the position predates the desk's own
+        record (or was opened outside it), which cannot be evidence that it
+        was bought today, so it stays eligible. A FAILED read is different:
+        the age is unknown, and an unknown age holds rather than sells,
+        which is the same fail-closed posture the rest of this path takes.
+        """
+        try:
+            row = self.db.get_symbol_last_buy(symbol) or {}
+        except Exception as e:  # noqa: BLE001 — unknown age HOLDS
+            logger.warning(
+                "alignment scan: could not read %s's entry date (%s) — it is "
+                "treated as opened today, so no sale is raised", symbol, e,
+            )
+            return True
+        ts = ((row or {}).get("timestamp") or "")[:10]
+        if not ts:
+            return False
+        return ts == str(et_today())
+
+    def _alignment_exit_for_holding(
+        self, *, symbol: str, thesis_invalid_if: str | None, is_short: bool,
+        entry_price: float | None, stop_loss: float | None, run_id: str,
+    ):
+        """Read this holding's own chart and return the alignment verdict.
+
+        Supplies `src.risk.alignment_exit.check_alignment_exit` with real
+        numbers off the SAME deterministic, no-LLM machinery
+        `_structural_protection_for_holding` uses (`compute_indicators` for
+        ATR, `find_structural_levels` for levels), on the same
+        `config.trading.lookback_days` window, and on the latest COMPLETED
+        daily closes — never a live quote.
+
+        The structural mark is admitted ONLY when the ratified structural
+        check has already returned `structural_level_broken`, i.e. its
+        cross-day confirmation gate passed. This method neither re-derives
+        nor shortcuts that gate: it reads the verdict (`persist=False`, so
+        consulting it here can never file a break and let a future
+        confirmation land a day early) and takes the level THAT CHECK
+        NAMED as broken (`StructuralProtectionCheck.broken_level`); no
+        level is ever chosen by nearness to the close. Never raises; a
+        failure degrades to UNPARSEABLE, which callers treat as HOLD.
+        """
+        from src.risk.alignment_exit import (
+            CODE_NO_CLOSES, AlignmentExitCheck, check_alignment_exit,
+        )
+        try:
+            bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days) or []
+            sorted_bars = sorted(bars, key=lambda b: b.date)
+            closes = [float(b.close) for b in sorted_bars]
+            atr = None
+            broken_level = None
+            if sorted_bars:
+                from src.data.technical import compute_indicators
+                atr = compute_indicators(symbol, bars).atr_14
+                protection = self._structural_protection_for_holding(
+                    symbol=symbol, thesis_invalid_if=thesis_invalid_if,
+                    entry_price=entry_price, stop_loss=stop_loss,
+                    is_short=is_short, run_id=run_id, persist=False,
+                )
+                if getattr(protection, "basis", "") == "structural_level_broken":
+                    # THE LEVEL THAT ACTUALLY BROKE, as named by the check
+                    # that confirmed it. An earlier draft instead pooled
+                    # every support AND resistance and took the nearest
+                    # price on the far side of the close — which could
+                    # admit an overhead resistance that never broke as
+                    # "the confirmed-broken structural level". Nothing is
+                    # re-derived and nothing is guessed by proximity: when
+                    # the check does not name a level there is no
+                    # structural mark.
+                    broken_level = getattr(protection, "broken_level", None)
+            return check_alignment_exit(
+                thesis_invalid_if=thesis_invalid_if, closes=closes, atr=atr,
+                broken_structural_level=broken_level, is_short=is_short,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "alignment exit: chart read failed for %s (%s) — the verdict "
+                "is UNPARSEABLE, which callers treat as HOLD", symbol, e,
+            )
+            return AlignmentExitCheck(
+                "UNPARSEABLE", CODE_NO_CLOSES, (), None, None, None,
+                f"chart read failed: {e}",
+            )
 
     def _record_exit_refusal(
         self, *, symbol: str, run_id: str, action: str, code: str,
@@ -11957,6 +13264,17 @@ class TradingPipeline:
                 "(priority SELL/COVER>REDUCE>TRAIL_STOP>HOLD)", dropped,
             )
 
+        # THE ALIGNMENT SCAN — every held position is read against the
+        # owner-ratified alignment exit here, before the early return below,
+        # because a review that proposed nothing at all is exactly the
+        # session in which the chart must still be allowed to speak.
+        _scan_displaced: dict[str, dict] = {}
+        self._alignment_exit_scan(
+            positions, best_by_symbol, run_id=run_id,
+            position_facts=position_facts, priority=_priority,
+            displaced=_scan_displaced,
+        )
+
         if not best_by_symbol:
             return orders
 
@@ -12006,7 +13324,10 @@ class TradingPipeline:
         # exit actually reaches that gate — a HOLD-only or TRAIL_STOP-only
         # review must not buy the DB reads.
         hd_position_history: dict | None = None
-        for action_item in best_by_symbol.values():
+
+        for action_item in _actions_with_scan_fallback(
+            best_by_symbol.values(), _scan_displaced, orders,
+        ):
             act = action_item.get("action")
             if act not in ("SELL", "REDUCE", "TRAIL_STOP", "COVER"):
                 continue
@@ -12103,7 +13424,121 @@ class TradingPipeline:
                 # noise band is measured against the CLOSING side, same
                 # convention as _submit_protected_sell's `side` param.
                 close_side = "buy" if act == "COVER" else "sell"
-                if held_now is not None and not cites_external_information(reason_for_band):
+
+                # THE ALIGNMENT EXIT (owner ruling 2026-09-30, "exit on
+                # ALIGNMENT, never on a target") — the desk's only sanctioned
+                # way to realise a GAIN, and the one non-news sale allowed
+                # past the entry-anchored noise band below.
+                #
+                # A closed first attempt (PR 837) DELETED that band and
+                # shipped `check_alignment_exit` with no caller anywhere in
+                # src/ — the brake gone and nothing computing the reading
+                # meant to replace it, which is strictly worse than doing
+                # nothing. The band therefore stays, and this is the caller.
+                #
+                # A sale claiming the trend is over is now VERIFIED, not trusted:
+                # only a chart that confirms the last mark has been given up by
+                # more than the give-back tolerance gets through. An unconfirmed
+                # or unreadable chart DROPS the sale — the opposite posture to
+                # the fail-open gates below, and deliberately so, because this is
+                # the one exit the desk takes with no external event behind it
+                # and possibly with the other seats still positive.
+                #
+                # THE READING IS TAKEN ON EVERY EXIT OF A HELD POSITION,
+                # not only on the ones whose prose happens to name it. A
+                # sale the model wanted for some other reason still leaves
+                # a durable record of what the chart said about that
+                # position's trend at that moment; without it, a position
+                # the desk exited has no alignment record at all and the
+                # evening review cannot tell an unread chart from a chart
+                # that said hold. Only a sale that CLAIMS the alignment
+                # exit is GATED by the verdict.
+                alignment_verdict = None
+                alignment_claimed = _reason_claims_alignment_exit(
+                    reason_for_band, action_item.get("exit_trigger"),
+                )
+                if held_now is not None:
+                    facts = (position_facts or {}).get(symbol, {}) or {}
+                    verdict = self._alignment_exit_cached(
+                        symbol=symbol,
+                        thesis_invalid_if=getattr(held_now, "thesis_invalid_if", None)
+                        or facts.get("thesis_invalid_if"),
+                        is_short=(act == "COVER"),
+                        entry_price=getattr(held_now, "avg_entry", None),
+                        # IDENTICAL to the scan's inputs, including the
+                        # position-facts fallback. `stop_loss` decides
+                        # whether a broken-level mark exists, and both
+                        # callers key the SAME memo — resolving it
+                        # differently would let one of them read a verdict
+                        # built from a stop the other never passed.
+                        stop_loss=getattr(held_now, "stop_loss", None)
+                        or facts.get("stop_loss"),
+                        run_id=run_id,
+                    )
+                    # EVERY verdict leaves a durable, machine-readable, per-symbol
+                    # record — INCLUDING the "could not read the chart" states.
+                    # Without them the desk cannot tell a position it HELD from
+                    # one it failed to read, and neither the other seats nor the
+                    # owner can see that an exit was considered at all. The parsed
+                    # thesis MA period and the prose it came from are recorded
+                    # with it: that text is model-written and unversioned, so a
+                    # reword silently changes which price decides a sale, and
+                    # without pinning it the record would not say which average
+                    # actually decided this one.
+                    det = (
+                        f"{act}: {verdict.status} "
+                        f"claimed={alignment_claimed} "
+                        f"ma={verdict.thesis_ma_kind}{verdict.thesis_ma_period} "
+                        f"breach_atr={verdict.breach_atrs} "
+                        f"tolerance_atr={verdict.band_atrs} "
+                        f"sessions_since_mark_lost={verdict.sessions_since_mark_lost} "
+                        f"thesis={verdict.thesis_text!r} "
+                        f"| {verdict.reason}"
+                    )[:1200]
+                    self._record_exit_refusal(
+                        symbol=symbol, run_id=run_id, action=act,
+                        code=verdict.code,
+                        dropped=alignment_claimed and not verdict.exit_cleared,
+                        detail=det,
+                        layer=(
+                            "alignment_exit" if alignment_claimed
+                            else "alignment_exit_observed"
+                        ),
+                    )
+                    try:
+                        self.db.record_intraday_evaluation(
+                            symbol=symbol, run_id=run_id,
+                            status=f"alignment_exit_{verdict.status.lower()}",
+                            detail=det[:400],
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("alignment exit: audit write failed: %s", e)
+                    logger.info(
+                        "Alignment exit %s %s: %s (claimed=%s) — %s", act, symbol,
+                        verdict.status, alignment_claimed, verdict.reason,
+                    )
+                    if alignment_claimed:
+                        alignment_verdict = verdict
+                        if not verdict.exit_cleared:
+                            continue
+                        # Carry the chart's own words into the order reason
+                        # so the owner and the other seats read WHY, not
+                        # just THAT.
+                        if verdict.owner_reason:
+                            action_item["reason"] = (
+                                f"{action_item.get('reason', '')} | "
+                                f"{verdict.owner_reason}"
+                            )[:2000]
+
+                # The ALIGNMENT EXIT above is the one non-news sale allowed
+                # past this band. The band STAYS for everything else: it is a
+                # real brake on premature exits, and deleting it while
+                # shipping a verdict nothing in src/ ever called (the closed
+                # PR 837) would leave the desk with neither. A chart-verified
+                # alignment exit is simply not judged by its distance from
+                # what the desk PAID, because what the desk paid says nothing
+                # about whether a trend has ended.
+                if held_now is not None and alignment_verdict is None and not cites_external_information(reason_for_band):
                     from src.risk.exit_guard import noise_band_atr
 
                     atr = self._atr_for_symbol(symbol)
@@ -13292,6 +14727,10 @@ class TradingPipeline:
             "drawdown_pct": ceiling.drawdown_pct,
             "rung": ceiling.rung,
             "alert_owner": ceiling.alert_owner,
+            # The level the alert fired at, carried so the owner message
+            # can state it instead of restating a literal that goes stale
+            # the day the sourced threshold moves (board item 182).
+            "alert_pct": GROSS_LADDER_ALERT_PCT,
             "reason": ceiling.reason,
             "distance_to_forced_liquidation_pct":
                 distance_to_forced_liquidation_pct(
@@ -14321,6 +15760,7 @@ class TradingPipeline:
 
         evidence = verdict.to_evidence()
         _record(None, evidence.pop("outcome"), evidence.pop("reason"), **evidence)
+        self._record_name_coverage(ctx, _record)
         if not verdict.skip:
             if verdict.advisory_lost:
                 # Owner mandate 2026-09-18: only the technical seat halts the
@@ -14417,6 +15857,119 @@ class TradingPipeline:
         self._attach_universe_changes(result)
         self._persist_session_report("morning", result)
         return result
+
+    def _record_name_coverage(self, ctx, _record) -> None:
+        """Write down, per candidate name, which seats answered ABOUT it.
+
+        The counting half of docs/WORK.md item 20. It is a RECORD, not a
+        bar: no ratio, no minimum, nothing refused here. Both attempts at
+        deriving a coverage bar failed and the reasons are written down in
+        `src/evidence_gate.py` beside `name_coverage`; this is the
+        instrument that would let one be measured from the desk's own data
+        instead of picked. Fail-soft — a forensic record must never be able
+        to break the trading path it reports on.
+        """
+        from src import evidence_gate
+
+        try:
+            seat_symbols: dict[str, set] = {}
+            seat_symbols["tech"] = {
+                getattr(a, "symbol", "") for a in (getattr(ctx, "analyses", None) or ())
+            }
+            seat_symbols["earnings"] = {
+                (r.get("symbol") if isinstance(r, dict) else getattr(r, "symbol", ""))
+                for r in (getattr(ctx, "earnings_results", None) or ())
+            }
+            smart: set = set()
+            for bucket in ("smart_money_observations", "smart_money_findings"):
+                for item in (getattr(ctx, bucket, None) or ()):
+                    smart.add(
+                        item.get("symbol") if isinstance(item, dict)
+                        else getattr(item, "symbol", "")
+                    )
+            seat_symbols["smart_money"] = smart
+            intel = getattr(ctx, "news_intel", None)
+            if intel is not None:
+                # Absent `news_intel` means the news seat recorded no
+                # per-name coverage at all, which `name_coverage` reports as
+                # uncovered rather than assuming complete.
+                seat_symbols["news"] = set(getattr(intel, "stock_news", None) or {})
+
+            universe: set = set()
+            for names in seat_symbols.values():
+                universe |= {n for n in names if n}
+            universe |= {
+                str(s) for s in (getattr(ctx, "admitted_symbols", None) or set())
+            }
+            # HELD NAMES ARE IN THE UNIVERSE (board item 220). The rule binds
+            # on STAYING as well as entering, and a held name that no seat
+            # answered about this review was previously absent from this
+            # record entirely — the one case where "no row" meant "nothing to
+            # see" rather than "nobody looked".
+            for pos in (getattr(ctx, "positions", None) or ()):
+                sym = (
+                    pos.get("symbol") if isinstance(pos, dict)
+                    else getattr(pos, "symbol", "")
+                )
+                if sym:
+                    universe.add(str(sym))
+            # A name whose technical row came back unreadable may be in no
+            # other list at all, and it is the one name that must not vanish.
+            unreadable_by_seat = {
+                "tech": set(getattr(ctx, "tech_unreadable", None) or {}),
+            }
+            asked_no_answer_by_seat = {
+                "tech": set(getattr(ctx, "tech_unanswered", None) or set()),
+            }
+            universe |= {str(s) for s in unreadable_by_seat["tech"]}
+            universe |= {str(s) for s in asked_no_answer_by_seat["tech"]}
+            try:
+                universe |= {str(s) for s in self.config.trading.universe}
+            except Exception:  # noqa: BLE001 — config shape is not this record's job
+                pass
+
+            coverage_by_name = evidence_gate.name_coverage(
+                universe, seat_symbols,
+                unreadable_by_seat=unreadable_by_seat,
+                asked_no_answer_by_seat=asked_no_answer_by_seat,
+            )
+            for name, coverage in coverage_by_name.items():
+                record = coverage.to_evidence()
+                _record(
+                    name,
+                    "recorded",
+                    record.pop("summary"),
+                    stage="evidence_gate",
+                    gate="name_coverage",
+                    **record,
+                )
+
+            # The per-name reading of the owner's blocking-seat mandate,
+            # carried out of here so the entry bar and the holding review
+            # both read a MISSING seat rather than an absent objection.
+            # Nothing is refused here; the categorical refusals already
+            # exist (`risk.rules.own_bar_block_reason` for entry, rotation's
+            # `ineligible_hold` tier for the held side) and both already
+            # treat "no technical read this review" as blocking.
+            gaps = evidence_gate.names_missing_blocking_seat(coverage_by_name)
+            ctx.name_coverage_blocking_gaps = dict(gaps)
+            if gaps:
+                logger.warning(
+                    "evidence gate: %d name(s) have NO answer from a seat that "
+                    "may stop the desk — treated as a missing seat, never as "
+                    "agreement: %s%s",
+                    len(gaps),
+                    "; ".join(
+                        f"{n}={','.join(seats)}" for n, seats in sorted(gaps.items())
+                    ),
+                    (
+                        " (returned-but-unreadable: "
+                        + ", ".join(sorted(unreadable_by_seat["tech"])) + ")"
+                        if unreadable_by_seat["tech"] else ""
+                    ),
+                )
+        except Exception as exc:  # noqa: BLE001 — never break the decision
+            logger.warning("evidence gate: name coverage write failed: %s", exc)
 
     def _attach_evidence_freshness(self, result) -> None:
         """Carry this run's evidence-freshness disclosure out to the owner.
@@ -14866,18 +16419,6 @@ class TradingPipeline:
             if conviction_delever:
                 orders = list(conviction_delever) + list(orders)
 
-            # Bookend: park idle cash above the reserve into the sweep vehicle.
-            # After the BUY phase so open BUY limits are subtracted from the
-            # parkable excess (see CashSweeper.park_excess).
-            sweeper = self._sweeper()
-            if sweeper is not None:
-                try:
-                    sweep_order = sweeper.park_excess(ctx)
-                    if sweep_order:
-                        orders.append(sweep_order)
-                except Exception as e:
-                    logger.warning("cash sweep: park_excess failed (non-fatal): %s", e)
-
             # Truthful terminal status. 2026-08-19: three risk-approved BUYs
             # were skipped as unfunded (the funding sell filled 36s after the
             # session gave up), yet the run reported status='executed' with
@@ -15253,9 +16794,7 @@ class TradingPipeline:
                 pnl_pct is not None and pnl_pct >= 15
                 and days_held is not None and days_held < 3
             )
-            drift_flag = (
-                weight_pct > 12 and pnl_pct is not None and pnl_pct > 10
-            )
+            drift_flag = _drift_flag_check(weight_pct, pnl_pct)
             target_breach_flag = progress_pct is not None and progress_pct > 150
 
             # Vol-unit context so the reviewer reasons about stop distance
@@ -15996,6 +17535,10 @@ class TradingPipeline:
             if review is None:
                 review_log_kwargs["status"] = "position_review_parse_error"
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs(
+                    "position_review_parse_error" if review is None else None,
+                    result=md_result,
+                ),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=(
                     f"{session_type} | {len(review_positions)} positions, ${total_value:.0f} total"
@@ -16067,11 +17610,23 @@ class TradingPipeline:
             # exit decision this session makes. A re-derived target
             # therefore cannot reach this session's exits even in
             # principle; and because progress/pace are measured against
-            # the PINNED entry target, it cannot reach a later session's
+            # the entry target, it cannot reach a later session's
             # exit-guard veto either. Places no orders: nothing here
             # exits anything, and the trailing stop remains the only
             # automatic exit (PR #321).
+            #
+            # NOT the same as "it can never contribute to a sale" (item
+            # 194, corrected 2026-10-01). The LIVE target still feeds
+            # `distance_to_target_pct` in the position facts the reviewing
+            # model reads, so a revised target can still influence a sale
+            # through that model's prose on a LATER session. What is true
+            # is narrower and worth stating precisely: no DETERMINISTIC
+            # gate reads it — not the exit guard, not progress or pace,
+            # and since item 194 not the trailing-stop regime either.
             try:
+                # Runs over the WHOLE open book, not only the symbols a
+                # seat flagged (item 194); `seat` here is only the label
+                # worn by the outcomes that a seat did raise.
                 target_revisions = self._adjudicate_target_revision_flags(
                     review, review_positions, run_id=run_id,
                     seat="position_reviewer",
@@ -16095,20 +17650,6 @@ class TradingPipeline:
         # Reconcile everything still marked submitted (today's new orders +
         # any lingering from morning that didn't reach terminal in time).
         self._reconcile_fills()
-
-        # Bookend: park cash freed by this session's sells (and any still-idle
-        # excess) — without this, midday/close SELL proceeds sit unswept until
-        # tomorrow's morning bookend. park_excess refreshes account state and
-        # subtracts open-BUY holds itself; emergency paths returned earlier and
-        # deliberately skip parking.
-        sweeper = self._sweeper()
-        if sweeper is not None:
-            try:
-                sweep_order = sweeper.park_excess(ctx)
-                if sweep_order:
-                    orders.append(sweep_order)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("cash sweep: park_excess failed (non-fatal): %s", e)
 
         # Session execution (reviewer exits, sweep) may have changed the
         # book since the start-of-session snapshot.
@@ -16341,6 +17882,7 @@ class TradingPipeline:
             sentiment = (analysis.get("investment_implications") or {}).get("sentiment", "?")
             try:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("agent_failure" if not analysis else None),
                     agent_name="earnings_analyst_preprocess",
                     run_id=run_id,
                     input_summary=f"{sym} {res.get('form_type','?')} filed {res.get('filing_date','?')}",
@@ -16414,89 +17956,63 @@ class TradingPipeline:
             "smart_money_refresh": smart_money_refresh,
         }
 
-    def run_intra_check(self) -> dict:
-        """Intra-session circuit-breaker check, plus the durable record of
-        its own output.
+    def run_intra_safety(self) -> dict:
+        """The FREE safety preamble, on its own schedule (board item 177).
 
-        Same gap as `run_morning`/`run_position_review` (2026-09-18 sweep):
-        `stop_coverage_gaps` is computed from live broker state every tick
-        and handed to the notifier with no other durable home. This wrapper
-        persists every return path, keyed by run_id (not date — this fires
-        roughly every 30 minutes, so a date-keyed row would keep only the
-        last tick; see `Database.save_intra_check_report`). Fail-soft.
+        Fill reconcile, stop-out reconcile, protection-restore drain and
+        repeg drain cost no model spend and protect live capital. Until
+        2026-10-01 they existed ONLY as the opening block of
+        ``_run_intra_check_body``, so they were welded to the *paid*
+        intraday tick: cutting the paid cadence would silently have cut
+        the loss-protection latency with it. That coupling was the defect
+        item 177 names.
+
+        The body is unchanged and lives in ``_run_intra_safety_preamble``.
+        Both entry points call that one method, so this is strictly
+        ADDITIVE: the paid tick still runs the preamble exactly as before,
+        and the standalone ``intra_safety`` mode gives it a second,
+        independent chance every tick. There is no new window in which
+        protection is not restored — the only change is that one more
+        caller can reach the same idempotent work.
+
+        Both callers take the same advisory ``_intraday_scan_process_lock``
+        and the same ``_blocking_owner_session`` check (board item 127), so
+        two of them firing together cannot race: whichever acquires the
+        lock does the work and the other defers, which is the behaviour the
+        lock was built for.
+
+        No LLM calls, and deliberately NO cost session — this path can
+        never spend, and activating one would put empty rows into the very
+        ``llm_budget_sessions`` measurement item 177 reads.
         """
-        self._last_evidence_freshness = None
-        self._last_account_snapshot = None
-        self._intra_preamble_deferred = ""
-        result = self._run_intra_check_body()
-        if isinstance(result, dict) and self._intra_preamble_deferred:
-            result["preamble_deferred"] = self._intra_preamble_deferred
-        self._attach_pnl(result)
-        self._attach_evidence_freshness(result)
-        self._persist_intra_check_report(result)
-        return result
-
-    def _persist_intra_check_report(self, result: dict) -> None:
-        if not isinstance(result, dict):
-            return
-        run_id = result.get("run_id")
-        if not run_id:
-            return
-        try:
-            self.db.save_intra_check_report(
-                run_id=run_id, date=session_date_key(), payload=result,
-            )
-        except Exception as exc:  # noqa: BLE001 — never break the push
-            logger.warning(
-                "intra_check report persistence failed (non-fatal): %s", exc,
-            )
-
-    def _run_intra_check_body(self) -> dict:
-        """Lightweight intra-session maintenance tick (no LLM calls).
-
-        Scheduled between morning and midday (typically 12:00 ET). It
-        reconciles fills, repairs stop coverage on anything found
-        unprotected, reports the session snapshot, and runs the bounded
-        intraday opportunity scan.
-
-        **It no longer carries an account-level loss breaker.** That whole
-        mechanism — a daily P&L vs loss-limit test that halted the desk —
-        was removed 2026-09-20 on the owner's instruction (retired item 32,
-        docs/INCIDENT_HISTORY.md). Loss protection is the per-position stop
-        living at the broker, which does not depend on this tick running.
-        Runs in ~5 seconds.
-        """
-        ctx = RunContext.start("intra_check")
+        ctx = RunContext.start("intra_safety")
         run_id = ctx.run_id
-        logger.info("=== Intra-session risk check: %s ===", run_id)
+        logger.info("=== Intra safety preamble (free): %s ===", run_id)
 
         if not self._is_trading_day():
-            logger.info("Intra check skipped: market closed for non-trading day")
+            logger.info("Intra safety skipped: market closed for non-trading day")
             return {"status": "market_holiday", "run_id": run_id}
 
         halt = self._kill_switch_halt_result(run_id)
         if halt is not None:
             return halt
 
-        self._activate_cost_session(run_id, "intra_check")
+        coverage_gaps, preamble_deferred = self._run_intra_safety_preamble(run_id)
+        self._intra_preamble_deferred = preamble_deferred
+        return {
+            "status": "deferred" if preamble_deferred else "ok",
+            "run_id": run_id,
+            "stop_coverage_gaps": coverage_gaps,
+            "preamble_deferred": preamble_deferred,
+        }
 
-        # Board item 127 (2026-09-19). Every write below reaches the broker,
-        # and `intra_check` is exempt from the wrapper's session lock (item
-        # 128), so this whole preamble used to run with no lock at all. It
-        # now runs only while this process holds the same advisory flock the
-        # paid scan below takes (`_intraday_scan_process_lock`) — which the
-        # standalone coverage sweep's repair pass also takes — and only while
-        # no morning/midday/close session owns the desk
-        # (`_blocking_owner_session`, the check the paid scan already uses).
-        # A live session runs this same preamble itself near the start of its
-        # own run, and it may be in the middle of cancelling stops to sell; a
-        # stop added here in that window is the worst pairing item 127 names.
-        # Deferring skips only this tick's preamble, and the next tick
-        # re-reads the broker. This used to add "the loss check below still
-        # runs every tick" as the rest of the safety argument; there is no
-        # loss check any more (2026-09-20, retired item 32), so the
-        # argument for deferring now rests entirely on the next tick
-        # re-reading. Board item 127 is open on that exposure.
+    def _run_intra_safety_preamble(self, run_id: str) -> tuple[list[dict], str]:
+        """Run the free broker-truth safety work; return (gaps, deferred_reason).
+
+        Called by BOTH ``_run_intra_check_body`` (the paid tick) and
+        ``run_intra_safety`` (the standalone free tick). Idempotent and
+        fail-soft throughout; an empty deferred reason means it ran.
+        """
         coverage_gaps: list[dict] = []
         preamble_deferred = ""
         with self._intraday_scan_process_lock() as preamble_lock:
@@ -16592,6 +18108,96 @@ class TradingPipeline:
                 # mid-session stop-out reaches him fastest.
                 self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
+        return coverage_gaps, preamble_deferred
+
+    def run_intra_check(self) -> dict:
+        """Intra-session circuit-breaker check, plus the durable record of
+        its own output.
+
+        Same gap as `run_morning`/`run_position_review` (2026-09-18 sweep):
+        `stop_coverage_gaps` is computed from live broker state every tick
+        and handed to the notifier with no other durable home. This wrapper
+        persists every return path, keyed by run_id (not date — this fires
+        roughly every 30 minutes, so a date-keyed row would keep only the
+        last tick; see `Database.save_intra_check_report`). Fail-soft.
+        """
+        self._last_evidence_freshness = None
+        self._last_account_snapshot = None
+        self._intra_preamble_deferred = ""
+        result = self._run_intra_check_body()
+        if isinstance(result, dict) and self._intra_preamble_deferred:
+            result["preamble_deferred"] = self._intra_preamble_deferred
+        self._attach_pnl(result)
+        self._attach_evidence_freshness(result)
+        self._persist_intra_check_report(result)
+        return result
+
+    def _persist_intra_check_report(self, result: dict) -> None:
+        if not isinstance(result, dict):
+            return
+        run_id = result.get("run_id")
+        if not run_id:
+            return
+        try:
+            self.db.save_intra_check_report(
+                run_id=run_id, date=session_date_key(), payload=result,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break the push
+            logger.warning(
+                "intra_check report persistence failed (non-fatal): %s", exc,
+            )
+
+    def _run_intra_check_body(self) -> dict:
+        """Lightweight intra-session maintenance tick (no LLM calls).
+
+        Scheduled between morning and midday (typically 12:00 ET). It
+        reconciles fills, repairs stop coverage on anything found
+        unprotected, reports the session snapshot, and runs the bounded
+        intraday opportunity scan.
+
+        **It no longer carries an account-level loss breaker.** That whole
+        mechanism — a daily P&L vs loss-limit test that halted the desk —
+        was removed 2026-09-20 on the owner's instruction (retired item 32,
+        docs/INCIDENT_HISTORY.md). Loss protection is the per-position stop
+        living at the broker, which does not depend on this tick running.
+        Runs in ~5 seconds.
+        """
+        ctx = RunContext.start("intra_check")
+        run_id = ctx.run_id
+        logger.info("=== Intra-session risk check: %s ===", run_id)
+
+        if not self._is_trading_day():
+            logger.info("Intra check skipped: market closed for non-trading day")
+            return {"status": "market_holiday", "run_id": run_id}
+
+        halt = self._kill_switch_halt_result(run_id)
+        if halt is not None:
+            return halt
+
+        self._activate_cost_session(run_id, "intra_check")
+
+        # Board item 127 (2026-09-19). Every write below reaches the broker,
+        # and `intra_check` is exempt from the wrapper's session lock (item
+        # 128), so this whole preamble used to run with no lock at all. It
+        # now runs only while this process holds the same advisory flock the
+        # paid scan below takes (`_intraday_scan_process_lock`) — which the
+        # standalone coverage sweep's repair pass also takes — and only while
+        # no morning/midday/close session owns the desk
+        # (`_blocking_owner_session`, the check the paid scan already uses).
+        # A live session runs this same preamble itself near the start of its
+        # own run, and it may be in the middle of cancelling stops to sell; a
+        # stop added here in that window is the worst pairing item 127 names.
+        # Deferring skips only this tick's preamble, and the next tick
+        # re-reads the broker. This used to add "the loss check below still
+        # runs every tick" as the rest of the safety argument; there is no
+        # loss check any more (2026-09-20, retired item 32), so the
+        # argument for deferring now rests entirely on the next tick
+        # re-reading. Board item 127 is open on that exposure.
+        # Board item 177 (2026-10-01): the free safety work below now also
+        # has its own entry point (`run_intra_safety`) and its own systemd
+        # unit, so it no longer depends on this paid tick running. The paid
+        # tick still calls it, unchanged, so nothing here got less reliable.
+        coverage_gaps, preamble_deferred = self._run_intra_safety_preamble(run_id)
         self._intra_preamble_deferred = preamble_deferred
 
         try:
@@ -18764,6 +20370,7 @@ class TradingPipeline:
         if ta_result:
             try:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("failed" if not analyses else None),
                     agent_name="tech_analyst", run_id=ctx.run_id,
                     input_summary=(
                         f"Intraday scan batch: {len(analyses)}/{len(analyses_map)} "
@@ -19306,6 +20913,7 @@ class TradingPipeline:
         elif analysis is None:
             _ev_log_kwargs["status"] = "evening_parse_error"
         self.db.insert_agent_log(
+            **seat_acceptance_kwargs(_ev_log_kwargs.get("status") if _ev_log_kwargs.get("status") in ("failed", "evening_parse_error") else None),
             agent_name="evening_analyst", run_id=run_id,
             input_summary=f"${total_value:.0f} total, PnL ${daily_pnl:.2f}",
             input_message=ev_result.user_message,

@@ -63,6 +63,7 @@ from src.api.schemas import (
     DailyPnlPoint,
     ExposureBreakdown,
     HealthResponse,
+    SuppressedAlertsResponse,
     LiquidityBreakdown,
     LiveQuote,
     LiveQuotesResponse,
@@ -183,6 +184,24 @@ def _deploy_drift_state() -> dict:
         return {"status": "unknown", "reason": "drift state read failed"}
 
 
+@router.get("/alerts/suppressed", response_model=SuppressedAlertsResponse)
+def get_suppressed_alerts(limit: int = 50) -> SuppressedAlertsResponse:
+    """Item 211 — everything the desk decided not to say twice.
+
+    Alerts can be muted; the board cannot. A suppressed alert that is
+    readable nowhere is a lost alert, so this endpoint exists to make the
+    suppression record visible without a Telegram channel.
+    """
+
+    from src.api.db_reads import get_suppressed_alerts as _read
+
+    try:
+        payload = _read(limit=limit)
+    except Exception:
+        return SuppressedAlertsResponse()
+    return SuppressedAlertsResponse(**payload)
+
+
 @router.get("/health", response_model=HealthResponse)
 def get_health() -> HealthResponse:
     try:
@@ -258,7 +277,7 @@ def get_health() -> HealthResponse:
         # teaches the operator to ignore red.
         alert_channel_degraded = str(
             (alert_channel or {}).get("status") or "unknown"
-        ) in ("broken", "stale")
+        ) in ("broken", "stale", "muted")
         # A box running code that was never merged-then-deployed is degraded:
         # every fix believed to be live is not. `unknown` (never checked) is
         # shown in the payload but does not flip the board, for the same
@@ -267,6 +286,23 @@ def get_health() -> HealthResponse:
         deploy_drift_degraded = str(
             (deploy_drift or {}).get("status") or "unknown"
         ) in ("behind", "stale")
+        degraded_causes: list[str] = []
+        if not db_reachable:
+            degraded_causes.append("database unreachable")
+        if broker_reachable is False:
+            degraded_causes.append("broker unreachable")
+        if decision_path_status != "ok":
+            degraded_causes.append(f"decision path: {decision_path_status}")
+        if alert_channel_degraded:
+            degraded_causes.append(
+                "alert channel "
+                + str((alert_channel or {}).get("status") or "unknown")
+            )
+        if deploy_drift_degraded:
+            degraded_causes.append(
+                "deploy drift "
+                + str((deploy_drift or {}).get("status") or "unknown")
+            )
         overall_status = (
             "degraded"
             if (not db_reachable or broker_reachable is False
@@ -278,6 +314,7 @@ def get_health() -> HealthResponse:
 
         return HealthResponse(
             status=overall_status,
+            reason="; ".join(degraded_causes) or None,
             db_reachable=db_reachable,
             broker_reachable=broker_reachable,
             paper=get_alpaca_paper(),
@@ -296,6 +333,7 @@ def get_health() -> HealthResponse:
         # unknown, rather than leaking a stack trace.
         return HealthResponse(
             status="degraded",
+            reason="the health read itself failed",
             db_reachable=False,
             broker_reachable=None,
             paper=None,
@@ -355,8 +393,19 @@ def _compute_liquidity(
     # BUY phase liquidates on demand. Unknown until BOTH halves are known —
     # a positions-read failure must not print raw cash as if it were the
     # whole deployable figure.
+    #
+    # The parked vehicle only counts when the sweep is ENABLED. With
+    # `cash_sweep.enabled: false` the engine's `_compute_deployable_cash`
+    # takes the `_sweeper() is None` branch and adds 0.0, because
+    # `CashSweeper.fund_buys` returns 0.0 on the first line and nothing
+    # else converts the vehicle to cash for the BUY phase. This view used
+    # to add it unconditionally, so a vehicle held under a retired sweep
+    # would have made the operator's "Deployable" tile read above the
+    # figure the PM actually sizes against — exactly the drift the test
+    # beside it guards. Latent, not an incident: no cash-equivalent
+    # position is held (production DB, read-only, 2026-10-01).
     deployable = (
-        deployable_cash(cash, sweep_parked_value)
+        deployable_cash(cash, sweep_parked_value if sweep_enabled else 0.0)
         if cash is not None and sweep_parked_value is not None
         else None
     )

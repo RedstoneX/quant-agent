@@ -868,12 +868,35 @@ GROSS_LADDER: tuple[tuple[float, float], ...] = (
 #: reason string below names the rung the ladder is ACTUALLY on, and only
 #: claims the floor when the book is at the floor.
 #:
-#: STATUS: still `arbitrary`, still ledgered, and its open question — "at
-#: what drawdown must the owner be told, independently of what the ladder
-#: does to exposure?" — is still unanswered. Deduplicating it against an
-#: arbitrary table would not have sourced it either; a number does not become
-#: non-arbitrary by being set equal to another arbitrary number.
-GROSS_LADDER_ALERT_PCT = -20.0
+#: SOURCED 2026-09-30 (board item 182). The value is no longer the desk's own
+#: round number. It is the depreciation-notification threshold published in
+#: Article 62(1) of Commission Delegated Regulation (EU) 2017/565 (the MiFID
+#: Org Regulation), reproduced in the FCA Handbook as COBS 16A.4.3UK: a firm
+#: managing a portfolio "shall inform the client where the overall value of
+#: the portfolio ... depreciates by 10 % and thereafter at multiples of 10 %,
+#: no later than the end of the business day in which the threshold is
+#: exceeded". That rule answers THIS question and no other one this desk
+#: could find: at what loss must the person whose money it is be told, quite
+#: apart from anything the manager does to the book. It is therefore adopted
+#: as the trigger, and the alert moves from -20% to -10%.
+#:
+#: HONEST DIFFERENCES, stated rather than papered over. (a) The regulation
+#: measures depreciation against the value at the START of the reporting
+#: period; this desk measures peak-to-trough drawdown. Peak-to-trough is
+#: always at least as deep as period-start depreciation, so alerting on it at
+#: -10% fires no later than the regulation would, never later. (b) The
+#: regulation is a RETAIL investor-protection rule and the UK FCA revoked
+#: COBS 16A.4.3UK with effect from 23 October 2025; the revocation was a
+#: firm-burden decision, not a finding that 10% is the wrong number, and the
+#: EU Article 62 text stands. It is cited here as published practice, not as
+#: a rule this desk is subject to. (c) The desk re-alerts on every session
+#: past the threshold, which is more often than "thereafter at multiples of
+#: 10%" requires; the regulation is a floor on loudness and this clears it.
+#:
+#: This direction is the one the 2026-09-30 revert argued for: the change
+#: makes the desk LOUDER. It cannot introduce silence anywhere, because the
+#: trigger is monotone and -10% is shallower than the old -20%.
+GROSS_LADDER_ALERT_PCT = -10.0
 
 #: Name of the deterministic hard-block rule this ceiling raises. Listed in
 #: `HARD_BLOCK_RULES` (below in this file) — one string, two places.
@@ -1041,8 +1064,7 @@ def resolve_gross_ceiling(
         # claiming the floor at a drawdown that is merely past the alert.
         deepest = min(threshold for threshold, _ in GROSS_LADDER)
         reason += (
-            f" This is past the {abs(GROSS_LADDER_ALERT_PCT):.0f}% level at "
-            f"which the owner is told."
+            f" Past the {abs(GROSS_LADDER_ALERT_PCT):.0f}% owner-alert level."
         )
         floor_x = min(
             rung_x for threshold, rung_x in GROSS_LADDER if threshold == deepest
@@ -1334,24 +1356,20 @@ DESK_INVESTED_TARGET_PCT = 100.0
 def deployment_gap_band_pct(config) -> float:
     """The tolerance band for the `deployment_gap` advisory.
 
-    Previously a flat 15pp with no source (owner rule: no arbitrary
-    numbers). The only cash slice the desk has actually sourced and the
-    owner accepted is the sweep reserve (`cash_sweep.reserve_pct` —
-    deliberately-parked cash for fees/slippage, see `CashSweepConfig`).
-    Reusing it means a book short of 100% by no more than the reserve is
-    exactly at the fully-invested mandate, not "under" it; a book short by
-    more than the reserve has real idle cash and the advisory should say
-    so. No new constant — this tracks whatever the owner sets there.
+    Reads `deployment_gap.band_pct` (value 1.0, carried over
+    unchanged from the retiring `cash_sweep.reserve_pct`, board item 190
+    step 1). A book short of 100% by no more than the band is at the
+    fully-invested mandate; short by more has real idle cash and the
+    advisory says so.
 
     `config` is the pipeline's top-level config (or None — several ~58
     tests build `TradingPipeline` via `__new__` without one); a missing
-    `cash_sweep` block falls back to `CashSweepConfig`'s own declared
-    default rather than a number invented here.
+    value falls back to the field's own declared default.
     """
-    from src.config import CashSweepConfig
-    pct = getattr(getattr(config, "cash_sweep", None), "reserve_pct", None)
+    from src.config import DeploymentGapConfig
+    pct = getattr(getattr(config, "deployment_gap", None), "band_pct", None)
     if pct is None:
-        pct = CashSweepConfig.model_fields["reserve_pct"].get_default()
+        pct = DeploymentGapConfig.model_fields["band_pct"].get_default()
     return float(pct)
 
 

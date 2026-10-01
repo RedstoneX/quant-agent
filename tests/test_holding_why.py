@@ -148,6 +148,19 @@ def test_rsg_take_profit_is_shown_as_a_reference_that_nothing_acts_on(rsg):
     assert "Nothing sells at this price" in tp["note"]
 
 
+def test_take_profit_note_states_the_targets_one_remaining_live_effect(rsg):
+    """Item 75: `acted_on is False` is about ORDERS, and on its own it reads
+    as "this number does nothing". That is untrue. `src/risk/trailing.py`
+    asks whether price has exceeded the target to decide whether the +1R
+    ratchet floor constrains the Type A structural trail, so the recorded
+    target still moves a live stop. The owner-facing note must say so.
+    """
+    note = rsg["readable"]["take_profit"]["note"]
+    assert "trailing stop" in note
+    assert "floor" in note
+    assert "no order rests on it" in note
+
+
 def test_rsg_horizon_is_the_pinned_plan_and_says_nothing_acts_on_it(rsg):
     horizon = rsg["readable"]["horizon"]
     assert horizon["sessions"] == 12

@@ -436,8 +436,9 @@ def test_reprotect_residual_picks_highest_stop_for_a_long_unchanged():
         {"id": "hi", "qty": 51, "stop_price": 248.5},
     ]
     pipe._reprotect_residual_after_partial_sell("AMZN", 41.0, cancelled)
-    pipe.broker._submit_stop_limit_order.assert_called_once_with(
-        symbol="AMZN", qty=41.0, stop_price=248.5,
+    pipe.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="AMZN", qty=41.0, stop_price=248.5, limit_price=None,
+        side="sell",
     )
 
 
@@ -456,8 +457,9 @@ def test_reprotect_residual_picks_lowest_stop_for_a_short():
     pipe._reprotect_residual_after_partial_sell(
         "AMZN", 41.0, cancelled, side="buy",
     )
-    pipe.broker._submit_stop_limit_order.assert_called_once_with(
-        symbol="AMZN", qty=41.0, stop_price=252.5, side="buy",
+    pipe.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="AMZN", qty=41.0, stop_price=252.5, limit_price=None,
+        side="buy",
     )
 
 

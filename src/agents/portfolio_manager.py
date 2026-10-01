@@ -715,9 +715,15 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             broadcast_here = sorted(s for s in (broadcast or ()) if s in sources)
             if broadcast_here:
                 notes.append(
-                    f"{', '.join(broadcast_here)} stance is the market-wide "
-                    "outlook, not a read on this name's sector — it cannot "
-                    "count FOR the trade; it still counts against one it opposes"
+                    # Item 18, 2026-09-30: the reason this note exists is
+                    # IDENTICAL on every line that carries it, so it is
+                    # stated ONCE under the section instead of ~110 times.
+                    # What stays per line is the only per-line fact: WHICH
+                    # source was broadcast. Prior wording repeated 130-odd
+                    # characters of explanation per symbol, measured at 14.9%
+                    # of the whole briefing.
+                    f"{', '.join(broadcast_here)} stance broadcast — "
+                    "one-sided, see note below"
                 )
             stale_note = f"; {'; '.join(notes)}" if notes else ""
             # The ALIGNED side drops both; the OPPOSED side drops only the
@@ -1606,10 +1612,10 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
         )
 
         reserve_line = (
-            f"\n  (of which ${reserve_balance:,.2f} is parked in the "
-            f"cash-equivalent sweep vehicle and is auto-liquidated before "
-            f"any BUY executes — already included in Cash Balance above, "
-            f"do not add it again)"
+            f"\n  (a further ${reserve_balance:,.2f} is parked in the "
+            f"cash-equivalent sweep vehicle; the desk does NOT sell it to "
+            f"fund a BUY, and it is NOT part of the Cash Balance above — "
+            f"do not size against it)"
             if reserve_balance > 0 else ""
         )
         # 2026-09-17 fix: this used to hardcode "no margin" regardless of
@@ -1705,6 +1711,11 @@ what you write in provenance — is a GO/NO-GO, not a size dial. A source whose
 stance is marked stale is in neither count: an old filing is still worth
 reading, but it has not confirmed anything about today, and it has not
 contradicted anything either.
+
+A source marked `broadcast` above is one-sided, and the rule is the same for
+every name that carries the mark: that stance is the market-wide outlook, not
+a read on this name's sector, so it cannot count FOR the trade — it still
+counts AGAINST one it opposes.
 
 A seat arguing the OTHER way SUBTRACTS from the net.
 **A net score of zero or below produces NO ORDER AT ALL** — not a small
@@ -2326,12 +2337,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         Capacity section does not.
         """
         held_below = holdings_below_entry_bar(blocked, held_symbols)
+        # Board item 219. What the pass looked at, kept verbatim so the
+        # owner's report states a measured count rather than an inference.
+        held_examined = tuple(sorted(
+            str(s).strip().upper() for s in held_symbols if str(s).strip()
+        ))
         if existing_risk_pct is None:
             return RotationPrecheck(
                 opportunity=None, headroom_pct=0.0, ceiling_pct=ceiling_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT, telemetry_available=False,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
-                held_below_entry_bar=held_below,
+                held_below_entry_bar=held_below, held_examined=held_examined,
             )
         headroom_pct = allocate_risk_budget(
             [], existing_pct=existing_risk_pct, clusters=None,
@@ -2355,7 +2371,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 floor_pct=STARTER_POSITION_RISK_PCT,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
             ),
-            held_below_entry_bar=held_below,
+            held_below_entry_bar=held_below, held_examined=held_examined,
         )
 
     @staticmethod
@@ -2388,7 +2404,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             parts.append(
                 f"only ${budget:,.2f} still deployable for new entries (the §11.2 "
                 "ladder-and-cash budget execution sizes entries against), "
-                f"under the ${floor:,.0f} minimum order worth placing — so "
+                "below the smallest order the desk will place — so "
                 "no new position can be funded at all without freeing "
                 "capital first"
                 if isinstance(budget, (int, float))
@@ -2465,8 +2481,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     f"{headroom_pct:.2f}% risk headroom left against the "
                     f"{ceiling_pct:.2f}% ceiling, and "
                     f"${precheck.entry_budget_usd:,.2f} is still deployable "
-                    f"for new entries against a ${precheck.min_order_usd:,.0f} "
-                    "minimum order — real room exists on every constraint, "
+                    "for new entries, above the smallest order the desk will "
+                    "place — real room exists on every constraint, "
                     "so there is nothing to rotate for."
                 )
             # Adversary review 2026-09-23: do NOT tell a seat that can sell
@@ -2616,6 +2632,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     @staticmethod
     def _semantic_failure(result, status: str, error: object):
         result.semantic_status = status
+        # Board item 188 (recording only): the gate's own word, so the
+        # agent_logs row says WHICH way the answer was unusable rather than
+        # only that the seat produced no decision.
+        result.gate_reason = status
         result.semantic_error = str(error)
         return None, result
 

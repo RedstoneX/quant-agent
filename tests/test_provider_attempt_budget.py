@@ -34,7 +34,11 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from src.agents.base import _max_retries, provider_attempt_budget
+from src.agents.base import (
+    _max_retries,
+    capacity_max_attempts,
+    provider_attempt_budget,
+)
 from src.cost_circuit import (
     LLMCostCircuitBreaker,
     PaidAnalysisSuspended,
@@ -85,13 +89,20 @@ def _db_path(tmp_path):
 
 
 def test_budget_covers_primary_attempts_plus_one_failover():
-    assert provider_attempt_budget(failover_available=True) == _max_retries() + 1
+    """The property is "the ceiling covers the loop's worst case", not any
+    particular count. The worst case is `capacity_max_attempts()` — a
+    capacity refusal (429/5xx) is bounded by the wall-clock retry deadline,
+    not by `_max_retries()`, which still bounds every other failure."""
+    assert (provider_attempt_budget(failover_available=True)
+            == capacity_max_attempts() + 1)
+    assert capacity_max_attempts() >= _max_retries()
 
 
 def test_budget_drops_the_failover_attempt_when_no_failover_is_possible():
     """An Anthropic-primary agent never fails over (Claude to Claude is
     pointless), so it cannot spend the extra attempt."""
-    assert provider_attempt_budget(failover_available=False) == _max_retries()
+    assert (provider_attempt_budget(failover_available=False)
+            == capacity_max_attempts())
 
 
 @pytest.mark.parametrize("retries", [1, 2, 3, 7])
@@ -100,9 +111,37 @@ def test_budget_tracks_the_env_override_the_retry_loop_actually_reads(
 ):
     """`.env` on the box carries a commented-out QUANT_AGENT_MAX_RETRIES=7.
     Uncommenting it must move the circuit's ceiling too, not silently
-    recreate the 2026-08-31 mismatch three attempts wider."""
+    recreate the 2026-08-31 mismatch three attempts wider. The ceiling
+    tracks whichever of the two primary bounds is the wider one."""
     monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", str(retries))
-    assert provider_attempt_budget(failover_available=True) == retries + 1
+    assert provider_attempt_budget(failover_available=True) == max(
+        retries, capacity_max_attempts()
+    ) + 1
+    assert provider_attempt_budget(failover_available=True) >= retries + 1
+
+
+def test_a_short_deadline_shrinks_the_capacity_attempt_cap(monkeypatch):
+    """`capacity_max_attempts()` is DERIVED from the published deadline and
+    the published backoff schedule, so shrinking the deadline must shrink
+    it — proof nothing new was hand-picked here."""
+    monkeypatch.setenv("QUANT_AGENT_MAX_RETRIES", "1")
+    monkeypatch.setenv("QUANT_AGENT_RETRY_DEADLINE_S", "10000")
+    wide = capacity_max_attempts()
+    monkeypatch.setenv("QUANT_AGENT_RETRY_DEADLINE_S", "3")
+    assert capacity_max_attempts() < wide
+
+
+def test_waiting_longer_only_applies_to_a_provably_unbilled_refusal():
+    """The cost question. The wider cap is granted ONLY where the provider
+    refused because it was busy (429/5xx) — attempts that generate no tokens
+    and so cannot multiply spend. A transport blip or a stream cut, which may
+    well have been charged, keeps the original `_max_retries()` bound."""
+    from src.agents.base import is_capacity_refusal
+
+    assert is_capacity_refusal(_Rate429("busy"))
+    assert is_capacity_refusal(_StatusErr(503, "high demand"))
+    assert not is_capacity_refusal(ConnectionError("stream cut"))
+    assert not is_capacity_refusal(_StatusErr(400, "bad request"))
 
 
 # ------------------------------------------------------------ configuration
@@ -161,8 +200,9 @@ def test_config_allows_a_ceiling_above_the_worst_case(_keys):
     """Raising it is a legitimate operator choice and grants no extra
     attempts — the retry loop, not this ceiling, decides how many requests
     happen."""
-    config = _load_settings_with(9)
-    assert config.llm_cost_circuit.max_provider_attempts_per_call == 9
+    above = provider_attempt_budget(failover_available=True) + 3
+    config = _load_settings_with(above)
+    assert config.llm_cost_circuit.max_provider_attempts_per_call == above
 
 
 def test_config_failover_available_agrees_with_every_real_agents_own_gate(_keys):
@@ -339,6 +379,14 @@ class _Rate429(Exception):
     status_code = 429
 
 
+class _StatusErr(Exception):
+    """Any other provider error carrying an HTTP status."""
+
+    def __init__(self, status_code: int, message: str = "provider error"):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class _CircuitAgent:
     """Built in the test rather than imported so the agent under test is
     unambiguously running the production `run()` with a live breaker."""
@@ -394,7 +442,9 @@ def test_rate_limited_primary_fails_over_with_a_live_circuit(tmp_path, monkeypat
 
     assert result.raw_text == '{"result": "ok"}'
     assert result.model == "claude-opus-4-7"
-    assert openrouter.chat.completions.create.call_count == 2   # primary exhausted
+    # Primary exhausted — by the deadline-derived capacity cap, not by 2.
+    assert (openrouter.chat.completions.create.call_count
+            == capacity_max_attempts())
     anthropic_client.messages.create.assert_called_once()       # single-shot failover
 
     with sqlite3.connect(circuit.db_path, uri=True) as conn:
@@ -472,10 +522,9 @@ def test_google_primary_fails_over_to_openrouter_with_a_live_circuit(tmp_path, m
     success_chunks = _openai_stream_mock().chat.completions.create.return_value
     client = MagicMock()
     client.chat.completions.create.side_effect = [
-        _Rate429("google free-tier rate-limited"),
-        _Rate429("google free-tier rate-limited"),
-        success_chunks,
-    ]
+        _Rate429("google free-tier rate-limited")
+        for _ in range(capacity_max_attempts())
+    ] + [success_chunks]
 
     google_gov = base_mod._TOKEN_GOVERNORS["google"]
     openrouter_gov = base_mod._TOKEN_GOVERNORS["openrouter"]
@@ -496,10 +545,11 @@ def test_google_primary_fails_over_to_openrouter_with_a_live_circuit(tmp_path, m
     assert result.model == "google/gemini-3.5-flash-lite"
     assert result.actual_provider == "openrouter"
     assert result.used_fallback is True
-    assert client.chat.completions.create.call_count == 3  # 2 primary + 1 failover
+    assert (client.chat.completions.create.call_count
+            == capacity_max_attempts() + 1)  # primary attempts + 1 failover
 
     assert google_gov.snapshot()["tokens_in_window"] > google_before, (
-        "the two primary attempts must be charged to the GOOGLE governor"
+        "the primary attempts must be charged to the GOOGLE governor"
     )
     assert openrouter_gov.snapshot()["tokens_in_window"] > openrouter_before, (
         "the failover attempt must be charged to the OPENROUTER governor"

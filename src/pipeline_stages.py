@@ -44,7 +44,7 @@ from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
-from src.agents.base import agent_log_kwargs
+from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.macro import MacroCoverage
@@ -1758,7 +1758,7 @@ def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     Auth is omitted when the kept socket already started during Risk — that
     budget began at hub open. Funding timeouts are the cash-sweep step's
     own ceiling; they must not be added as leftover slack on the submit
-    path after fund_buys has already returned. Call this AFTER funding
+    path after the funding step has already returned. Call this AFTER funding
     with will_fund=False.
 
     Auth is also omitted when the socket is switched off entirely
@@ -4101,6 +4101,10 @@ def _account_for_pm_candidates(
 
     try:
         pipeline.db.insert_agent_log(
+            **seat_acceptance_kwargs(
+                "no_valid_grounded_decision" if not reasked else None,
+                result=reask_result,
+            ),
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=(
                 f"candidate-accounting re-ask | {', '.join(pending)}"
@@ -4820,6 +4824,25 @@ def _record_scale_advisory(decisions, verdict) -> tuple[list, float, list]:
     return list(decisions), scale, advised
 
 
+
+def _probe_sale_census(provider: object) -> dict | None:
+    """Board item 63: find the SEC provider's last sale census, however the
+    provider happens to be wrapped. Duck-typed on purpose -- the combined
+    provider delegates by attribute, exactly as `form4_coverage` is probed
+    a few lines below. Returns None when nothing recorded one."""
+    candidates: list[object] = [provider]
+    nested = getattr(provider, "providers", None)
+    if isinstance(nested, (list, tuple)):
+        candidates.extend(nested)
+    if hasattr(provider, "__dict__"):
+        candidates.extend(vars(provider).values())
+    for candidate in candidates:
+        census = getattr(candidate, "last_sale_census", None)
+        if isinstance(census, dict) and census.get("sale_rows"):
+            return census
+    return None
+
+
 class MorningResearchStage:
     """Parallel data + LLM fan-out at morning open.
 
@@ -5257,6 +5280,15 @@ class MorningResearchStage:
                     for s in symbols_data if s["symbol"] in live_context
                 },
             )
+            ctx.tech_unreadable = dict(
+                getattr(self.tech_analyst, "last_unreadable", None) or {}
+            )
+            ctx.tech_unanswered = set(
+                getattr(self.tech_analyst, "last_unanswered", None) or set()
+            )
+            ctx.tech_unanswered = set(
+                getattr(self.tech_analyst, "last_unanswered", None) or set()
+            )
             resolved = [a for a in analyses_map.values() if a is not None]
             if resolved:
                 try:
@@ -5364,6 +5396,21 @@ class MorningResearchStage:
             ctx.smart_money_findings = findings
             ctx.smart_money_provider_error = provider_error or analysis_error
             import json as _sm_json
+            # Board item 63. The sale side of the insider signal, recorded
+            # because nothing else records it: the fetch truncation puts
+            # admission-eligible buys first and admission requires a buy,
+            # so no sale has ever reached `finding`/`admission` evidence.
+            # This row governs nothing -- no gate, no rank, no size reads
+            # it -- it exists so the magnitude->sign question can one day
+            # be answered from the desk's own data instead of guessed.
+            _sale_census = _probe_sale_census(self.smart_money_provider)
+            if _sale_census:
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id,
+                    agent_name="smart_money_analyst",
+                    kind="insider_sale_census", scope="run",
+                    evidence_json=_sm_json.dumps(_sale_census),
+                )
             _persist_evidence(
                 self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
                 kind="scan_summary", scope="run",
@@ -5397,6 +5444,7 @@ class MorningResearchStage:
                 if analysis_error:
                     sm_log_kwargs["status"] = "agent_failure"
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("agent_failure" if analysis_error else None),
                     agent_name="smart_money_analyst", run_id=ctx.run_id,
                     input_summary=f"{len(findings)} material findings",
                     input_message=sm_result.user_message,
@@ -5536,6 +5584,14 @@ class MorningResearchStage:
                 macro_events = []
             ctx.macro_events = list(macro_events or [])
             ctx.macro_event_coverage = event_coverage
+            # Board item 187: durable per-open coverage record, so the item
+            # closes on observed rows rather than on someone reading logs.
+            try:
+                from src.data.fetch_coverage_record import build_row
+                self.db.insert_fred_fetch_coverage_run(
+                    build_row(ctx.run_id, macro_coverage, event_coverage))
+            except Exception as e:  # noqa: BLE001 — telemetry never costs the run
+                logger.warning("Could not record FRED fetch coverage: %s", e)
             # Same test-double guard, same reason: anything that is not the
             # real dataclass reads as NOT FETCHED, which the renderer states
             # outright rather than showing as an empty FOMC schedule.
@@ -5881,6 +5937,7 @@ class MorningResearchStage:
                 )
             if ta_result:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("failed" if not analyses else None),
                     agent_name="tech_analyst", run_id=ctx.run_id,
                     input_summary=(
                         f"Batch: {len(analyses)}/{len(analyses_map)} symbols "
@@ -6048,6 +6105,19 @@ class MorningResearchStage:
                 parse_telemetry.total_null_coercions(),
                 parse_telemetry.describe_null_coercions(),
             )
+        if parse_telemetry.total_hygiene_observations() and not (
+            parse_telemetry.total_hygiene_violations()
+        ):
+            # Item 214 (2026-10-01): a silent clean run used to look
+            # identical to the check never running, which is why nobody
+            # could read these counters off production. State the
+            # denominator so "0 of N, by provider" is a readable fact.
+            logger.info(
+                "Tech-seat answer hygiene CLEAN this run: 0 violations in %d "
+                "checked answer(s), by provider: %s — see docs/WORK.md item 214",
+                parse_telemetry.total_hygiene_observations(),
+                parse_telemetry.describe_hygiene_observations(),
+            )
         if parse_telemetry.total_hygiene_violations():
             # Item 157's runtime check (2026-09-23): whether a schema-
             # enforced route is actually being honoured, surfaced where a
@@ -6071,7 +6141,9 @@ class MorningResearchStage:
                 "being sent at all, not a schema failing to suppress): "
                 "%s — see docs/WORK.md item 157",
                 parse_telemetry.total_hygiene_violations(),
-                parse_telemetry.describe_hygiene_violations(),
+                parse_telemetry.describe_hygiene_violations()
+                + f" (out of {parse_telemetry.total_hygiene_observations()} "
+                + f"checked answer(s): {parse_telemetry.describe_hygiene_observations()})",
             )
         return ctx
 
@@ -6271,6 +6343,9 @@ class MorningResearchStage:
             # Same live-price rule as the main morning Tech pass (2026-09-14).
             intraday_context=self._live_context([s["symbol"] for s in symbols_data]),
         )
+        ctx.tech_unreadable = dict(
+            getattr(self.tech_analyst, "last_unreadable", None) or {}
+        )
         resolved = [a for a in analyses_map.values() if a is not None]
         if resolved:
             try:
@@ -6290,6 +6365,7 @@ class MorningResearchStage:
 
         if ta_result:
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("failed" if not resolved else None),
                 agent_name="tech_analyst", run_id=ctx.run_id,
                 input_summary=(
                     f"Nomination responder batch: {len(resolved)}/{len(analyses_map)} symbols"
@@ -6355,10 +6431,11 @@ class DecisionStage:
             ctx.macro_analysis, ctx.total_value, ctx.deployable_cash,
             ctx.last_equity
 
-    `ctx.deployable_cash`, NOT `ctx.cash` — this stage sizes a plan, and the
-    plan may spend the sweep vehicle because `fund_buys` converts it before
-    the BUY phase. Raw broker cash here would hide the parked book from PM
-    and RM and cap the desk at its reserve. The docstring said `ctx.cash`;
+    `ctx.deployable_cash`, NOT `ctx.cash` — this stage sizes a plan against
+    everything the account owns, parked sweep value included. Raw broker cash
+    here would hide the parked book from PM and RM and cap the desk at its
+    reserve. Since item 190 nothing converts the vehicle automatically before
+    the BUY phase. The docstring said `ctx.cash`;
     the code has read `deployable_cash` since the 2026-08-19 tranche.
     Writes: ctx.portfolio_decision (with .targets AND .decisions populated),
             ctx.facts
@@ -6698,6 +6775,10 @@ class DecisionStage:
                 pm_result.semantic_error or "no valid PM decision"
             )
         pipeline.db.insert_agent_log(
+            **seat_acceptance_kwargs(
+                "no_valid_grounded_decision" if not portfolio_decision else None,
+                result=pm_result,
+            ),
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=f"{len(analyses)} analyses, ${total_value:.0f} total",
             input_message=pm_result.user_message,
@@ -7918,6 +7999,10 @@ class RiskStage:
         if verdict is None:
             rm_log_kwargs["status"] = "agent_failure"
         pipeline.db.insert_agent_log(
+            **seat_acceptance_kwargs(
+                "risk_manager_unparseable_output" if verdict is None else None,
+                result=rm_result,
+            ),
             agent_name="risk_manager", run_id=run_id,
             # "violations" was wrong AND owner-facing: this string is what
             # `CandidateDetailModal` shows on the dashboard, and by this point
@@ -8980,12 +9065,11 @@ class ExecutionStage:
         # PM/RM/the hard gate size BUYs against
         # `deployable_cash` (raw cash + convertible sweep value), so on any
         # session with meaningful BUYs this sale IS load-bearing — the raw
-        # cash on hand is typically just the reserve. `fund_buys` sells
-        # enough of the vehicle to cover the planned notional, then waits
-        # for the fill and CONFIRMS the observed rise in broker cash (a
-        # filled sale credits `cash` immediately; the 2026-08-19 loss of a
-        # fully-approved plan was a 51s fill outliving a 15s wait, not
-        # settlement — see cash_sweep._FUND_TERMINAL_TIMEOUT_S).
+        # cash on hand is typically just the reserve. The pre-BUY funding
+        # sale that used to cover the planned notional was removed in item
+        # 190, so nothing converts the vehicle automatically now (the
+        # 2026-08-19 loss of a fully-approved plan was a 51s fill outliving
+        # a 15s wait, not settlement).
         #
         # Since margin went on (2026-09-02) the sale is no longer what makes
         # a BUY POSSIBLE — the entry budget below is ladder headroom, and a
@@ -8996,73 +9080,16 @@ class ExecutionStage:
         # loan is what is left over.
         # isinstance guard: stage tests stub `pipeline` with MagicMock.
         if buy_decisions:
-            from src.execution.cash_sweep import CashSweeper
             _pin_approved_entry_ceilings(pipeline, ctx, buy_decisions)
             _warm_trade_updates(pipeline, ctx)
-            sweeper = getattr(pipeline, "_sweeper", None)
-            sweeper = sweeper() if callable(sweeper) else None
-            if not isinstance(sweeper, CashSweeper):
-                sweeper = None
-            if sweeper is not None:
-                planned_notional = sum(
-                    fundable_notional.get(d.symbol, 0.0) for d in buy_decisions
+            # The cash-sweep funding step (sell the T-bill vehicle before a BUY)
+            # was retired with the sweeper (board item 190 step 3); raw cash is
+            # the only funding source, so there is nothing to record as freed.
+            for d in buy_decisions:
+                _record_pipeline_event(
+                    pipeline, ctx, d.symbol, "funding", "not_required",
+                    "cash_sweep_disabled", raw_cash=cash,
                 )
-                for d in buy_decisions:
-                    _record_pipeline_event(
-                        pipeline, ctx, d.symbol, "funding", "attempted",
-                        "cash_sweep_funding", planned_notional=planned_notional,
-                    )
-                try:
-                    freed = sweeper.fund_buys(ctx, planned_notional)
-                except Exception as e:
-                    logger.warning("cash sweep: fund_buys failed (BUYs will "
-                                   "use raw cash only): %s", e)
-                    freed = 0.0
-                    for d in buy_decisions:
-                        _record_pipeline_event(
-                            pipeline, ctx, d.symbol, "funding", "failed",
-                            "cash_sweep_exception", detail=str(e),
-                        )
-                else:
-                    # Adopt whatever the sweeper refreshed REGARDLESS of the
-                    # confirmed amount. `fund_buys` re-reads the broker into
-                    # ctx before it decides what it can confirm, so on the
-                    # zero-confirmed path ctx already held fresher figures
-                    # than these locals — and the locals, not ctx, govern the
-                    # BUY loop's entry budget. Refreshing only on the
-                    # success path meant an unconfirmed funding attempt left
-                    # the loop sizing against a pre-sale cash reading; if
-                    # anything had DRAWN cash in between, that reading is
-                    # stale-HIGH and the clamp stops protecting anything.
-                    # ctx is unchanged when fund_buys bailed early, so this
-                    # is a no-op in the ordinary case.
-                    if isinstance(getattr(ctx, "cash", None), (int, float)):
-                        cash = ctx.cash
-                    if isinstance(getattr(ctx, "total_value", None), (int, float)):
-                        total_value = ctx.total_value
-                    if ctx.positions is not None:
-                        positions = ctx.positions
-                if freed > 0:
-                    positions = ctx.positions
-                    cash = ctx.cash
-                    total_value = ctx.total_value
-                    for d in buy_decisions:
-                        _record_pipeline_event(
-                            pipeline, ctx, d.symbol, "funding", "funded",
-                            "cash_sweep_confirmed", freed_cash=freed,
-                        )
-                elif buy_decisions:
-                    for d in buy_decisions:
-                        _record_pipeline_event(
-                            pipeline, ctx, d.symbol, "funding", "no_additional_cash",
-                            "cash_sweep_released_zero", raw_cash=cash,
-                        )
-            else:
-                for d in buy_decisions:
-                    _record_pipeline_event(
-                        pipeline, ctx, d.symbol, "funding", "not_required",
-                        "cash_sweep_disabled", raw_cash=cash,
-                    )
             _adopt_stream_stall(pipeline, ctx)
             # Encode AFTER funding so the fund step's own 180s/30s ceiling
             # cannot sit as leftover slack on a fast no-op. Remaining
@@ -10018,8 +10045,23 @@ class ExecutionStage:
                     # multiplier — doctrine bars fitting a number to this
                     # desk's history. See the `entry_atr` migration note in
                     # src/storage/db.py.
-                    entry_atr=getattr(decision, "atr_14", None),
+                    # Read off the ENTRY ANALYSIS, not off `decision`:
+                    # `TradeDecision` has no `atr_14` field at all (ATR(14)
+                    # lives on `TechnicalIndicators`/the analysis object), so
+                    # the original `getattr(decision, "atr_14", None)` was a
+                    # silent typo that resolved to its default on every
+                    # single trade and left the column empty for the whole
+                    # life of the feature. Same accessor the fat-finger
+                    # refusal below already uses. None on the resume/sweep
+                    # lanes that carry no analysis — the row then records no
+                    # ATR rather than a reconstructed one.
+                    entry_atr=getattr(entry_analysis, "atr_14", None),
                     stop_basis=getattr(decision, "stop_rule", None),
+                    # Item 55 RECORDING, no behaviour: what that stop was
+                    # BASED on — which level, how many turns made it, how
+                    # wide its zone was, how far the stop sat from it. Set
+                    # by the constructor; nothing downstream reads it back.
+                    stop_level_basis=getattr(decision, "stop_level_basis", None),
                     # Conviction ledger (spec §7.2) — pinned at entry from
                     # the constructor's TradeDecision (see portfolio_
                     # constructor._build_buy/_build_short) and from this

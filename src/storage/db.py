@@ -696,6 +696,32 @@ class Database:
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            -- Board item 187: one row per morning-open FRED fetch, written by
+            -- the pipeline from the coverage objects the fetch itself
+            -- returned (nothing re-derived from log text). `series_failed`
+            -- are series that WERE asked and failed (with reason);
+            -- `series_not_attempted` never reached the wire. They are kept
+            -- apart because "never attempted" is the item's complaint.
+            -- `releases_*` is the event-calendar half; NULL there means that
+            -- coverage object was not available, NOT zero. The calendar
+            -- provider cannot tell "asked and failed" from "deadline hit
+            -- before the ask", so its failures are recorded with their own
+            -- reason text and are never claimed as either.
+            CREATE TABLE IF NOT EXISTS fred_fetch_coverage_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT,
+                recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+                series_configured INTEGER,
+                series_succeeded INTEGER,
+                series_failed TEXT,
+                series_not_attempted TEXT,
+                releases_configured INTEGER,
+                releases_succeeded INTEGER,
+                releases_from_cache INTEGER,
+                releases_failed TEXT,
+                full_coverage INTEGER NOT NULL
+            );
+
             -- The evening run's OWN OUTPUT — the exact result dict the
             -- evening Telegram formatter (src/trader_feed.py
             -- `_format_evening`) was handed, plus the book as the
@@ -855,6 +881,29 @@ class Database:
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 run_id TEXT
             );
+
+            -- Board item 193. `pending_protection_restores.id` is a SHARED
+            -- AUTOINCREMENT: the scale-in cancel path and the protected-sell
+            -- exit path both draw ids from it, and every row is DELETED once
+            -- discharged. The id ceiling is therefore not a count of anything,
+            -- and an id spent by the other writer used to be indistinguishable
+            -- from a scale-in cancel that filed no event. This table is the
+            -- attribution: one never-deleted row per id handed out, written at
+            -- the single insert choke point, so a future gap between the id
+            -- ceiling and the scale-in cancel events is read off the record
+            -- instead of argued about. Bookkeeping only - nothing reads it to
+            -- decide anything, and failing to write it never blocks the
+            -- protective WAL row it describes.
+            CREATE TABLE IF NOT EXISTS protection_restore_wal_audit (
+                row_id INTEGER PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                sell_order_id TEXT NOT NULL,
+                position_qty_before_sell REAL,
+                side TEXT,
+                run_id TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
 
             -- Bounded entry re-peg write-ahead queue. An Alpaca order
             -- replacement MINTS A NEW ORDER ID: the moment the PATCH is
@@ -1046,6 +1095,37 @@ class Database:
         # column existed. See `TradeDecision.structural_ceiling` in models.py
         # and `src.risk.constants.is_trend_trade`.
         _ensure_column("trades", "structural_ceiling", "structural_ceiling INTEGER")
+        # Board item 218 (owner ruling 2026-10-01). The parity refusal is
+        # an explicitly PROVISIONAL trial — "for now ... see if that
+        # improves the desk purchases" — so the thing it refused has to be
+        # recoverable as NUMBERS, not as prose. One row per refused name per
+        # run, every quantity in its own column, so "did refusing these
+        # improve the desk's purchases" is a query and not a grep. Nothing
+        # reads this table yet by design: it is the evidence the owner's own
+        # question will be answered from.
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trade_refusals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                run_id TEXT,
+                symbol TEXT NOT NULL,
+                direction TEXT,
+                refusal TEXT NOT NULL,
+                stage TEXT,
+                entry_price REAL,
+                stop_price REAL,
+                level_used REAL,
+                reward_risk REAL,
+                threshold REAL,
+                level_was_measured INTEGER
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trade_refusals_symbol_ts "
+            "ON trade_refusals (symbol, timestamp)"
+        )
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
@@ -1108,6 +1188,23 @@ class Database:
         # agent_logs row to the trades row(s) its decision produced). NULL
         # for every other agent and for all pre-Stage-1 rows.
         _ensure_column("agent_logs", "decision_id", "decision_id TEXT")
+        # Did the SEAT accept this answer, and if not why — the fact `status`
+        # never carried (`status` only ever meant "the call returned"). NULL
+        # on every legacy row and on any site not yet instrumented; readers
+        # must treat NULL as unknown, never as accepted. Board item 188:
+        # for the three DECISION seats `acceptance_reason` now carries the
+        # gate's OWN machine-readable word (pm_/risk_/review_ prefixed) when
+        # the gate named one, so the refusal says which way the answer was
+        # unusable. RECORDING ONLY: nothing may read either column back into
+        # a sizing, stop, exit or routing decision, and neither may be swept
+        # for an optimal threshold — they exist to make a model's
+        # usable-answer rate computable from the desk's own rows.
+        _ensure_column("agent_logs", "acceptance", "acceptance TEXT")
+        _ensure_column("agent_logs", "acceptance_reason", "acceptance_reason TEXT")
+        # Whether the provider's answer carried usage information:
+        # complete / no_cost / no_usage. NULL on every legacy row and where no
+        # request was made; NULL is unknown, never "complete" and never free.
+        _ensure_column("agent_logs", "telemetry", "telemetry TEXT")
         _ensure_column("trades", "decision_id", "decision_id TEXT")
         _ensure_column("trades", "realized_pnl", "realized_pnl REAL")
         # Stage 3 (shorts): which side the protective stop being restored
@@ -1175,12 +1272,123 @@ class Database:
         _ensure_column("trades", "stop_basis", "stop_basis TEXT")
         # `max_adverse_excursion` — the worst price the position reached
         # against its entry while open, in price units, accumulated by
-        # `update_adverse_excursion` from each session's position snapshot.
+        # `_accumulate_excursions` from each session's position snapshot.
         # A snapshot-frequency floor on the true MAE, never an overstatement:
         # intraday spikes between snapshots are missed, so a reading that
         # says the floor WAS violated is trustworthy while one that says it
         # was not is only "not observed". Any reader must carry that caveat.
         _ensure_column("trades", "max_adverse_excursion", "max_adverse_excursion REAL")
+        # `max_favourable_excursion` — the best price the position reached IN
+        # ITS FAVOUR against its entry while open, in price units, the exact
+        # mirror of `max_adverse_excursion` and accumulated by the same
+        # `_accumulate_excursions` call from the same snapshot. It is the
+        # other half of the falsification question and cannot be recovered
+        # afterwards either: without it, a stop-out recorded alongside a wide
+        # adverse excursion cannot be told apart from one that first ran a
+        # long way in the desk's favour and gave it all back. Carries the
+        # SAME snapshot-frequency caveat (a floor on the true MFE, never an
+        # overstatement) and the SAME hard limit on use — falsification of
+        # the ratified floor only, never a value to optimise a multiplier
+        # against. NULL on every legacy row and every non-entry row.
+        _ensure_column(
+            "trades", "max_favourable_excursion", "max_favourable_excursion REAL",
+        )
+        # `max_adverse_overnight_gap` — SHORT-SIDE GAP EVIDENCE, the worst
+        # ADVERSE overnight gap (session open minus the prior session's
+        # close, in price units, positive = against the short) observed on
+        # any session this short was held. Its sibling
+        # `overnight_gap_sessions` counts the sessions on which a gap was
+        # actually observed, so a NULL/absent reading is distinguishable
+        # from "held, and never gapped against".
+        #
+        # WHY IT EXISTS (item 186): the short-side sizing haircut
+        # (`RiskConfig.short_gap_risk_multiple`, 1.5) is unsourced, and TWO
+        # attempts to read it off the instrument have failed — see the
+        # ledger row and docs/BOARD_NOTES.md item 186. Both failed for the
+        # same underlying reason: the desk has never recorded what a short
+        # actually suffers overnight. Bars are fetched live and discarded;
+        # no OHLCV table exists. This column, joined to the `entry_atr` and
+        # `initial_stop_loss` already pinned on the same opening row, is the
+        # evidence that would let the question ever be settled.
+        #
+        # WHAT IT MAY NOT BE USED FOR: the same hard limit the
+        # `max_adverse_excursion` note above states. RECORDING ONLY. Nothing
+        # reads it back into a sizing, stop or exit decision, and it may not
+        # be swept for the multiple that would have been optimal — doctrine
+        # bars fitting a number to this desk's own history. Carries the same
+        # snapshot-frequency caveat: a session on which no snapshot ran
+        # contributes nothing, so the stored figure is a FLOOR on the worst
+        # adverse gap, never an overstatement.
+        _ensure_column(
+            "trades", "max_adverse_overnight_gap", "max_adverse_overnight_gap REAL",
+        )
+        _ensure_column(
+            "trades", "overnight_gap_sessions", "overnight_gap_sessions INTEGER",
+        )
+        # `last_overnight_gap_date` — the session date of the most recently
+        # recorded gap, so a second sync in the same session cannot count
+        # the same gap twice. Idempotence by date, not by call count.
+        _ensure_column(
+            "trades", "last_overnight_gap_date", "last_overnight_gap_date TEXT",
+        )
+        # --- Item 55 evidence: WHAT the stop was based on, and what the
+        # market then did with that level. RECORDING ONLY (2026-10-01).
+        #
+        # Board item 55 ("what IS a structural level — how many bars make a
+        # swing point, how wide is a level's zone?") has been argued and
+        # re-measured repeatedly and never closed, because three
+        # measurements of the SAME baseline disagreed. A quantity that
+        # unstable cannot govern money, and no further argument fixes it:
+        # the desk has never recorded what its own stops were standing on,
+        # so it cannot look. These columns are that record.
+        #
+        # WHAT THIS DATA MAY BE USED FOR: showing that the CURRENT
+        # definition is WRONG — that level-backed stops fared no differently
+        # from stops with nothing behind them, that a given zone width or
+        # pivot window predicted nothing. A falsification.
+        #
+        # WHAT IT MAY NOT BE USED FOR: picking a better pivot window or zone
+        # width by trying candidates against these rows. That is fitting a
+        # number to this desk's own history, which doctrine bars outright
+        # ("no fitting, only reading"), and it is barred here however much
+        # data accumulates.
+        #
+        # NO CLASSIFICATION IS STORED. "Respected", "pierced and recovered"
+        # and "broken outright" all need a cutoff nobody can source today,
+        # so only RAW DISTANCES are kept and the classification is derived
+        # later by a reader who states its own cutoff. Unknown is NULL.
+        #
+        # `stop_level_basis` — JSON written at entry by
+        # `PortfolioConstructor.shipped_stop_level_basis` (see
+        # `src.data.levels.describe_stop_level_basis` for every field): the
+        # level's price and kind, its touch count, the pivot window and
+        # confirmation span in force, the zone's edges and width, and the
+        # signed stop-to-level and entry-to-level distances. Written for
+        # trades with NO level behind the stop too (`level_backed: false`),
+        # because that is the control group. NULL on legacy rows, non-entry
+        # rows, and any entry whose analysis could not produce an honest
+        # record.
+        _ensure_column("trades", "stop_level_basis", "stop_level_basis TEXT")
+        # `level_max_penetration` — the furthest price ever travelled BEYOND
+        # the far edge of that level's zone while the position was open, in
+        # price units, monotonic (only ever widens) and never negative. Zero
+        # or NULL means the zone's far edge was never exceeded in any
+        # snapshot. Carries the SAME snapshot-frequency caveat as
+        # `max_adverse_excursion`: a floor on the true penetration, so a
+        # reading that says the level WAS exceeded is trustworthy while one
+        # that says it was not is only "not observed".
+        _ensure_column(
+            "trades", "level_max_penetration", "level_max_penetration REAL",
+        )
+        # `level_closest_approach` — the SMALLEST distance ever seen between
+        # price and the NEAR edge of the zone, monotonic downwards, signed:
+        # positive means price never reached the zone, zero or negative
+        # means it entered. Together with `level_max_penetration` this
+        # separates "never came near it", "entered the zone", and "went
+        # clean through it" without anyone having to name a tolerance.
+        _ensure_column(
+            "trades", "level_closest_approach", "level_closest_approach REAL",
+        )
         _ensure_column("trades", "requested_risk_pct", "requested_risk_pct REAL")
         _ensure_column("trades", "allocated_risk_pct", "allocated_risk_pct REAL")
         _ensure_column("trades", "conviction", "conviction TEXT")
@@ -1452,13 +1660,14 @@ class Database:
                      thesis_invalid_if: str | None = None,
                      structural_ceiling: bool | None = None,
                      entry_atr: float | None = None,
-                     stop_basis: str | None = None) -> int:
+                     stop_basis: str | None = None,
+                     stop_level_basis: str | None = None) -> int:
         """Insert a trade record. Returns the new row's id.
 
         `entry_atr` / `stop_basis` are STOP-FLOOR EVIDENCE, pinned at entry
         only, and are recorded for one purpose: so a future pass can ask
         whether the ratified minimum stop width was ever VIOLATED in
-        practice. See `update_adverse_excursion` for the third leg (MAE) and
+        practice. See `_accumulate_excursions` for the MAE/MFE legs and
         for the explicit limits on what this data may be used for.
 
 
@@ -1528,19 +1737,66 @@ class Database:
                 "expected_horizon_sessions, setup_type, position_id, exit_reason_category, "
                 "conviction, requested_risk_pct, allocated_risk_pct, decision_model, "
                 "decision_id_status, thesis_invalid_if, initial_stop_loss, "
-                "initial_take_profit, structural_ceiling, entry_atr, stop_basis) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "initial_take_profit, structural_ceiling, entry_atr, stop_basis, "
+                "stop_level_basis) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
                  stop_loss, take_profit, broker_order_id, fill_status, decision_id,
                  expected_horizon_sessions, setup_type, position_id, exit_category,
                  conviction, requested_risk_pct, allocated_risk_pct, decision_model,
                  decision_link_status, thesis_invalid_if, initial_stop_loss,
                  initial_take_profit, structural_ceiling_stored,
-                 entry_atr, stop_basis),
+                 entry_atr, stop_basis, stop_level_basis),
             )
             self.conn.commit()
             return cur.lastrowid
         return self._locked_write(_do, label="insert_trade")
+
+    def insert_trade_refusal(
+        self, *, symbol: str, direction: str | None, refusal: str,
+        entry_price: float | None = None, stop_price: float | None = None,
+        level_used: float | None = None, reward_risk: float | None = None,
+        threshold: float | None = None, level_was_measured: bool | None = None,
+        stage: str | None = None, run_id: str | None = None,
+    ) -> int | None:
+        """Record one NAMED refusal with its numbers in their own columns.
+
+        Board item 218. `PortfolioConstructor.last_refusals` keeps the human
+        sentence and is drained only for the symbols that reach
+        `constructor_dropped`; this is the durable half, written at the
+        moment of refusal, and it stores no English at all. A trial the
+        owner asked to judge later ("see if that improves the desk
+        purchases") is judged from these columns.
+        """
+        def _do():
+            cur = self.conn.execute(
+                "INSERT INTO trade_refusals (timestamp, run_id, symbol, "
+                "direction, refusal, stage, entry_price, stop_price, "
+                "level_used, reward_risk, threshold, level_was_measured) "
+                "VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (run_id, str(symbol or "").strip().upper(), direction,
+                 refusal, stage, entry_price, stop_price, level_used,
+                 reward_risk, threshold,
+                 None if level_was_measured is None else int(bool(level_was_measured))),
+            )
+            self.conn.commit()
+            return cur.lastrowid
+        return self._locked_write(_do, label="insert_trade_refusal")
+
+    def get_trade_refusals(
+        self, *, refusal: str | None = None, limit: int = 500,
+    ) -> list[dict]:
+        """Read back the durable refusal rows, newest first."""
+        sql = "SELECT * FROM trade_refusals"
+        args: list = []
+        if refusal:
+            sql += " WHERE refusal = ?"
+            args.append(refusal)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(int(limit))
+        cur = self.conn.execute(sql, tuple(args))
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
 
     def update_open_stop_loss(
         self, symbol: str, new_stop_price: float, *, action: str | None = None,
@@ -2232,9 +2488,44 @@ class Database:
                 (symbol, sell_order_id, position_qty_before_sell, specs_json,
                  run_id, side),
             )
+            row_id = cur.lastrowid or 0
+            # Item 193: attribute the id before it can be forgotten. Best
+            # effort on purpose - an audit failure must never stop a
+            # protective-restore intent from being persisted.
+            try:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO protection_restore_wal_audit "
+                    "(row_id, symbol, sell_order_id, "
+                    "position_qty_before_sell, side, run_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (row_id, symbol, sell_order_id,
+                     position_qty_before_sell, side, run_id),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "protection-restore WAL audit row %s not written: %s",
+                    row_id, exc,
+                )
             self.conn.commit()
-            return cur.lastrowid or 0
+            return row_id
         return self._locked_write(_do, label="insert_pending_protection_restore")
+
+    def get_protection_restore_wal_audit(self) -> list[dict]:
+        """Every protection-restore WAL id ever handed out, oldest first.
+
+        Item 193's completeness check: join these against the
+        `scale_in|protective_sell_cancelled` events' own `wal_row_id`, and
+        an id present here but absent there was spent by the protected-sell
+        exit path or by a rolled-back preparation, not by an unrecorded
+        cancel.
+        """
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT row_id, symbol, sell_order_id, "
+                "position_qty_before_sell, side, run_id, created_at "
+                "FROM protection_restore_wal_audit ORDER BY row_id"
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_pending_protection_restores(self) -> list[dict]:
         """All currently-pending protection-restore rows, oldest first."""
@@ -2466,13 +2757,15 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def _accumulate_adverse_excursion(self, position) -> None:
-        """Widen the recorded worst-against-entry excursion for one holding.
+    def _accumulate_excursions(self, position) -> None:
+        """Widen the recorded worst- and best-against-entry excursions.
 
-        STOP-FLOOR EVIDENCE, RECORDING ONLY. This is the third of the three
-        facts the desk needs before it can ever check its ratified minimum
-        stop width against its own trades (the other two, `entry_atr` and
-        `stop_basis`, are pinned at entry by `insert_trade`). Read the
+        STOP-FLOOR EVIDENCE, RECORDING ONLY. These are the running half of
+        the facts the desk needs before it can ever check its ratified
+        minimum stop width against its own trades (the pinned half,
+        `entry_atr`, `initial_stop_loss` and `stop_basis`, is written at
+        entry by `insert_trade`; the resolved half, `realized_pnl` and
+        `exit_reason_category`, lands when the position closes). Read the
         `max_adverse_excursion` migration note in `_migrate` for the hard
         limit on its use: it may show whether the floor was ever VIOLATED in
         practice, and it may NOT be optimised against to produce a new
@@ -2502,19 +2795,165 @@ class Database:
         if entry <= 0 or last <= 0 or qty == 0:
             return
         # Excursion AGAINST the position, in price units. Never negative:
-        # a position in profit contributes nothing.
-        excursion = (entry - last) if qty > 0 else (last - entry)
-        if excursion <= 0:
+        # a position in profit contributes nothing. The favourable leg is
+        # its exact mirror, and at most one of the two is positive at any
+        # snapshot, so each column widens only on the snapshots that
+        # actually evidence it.
+        adverse = (entry - last) if qty > 0 else (last - entry)
+        favourable = -adverse
+        for column, excursion in (
+            ("max_adverse_excursion", adverse),
+            ("max_favourable_excursion", favourable),
+        ):
+            if excursion <= 0:
+                continue
+            self.conn.execute(
+                f"UPDATE trades SET {column} = ? "  # noqa: S608 - literal, not input
+                "WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
+                "AND entry_atr IS NOT NULL "
+                f"AND ({column} IS NULL OR {column} < ?) "
+                "AND position_id IN ("
+                "  SELECT position_id FROM trades WHERE symbol = ? "
+                "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
+                (excursion, position.symbol, excursion, position.symbol),
+            )
+
+    def record_overnight_gap(
+        self, symbol: str, prev_close: float, open_price: float,
+        session_date: str,
+    ) -> bool:
+        """Record one session's ADVERSE overnight gap against an open SHORT.
+
+        SHORT-SIDE GAP EVIDENCE, RECORDING ONLY. Read the
+        `max_adverse_overnight_gap` migration note in `_migrate` for why
+        this exists (item 186 — the sizing haircut cannot be read off the
+        instrument because the evidence was never kept) and for the hard
+        limit on its use: nothing may read it back into a sizing, stop or
+        exit decision, and it may not be swept for an optimal multiple.
+
+        The stored figure is the WORST (largest) adverse gap seen on any
+        session the short was held, `open - prev_close` in price units,
+        positive when the name gapped UP against the short. It is stored
+        SIGNED and unfiltered: a short every one of whose gaps ran in its
+        favour records a negative worst, which is a real and different fact
+        from "never observed". `overnight_gap_sessions` counts the sessions
+        observed so the two stay distinguishable.
+
+        Written onto the OPENING rows of the position (the `SHORT` rows
+        carrying `entry_atr`), which is where a later reader joins the gap
+        to the volatility read and the stop distance pinned at entry —
+        `entry_atr` and `initial_stop_loss` on the same row — and, once the
+        position closes, to its realised outcome.
+
+        Idempotent per session: `last_overnight_gap_date` gates the write,
+        so a second position sync on the same date cannot count one gap
+        twice. Returns True when a row was updated.
+        """
+        try:
+            prev_close = float(prev_close)
+            open_price = float(open_price)
+        except (TypeError, ValueError):
+            return False
+        if prev_close <= 0 or open_price <= 0 or not session_date:
+            return False
+        gap = open_price - prev_close
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE trades SET "
+                "  max_adverse_overnight_gap = CASE "
+                "    WHEN max_adverse_overnight_gap IS NULL "
+                "      OR max_adverse_overnight_gap < ? THEN ? "
+                "    ELSE max_adverse_overnight_gap END, "
+                "  overnight_gap_sessions = COALESCE(overnight_gap_sessions, 0) + 1, "
+                "  last_overnight_gap_date = ? "
+                "WHERE symbol = ? AND action = 'SHORT' "
+                "AND entry_atr IS NOT NULL "
+                "AND (last_overnight_gap_date IS NULL OR last_overnight_gap_date < ?) "
+                "AND position_id IN ("
+                "  SELECT position_id FROM trades WHERE symbol = ? "
+                "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
+                (gap, gap, session_date, symbol, session_date, symbol),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
+
+    def _accumulate_level_distances(self, position) -> None:
+        """Widen what the market has done to the stop's structural level.
+
+        ITEM 55 RECORDING, FALSIFICATION ONLY, and it decides nothing. The
+        pinned half (`stop_level_basis`) says what the stop stood on; this
+        is the running half that says what price then did to it, so that
+        "is this a real level" becomes answerable from the desk's own
+        record instead of from argument. Read the `stop_level_basis`
+        migration note for the hard limit on its use: it may show the
+        current definition of a level is WRONG, and it may NEVER be swept
+        for a better pivot window or zone width.
+
+        TWO RAW DISTANCES, NO VERDICT. `level_max_penetration` is how far
+        beyond the zone's FAR edge price has travelled (monotonic upward,
+        never negative); `level_closest_approach` is the smallest gap ever
+        seen to the zone's NEAR edge (monotonic downward, signed, negative
+        once price is inside). Nothing here calls an outcome "respected",
+        "pierced" or "broken", because each of those needs a cutoff nobody
+        can source; a later reader states its own cutoff and applies it to
+        these numbers, which were never rounded to one.
+
+        Side-agnostic in the same way as `_accumulate_excursions`, and for
+        the same reason: the side is read off the sign of `qty`, the only
+        side fact a broker position snapshot carries. A row with no
+        `stop_level_basis`, or one whose record had no level behind the
+        stop, is skipped and stays NULL rather than being given a
+        substitute.
+
+        Assumes the caller holds `self._lock` and an open transaction —
+        `sync_positions` is the only caller and does both.
+        """
+        try:
+            last = float(getattr(position, "current_price", 0) or 0)
+            qty = float(getattr(position, "qty", 0) or 0)
+        except (TypeError, ValueError):
             return
-        self.conn.execute(
-            "UPDATE trades SET max_adverse_excursion = ? "
+        if last <= 0 or qty == 0:
+            return
+        row = self.conn.execute(
+            "SELECT id, stop_level_basis FROM trades "
             "WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
-            "AND entry_atr IS NOT NULL "
-            "AND (max_adverse_excursion IS NULL OR max_adverse_excursion < ?) "
+            "AND stop_level_basis IS NOT NULL "
             "AND position_id IN ("
             "  SELECT position_id FROM trades WHERE symbol = ? "
-            "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
-            (excursion, position.symbol, excursion, position.symbol),
+            "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1) "
+            "ORDER BY id DESC LIMIT 1",
+            (position.symbol, position.symbol),
+        ).fetchone()
+        if row is None:
+            return
+        try:
+            basis = json.loads(row[1])
+        except (TypeError, ValueError):
+            return
+        if not isinstance(basis, dict) or not basis.get("level_backed"):
+            return
+        low, high = basis.get("zone_low"), basis.get("zone_high")
+        if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+            return
+        if qty > 0:
+            # Long: the level is support below, so the far edge is the
+            # bottom of the zone and the near edge is the top of it.
+            penetration = float(low) - last
+            approach = last - float(high)
+        else:
+            penetration = last - float(high)
+            approach = float(low) - last
+        if penetration > 0:
+            self.conn.execute(
+                "UPDATE trades SET level_max_penetration = ? WHERE id = ? "
+                "AND (level_max_penetration IS NULL OR level_max_penetration < ?)",
+                (penetration, row[0], penetration),
+            )
+        self.conn.execute(
+            "UPDATE trades SET level_closest_approach = ? WHERE id = ? "
+            "AND (level_closest_approach IS NULL OR level_closest_approach > ?)",
+            (approach, row[0], approach),
         )
 
     def sync_positions(self, positions) -> None:
@@ -2562,10 +3001,11 @@ class Database:
                     # disagree, and swallowed on error so a recording problem
                     # can never fail a position sync.
                     try:
-                        self._accumulate_adverse_excursion(p)
+                        self._accumulate_excursions(p)
+                        self._accumulate_level_distances(p)
                     except Exception:
                         logger.debug(
-                            "adverse-excursion recording skipped for %s",
+                            "excursion recording skipped for %s",
                             getattr(p, "symbol", "?"), exc_info=True,
                         )
                 self.conn.commit()
@@ -2588,7 +3028,10 @@ class Database:
                          status: str | None = None,
                          finish_reason: str | None = None,
                          truncated: bool | None = None,
-                         decision_id: str | None = None):
+                         decision_id: str | None = None,
+                         acceptance: str | None = None,
+                         acceptance_reason: str | None = None,
+                         telemetry: str | None = None):
         """`model` remains the ACTUAL responding model (Stage 0.5 contract —
         unchanged). The Stage 1 kwargs below are additive and all default to
         None so every pre-Stage-1 caller keeps working unmodified; omitting
@@ -2601,8 +3044,8 @@ class Database:
                    provider_requests,
                    requested_provider, requested_model, actual_provider,
                    prompt_version, latency_s, status, finish_reason, truncated,
-                   decision_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   decision_id, acceptance, acceptance_reason, telemetry)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (agent_name, run_id, input_summary, input_message, output_summary,
                  full_response, model, tokens_used,
                  input_tokens, output_tokens, cost_usd,
@@ -2610,7 +3053,7 @@ class Database:
                  requested_provider, requested_model, actual_provider,
                  prompt_version, latency_s, status,
                  finish_reason, None if truncated is None else int(truncated),
-                 decision_id),
+                 decision_id, acceptance, acceptance_reason, telemetry),
             )
             self.conn.commit()
         self._locked_write(_do, label="insert_agent_log")
@@ -3230,6 +3673,7 @@ class Database:
     def save_holding_protection_break(
         self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
         close: float | None = None,
+        basis: str | None = None, detail: str | None = None,
     ) -> int:
         """Record whether the close dated `bar_date` came back broken for
         `symbol`, so a LATER, DIFFERENT bar_date's read can require it to
@@ -3240,6 +3684,22 @@ class Database:
         trend regime (the margin-consistency guard #4 in
         `src.risk.exit_guard`), rather than trusting a stale broken flag."""
         payload: dict = {"raw_broken": bool(raw_broken), "bar_date": str(bar_date)}
+        # SETTLEMENT RECORDINGS, 2026-10-01. The structural-protection check
+        # builds two machine-readable `rule=` payloads into its `detail`
+        # string -- the break-confirmation margin in both ATR multiples and
+        # percent of close (board item 70) and the noise-band read (item 109)
+        # -- and this call was the ONLY thing that persisted the check at
+        # all. It kept three scalars and threw the payload away, so both
+        # recordings had produced zero observations in production: measured
+        # read-only 2026-10-01, 0 of 13,822 `specialist_evidence` rows carry
+        # any `rule=` text. Keeping `basis` and `detail` is what turns those
+        # recordings from code that exists into evidence that accrues. Both
+        # stay OPTIONAL and stay NULL-equivalent when absent -- nothing is
+        # reconstructed, and no exit behaviour is touched by this.
+        if basis is not None:
+            payload["basis"] = str(basis)
+        if detail is not None:
+            payload["detail"] = str(detail)
         try:
             if close is not None:
                 cf = float(close)
@@ -3939,6 +4399,22 @@ class Database:
             )
             self.conn.commit()
 
+    def insert_fred_fetch_coverage_run(self, row: dict) -> None:
+        """Board item 187 record: one row per morning FRED fetch. See the
+        table comment in `initialize()`; `row` comes from
+        `src.data.fetch_coverage_record.build_row`."""
+        cols = ("run_id", "series_configured", "series_succeeded",
+                "series_failed", "series_not_attempted",
+                "releases_configured", "releases_succeeded",
+                "releases_from_cache", "releases_failed", "full_coverage")
+        with self._lock:
+            self.conn.execute(
+                f"INSERT INTO fred_fetch_coverage_runs ({', '.join(cols)}) "
+                f"VALUES ({', '.join('?' for _ in cols)})",
+                tuple(row[c] for c in cols),
+            )
+            self.conn.commit()
+
     def backfill_margin_interest_daily(
         self, rows: list, dry_run: bool = True,
     ) -> dict:
@@ -4622,6 +5098,90 @@ class Database:
                 f"AND {predicate} "
                 "ORDER BY timestamp DESC, id DESC LIMIT 1",
                 (symbol, opening),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_position_open_timestamp(self, buy_row: dict | None) -> str | None:
+        """When the POSITION `buy_row` belongs to was first opened.
+
+        `get_symbol_last_buy` returns the MOST RECENT opening row, which is
+        the right answer for "what did the desk last decide about this name"
+        and the wrong one for "how long has this trade been on". A scale-in
+        mints no new position: `_assign_position_ids` hands every add the
+        same `position_id` until net qty returns to flat. So the position's
+        birthday is the EARLIEST executed opening row carrying that id, not
+        the latest.
+
+        Why this exists (measured 2026-09-30, live DB): the deterministic
+        trail sliced its bars from the last buy's date, while taking the
+        entry PRICE from `position.avg_entry`, which is blended across every
+        add. On 2026-09-23 MRVL's position (`pos-08b43df53103`, opened
+        2026-09-17) took a third add at 17:19; the 19:31 trail evaluation
+        therefore saw ZERO bars "since entry" for a position that was four
+        sessions old, and `src/risk/trailing.py::_swing_lows` — which needs
+        `2 * PIVOT_WINDOW + 1` = 7 bars before it can confirm anything — had
+        nothing to read. See `tests/test_position_open_timestamp.py`.
+
+        This lookup makes the trail's window LONGER, and a longer window is
+        not automatically safer — the PR that added this said it was, and
+        that was untrue. A longer window can only raise the chandelier's
+        high-water anchor, and `src/risk/trailing.py::evaluate_trailing_stop`
+        REFUSES outright once the resulting candidate rises through its
+        noise floor instead of falling back to a lower one, so a wider
+        window can cost a tighten the narrower window took. The reason to
+        do it anyway is consistency: the caller takes the entry PRICE from
+        `position.avg_entry`, blended across every add, so slicing bars from
+        the last add alone was incoherent by construction. Measured against
+        all 21 recorded refusals on 2026-09-30, the cost is currently zero;
+        see the `_swing_lows` docstring for that measurement.
+
+        Returns the timestamp string as stored, or None when `buy_row` is
+        missing or carries no `position_id` (legacy rows predating the id,
+        and rows the backfill could not chain). None means "unknown", never
+        a guessed date — the caller keeps its own fallback.
+        """
+        row = self.get_position_open_row(buy_row)
+        return row["timestamp"] if row else None
+
+    def get_position_open_row(self, buy_row: dict | None) -> dict | None:
+        """The FULL row that opened the position `buy_row` belongs to.
+
+        `get_position_open_timestamp` is this lookup's date-only form and
+        now delegates here; the chain rule and every caveat in its docstring
+        apply unchanged. The date was never the only thing an add corrupts:
+        `take_profit` (the trail's reference target) and `initial_stop_loss`
+        (the denominator of R, via `recorded_initial_stop`) are also pinned
+        at entry, and reading them off the newest add lets the reference
+        target sit above current price and measures R from a stop the trade
+        never opened with. `setup_type` and `structural_ceiling` are pinned
+        at entry the same way.
+
+        `get_symbol_last_buy` keeps its "most recent opening row" meaning —
+        PM memory and the stop-coverage repair both want the latest reviewed
+        intent — so this is a separate lookup layered on top of it, not a
+        change to it.
+
+        Returns None when `buy_row` is missing, carries no `position_id`
+        (legacy rows predating the column, and rows the backfill could not
+        chain), or is not an opening row. None means "unknown": the caller
+        FAILS CLOSED onto `buy_row` itself, which is exactly today's
+        behaviour, rather than guessing a chain boundary from timestamps.
+        """
+        if not buy_row:
+            return None
+        pid = buy_row.get("position_id")
+        symbol = buy_row.get("symbol")
+        opening = (buy_row.get("action") or "").upper()
+        if not pid or not symbol or opening not in _POSITION_OPEN_ACTIONS:
+            return None
+        predicate = self._executed_trade_predicate()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM trades WHERE symbol = ? "
+                "AND position_id = ? AND action = ? "
+                f"AND {predicate} "
+                "ORDER BY timestamp ASC, id ASC LIMIT 1",
+                (symbol, pid, opening),
             ).fetchone()
         return dict(row) if row else None
 

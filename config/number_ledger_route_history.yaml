@@ -1,0 +1,117 @@
+# The SETTLEMENT-ROUTE ratchet's append-only record (board item 90, half two).
+#
+# `MAX_ROUTELESS_ARBITRARY` in `src/number_sources.py` is the SUM of the
+# deltas below, and the ledger check requires it to EQUAL the number of
+# `status: arbitrary` rows in `config/number_ledger.yaml` that carry no valid
+# `settles_by:` block. It is the same ratchet shape as the arbitrary count
+# (`config/number_ledger_history.yaml`) and for the same reason: a count kept
+# as a hand-edited literal drifts from its own record, and a count kept as a
+# ceiling rewards deleting the row instead of answering it.
+#
+# WHAT IT COUNTS. Item 90 requires every trade-governing number to sit in one
+# of exactly three states: (1) sourced or measured, (2) ratified as a
+# structural bound with the reason recorded, or (3) UNSOURCEABLE TODAY with a
+# named recording -- already built or specified -- that would settle it, that
+# recording being its closing condition. States 1 and 2 are the existing
+# `sourced` / `derived` / `instrument` statuses. State 3 is an `arbitrary` row
+# WITH a `settles_by:` block. A number in none of the three is an `arbitrary`
+# row with no `settles_by:`, and that residue is what this file counts.
+#
+# LOWER it by appending a negative delta in the same commit that gives a row
+# its `settles_by:` block or sources the number outright. Raising it means a
+# new unsourced number arrived with no route to an answer, which is an owner
+# decision and not a build fix.
+changes:
+  - delta: 135
+    date: "2026-10-01"
+    why: |
+      Genesis, measured from the ledger on 2026-10-01 (board item 90): 135 of
+      the 329 ledger rows carry `status: arbitrary`, and at the moment this
+      ratchet was built NONE of them declared a settlement route, because the
+      schema had no way to express one. Every arbitrary row already carries
+      `open_question` and `cost_while_unanswered` -- what it owed and what the
+      debt costs -- but neither says whether anything in this desk WILL ever
+      answer it. That is the whole of item 90's remaining work, now countable.
+  - delta: -1
+    date: "2026-10-01"
+    why: |
+      `src.config.RiskConfig.min_stop_atr_multiple` (2.5) is state 3. The
+      recording that settles it was BUILT on 2026-09-30 by item 90's own
+      `min_stop_atr_multiple` pass: the per-closed-trade excursion columns in
+      `src/storage/db.py`. The value is untouched and is not re-derived here;
+      only the route to its answer is now written where the check can see it.
+  - delta: +1
+    date: "2026-10-01"
+    why: |
+      The ALIGNMENT EXIT (owner ruling 2026-09-30, docs/WORK.md item 205)
+      adds `src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE` (3.0)
+      as an `arbitrary` row with NO settlement route, and this +1 records
+      that honestly rather than hiding it. The row gains no `settles_by:`
+      block because none of the three route kinds applies: it is not a
+      structural bound, no recording in this desk accumulates it, and its
+      own `open_question` states that no research can settle it -- how
+      readily the desk blocks a sale is owner appetite, and the only thing
+      that closes this row is the owner moving the dial. The published
+      2.5-3.5 give-back band is context for the order of magnitude only;
+      it is not a source, because Wilder and Le Beau measure give-back from
+      a running extreme on ATR(22) while this measures it from a moving
+      average on ATR(14). Lower this count by -1 the day a recording of
+      realised give-back per alignment exit exists, or the day the owner
+      ratifies the dial as a bound with his reason written down.
+  - delta: -4
+    date: "2026-10-01"
+    why: |
+      Item 186's portfolio and cluster ceilings gain settlement routes:
+      `max_portfolio_risk_pct` (25), `SECTOR_HARD_CEILING_MAX` (90) with its
+      constructor mirror `max_sector_hard_pct`, and
+      `max_cluster_risk_share_pct` (40). No value moved and no appetite was
+      routed to the owner, which his 2026-09-30 ruling bars. Each row now
+      names the recording that would settle it -- per-session book
+      loss-if-stopped, per-session sector shares of gross notional, and
+      per-session cluster membership with each cluster's share of total
+      at-risk -- and each records BOTH failed derivation attempts, including
+      the algebraic cancellations: 25 is five full-size names at the ratified
+      5% per-trade envelope, and 40% of 25% is exactly two, so deriving
+      either reduces to picking a name count.
+  - delta: -1
+    date: "2026-10-01"
+    why: |
+      Board item 190: `CashSweepConfig.min_order_usd` (500) gains a settlement
+      route. The row previously claimed the value's only live job was gating
+      the retired cash sweep; measurement found the sweep job gone and two
+      trade-governing consumers missed -- the short scale-in add it refuses
+      outright as `below_min_notional`, and the `funding` binding constraint
+      the rotation report renders. The value did not move and no appetite was
+      routed to the owner. The route names the execution-skip recording that
+      already collects every refusal, and the row records BOTH failed
+      derivation attempts plus the algebra check: the dollar floor does NOT
+      cancel to a constant fraction of equity, so it is not a disguised global
+      dial but a bound whose effective weight drifts inversely with account
+      size.
+  - delta: -16
+    date: "2026-10-01"
+    why: |
+      Item 90, the smart-money reading tranche: all 14 routeless rows in
+      `src/agents/smart_money_analyst.py` and both in
+      `src/data/smart_money_cluster.py` gain settlement routes. No value
+      moved and no appetite was routed to the owner.
+
+      The eight ranking-table rows (`_ROLE_RANK`, `_FRESHNESS_RANK`,
+      `_SIGNAL_CLASS_RANK`) are a number that only LOOKS numeric: the
+      integers enter the code solely as elements of a lexicographic tuple
+      sort key (smart_money_analyst.py:153-155 and 174-176), never summed,
+      scaled or compared across tables, so the spacing algebraically
+      cancels and any order-preserving relabelling ranks identically. Their
+      route is therefore a ratified-bound on the ORDER plus the deliberate
+      unset/`indeterminate` tie, closing on post-filing behaviour measured
+      by role, freshness and signal class off the filings record and market
+      prices -- never off this desk's own fills.
+
+      The six truncation caps record BOTH failed derivation attempts.
+      First: derive each cap from the synthesis prompt's token budget --
+      failed, because that budget is itself unledgered and every cap here
+      is small enough relative to it that the budget constrains none of
+      them. Second: derive each cap from the largest evidence the stream
+      has actually carried -- failed, because nothing anywhere records a
+      pre-truncation size, so there is no record to read. Stopped at two:
+      the recording that would settle them IS the route.

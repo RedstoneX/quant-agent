@@ -838,7 +838,10 @@ def test_a_repairing_sweep_run_leaves_a_log_line_and_an_event_row(
     assert len(lines) == 2
     assert lines[0].endswith("(coverage_sweep): started")
     assert "repaired" in lines[1] and "positions checked 1" in lines[1]
-    assert "succeeded 1" in lines[1] and "alert none sent" in lines[1]
+    # Defect 5b, 2026-09-30: a repairing run used to assert "alert none
+    # sent". It now pages, so the assertion is inverted deliberately.
+    assert "succeeded 1" in lines[1] and "alert none sent" not in lines[1]
+    assert "stop-repaired alert" in lines[1]
 
     rows = _sweep_rows(desk_db)
     assert len(rows) == 1
@@ -850,8 +853,14 @@ def test_a_repairing_sweep_run_leaves_a_log_line_and_an_event_row(
     assert row["repairs_succeeded"] == 1
     assert row["repairs_failed"] == 0
     assert row["repaired"][0]["symbol"] == "ORCL"
-    assert row["gaps_found"] == 0                  # re-read after placing
-    assert row["alerts"] == []
+    # Defect 5a: `gaps_found` is what the run FOUND. It read 0 here
+    # because the post-repair re-read rebound the same variable, which is
+    # how a repaired gap was reported as no gap at all.
+    assert row["gaps_found"] == 1
+    assert row["gaps_remaining"] == 0              # re-read after placing
+    # Defect 5b: a repair now pages. (Not delivered in this test — no
+    # notifier is configured — which the line reports honestly.)
+    assert row["alerts"] == ["stop-repaired alert could NOT be delivered"]
     assert row["run_id"] in lines[0]
 
 
@@ -927,6 +936,69 @@ def test_the_sweep_process_writes_to_the_desk_log_file(tmp_path):
         root.setLevel(before_level)
     text = (tmp_path / "quant_agent.log").read_text()
     assert "[INFO] src.coverage_watchdog: COVERAGE SWEEP coverage_sweep-test" in text
+
+
+# ---------------------------------------------------------------------------
+# DEFECT 5 (2026-09-30): the sweep repaired AAPL and reported
+# "gaps 0, ... repairs attempted 1 ... alert none sent".
+# ---------------------------------------------------------------------------
+
+
+def _repaired_status(**kw):
+    from src.coverage_watchdog import CoverageStatus, RepairOutcome
+
+    base = dict(
+        trading_day="2026-09-30",
+        session_ran=True,
+        gaps=[],                 # the POST-repair re-read: nothing left
+        gaps_detected=1,         # what the run actually found
+        repairs=[RepairOutcome(symbol="AAPL", qty=7.33, placed=True)],
+        positions_checked=11,
+    )
+    base.update(kw)
+    return CoverageStatus(**base)
+
+
+def test_summary_reports_the_gap_it_found_not_the_one_left():
+    """5a. `gaps` is rebound to the post-repair re-read, so the count the
+    operator scans read 0 while a repair was attempted. Both numbers now."""
+    from src.coverage_watchdog import sweep_log_line, sweep_summary
+
+    summary = sweep_summary(
+        _repaired_status(), entry="coverage_sweep", run_id="r1",
+    )
+    assert summary["gaps_found"] == 1
+    assert summary["gaps_remaining"] == 0
+    assert summary["repairs_attempted"] == 1
+    line = sweep_log_line(summary)
+    assert "gaps 1 found / 0 still open" in line
+    assert "gaps 0," not in line
+
+
+def test_a_repair_pages_the_owner():
+    """5b. A repair means something upstream failed silently; the last
+    line of defence must not fix it and say nothing."""
+    from src.coverage_watchdog import repair_performed_text
+
+    status = _repaired_status()
+    assert status.should_alert_repair_performed is True
+    text = repair_performed_text(status)
+    assert "AAPL" in text and "PUT BACK" in text
+
+
+def test_a_clean_sweep_still_says_nothing():
+    from src.coverage_watchdog import CoverageStatus
+
+    clean = CoverageStatus(
+        trading_day="2026-09-30", session_ran=True, gaps=[],
+        gaps_detected=0, repairs=[], positions_checked=11,
+    )
+    assert clean.should_alert_repair_performed is False
+
+
+def test_a_repair_already_all_cleared_does_not_page_twice():
+    status = _repaired_status(resolution_notice_symbols=("aapl",))
+    assert status.should_alert_repair_performed is False
 
 
 # ---------------------------------------------------------------------------
@@ -1037,3 +1109,126 @@ def test_item193_summary_and_log_line_name_the_unguarded_position():
     text = cw.unguarded_text([row])
     assert "AAPL" in text and "9.0s" in text
     assert status.should_alert_unguarded is True
+
+
+# ---------------------------------------------------------------------------
+# board item 193 — the session-lock skip is BOUNDED by measured history
+# ---------------------------------------------------------------------------
+
+class _EntryBroker:
+    """Broker double whose only job is to say what entry orders are working."""
+
+    def __init__(self, working):
+        self.working = list(working)
+
+    def get_orders(self, *a, **k):  # pragma: no cover - shape varies
+        return list(self.working)
+
+
+def _lock_held(monkeypatch, held):
+    import src.execution.scale_in as si
+    monkeypatch.setattr(si, "trading_session_lock_held", lambda: held)
+
+
+def test_item193_lock_held_within_measured_bound_still_skips(tmp_path, monkeypatch):
+    """A normal live window is untouched: the skip is the correct behaviour."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    _lock_held(monkeypatch, True)
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
+    now = datetime(2026, 9, 30, 14, 0, 5, tzinfo=timezone.utc)  # 5s < 9s measured
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+def test_item193_lock_held_past_measured_bound_hands_symbol_to_the_sweep(
+    tmp_path, monkeypatch,
+):
+    """Past every window ever measured, the lock is no longer reason to look
+    away: with no entry order working there is nothing to collide with, so the
+    position becomes repairable instead of staying naked indefinitely."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    _lock_held(monkeypatch, True)
+    import src.execution.scale_in as si
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
+    now = datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc)  # 300s > 9s
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == set()
+
+
+def test_item193_past_bound_but_entry_still_working_keeps_the_skip(
+    tmp_path, monkeypatch,
+):
+    """The collision is real — a stop would be blocked — so the skip stands."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: ["entry-1"])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[9.0])
+    now = datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker(["entry-1"]), db, now=now) == {"AAPL"}
+
+
+def test_item193_no_measured_history_leaves_the_old_behaviour_exactly(
+    tmp_path, monkeypatch,
+):
+    """With nothing measured there is no bound, so nothing is called overdue
+    and the lock-held skip behaves exactly as it did before."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00")  # no windows
+    now = datetime(2026, 9, 30, 18, 0, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+def test_item193_unreadable_write_time_is_never_treated_as_overdue(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="not-a-timestamp", windows=[9.0])
+    now = datetime(2026, 9, 30, 18, 0, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+# ============================================================================
+# Item 211 (2026-09-30): the generic per-TYPE alert claim still SPEAKS UP
+# ============================================================================
+
+
+def test_typed_alert_claim_is_per_type_and_records_what_it_held_back(tmp_path):
+    """The owner-alert path must not get quieter than it already is.
+
+    A first finding of any type still returns its keys, so the caller still
+    pages. Only an exact repeat of the SAME finding on the SAME ET day is
+    held, and a different alert type is never silenced by a noisy one --
+    that is the failure a global throttle would introduce. What was held
+    back is written down rather than dropped.
+    """
+    from src.coverage_watchdog import claim_typed_alert, load_state
+
+    path = tmp_path / "state.json"
+
+    # It fires.
+    assert claim_typed_alert("deploy_drift", ["MAIN@ABC"], path=path) == ["MAIN@ABC"]
+    # The same finding again is one finding, not two pages.
+    assert claim_typed_alert("deploy_drift", ["MAIN@ABC"], path=path) == []
+    # A different deployed SHA is a different finding, and it fires.
+    assert claim_typed_alert("deploy_drift", ["MAIN@DEF"], path=path) == ["MAIN@DEF"]
+    # A DIFFERENT alert type is never silenced by a noisy one.
+    assert claim_typed_alert("pricing_cache", ["MAIN@ABC"], path=path) == ["MAIN@ABC"]
+
+    # Nothing was silently dropped.
+    suppressed = load_state(path)["suppressed_alerts"]["deploy_drift"]
+    assert suppressed["count"] == 1
+    assert suppressed["events"][-1]["key"] == "MAIN@ABC"
