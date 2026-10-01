@@ -327,6 +327,7 @@
         "_classify_earnings_status",
         "_collect_seat_nominations",
         "_delete_repeg_wal",
+        "_drop_buys_sold_today_below_bar",
         "_drop_rotation_buy_if_room_not_freed",
         "_dropped_since_proposal",
         "_earnings_analysis_has_real_figures",

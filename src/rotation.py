@@ -268,11 +268,16 @@ bar has, by the identical rule a new buy must clear, "stopped earning its
 place," and a candidate that clears that same bar displaces it — pass/fail,
 no score margin, no invented number. It is live and, since PR #604 pointed
 the precondition at the union of every binding limit, actually reachable on
-a full book. Its real firing rate is UNMEASURED (it had fired zero times in
-the retained logs, and the rate at which a holding's structural protection
-breaks on this book — the other conjunct — is itself unmeasured, PR #604
-"found not fixed"), so it is honestly described as "categorically reachable,
-delivery rate unmeasured," never as "the mandate is fully delivered."
+a full book. CORRECTED 2026-10-01 (this file previously said the tier "had fired zero
+times in the retained logs" — that was FALSE and is a defect in the desk's
+own record). MEASURED against the production `specialist_evidence` rows: it
+fired 8 times on 24-25 Sep and died 8 of 8 at the buy-leg precondition,
+recorded as `pm_did_not_target_new_candidate`. The trap was circular — the
+tier only ran when the book was full, the prompt then told the model there
+was no room to buy, the model never wrote the buy, so the sell was never
+proposed. In 80 closed trades the desk had never once sold a holding for
+ceasing to earn its place. That is why the owner removed the capital and
+replacement preconditions from this tier on 2026-10-01.
 
 REJECTED, do not re-propose (adversary review, 2026-09-23): choosing WHICH
 below-the-bar holding to prune by seat-weighted CONVICTION score. The
@@ -399,8 +404,12 @@ class RotationOpportunity:
     not because it ranked low among names that passed them.
     """
 
-    new_symbol: str
-    new_score: float
+    #: `None` on the categorical tier when NO new candidate exists. Owner
+    #: ruling 2026-10-01: a holding that no longer clears the fresh-entry
+    #: bar is sold on its own merits, so the replacement is no longer a
+    #: precondition and must not be faked with a placeholder score.
+    new_symbol: str | None
+    new_score: float | None
     held_symbol: str
     held_score: float | None
     #: "ineligible_hold" (categorical — no margin needed) or "ranked_margin"
@@ -730,29 +739,15 @@ def evaluate_rotation(
             weakest_held=weakest_held, margin_pct=margin_pct, binding=binding,
         ))
 
-    if not binding:
-        measured = funding_view_measured(entry_budget_usd, min_order_usd)
-        return _refuse(
-            "book_not_constrained",
-            f"risk headroom {headroom_pct:.2f}% is at or above the "
-            f"{floor_pct:.2f}% floor, and "
-            + (
-                f"${entry_budget_usd:,.2f} deployable is at or above "
-                "the smallest order the desk will place — real room on every "
-                "constraint"
-                if measured else
-                "the funding view was NOT MEASURED this session, so no "
-                "funding constraint could be tested"
-            ),
-        )
-
-    if best_new is None:
-        return _refuse(
-            "no_new_candidates",
-            f"every one of the {len(ranked)} ranked names is already held, "
-            f"so there is no candidate to rotate INTO",
-        )
-
+    # Tier 1 — categorical. OWNER RULING 2026-10-01 ("every position needs
+    # to justify its reason to be there"): this tier is evaluated BEFORE the
+    # capital precondition and BEFORE any replacement candidate is required.
+    # A holding that would not be bought today is sold on its own merits —
+    # not because the book is full, and not because something is queued to
+    # take its place. The replacement BUY, where one exists, stays an
+    # ordinary separate decision. Both preconditions below still gate the
+    # RANKED-MARGIN tier, which sells a still-eligible name purely to fund a
+    # replacement and therefore genuinely needs both.
     # Tier 1 — categorical. A held name failing the desk's own entry gates
     # needs no ranking margin: it would not be bought today. Ties broken by
     # the MOST blocking reasons first (worse, more clearly stale), then
@@ -776,8 +771,8 @@ def evaluate_rotation(
         )
         held_symbol = ordered[0]
         return RotationOutcome(opportunity=RotationOpportunity(
-            new_symbol=best_new.symbol,
-            new_score=best_new.score,
+            new_symbol=best_new.symbol if best_new else None,
+            new_score=best_new.score if best_new else None,
             held_symbol=held_symbol,
             held_score=None,
             tier="ineligible_hold",
@@ -787,6 +782,30 @@ def evaluate_rotation(
                 (sym, ineligible_held[sym]) for sym in ordered
             ),
         ))
+
+
+    if not binding:
+        measured = funding_view_measured(entry_budget_usd, min_order_usd)
+        return _refuse(
+            "book_not_constrained",
+            f"risk headroom {headroom_pct:.2f}% is at or above the "
+            f"{floor_pct:.2f}% floor, and "
+            + (
+                f"${entry_budget_usd:,.2f} deployable is at or above "
+                "the smallest order the desk will place — real room on every "
+                "constraint"
+                if measured else
+                "the funding view was NOT MEASURED this session, so no "
+                "funding constraint could be tested"
+            ),
+        )
+
+    if best_new is None:
+        return _refuse(
+            "no_new_candidates",
+            f"every one of the {len(ranked)} ranked names is already held, "
+            f"so there is no candidate to rotate INTO",
+        )
 
     # Tier 2 — ranked margin. Both sides eligible; the weakest held name is
     # simply the last held entry in `ranked`'s own (already-sorted) order.
@@ -1189,13 +1208,24 @@ def rotation_sell_reason(
             "executable"
         )
     failed_rules = ("; ".join(opportunity.reasons) or "entry rules")[:100]
+    # Owner ruling 2026-10-01. The sale stands on the entry bar alone, so the
+    # reason states the bar it fails and nothing it does not depend on. The
+    # replacement, where one exists, is named as a SEPARATE decision — never
+    # as this sale's justification — and is omitted entirely when there is
+    # none, rather than rendered from a placeholder score.
+    replacement = ""
+    if opportunity.new_symbol and opportunity.new_score is not None:
+        replacement = (
+            f" Best-ranked candidate {opportunity.new_symbol} (score "
+            f"{opportunity.new_score:.2f}) is its own separate decision."
+        )
     return (
         f"ROTATION (deterministic, src/rotation.py): {opportunity.held_symbol} "
-        f"fails the desk's own entry rules today ({failed_rules}); structural "
-        f"protection not intact ({protection_basis}: {protection_detail[:60]}). "
-        f"{rotation_constraint_clause(binding=binding, headroom_pct=headroom_pct, ceiling_pct=ceiling_pct, floor_pct=floor_pct, entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd)} Full close to free room for "
-        f"{opportunity.new_symbol}, the best-ranked eligible candidate (score "
-        f"{opportunity.new_score:.2f}) the PM targeted."
+        f"fails the desk's own entry rules today ({failed_rules}); it would "
+        f"not be bought today, so it has stopped earning its place (owner "
+        f"ruling 2026-10-01 — neither a full book nor a replacement is "
+        f"required). Protection: {protection_basis}: "
+        f"{protection_detail[:40]}.{replacement}"
     )
 
 
@@ -1349,6 +1379,12 @@ ROTATION_TELEMETRY_UNAVAILABLE = "telemetry_unavailable"
 ROTATION_ROOM_AVAILABLE = "room_available"
 ROTATION_FULL_NOTHING_BETTER = "full_nothing_outranked_a_holding"
 ROTATION_FULL_OPPORTUNITY = "full_candidate_outranked_a_holding"
+#: 2026-10-01. The categorical tier now runs BEFORE the "is the book even
+#: constrained" refusal, so a below-bar holding can be put up to be cut with
+#: the book not full and no candidate ready to take its place. That is not
+#: the outranked case and must never borrow its sentence: there is nothing
+#: on the other side of the comparison to name.
+ROTATION_HOLDING_BELOW_BAR = "holding_below_entry_bar_no_replacement"
 
 
 def precheck_outcome(precheck) -> str:
@@ -1364,7 +1400,12 @@ def precheck_outcome(precheck) -> str:
     """
     if not getattr(precheck, "telemetry_available", True):
         return ROTATION_TELEMETRY_UNAVAILABLE
-    if getattr(precheck, "opportunity", None) is not None:
+    opportunity = getattr(precheck, "opportunity", None)
+    if opportunity is not None:
+        # 2026-10-01. No replacement candidate means nothing outranked
+        # anything: the holding is up to be cut on its own merits alone.
+        if not str(getattr(opportunity, "new_symbol", "") or "").strip():
+            return ROTATION_HOLDING_BELOW_BAR
         return ROTATION_FULL_OPPORTUNITY
     if _precheck_binding(precheck):
         return ROTATION_FULL_NOTHING_BETTER
@@ -1574,9 +1615,50 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
     # would have gone on quoting it while the real cause was $92 of cash
     # against a $500 minimum order — a true-sounding sentence about the
     # wrong number.
-    full = "🔄 Rotation check: the book is FULL — " + _full_book_cause(
-        record, headroom=headroom, ceiling=ceiling, floor=floor,
-    ) + " This is a normal state, not a fault."
+    #
+    # 2026-10-01. And only say it is full when a limit actually binds. The
+    # categorical tier can now reach this block with every limit slack, and
+    # "the book is FULL" was being asserted there from the outcome name
+    # alone — true of the outcome's original case, false of the new one.
+    constrained = bool(
+        [b for b in str(record.get("binding") or "").split(",") if b]
+    )
+    if constrained:
+        full = "🔄 Rotation check: the book is FULL — " + _full_book_cause(
+            record, headroom=headroom, ceiling=ceiling, floor=floor,
+        ) + " This is a normal state, not a fault."
+    else:
+        full = (
+            f"🔄 Rotation check: the book has room — {headroom} of risk "
+            f"headroom under the desk's {ceiling} ceiling, and no limit is "
+            "stopping the desk opening a new position."
+        )
+
+    if outcome == ROTATION_HOLDING_BELOW_BAR:
+        held = str(record.get("held_symbol") or "").upper()
+        reasons = [
+            s for s in str(record.get("held_reasons") or "").split(",") if s
+        ]
+        why = "; ".join(reasons) if reasons else (
+            "it no longer clears the desk's own entry bar"
+        )
+        subject = held if held else "A holding"
+        lines = [
+            full,
+            f"   {subject} is up to be cut on its own merits: it would not "
+            f"be bought today — {why}. Nothing outranked it; there was no "
+            "candidate on the other side of this at all.",
+            "   Whatever this frees stays in the book as cash, because "
+            "nothing was ready to replace it. Room was never the reason "
+            "for the cut.",
+        ]
+        if not record.get("execute_enabled"):
+            lines.append(
+                "   The desk is not switched on to act on this by itself, "
+                "so this is information only — nothing was sold."
+            )
+        return lines
+
     if outcome == ROTATION_FULL_NOTHING_BETTER:
         return [
             full,
@@ -1588,14 +1670,23 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
     if outcome != ROTATION_FULL_OPPORTUNITY:
         return []
 
-    held = str(record.get("held_symbol") or "?").upper()
-    new = str(record.get("new_symbol") or "?").upper()
+    held = str(record.get("held_symbol") or "").upper()
+    new = str(record.get("new_symbol") or "").upper()
     tier = str(record.get("tier") or "")
+    # 2026-10-01. Never render a placeholder to the owner: if either side of
+    # the comparison is absent the sentence naming it cannot be written, so
+    # it is not written. Nor claim the holding was "using the room" when no
+    # limit was binding — it was not competing for anything.
+    if not (held and new):
+        return [full]
+    weakest = (
+        ", the weakest thing currently using the room" if constrained else ""
+    )
     lines = [
         full,
         f"   Every new candidate was ranked against what is already held, "
-        f"and one comparison came out the other way: {new} outranks {held}, "
-        f"the weakest thing currently using the room.",
+        f"and one comparison came out the other way: {new} outranks {held}"
+        f"{weakest}.",
     ]
     if not record.get("execute_enabled"):
         lines.append(
