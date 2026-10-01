@@ -147,19 +147,6 @@ DONE WHEN:
   - [ ] half one is already DONE (2026-09-18): the ledger gate exists and the build fails on an unsourced trade-governing number. Its honest limit stands recorded — it proves a reason was WRITTEN, never that the reason is TRUE — and that limit is not something this item can close.
 detail: docs/BOARD_NOTES.md (item 90)
 
-**99. The analyst seats' falsifier: only one of five states one — TIER 2, filed 2026-09-18, re-scoped and MEASURED 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 99").** Measured read-only on the production database 2026-09-30: `tech_analyst` states a falsifier on 195 of 195 actionable ratings since 2026-09-25 and on 1,664 of 1,665 before — the "blank on about 6 in 10" figure is entirely NEUTRAL ratings, where prompt and schema both REQUIRE it empty, and is not a defect. `news_analyst`, `earnings_analyst`, `macro_analyst` and `smart_money_analyst` state none at all: no prompt asks, no answer schema carries the field, and 0 of 103 recorded nominations have one. Their invalidation is SYNTHESISED downstream, so a name whose only backer is one of those seats clears the conviction bar on a templated falsifier. Pinned by `tests/test_analyst_seat_falsifier_contract.py`.
-
-DONE WHEN:
-  - [x] the analyst seats' real falsifier coverage is measured from recorded production output rather than inferred from prompt text, and pinned by a test that fails when the contract changes — 2026-09-30
-  - [x] the four uncovered seats state their OWN falsifier at the moment they make the call, stored with that call and readable by the existing exit checker in the same shape the technical seat's is — News/Earnings/Macro on `Nomination.thesis_invalid_if`, Smart Money on `SmartMoneyFinding.thesis_invalid_if`; a seat that names none leaves it empty and the nomination event records `falsifier_missing`, with no template substituted anywhere — 2026-09-30
-  - [ ] KNOWN LIMIT, not a gap to paper over: `exit_guard.check_thesis_invalid_if` evaluates only a numeric price level or MA20/MA50/MA200, so a news, earnings, macro or Form 4 condition stated in words returns UNPARSEABLE with a reason and is never treated as passed; whether the desk builds an evaluator for any non-price falsifier class is a separate, unfiled decision
-  - [ ] (b) the technical seat's prompt names the five data blocks it actually receives and does not claim ones it does not
-  - [ ] (d) the deletion-site check exists: removing a mechanism greps its symbol name across every prompt and every Python-assembled agent string at that moment
-  - [ ] no blanket prompt-text number scanner is built (rejected: ~1,825 numbers in the prompt files, mostly dates and list numbering)
-  - [ ] the mandate/horizon half is NOT re-opened — resolved 2026-09-25 as SWING, days to weeks
-  - [ ] SPLIT OUT 2026-09-30, do not re-file here: the ~55 prompt-only numbers and ~20 unsourced market claims (was 99(a)), the render-or-pin-every-code-controlled-sentence requirement (was 99(g)) and the (f) residue are item 107(b)/(c), which already carries them; the PM/RM/reviewer dead-weight prose (was 99(c)) is item 109(c). Item 99 is now the ANALYST seats' own prompts and their enforcement only.
-detail: docs/BOARD_NOTES.md (item 99)
-
 **107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17; parts (a) and (c) SHIPPED 2026-09-26, (b) still open.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17 and 2026-09-26. **Do not re-propose the three designs rejected on 2026-09-17, and do not build a second deletion-site grep — that one exists.**
 
 DONE WHEN:
@@ -183,13 +170,6 @@ detail: docs/BOARD_NOTES.md (item 119)
 DONE WHEN:
   - [ ] a success whose provider request DID happen but returned no usable token or cost telemetry is understood and either priced from a fallback source or proven free and excluded from unknown-cost counting, the same evidentiary standard item 147 set for cache hits.
 detail: docs/BOARD_NOTES.md (item 203)
-
-**157. The technical seat has no enforced answer format on either route, so a malformed row still needs salvaging after the fact — filed 2026-09-19, from #538's write-up.** #538 made a broken row recoverable, not prevented.
-
-DONE WHEN:
-  - [ ] a live call confirms whether the Google route enforces a sent response schema
-  - [ ] a decision is recorded on whether the schema change is worth it given row-salvage already ships
-detail: docs/BOARD_NOTES.md (item 157)
 
 **174. Nobody is told when the cost circuit lets itself back in — filed 2026-09-23 with the 503/self-clear fix (write-up in `docs/INCIDENT_HISTORY.md`).** A hard latch alerts Telegram; the new transient self-clear writes an `auto_reset` event and a log line only, so the owner sees "desk suspended" and never sees it come back.
 
@@ -230,6 +210,7 @@ DONE WHEN:
   - [ ] `short_gap_risk_multiple` (1.5) becomes a read off that stock's own overnight-gap behaviour instead of one constant for every short — BLOCKED on stored daily bars, which the desk does not keep (the constructor is handed `analysis.atr_14` and no bar history, verified 2026-09-30). No value picked, no appetite asked
   - [ ] the queued-earnings BUY clamp (5% of the book) stops being a global share — the structural alternative identified 2026-09-30 is that an unread filing IS an unconvicted seat, which under standing doctrine (all five seats right to enter) bars the BUY rather than sizing it; it changes live sizing behaviour, so it needs an adversary pass before it ships and was NOT applied in this pass
 
+  - [x] the portfolio and cluster ceilings (25 total at-risk, 90 terminal sector and its constructor mirror, 40 cluster share) each end in a definite state rather than as an open appetite question — 2026-10-01: values unchanged and still owner-ratified, every appetite question WITHDRAWN under the 2026-09-30 ruling, both failed derivations written down per ceiling (two of them algebraic cancellations: 25 is five full-size names and 40% of 25% is two, at the ratified 5% per-trade envelope), and each row now names the recording that would settle it with the route ratchet moved to match. Do not re-derive these three
 detail: docs/BOARD_NOTES.md (item 186)
 
 **187. FRED fetch reliability — the chronic `fetch_deadline_exceeded` failure and required series left un-fetched — filed 2026-09-25, carried out of item 175's retirement. Item 175's weekend/holiday overdue-date roll shipped and was retired; this is the separate, still-open half. Detail: `docs/BOARD_NOTES.md` ("item 187").** Every FRED failure in the retained log is `fetch_deadline_exceeded`; 4 of 12 runs reached full coverage, worst 5 of 15 [measured 09-17..23]. Owned by the approved fetch redesign.
@@ -326,6 +307,25 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 208)
 
 
+**211. Alarm flapping — the desk paged the owner on BOTH edges of a self-clearing fault, and he muted every alert — filed 2026-09-30.** 107 Telegram messages went out between 26 and 29 Sep, 46 on the 28th and 42 on the 29th [measured, production `notifier_sends`]. 22 "PAID ANALYSIS SUSPENDED" and 22 "PAID ANALYSIS RESUMED" of those are ONE underlying fault — paid provider calls failing — latching and self-clearing all weekend, announced twice per cycle, plus 5 identical deploy-drift repeats from a timer-run unit that had no per-type suppression at all. The owner turned every desk alert off, including live-risk ones, so this defect is currently suppressing the alerts that protect money. FIXED HERE: `LLMCostCircuitBreaker._notify_if_needed` defers the owner page for a `_SELF_CLEARING_HARD_TRIGGERS` latch until it has outlived `transient_latch_cooldown_minutes` — the circuit's OWN self-clear timing, read from the same config field `_auto_clear_transient_latch_locked` gates on, not a threshold picked here. A latch that expires inside that window leaves `alert_state` at 0, which the existing item-174 pairing already reads to suppress the matching "RESUMED" note, so a blip is one recorded episode and zero messages. Both owner-facing messages now carry the episode's duration and how many times the same trigger self-cleared today. Nothing is dropped: the trip event, a once-per-latch `suspend_alert_deferred` event and the CRITICAL log line all still land in `llm_circuit_events`, and `scripts/check_deploy_drift.py` now claims through a new GENERIC per-type, per-key, ET-day marker (`coverage_watchdog.claim_typed_alert`) that writes every refused claim to `suppressed_alerts` in the watchdog state file.
+
+detail: docs/BOARD_NOTES.md (item 211)
+
+DONE WHEN:
+  - [x] a transient provider latch that self-clears inside the circuit's own self-clear window sends the owner NOTHING and is still fully recorded
+  - [x] the durability threshold is read from `transient_latch_cooldown_minutes`, so changing the self-clear timing moves the paging threshold with it
+  - [x] the suspension and resume messages both state the episode's duration and its self-clear count
+  - [x] repeat suppression is per alert TYPE and per key, never global, so one noisy fault cannot silence an unrelated one
+  - [ ] the `suppressed_alerts` record and the `suspend_alert_deferred` events are surfaced on the read-only API/dashboard — NOT DONE HERE, they are durable in the state file and the DB but no endpoint reads them yet
+
+**214. Nobody has read the technical seat's schema-hygiene counters, so whether the Google route actually honours the sent schema is still unanswered — filed 2026-09-30, OPEN, carrying item 157's first criterion.** Item 157's enforced answer format shipped on both wire routes, but its live-confirmation criterion could never run: no deployed process holds a real Google credential for a pytest call. `_record_answer_hygiene` was shipped instead and records fenced-markdown and undeclared-key hits per provider on every real call; nobody has since looked at what it recorded.
+
+DONE WHEN:
+  - [ ] the recorded hygiene counts are read off production for both the openrouter-tagged and google-tagged calls, over a stated window
+  - [ ] a conclusion is written down on whether the Google route enforces the sent schema, or the counts are shown to be too sparse to conclude
+detail: docs/BOARD_NOTES.md (item 214)
+
+
 **210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/BOARD_NOTES.md` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are.
 
 DONE WHEN:
@@ -357,6 +357,8 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 196
 - retired queue: 109
 - retired queue: 19
+- retired queue: 99
+- retired queue: 157
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
