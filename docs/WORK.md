@@ -129,13 +129,6 @@ DONE WHEN:
   - [ ] nothing here is fitted to the desk's own trading record, and nothing ships alone
 detail: docs/BOARD_NOTES.md (item 75)
 
-**76. PM-input shape: the one open piece is whether the PM uses its new macro-audit channel. OPEN, moved out of the PM TEST GATE 2026-09-14.** Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14.
-
-DONE WHEN:
-  - [ ] BLOCKED and cannot close by building — a before/after benchmark of whether the PM actually uses `reasoning_chain.macro_audit` is a paid run, and the owner's 2026-09-15 decision is that no test-environment work happens unless he asks. Same blocker as the model-seat decision line at the top of this file and 18(a); one authorisation would release all three.
-  - [ ] it is not reopened as a prompt-size problem
-detail: docs/BOARD_NOTES.md (item 76)
-
 **78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle.** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank.
 
 DONE WHEN:
@@ -151,6 +144,7 @@ detail: docs/BOARD_NOTES.md (item 78)
   - [ ] 2026-09-30, second pass: the floor's VALUE is untouched and the evidence to judge it is now recorded per closed trade (entry price, entry ATR, the entry stop and its basis, and the maximum ADVERSE and FAVOURABLE excursions, alongside the realised outcome and stop-hit category already stored; the ATR multiple is recomputed from those, not stored again), and the pipeline's stale 1.5 fallback is closed at source by reading the declared default instead of a copied literal; the record is for FALSIFICATION only (was the floor ever violated in practice) and may NOT be optimised against, so the next pass reads it rather than re-deriving a multiple. Detail: `docs/BOARD_NOTES.md` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
 
 DONE WHEN:
+  - [ ] 2026-10-01, SECOND TRANCHE (pipeline): all 18 routeless `arbitrary` rows under `src.pipeline.TradingPipeline` gained a settlement route and no value changed; routeless falls 130 -> 112, `arbitrary` stays 136, and both failed derivations per row plus the recording spec the fourteen prompt-evidence windows point at are in `docs/BOARD_NOTES.md` item 90 — item STAYS OPEN.
   - [ ] 2026-10-01: the CLASSIFICATION is now mechanical and ratcheted, and it says the item is further from closing than the status field implied. `src/number_sources.py` partitions every ledger row into item 90's three states and a fourth that is the defect — a live number in none of them — and `config/number_ledger_route_history.yaml` ratchets that fourth count for EQUALITY, the same shape as `MAX_ARBITRARY_ENTRIES` and for the same reason (a hand-kept literal drifts from its record; a ceiling rewards deleting the row instead of answering it). Measured from the ledger on 2026-10-01: 329 rows — 109 not trade-governing, 82 sourced or measured, 3 ratified as a bound, 1 in state 3 with a named recording, and **134 in none of the three states**. An `arbitrary` row may now declare `settles_by:` (kind, state built/specified, where, what it records, what closes it); a malformed route is a hard build failure, because a route that cannot be acted on reads as an answer and quietly removes the row from the outstanding count. NO number was derived, moved or re-picked in this pass.
   - [ ] REMAINING WORK, named by the check rather than by prose (listing 134 ids here would duplicate the ledger): the 134 routeless rows are enumerated by `classification()["unclassified"]`, and sit in `src.config` (36), `src.agents` (30), `src.risk` (21), `src.pipeline` (18), `src.portfolio_constructor` (9), `src.execution` (8), `src.data` (5), `src.verdicts` (4), `src.pipeline_stages` (2) and `src.rotation` (1). Each closes by gaining a `settles_by:` route or a source, never by deletion and never by a derivation campaign — the repeated failure this item records is that these numbers cannot be derived from data the desk never recorded, so the unit of work is now the RECORDING, one appended negative delta at a time.
   - [ ] the only row in state 3 today is `src.config.RiskConfig.min_stop_atr_multiple` (2.5), whose settling recording was BUILT on 2026-09-30 (per-closed-trade entry stop, basis and excursions, `src/storage/db.py`); its value is untouched and the recording is for FALSIFICATION only.
@@ -418,6 +412,7 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 185
 - retired queue: 214
 - retired queue: 107
+- retired queue: 76
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
