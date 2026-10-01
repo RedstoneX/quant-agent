@@ -454,7 +454,7 @@ FAMILIES: tuple[FaultFamily, ...] = (
             # fault eight times in the retained logs before this was caught.
             r"Macro coverage: \d+/\d+ FRED series.*FAILED:",
         ),
-        board_item=119,
+        board_item=187,
         measure_duration=True,
     ),
     # The congressional trading-disclosure feed. Unlike every family above,

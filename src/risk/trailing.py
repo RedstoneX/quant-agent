@@ -44,20 +44,13 @@ reversal. A SECOND ratchet now stacks on top of the breakeven step and stays
 below the target: once price reaches +2R (see `RANGE_SECOND_RATCHET_TRIGGER_R`)
 the stop moves up to +1R (see `RANGE_SECOND_RATCHET_LOCK_R`), locking one
 initial-risk-unit of gain. This REDUCES the give-back to a +1R floor once +2R
-is tagged. Both steps are Type A only, and both ratchet the stop UP only —
-never down. Breakouts are
+is tagged; it does NOT close the give-back gap — between +1R (the lock) and the
+target the stop is pinned at +1R and no structural trail runs, so a run to +5R
+then a reversal still gives back to +1R. The residual give-back between +1R and
+target is unchanged. Both steps are Type A only, both fire only below the
+target, and both ratchet the stop UP only — never down. Breakouts are
 untouched: they use the structural/chandelier trail from entry and never reach
 either R-multiple step.
-
-2026-09-30: the remaining give-back — a run to +5R reversing all the way back
-to the +1R lock — was caused by the TARGET being the switch that enabled Type
-A structural trailing at all. The target is an unsourced number and the desk
-bars a made-up number from governing an exit, so it is no longer that switch.
-Once a Type A position is past the ratified +2R trigger, the ordinary
-structural / chandelier trail runs for it exactly as it does for Type B, and
-it may never place a stop below the +1R lock or below wherever the stop
-already is. The two ratchets are untouched and still take precedence; the
-target survives as a signal for everything else it feeds.
 
 **Type B — `breakout`.** There is no overhead structure and the target is a
 measured-move reference, not a level. Progress and pace are meaningless here
@@ -305,7 +298,6 @@ TRAIL_CODE_RANGE_ALREADY_BREAKEVEN = "range_below_target_stop_already_at_breakev
 TRAIL_CODE_RANGE_BREAKEVEN_OFF_SIDE = "range_breakeven_not_between_stop_and_price"
 TRAIL_CODE_RANGE_BELOW_2R = "range_below_target_not_yet_2r"
 TRAIL_CODE_RANGE_SECOND_OFF_SIDE = "range_second_ratchet_lock_not_between_stop_and_price"
-TRAIL_CODE_RANGE_TRAIL_BELOW_LOCK = "range_structural_trail_would_sit_below_second_ratchet_lock"
 TRAIL_CODE_NO_CANDIDATE = "no_structure_and_no_usable_chandelier"
 TRAIL_CODE_BELOW_MIN_RATCHET = "move_smaller_than_min_ratchet"
 TRAIL_CODE_INSIDE_NOISE_BAND = "inside_noise_band"
@@ -528,36 +520,6 @@ def _range_breakeven_ratchet(
     ), TRAIL_CODE_TRAILED)
 
 
-def _range_second_ratchet_state(
-    *, ent: float, cur: float, initial_stop: float | None, is_short: bool,
-) -> tuple[bool, float | None]:
-    """`(price is past the +2R second-ratchet trigger, the +1R lock price)`.
-
-    The SAME arithmetic `_range_second_ratchet` runs, exposed so the Type A
-    branch of `evaluate_trailing_stop` can ask the two questions it needs
-    without re-deriving anything: has the owner-ratified +2R trigger been
-    reached, and where is the owner-ratified +1R lock. No new number is
-    introduced — both multiples are the existing ratified constants.
-
-    Fails closed exactly as the ratchet does: without a usable `initial_stop`
-    R cannot be measured, so this reports `(False, None)` and the caller
-    leaves Type A behaviour untouched.
-    """
-    init_stop = _finite(initial_stop) if initial_stop is not None else None
-    if init_stop is None or init_stop <= 0:
-        return (False, None)
-    risk = abs(ent - init_stop)
-    if risk <= 0:
-        return (False, None)
-    if is_short:
-        trigger = ent - RANGE_SECOND_RATCHET_TRIGGER_R * risk
-        lock = ent - RANGE_SECOND_RATCHET_LOCK_R * risk
-        return (cur <= trigger, lock)
-    trigger = ent + RANGE_SECOND_RATCHET_TRIGGER_R * risk
-    lock = ent + RANGE_SECOND_RATCHET_LOCK_R * risk
-    return (cur >= trigger, lock)
-
-
 def _range_second_ratchet(
     *, symbol: str, ent: float, cur: float, stop: float,
     initial_stop: float | None, is_short: bool, setup_type: str | None,
@@ -720,11 +682,7 @@ def evaluate_trailing_stop(
     # identical to the pre-item-82 `!= "breakout"` compare this replaces.
     from src.risk.constants import is_trend_trade
 
-    # Set only on the Type A past-+2R path below: the +1R lock the ratified
-    # second ratchet installed, which a structural trail may never undercut.
-    range_trail_floor: float | None = None
-
-    # --- Type A: structural trailing once the position is past +2R ---------
+    # --- Type A: no STRUCTURAL trailing until the target is exceeded -------
     if not is_trend_trade(setup_type, structural_ceiling=structural_ceiling):
         target = _finite(reference_target) if reference_target is not None else None
         exceeded = False
@@ -748,39 +706,11 @@ def evaluate_trailing_stop(
             )
             if second.proposal is not None:
                 return second
-            breakeven = _range_breakeven_ratchet(
+            return _range_breakeven_ratchet(
                 symbol=symbol, ent=ent, cur=cur, stop=stop,
                 initial_stop=initial_stop, is_short=is_short,
                 setup_type=setup_type,
             )
-            if breakeven.proposal is not None:
-                return breakeven
-            # The take-profit target is NOT a measured level, and the desk's
-            # doctrine bars a made-up number from governing an exit. It used
-            # to be the switch that enabled Type A structural trailing at
-            # all, so a range trade that ran to +5R and reversed still gave
-            # back to the +1R lock. It stops being that switch here: once the
-            # position is past the OWNER-RATIFIED +2R second-ratchet trigger
-            # — a level measured off this trade's own initial risk, not off a
-            # guessed price — the ordinary structural / chandelier trail runs
-            # for Type A too. The target survives untouched as a signal
-            # elsewhere; it simply no longer gates protection.
-            #
-            # Nothing loosens: the structural path below only ever proposes a
-            # candidate strictly BETWEEN the live stop and price (mirrored
-            # for a short), so the stop can never retreat, and
-            # `range_trail_floor` additionally refuses any candidate that
-            # would sit below the +1R lock the ratified ratchet installed.
-            # Both ratchets above are untouched and still take precedence.
-            past_2r, lock_price = _range_second_ratchet_state(
-                ent=ent, cur=cur, initial_stop=initial_stop,
-                is_short=is_short,
-            )
-            if not (past_2r and lock_price is not None):
-                # Below +2R (or R unmeasurable): unchanged — the two
-                # ratchets are the whole of Type A protection here.
-                return breakeven
-            range_trail_floor = lock_price
         # Target exceeded: fall through to the structural/chandelier trail
         # below exactly as before fix #3 — unchanged.
 
@@ -881,18 +811,6 @@ def evaluate_trailing_stop(
     else:
         if candidate <= stop or candidate >= cur:
             return TrailEvaluation(None, TRAIL_CODE_ROUNDED_OFF_SIDE)
-
-    # Type A past +2R only: never place a stop below (above, for a short)
-    # the owner-ratified +1R lock. In practice the ratchet has already put
-    # the live stop at or beyond the lock and the guards above require the
-    # candidate to beat that stop, so this is a belt-and-braces refusal.
-    if range_trail_floor is not None:
-        if is_short:
-            if candidate > range_trail_floor:
-                return TrailEvaluation(None, TRAIL_CODE_RANGE_TRAIL_BELOW_LOCK)
-        else:
-            if candidate < range_trail_floor:
-                return TrailEvaluation(None, TRAIL_CODE_RANGE_TRAIL_BELOW_LOCK)
 
     locked = ""
     if is_short:

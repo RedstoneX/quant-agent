@@ -2636,7 +2636,14 @@ def test_replace_stop_loss_refused_amend_leaves_original_resting(mock_tc_cls):
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     result = broker.replace_stop_loss("NVDA", 192.0)
 
-    assert result is None
+    # Item 201: a refusal used to return a bare None, which threw away WHICH
+    # leg refused and at what level — so nothing could be recorded and nobody
+    # could be told. It now returns a payload that carries no order id, so
+    # `accepted_stop_order` still rejects it and no stop level is written back.
+    from src.execution.stop_records import accepted_stop_order
+    assert accepted_stop_order(result) is False
+    assert result["id"] is None and result["amend_status"] == "refused"
+    assert [leg["outcome"] for leg in result["legs"]] == ["refused"]
     mock_client.cancel_order_by_id.assert_not_called()
     mock_client.submit_order.assert_not_called()
 
