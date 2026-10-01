@@ -113,9 +113,15 @@ Re-exported from `src.pipeline` so existing imports keep working: `_WAL_SELL_SEN
 `_classify_coverage_gap`, `_reconciled_exit_action`, and `_finite_float_or_none` — the
 last of these is the one name the plan did not anticipate: it is a broker-fill float
 coercion the plan left in `src/pipeline.py` with the other risk-number helpers, but the
-moved code uses it and a base module cannot be imported by its own mixin, so it travels
-with the cluster and is re-exported back. Nothing else in `src/pipeline.py` still reads
-a moved module-level name.
+moved code uses it, so it travels with the cluster and is re-exported back.
+
+CORRECTION (2026-10-01). The reason first given for that travel — "a base module cannot
+be imported by its own mixin" — describes the opposite direction and is wrong. A mixin
+module importing its base module is exactly what Python forbids HERE, and only because
+`src/pipeline.py` already imports `src/pipeline_protection.py` at module import time:
+the back-import would close a cycle. So the helper could not stay behind and be imported
+forward by the mixin; it had to move and be re-exported backward. Nothing else in
+`src/pipeline.py` still reads a moved module-level name.
 
 Eleven test patch sites were re-pointed at the new module: six `_market_is_open_now` in
 the stop-coverage repair tests and one each in the unreadable-stop, exit-path-records
