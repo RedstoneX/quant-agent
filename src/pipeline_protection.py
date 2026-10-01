@@ -984,24 +984,17 @@ class ProtectionMixin:
         """Tell the owner a protective stop FIRED and did NOT fill. Never
         raises.
 
-        A DIFFERENT condition from the one PR #514 alerts on, and it has to
-        stay different: that one is a stop the desk could not PLACE, this
-        one is a stop that exists, is correctly sized, and did not execute.
-        It therefore takes its own per-position per-day claim in the same
-        `data/alerting/coverage_heartbeat.json` state file rather than
-        borrowing the repair-failure key — sharing the key would let either
-        condition silence the other on the same name, which is the opposite
-        of not double-alerting.
+        Distinct from PR #514's alert (a stop the desk could not PLACE):
+        this stop exists, is sized, and did not execute. It takes its own
+        per-position per-day claim; a shared key would let either
+        condition silence the other.
 
-        The bullet is `src.trader_feed.format_coverage_gap_line`, the same
-        wording the session feed and the placement-failure alert use, so one
-        position cannot be described three ways.
-        """
+        Wording: `src.trader_feed.format_coverage_gap_line`."""
         try:
             from src import notifier as _notifier
+            from src.coverage_alert_release import release_elected_unfilled_alert
             from src.coverage_watchdog import claim_elected_unfilled_alert
             from src.trader_feed import _profiles, format_coverage_gap_line
-
             symbols = [
                 str(r.get("symbol")).strip() for r in rows
                 if str(r.get("symbol") or "").strip()
@@ -1025,7 +1018,7 @@ class ProtectionMixin:
             detail = "\n".join(
                 format_coverage_gap_line(row, profiles) for row in send
             )
-            _notifier.send_owner_alert(
+            sent_ok = _notifier.send_owner_alert(
                 "\U0001f534 A PROTECTIVE STOP FIRED AND DID NOT FILL\n"
                 f"{len(send)} position(s) have traded past their protective "
                 "stop while that stop's order is still sitting unfilled at "
@@ -1039,6 +1032,13 @@ class ProtectionMixin:
                 "position is reported at most once per trading day.",
                 symbols=sorted(fresh),
             )
+            if not sent_ok:
+                # Claimed BEFORE the send: roll back so the next run retries.
+                released = release_elected_unfilled_alert(fresh)
+                logger.critical(
+                    "Stop-unfilled alert for %s NOT delivered; claim %s",
+                    sorted(fresh), "rolled back" if released else "ROLLBACK FAILED",
+                )
         except Exception as exc:  # noqa: BLE001
             logger.error("elected-but-unfilled stop owner alert failed: %s", exc)
 

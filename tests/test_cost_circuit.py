@@ -32,6 +32,7 @@ from src.cost_circuit import (
 )
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 class _Notifier:
@@ -83,9 +84,8 @@ def _db_path(tmp_path):
 
 
 def test_pipeline_attaches_breaker_to_every_paid_agent():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
     circuit = object()
-    pipeline.cost_circuit = circuit
+    pipeline = build_pipeline(cost_circuit=circuit)
     names = (
         "tech_analyst", "news_analyst", "macro_analyst",
         "earnings_analyst", "smart_money_analyst", "portfolio_manager",

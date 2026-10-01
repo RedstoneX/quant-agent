@@ -81,8 +81,8 @@ def count_test_files_importing_pipeline(tests_dir: Path = TESTS) -> int:
         # TradingPipeline and drive every stage end to end; counting it would
         # penalise the test this metric most wants to exist. Every OTHER test
         # that needs a whole pipeline is what the ratchet is measuring.
-        if p.name in ("boundary_harness.py", "test_boundary_harness.py",
-                      "test_e2e_morning_session.py"):
+        if p.name in ("boundary_harness.py", "test_boundary_harness.py",  # and the composition root,
+                      "test_e2e_morning_session.py", "pipeline_factory.py", "test_pipeline_factory.py"):
             continue
         try:
             tree = _parse(p)

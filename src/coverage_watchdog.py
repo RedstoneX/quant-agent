@@ -1241,9 +1241,8 @@ def claim_elected_unfilled_alert(
     """Reserve today's elected-but-unfilled alert for `symbols` and return
     the ones NOT already alerted today, in the order given.
 
-    Same contract as `claim_repair_failure_alert`, including that an
-    unwritable state file errs towards telling the owner twice rather than
-    not at all.
+    Same contract as `claim_repair_failure_alert`. The caller MUST call
+    `release_elected_unfilled_alert` if the send then fails.
     """
     day = repair_failure_alert_day(now)
     state = load_state(path)

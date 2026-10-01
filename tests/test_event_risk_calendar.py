@@ -1614,10 +1614,9 @@ _ONE = (_Release(10, "CPI", "inflation print"),)
 
 
 def _provider(tmp_path, **kw):
-    return _Provider(
-        api_key="k", releases=_ONE,
-        schedule_cache_path=str(tmp_path / "rs.json"), **kw,
-    )
+    p = _Provider(api_key="k", releases=_ONE, schedule_cache_path=str(tmp_path / "rs.json"), **kw)
+    p._fetch_release_dates = lambda *a, **k: ([], None)  # offline unless the test says otherwise
+    return p
 
 
 def _write_cache(tmp_path, dates, fetched_on):

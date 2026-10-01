@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from tests.pipeline_factory import build_pipeline
 
 
 def _parse_csv(b: bytes) -> list[dict]:
@@ -107,8 +108,7 @@ def test_send_document_posts_and_swallows(monkeypatch):
 
 def test_run_daily_sends_and_reports(monkeypatch):
     from src.pipeline import TradingPipeline
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
+    pipe = build_pipeline(broker=MagicMock())
     pipe.broker.get_full_portfolio_history.return_value = [
         ("2026-05-27", 100_000.0), ("2026-05-28", 100_500.0),
     ]
@@ -124,8 +124,7 @@ def test_run_daily_sends_and_reports(monkeypatch):
 
 def test_run_daily_error_on_no_data():
     from src.pipeline import TradingPipeline
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
+    pipe = build_pipeline(broker=MagicMock())
     pipe.broker.get_full_portfolio_history.return_value = []
     res = pipe.run_daily()
     assert res["status"] == "error"
@@ -212,8 +211,7 @@ def test_run_daily_skipped_when_telegram_disabled(monkeypatch):
     """[Bug 2] Telegram disabled (no creds) → CSV built but undelivered →
     honest 'skipped', not 'sent'."""
     from src.pipeline import TradingPipeline
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
+    pipe = build_pipeline(broker=MagicMock())
     pipe.broker.get_full_portfolio_history.return_value = [
         ("2026-05-27", 100_000.0), ("2026-05-28", 100_500.0),
     ]
@@ -228,8 +226,7 @@ def test_run_daily_skipped_when_telegram_disabled(monkeypatch):
 def test_run_daily_error_when_delivery_fails(monkeypatch):
     """[Bug 2] Telegram enabled but the upload failed → 'error', not 'sent'."""
     from src.pipeline import TradingPipeline
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
+    pipe = build_pipeline(broker=MagicMock())
     pipe.broker.get_full_portfolio_history.return_value = [("2026-05-27", 100_000.0)]
     monkeypatch.setattr("yfinance.download", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no net")))
     with patch("src.notifier.TelegramNotifier") as TN:
