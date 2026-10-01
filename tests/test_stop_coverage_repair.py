@@ -148,7 +148,7 @@ def test_fractional_remainder_on_a_short_is_repaired_with_a_buy_stop():
         last_buy=_opening_lookup(BUY=180.0, SHORT=220.0),
     )
     p.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-frac"}
-    with patch("src.pipeline._market_is_open_now", return_value=True):
+    with patch("src.pipeline_protection._market_is_open_now", return_value=True):
         gaps = p._reconcile_stop_coverage()
     assert len(gaps) == 1 and gaps[0]["repaired"] is True
     assert gaps[0]["coverage"] == "fractional_replaced"
@@ -514,7 +514,7 @@ def shared_marker(tmp_path, monkeypatch):
 
 def _run(p):
     with patch("src.notifier.send_owner_alert") as send, \
-            patch("src.pipeline._market_is_open_now", return_value=True), \
+            patch("src.pipeline_protection._market_is_open_now", return_value=True), \
             patch("src.trader_feed._profiles", return_value={}):
         gaps = p._reconcile_stop_coverage()
     return gaps, send
@@ -540,7 +540,7 @@ def test_the_overnight_fractional_lapse_still_says_nothing(shared_marker):
     """Owner-ratified, bounded, happens every night — it must stay silent."""
     p = _fractional_pipeline("NET", 3.4785, 3.0, 334.0, buy_stop=300.0)
     with patch("src.notifier.send_owner_alert") as send, \
-            patch("src.pipeline._market_is_open_now", return_value=False):
+            patch("src.pipeline_protection._market_is_open_now", return_value=False):
         gaps = p._reconcile_stop_coverage()
     assert gaps[0]["coverage"] == "fractional_overnight"
     assert "session_repair_failed" not in gaps[0]
@@ -681,7 +681,7 @@ def test_an_elected_unfilled_stop_is_not_detected_while_the_market_is_shut(
 ):
     p = _elected_pipeline("VST", 31.0, price=150.0, stop=158.0)
     with patch("src.notifier.send_owner_alert") as send, \
-            patch("src.pipeline._market_is_open_now", return_value=False):
+            patch("src.pipeline_protection._market_is_open_now", return_value=False):
         p._reconcile_stop_coverage()
     send.assert_not_called()
 
@@ -877,7 +877,7 @@ def test_a_name_that_never_printed_all_session_pages_after_the_close(
 
     after_close = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
     with patch("src.notifier.send_owner_alert") as shut, \
-            patch("src.pipeline._market_is_open_now", return_value=False), \
+            patch("src.pipeline_protection._market_is_open_now", return_value=False), \
             patch("src.trader_feed._profiles", return_value={}):
         gaps = after_close._reconcile_stop_coverage()
     assert gaps[0]["coverage"] != "fractional_overnight"
@@ -901,7 +901,7 @@ def test_a_repaired_name_is_not_reported_after_the_close(shared_marker):
 
     after_close = _no_print_pipeline("RSG", 22.5862, 22.0, 213.79, buy_stop=213.33)
     with patch("src.notifier.send_owner_alert") as shut, \
-            patch("src.pipeline._market_is_open_now", return_value=False):
+            patch("src.pipeline_protection._market_is_open_now", return_value=False):
         gaps = after_close._reconcile_stop_coverage()
     assert gaps[0]["coverage"] == "fractional_overnight"
     shut.assert_not_called()

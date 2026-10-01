@@ -126,14 +126,89 @@ def test_alpaca_broker_constructed_only_in_broker_reads():
 #    load-bearing for trading).
 # ---------------------------------------------------------------------------
 
-_TRADING_CRITICAL_FILES = [
+# The set is DERIVED, not retyped. Board item 210 splits `src/pipeline.py`
+# into one module per cluster over several steps, and a hand-written list
+# silently stopped covering the moved code at every step: the guard kept
+# passing while the module it existed to watch was no longer named here.
+#
+# THE RULE: a fixed core (the entrypoint, the broker, the risk rules, the
+# scheduler) UNION every `src/pipeline*.py` module. The split's own naming
+# convention is what makes the second half honest -- every step of
+# docs/PIPELINE_SPLIT_PLAN.md lands its new module under that name, so a
+# module created by a future step is covered the moment it exists, with no
+# edit here.
+#
+# WHAT THE RULE WOULD MISS: a cluster moved OUT of the `src/pipeline*.py`
+# namespace (say to `src/protection/stops.py`). That gap is closed by
+# `test_every_trading_pipeline_base_module_is_covered` below, which walks the
+# live MRO of `TradingPipeline` and fails if any class it is composed from
+# lives in a file this list does not contain. The remaining blind spot is a
+# moved cluster that is NEITHER named `pipeline*` NOR a base of
+# `TradingPipeline` -- plain helper functions in a new namespace. Nothing
+# mechanical catches that; the reviewer of that step must add it here.
+
+_ALWAYS_TRADING_CRITICAL = (
     "main.py",
-    "src/pipeline.py",
-    "src/pipeline_stages.py",
     "src/execution/broker.py",
     "src/risk/rules.py",
     "src/scheduler.py",
-]
+)
+
+
+def _pipeline_split_modules() -> list[str]:
+    """Every `src/pipeline*.py` module, as a repo-relative path string."""
+    return [f"src/{path.name}" for path in sorted((REPO_ROOT / "src").glob("pipeline*.py"))]
+
+
+def _trading_critical_files() -> list[str]:
+    return sorted(set(_ALWAYS_TRADING_CRITICAL) | set(_pipeline_split_modules()))
+
+
+_TRADING_CRITICAL_FILES = _trading_critical_files()
+
+
+def test_trading_critical_set_is_not_silently_empty():
+    """The derivation must actually find the split modules, not quietly yield none."""
+    split = _pipeline_split_modules()
+    assert "src/pipeline.py" in split
+    assert len(split) >= 2, (
+        "the pipeline split produced extra modules but the glob found none of "
+        f"them: {split}"
+    )
+    for rel in _ALWAYS_TRADING_CRITICAL:
+        assert rel in _TRADING_CRITICAL_FILES
+
+
+def test_every_trading_pipeline_base_module_is_covered():
+    """Every module `TradingPipeline` is composed from must be on the list.
+
+    This is the half of the rule that does not depend on a filename: if a
+    future split step puts a mixin somewhere outside `src/pipeline*.py`, the
+    glob misses it and this test says so by name.
+    """
+    import sys
+
+    from src.pipeline import TradingPipeline
+
+    root = REPO_ROOT.resolve()
+    missing: list[str] = []
+    for klass in TradingPipeline.__mro__:
+        if klass is object:
+            continue
+        module = sys.modules.get(klass.__module__)
+        filename = getattr(module, "__file__", None)
+        if not filename:
+            continue
+        path = Path(filename).resolve()
+        if root not in path.parents:
+            continue
+        rel = str(path.relative_to(root))
+        if rel not in _TRADING_CRITICAL_FILES:
+            missing.append(rel)
+    assert not missing, (
+        "TradingPipeline is composed from modules that the trading-critical "
+        f"import guard does not watch: {sorted(set(missing))}"
+    )
 
 
 def _imported_module_names(tree: ast.AST) -> list[str]:
@@ -148,17 +223,40 @@ def _imported_module_names(tree: ast.AST) -> list[str]:
     return names
 
 
+def _api_imports(tree: ast.AST) -> list[str]:
+    """Imports of the API layer found in `tree`, in source order."""
+    return [
+        name
+        for name in _imported_module_names(tree)
+        if name == "src.api" or name.startswith("src.api.")
+    ]
+
+
 @pytest.mark.parametrize("rel_path", _TRADING_CRITICAL_FILES)
 def test_api_package_never_imports_trading_critical_modules(rel_path: str):
     path = REPO_ROOT / rel_path
     assert path.is_file(), f"expected trading-critical file to exist: {path}"
     tree = _parse(path)
-    imported = _imported_module_names(tree)
-    offenders = [m for m in imported if m == "src.api" or m.startswith("src.api.")]
+    offenders = _api_imports(tree)
     assert not offenders, (
         f"{rel_path} imports src.api, which trading-critical code must never "
         f"depend on: {offenders}"
     )
+
+
+def test_trading_critical_import_guard_can_fail():
+    """Prove the guard above can FAIL -- a guard that cannot fail is not a guard.
+
+    The check is run against the real source text of each derived split module
+    with an `import src.api` appended, so a regression in the detector (not
+    just in the list) is caught too.
+    """
+    assert _api_imports(ast.parse("from src.api.server import app\n")) == ["src.api.server"]
+    for rel_path in _pipeline_split_modules():
+        source = (REPO_ROOT / rel_path).read_text() + "\nimport src.api  # injected\n"
+        assert _api_imports(ast.parse(source)) == ["src.api"], (
+            f"the guard would not notice {rel_path} importing src.api"
+        )
 
 
 # ---------------------------------------------------------------------------

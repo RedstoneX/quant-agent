@@ -87,3 +87,56 @@ worth knowing before step 2. The method inventory was re-recorded in the same ch
 and the new module added to the tracked list.
 
 Item 210 stays open: ten steps remain.
+
+## Step 2 — the protection cluster (2026-10-01)
+
+`src/pipeline_protection.py` (`ProtectionMixin`, 4,438 lines) carries clusters F and H
+out of `src/pipeline.py`, which drops from 18,289 to 13,912 lines. Everything that
+places, cancels, restores or reconciles a protective stop or a sell now reads in one
+file: the 603-line stop-coverage reconciler, the owner alerts, `_repair_stop_coverage`,
+`_submit_protected_sell`, the finalizers, the write-ahead cancel/restore legs, the
+repeg and restore drains, `_reprotect_residual_after_partial_sell`, and the fill,
+orphan-submit and stop-out reconcilers.
+
+`_handle_ex_dividends` came here too, reassigned out of step 1's prompt-facts cluster
+because it shifts live stops down by the dividend — a stop-moving method in a module
+advertised as read-only is the boundary lying about touching money. Its two test files
+were run against this step as the plan requires.
+
+The move is pure: method bodies are the same text, the only edits are the enclosing
+class line, the import block and the re-exports. The plan estimated ~3,600 lines; the
+measured figure is 4,438, because the cluster has grown since the estimate was taken.
+
+Re-exported from `src.pipeline` so existing imports keep working: `_WAL_SELL_SENTINEL`
+(7 test files plus `src/pipeline_stages.py` and `src/execution/scale_in.py`),
+`_market_is_open_now`, `_price_is_through_stop`, `_position_notional`,
+`_classify_coverage_gap`, `_reconciled_exit_action`, and `_finite_float_or_none` — the
+last of these is the one name the plan did not anticipate: it is a broker-fill float
+coercion the plan left in `src/pipeline.py` with the other risk-number helpers, but the
+moved code uses it, so it travels with the cluster and is re-exported back.
+
+CORRECTION (2026-10-01). The reason first given for that travel — "a base module cannot
+be imported by its own mixin" — describes the opposite direction and is wrong. A mixin
+module importing its base module is exactly what Python forbids HERE, and only because
+`src/pipeline.py` already imports `src/pipeline_protection.py` at module import time:
+the back-import would close a cycle. So the helper could not stay behind and be imported
+forward by the mixin; it had to move and be re-exported backward. Nothing else in
+`src/pipeline.py` still reads a moved module-level name.
+
+Eleven test patch sites were re-pointed at the new module: six `_market_is_open_now` in
+the stop-coverage repair tests and one each in the unreadable-stop, exit-path-records
+and fractional-sizing tests, two `et_now` in fractional sizing, and three `et_today` in
+the ex-dividend tests. A source-text scanner that read `terminal_fail` out of
+`src/pipeline.py` was re-pointed at the new file; three number-ledger prose citations
+that quoted `src/pipeline.py` line ranges now past the end of the shortened file were
+corrected to their current addresses.
+
+Ledger ids: none. All nine ids naming `src.pipeline.*` belong to methods that stay, and
+the nested-function case step 1 hit was checked for explicitly and does not arise here,
+so the step-0 helper had nothing to migrate. `src/pipeline_protection.py` was still
+added to `SCOPED_PATHS`, so its numbers stay under the guard, and to the tracked module
+list of the inventory guard, which was re-recorded in the same change.
+
+Held deliberately: this sits on step 1 and is not merged on a trading day.
+
+Item 210 stays open: nine steps remain.
