@@ -115,3 +115,33 @@ changes:
       has actually carried -- failed, because nothing anywhere records a
       pre-truncation size, so there is no record to read. Stopped at two:
       the recording that would settle them IS the route.
+  - delta: -31
+    date: "2026-10-01"
+    why: |
+      Item 90, tranche three: the 16 routeless rows of the smart-money
+      admission screen in `SmartMoneyConfig` and the 15 agent-result
+      scoring-field rows in `src/agents/base.py` gain settlement routes.
+      No value moved and no appetite was routed to the owner.
+
+      The 15 scoring weights were checked for the sort-key shape the
+      previous tranche found and DO NOT have it. `AgentResult._shape_score`
+      sums the weight of every expected key present in a candidate and
+      compares those sums across candidates, and a top-level list scores
+      the SUM of its elements, so the spacing is load-bearing rather than
+      cancelling -- the 2026-08-17/20 collapse of 10 of 13 decision runs
+      was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Their
+      route is a measurement of real multi-candidate contests.
+
+      The ten filings-window rows and the three admission-screen floors
+      route to measurements off the filings record and market prices --
+      never off this desk's own fills.
+
+      The three affordability caps (external nominations, filings per
+      refresh, refresh deadline) record BOTH failed derivation attempts.
+      First: derive each from the per-run time and cost budget it serves --
+      failed, that budget is itself unledgered. Second: derive each from
+      demand actually seen -- failed, the scan logs only BOOLEANS saying
+      the cap bound or the deadline cut the scan, and a boolean cannot
+      distinguish a true demand of 1000 from one of 2000. Stopped at two:
+      the recording of pre-cap demand IS the route.
