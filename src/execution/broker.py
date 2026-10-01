@@ -6253,7 +6253,7 @@ class AlpacaBroker:
         when this path does not apply and the caller should run the legacy
         cancel+resubmit fallback.
 
-        Measured against the broker on rehearsal account PA30V8QHEW1C on
+        Measured against the broker on rehearsal account <redacted-rehearsal-account> on
         2026-09-30: `replace_order_by_id(id, ReplaceOrderRequest(stop_price=X))`
         moves a resting protective stop atomically (old order -> REPLACED, new
         id issued, exactly one open stop on the symbol at every instant), and a
@@ -6321,7 +6321,7 @@ class AlpacaBroker:
                 spec["id"], ReplaceOrderRequest(stop_price=price),
             )
         except Exception as exc:  # noqa: BLE001
-            # MEASURED 2026-09-30 (rehearsal PA30V8QHEW1C): a genuine refusal
+            # MEASURED 2026-09-30 (rehearsal <redacted-rehearsal-account>): a genuine refusal
             # is APIError with status_code 422. `status_code is not None` also
             # catches 429/500/502/504 -- a transport-layer failure that may have
             # been applied at the broker BEFORE the answer was lost. Treating
@@ -6381,7 +6381,7 @@ class AlpacaBroker:
         Used by the midday trailing-stop logic. PREFERRED PATH: when exactly one
         plain (non-bracket/OTO) protective stop covers the whole position, the stop's
         price is amended ATOMICALLY via Alpaca's replace endpoint — measured against
-        the broker on rehearsal account PA30V8QHEW1C on 2026-09-30: the old order goes
+        the broker on rehearsal account <redacted-rehearsal-account> on 2026-09-30: the old order goes
         to REPLACED, a new id is issued, and exactly ONE open stop covers the symbol at
         every instant. A refused amend leaves the ORIGINAL order resting untouched.
 

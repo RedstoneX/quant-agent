@@ -2589,7 +2589,7 @@ def _plain_resting_stop(order_id="old-stop", qty="10", stop_price="185.0"):
 
 @patch("src.execution.broker.TradingClient")
 def test_replace_stop_loss_amends_single_plain_stop_in_place(mock_tc_cls):
-    """Measured 2026-09-30 (PA30V8QHEW1C): one plain resting stop is moved by
+    """Measured 2026-09-30 (<redacted-rehearsal-account>): one plain resting stop is moved by
     Alpaca's replace endpoint atomically — so nothing may be cancelled and no
     replacement order may be submitted, which is what closed the naked window."""
     old_stop = _plain_resting_stop()
