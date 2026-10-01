@@ -398,20 +398,53 @@ def run_rehearsal(
         from ops.rehearsal.market_recording import recorded_market_data
 
         _recording = _load_recording(market_recording) if market_recording else _load_recording()
+        _live_market = pipeline.market
         if _recording:
-            pipeline.market = recorded_market_data(unavailable, _recording)
+            _served = recorded_market_data(unavailable, _recording)
             checks.append(
                 "market data is served from the recording captured "
                 f"{_recording.get('captured_utc')} "
                 f"({len(_recording.get('bars') or {})} symbols), not downloaded"
             )
         else:
-            pipeline.market = blocked_market_data(unavailable)
+            _served = blocked_market_data(unavailable)
             notes.append(
                 "no recorded market data on this box, so every technical read is "
                 "empty — capture one with `python -m ops.rehearsal.market_recording "
                 "SYM ...` (board item 202)"
             )
+        # Replacing `pipeline.market` alone was NOT enough, and that is the
+        # second half of board item 202. `TradingPipeline.__init__` hands the
+        # SAME provider object to the stages it builds (`MorningResearchStage`
+        # takes `market=self.market`), so the technical read — the one read a
+        # rehearsal most needs served from the recording — went on holding the
+        # live provider after the swap. Offline that reads as "No data for
+        # SPY, skipping" for every symbol and the session degrades to
+        # `no_data`; online, before the curl_cffi hole was closed, it is what
+        # actually downloaded the bars. Rebind every holder, and say how many.
+        pipeline.market = _served
+        _rebound = []
+        for _name, _obj in list(vars(pipeline).items()):
+            if _obj is _live_market or not hasattr(_obj, "market"):
+                continue
+            if getattr(_obj, "market", None) is _live_market:
+                _obj.market = _served
+                _rebound.append(_name)
+        _still_live = [
+            _name for _name, _obj in vars(pipeline).items()
+            if _obj is not _live_market and getattr(_obj, "market", None) is _live_market
+        ]
+        if _still_live:
+            raise AssertionError(
+                "a rehearsal cannot start with the LIVE market-data provider "
+                f"still reachable through {sorted(_still_live)} — it would "
+                "fetch prices from the network instead of the recording "
+                "(board item 202)"
+            )
+        checks.append(
+            "every holder of the market-data provider was rebound to the "
+            f"rehearsal's, not just the pipeline: {sorted(_rebound) or 'none'}"
+        )
         checks.append(assert_broker_is_stubbed(pipeline.broker))
         checks.append(
             "no outbound network connection is possible for the duration of "
