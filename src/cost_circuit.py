@@ -202,8 +202,24 @@ def _unknown_cost_row_expr(conn: sqlite3.Connection) -> str:
         columns = set()
     if not {"provider_requests", "status"} <= columns:
         return "CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
+    # Item 203: a provider request that HAPPENED and came back with no token
+    # counts at all is recorded by `src/agents/base.py:usage_telemetry_word`
+    # as `telemetry='no_usage'`. Such a row's `cost_usd` may be a literal 0.0
+    # rather than NULL -- written because nothing was reported, not because
+    # anything was measured -- and the plain `cost_usd IS NULL` test would
+    # bank it as a proven free call. It is not proven free and it is not
+    # priced: this desk refuses to substitute a list rate, an average or any
+    # other invented price for a number the provider did not return, so the
+    # row is counted as UNKNOWN and the day loses `costs_exact`. Disjoint from
+    # `_PROVEN_ZERO_ROW_SQL` by construction (that needs provider_requests=0,
+    # this word is only written when a request was made), and the clause is
+    # dropped entirely on an older `agent_logs` that has no `telemetry`
+    # column, where the absence of the proof leaves only the NULL test.
+    no_usage_sql = (
+        "WHEN telemetry = 'no_usage' THEN 1 " if "telemetry" in columns else ""
+    )
     return f"CASE WHEN ({_PROVEN_ZERO_ROW_SQL}) THEN 0 " \
-           "WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
+           f"{no_usage_sql}WHEN cost_usd IS NULL THEN 1 ELSE 0 END"
 
 
 def _trigger_scope(code: Any) -> str:
