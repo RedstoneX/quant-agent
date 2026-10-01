@@ -206,7 +206,7 @@ def test_midday_and_close_share_the_one_executor_this_gate_lives_in():
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_midday)
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_close)
     assert "_run_position_review_body" in inspect.getsource(TradingPipeline.run_position_review)
-    review_src = inspect.getsource(TradingPipeline._run_position_review_body)
+    review_src = inspect.getsource(__import__("src.sessions.position_review_session", fromlist=["PositionReviewSession"]).PositionReviewSession.run)
     assert review_src.count("_midday_execute_llm_actions(") == 1
 
 

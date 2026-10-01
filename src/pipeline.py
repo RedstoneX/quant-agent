@@ -110,6 +110,8 @@ from src.pipeline_stages import (
     _record_pipeline_event,
 )
 from src.portfolio_constructor import PortfolioConstructor
+from src.sessions.evening_session import EveningSession
+from src.sessions.position_review_session import PositionReviewSession
 from src.storage.db import Database
 from src.cost_circuit import (
     LLMCostCircuitBreaker,
@@ -440,6 +442,23 @@ def _smart_money_refresh_sources_word(congress_enabled: bool) -> str:
     if congress_enabled:
         return "SEC Form 4 + congressional"
     return "SEC Form 4 only (congressional cross-check switched off)"
+
+
+class _MissingCollaborator:
+    """Stand-in for a TradingPipeline attribute that a `__new__`-built test double
+    never set. The session shims below read every collaborator up front; this
+    defers the AttributeError to first USE, exactly where the inline body raised it."""
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def _raise(self, *_a, **_k):
+        raise AttributeError(f"'TradingPipeline' object has no attribute '{self._name}'")
+
+    __call__ = __iter__ = __len__ = __bool__ = _raise
+
+    def __getattr__(self, attr):
+        self._raise()
 
 
 class TradingPipeline(
@@ -928,7 +947,7 @@ class TradingPipeline(
             build_constructor_config(config, self.risk_engine.config),
             # Board item 218: the parity refusal is a TRIAL and must leave a
             # durable, numeric, per-symbol record or it cannot be judged.
-            db=self.db,
+            db=self._collab("db"),
         )
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.
@@ -937,22 +956,22 @@ class TradingPipeline(
             market=self.market, macro=self.macro,
             news_provider=self.news_provider, news_store=self.news_store,
             macro_store=self.macro_store, tech_store=self.tech_store,
-            earnings_provider=self.earnings_provider,
-            macro_analyst=self.macro_analyst,
-            news_analyst=self.news_analyst,
-            tech_analyst=self.tech_analyst,
-            earnings_analyst=self.earnings_analyst,
-            smart_money_provider=self.smart_money_provider,
-            smart_money_analyst=self.smart_money_analyst,
-            admit_smart_money_candidates_fn=self._admit_transient_smart_money_symbols,
-            admit_nominated_candidates_fn=self._admit_nominated_external_symbols,
-            admit_screened_universe_fn=self._admit_screened_universe_symbols,
-            event_calendar=self.event_calendar,
-            fomc_calendar=self.fomc_calendar,
-            has_actionable_signal_fn=self._has_actionable_signal_fn,
-            live_session_context_fn=self._live_session_context,
-            run_news_update_fn=self._run_news_update,
-            load_earnings_analyses_fn=self._load_earnings_analyses,
+            earnings_provider=self._collab("earnings_provider"),
+            macro_analyst=self._collab("macro_analyst"),
+            news_analyst=self._collab("news_analyst"),
+            tech_analyst=self._collab("tech_analyst"),
+            earnings_analyst=self._collab("earnings_analyst"),
+            smart_money_provider=self._collab("smart_money_provider"),
+            smart_money_analyst=self._collab("smart_money_analyst"),
+            admit_smart_money_candidates_fn=self._collab("_admit_transient_smart_money_symbols"),
+            admit_nominated_candidates_fn=self._collab("_admit_nominated_external_symbols"),
+            admit_screened_universe_fn=self._collab("_admit_screened_universe_symbols"),
+            event_calendar=self._collab("event_calendar"),
+            fomc_calendar=self._collab("fomc_calendar"),
+            has_actionable_signal_fn=self._collab("_has_actionable_signal_fn"),
+            live_session_context_fn=self._collab("_live_session_context"),
+            run_news_update_fn=self._collab("_run_news_update"),
+            load_earnings_analyses_fn=self._collab("_load_earnings_analyses"),
         )
         # Downstream stages for run_morning: decision → risk → execution.
         # They take a `pipeline` reference so they can reuse the 15+ memory /
@@ -2937,673 +2956,65 @@ class TradingPipeline(
         self._persist_session_report(session_type, result)
         return result
 
+    def _collab(self, name: str):
+        """A collaborator for a session object: the attribute, or a deferred-error stand-in."""
+        try:
+            return getattr(self, name)
+        except AttributeError:
+            return _MissingCollaborator(name)
+
     def _run_position_review_body(self, session_type: str) -> dict:
-        """Unified entry for both midday (13:00 ET) and close (15:30 ET).
-
-        Same memory layers, same schema, same agent. Session bias is injected
-        via prompt language driven by `session_type`. Everything else — force
-        de-lever / ex-div / news / earnings / LLM review /
-        emergency liquidate / execution / reconcile — is identical.
-        """
-        ctx = RunContext.start(session_type)
-        run_id = ctx.run_id
-        logger.info("=== %s check: %s ===", session_type.capitalize(), run_id)
-
-        if not self._is_trading_day():
-            logger.info("%s run skipped: market closed for non-trading day", session_type)
-            return {"status": "market_holiday", "positions": 0, "orders": [], "run_id": run_id}
-
-        halt = self._kill_switch_halt_result(run_id, positions=0)
-        if halt is not None:
-            return halt
-
-        self._activate_cost_session(run_id, session_type)
-
-        # Early-close check. On half-day sessions (day after Thanksgiving 13:00
-        # close; July 3 half-day) the launchd-gated midday (13:00-14:30 ET) and
-        # close (15:30-15:55 ET) windows fire against a market that's already
-        # shut. Every submit would land as rejected; the LLM would still burn
-        # tokens reviewing. Skip cleanly when today's session_close has already
-        # passed. `isinstance(datetime)` instead of `is not None` because we
-        # can only compare to a real datetime — a None or unexpected type
-        # (misconfigured mock, broker returning a placeholder) defaults to
-        # "proceed and let downstream checks handle it" rather than crashing.
-        from datetime import datetime as _dt
-        session_close = None
-        if hasattr(self.broker, "get_session_close"):
-            try:
-                session_close = self.broker.get_session_close()
-            except Exception as exc:
-                logger.warning(
-                    "early_close check: get_session_close failed (%s); "
-                    "proceeding with %s run",
-                    exc, session_type,
-                )
-                session_close = None
-        if isinstance(session_close, _dt) and et_now() >= session_close:
-            logger.info(
-                "%s run skipped: regular session already closed today at %s ET "
-                "(early-close day)",
-                session_type, session_close.strftime("%H:%M"),
-            )
-            return {
-                "status": "early_close",
-                "positions": 0,
-                "orders": [],
-                "run_id": run_id,
-                "session_close_et": session_close.isoformat(),
-            }
-
-        # Drain orphaned protection-restore intents from prior sessions.
-        # If morning bailed on a finalize and the SELL has since become
-        # terminal, recover stop coverage NOW rather than waiting for
-        # next-morning's drain — codex r8 #2.
-        drained = self._drain_pending_protection_restores()
-        self._drain_pending_repegs()
-        self._reconcile_orphan_pending_submits()  # audit F4
-        # Broker-truth coverage audit (independent of the WAL).
-        coverage_gaps = self._reconcile_stop_coverage()
-        # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
-        self._release_retired_cash_park(run_id)
-        # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ) — midday/close run
-        # every trading day, so this is the most frequent chance to catch a
-        # stop that fired since the last pass and write it back before the
-        # reviewer builds its "what happened today" picture.
-        #
-        # Item 173(2): unlike intra/evening, this site is NOT reordered to run
-        # `_reconcile_fills` first. This session's only `_reconcile_fills` is
-        # conditional and runs later — after `_force_delever` /
-        # `_enforce_gross_ceiling` — SOLELY to flip THIS session's own
-        # FORCE_DELEVER rows so the reviewer can see them; it is not the
-        # unscoped stale-'submitted' sweep intra/evening run. Moving it ahead
-        # of the ceiling logic would reconcile rows that don't exist yet, so
-        # the reorder does not apply here.
-        reco = None
-        try:
-            reco = self._reconcile_stop_out_fills(run_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "%s stop-out reconcile failed (non-fatal): %s",
-                session_type, exc,
-            )
-        # Item 101: surface a broker-made stop-out / re-protection to owner.
-        self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
-
-        # 1. Sync positions (snapshot into ctx)
-        account = self.broker.get_account()
-        positions = self.broker.get_positions()
-        cash = account["cash"]
-        total_value = account["portfolio_value"]
-        last_equity = account.get("last_equity", total_value)
-        # Carries the P&L block out of the paid-suspension return paths too,
-        # which read the account and then reported "not available".
-        self._record_account_snapshot(total_value, last_equity)
-        ctx.account = account
-        ctx.positions = positions
-        ctx.cash = cash
-        ctx.deployable_cash = self._compute_deployable_cash(cash, positions)
-        ctx.total_value = total_value
-        ctx.last_equity = last_equity
-
-        # Replace the positions snapshot (drops rows for symbols no longer held).
-        self._sync_positions_from_broker(positions)
-
-        # 1a. Cash-only safety net — force-sell if the account drifted into
-        # margin. Refreshes ctx fields on completion.
-        forced_orders = self._force_delever(ctx)
-
-        # 1b. Spec §11.2 — the gross-exposure ceiling and its de-levering
-        # ladder. Runs on midday and close too, not just the morning: the
-        # ceiling steps down on measured drawdown, and waiting for tomorrow's
-        # session to act on it is the coupling the ladder exists to avoid.
-        # Computed from account state alone — no agent output is an input.
-        forced_orders = list(forced_orders) + self._enforce_gross_ceiling(ctx)
-        if forced_orders:
-            # Reconcile immediately so the FORCE_DELEVER rows flip from
-            # fill_status='submitted' to 'filled' before the reviewer's
-            # morning_trades query (executed_only=True) is built. Otherwise
-            # the reviewer can't see the same-session forced sells in
-            # system_action_lines and would reason about a shrunken book
-            # without the explanation.
-            self._reconcile_fills(ctx)
-        positions = ctx.positions
-        cash = ctx.cash
-        total_value = ctx.total_value
-        last_equity = ctx.last_equity
-        self._sync_positions_from_broker(positions)
-
-        # Today's P&L for the Telegram feed (item: "Session P&L" rename) —
-        # same basis as `run_intra_check`/`run_evening`: the broker's own
-        # last_equity (prior trading-day close), not a run-scoped figure.
-        daily_pnl = (total_value - last_equity) if last_equity else 0.0
-        daily_return_pct = (daily_pnl / last_equity * 100) if last_equity else 0.0
-        total_pnl, total_return_pct, total_pnl_since = (
-            self._total_pnl_since_reset(total_value)
-        )
-
-
-        # 1b. (DELETED 2026-09-12, owner decision.) A midday "auto take-profit"
-        # used to sit here: sell 15% of any position once its unrealised
-        # gain reached 30%. Both numbers were tuned off ONE trade (a GOOGL
-        # trim at +27% on 2026-04-30) — hindsight-tuning on n=1 — and, more
-        # fundamentally, it was a preset profit target: a fixed fraction at
-        # a fixed gain decided in advance with no reference to what the
-        # instrument is doing. The owner removed that class of logic when he
-        # removed reward:risk as a universal gate: the reward side of a
-        # trade cannot be predetermined because the holding period is
-        # unknown, and profit-taking belongs to the trailing stop
-        # (`src/risk/trailing.py`). The rule predated QAMC and was never
-        # ratified against that doctrine. The ONLY exit rule is the
-        # trailing stop; `tests/test_pipeline.py::
-        # test_no_fixed_gain_automatic_profit_trim_exists` fails if a
-        # fixed-gain trim is reintroduced.
-
-        # 1c. Ex-dividend stop adjustment (both sessions — a dividend tomorrow
-        # is still a dividend tomorrow no matter which session looks at it).
-        exdiv_orders = self._handle_ex_dividends(positions, run_id)
-
-        # Ex-dividend actions and all protection reconciliation above are
-        # deterministic. A latched paid-analysis breaker stops only at this
-        # boundary, before news/reviewer model requests.
-        orders = list(forced_orders) + list(exdiv_orders)
-        try:
-            self._require_paid_analysis(f"{session_type}_analysis")
-        except PaidAnalysisSuspended as exc:
-            self._reconcile_fills()
-            return self._paid_suspension_after_late_safety(
-                run_id, session=session_type, error=exc,
-                where=f"{session_type}-paid-preflight",
-                orders=orders,
-                extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps,
-                       # Spec §11.2 — gross exposure and its ceiling.
-                       "leverage": dict(ctx.leverage)},
-            )
-
-        # 2. News + Earnings update — capture developments since morning.
-        try:
-            # held_symbols: current book, cash-sweep vehicle excluded (see
-            # _news_held_symbols), in broker snapshot order (stable within
-            # this run — see _run_news_update's ordering contract). No
-            # separate "candidate_symbols" concept exists at this point in
-            # the midday/close path (unlike MorningResearchStage, which has
-            # ctx.admitted_symbols computed before news fetches) — a
-            # deliberate scope limit, not an oversight; see the PR
-            # description.
-            session_news, session_news_coverage = self._run_news_update(
-                run_id, session=session_type,
-                held_symbols=self._news_held_symbols(positions),
-            )
-        except PaidAnalysisSuspended as exc:
-            self._reconcile_fills()
-            return self._paid_suspension_after_late_safety(
-                run_id, session=session_type, error=exc,
-                where=f"{session_type}-paid-news",
-                orders=orders,
-                extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps,
-                       # Spec §11.2 — gross exposure and its ceiling.
-                       "leverage": dict(ctx.leverage)},
-            )
-        if session_news_coverage is not None and session_news_coverage.status != "ok":
-            # midday/close have no data_status mechanism of their own (that
-            # is a morning-only construct today — see MorningResearchStage),
-            # so a degraded wire here would otherwise be silent even after
-            # the 2026-08-28 coverage fix. At minimum this keeps it out of
-            # the log-only failure mode the fix exists to close.
-            logger.warning("%s: %s", session_type, session_news_coverage.describe())
-        if session_news:
-            logger.info("%s news: %s", session_type.capitalize(), session_news.pm_briefing[:200])
-        try:
-            _, session_earnings = self._load_earnings_analyses(
-                run_id, session=session_type, ctx=ctx,
-            )
-        except PaidAnalysisSuspended as exc:
-            self._reconcile_fills()
-            return self._paid_suspension_after_late_safety(
-                run_id, session=session_type, error=exc,
-                where=f"{session_type}-paid-earnings",
-                orders=orders,
-                extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps,
-                       # Spec §11.2 — gross exposure and its ceiling.
-                       "leverage": dict(ctx.leverage)},
-            )
-        except Exception as e:  # noqa: BLE001 — reviewer proceeds without earnings
-            logger.error("%s: earnings load failed (continuing without): %s",
-                         session_type, e)
-            session_earnings = []
-
-        circuit_state = self._cost_circuit_status()
-        if circuit_state.get("suspended"):
-            self._reconcile_fills()
-            return self._paid_suspension_after_late_safety(
-                run_id, session=session_type, orders=orders,
-                where=f"{session_type}-post-news-circuit-open",
-                error=PaidAnalysisSuspended(
-                    str(circuit_state.get("trigger_detail") or "cost circuit opened")
-                ),
-                extra={"session": session_type, "positions": len(positions),
-                       "stop_coverage_gaps": coverage_gaps,
-                       # Spec §11.2 — gross exposure and its ceiling.
-                       "leverage": dict(ctx.leverage)},
-            )
-
-        # 3. LLM position review — memory-heavy, 6-step CoT.
-        macro_summary = self.macro.get_macro_summary()
-        macro_coverage = self.macro.last_coverage
-        if isinstance(macro_coverage, MacroCoverage) and macro_coverage.status != "ok":
-            # Same gap noted for news coverage just above: midday/close have
-            # no data_status mechanism of their own (that is a morning-only
-            # construct today — see MorningResearchStage), so a degraded
-            # FRED fetch here would otherwise be silent even after the
-            # Phase 4.2 macro-coverage fix. At minimum this keeps it out of
-            # the log-only failure mode the fix exists to close.
-            logger.warning("%s: %s", session_type, macro_coverage.describe())
-        review = None
-        # Adjudicated take-profit revision flags, filed per symbol whichever
-        # way each one goes (revision, named refusal, named data fault).
-        target_revisions: list[dict] = []
-        # Pre-LLM orders (take-profit + ex-div) feed into the same bucket.
-
-        # LLM view: the cash-sweep vehicle is cash-equivalent, not a
-        # position — the reviewer must never see it, hold-grade it, or sell
-        # it. Raw `positions` stays in scope for the paths that need broker
-        # truth (emergency liquidate below sells EVERYTHING, parked cash
-        # included).
-        #
-        # 2026-08-19 SGOV/deployable-liquidity forensic: crediting the
-        # parked vehicle's market value straight into "cash" (2026-07-16
-        # audit's fix) told the reviewer money was instantly available when
-        # it was not — Alpaca settlement (T+1) means a same-day SGOV
-        # liquidation is not reliably spendable by the time execution
-        # rechecks. `review_cash` is now `ctx.deployable_cash` (Alpaca's
-        # settled non-margin buying power); `reserve_balance` carries the
-        # parked value separately, informationally, so the reviewer still
-        # knows the reserve exists without treating it as instant cash.
-        review_positions = positions
-        review_cash = ctx.deployable_cash
-        reserve_balance = 0.0
-        sweeper = self._sweeper()
-        if sweeper is not None:
-            review_positions, parked = sweeper.split_positions(positions)
-            if parked is not None:
-                reserve_balance = sweeper.parked_value(positions)
-
-        if review_positions:
-            # Sweep any straggler fills before building the reviewer prompt.
-            # run_morning's final reconcile is run_id-scoped, so a BUY whose
-            # fill landed AFTER morning's wait window stays at fill_status=
-            # 'submitted' in DB even though broker shows the position. The
-            # reviewer's executed_only=True query would skip it, losing
-            # entry/stop/thesis context for that holding. An unscoped
-            # reconcile here is cheap (1 broker call per pending row) and
-            # closes that gap. Codex r11 P2.
-            self._reconcile_fills()
-            morning_trades = self.db.get_trades(
-                limit=50, today_only=True, executed_only=True,
-            )
-
-            # Board item 89 defect 3 (and item 104's eighth trade-affecting
-            # prompt defect, which is the same root cause one layer down).
-            #
-            # `morning_trades` is deliberately `today_only=True` — the
-            # reviewer's "what already happened this session" block depends
-            # on that and must keep it. But it is ALSO the only source the
-            # reviewer had for a position's ENTRY THESIS, so every position
-            # opened on an earlier day rendered "Entry thesis: (unavailable
-            # — position opened before today)". The reason was never
-            # missing: it is on the entry row in `trades`, which the lookup
-            # simply never searched. The reviewer then wrote "thesis
-            # unavailable" into its hold reasons, and those reasons go
-            # straight into the owner's message.
-            #
-            # `get_symbol_last_buy` is the existing unrestricted lookup —
-            # the same "most recent executed opening row for this symbol,
-            # no date bound" query the evening thesis-health context and
-            # the cockpit's "why do we hold this" endpoint already use. No
-            # second lookup is written here, and nothing about the review
-            # DECISION changes: this only stops a fact the desk already
-            # holds from being reported as absent.
-            entry_context: dict[str, dict] = {}
-            for _p in review_positions:
-                _sym = getattr(_p, "symbol", None)
-                if not _sym:
-                    continue
-                # A short's opening row is a SHORT, not a BUY, and mixing
-                # the two would hand a short a long's thesis and stop —
-                # the precise confusion `get_symbol_last_buy` refuses by
-                # taking the opening action explicitly.
-                _action = "SHORT" if getattr(_p, "qty", 0) < 0 else "BUY"
-                try:
-                    _row = self.db.get_symbol_last_buy(_sym, action=_action)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        "%s: entry-context lookup failed for %s: %s",
-                        session_type, _sym, e,
-                    )
-                    continue
-                if _row:
-                    entry_context[_sym] = _row
-
-            # Reuse morning's macro_analysis from macro_store so the
-            # reviewer sees the same regime the PM committed to today.
-            macro_analysis_dict = None
-            try:
-                macro_analysis_dict = self.macro_store.load_last_state()
-            except Exception as e:
-                logger.warning("%s: macro_store load failed: %s", session_type, e)
-
-            # Pre-compute deterministic per-position metrics.
-            #
-            # Phase 3.1: this used to fetch `avg_hold_days` from the rolling
-            # 45-day realized-trade calibration and hand it to the facts
-            # builder as the denominator of `pace`. That is the feedback loop —
-            # the system's own selling behaviour set the bar every surviving
-            # position was measured against. The horizon is now pinned at entry
-            # on the trade row and the calibration query is gone from this
-            # path entirely, so there is nothing to accidentally reconnect.
-            position_facts = self._build_position_facts(
-                review_positions, morning_trades, total_value,
-            )
-
-            # Phase 3.2 / audit §1.5 — the reviewer's memory of its OWN prior
-            # numbers. `_build_own_recent_decisions` below replays past ACTIONS
-            # and drops HOLDs, so without this the seat rebuilds its view from
-            # scratch every session and can report a position deteriorating
-            # while everything it measured six hours ago improved. That is
-            # exactly how EPD and MRVL were sold on intact theses.
-            metric_deltas = self._build_review_metric_deltas(
-                position_facts, run_id=run_id,
-            )
-
-            # Memory layers — share the same helpers PM uses.
-            weekly_narrative = self._build_weekly_narrative()
-            macro_trajectory = self._build_macro_trajectory()
-            active_state_changes = self._build_active_state_changes()
-            calibration_note = self._build_calibration_note()
-            own_recent_decisions = self._build_own_recent_decisions()
-            # v2: evening's per-trade grades feed back into position_reviewer.
-            # 14-day rolling counts of correct/premature/wrong SELLs (and BUYs)
-            # let the reviewer lean patient when past SELLs trended premature.
-            trade_grade_summary = self._build_trade_grade_summary(lookback_days=14)
-            # Same-day trim discipline — feeds the prompt + the executor.
-            # See _symbols_already_trimmed_today for the AMZN-2026-05-04 origin.
-            #
-            # 2026-09-17 XOM incident: _symbols_already_trimmed_today reads
-            # today's trade rows with no notion of what is still held — a
-            # symbol that was fully SOLD (not merely trimmed) this morning
-            # comes back exactly like one that still has shares open. The
-            # prompt section this feeds tells the LLM to render a HOLD
-            # decision for every name in the set ("HOLD them at this
-            # session unless..."), so a fully-closed name that never
-            # appears in `review_positions` (broker truth, fetched above)
-            # still got a fabricated action out of the model — 7 actions
-            # returned against 6 real broker positions. Intersect with the
-            # symbols actually being reviewed right here, at the one place
-            # both sets are in scope, so a sold-out name can never reach
-            # the reviewer's prompt or its action list again.
-            already_trimmed_today = self._symbols_already_trimmed_today() & {
-                p.symbol for p in review_positions
-            }
-            # Board item 74 — the seat must SEE which triggers it has already
-            # spent today, or the executor's refusal is an invisible filter.
-            # Same text the enforcement reads, so prompt and gate cannot rot
-            # apart. A failed read renders nothing rather than claiming
-            # nothing is spent.
-            try:
-                from src.risk.spent_trigger import (
-                    format_spent_triggers_block, keep_executed_acted_triggers,
-                    parse_acted_triggers,
-                )
-                _acted_rows = self.db.get_acted_exit_triggers_today()
-                # Same fill verification the executor applies, so the seat is
-                # never told a trigger is spent by a cut that sold nothing.
-                _executed_ids = {
-                    str(r.get("broker_order_id"))
-                    for r in (self.db.get_trades(today_only=True, limit=200) or [])
-                    if r.get("broker_order_id")
-                    and self._trade_executed_or_pending(r)
-                }
-                _acted = keep_executed_acted_triggers(
-                    None if _acted_rows is None else parse_acted_triggers(_acted_rows),
-                    executed_order_ids=_executed_ids,
-                )
-                spent_triggers_block = (
-                    "" if _acted is None else format_spent_triggers_block(
-                        _acted, {p.symbol for p in review_positions},
-                    )
-                )
-            except Exception as _e:  # noqa: BLE001
-                logger.warning(
-                    "spent trigger: prompt block unavailable (%s) — the "
-                    "executor still enforces it", _e,
-                )
-                spent_triggers_block = ""
-
-            yesterday_insights = self.db.get_latest_insights(before_date=session_date_key())
-            recent_performance = self._compute_recent_performance(last_equity)
-
-            # Margin capacity for the reviewer prompt — WORDING ONLY, mirrors
-            # the same fix threaded into the PM prompt (`DecisionStage.run`
-            # in `src/pipeline_stages.py`). Reuses the EXACT §11.2
-            # computation execution's submit loop sizes entries against
-            # (`_entry_deployment_budget`, which itself resolves the ladder
-            # via `_session_gross_ceiling`) — never a second formula. Book
-            # state here (positions/equity/held-gross) has not changed since
-            # ctx was built above, so this is the same headroom execution
-            # will see for this session's entries.
-            from src.pipeline_stages import (
-                _entry_deployment_budget, _session_gross_ceiling,
-            )
-            margin_headroom_usd, margin_ladder_backed, _margin_headroom_note = (
-                _entry_deployment_budget(
-                    self, ctx, review_positions, total_value, review_cash,
-                )
-            )
-            _margin_ceiling = _session_gross_ceiling(self, ctx)
-            margin_ladder_multiple = (
-                _margin_ceiling.ceiling_x if _margin_ceiling is not None else None
-            )
-            margin_ladder_rung = (
-                _margin_ceiling.rung if _margin_ceiling is not None else None
-            )
-
-            review_kwargs = dict(
-                    positions=review_positions,
-                    macro_summary=macro_summary,
-                    cash_balance=review_cash,
-                    reserve_balance=reserve_balance,
-                    total_value=total_value,
-                    session_type=session_type,
-                    position_facts=position_facts,
-                    metric_deltas=metric_deltas,
-                    morning_trades=morning_trades,
-                    # Board item 89 defect 3 — see the build above.
-                    entry_context=entry_context,
-                    news_intel=session_news,
-                    earnings_analyses=session_earnings,
-                    macro_analysis=macro_analysis_dict,
-                    weekly_narrative=weekly_narrative,
-                    macro_trajectory=macro_trajectory,
-                    active_state_changes=active_state_changes,
-                    calibration_note=calibration_note,
-                    own_recent_decisions=own_recent_decisions,
-                    trade_grade_summary=trade_grade_summary,
-                    yesterday_insights=yesterday_insights,
-                    recent_performance=recent_performance,
-                    already_trimmed_today=already_trimmed_today,
-                    spent_triggers_block=spent_triggers_block,
-                    allow_margin=bool(getattr(self.config.risk, "allow_margin", False)),
-                    margin_headroom_usd=margin_headroom_usd,
-                    margin_ladder_backed=margin_ladder_backed,
-                    margin_ladder_multiple=margin_ladder_multiple,
-                    margin_ladder_rung=margin_ladder_rung,
-            )
-            try:
-                review, md_result = self.position_reviewer.review(**review_kwargs)
-            except PaidAnalysisSuspended as exc:
-                self._reconcile_fills()
-                return self._paid_suspension_after_late_safety(
-                    run_id, session=session_type, error=exc,
-                    where=f"{session_type}-paid-reviewer",
-                    orders=orders,
-                    extra={"session": session_type, "positions": len(positions),
-                           "stop_coverage_gaps": coverage_gaps,
-                           # Spec §11.2 — gross exposure and its ceiling.
-                           "leverage": dict(ctx.leverage)},
-                )
-            review_log_kwargs = agent_log_kwargs(md_result)
-            if review is None:
-                review_log_kwargs["status"] = "position_review_parse_error"
-            self.db.insert_agent_log(
-                **seat_acceptance_kwargs(
-                    "position_review_parse_error" if review is None else None,
-                    result=md_result,
-                ),
-                agent_name="position_reviewer", run_id=run_id,
-                input_summary=(
-                    f"{session_type} | {len(review_positions)} positions, ${total_value:.0f} total"
-                ),
-                input_message=md_result.user_message,
-                output_summary=review.overall_assessment if review else "parse_error",
-                full_response=md_result.raw_text,
-                model=md_result.model,
-                tokens_used=md_result.tokens_used,
-                input_tokens=md_result.input_tokens,
-                output_tokens=md_result.output_tokens,
-                cost_usd=md_result.cost_usd,
-                **review_log_kwargs,
-            )
-
-            # Substantiation pass on the exit side (2026-09-18). Heals the
-            # structured trigger from the prose, RE-ASKS once for anything
-            # still unsubstantiated, and records a durable reason for what
-            # survives both. See `_substantiate_exit_triggers`.
-            review = self._substantiate_exit_triggers(
-                review, ctx=ctx, run_id=run_id, review_kwargs=review_kwargs,
-            )
-
-            # Refresh the broker book before dispatching the LLM's
-            # per-position action list: the locals here date from BEFORE the
-            # review (minutes of tape ago). Falls back to the pre-review
-            # snapshot if the refresh fails.
-            try:
-                fresh_positions = self.broker.get_positions()
-                if fresh_positions:
-                    positions = fresh_positions
-            except Exception as e:  # noqa: BLE001
-                logger.warning("post-review position refresh failed "
-                               "(using pre-review snapshot): %s", e)
-            # Phase 3.7 — deterministic trailing FIRST, before the LLM's
-            # discretionary TRAIL_STOP is considered. Arithmetic does not
-            # need a language model's permission, and a winner's stop
-            # should not depend on one remembering to propose a move.
-            orders.extend(
-                self._apply_deterministic_trails(review_positions, run_id=run_id)
-            )
-
-            # Phase 3.4 — AGENTS.md puts AI Risk in the chain for exits
-            # as well as entries. Until this landed the entire sell side
-            # skipped the veto layer the buy side has always had.
-            risk_vetoed, _exit_verdict = self._risk_review_exits(
-                review, review_positions, run_id=run_id,
-                total_value=total_value, macro_summary=macro_summary,
-                position_facts=position_facts,
-                # This loop fetched all of these before the position
-                # reviewer ran; until 2026-09-13 none of them reached the
-                # AI Risk seat, which was then asked to audit the exits
-                # against news and drawdown state it had never been shown.
-                news_intel=session_news,
-                earnings_analyses=session_earnings,
-                cash=review_cash,
-                reserve_balance=reserve_balance,
-                recent_performance=recent_performance,
-            )
-            orders.extend(self._midday_execute_llm_actions(
-                review_positions, review, run_id,
-                already_trimmed_today=already_trimmed_today,
-                metric_deltas=metric_deltas,
-                risk_vetoed_symbols=risk_vetoed,
-                position_facts=position_facts,
-            ))
-
-            # Take-profit revision flags, adjudicated LAST — after every
-            # exit decision this session makes. A re-derived target
-            # therefore cannot reach this session's exits even in
-            # principle; and because progress/pace are measured against
-            # the entry target, it cannot reach a later session's
-            # exit-guard veto either. Places no orders: nothing here
-            # exits anything, and the trailing stop remains the only
-            # automatic exit (PR #321).
-            #
-            # NOT the same as "it can never contribute to a sale" (item
-            # 194, corrected 2026-10-01). The LIVE target still feeds
-            # `distance_to_target_pct` in the position facts the reviewing
-            # model reads, so a revised target can still influence a sale
-            # through that model's prose on a LATER session. What is true
-            # is narrower and worth stating precisely: no DETERMINISTIC
-            # gate reads it — not the exit guard, not progress or pace,
-            # and since item 194 not the trailing-stop regime either.
-            try:
-                # Runs over the WHOLE open book, not only the symbols a
-                # seat flagged (item 194); `seat` here is only the label
-                # worn by the outcomes that a seat did raise.
-                target_revisions = self._adjudicate_target_revision_flags(
-                    review, review_positions, run_id=run_id,
-                    seat="position_reviewer",
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "target revision sweep failed (non-fatal, no target "
-                    "was changed): %s", exc,
-                )
-                target_revisions = []
-
-            # Snapshot AFTER the review so the next session compares against
-            # what this one actually saw. Written even when the review failed:
-            # the metrics are deterministic and their continuity is the point.
-            self._persist_review_metrics(position_facts, run_id=run_id)
-
-        logger.info("%s: %d positions, risk=%s, %d orders",
-                     session_type.capitalize(), len(positions),
-                     review.risk_level if review else "no_positions",
-                     len(orders))
-        # Reconcile everything still marked submitted (today's new orders +
-        # any lingering from morning that didn't reach terminal in time).
-        self._reconcile_fills()
-
-        # Session execution (reviewer exits, sweep) may have changed the
-        # book since the start-of-session snapshot.
-        self._sync_positions_from_broker()
-
-        return {
-            "status": (
-                "reviewed" if not review_positions or review is not None
-                else "position_review_parse_error"
-            ),
-            "session": session_type,
-            "positions": len(positions),
-            "review": review.model_dump() if review else None,
-            "orders": orders,
-            "run_id": run_id,
-            "stop_coverage_gaps": coverage_gaps,
-            # Every take-profit revision flag this session adjudicated, with
-            # its basis code — read by the cockpit, which draws the target.
-            "target_revisions": target_revisions,
-            # Spec §11.2 — gross exposure, its ladder-resolved ceiling and the
-            # distance to forced liquidation, for the operator alert.
-            "leverage": dict(ctx.leverage),
-            # Telegram P&L line ("Session P&L" rename): today's account
-            # change (broker last_equity basis, same as run_intra_check/
-            # run_evening) plus total since the last recorded baseline.
-            "daily_pnl": daily_pnl,
-            "daily_return_pct": daily_return_pct,
-            "total_pnl": total_pnl,
-            "total_return_pct": total_return_pct,
-            "total_pnl_since": total_pnl_since,
-        }
-
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/position_review_session.py)."""
+        return PositionReviewSession(
+            activate_cost_session=self._collab("_activate_cost_session"),
+            adjudicate_target_revision_flags=self._collab("_adjudicate_target_revision_flags"),
+            apply_deterministic_trails=self._collab("_apply_deterministic_trails"),
+            build_active_state_changes=self._collab("_build_active_state_changes"),
+            build_calibration_note=self._collab("_build_calibration_note"),
+            build_macro_trajectory=self._collab("_build_macro_trajectory"),
+            build_own_recent_decisions=self._collab("_build_own_recent_decisions"),
+            build_position_facts=self._collab("_build_position_facts"),
+            build_review_metric_deltas=self._collab("_build_review_metric_deltas"),
+            build_trade_grade_summary=self._collab("_build_trade_grade_summary"),
+            build_weekly_narrative=self._collab("_build_weekly_narrative"),
+            compute_deployable_cash=self._collab("_compute_deployable_cash"),
+            compute_recent_performance=self._collab("_compute_recent_performance"),
+            cost_circuit_status=self._collab("_cost_circuit_status"),
+            drain_pending_protection_restores=self._collab("_drain_pending_protection_restores"),
+            drain_pending_repegs=self._collab("_drain_pending_repegs"),
+            enforce_gross_ceiling=self._collab("_enforce_gross_ceiling"),
+            force_delever=self._collab("_force_delever"),
+            handle_ex_dividends=self._collab("_handle_ex_dividends"),
+            is_trading_day=self._collab("_is_trading_day"),
+            kill_switch_halt_result=self._collab("_kill_switch_halt_result"),
+            load_earnings_analyses=self._collab("_load_earnings_analyses"),
+            midday_execute_llm_actions=self._collab("_midday_execute_llm_actions"),
+            news_held_symbols=self._collab("_news_held_symbols"),
+            paid_suspension_after_late_safety=self._collab("_paid_suspension_after_late_safety"),
+            persist_review_metrics=self._collab("_persist_review_metrics"),
+            reconcile_fills=self._collab("_reconcile_fills"),
+            reconcile_orphan_pending_submits=self._collab("_reconcile_orphan_pending_submits"),
+            reconcile_stop_coverage=self._collab("_reconcile_stop_coverage"),
+            reconcile_stop_out_fills=self._collab("_reconcile_stop_out_fills"),
+            record_account_snapshot=self._collab("_record_account_snapshot"),
+            release_retired_cash_park=self._collab("_release_retired_cash_park"),
+            require_paid_analysis=self._collab("_require_paid_analysis"),
+            risk_review_exits=self._collab("_risk_review_exits"),
+            run_news_update=self._collab("_run_news_update"),
+            substantiate_exit_triggers=self._collab("_substantiate_exit_triggers"),
+            surface_reconcile_outcomes=self._collab("_surface_reconcile_outcomes"),
+            sweeper=self._collab("_sweeper"),
+            symbols_already_trimmed_today=self._collab("_symbols_already_trimmed_today"),
+            sync_positions_from_broker=self._collab("_sync_positions_from_broker"),
+            total_pnl_since_reset=self._collab("_total_pnl_since_reset"),
+            trade_executed_or_pending=self._collab("_trade_executed_or_pending"),
+            broker=self._collab("broker"),
+            config=self._collab("config"),
+            db=self._collab("db"),
+            macro=self._collab("macro"),
+            macro_store=self._collab("macro_store"),
+            position_reviewer=self._collab("position_reviewer"),
+        ).run(session_type)
     def run_earnings_preprocess(self) -> dict:
         """Pre-market earnings analysis, plus the one true sentence its
         P&L block can say.
@@ -3921,619 +3332,47 @@ class TradingPipeline(
             )
 
     def _run_evening_body(self) -> dict:
-        ctx = RunContext.start("evening")
-        run_id = ctx.run_id
-        logger.info("=== Evening report: %s ===", run_id)
-
-        if not self._is_trading_day():
-            logger.info("Evening run skipped: market closed for non-trading day")
-            return {"status": "market_holiday", "analysis": None, "run_id": run_id}
-
-        self._activate_cost_session(run_id, "evening")
-
-        # Drain orphaned protection-restore intents — last chance before
-        # the trading day ends. If close-session bailed and the SELL has
-        # since gone terminal, recover coverage now rather than carrying
-        # a naked position overnight. Codex r8 #2.
-        drained = self._drain_pending_protection_restores()
-        self._drain_pending_repegs()
-        self._reconcile_orphan_pending_submits()  # audit F4
-        # Broker-truth coverage audit — last check before carrying positions
-        # overnight (independent of the WAL).
-        coverage_gaps = self._reconcile_stop_coverage()
-        # Sweep submitted orders so canceled/expired orders do not get
-        # narrated as real trades, and partial terminal fills are reflected
-        # in the trade list before the evening prompt is built.
-        #
-        # Item 173(2): this runs BEFORE the stop-out reconcile below, not
-        # after. A SELL this session submitted but hasn't yet reconciled
-        # leaves the ledger believing the position is still open
-        # (get_symbols_with_open_ledger_qty ignores 'submitted' rows) while
-        # the broker has already reduced it — a positive gap the stop-out
-        # reconciler can't explain, because the submitted SELL's
-        # broker_order_id is already in get_known_broker_order_ids so its
-        # fill is filtered out of new_fills, and it pages a false CRITICAL
-        # "records disagree with broker". Reconciling fills first flips that
-        # SELL to executed, the gap closes, and the stop-out check stays quiet.
-        self._reconcile_fills()
-        # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ) — last chance before
-        # the daily P&L snapshot below is computed, so a same-day stop-out
-        # is reflected in tonight's report rather than showing up as an
-        # unexplained gap the next time someone looks at realized_pnl.
-        reco = None
-        try:
-            reco = self._reconcile_stop_out_fills(run_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("evening stop-out reconcile failed (non-fatal): %s", exc)
-        # Item 101: surface a broker-made stop-out / re-protection to owner.
-        self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
-
-        # 1. Record daily PnL — use Alpaca's last_equity (previous trading-day close)
-        # as the baseline. This correctly handles weekends/holidays (Alpaca updates
-        # last_equity only on trading days) and doesn't depend on whether yesterday's
-        # evening run actually persisted a snapshot to our own DB.
-        account = self.broker.get_account()
-        positions = self.broker.get_positions()
-        total_value = account["portfolio_value"]
-        last_equity = account.get("last_equity", total_value)
-        today_str = session_date_key()  # ET trading-day key — stable across host TZ
-
-        if last_equity > 0:
-            daily_pnl = total_value - last_equity
-            daily_return_pct = daily_pnl / last_equity * 100
-        else:
-            daily_pnl = 0.0
-            daily_return_pct = 0.0
-        ctx.account = account
-        ctx.positions = positions
-        ctx.total_value = total_value
-        ctx.last_equity = last_equity
-        ctx.daily_pnl = daily_pnl
-        # Sync the full broker book (before the LLM-view split below).
-        # Evening's Telegram snapshot reads this table, not the in-memory list.
-        self._sync_positions_from_broker(ctx.positions)
-
-        # LLM view: hide the cash-sweep vehicle from evening's position
-        # narratives (facts / thesis-health / missed-ops held-set) — parked
-        # T-bills have no thesis to review. ctx keeps broker truth.
-        sweeper = self._sweeper()
-        if sweeper is not None:
-            positions, _parked = sweeper.split_positions(positions)
-
-        # Phase 6 (§6.3b): today's P&L expressed against capital actually AT
-        # RISK, not just total equity — reuses the same audit §1.3 heat
-        # calculation (`_build_portfolio_heat` -> `src.risk.metrics.
-        # portfolio_heat`) the risk-manager prompt already trusts, rather
-        # than recomputing it. None (not 0.0) on a failed build, so the
-        # notifier can say "unknown" instead of a fabricated number.
-        try:
-            risk_heat = self._build_portfolio_heat(positions, total_value)
-            risk_capital_dollars = (
-                risk_heat.budget_risk_dollars if risk_heat is not None else None
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("evening: risk-capital heat build failed: %s", e)
-            risk_capital_dollars = None
-
-
-        # Phase 4 #5: daily_pnl write is deferred to the atomic
-        # save_evening_snapshot() below, along with insights. Doing both in
-        # one transaction means a crash between them doesn't leave next
-        # morning reading a P&L number with no insights narrative attached.
-        # Fallback: if the evening LLM fails (analysis is None), we still
-        # save the daily_pnl alone below to preserve the P&L audit trail.
-
-        # This boundary is intentionally after broker protection/fill
-        # reconciliation and the deterministic P&L snapshot, but before the
-        # first paid news/model request. A latched breaker still persists the
-        # P&L audit row and returns a truthful suspended status.
-        try:
-            self._require_paid_analysis("evening_news")
-        except PaidAnalysisSuspended as exc:
-            equity_close = None
-            try:
-                closes = self.broker.get_recent_daily_closes(lookback_days=10)
-                if closes and closes[-1][0] == today_str:
-                    equity_close = closes[-1][1]
-            except Exception as close_exc:  # noqa: BLE001
-                logger.warning("suspended evening: 4pm close fetch failed: %s", close_exc)
-            self.db.insert_daily_pnl(
-                date=today_str,
-                total_value=total_value,
-                daily_pnl=daily_pnl,
-                daily_return_pct=daily_return_pct,
-                equity_close=equity_close,
-            )
-            payload = self._paid_suspended_payload(run_id, error=exc)
-            payload.update(
-                analysis=None,
-                total_value=total_value,
-                daily_pnl=daily_pnl,
-                daily_return_pct=daily_return_pct,
-                equity_close=equity_close,
-                stop_coverage_gaps=coverage_gaps,
-            )
-            return payload
-
-        # 2. News + Earnings update — capture end-of-day developments
-        try:
-            # Same held-symbols-only scope as run_position_review — see the
-            # comment there. No separate candidate list exists pre-fetch in
-            # this path. `positions` here was already sweeper-split above,
-            # so _news_held_symbols' own split is a no-op; called anyway to
-            # keep this call site identical to the other two.
-            evening_news, evening_news_coverage = self._run_news_update(
-                run_id, session="evening",
-                held_symbols=self._news_held_symbols(positions),
-            )
-        except PaidAnalysisSuspended as exc:
-            self.db.insert_daily_pnl(
-                date=today_str, total_value=total_value,
-                daily_pnl=daily_pnl, daily_return_pct=daily_return_pct,
-            )
-            payload = self._paid_suspended_payload(run_id, error=exc)
-            payload.update(
-                analysis=None, total_value=total_value, daily_pnl=daily_pnl,
-                daily_return_pct=daily_return_pct,
-                stop_coverage_gaps=coverage_gaps,
-            )
-            return payload
-        if evening_news_coverage is not None and evening_news_coverage.status != "ok":
-            # Same gap noted in run_position_review: evening has no
-            # data_status mechanism of its own to carry this further, so at
-            # minimum it does not disappear into a log-only "ok".
-            logger.warning("evening: %s", evening_news_coverage.describe())
-        if evening_news:
-            logger.info("Evening news: %s", evening_news.pm_briefing[:200])
-        try:
-            _, evening_earnings = self._load_earnings_analyses(run_id, session="evening", ctx=ctx)
-        except Exception as e:  # noqa: BLE001 — evening proceeds without earnings
-            logger.error("evening: earnings load failed (continuing without): %s", e)
-            evening_earnings = []
-
-        try:
-            self._require_paid_analysis("evening_analyst")
-        except PaidAnalysisSuspended as exc:
-            self.db.insert_daily_pnl(
-                date=today_str, total_value=total_value,
-                daily_pnl=daily_pnl, daily_return_pct=daily_return_pct,
-            )
-            payload = self._paid_suspended_payload(run_id, error=exc)
-            payload.update(
-                analysis=None, total_value=total_value, daily_pnl=daily_pnl,
-                daily_return_pct=daily_return_pct,
-                stop_coverage_gaps=coverage_gaps,
-            )
-            return payload
-
-        # 3. LLM evening analysis — daily review and tomorrow outlook
-        macro_summary = self.macro.get_macro_summary()
-        evening_macro_coverage = self.macro.last_coverage
-        if isinstance(evening_macro_coverage, MacroCoverage) and evening_macro_coverage.status != "ok":
-            # Same gap noted in run_position_review / the news coverage
-            # check above: evening has no data_status mechanism of its own
-            # to carry this further, so at minimum it does not disappear
-            # into a log-only "ok".
-            logger.warning("evening: %s", evening_macro_coverage.describe())
-        # Sweep churn (SWEEP_BUY/SWEEP_SELL) is cash parking, not a trading
-        # decision — narrating it to the evening analyst would feed the
-        # learning loops noise (review finding). Fetch extra rows so the
-        # filter doesn't shrink the real-trade view.
-        today_trades = [
-            self._actualize_trade_row(t)
-            for t in self.db.get_trades(limit=30, today_only=True, executed_only=True)
-            if (t.get("action") or "") not in ("SWEEP_BUY", "SWEEP_SELL")
-        ][:20]
-        # Feed yesterday's insights back so evening can grade its own prior outlook
-        # against today's reality — enables calibration over time.
-        prior_outlook = self.db.get_latest_insights(before_date=today_str)
-        # SELL decisions from the last 2 days + each symbol's move since sell.
-        # Evening grades each one {correct|premature|wrong} — the feedback loop
-        # on selling discipline.
-        recent_sells = self._build_recent_sells_for_grading(
-            lookback_days=2,
-            symbols_bars=ctx.symbols_bars,  # empty for evening (no tech fetch) — OK, we use broker price
-        )
-        # v2: mirror SELL grading with BUY grading. Entry quality feedback loop.
-        recent_buys = self._build_recent_buys_for_grading(
-            lookback_days=5, symbols_bars=ctx.symbols_bars,
-        )
-        # v2: meta-calibration — evening sees its own recent tomorrow_bias vs
-        # actual outcomes so it can detect "I've been too bullish 7/10 days".
-        outlook_calibration = self._build_recent_outlook_calibration(lookback=10)
-        # v2: share the PM's 7-day narrative + 14-day active state-change
-        # memory so evening doesn't drift from or repeat its own previous
-        # language unchecked.
-        weekly_narrative = self._build_weekly_narrative()
-        active_state_changes = self._build_active_state_changes()
-
-        # Phase-1 evening-upgrade: deterministic "what did we miss" digest.
-        # Python pre-computes the signal-state context so the LLM's classification
-        # has to cite observable evidence rather than retro-rationalize price.
-        held_set = {p.symbol for p in positions}
-        try:
-            missed_ops_snapshots = self._build_missed_opportunities_digest(
-                lookback_days=5, move_threshold_pct=8.0, top_n=15,
-                current_position_symbols=held_set,
-            )
-        except Exception as e:
-            logger.warning("missed_ops digest failed (proceeding without it): %s", e)
-            missed_ops_snapshots = []
-
-        # Value-lens upgrade (2026-04): per-position 8-week fundamentals
-        # evolution — feeds the new thesis_health_review reasoning step.
-        try:
-            thesis_health_context = self._build_thesis_health_context(positions)
-        except Exception as e:
-            logger.warning(
-                "thesis_health_context failed (proceeding without it): %s", e,
-            )
-            thesis_health_context = {}
-
-        # Replay/shadow mechanism (2026-04 — P2 follow-up): persist the
-        # full evening-analyst input set so a candidate prompt can be
-        # re-scored on the same frozen inputs later via
-        # `scripts/replay_evening.py`. Doesn't affect the live run;
-        # failure here is non-fatal and only logged.
-        try:
-            self._persist_evening_replay_inputs(
-                date_iso=today_str,
-                run_id=run_id,
-                positions=positions,
-                macro_summary=macro_summary,
-                total_value=total_value,
-                daily_pnl=daily_pnl,
-                daily_return_pct=daily_return_pct,
-                today_trades=today_trades,
-                prior_outlook=prior_outlook,
-                recent_sells=recent_sells,
-                recent_buys=recent_buys,
-                news_intel=evening_news,
-                earnings_analyses=evening_earnings,
-                weekly_narrative=weekly_narrative,
-                active_state_changes=active_state_changes,
-                outlook_calibration=outlook_calibration,
-                missed_ops_snapshots=missed_ops_snapshots,
-                thesis_health_context=thesis_health_context,
-            )
-        except Exception as e:
-            logger.warning("evening replay input persistence failed: %s", e)
-
-        analysis = None
-        analysis_error = False
-        try:
-            analysis, ev_result = self.evening_analyst.analyze(
-                positions=positions,
-                macro_summary=macro_summary,
-                total_value=total_value,
-                daily_pnl=daily_pnl,
-                daily_return_pct=daily_return_pct,
-                today_trades=today_trades,
-                prior_outlook=prior_outlook,
-                recent_sells=recent_sells,
-                recent_buys=recent_buys,
-                news_intel=evening_news,
-                earnings_analyses=evening_earnings,
-                weekly_narrative=weekly_narrative,
-                active_state_changes=active_state_changes,
-                outlook_calibration=outlook_calibration,
-                missed_ops_snapshots=missed_ops_snapshots,
-                thesis_health_context=thesis_health_context,
-            )
-        except PaidAnalysisSuspended as exc:
-            self.db.insert_daily_pnl(
-                date=today_str, total_value=total_value,
-                daily_pnl=daily_pnl, daily_return_pct=daily_return_pct,
-            )
-            payload = self._paid_suspended_payload(run_id, error=exc)
-            payload.update(
-                analysis=None, total_value=total_value, daily_pnl=daily_pnl,
-                daily_return_pct=daily_return_pct,
-                stop_coverage_gaps=coverage_gaps,
-            )
-            return payload
-        except Exception as e:
-            from src.agents.base import AgentResult, resolve_provider
-
-            analysis_error = True
-            logger.error("Evening analyst failed: %s", e, exc_info=True)
-            # No call ever completed, so `actual_provider`/model stay unknown
-            # (not fabricated) — but WHAT was requested is known regardless
-            # of the exception, so record that much for attribution.
-            _requested_model = self.config.llm.evening_analyst_model
-            _requested_provider = resolve_provider(
-                _requested_model, self.config.llm.evening_analyst_provider,
-            )
-            ev_result = AgentResult(
-                raw_text=f"[exception] {e}",
-                tokens_used=0,
-                model=self.config.llm.evening_analyst_model,
-                user_message="",
-                requested_model=_requested_model,
-                requested_provider=_requested_provider,
-                provider_requests=0,
-            )
-
-        _ev_log_kwargs = agent_log_kwargs(ev_result)
-        if analysis_error:
-            # agent_log_kwargs() derives "fallback"/"success" from
-            # used_fallback, which is False here (no call ever completed) —
-            # override so a hard failure isn't misreported as a success.
-            _ev_log_kwargs["status"] = "failed"
-        elif analysis is None:
-            _ev_log_kwargs["status"] = "evening_parse_error"
-        self.db.insert_agent_log(
-            **seat_acceptance_kwargs(_ev_log_kwargs.get("status") if _ev_log_kwargs.get("status") in ("failed", "evening_parse_error") else None),
-            agent_name="evening_analyst", run_id=run_id,
-            input_summary=f"${total_value:.0f} total, PnL ${daily_pnl:.2f}",
-            input_message=ev_result.user_message,
-            output_summary=(
-                analysis.daily_summary
-                if analysis
-                else ("analysis_error" if analysis_error else "parse_error")
-            ),
-            full_response=ev_result.raw_text,
-            model=ev_result.model,
-            tokens_used=ev_result.tokens_used,
-            input_tokens=ev_result.input_tokens,
-            output_tokens=ev_result.output_tokens,
-            cost_usd=ev_result.cost_usd,
-            **_ev_log_kwargs,
-        )
-
-        # True close-to-close ("4pm-to-4pm") P&L. account.last_equity is the
-        # PRIOR day's close (stale at the 20:00 ET evening run), and
-        # total_value here is the 8pm after-hours value — neither gives today's
-        # official 4pm close. Alpaca portfolio_history (extended_hours=False)
-        # does: its latest 1D point is today's regular-session close. We report
-        # the clean close-to-close P&L when available and store today's close
-        # for the audit trail; on any gap we fall back to the real-time diff.
-        equity_close = None
-        pnl_4pm = None
-        pnl_4pm_pct = None
-        try:
-            closes = self.broker.get_recent_daily_closes(lookback_days=10)
-            if closes and closes[-1][0] == today_str:
-                equity_close = closes[-1][1]
-                prev_close = closes[-2][1] if len(closes) >= 2 else None
-                # Guard > 0: a negative prior close (corrupted data / underwater
-                # account) would flip the sign of the return %; leave pnl_4pm
-                # None so the headline falls back to the real-time path.
-                if prev_close and prev_close > 0:
-                    pnl_4pm = equity_close - prev_close
-                    pnl_4pm_pct = pnl_4pm / prev_close * 100
-            elif closes:
-                logger.info(
-                    "4pm snapshot: portfolio_history latest date %s != today %s "
-                    "(API lag?) — evening uses the real-time P&L fallback",
-                    closes[-1][0], today_str,
-                )
-            # Self-heal: when portfolio_history is a day behind at the
-            # 20:00 ET evening run (the "API lag?" branch above), that
-            # evening's equity_close landed NULL — but by a LATER evening
-            # the API has caught up on those dates, which are still inside
-            # this lookback window. Backfill any still-NULL rows now.
-            # today_str is excluded because today's row is owned by the
-            # branches above + save_evening_snapshot below: when today's
-            # bar is present the first branch already uses it as the
-            # official close, and when it's absent there is nothing to
-            # backfill yet.
-            for d, close_val in closes:
-                if d == today_str:
-                    continue
-                # Mirror the `prev_close > 0` guard above: Alpaca
-                # portfolio_history can emit 0.0 (pre-funding / account
-                # reset) or non-finite points, and a backfilled value is
-                # permanent (the fill targets NULL-only rows, so a bad
-                # write can never be corrected by a later run) — never
-                # freeze a corrupt equity in. NaN must be caught here
-                # anyway: sqlite binds it as NULL, which would make
-                # backfill report success while storing nothing.
-                if not (math.isfinite(close_val) and close_val > 0):
-                    logger.warning(
-                        "equity_close backfill skipped for %s: suspect "
-                        "equity value %r", d, close_val,
-                    )
-                    continue
-                try:
-                    if self.db.backfill_equity_close(d, close_val):
-                        logger.info(
-                            "equity_close backfilled for %s = %.2f (API lag self-heal)",
-                            d, close_val,
-                        )
-                except Exception as exc:
-                    logger.warning("equity_close backfill failed for %s: %s", d, exc)
-        except Exception as e:
-            logger.warning("4pm snapshot fetch failed: %s — using real-time P&L", e)
-
-        # Save daily_pnl + insights atomically (Phase 4 #5). If the LLM
-        # failed (analysis is None), still record the P&L number so the
-        # audit trail is complete — just with empty insights fields.
-        if analysis:
-            self.db.save_evening_snapshot(
-                date=today_str,
-                total_value=total_value, daily_pnl=daily_pnl,
-                daily_return_pct=daily_return_pct,
-                equity_close=equity_close,
-                tomorrow_outlook=analysis.tomorrow_outlook,
-                lessons=analysis.lessons,
-                suggested_actions=analysis.suggested_actions,
-                risk_rating=analysis.risk_rating,
-                tomorrow_bias=analysis.tomorrow_bias,
-                tomorrow_conviction=analysis.tomorrow_conviction,
-                tomorrow_key_risks=analysis.tomorrow_key_risks,
-                sell_decisions_assessment=analysis.sell_decisions_assessment,
-                # v2: persist structured grades so next-day position_reviewer
-                # can aggregate counts into its "lean patient" bias.
-                sell_grades=analysis.sell_grades,
-                buy_grades=analysis.buy_grades,
-                # Phase-1 upgrade: per-day missed opportunities feed PM's L3d
-                # memory next morning and the quarterly meta-reflector's
-                # theme_coverage_report.
-                missed_opportunities=analysis.missed_opportunities,
-                # Defect (d) fix: these four were produced by the LLM every
-                # night and declared on EveningReport, but had no parameter
-                # here — dropped before ever reaching disk.
-                # thesis_updates/selection_rules/discipline_notes feed
-                # tomorrow's portfolio_manager (see build_user_message).
-                thesis_updates=analysis.thesis_updates,
-                selection_rules=analysis.selection_rules,
-                discipline_notes=analysis.discipline_notes,
-                previous_outlook_assessment=analysis.previous_outlook_assessment,
-            )
-        else:
-            # LLM failed — keep at least the P&L number for daily audit.
-            self.db.insert_daily_pnl(
-                date=today_str,
-                total_value=total_value,
-                daily_pnl=daily_pnl,
-                daily_return_pct=daily_return_pct,
-                equity_close=equity_close,
-            )
-
-        # Conviction ledger (spec §9.5) — score on close. Every position
-        # chain that went flat today is credited to the seats that took a
-        # side on it: aligned with the direction taken scores +R, opposed
-        # scores -R, weighted by the conviction that seat declared. Runs
-        # HERE, in evening housekeeping, deliberately: it reads closed
-        # `trades` rows and writes forensic evidence rows, touches no broker
-        # and no open position, and is idempotent (a position already scored
-        # is skipped), so it can never influence or delay an execution path.
-        # Advisory only — nothing in the trading chain reads what it writes.
-        try:
-            ledger = self.db.resolve_conviction_ledger()
-            if ledger.get("scored_positions"):
-                logger.info(
-                    "Conviction ledger: scored %d newly closed position(s) into "
-                    "%d seat credit(s) (%d already scored, %d unscorable without "
-                    "an entry stop, %d with no recorded stances)",
-                    ledger["scored_positions"], ledger["credits_written"],
-                    ledger["skipped_already_scored"], ledger["skipped_no_r"],
-                    ledger["skipped_no_stances"],
-                )
-        except Exception as e:
-            logger.warning("Conviction ledger resolution failed: %s", e)
-
-        # Housekeeping: drop agent_logs older than 2 years (full_response bloats the DB
-        # but 730 days supports quarter-over-quarter learning), and trades older than
-        # 5 years (keep a long audit tail but bound it).
-        try:
-            pruned = self.db.prune_agent_logs(keep_days=730)
-            if pruned:
-                logger.info("Pruned %d old agent_log rows", pruned)
-        except Exception as e:
-            logger.warning("Agent log prune failed: %s", e)
-        try:
-            pruned_t = self.db.prune_trades(keep_days=365 * 5)
-            if pruned_t:
-                logger.info("Pruned %d trades older than 5 years", pruned_t)
-        except Exception as e:
-            logger.warning("Trades prune failed: %s", e)
-        # Stage 4 (QAMC): specialist_evidence is forensic display detail for
-        # the same agent calls agent_logs already prunes — same 730-day
-        # retention, same never-block-housekeeping discipline.
-        try:
-            pruned_se = self.db.prune_specialist_evidence(keep_days=730)
-            if pruned_se:
-                logger.info("Pruned %d old specialist_evidence rows", pruned_se)
-        except Exception as e:
-            logger.warning("specialist_evidence prune failed: %s", e)
-        # Stale orphaned protection-restore rows accumulate when a
-        # sell_order_id becomes unqueryable (broker GC) or position
-        # gets liquidated by another path. Drain can't make progress on
-        # them; 30d cutoff bounds the operational noise.
-        try:
-            pruned_p = self.db.prune_pending_protection_restores(keep_days=30)
-            if pruned_p:
-                logger.info("Pruned %d stale pending_protection_restores rows", pruned_p)
-        except Exception as e:
-            logger.warning("pending_protection_restores prune failed: %s", e)
-        try:
-            pruned_rp = self.db.prune_pending_repegs(keep_days=30)
-            if pruned_rp:
-                logger.info("Pruned %d stale pending_repegs rows", pruned_rp)
-        except Exception as e:
-            logger.warning("pending_repegs prune failed: %s", e)
-        # File-store housekeeping: the news dated dirs + narrative backups grow
-        # unbounded (the DB side prunes; the file-stores didn't). Nothing reads
-        # news artifacts older than ~14 days, so 1000d is very safe headroom.
-        try:
-            pruned_n = self.news_store.prune(keep_days=1000)
-            if pruned_n:
-                logger.info("Pruned %d dated news artifact(s)", pruned_n)
-        except Exception as e:
-            logger.warning("news file-store prune failed: %s", e)
-        try:
-            pruned_e = self.earnings_provider.prune(keep_days=1000)
-            if pruned_e:
-                logger.info("Pruned %d old raw earnings filing(s)", pruned_e)
-        except Exception as e:
-            logger.warning("earnings file-store prune failed: %s", e)
-
-        logger.info("Evening: value=$%.2f, PnL=$%.2f (%.2f%%), risk=%s",
-                     total_value, daily_pnl, daily_return_pct,
-                     analysis.risk_rating if analysis else "error")
-        if analysis:
-            logger.info("Summary: %s", analysis.daily_summary)
-            logger.info("Tomorrow: %s", analysis.tomorrow_outlook)
-        # Evening is the last chance to reconcile today's orders before the
-        # next trading day. Sweep everything still marked submitted.
-        self._reconcile_fills()
-        self._sync_positions_from_broker()
-
-        meta_result = self._maybe_run_quarterly_meta()
-        missing_sessions = self._expected_sessions_missing_today()
-        # Owner-facing evening report (2026-09-18): today's P&L alone never
-        # answered "am I up since the desk restarted". The same
-        # `_total_pnl_since_reset` the trader-feed messages already use is
-        # read here so the evening message can lead with BOTH figures on the
-        # identical basis, rather than computing a second "total" of its own.
-        total_pnl, total_return_pct, total_pnl_since = (
-            self._total_pnl_since_reset(total_value)
-        )
-        if missing_sessions:
-            logger.warning(
-                "Dead-man's check: expected session(s) left no agent_logs "
-                "today: %s", ", ".join(missing_sessions),
-            )
-        return {
-            "status": (
-                "analyzed" if analysis is not None else
-                ("evening_analysis_error" if analysis_error else "evening_parse_error")
-            ),
-            "total_value": total_value,
-            "daily_pnl": daily_pnl,
-            "daily_return_pct": daily_return_pct,
-            "analysis": analysis.model_dump() if analysis else None,
-            "run_id": run_id,
-            "auto_meta": meta_result,
-            # Observability: surface a silently-missing session so the
-            # notifier can raise deterministic escalation (not just LLM).
-            "missing_sessions": missing_sessions,
-            "stop_coverage_gaps": coverage_gaps,
-            # True 4pm-to-4pm headline P&L (None → notifier falls back to the
-            # real-time total_value/daily_pnl figures).
-            "equity_close": equity_close,
-            "pnl_4pm": pnl_4pm,
-            "pnl_4pm_pct": pnl_4pm_pct,
-            # Phase 6 (§6.3b) — capital actually at risk (sum of
-            # (entry-stop) x shares across open positions), for the
-            # notifier's "P&L vs risk capital" line. None on a failed heat
-            # build; 0.0 for a genuinely flat/fully-released book — the
-            # notifier tells those two apart.
-            "risk_capital_dollars": risk_capital_dollars,
-            # Dated total P&L (see `_total_pnl_since_reset` for why it is
-            # dated rather than called "since inception").
-            "total_pnl": total_pnl,
-            "total_return_pct": total_return_pct,
-            "total_pnl_since": total_pnl_since,
-            # Two end-of-day facts the desk knew and never told the owner:
-            # which holdings sit within one ordinary day's move of their stop,
-            # and which report earnings imminently. Both fail soft to [].
-            "stop_proximity": self._evening_stop_proximity(positions),
-            "earnings_proximity": self._evening_earnings_proximity(positions),
-        }
-
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/evening_session.py)."""
+        return EveningSession(
+            activate_cost_session=self._collab("_activate_cost_session"),
+            actualize_trade_row=self._collab("_actualize_trade_row"),
+            build_active_state_changes=self._collab("_build_active_state_changes"),
+            build_missed_opportunities_digest=self._collab("_build_missed_opportunities_digest"),
+            build_portfolio_heat=self._collab("_build_portfolio_heat"),
+            build_recent_buys_for_grading=self._collab("_build_recent_buys_for_grading"),
+            build_recent_outlook_calibration=self._collab("_build_recent_outlook_calibration"),
+            build_recent_sells_for_grading=self._collab("_build_recent_sells_for_grading"),
+            build_thesis_health_context=self._collab("_build_thesis_health_context"),
+            build_weekly_narrative=self._collab("_build_weekly_narrative"),
+            drain_pending_protection_restores=self._collab("_drain_pending_protection_restores"),
+            drain_pending_repegs=self._collab("_drain_pending_repegs"),
+            evening_earnings_proximity=self._collab("_evening_earnings_proximity"),
+            evening_stop_proximity=self._collab("_evening_stop_proximity"),
+            expected_sessions_missing_today=self._collab("_expected_sessions_missing_today"),
+            is_trading_day=self._collab("_is_trading_day"),
+            load_earnings_analyses=self._collab("_load_earnings_analyses"),
+            maybe_run_quarterly_meta=self._collab("_maybe_run_quarterly_meta"),
+            news_held_symbols=self._collab("_news_held_symbols"),
+            paid_suspended_payload=self._collab("_paid_suspended_payload"),
+            persist_evening_replay_inputs=self._collab("_persist_evening_replay_inputs"),
+            reconcile_fills=self._collab("_reconcile_fills"),
+            reconcile_orphan_pending_submits=self._collab("_reconcile_orphan_pending_submits"),
+            reconcile_stop_coverage=self._collab("_reconcile_stop_coverage"),
+            reconcile_stop_out_fills=self._collab("_reconcile_stop_out_fills"),
+            require_paid_analysis=self._collab("_require_paid_analysis"),
+            run_news_update=self._collab("_run_news_update"),
+            surface_reconcile_outcomes=self._collab("_surface_reconcile_outcomes"),
+            sweeper=self._collab("_sweeper"),
+            sync_positions_from_broker=self._collab("_sync_positions_from_broker"),
+            total_pnl_since_reset=self._collab("_total_pnl_since_reset"),
+            broker=self._collab("broker"),
+            config=self._collab("config"),
+            db=self._collab("db"),
+            earnings_provider=self._collab("earnings_provider"),
+            evening_analyst=self._collab("evening_analyst"),
+            macro=self._collab("macro"),
+            news_store=self._collab("news_store"),
+        ).run()
     def _evening_stop_proximity(self, positions) -> list[dict]:
         """Held positions whose live stop is less than one ordinary day's
         move away — the evening report's "close to its stop" line.
