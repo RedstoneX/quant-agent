@@ -293,6 +293,7 @@ def _record_answer_hygiene(raw_text: str, rows: list, provider: str) -> None:
     review, 2026-09-23).
     """
     model_name = f"TechAnalystAnswer[{provider or 'unknown'}]"
+    parse_telemetry.record_hygiene_observation(model_name)
     if _FENCED_MARKDOWN_RE.search(raw_text):
         parse_telemetry.record_hygiene_violation(model_name, "fenced_markdown")
     for row in rows:
