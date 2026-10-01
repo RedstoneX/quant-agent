@@ -45,6 +45,17 @@ def test_harness_fails_every_composed_mixin(name, module):
         # test), so the delegate reads no foreign self attrs. Clause 2 must
         # stay clear here, which proves the logic really left the mixin.
         assert 2 not in v.failures, v.failures[2]
+        # ...and the logic must have landed somewhere that IS a boundary.
+        # Without this, naming any mixin `*_delegate` would buy the softer
+        # clause-2 assertion for free; requiring the paired standalone to
+        # pass the harness outright is what makes the delegate branch mean
+        # "converted" rather than "renamed".
+        standalone = module[: -len("_delegate")]
+        sv = check_boundary(standalone)
+        assert sv.passed, (
+            f"{module} claims conversion but {standalone} is not a boundary: "
+            f"{sv.failures}"
+        )
     else:
         assert 2 in v.failures  # foreign self attrs
 
