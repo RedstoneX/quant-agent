@@ -87,6 +87,10 @@ SESSION_RUN_KILL_AFTER_SEC="${SESSION_RUN_KILL_AFTER_SEC_OVERRIDE:-30}"
 # is exactly what this script enforces one screen below: SIGTERM at
 # SESSION_RUN_TIMEOUT_SEC, SIGKILL SESSION_RUN_KILL_AFTER_SEC later. A
 # process alive past their sum cannot exist, and nothing shorter is safe.
+# That holds ONLY because the owner stamp is rewritten immediately before
+# `timeout` starts (see FAULT 1 at the run site): age and kill are counted
+# from the same instant. If that re-stamp is ever removed, this derivation
+# becomes too tight by the length of the prelude and must not stand.
 SESSION_LOCK_MAX_AGE_SEC="${SESSION_LOCK_MAX_AGE_SEC_OVERRIDE:-$(( SESSION_RUN_TIMEOUT_SEC + SESSION_RUN_KILL_AFTER_SEC ))}"
 
 mkdir -p "$LAST_RUN_DIR"
@@ -286,6 +290,28 @@ ping_healthcheck() {
     [[ -z "${HEALTHCHECKS_URL:-}" ]] && return 0
     curl -fsS --max-time 10 --retry 2 "${HEALTHCHECKS_URL}${suffix}" >/dev/null 2>&1 || true
 }
+
+# FAULT 1 (adversary round 4). The lock age is compared against the kill
+# this script performs, so the two must be measured from the SAME instant.
+# The lock was stamped with NOW_UNIX, taken near the top of the script --
+# before the environment load, the credential reads and the healthcheck
+# curls -- while `timeout` only starts counting here. A live session's true
+# maximum lock age was therefore the prelude PLUS the kill, which is
+# strictly more than the ceiling, and the next tick would have cleared the
+# lock of a session still running: two sessions, two protective stops on the
+# same shares, and nothing in this desk reconciles a duplicate.
+#
+# The boundary is fixed, not padded. The owner stamp is rewritten with the
+# clock reading at the instant `timeout` starts, so lock age and the kill
+# now count from the same zero and the derived ceiling is exact. No padding
+# number is chosen and nothing is measured by guess. A crash during the
+# prelude still leaves the earlier stamp, which only ever makes the lock
+# look OLDER and so clears sooner -- the safe direction. The PID is
+# refreshed with it so the owner line keeps naming the process that holds
+# the lock.
+if [[ "$LOCK_ACQUIRED" -eq 1 ]]; then
+    echo "${MODE} ${ET_DATE} $(date +%s) $$" > "$LOCK_OWNER_FILE"
+fi
 
 if "$TIMEOUT" --kill-after="$SESSION_RUN_KILL_AFTER_SEC" "$SESSION_RUN_TIMEOUT_SEC" "$PYTHON" main.py --mode "$MODE"; then
     # intra_check is intentionally guard-less (see last-run guard block above) —

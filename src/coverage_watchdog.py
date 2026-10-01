@@ -1359,6 +1359,45 @@ def claim_unreadable_stop_alert(
 # exactly the swallowing this family of keys exists to prevent, and the two
 # happen together by construction.
 
+def release_typed_alert(
+    kind: str, symbols: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> None:
+    """Give back today's `kind` claim for `symbols`.
+
+    `claim_typed_alert` reserves the symbol BEFORE the message is handed to
+    the notifier, which is the right order -- two processes finding the same
+    condition at the same moment must not both send. But the reservation is
+    saved whether or not the send lands, so a muted or failed delivery used
+    to burn the symbol's one page for the whole trading day and the owner
+    was never told at all. `send_owner_alert` reports whether it landed;
+    when it did not, the caller hands the claim back here so the next
+    attempt -- the 30-minute watchdog, the next session entry -- can try
+    again. Never raises: an alerting bug must not break the path it reports
+    on. Releasing a claim that is not held is a no-op.
+    """
+    key = str(kind).strip() or "unspecified"
+    try:
+        day = repair_failure_alert_day(now)
+        state = load_state(path)
+        already = _typed_alerted_symbols(state, day, key)
+        giving_back = {
+            str(raw).strip().upper() for raw in symbols if str(raw).strip()
+        }
+        remaining = already - giving_back
+        if remaining == already:
+            return
+        state[f"typed_alerted_symbols::{key}"] = {
+            "day": day, "symbols": sorted(remaining),
+        }
+        save_state(state, path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "release_typed_alert(%s) failed: %s — the claim stays held and "
+            "today's page for those symbols will not be retried", key, exc,
+        )
+
+
 def _exit_declined_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
     raw = state.get("exit_declined_alerted_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:

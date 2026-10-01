@@ -4180,8 +4180,11 @@ class TradingPipeline:
         """Push the NO-STOP-AT-ALL escalation to the owner. Never raises."""
         try:
             from src import notifier as _notifier
-            from src.coverage_watchdog import claim_typed_alert
+            from src.coverage_watchdog import (
+                claim_typed_alert, release_typed_alert,
+            )
 
+            fresh: set[str] = set()
             # DEFECT 6 (adversary round 3). This escalation had no claim of
             # its own while every neighbouring one -- unreadable stop,
             # repair failure, elected-but-unfilled, kill-switch block --
@@ -4222,7 +4225,7 @@ class TradingPipeline:
                 + (f" — {g['repair_refusal']}" if g.get("repair_refusal") else "")
                 for g in naked
             )
-            _notifier.send_owner_alert(
+            landed = _notifier.send_owner_alert(
                 # Item 21b: shape, not colour — the owner is red-green
                 # colour blind, so severity is carried by HOW MANY marks
                 # there are, not which one. This alert used a single 🔴
@@ -4240,8 +4243,89 @@ class TradingPipeline:
                 "Place a protective stop manually or flatten the position.",
                 symbols=[str(g.get("symbol")) for g in naked if g.get("symbol")],
             )
+            # FAULT 2 (adversary round 4). The claim above is saved before
+            # the send is attempted and was kept whether or not it landed,
+            # so a muted or failed delivery burned the symbol's one page for
+            # the whole trading day and nothing retried. Telegram is MUTED
+            # on this desk today, which turns that from a rare case into the
+            # normal one. `send_owner_alert` logs at CRITICAL before it
+            # sends, so the journal record survives either way -- but the
+            # CLAIM must not, or the 30-minute watchdog and the next session
+            # entry both find the symbol already spoken for and say nothing.
+            if claimable and not landed:
+                release_typed_alert("no_stop_at_all", sorted(fresh))
         except Exception as exc:  # noqa: BLE001
             logger.error("no-stop owner alert failed: %s", exc)
+
+    @staticmethod
+    def _alert_owner_stop_pending_acceptance(
+        symbol: str, residual_qty: str, order_id: str, status: str,
+        stop_price: float,
+    ) -> None:
+        """Page the owner that a replacement protective stop has been
+        RECEIVED by the broker but is not yet working. Never raises.
+
+        FAULTS 2 and 3 (adversary round 4). This condition first borrowed
+        `_alert_owner_no_stop`, and that was wrong twice over.
+
+        It was UNTRUE. That message reads "NO STOP AT ALL ... there is
+        nothing standing watch", and here the broker holds the order -- it
+        simply has not routed it yet, and it may still be rejected. The
+        desk's standing rule is to report the true state, never an
+        approximation of it that sounds more urgent; a false alert is a
+        root-cause defect in its own right.
+
+        And it SILENCED the page that matters. `no_stop_at_all` is claimed
+        per symbol per trading day. A benign pending stop at 09:35 took the
+        symbol's only claim, so when that same order was later rejected and
+        the position really was naked, the coverage sweep and the
+        thirty-minute watchdog both found the claim held and told nobody.
+        The two conditions therefore get two keys: an unconfirmed stop can
+        never consume the claim belonging to no stop at all.
+
+        Like every other page here it claims the symbol first so two
+        processes cannot both send, and hands the claim back when the send
+        does not land -- which on this desk today is every time, Telegram
+        being muted. `send_owner_alert` logs at CRITICAL before sending, so
+        the journal keeps the record regardless.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import (
+                claim_typed_alert, release_typed_alert,
+            )
+
+            sym = str(symbol).strip().upper()
+            if not sym:
+                return
+            if not claim_typed_alert("stop_pending_acceptance", [sym]):
+                return
+            # Two marks, not three: `_alert_owner_no_stop` uses three for
+            # "there is nothing standing watch", and this is the strictly
+            # weaker condition -- an order exists and may yet work. Severity
+            # is carried by how many marks there are (item 21b, the owner is
+            # red-green colour blind), so ranking this below the real thing
+            # is the point.
+            landed = _notifier.send_owner_alert(
+                "🛑🛑 PROTECTIVE STOP NOT YET WORKING\n"
+                f"{sym}: a replacement protective stop for {residual_qty} "
+                f"share(s) at ${stop_price:.2f} (order {order_id}) has been "
+                f"RECEIVED by the broker and is still {status} — accepted "
+                "into the book but not yet routed, and an order in that "
+                "state can still be rejected.\n"
+                "This is NOT a confirmed naked position and it is NOT "
+                "confirmed protection: the desk did not place a second stop "
+                "over it, because two live stops on one position sell the "
+                "shares twice. The recovery intent is kept and the next "
+                "pass re-reads the order's status.\n"
+                "Check that the order reached working state; if it was "
+                "rejected, place a protective stop manually or flatten.",
+                symbols=[sym],
+            )
+            if not landed:
+                release_typed_alert("stop_pending_acceptance", [sym])
+        except Exception as exc:  # noqa: BLE001
+            logger.error("pending-stop owner alert failed: %s", exc)
 
     @staticmethod
     def _alert_owner_unreadable_stop(rows: list[dict]) -> None:
@@ -6177,28 +6261,20 @@ class TradingPipeline:
                     f"still {status} at ${existing_sp:.2f}; the recovery "
                     f"intent was kept rather than banked as protection.",
                 )
-                # DEFECT 3 (adversary round 3). Every other branch that
-                # leaves this method with the residual unprotected pages the
-                # owner; this one did not. A `pending_new` stop can still be
-                # rejected, the coverage sweep DEFERS repair while a trading
-                # session holds the lock, and this path runs inside exactly
-                # that window -- so the only thing standing between the
-                # position and no protection at all was a log line. It uses
-                # the same escalation and the same per-symbol per-day claim
-                # as every other no-stop page, so a drain that replays does
-                # not page twice.
-                self._alert_owner_no_stop([{
-                    "symbol": symbol,
-                    "held_qty": self._format_qty(residual_qty),
-                    "covered_qty": "unconfirmed",
-                    "repair_refusal": (
-                        f"a replacement stop (order {order_id}) is still "
-                        f"{status} at ${existing_sp:.2f} — received by the "
-                        f"broker, not yet working, and still able to be "
-                        f"rejected; the desk did not place a second stop "
-                        f"over it and will re-read on the next pass"
-                    ),
-                }])
+                # DEFECT 3 (adversary round 3), corrected in round 4.
+                # Every other branch that leaves this method with the
+                # residual unprotected pages the owner; this one did not,
+                # and the only thing standing between the position and no
+                # protection at all was a log line. It first reused the
+                # NO-STOP-AT-ALL page, which was untrue here and which
+                # consumed that page's per-symbol daily claim, so a later
+                # REJECTION of this very order would have gone unreported.
+                # It now has its own message, saying what is actually true,
+                # under its own claim key.
+                self._alert_owner_stop_pending_acceptance(
+                    symbol, self._format_qty(residual_qty), order_id,
+                    status or "unknown", existing_sp,
+                )
                 return False
             if status not in _ACTIVE_STATUSES:
                 logger.warning(
@@ -6206,16 +6282,6 @@ class TradingPipeline:
                     "(order %s) is in status %r, not a live protective "
                     "state — a dying order is not coverage.",
                     symbol, existing_sp, order_id, status or "unknown",
-                )
-                continue
-            if identity_unprovable:
-                logger.warning(
-                    "Reprotect for %s will SUBMIT over an open, live stop "
-                    "(order %s, status %s) at $%.2f: this run could not "
-                    "prove the stop is not one it just cancelled, so it "
-                    "may not be banked as protection. The ambiguity is on "
-                    "the per-symbol refusal record.",
-                    symbol, order_id, status or "unknown", existing_sp,
                 )
                 continue
             # DEFECT 1, second half. The order is identity-proven, live and
@@ -6250,6 +6316,24 @@ class TradingPipeline:
                     ),
                 }])
                 return False
+            # FAULT 5 (adversary round 4). This bail-out used to run
+            # BEFORE the unreadable-price branch below, so an open stop that
+            # was BOTH unreadable and unprovable fell straight through to
+            # the submit at the bottom: two stops resting on the same
+            # shares, neither with a price this desk can read, and nothing
+            # anywhere that reconciles a duplicate. Price is checked first,
+            # because "a live order rests here and I cannot read it" is a
+            # reason to place nothing whatever its identity turns out to be.
+            if identity_unprovable:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT over an open, live stop "
+                    "(order %s, status %s) at $%.2f: this run could not "
+                    "prove the stop is not one it just cancelled, so it "
+                    "may not be banked as protection. The ambiguity is on "
+                    "the per-symbol refusal record.",
+                    symbol, order_id, status or "unknown", existing_sp,
+                )
+                continue
             # DEFECT 2 (adversary round 3) -- CONSCIOUSLY LEFT OPEN, not
             # missed. The objection is real: an identity-proven stop is
             # banked as this position's protection at ANY level, so a stop
