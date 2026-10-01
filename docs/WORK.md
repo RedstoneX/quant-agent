@@ -96,6 +96,7 @@ detail: docs/BOARD_NOTES.md (item 55)
 
 DONE WHEN:
   - [ ] the magnitude→sign boundary is settled by EVIDENCE, not appetite: either a published SIGNED insider-sale scoring scheme is cited and `SmartMoneyObservation.signal_direction` returns -1 off the already-reported `holdings_fraction_band` (Scott & Xu's sourced >50%-of-holdings band), or the desk's own resolved smart-money outcomes are numerous enough to read a separation from
+  - [ ] PREREQUISITE FOUND 2026-10-01: the desk's own data cannot settle it because it holds NO sale observations to read — the production evidence store has 521 smart-money observations across 325 analyst rows, ALL buys, zero sales [measured, production DB specialist_evidence, 2026-08-26..2026-09-30] and only 80 trades in total [measured, same DB]; the remaining build is a RECORDING of insider-sale rows (with `holdings_fraction_band`) plus their forward return, found first by tracing why no sale reaches the stored evidence although the parser emits them
   - [ ] until one of those exists a sale stays NEUTRALISED at 0 and no agent picks the boundary number — the standing no-arbitrary-numbers and no-fitting rules settle that, this is not an appetite dial
 detail: docs/BOARD_NOTES.md (item 63)
 
