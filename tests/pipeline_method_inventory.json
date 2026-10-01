@@ -18,6 +18,7 @@
           "_attach_cost_circuit_to_agents",
           "_attach_evidence_freshness",
           "_attach_pnl",
+          "_collab",
           "_compute_deployable_cash",
           "_constructor_cfg_or_none",
           "_cost_circuit_status",
@@ -73,6 +74,11 @@
           "run_morning",
           "run_position_review",
           "run_quarterly_meta_reflection"
+        ],
+        "_MissingCollaborator": [
+          "__getattr__",
+          "__init__",
+          "_raise"
         ]
       }
     },
