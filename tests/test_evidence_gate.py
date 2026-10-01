@@ -262,15 +262,23 @@ def test_every_status_the_codebase_writes_is_classified():
         "carry_forward_empty", "carry_forward_failed",
     })
     import ast
-    stages = ast.parse((REPO / "src" / "pipeline_stages.py").read_text())
-    for node in ast.walk(stages):
-        if (isinstance(node, ast.FunctionDef)
-                and node.name == "_classify_earnings_status"):
-            written.update(
-                r.value.value for r in ast.walk(node)
-                if isinstance(r, ast.Return) and isinstance(r.value, ast.Constant)
-                and isinstance(r.value.value, str)
-            )
+    # The classifier moves whenever pipeline_stages is split further, so find
+    # it by name across src/ instead of naming the module that holds it today.
+    classifier_found = False
+    for path in (REPO / "src").rglob("*.py"):
+        text = path.read_text()
+        if "def _classify_earnings_status" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if (isinstance(node, ast.FunctionDef)
+                    and node.name == "_classify_earnings_status"):
+                classifier_found = True
+                written.update(
+                    r.value.value for r in ast.walk(node)
+                    if isinstance(r, ast.Return) and isinstance(r.value, ast.Constant)
+                    and isinstance(r.value.value, str)
+                )
+    assert classifier_found, "_classify_earnings_status not found anywhere in src/"
     assert {"ok", "failed", "parse_error", "content_missing"} <= written, (
         "the scan found almost nothing — the assignment pattern has drifted "
         "and this test is no longer enforcing anything"
