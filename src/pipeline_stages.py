@@ -7204,13 +7204,15 @@ def _record_queued_earnings_refusals(
     list the gate returned, so it is read by comparing the two lists. The
     size is stated before and after (after is always 0) because the symbol's
     `proposed_order` row, written earlier by DecisionStage, still carries the
-    size that was asked for. The detail is the conviction bar's own refusal
-    string, so the record reads the same as every other stand-down on an
-    unconvicted seat. Never raises — a record failure must not stop the
+    size that was asked for. The detail is the gate's own refusal string
+    (`risk.rules.unread_filing_block_reason`), which carries its own prefix
+    and is deliberately NOT the conviction bar's: this is missing evidence,
+    not a seat's verdict, and entries only — nothing here reads or changes a
+    held position. Never raises — a record failure must not stop the
     stage (`_persist_evidence`'s contract).
     """
     try:
-        from src.risk.rules import queued_earnings_block_reason
+        from src.risk.rules import unread_filing_block_reason
         after_symbols = {
             d.symbol.strip().upper()
             for d in (after or []) if d is not None and d.action == "BUY"
@@ -7222,13 +7224,13 @@ def _record_queued_earnings_refusals(
                 continue
             _record_pipeline_event(
                 pipeline, ctx, d.symbol, "deterministic_gate", "blocked",
-                "queued_earnings_unconvicted_seat",
-                gate="queued_earnings_unconvicted_seat",
+                "queued_earnings_unread_filing",
+                gate="queued_earnings_unread_filing",
                 before_allocation_pct=d.allocation_pct,
                 after_allocation_pct=0.0,
                 detail=(
                     f"BUY {d.symbol} REFUSED at {d.allocation_pct:.2f}%: "
-                    + queued_earnings_block_reason(d.symbol)
+                    + unread_filing_block_reason(d.symbol)
                 ),
             )
     except Exception as exc:  # noqa: BLE001

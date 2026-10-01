@@ -219,7 +219,8 @@ def test_the_queued_earnings_gate_records_every_refusal():
     """Board item 186 (2026-10-01): the gate no longer CUTS a BUY, so the
     `modified` row this file used to pin cannot occur. What must still be
     durable is the stand-down itself, with the size that was asked for and
-    the conviction-bar reason it was refused on."""
+    the missing-evidence reason it was refused on, and the stage's own
+    return contract is asserted exactly as it was before."""
     buy = TradeDecision(
         action="BUY", symbol="CHPX", allocation_pct=8.0, entry_price=24.0,
         stop_loss=22.5, take_profit=28.55, reasoning="t",
@@ -229,16 +230,17 @@ def test_the_queued_earnings_gate_records_every_refusal():
     ctx = _ctx([buy])
     ctx.earnings_results = [{"symbol": "CHPX", "queued": True}]
 
-    assert RiskStage(pipeline=pipeline).run(ctx) is not None or True
+    result = RiskStage(pipeline=pipeline).run(ctx)
+    assert result is None, result
     assert "CHPX" not in [d.symbol for d in ctx.portfolio_decision.decisions]
 
     rows = [p for s, p in _events(pipeline) if s == "CHPX"
-            and p.get("gate") == "queued_earnings_unconvicted_seat"]
+            and p.get("gate") == "queued_earnings_unread_filing"]
     assert len(rows) == 1
     assert rows[0]["outcome"] == "blocked"
     assert rows[0]["before_allocation_pct"] == 8.0
     assert rows[0]["after_allocation_pct"] == 0.0
-    assert "not convicted" in rows[0]["detail"]
+    assert "Unread filing" in rows[0]["detail"]
 
 
 def test_the_queued_earnings_gate_is_silent_on_a_read_filing():
@@ -257,7 +259,7 @@ def test_the_queued_earnings_gate_is_silent_on_a_read_filing():
 
     assert "CHPX" in [d.symbol for d in ctx.portfolio_decision.decisions]
     assert not [p for s, p in _events(pipeline) if s == "CHPX"
-                and p.get("gate") == "queued_earnings_unconvicted_seat"]
+                and p.get("gate") == "queued_earnings_unread_filing"]
 
 
 # ---------------------------------------------------------------------------

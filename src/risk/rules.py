@@ -525,6 +525,56 @@ def agreement_refuses_trade(score: int) -> bool:
     return score <= 0
 
 
+# --- Missing evidence: a filing the desk never read -------------------------
+#
+# NOT THE CONVICTION BAR, AND DELIBERATELY NOT ROUTED THROUGH IT (board item
+# 186, 2026-10-01). The R7 bar below grades what the seats SAID: one
+# supportive seat with a real directional thesis, no seat opposed, the chart
+# confirming. A queued-but-unread filing is none of those things — it is a
+# seat that was never asked, and `agreement_refuses_trade` above names
+# exactly that distinction ("the seats disagreed" vs "the seats had nothing
+# to look at") as the confusion it exists to avoid. Treating an unread filing
+# as a conviction failure would also borrow `OWN_BAR_REASON_PREFIX`, which
+# `src/rotation.py` STRING-MATCHES to classify HELD names as ineligible to
+# hold, so it would silently change behaviour on positions the desk already
+# owns. This route is MISSING EVIDENCE, it carries its own prefix, and
+# nothing matches that prefix anywhere.
+
+#: The reason prefix for an entry refused because evidence the desk meant to
+#: have was not fetched. Matched by nothing — deliberately.
+UNREAD_FILING_REASON_PREFIX = "Unread filing"
+
+
+def unread_filing_block_reason(symbol: str) -> str:
+    """The one refusal string for a BUY whose just-filed report was never read.
+
+    WHAT THE TRIGGER ACTUALLY MEANS, because it changes the argument. The
+    `queued=True` placeholder is set in exactly one place (`src/pipeline.py`,
+    the session-time earnings fetch): a filing that turns up as NEW at
+    decision time, i.e. one the pre-market preprocess did not pick up and
+    analyse. It marks an OPERATIONS FAILURE — a step of this desk's own
+    pipeline did not run or did not finish in time — not a market event and
+    not a seat's verdict.
+
+    So this refusal is argued on evidence, not on conviction: the desk meant
+    to read that report before deciding, it did not, and it declines to buy
+    into the gap rather than buying on an incomplete picture. Holding is
+    untouched; this refuses an ENTRY only.
+
+    This replaced the 5%-of-book weight clamp (board item 186, 2026-10-01).
+    That 5 had no source and two derivations failed, and the owner ruled on
+    2026-09-30 that such a constant is a defect to remove rather than an
+    appetite to answer — so the condition was reformulated and the number
+    deleted instead of re-derived.
+    """
+    return (
+        f"{UNREAD_FILING_REASON_PREFIX} \u2014 {symbol.strip().upper()}: a "
+        "just-filed report reached this session unread because the pre-market "
+        "preprocess did not analyse it, so the desk is deciding without "
+        "evidence it meant to have; entry refused until it is read"
+    )
+
+
 # --- Owner mandate 2026-09-25 — the ROLE-BASED conviction bar (R7) ---------
 #
 # "Earn the right to ENTER and to STAY." A name clears this bar only when a
@@ -548,31 +598,6 @@ def agreement_refuses_trade(score: int) -> bool:
 #: (rotation's `ineligible_hold` tier) recognises exactly these reasons and
 #: `holdings_below_entry_bar` counts them. A test pins the two equal.
 OWN_BAR_REASON_PREFIX = "R7 conviction bar"
-
-
-def queued_earnings_block_reason(symbol: str) -> str:
-    """The one refusal string for a BUY whose just-filed report is unread.
-
-    An unread filing is not a smaller edge, it is an UNCONVICTED SEAT: the
-    earnings seat has the one document that matters sitting in a queue and
-    has formed no view on it. Standing doctrine (owner ruling 2026-09-25,
-    `own_bar_block_reason` above) is that a name enters only when the seats
-    are RIGHT about it, so a seat that cannot be right about it refuses the
-    entry instead of shrinking it. This replaced the 5%-of-book weight clamp
-    (`TradingPipeline._refuse_queued_earnings_buys`, board item 186,
-    2026-10-01): that clamp was an invented share of the book with no source,
-    and reformulating the condition retires the number rather than
-    re-deriving it.
-
-    It carries `OWN_BAR_REASON_PREFIX` because it IS the conviction bar
-    applied to the earnings seat, not a second gate with its own vocabulary.
-    """
-    return (
-        f"{OWN_BAR_REASON_PREFIX} \u2014 earnings seat not convicted on "
-        f"{symbol.strip().upper()}: a just-filed report is queued and unread, "
-        "so that seat has formed no view on this name and cannot be right "
-        "about it; entry refused rather than sized down"
-    )
 
 
 def _has_supported_directional_thesis(v: "AnalystVerdict", aligned: str) -> bool:

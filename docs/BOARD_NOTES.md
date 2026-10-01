@@ -1361,40 +1361,72 @@ Item 90's half two, surfaced for visibility. Three numbers: the 3x-ATR chandelie
 ## item 186 — detail moved from the board 2026-09-30
 
 UPDATE 2026-10-01 (queued-earnings BUY clamp) — THE NUMBER IS GONE, REMOVED
-BY REFORMULATION RATHER THAN RE-DERIVED. The 5%-of-book cap on a BUY whose
-just-filed report is queued and unread no longer exists. The condition is now
-read for what it is: an unread filing is an UNCONVICTED EARNINGS SEAT, and
-standing doctrine (owner ruling 2026-09-25, `risk.rules.own_bar_block_reason`)
-already refuses an entry the seats are not right about. The gate therefore
-REFUSES the BUY and carries no percentage at all.
+BY REFORMULATION RATHER THAN RE-DERIVED, AND THE ROUTE IS MISSING EVIDENCE
+RATHER THAN CONVICTION. The 5%-of-book cap on a BUY whose just-filed report
+reached the session unread no longer exists. The gate refuses the BUY and
+carries no percentage at all.
 
-- The refusal reuses the conviction bar's own vocabulary
-  (`queued_earnings_block_reason`, carrying `OWN_BAR_REASON_PREFIX`), so it is
-  the existing bar applied to the earnings seat, not a second gate with a
-  parallel flag.
+SAY WHAT THE TRIGGER ACTUALLY IS, because it changes the argument.
+`queued=True` is set in exactly ONE place, the session-time earnings fetch in
+`src/pipeline.py`: a filing that turns up as NEW at decision time, i.e. one
+the PRE-MARKET PREPROCESS DID NOT PICK UP AND ANALYSE. It marks a failure of
+this desk's own operations, not a market event and not a seat's verdict. So
+what this gate does is convert an operations failure into a trading refusal,
+and it has to be argued on those terms: the desk meant to read that report
+before deciding, it did not, and it declines to open a position into the gap
+rather than buying on an incomplete picture. Refusing to buy on evidence the
+desk failed to fetch is defensible; calling it a seat verdict would not be.
+
+WHY IT IS **NOT** ROUTED THROUGH THE CONVICTION BAR (the first build was, and
+that was wrong). R7 grades what the seats SAID — one supportive seat with a
+real directional thesis, no seat opposed, the chart confirming. An unread
+filing is a seat that was NEVER ASKED, which on R7's own terms does not fail
+it: a queued filing with a confirming technical read and nobody opposed
+PASSES the bar. `agreement_refuses_trade` in the same file names exactly this
+distinction ("the seats disagreed" versus "the seats had nothing to look at")
+as the confusion it exists to avoid, and the owner's 2026-09-25 ruling culls a
+HELD name only on a seat ACTIVELY OPPOSED. Borrowing the bar's reason prefix
+would have been worse than untidy: `src/rotation.py` STRING-MATCHES that
+prefix to classify held names as ineligible to hold, so it would have silently
+changed behaviour on positions the desk already owns — which this item never
+asked for. The gate therefore has its OWN prefix
+(`risk.rules.UNREAD_FILING_REASON_PREFIX`, matched by nothing) and touches
+nothing about holding.
+
 - Every refusal is recorded per symbol as a `deterministic_gate` / `blocked`
   event with the size that was asked for and the reason, so the change can be
   judged later from the record. The `modified` (cut) outcome the old clamp
-  produced cannot occur any more and its test was rewritten, not dropped.
+  produced cannot occur any more and its test was rewritten, not dropped; the
+  stage's own return contract is still asserted.
 - The ledger row is DELETED and the arbitrary ratchet moved -1. The two failed
-  derivations stay recorded above so neither is retried: 5.07% is the size of
+  derivations stay recorded below so neither is retried: 5.07% is the size of
   a MOVE and not a share of a BOOK, and the per-trade risk envelope run
   forward permits a weight near 100%, so it cannot be the cap's parent.
-- Nothing already held is sold. Refusing to BUY is not a decision to SELL,
-  the same contract `agreement_refuses_trade` carries.
+- MY REASONING, NOT A QUOTED RULE: "refuse rather than size down" is an
+  inference, not the words of any ruling. What supports it is that the entry
+  bar already refuses a name whose technical read is merely ABSENT, so
+  withholding an entry on evidence the desk does not have is consistent with
+  how it already behaves; and that the doctrine about all five seats being
+  right applies to ENTERING. R7 as ruled would still admit such a name on
+  another seat's thesis, so this gate is an ADDITION to it, decided here, and
+  that is the thing the adversary pass has to judge.
+- "It can only refuse, never enlarge" is a FACT about the change, offered as
+  reassurance about its blast radius, not as a justification for making it.
+- Nothing already held is sold or reclassified. Entries only.
 
 MEASURED EFFECT, AGAINST THE PRODUCTION RECORD READ-ONLY (2026-10-01, span
-2026-09-02 → 2026-10-01): ZERO recorded BUYs change. The queued-earnings gate
+2026-09-02 -> 2026-10-01): ZERO recorded BUYs change. The queued-earnings gate
 has produced NO rows at all in `specialist_evidence` (the recording exists
-since 2026-09-19, board item 164), and the `"queued": true` placeholder that
-triggers it appears nowhere in the retained evidence either, against 54
-recorded proposed BUYs. So the path is UNPROVEN rather than dead: the record
-cannot say how often it will fire, only that it has not fired while the desk
-has been recording. What the desk gives up is the one case the old clamp
-allowed — a fresh entry of up to 5% of the book on a name whose filing nobody
-has read. Every other case the old clamp covered already ended in no order.
-It is strictly tighter in every direction; it can never open a larger
-position than before.
+since 2026-09-19, board item 164, and reaches storage by the same path that
+demonstrably populates for other gates, so zero rows means the trigger never
+fired rather than that the write is broken), and the `"queued": true`
+placeholder appears nowhere in the retained evidence either, against 54
+recorded proposed BUYs and 2794 earnings analysis rows. UNPROVEN, not dead:
+the record cannot say how often it will fire, only that it has not fired while
+the desk has been recording. What the desk gives up is the one case the old
+clamp allowed — a fresh entry of up to 5% of the book on a name whose filing
+the preprocess failed to read. Every other case the old clamp covered already
+ended in no order.
 
 UPDATE 2026-09-30 (short-side haircut) — TWO DERIVATIONS ATTEMPTED, BOTH
 WITHDRAWN, NO SIZING CHANGE SHIPPED. The desk sizes shorts exactly as it did
