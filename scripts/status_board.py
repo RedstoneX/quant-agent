@@ -1017,17 +1017,81 @@ class QueueItem:
         return "finished"
 
     @property
+    def done_when_marks(self) -> list[str]:
+        """This item's own `DONE WHEN` checkbox marks, empty when it has no
+        such block. Structured data, not prose: the one statement about an
+        item's completeness that cannot be fooled by how a headline is
+        worded."""
+        return _done_when_checkbox_marks(self.raw_body)
+
+    @property
+    def box_state(self) -> str:
+        """What this item's own `DONE WHEN` boxes say.
+
+          ``"finished"``     at least one box, and none outstanding
+          ``"outstanding"``  at least one box is still open
+          ``"none"``         the item has no `DONE WHEN` block at all
+
+        ``"none"`` is deliberately NOT ``"finished"``. Zero outstanding boxes
+        out of zero boxes is the empty-set trap: it would read every
+        headline-only item on the board as done. An item with no boxes is
+        unstructured, and saying nothing about it is the honest answer.
+        """
+        marks = self.done_when_marks
+        if not marks:
+            return "none"
+        return "finished" if all(m.lower() == "x" for m in marks) else "outstanding"
+
+    @property
     def claims_closure(self) -> bool:
-        """Its status says FULLY finished, but it was never marked finished.
+        """Its boxes say FULLY finished, but it was never marked finished.
+
+        PRIMARY RULE: the item's own `DONE WHEN` boxes (`box_state`), never
+        its headline prose. Owner ruling 2026-10-01, after the prose reading
+        produced two false alarms in one night — an item whose headline
+        mentioned ANOTHER item's completion was reported finished with zero
+        of its ten boxes ticked. Boxes are structured and unambiguous;
+        wording is not. The prose vocabulary survives only as a secondary
+        hint (`closure_claim`), which never classifies anything on its own
+        and loses to the boxes whenever the two disagree.
 
         Reported, never believed. An item saying one thing while the backlog's
         strike-through says another is the backlog's version of a CONTRADICTED
-        phase — so the page shows it as finished (which is what its own author
-        wrote) while saying plainly that the backlog has not been ticked off,
-        rather than filing it as live work, which is the statement he called
-        déjà vu.
+        phase — so the page shows it as finished (which is what its own
+        criteria say) while saying plainly that the backlog has not been
+        ticked off, rather than filing it as live work, which is the statement
+        he called déjà vu.
         """
-        return not self.done and self.closure_claim == "finished"
+        return not self.done and self.box_state == "finished"
+
+    @property
+    def closure_disputed(self) -> bool:
+        """Its prose claims finished while its own boxes are still open.
+
+        The boxes win, so the item stays in the running order as live work —
+        but the disagreement is itself a board defect (one of the two is
+        wrong), so it is surfaced as its own category rather than dropped.
+        """
+        return (not self.done and self.box_state == "outstanding"
+                and self.closure_claim == "finished")
+
+    @property
+    def closure_disagreement(self) -> str:
+        """Plain words for a boxes-vs-prose contradiction, or ``""``.
+
+        Both directions count: a fully ticked item whose status text still
+        reads as open work, and an item whose status text says finished while
+        boxes remain open. Never a classification — only a description of one.
+        """
+        if self.done or self.box_state == "none":
+            return ""
+        if self.box_state == "finished" and self.closure_claim != "finished":
+            return ("every DONE WHEN box is ticked, but its status text does "
+                    "not say so")
+        if self.closure_disputed:
+            return ("its status text says finished, but DONE WHEN boxes are "
+                    "still open")
+        return ""
 
     @property
     def review_owed(self) -> bool:
@@ -2725,7 +2789,9 @@ def _render_one_liners(items: list[QueueItem], empty: str,
     return "\n".join(rows)
 
 
-def _render_finished_unmarked(items: list[QueueItem]) -> str:
+def _render_finished_unmarked(
+        items: list[QueueItem],
+        disputed: "list[QueueItem] | tuple[()]" = ()) -> str:
     """Items their own author has written up as finished, which the backlog
     has not struck through.
 
@@ -2739,19 +2805,44 @@ def _render_finished_unmarked(items: list[QueueItem]) -> str:
     Nothing is believed on the item's behalf: the page says which half of the
     backlog is claiming what, and never picks one.
     """
-    if not items:
-        return ('<div class="note">Every finished item in the backlog is also '
-                'ticked off as finished.</div>')
     rows = []
+    if not items:
+        rows.append('<div class="note">Every finished item in the backlog is '
+                    'also ticked off as finished.</div>')
     for it in items:
         rows.append(
             '<div class="ol ol-done ol-untidy">'
             f'<span class="q-n">{_esc(it.ref)}</span>'
             f'<span>{_esc(it.title)} '
-            '<em>&mdash; finished according to its own note; the backlog has '
-            'not ticked it off yet, so that one line needs tidying.</em>'
+            '<em>&mdash; every one of its own DONE WHEN boxes is ticked; the '
+            'backlog has not ticked it off yet, so that one line needs '
+            'tidying.</em>'
             '</span></div>')
+    rows.extend(_render_closure_disagreements(list(items) + list(disputed)))
     return "\n".join(rows)
+
+
+def _render_closure_disagreements(items: list[QueueItem]) -> list[str]:
+    """Items whose boxes and whose prose say different things.
+
+    The boxes decide what an item IS (owner ruling 2026-10-01); this says
+    out loud where the two sources disagree, because one of them is wrong
+    and a silent disagreement is how a wrong board line survives. Items
+    whose prose claims closure over open boxes stay in the running order as
+    live work — they are named here, never moved.
+    """
+    rows = []
+    for it in items:
+        note = it.closure_disagreement
+        if not note:
+            continue
+        rows.append(
+            '<div class="ol ol-untidy">'
+            f'<span class="q-n">{_esc(it.ref)}</span>'
+            f'<span>{_esc(it.title)} '
+            f'<em>&mdash; {_esc(note)}; one of the two is wrong.</em>'
+            '</span></div>')
+    return rows
 
 
 def _render_in_hand(items: list[QueueItem]) -> str:
@@ -3184,6 +3275,10 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     finished_unmarked = [i for i in queue_items
                          if i.bucket == "finished_unmarked"]
     review_owed = [i for i in queue_items if i.bucket == "review_owed"]
+    # Prose says finished, the item's own boxes say otherwise. Left in the
+    # running order (the boxes win, so it is live work) and named in the
+    # finished section as a contradiction — never counted as finished.
+    closure_disputed = [i for i in queue_items if i.closure_disputed]
     # Decided or being built: his answer is already given, or the work is
     # under way. Drawn BELOW everything that is actually his to answer.
     in_hand = [i for i in queue_items if i.bucket == "in_hand"]
@@ -3205,6 +3300,8 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     finished_unmarked = [i for i in finished_unmarked
                          if i.ref not in owner_call_refs]
     review_owed = [i for i in review_owed if i.ref not in owner_call_refs]
+    closure_disputed = [i for i in closure_disputed
+                        if i.ref not in owner_call_refs]
     in_hand = [i for i in in_hand if i.ref not in owner_call_refs]
     no_action = [i for i in no_action if i.ref not in owner_call_refs]
     unexplained = [i for i in open_items if not i.prose.plain]
@@ -3218,7 +3315,8 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
         "Nothing is parked. Everything in the backlog is either being worked "
         "on or already finished."))
     body = body.replace("{{FINISHED_UNMARKED}}",
-                        _render_finished_unmarked(finished_unmarked))
+                        _render_finished_unmarked(finished_unmarked,
+                                                  closure_disputed))
     body = body.replace("{{REVIEW_OWED}}", _render_review_owed(review_owed))
     body = body.replace("{{IN_HAND}}", _render_in_hand(in_hand))
     body = body.replace("{{IN_HAND_COUNT}}", str(len(in_hand)))
