@@ -898,3 +898,50 @@ def test_a_row_that_came_back_outranks_asked_and_silent():
         asked_no_answer_by_seat={"tech": ["AAA"]},
     )["AAA"]
     assert cov.unreadable == ["tech"] and cov.asked_no_answer == []
+
+
+def test_the_production_2026_09_18_skip_shape_no_longer_halts_the_desk():
+    """The exact `data_status` of the 11 half-hourly `evidence_gate_skip`
+    runs recorded on 2026-09-18 [measured 2026-10-01, production
+    `intra_check_reports`, read-only]. Every one of them lost only the
+    `smart_money` seat, which is ADVISORY: the owner's 2026-09-18 mandate
+    ("only technical analysis can stop the desk", `BLOCKING_SEATS`) landed
+    at 17:24 ET that day, after the last of them. They must never halt a
+    run again, and the loss must still be disclosed rather than hidden.
+
+    Pinned because item 187 (the FRED fetch) was the standing suspect for
+    these skips and is NOT the cause: the macro seat was covered in all 17.
+    """
+    p = _pipeline({
+        "tech": "ok",
+        "macro": "carried_from_morning",
+        "news": "ok",
+        "earnings": "carried_from_morning",
+        "smart_money": "expired",
+    })
+    result, _, _ = _run(p)
+    assert result["status"] != "evidence_gate_skip"
+    verdict = evidence_gate.evaluate(p._last_decision_data_status)
+    # Doubly fixed since: `expired` was later split out of CATEGORY_LOST
+    # (the desk HOLDS a good answer and knows it is stale), so the seat is
+    # not even lost now, and were it lost it would still be advisory.
+    assert verdict.lost == []
+    assert verdict.blocking_lost == []
+    assert verdict.skip is False
+
+
+def test_the_production_2026_09_28_skip_shape_still_halts_the_desk():
+    """The other 6 of the 17: the technical seat genuinely FAILED, which is
+    the one blocking seat, so the refusal is correct and must stay. No
+    reordering can save this call — tech's outcome is only knowable by
+    making it [measured 2026-10-01, production `intra_check_reports`]."""
+    status = {
+        "tech": "failed",
+        "macro": "remembered",
+        "news": "carry_forward_empty",
+        "earnings": "carried_from_morning",
+        "smart_money": "remembered",
+    }
+    verdict = evidence_gate.evaluate(status)
+    assert verdict.blocking_lost == ["tech"]
+    assert verdict.skip is True
