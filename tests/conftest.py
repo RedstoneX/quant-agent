@@ -254,5 +254,19 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     alerting.mkdir(exist_ok=True)
     import src.coverage_watchdog as _cw
 
-    monkeypatch.setattr(_cw, "STATE_PATH", alerting / "coverage_heartbeat.json")
-    monkeypatch.setattr(_cw, "DEPLOY_DRIFT_STATE_PATH", alerting / "deploy_drift.json")
+    heartbeat = alerting / "coverage_heartbeat.json"
+    drift = alerting / "deploy_drift.json"
+    monkeypatch.setattr(_cw, "STATE_PATH", heartbeat)
+    monkeypatch.setattr(_cw, "DEPLOY_DRIFT_STATE_PATH", drift)
+
+    # The reading side moves with the writing side, or the isolation itself
+    # would break the invariant that pins them together
+    # (tests/test_alert_suppression_api.py). `src.api.db_reads` spells the
+    # paths as literals because it may not import trading modules, so
+    # redirecting only the watchdog would leave the endpoint reading this
+    # checkout's real files while the writer wrote to tmp — the exact drift
+    # that pin exists to catch, introduced by the fixture meant to prevent
+    # pollution.
+    import src.api.db_reads as _db_reads
+
+    monkeypatch.setattr(_db_reads, "SUPPRESSION_STATE_PATHS", (heartbeat, drift))
