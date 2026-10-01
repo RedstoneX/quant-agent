@@ -1206,6 +1206,64 @@ class Database:
         _ensure_column(
             "trades", "max_favourable_excursion", "max_favourable_excursion REAL",
         )
+        # --- Item 55 evidence: WHAT the stop was based on, and what the
+        # market then did with that level. RECORDING ONLY (2026-10-01).
+        #
+        # Board item 55 ("what IS a structural level — how many bars make a
+        # swing point, how wide is a level's zone?") has been argued and
+        # re-measured repeatedly and never closed, because three
+        # measurements of the SAME baseline disagreed. A quantity that
+        # unstable cannot govern money, and no further argument fixes it:
+        # the desk has never recorded what its own stops were standing on,
+        # so it cannot look. These columns are that record.
+        #
+        # WHAT THIS DATA MAY BE USED FOR: showing that the CURRENT
+        # definition is WRONG — that level-backed stops fared no differently
+        # from stops with nothing behind them, that a given zone width or
+        # pivot window predicted nothing. A falsification.
+        #
+        # WHAT IT MAY NOT BE USED FOR: picking a better pivot window or zone
+        # width by trying candidates against these rows. That is fitting a
+        # number to this desk's own history, which doctrine bars outright
+        # ("no fitting, only reading"), and it is barred here however much
+        # data accumulates.
+        #
+        # NO CLASSIFICATION IS STORED. "Respected", "pierced and recovered"
+        # and "broken outright" all need a cutoff nobody can source today,
+        # so only RAW DISTANCES are kept and the classification is derived
+        # later by a reader who states its own cutoff. Unknown is NULL.
+        #
+        # `stop_level_basis` — JSON written at entry by
+        # `PortfolioConstructor.shipped_stop_level_basis` (see
+        # `src.data.levels.describe_stop_level_basis` for every field): the
+        # level's price and kind, its touch count, the pivot window and
+        # confirmation span in force, the zone's edges and width, and the
+        # signed stop-to-level and entry-to-level distances. Written for
+        # trades with NO level behind the stop too (`level_backed: false`),
+        # because that is the control group. NULL on legacy rows, non-entry
+        # rows, and any entry whose analysis could not produce an honest
+        # record.
+        _ensure_column("trades", "stop_level_basis", "stop_level_basis TEXT")
+        # `level_max_penetration` — the furthest price ever travelled BEYOND
+        # the far edge of that level's zone while the position was open, in
+        # price units, monotonic (only ever widens) and never negative. Zero
+        # or NULL means the zone's far edge was never exceeded in any
+        # snapshot. Carries the SAME snapshot-frequency caveat as
+        # `max_adverse_excursion`: a floor on the true penetration, so a
+        # reading that says the level WAS exceeded is trustworthy while one
+        # that says it was not is only "not observed".
+        _ensure_column(
+            "trades", "level_max_penetration", "level_max_penetration REAL",
+        )
+        # `level_closest_approach` — the SMALLEST distance ever seen between
+        # price and the NEAR edge of the zone, monotonic downwards, signed:
+        # positive means price never reached the zone, zero or negative
+        # means it entered. Together with `level_max_penetration` this
+        # separates "never came near it", "entered the zone", and "went
+        # clean through it" without anyone having to name a tolerance.
+        _ensure_column(
+            "trades", "level_closest_approach", "level_closest_approach REAL",
+        )
         _ensure_column("trades", "requested_risk_pct", "requested_risk_pct REAL")
         _ensure_column("trades", "allocated_risk_pct", "allocated_risk_pct REAL")
         _ensure_column("trades", "conviction", "conviction TEXT")
@@ -1477,7 +1535,8 @@ class Database:
                      thesis_invalid_if: str | None = None,
                      structural_ceiling: bool | None = None,
                      entry_atr: float | None = None,
-                     stop_basis: str | None = None) -> int:
+                     stop_basis: str | None = None,
+                     stop_level_basis: str | None = None) -> int:
         """Insert a trade record. Returns the new row's id.
 
         `entry_atr` / `stop_basis` are STOP-FLOOR EVIDENCE, pinned at entry
@@ -1553,15 +1612,16 @@ class Database:
                 "expected_horizon_sessions, setup_type, position_id, exit_reason_category, "
                 "conviction, requested_risk_pct, allocated_risk_pct, decision_model, "
                 "decision_id_status, thesis_invalid_if, initial_stop_loss, "
-                "initial_take_profit, structural_ceiling, entry_atr, stop_basis) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "initial_take_profit, structural_ceiling, entry_atr, stop_basis, "
+                "stop_level_basis) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
                  stop_loss, take_profit, broker_order_id, fill_status, decision_id,
                  expected_horizon_sessions, setup_type, position_id, exit_category,
                  conviction, requested_risk_pct, allocated_risk_pct, decision_model,
                  decision_link_status, thesis_invalid_if, initial_stop_loss,
                  initial_take_profit, structural_ceiling_stored,
-                 entry_atr, stop_basis),
+                 entry_atr, stop_basis, stop_level_basis),
             )
             self.conn.commit()
             return cur.lastrowid
@@ -2552,6 +2612,85 @@ class Database:
                 (excursion, position.symbol, excursion, position.symbol),
             )
 
+    def _accumulate_level_distances(self, position) -> None:
+        """Widen what the market has done to the stop's structural level.
+
+        ITEM 55 RECORDING, FALSIFICATION ONLY, and it decides nothing. The
+        pinned half (`stop_level_basis`) says what the stop stood on; this
+        is the running half that says what price then did to it, so that
+        "is this a real level" becomes answerable from the desk's own
+        record instead of from argument. Read the `stop_level_basis`
+        migration note for the hard limit on its use: it may show the
+        current definition of a level is WRONG, and it may NEVER be swept
+        for a better pivot window or zone width.
+
+        TWO RAW DISTANCES, NO VERDICT. `level_max_penetration` is how far
+        beyond the zone's FAR edge price has travelled (monotonic upward,
+        never negative); `level_closest_approach` is the smallest gap ever
+        seen to the zone's NEAR edge (monotonic downward, signed, negative
+        once price is inside). Nothing here calls an outcome "respected",
+        "pierced" or "broken", because each of those needs a cutoff nobody
+        can source; a later reader states its own cutoff and applies it to
+        these numbers, which were never rounded to one.
+
+        Side-agnostic in the same way as `_accumulate_excursions`, and for
+        the same reason: the side is read off the sign of `qty`, the only
+        side fact a broker position snapshot carries. A row with no
+        `stop_level_basis`, or one whose record had no level behind the
+        stop, is skipped and stays NULL rather than being given a
+        substitute.
+
+        Assumes the caller holds `self._lock` and an open transaction —
+        `sync_positions` is the only caller and does both.
+        """
+        try:
+            last = float(getattr(position, "current_price", 0) or 0)
+            qty = float(getattr(position, "qty", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if last <= 0 or qty == 0:
+            return
+        row = self.conn.execute(
+            "SELECT id, stop_level_basis FROM trades "
+            "WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
+            "AND stop_level_basis IS NOT NULL "
+            "AND position_id IN ("
+            "  SELECT position_id FROM trades WHERE symbol = ? "
+            "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1) "
+            "ORDER BY id DESC LIMIT 1",
+            (position.symbol, position.symbol),
+        ).fetchone()
+        if row is None:
+            return
+        try:
+            basis = json.loads(row[1])
+        except (TypeError, ValueError):
+            return
+        if not isinstance(basis, dict) or not basis.get("level_backed"):
+            return
+        low, high = basis.get("zone_low"), basis.get("zone_high")
+        if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+            return
+        if qty > 0:
+            # Long: the level is support below, so the far edge is the
+            # bottom of the zone and the near edge is the top of it.
+            penetration = float(low) - last
+            approach = last - float(high)
+        else:
+            penetration = last - float(high)
+            approach = float(low) - last
+        if penetration > 0:
+            self.conn.execute(
+                "UPDATE trades SET level_max_penetration = ? WHERE id = ? "
+                "AND (level_max_penetration IS NULL OR level_max_penetration < ?)",
+                (penetration, row[0], penetration),
+            )
+        self.conn.execute(
+            "UPDATE trades SET level_closest_approach = ? WHERE id = ? "
+            "AND (level_closest_approach IS NULL OR level_closest_approach > ?)",
+            (approach, row[0], approach),
+        )
+
     def sync_positions(self, positions) -> None:
         """Replace positions table with a fresh broker snapshot.
 
@@ -2598,6 +2737,7 @@ class Database:
                     # can never fail a position sync.
                     try:
                         self._accumulate_excursions(p)
+                        self._accumulate_level_distances(p)
                     except Exception:
                         logger.debug(
                             "excursion recording skipped for %s",

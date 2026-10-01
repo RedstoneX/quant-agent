@@ -10036,6 +10036,11 @@ class ExecutionStage:
                     # ATR rather than a reconstructed one.
                     entry_atr=getattr(entry_analysis, "atr_14", None),
                     stop_basis=getattr(decision, "stop_rule", None),
+                    # Item 55 RECORDING, no behaviour: what that stop was
+                    # BASED on — which level, how many turns made it, how
+                    # wide its zone was, how far the stop sat from it. Set
+                    # by the constructor; nothing downstream reads it back.
+                    stop_level_basis=getattr(decision, "stop_level_basis", None),
                     # Conviction ledger (spec §7.2) — pinned at entry from
                     # the constructor's TradeDecision (see portfolio_
                     # constructor._build_buy/_build_short) and from this
