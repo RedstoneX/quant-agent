@@ -7651,6 +7651,47 @@ numbers:
       BREAKOUT_PROJECTION_ATR_MULTIPLE (src/risk/target_revision.py:105-115).
       One number, reached through a second name; the base carries the
       question.
+  - id: src.risk.target_revision.raw_trigger_flags(break_margin_atr_multiple)
+    value: 1.0
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
+    base_value: 1.0
+    note: >-
+      Parameter default bound to the imported constant
+      BREAK_CONFIRMATION_ATR_MULTIPLE. One number, reached through a second
+      name; the base carries the question. Added with board item 194, which
+      put the reach and wall triggers behind the same two-consecutive-closes
+      confirmation the level-broken trigger already used, so the raw-state
+      helper takes the same margin the confirmed check does.
+  - id: src.risk.target_revision.raw_trigger_flags(max_horizon_sessions)
+    value: 60
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.MAX_HORIZON_SESSIONS
+    base_value: 60
+    note: >-
+      Parameter default bound to the imported constant MAX_HORIZON_SESSIONS.
+      One number, reached through a second name; the base carries the
+      question. Same binding as the sibling row on `assess_target_revision`.
+  - id: src.risk.target_revision.raw_trigger_flags(max_reach_atr_multiple)
+    value: 1.5
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.MAX_REACH_ATR_MULTIPLE
+    base_value: 1.5
+    note: >-
+      Parameter default bound to the imported constant MAX_REACH_ATR_MULTIPLE.
+      One number, reached through a second name; the base carries the question.
+  - id: src.risk.target_revision.raw_trigger_flags(min_target_atr_multiple)
+    value: 1
+    status: derived
+    site: src/risk/target_revision.py
+    derived_from: src.data.levels.MIN_TARGET_ATR_MULTIPLE
+    base_value: 1
+    note: >-
+      Parameter default bound to the imported constant MIN_TARGET_ATR_MULTIPLE.
+      One number, reached through a second name; the base carries the question.
   - id: src.risk.target_revision.assess_target_revision(max_horizon_sessions)
     value: 60
     status: derived
