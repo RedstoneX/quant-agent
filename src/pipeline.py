@@ -11428,6 +11428,8 @@ class TradingPipeline:
 
         computed_levels: list[float] = []
         computed_level_touches: dict[float, int] = {}
+        computed_level_zones: dict[float, list[float]] = {}
+        computed_level_bars: dict[float, list[tuple[float, float]]] = {}
         atr = ma_20 = ma_50 = ma_200 = ma_200_prior = adx = close_price = bar_date = None
         # The completed trading sessions strictly before today's close, most
         # recent first, taken from THIS position's own daily bars — the
@@ -11456,6 +11458,14 @@ class TradingPipeline:
                 all_levels = (*supports, *resistances)
                 computed_levels = sorted(lv.price for lv in all_levels)
                 computed_level_touches = {lv.price: lv.touches for lv in all_levels}
+                computed_level_zones = {
+                    lv.price: [float(lv.zone_low), float(lv.zone_high)]
+                    for lv in all_levels
+                    if lv.zone_low is not None and lv.zone_high is not None
+                }
+                computed_level_bars = {
+                    lv.price: list(lv.pivot_bars) for lv in all_levels
+                }
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: bars/indicator fetch failed for %s "
@@ -11505,6 +11515,8 @@ class TradingPipeline:
             is_short=is_short,
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
+            computed_level_zones=computed_level_zones,
+            computed_level_bars=computed_level_bars,
             min_level_touches=min_level_touches,
             # NOT a setting and not a fallback default — this is the exact
             # constant `find_structural_levels` used to cluster pivots into
@@ -12388,6 +12400,11 @@ class TradingPipeline:
             if proposal is None:
                 _note(
                     symbol, evaluation.code,
+                    # Item 212 follow-up: on a range name the R-ratchet leg
+                    # supplies the code, so the STRUCTURAL leg's own refusal
+                    # reason would otherwise never be recorded again. It is
+                    # both a recorded field and part of the dedupe identity.
+                    structural_code=evaluation.structural_code,
                     current_stop=current_stop,
                     current_price=position.current_price,
                     entry=position.avg_entry,
@@ -12472,6 +12489,10 @@ class TradingPipeline:
                 continue
             _note(
                 symbol, TRAIL_CODE_TRAILED, proposal.reason,
+                # Carried on the SUCCESS branch too: the case this field
+                # exists for is the R-ratchet leg winning, which is a
+                # trailed row, not a refusal row.
+                structural_code=evaluation.structural_code,
                 proposed_stop=proposal.new_stop, current_stop=current_stop,
             )
             if isinstance(order, dict):
@@ -12674,9 +12695,29 @@ class TradingPipeline:
                 # (the executor's qty-sign gate rejects a SELL on one).
                 act = "COVER" if is_short else "SELL"
                 existing = best_by_symbol.get(symbol)
+                # ITEM 75 RECORDING, AND IT BUYS NOTHING IT DOES NOT ALREADY
+                # HAVE. A chart read is a live `yfinance` download
+                # (`market.get_ohlcv`, uncached), so reading the chart for a
+                # position this scan would have skipped is NEW network work,
+                # not free evidence — the record is therefore written from
+                # what the scan ALREADY computes, and a position the scan
+                # skips gets an explicit "not evaluated this session" row
+                # with a NULL reading rather than a chart read bought to
+                # fill it. A later reader needs the skipped rows to know its
+                # own denominator; it must not mistake them for health.
                 if existing is not None and priority.get(
                     existing.get("action"), 99,
                 ) <= priority.get(act, 99):
+                    self._record_alignment_reading(
+                        symbol=symbol, verdict=None, run_id=run_id,
+                        is_short=is_short,
+                        not_evaluated_reason=(
+                            "the review already proposed a "
+                            f"{existing.get('action')} for this name, which "
+                            "the scan does not override, so its chart was "
+                            "not read this session"
+                        ),
+                    )
                     continue
                 facts = (position_facts or {}).get(symbol, {}) or {}
                 verdict = self._alignment_exit_cached(
@@ -12688,6 +12729,14 @@ class TradingPipeline:
                     stop_loss=getattr(position, "stop_loss", None)
                     or facts.get("stop_loss"),
                     run_id=run_id,
+                )
+                # The reading the scan itself acts on, memoised, written
+                # whether or not it fires — the sessions it does NOT fire are
+                # the whole point. Nothing reads these rows back into any
+                # decision; see `db.record_alignment_exit_reading`.
+                self._record_alignment_reading(
+                    symbol=symbol, verdict=verdict, run_id=run_id,
+                    is_short=is_short,
                 )
                 if not verdict.exit_cleared:
                     continue
@@ -12728,6 +12777,23 @@ class TradingPipeline:
                     "is raised for it",
                     getattr(position, "symbol", "?"), e,
                 )
+
+    def _record_alignment_reading(
+        self, *, symbol: str, verdict, run_id: str, is_short: bool,
+        not_evaluated_reason: str | None = None,
+    ) -> None:
+        """Item 75 recording. Never raises, never blocks a sale, never
+        buys a chart read to fill itself."""
+        try:
+            self.db.record_alignment_exit_reading(
+                symbol=symbol, verdict=verdict, run_id=run_id,
+                is_short=is_short, not_evaluated_reason=not_evaluated_reason,
+            )
+        except Exception as e:  # noqa: BLE001 — a recording never blocks
+            logger.warning(
+                "alignment-exit reading for %s was not recorded (%s)",
+                symbol, e,
+            )
 
     def _position_opened_today(self, symbol: str) -> bool:
         """Was this position bought in TODAY's session? DATE EQUALITY ONLY.

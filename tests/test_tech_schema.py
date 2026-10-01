@@ -39,11 +39,15 @@ from src.models import (
     TechnicalIndicators,
 )
 
-# The eight fields item 157 / #538's write-up names as desk-filled
-# (Python-set after the call, never emitted by the model).
+# The fields that are desk-filled: Python-set after the call, never emitted
+# by the model. Item 157 / #538's write-up named eight; board items 55 and
+# 215 added two more, because deciding whether a stop rests on a level now
+# needs the BARS that drew the level and the level's ZONE, both computed
+# here and neither ever asked of the model.
 _DESK_FILLED_FIELDS = {
     "atr_14", "computed_levels", "computed_level_touches", "levels_coverage",
     "signal_bar_low", "signal_bar_high", "bars_available", "signal_age_days",
+    "computed_level_bars", "computed_level_zones",
 }
 
 _VALID_ITEM = {
@@ -72,14 +76,14 @@ def _result(text: str) -> AgentResult:
 
 # --- the model split ---------------------------------------------------------
 
-def test_the_eight_desk_filled_fields_are_not_on_the_model_facing_schema():
+def test_the_desk_filled_fields_are_not_on_the_model_facing_schema():
     model_fields = set(TechAnalystAnswerItem.model_fields)
     assert not (model_fields & _DESK_FILLED_FIELDS), (
         f"leaked desk-filled fields into the model-facing schema: "
         f"{model_fields & _DESK_FILLED_FIELDS}"
     )
     # Every field TechAnalysisResult carries beyond the model-facing subset
-    # must be exactly the eight named ones -- nothing else quietly moved.
+    # must be exactly the named ones -- nothing else quietly moved.
     extra = set(TechAnalysisResult.model_fields) - model_fields
     assert extra == _DESK_FILLED_FIELDS
 

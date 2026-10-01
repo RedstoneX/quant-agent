@@ -827,8 +827,19 @@ numbers:
       relevant at all - scales off this one number.
   - id: src.config.RiskConfig.min_level_touches_for_stop_honor
     value: 5
-    status: sourced
+    status: arbitrary
     site: src/config.py
+    downgraded: >-
+      WAS `sourced`. DOWNGRADED 2026-10-01 (docs/WORK.md item 55), because the
+      input its source was measured on no longer exists. The table below was
+      built with levels clustered by the flat 1%-of-price rule; item 55 deletes
+      that rule and clusters on the overlap of the bars that made each pivot
+      instead, so the OBJECT the touch count is counting changed. docs/OUTCOME.md
+      requires every number derived from a changed input to be re-checked, and
+      the re-derivation was attempted twice and FAILED both times -- both
+      reasons recorded in docs/WORK.md item 55 rather than glossed. The value
+      stays at 5 because moving it would be inventing a number; the status no
+      longer claims a measurement that stands.
     source: >-
       In-repo measured study at src/config.py:722-740 (Phase 12.1, 2026-09-03,
       docs/RESEARCH_FINDINGS.md section 7): a real-vs-shuffled bounce-probability
@@ -846,8 +857,21 @@ numbers:
       chosen: below it a stop is not treated as level-backed and falls back to
       the unbacked-stop floor exactly as any unbacked stop does.
     open_question: >-
-      Whether that table -- 101 symbols over 5 years of daily bars -- transfers
-      to the holding periods and names this desk actually trades.
+      Does the real-versus-shuffled separation survive the new overlap
+      clustering, and at what touch count? Unanswered: the attempt on the
+      276-bar panel this repo holds yields n=27 real observations at 5 touches
+      against n=400+ in the original, and the shuffled control scored HIGHER
+      than real at every touch count, which means the reconstruction is not
+      the original test. docs/WORK.md item 55 names the recording that would
+      settle it. The older open question stands too: whether a table over 101
+      symbols and 5 years of daily bars transfers to the holding periods and
+      names this desk actually trades.
+    cost_while_unanswered: >-
+      Five touches is the bar a level must clear before a stop resting on it
+      earns the tight-stop exemption (1.0 ATR instead of 2.5 ATR), so an
+      unproven bar decides how tight a live stop may be. Set too low, a stop is
+      honoured against a separation that could be noise; set too high, real
+      structure is ignored and every stop is widened to the unbacked floor.
   - id: src.config.RiskConfig.min_position_risk_pct
     value: 0.5
     status: derived
@@ -2067,33 +2091,45 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.data.levels.CLUSTER_TOLERANCE_PCT
+  - id: src.data.levels.CLUSTER_TOLERANCE_PCT_FALLBACK
     value: 1
     status: arbitrary
     site: src/data/levels.py
     note: >-
-      Two pivots within this percentage of each other are the same level, so a
-      cluster spans at most 1.0%. src/data/levels.py:112-129 is unusually
-      honest about it: that is HALF the narrowest bin the literature has
-      tested, the match zone built from it spans exactly that narrowest tested
-      bin, and "1.0 is not shown to be right, and it is not shown to be wrong
-      either". It stays labelled rather than being moved to a foreign default,
-      which would be the same unsourced act in the other direction.
-      Ratified as owner-appetite 2026-09-25 (item 55): Zapranis & Tsinaslanidis
-      (2012), Applied Financial Economics 22(19) tested band widths from 2% to
-      5% and found the bounce-behaviour result did not change across that
-      range -- the literature gives a shape (a range with no measured winner
-      inside it), not a single value, so no citation can pick this number for
-      us. The on-desk sweep named below (item 55) would still narrow it if
-      run; until then this stays labelled `arbitrary` per this ledger's
-      convention for owner-ratified appetite figures.
+      SUPERSEDED 2026-09-30, docs/WORK.md item 55. This used to BE the level
+      definition: two pivots within 1% of each other were one level. That 1%
+      was never shown to be right (this entry said so in its own words) and
+      it did not scale with how violently a name moves. It is gone from the
+      definition. `_cluster` now groups two pivots when the price RANGES the
+      bars actually traded OVERLAP, and the level's width is those bars' own
+      combined span - read off the instrument, with no width to pick and
+      nothing left to sweep. The open question this entry used to carry ("at
+      what price separation do two pivots stop being one level") no longer
+      has to be answered, because nothing asks it any more.
+      The 1.0 is NOT deleted and this entry stays `arbitrary`, because the
+      number is still reachable and still unsourced wherever it is reached.
+      It remains reachable in four places, named rather than glossed:
+      (1) `level_zone_halfwidth` uses it whenever `zone_low`/`zone_high` are
+      absent, non-finite, inverted, or describe a zero-width bar;
+      (2) `_cluster` falls back to it to group a pivot whose bar range is not
+      a finite number;
+      (3) `risk.level_cluster_tolerance_pct` is a live configured parameter
+      carrying this value into `src/risk/exit_guard.py` and
+      `src/risk/target_revision.py`, where a level with no zone is still
+      matched as `price * pct / 100`;
+      (4) the alias `CLUSTER_TOLERANCE_PCT` is still exported and is still
+      the default argument of the public helpers.
+      What DID change is that the number no longer defines a level: every
+      level `find_structural_levels` builds from bars now carries its own
+      measured zone and never consults this value.
     open_question: >-
-      At what price separation do two pivots stop being one level, measured on
-      the bounce behaviour of this desk's own names? docs/WORK.md item 55
-      names what would settle it.
+      What bound should a zone-less level get, when no bar range is available
+      to read one off? Unanswered; 1% is a guess standing in for a
+      measurement, exactly as before.
     cost_while_unanswered: >-
-      Level clustering decides where structure is, and structure places stops
-      - so this sets the granularity of every level-backed stop.
+      A level reaching the risk seats without a zone is matched on a guessed
+      1% band, so a stop can be reported as backed by structure on the
+      strength of an unsourced width. docs/WORK.md item 55.
   - id: src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
     value: 10
     status: arbitrary
@@ -2777,6 +2813,23 @@ numbers:
     cost_while_unanswered: >-
       This is the cap that actually binds most real trades; it is a round 65
       with no derivation.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        the distribution of overnight and intraday gap moves against position, in
+        percent of prior close, measured off public daily bars for the eligible
+        universe over a stated window -- the no-stop-fill case this ceiling is the
+        only guard against. Measured on the instrument, over names the desk could
+        have held rather than names it did hold, so it is a property of the tape and
+        not of this desk's trade record
+      closes_when: >-
+        the owner states the single-name account loss he will tolerate when a stop
+        does not fill at all, and the measured gap distribution at a stated
+        percentile turns that tolerance into a notional share. The ceiling is then
+        that computed share. Until both halves exist the desk pays a round 65 nobody
+        derived; the open mandate half belongs to board item 186
   - id: src.portfolio_constructor.ConstructorConfig.max_sector_hard_pct
     value: 90
     status: arbitrary
@@ -2828,6 +2881,25 @@ numbers:
     cost_while_unanswered: >-
       A diversification-shaped number on a desk whose mandate explicitly
       rejects diversification as a goal.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        the common component of same-sector drawdown in the eligible universe: for
+        each sector, the size of the simultaneous adverse move across its names on
+        the worst days of a stated window, read off public daily bars. This measures
+        whether a sector share behaves as one position or as several, which is the
+        only survival-grounded reason this desk -- which rejects diversification as
+        a goal -- would cap a sector at all
+      closes_when: >-
+        the measurement shows the sector share at which a one-day sector shock
+        reaches the same single-name tolerance the max_position_pct route elicits;
+        the soft target is set there and the ceiling behind it follows from the same
+        number. If same-sector names do not move together enough for any share to
+        reach that tolerance, the soft target is DELETED rather than re-picked,
+        because then it is a diversification number the mandate does not want. Board
+        item 104 separately owns the prompt wording defect
   - id: src.portfolio_constructor.ConstructorConfig.max_target_horizon_sessions
     value: 60
     status: derived
@@ -2883,6 +2955,26 @@ numbers:
       A no-ATR name's protective stop sits a flat 0.5% past its level rather
       than a distance anyone chose; too tight risks a wick-out, too loose gives
       up more than intended on the rare name that loses its ATR reading.
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every no-ATR structural stop placement, carrying the level the stop was read
+        from, the half-width of the price cluster that formed that level (the
+        dispersion of the touches the level detector already groups), the distance
+        this flat 0.5% put the stop at, and whether the subsequent low pierced the
+        buffer without invalidating the level. The cluster half-width is a reading
+        off the instrument that is already computed at placement time; nothing here
+        consults the trade's profit or loss
+      closes_when: >-
+        the recording shows the cluster half-width is present and non-degenerate at
+        placement on a stated run of placements, at which point the buffer becomes
+        that measured half-width per name and the flat percentage is DELETED. If the
+        half-width is routinely unavailable, the flat percentage stays and the
+        recording states how often it was too tight -- pierced without the level
+        breaking -- so the cost is at least a measured number instead of an
+        assumption
   - id: src.portfolio_constructor.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived
@@ -2976,6 +3068,25 @@ numbers:
     cost_while_unanswered: >-
       Owner-ratified at 5% on 2026-08-27 but not sourced; it caps every real
       position.
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every sizing decision, carrying the name, the risk envelope this flat 5%
+        implies in dollars, the envelope the name's own measured behaviour implies
+        (its stop distance in ATR units and the conviction the seats recorded), and
+        WHICH of the two actually bound the final size. The ruling of 2026-09-30 is
+        that risk is read per name and that a global risk constant is a defect, so
+        what has to be observed is whether this constant ever binds anything the
+        per-name reading would not
+      closes_when: >-
+        the recording covers a stated run of sessions and shows either that the flat
+        envelope never binds a trade the per-name envelope would not -- in which
+        case it is DELETED as dead rather than re-derived -- or that it does bind,
+        in which case the per-name formula replaces it and this row leaves the
+        ledger. Never set by searching for the envelope that would have performed
+        best on this desk's own fills
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]
     value: 1.2
     status: arbitrary
@@ -3031,6 +3142,26 @@ numbers:
       Every stop in a high-volatility regime is widened by a scaler no
       measurement supports (src/portfolio_constructor.py:636-646 says exactly
       that).
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every macro-regime classification the constructor makes, paired with a
+        measurement taken off public daily bars for the SAME eligible universe and
+        the SAME regime bucket: the realized true range over the days that follow
+        the classification, divided by the trailing ATR reading the stop was sized
+        from on the classification day. This is a lag measurement on the instrument
+        -- how far behind the tape the ATR window sits once the regime has changed
+        -- and it is taken from price alone, with no reference to any position this
+        desk held
+      closes_when: >-
+        the measured ratio for the risk-off bucket is stable across a stated number
+        of regime transitions and a stated universe, at which point this rung is set
+        to that measured ratio and the appetite wording is withdrawn. If the ratio
+        for this bucket is indistinguishable from 1.0 the rung is DELETED rather
+        than kept at its present figure. Never set from which scaler would have
+        traded best on this desk's own record, which docs/OUTCOME.md bars outright
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[1][1]
     value: 1.1
     status: arbitrary
@@ -3050,6 +3181,26 @@ numbers:
       elevated-regime rung.
     cost_while_unanswered: >-
       As above.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every macro-regime classification the constructor makes, paired with a
+        measurement taken off public daily bars for the SAME eligible universe and
+        the SAME regime bucket: the realized true range over the days that follow
+        the classification, divided by the trailing ATR reading the stop was sized
+        from on the classification day. This is a lag measurement on the instrument
+        -- how far behind the tape the ATR window sits once the regime has changed
+        -- and it is taken from price alone, with no reference to any position this
+        desk held
+      closes_when: >-
+        the measured ratio for the elevated bucket is stable across a stated number
+        of regime transitions and a stated universe, at which point this rung is set
+        to that measured ratio and the appetite wording is withdrawn. If the ratio
+        for this bucket is indistinguishable from 1.0 the rung is DELETED rather
+        than kept at its present figure. Never set from which scaler would have
+        traded best on this desk's own record, which docs/OUTCOME.md bars outright
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]
     value: 0.95
     status: arbitrary
@@ -3069,6 +3220,26 @@ numbers:
     cost_while_unanswered: >-
       As above, and this rung TIGHTENS stops, so an error here moves exits
       inside noise.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every macro-regime classification the constructor makes, paired with a
+        measurement taken off public daily bars for the SAME eligible universe and
+        the SAME regime bucket: the realized true range over the days that follow
+        the classification, divided by the trailing ATR reading the stop was sized
+        from on the classification day. This is a lag measurement on the instrument
+        -- how far behind the tape the ATR window sits once the regime has changed
+        -- and it is taken from price alone, with no reference to any position this
+        desk held
+      closes_when: >-
+        the measured ratio for the calm bucket is stable across a stated number of
+        regime transitions and a stated universe, at which point this rung is set to
+        that measured ratio and the appetite wording is withdrawn. If the ratio for
+        this bucket is indistinguishable from 1.0 the rung is DELETED rather than
+        kept at its present figure. Never set from which scaler would have traded
+        best on this desk's own record, which docs/OUTCOME.md bars outright
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[0][1]
     value: 1
     status: sourced
@@ -3102,6 +3273,25 @@ numbers:
       src/portfolio_constructor.py:644 calls it "a modest tightening off the
       base, not a specific measured number" - and it multiplies into every
       range trade's stop and therefore its size.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        the adverse excursion that follows a signal, in ATR units, measured
+        separately for range-classified and breakout-classified setups using the
+        desk's OWN setup classifier run over public daily bars for the eligible
+        universe. The classifier is applied to every bar that qualifies, not to the
+        bars this desk traded, so the result is a property of how the two setup
+        types behave and carries no survivorship from the desk's entries
+      closes_when: >-
+        the chosen percentile of the range distribution divided by the same
+        percentile of the breakout distribution is measured over a stated universe
+        and window and is stably below 1.0; this scaler is then set to that measured
+        ratio. If the two distributions are indistinguishable the scaler is DELETED
+        and range setups take the base width, rather than keeping a 0.90 the
+        definition site itself calls 'not a specific measured number'. Never set
+        from this desk's own trade outcomes
   - id: src.portfolio_constructor.ConstructorConfig.target_divergence_warn_pct
     value: 25
     status: derived
@@ -3909,6 +4099,24 @@ numbers:
       Trailing stops are placed on pivots found by a window nothing measured,
       and the disagreement with the level scan is currently harmless only
       because nothing compares them.
+  - id: src.risk.trailing.MIN_BARS_FOR_A_READING
+    value: 7
+    status: derived
+    derived_from: src.risk.trailing.PIVOT_WINDOW
+    base_value: 3
+    site: src/risk/trailing.py
+    note: >-
+      Not a chosen bar count. It is `PIVOT_WINDOW * 2 + 1`, computed in code
+      from the row above, because that is exactly the span a confirmed swing
+      pivot needs: the pivot bar plus `PIVOT_WINDOW` bars either side. Below
+      it neither trail leg has enough bars to read anything, so both refuse
+      with `too_few_bars_since_entry` rather than reading an extreme off
+      today's price. Added with board item 212, which removed the
+      take-profit gate on a range position's structural trail: with the gate
+      gone a position entered today would otherwise have yielded a single
+      bar and a chandelier that merely follows price, which is a different
+      exit rule, not a trail. It inherits `PIVOT_WINDOW`'s own unresolved
+      question and adds none of its own.
   - id: src.risk.trailing.RANGE_BREAKEVEN_R_MULTIPLE
     value: 1
     status: arbitrary
