@@ -228,6 +228,16 @@ from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 from src.risk.exit_trigger import (  # noqa: E402
     CANONICAL_TRIGGER_NAMES as _CANONICAL_TRIGGER_NAMES,
 )
+from src.risk.exit_trigger import (  # noqa: E402
+    VERIFIED_ON_CHART as _VERIFIED_ON_CHART,
+    canonical_prose_names as _canonical_prose_names,
+)
+
+#: Canonical prose spellings of the triggers whose truth is decided by
+#: READING THE CHART. Never hard-trigger keywords — see the note below.
+_CHART_VERIFIED_TRIGGER_NAMES: frozenset[str] = frozenset(
+    n for t in _VERIFIED_ON_CHART for n in _canonical_prose_names(t)
+) | {"trend alignment over", "alignment exit"}
 
 
 # Named exit triggers — the vocabulary of NEW INFORMATION.
@@ -372,9 +382,20 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
 # untrue of four of them, in the one comment block whose entire job is to
 # record that bar. Overstating a finding is the same failure as understating
 # one, so the claim now lives in a constant a test checks.
+#
+# CHART-VERIFIED TRIGGERS ARE EXCLUDED, AND THIS IS LOAD-BEARING. A name in
+# this tuple is a BYPASS: `_reason_cites_hard_trigger` waves the reason past
+# the SELL/REDUCE noise band AND past the TRAIL_STOP ratchet cooldown and the
+# 1.25xATR trail clamp, on the strength of prose alone. The alignment exit is
+# the one trigger whose whole point is that prose is NOT enough — it is
+# granted its bypass by `_alignment_exit_for_holding` reading the chart, and
+# by nothing else. Letting its canonical name in here would hand a model a
+# second, unverified way to buy the same bypass on the trail path, which runs
+# no chart check at all.
 _HARD_TRIGGER_KEYWORDS = _HARD_TRIGGER_KEYWORDS + tuple(
     name for name in _CANONICAL_TRIGGER_NAMES
     if name not in _HARD_TRIGGER_KEYWORDS
+    and name not in _CHART_VERIFIED_TRIGGER_NAMES
 )
 
 
@@ -938,6 +959,62 @@ def _reconciled_exit_action(order_type: str | None) -> str:
     if ot in ("market", "limit") or ot.endswith(".market") or ot.endswith(".limit"):
         return "SELL"
     return "RECONCILED_EXIT"
+
+
+def _actions_with_scan_fallback(items, displaced: dict, orders: list):
+    """The midday action queue, with the SAFETY FALLBACK for scan-raised
+    sales.
+
+    A sale the alignment scan raised REPLACED whatever the review proposed
+    for that symbol. Every layer below may refuse it — an unnamed trigger,
+    the metric-contradiction veto, the AI Risk seat, the qty-sign gate, the
+    confirmer's own verdict. If that happens the symbol must not be left
+    with nothing: the action the scan displaced (in practice a TRAIL_STOP,
+    the only thing besides HOLD it may overwrite) goes back on the queue and
+    is executed normally, so a REFUSED scan sale leaves the position exactly
+    as well protected as the scan found it — never worse.
+
+    "Refused" is read off the only durable evidence available at this level:
+    the sale appended no order to `orders`. A submitted sale always appends
+    one; were it somehow not to, the fallback re-protects a position that is
+    closing, which is the harmless direction to be wrong in.
+
+    A generator so the executor loop is unchanged: it resumes here after the
+    body has run, whichever `continue` the body took to get out.
+    """
+    queue = list(items)
+    while queue:
+        item = queue.pop(0)
+        orders_before = len(orders)
+        yield item
+        if not item.get("_alignment_scan_raised"):
+            continue
+        if len(orders) > orders_before:
+            continue
+        fallback = displaced.pop((item.get("symbol") or "").strip().upper(), None)
+        if fallback is None:
+            continue
+        logger.warning(
+            "Alignment scan: the %s it raised for %s was refused downstream "
+            "— restoring the %s the review asked for, so the position is not "
+            "left unprotected",
+            item.get("action"), item.get("symbol"), fallback.get("action"),
+        )
+        queue.append(fallback)
+
+
+def _reason_claims_alignment_exit(reason: str, exit_trigger: object = None) -> bool:
+    """Does this sale claim the TREND IS OVER (the alignment exit)?
+
+    Read from the STRUCTURED trigger first and the prose only as a
+    fallback, same precedence the holding-discipline fact-check uses.
+    """
+    from src.risk.exit_trigger import ExitTrigger
+    t = getattr(exit_trigger, "value", exit_trigger)
+    if isinstance(t, str) and t.strip().lower() == ExitTrigger.TREND_ALIGNMENT_OVER.value:
+        return True
+    low = (reason or "").lower()
+    return "trend alignment over" in low or "alignment exit" in low
 
 
 class TradingPipeline:
@@ -11596,6 +11673,269 @@ class TradingPipeline:
             getattr(self, "portfolio_constructor", None), "cfg", None,
         )
 
+    #: Per-run memo for the alignment verdict, keyed
+    #: (run_id, symbol, is_short). The scan below and the confirmer inside
+    #: `_midday_execute_llm_actions` ask the SAME question about the same
+    #: position in the same pass; the chart read behind it costs bars plus a
+    #: structural-protection evaluation, so it is computed once. Same inputs,
+    #: same deterministic answer — this changes no verdict, only the count of
+    #: reads. Declared at class level so an instance built without __init__
+    #: (tests do this) still reads a value rather than raising.
+    _alignment_exit_memo: dict | None = None
+
+    def _alignment_exit_cached(
+        self, *, symbol: str, thesis_invalid_if: str | None, is_short: bool,
+        entry_price: float | None, stop_loss: float | None, run_id: str,
+    ):
+        """`_alignment_exit_for_holding`, computed at most once per
+        (run, symbol, side). Never raises: a memo failure just recomputes."""
+        key = (run_id, symbol, bool(is_short))
+        memo = self._alignment_exit_memo
+        if not isinstance(memo, dict):
+            memo = {}
+            self._alignment_exit_memo = memo
+        if key in memo:
+            return memo[key]
+        verdict = self._alignment_exit_for_holding(
+            symbol=symbol, thesis_invalid_if=thesis_invalid_if,
+            is_short=is_short, entry_price=entry_price, stop_loss=stop_loss,
+            run_id=run_id,
+        )
+        memo[key] = verdict
+        return verdict
+
+    def _alignment_exit_scan(
+        self, positions, best_by_symbol: dict, *, run_id: str,
+        position_facts: dict | None, priority: dict,
+        displaced: dict | None = None,
+    ) -> None:
+        """Read EVERY held position's own chart and raise a sale on the ones
+        the chart says are finished — whether or not any model mentioned them.
+
+        THE DEFECT THIS CLOSES. `check_alignment_exit` shipped wired only as
+        a CONFIRMER: it ran solely on positions the review had already named,
+        and only GATED the ones whose prose already claimed the alignment
+        exit. Nothing ever asked the question of a position the models were
+        silent about, so the owner-ratified "sell when the chart says the
+        trend is over" rule could never START a sale, and the desk still had
+        no sanctioned way to bank a gain on its own.
+
+        HOW IT REACHES THE SELL PATH. It does not open one. A cleared verdict
+        becomes an ordinary action item in `best_by_symbol` — the same dict
+        the review's own actions land in, resolved by the same
+        SELL/COVER > REDUCE > TRAIL_STOP > HOLD priority — so it is then
+        subject, unchanged and in order, to every protection an LLM-proposed
+        exit gets: the same-day-trim discipline, the spent-trigger layer, the
+        named-trigger phrase gate, the exit guard's metric-contradiction
+        veto, the AI Risk seat's veto, the qty-sign gate, and the alignment
+        verdict itself re-read as the confirmer. A sale this scan raises can
+        be refused by any one of them.
+
+        ONE PROTECTION IS DELIBERATELY BYPASSED, and only one: the
+        entry-anchored noise band, which asks how far price has travelled
+        from WHAT THE DESK PAID. Under the owner's 2026-09-30 ruling the
+        alignment exit sells because the move ended on the chart, and what
+        the desk paid says nothing about that, so a chart-verified
+        alignment sale is not judged against it. Every other layer applies
+        unchanged. (Chosen over keeping the band for scan-raised sales
+        because a band anchored to the entry would silently veto exactly
+        the exits the ruling exists to allow — the ones taken at a gain.)
+
+        WHEN A REFUSAL HAPPENS, THE DISPLACED ACTION COMES BACK. Raising a
+        sale overwrites whatever the review proposed for that symbol; if
+        that was a TRAIL_STOP and the sale is then refused downstream, the
+        position would end the session neither sold nor re-protected —
+        strictly worse than the state the scan found. The displaced item is
+        therefore kept in `displaced` and re-queued by the executor when a
+        scan-raised sale produces no order.
+
+        A model action of EQUAL OR HIGHER priority always wins: the scan
+        never overwrites a SELL, COVER or REDUCE the review asked for, and
+        never rewrites its reason. It supersedes only HOLD and TRAIL_STOP,
+        because under the owner's ruling the END OF A MOVE is decided by
+        reading the chart rather than by whether a model mentioned it — and
+        a stop adjustment on a position being closed is moot. The prose is
+        not irrelevant: when a thesis names an average the desk computes,
+        that average is the first mark. It is no longer REQUIRED — a thesis
+        naming none falls back to the chart's own averages, so coverage no
+        longer depends on model wording.
+
+        A POSITION OPENED IN TODAY'S SESSION IS NOT ELIGIBLE. Nothing in the
+        entry path requires a candidate to be above any average, so a name
+        can be bought while already below one, and without this the scan
+        could close it the same session on a chart the entry seats had
+        already read. Date equality only, on the recorded buy.
+
+        FAIL CLOSED. Only `status == "EXIT"` raises a sale. Missing bars, a
+        missing ATR, an unresolvable chart mark and every other degraded
+        state come back HOLD or UNPARSEABLE and raise nothing, exactly as
+        today. Per-symbol failures are swallowed so one unreadable name
+        cannot suppress the others — swallowing means NOT selling.
+
+        No new number, no new threshold and no extra agreement requirement:
+        what counts as the end of a move is entirely
+        `check_alignment_exit`'s decision, read as given.
+        """
+        from src.risk.exit_trigger import ExitTrigger
+
+        for position in (positions or []):
+            try:
+                symbol = (getattr(position, "symbol", "") or "").strip().upper()
+                if not symbol:
+                    continue
+                try:
+                    qty = float(getattr(position, "qty", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if qty == 0:
+                    continue
+                is_short = qty < 0
+                # COVER is the only lever the exit path has on a held short
+                # (the executor's qty-sign gate rejects a SELL on one).
+                act = "COVER" if is_short else "SELL"
+                existing = best_by_symbol.get(symbol)
+                if existing is not None and priority.get(
+                    existing.get("action"), 99,
+                ) <= priority.get(act, 99):
+                    continue
+                facts = (position_facts or {}).get(symbol, {}) or {}
+                verdict = self._alignment_exit_cached(
+                    symbol=symbol,
+                    thesis_invalid_if=getattr(position, "thesis_invalid_if", None)
+                    or facts.get("thesis_invalid_if"),
+                    is_short=is_short,
+                    entry_price=getattr(position, "avg_entry", None),
+                    stop_loss=getattr(position, "stop_loss", None)
+                    or facts.get("stop_loss"),
+                    run_id=run_id,
+                )
+                if not verdict.exit_cleared:
+                    continue
+                if self._position_opened_today(symbol):
+                    logger.info(
+                        "Alignment scan: %s was opened in today's session — "
+                        "no same-session close is raised for it", symbol,
+                    )
+                    continue
+                if existing is not None and isinstance(displaced, dict):
+                    displaced[symbol] = existing
+                # The reason NAMES the trigger in the desk's own accepted
+                # wording, and the structured trigger says the same thing, so
+                # the confirmer downstream recognises the claim and appends
+                # the chart's own owner-facing sentence
+                # (`AlignmentExitCheck.owner_reason`) to it. The sentence is
+                # not pasted here as well, or the owner would read it twice.
+                best_by_symbol[symbol] = {
+                    "symbol": symbol,
+                    "action": act,
+                    "reason": (
+                        "Trend alignment over — raised by the desk's own scan "
+                        "of this position's chart, not by a model."
+                    ),
+                    "exit_trigger": ExitTrigger.TREND_ALIGNMENT_OVER.value,
+                    "trigger_evidence": (verdict.reason or "")[:2000],
+                    # Read by the executor: if this item produces no order,
+                    # the action it displaced is put back on the queue.
+                    "_alignment_scan_raised": True,
+                }
+                logger.info(
+                    "Alignment scan: raising %s %s — %s",
+                    act, symbol, verdict.reason,
+                )
+            except Exception as e:  # noqa: BLE001 — a failure here HOLDS
+                logger.warning(
+                    "Alignment scan: %s could not be evaluated (%s) — no sale "
+                    "is raised for it",
+                    getattr(position, "symbol", "?"), e,
+                )
+
+    def _position_opened_today(self, symbol: str) -> bool:
+        """Was this position bought in TODAY's session? DATE EQUALITY ONLY.
+
+        No recorded buy at all means the position predates the desk's own
+        record (or was opened outside it), which cannot be evidence that it
+        was bought today, so it stays eligible. A FAILED read is different:
+        the age is unknown, and an unknown age holds rather than sells,
+        which is the same fail-closed posture the rest of this path takes.
+        """
+        try:
+            row = self.db.get_symbol_last_buy(symbol) or {}
+        except Exception as e:  # noqa: BLE001 — unknown age HOLDS
+            logger.warning(
+                "alignment scan: could not read %s's entry date (%s) — it is "
+                "treated as opened today, so no sale is raised", symbol, e,
+            )
+            return True
+        ts = ((row or {}).get("timestamp") or "")[:10]
+        if not ts:
+            return False
+        return ts == str(et_today())
+
+    def _alignment_exit_for_holding(
+        self, *, symbol: str, thesis_invalid_if: str | None, is_short: bool,
+        entry_price: float | None, stop_loss: float | None, run_id: str,
+    ):
+        """Read this holding's own chart and return the alignment verdict.
+
+        Supplies `src.risk.alignment_exit.check_alignment_exit` with real
+        numbers off the SAME deterministic, no-LLM machinery
+        `_structural_protection_for_holding` uses (`compute_indicators` for
+        ATR, `find_structural_levels` for levels), on the same
+        `config.trading.lookback_days` window, and on the latest COMPLETED
+        daily closes — never a live quote.
+
+        The structural mark is admitted ONLY when the ratified structural
+        check has already returned `structural_level_broken`, i.e. its
+        cross-day confirmation gate passed. This method neither re-derives
+        nor shortcuts that gate: it reads the verdict (`persist=False`, so
+        consulting it here can never file a break and let a future
+        confirmation land a day early) and takes the level THAT CHECK
+        NAMED as broken (`StructuralProtectionCheck.broken_level`); no
+        level is ever chosen by nearness to the close. Never raises; a
+        failure degrades to UNPARSEABLE, which callers treat as HOLD.
+        """
+        from src.risk.alignment_exit import (
+            CODE_NO_CLOSES, AlignmentExitCheck, check_alignment_exit,
+        )
+        try:
+            bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days) or []
+            sorted_bars = sorted(bars, key=lambda b: b.date)
+            closes = [float(b.close) for b in sorted_bars]
+            atr = None
+            broken_level = None
+            if sorted_bars:
+                from src.data.technical import compute_indicators
+                atr = compute_indicators(symbol, bars).atr_14
+                protection = self._structural_protection_for_holding(
+                    symbol=symbol, thesis_invalid_if=thesis_invalid_if,
+                    entry_price=entry_price, stop_loss=stop_loss,
+                    is_short=is_short, run_id=run_id, persist=False,
+                )
+                if getattr(protection, "basis", "") == "structural_level_broken":
+                    # THE LEVEL THAT ACTUALLY BROKE, as named by the check
+                    # that confirmed it. An earlier draft instead pooled
+                    # every support AND resistance and took the nearest
+                    # price on the far side of the close — which could
+                    # admit an overhead resistance that never broke as
+                    # "the confirmed-broken structural level". Nothing is
+                    # re-derived and nothing is guessed by proximity: when
+                    # the check does not name a level there is no
+                    # structural mark.
+                    broken_level = getattr(protection, "broken_level", None)
+            return check_alignment_exit(
+                thesis_invalid_if=thesis_invalid_if, closes=closes, atr=atr,
+                broken_structural_level=broken_level, is_short=is_short,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "alignment exit: chart read failed for %s (%s) — the verdict "
+                "is UNPARSEABLE, which callers treat as HOLD", symbol, e,
+            )
+            return AlignmentExitCheck(
+                "UNPARSEABLE", CODE_NO_CLOSES, (), None, None, None,
+                f"chart read failed: {e}",
+            )
+
     def _record_exit_refusal(
         self, *, symbol: str, run_id: str, action: str, code: str,
         dropped: bool, detail: str, layer: str,
@@ -12047,6 +12387,17 @@ class TradingPipeline:
                 "(priority SELL/COVER>REDUCE>TRAIL_STOP>HOLD)", dropped,
             )
 
+        # THE ALIGNMENT SCAN — every held position is read against the
+        # owner-ratified alignment exit here, before the early return below,
+        # because a review that proposed nothing at all is exactly the
+        # session in which the chart must still be allowed to speak.
+        _scan_displaced: dict[str, dict] = {}
+        self._alignment_exit_scan(
+            positions, best_by_symbol, run_id=run_id,
+            position_facts=position_facts, priority=_priority,
+            displaced=_scan_displaced,
+        )
+
         if not best_by_symbol:
             return orders
 
@@ -12096,7 +12447,10 @@ class TradingPipeline:
         # exit actually reaches that gate — a HOLD-only or TRAIL_STOP-only
         # review must not buy the DB reads.
         hd_position_history: dict | None = None
-        for action_item in best_by_symbol.values():
+
+        for action_item in _actions_with_scan_fallback(
+            best_by_symbol.values(), _scan_displaced, orders,
+        ):
             act = action_item.get("action")
             if act not in ("SELL", "REDUCE", "TRAIL_STOP", "COVER"):
                 continue
@@ -12193,7 +12547,121 @@ class TradingPipeline:
                 # noise band is measured against the CLOSING side, same
                 # convention as _submit_protected_sell's `side` param.
                 close_side = "buy" if act == "COVER" else "sell"
-                if held_now is not None and not cites_external_information(reason_for_band):
+
+                # THE ALIGNMENT EXIT (owner ruling 2026-09-30, "exit on
+                # ALIGNMENT, never on a target") — the desk's only sanctioned
+                # way to realise a GAIN, and the one non-news sale allowed
+                # past the entry-anchored noise band below.
+                #
+                # A closed first attempt (PR 837) DELETED that band and
+                # shipped `check_alignment_exit` with no caller anywhere in
+                # src/ — the brake gone and nothing computing the reading
+                # meant to replace it, which is strictly worse than doing
+                # nothing. The band therefore stays, and this is the caller.
+                #
+                # A sale claiming the trend is over is now VERIFIED, not trusted:
+                # only a chart that confirms the last mark has been given up by
+                # more than the give-back tolerance gets through. An unconfirmed
+                # or unreadable chart DROPS the sale — the opposite posture to
+                # the fail-open gates below, and deliberately so, because this is
+                # the one exit the desk takes with no external event behind it
+                # and possibly with the other seats still positive.
+                #
+                # THE READING IS TAKEN ON EVERY EXIT OF A HELD POSITION,
+                # not only on the ones whose prose happens to name it. A
+                # sale the model wanted for some other reason still leaves
+                # a durable record of what the chart said about that
+                # position's trend at that moment; without it, a position
+                # the desk exited has no alignment record at all and the
+                # evening review cannot tell an unread chart from a chart
+                # that said hold. Only a sale that CLAIMS the alignment
+                # exit is GATED by the verdict.
+                alignment_verdict = None
+                alignment_claimed = _reason_claims_alignment_exit(
+                    reason_for_band, action_item.get("exit_trigger"),
+                )
+                if held_now is not None:
+                    facts = (position_facts or {}).get(symbol, {}) or {}
+                    verdict = self._alignment_exit_cached(
+                        symbol=symbol,
+                        thesis_invalid_if=getattr(held_now, "thesis_invalid_if", None)
+                        or facts.get("thesis_invalid_if"),
+                        is_short=(act == "COVER"),
+                        entry_price=getattr(held_now, "avg_entry", None),
+                        # IDENTICAL to the scan's inputs, including the
+                        # position-facts fallback. `stop_loss` decides
+                        # whether a broken-level mark exists, and both
+                        # callers key the SAME memo — resolving it
+                        # differently would let one of them read a verdict
+                        # built from a stop the other never passed.
+                        stop_loss=getattr(held_now, "stop_loss", None)
+                        or facts.get("stop_loss"),
+                        run_id=run_id,
+                    )
+                    # EVERY verdict leaves a durable, machine-readable, per-symbol
+                    # record — INCLUDING the "could not read the chart" states.
+                    # Without them the desk cannot tell a position it HELD from
+                    # one it failed to read, and neither the other seats nor the
+                    # owner can see that an exit was considered at all. The parsed
+                    # thesis MA period and the prose it came from are recorded
+                    # with it: that text is model-written and unversioned, so a
+                    # reword silently changes which price decides a sale, and
+                    # without pinning it the record would not say which average
+                    # actually decided this one.
+                    det = (
+                        f"{act}: {verdict.status} "
+                        f"claimed={alignment_claimed} "
+                        f"ma={verdict.thesis_ma_kind}{verdict.thesis_ma_period} "
+                        f"breach_atr={verdict.breach_atrs} "
+                        f"tolerance_atr={verdict.band_atrs} "
+                        f"sessions_since_mark_lost={verdict.sessions_since_mark_lost} "
+                        f"thesis={verdict.thesis_text!r} "
+                        f"| {verdict.reason}"
+                    )[:1200]
+                    self._record_exit_refusal(
+                        symbol=symbol, run_id=run_id, action=act,
+                        code=verdict.code,
+                        dropped=alignment_claimed and not verdict.exit_cleared,
+                        detail=det,
+                        layer=(
+                            "alignment_exit" if alignment_claimed
+                            else "alignment_exit_observed"
+                        ),
+                    )
+                    try:
+                        self.db.record_intraday_evaluation(
+                            symbol=symbol, run_id=run_id,
+                            status=f"alignment_exit_{verdict.status.lower()}",
+                            detail=det[:400],
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("alignment exit: audit write failed: %s", e)
+                    logger.info(
+                        "Alignment exit %s %s: %s (claimed=%s) — %s", act, symbol,
+                        verdict.status, alignment_claimed, verdict.reason,
+                    )
+                    if alignment_claimed:
+                        alignment_verdict = verdict
+                        if not verdict.exit_cleared:
+                            continue
+                        # Carry the chart's own words into the order reason
+                        # so the owner and the other seats read WHY, not
+                        # just THAT.
+                        if verdict.owner_reason:
+                            action_item["reason"] = (
+                                f"{action_item.get('reason', '')} | "
+                                f"{verdict.owner_reason}"
+                            )[:2000]
+
+                # The ALIGNMENT EXIT above is the one non-news sale allowed
+                # past this band. The band STAYS for everything else: it is a
+                # real brake on premature exits, and deleting it while
+                # shipping a verdict nothing in src/ ever called (the closed
+                # PR 837) would leave the desk with neither. A chart-verified
+                # alignment exit is simply not judged by its distance from
+                # what the desk PAID, because what the desk paid says nothing
+                # about whether a trend has ended.
+                if held_now is not None and alignment_verdict is None and not cites_external_information(reason_for_band):
                     from src.risk.exit_guard import noise_band_atr
 
                     atr = self._atr_for_symbol(symbol)
