@@ -979,14 +979,8 @@ class TradingPipeline(
         __new__() without __init__ — for them (and for enabled=False
         configs) every sweep hook must be a structural no-op.
         """
-        from src.execution.cash_sweep import CashSweeper
-        sweeper = getattr(self, "cash_sweeper", None)
-        if not isinstance(sweeper, CashSweeper):
-            return None
-        try:
-            return sweeper if sweeper.enabled() else None
-        except Exception:  # noqa: BLE001 — a broken config must not take down a session
-            return None
+        from src.execution.cash_sweep import sweeper_or_none
+        return sweeper_or_none(getattr(self, "cash_sweeper", None))
 
     def _retired_cash_park_symbol(self) -> str | None:
         """The configured sweep vehicle when the sweep is DISABLED, else None.

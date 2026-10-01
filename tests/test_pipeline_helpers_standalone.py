@@ -1,10 +1,9 @@
 """Three of the four helpers that lived only on `TradingPipeline` are usable
 WITHOUT building a pipeline (conversion step 8, 2026-10-01).
 
-`_sweeper` stays on the pipeline on purpose: its body is a broad
-except-returns-None, and moving it into `src/execution/cash_sweep.py` (its
-only honest home, a money module) registers as a NEW silent swallow under
-`tests/test_silent_swallow_guard.py`. It moves when that swallow is fixed.
+`_sweeper` moved last (conversion step 9) as
+`src.execution.cash_sweep.sweeper_or_none`, once its broad except recorded
+the failure durably instead of swallowing it.
 
 Each test imports the helper from its real home and calls it with plain
 collaborators. `src.pipeline` is deliberately never imported here: the point
@@ -68,3 +67,32 @@ def test_parse_logged_agent_response_needs_no_pipeline():
            "model": "synthetic"}
     assert parse_logged_agent_response(row) == {"action": "HOLD", "n": 2}
     assert parse_logged_agent_response({}) is None
+
+
+def test_sweeper_or_none_needs_no_pipeline():
+    from types import SimpleNamespace
+    from src.execution.cash_sweep import CashSweeper, sweeper_or_none
+
+    assert sweeper_or_none(None) is None
+    assert sweeper_or_none(object()) is None
+    off = CashSweeper(pipeline=SimpleNamespace(config=SimpleNamespace(
+        cash_sweep=SimpleNamespace(enabled=False, symbol="SGOV"))))
+    assert sweeper_or_none(off) is None
+    on = CashSweeper(pipeline=SimpleNamespace(config=SimpleNamespace(
+        cash_sweep=SimpleNamespace(enabled=True, symbol="SGOV"))))
+    assert sweeper_or_none(on) is on
+
+    # A config that cannot even be read reads as disabled AND leaves a row.
+    class _BrokenConfig:
+        @property
+        def cash_sweep(self):
+            raise RuntimeError("config exploded")
+
+    class _Db:
+        rows = []
+        def insert_specialist_evidence(self, **kw):
+            self.rows.append(kw)
+    db = _Db()
+    broken = CashSweeper(pipeline=SimpleNamespace(config=_BrokenConfig(), db=db))
+    assert sweeper_or_none(broken) is None
+    assert len(db.rows) == 1 and "config exploded" in db.rows[0]["evidence_json"]
