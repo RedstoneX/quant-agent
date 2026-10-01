@@ -235,6 +235,31 @@ _CLEAN_FACTOR = 5.0
 #: ATRs. Deliberately looser than the measured-move projection — see the note
 #: on asymmetry in the target section.
 MAX_REACH_ATR_MULTIPLE = 1.5
+#
+# KEPT ON PURPOSE, 2026-10-01 (docs/WORK.md item 218). The question was
+# whether this multiple can be replaced by READING the instrument -- each
+# name's own realised favourable excursion over a hold of the stated
+# length -- so no multiple need be chosen at all. It was measured, on the
+# 400-bar daily set for 101 symbols the desk already holds: over a
+# 15-session hold the MEDIAN per-name realised excursion is 1.93 ATR and
+# the per-name MAXIMUM is 8.78 ATR, against this cap's 1.5*sqrt(15) =
+# 5.81 ATR [measured 2026-10-01, rolling windows, ATR(14)].
+#
+# Two findings, both against replacing it:
+#   1. The cap is NOT the binding constraint it was believed to be. At a
+#      typical hold it sits at ~5.8 ATR while the instrument's own typical
+#      advance is ~1.9 ATR, and recorded target distance is a median 3.25
+#      ATR. It binds only in the tail, not on the ordinary trade. Said
+#      plainly, because an earlier diagnosis in this repo says otherwise:
+#      this cap is NOT what holds the desk's targets close.
+#   2. A measured replacement still needs a QUANTILE -- median (1.93) and
+#      maximum (8.78) differ by 4.5x and sit either side of today's value.
+#      Picking between them is exactly the appetite choice the doctrine
+#      bars, and the only choice-free statistic (the sample maximum) is an
+#      outlier support bound, not a reach estimate.
+# So the purpose cannot be served by reading the instrument without
+# inventing a number, and the cap stays. Recorded rather than silently
+# left alone.
 
 #: Ceiling on `expected_horizon_sessions` before it enters the sqrt() travel
 #: estimate. An analyst claiming a 250-session horizon would otherwise
