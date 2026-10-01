@@ -197,7 +197,13 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     assert len(ledger_ids_for_module("src.pipeline", ledger)) == 2
     assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 1
-    assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 25
+    # 2026-10-01, item 210 step 10 (second half): the 25 prompt-facts ids moved
+    # with their bodies into the fact families (1 + 10 + 11 + 3 = 25).
+    assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 0
+    assert len(ledger_ids_for_module("src.prompt_facts_book", ledger)) == 1
+    assert len(ledger_ids_for_module("src.prompt_facts_candidates", ledger)) == 10
+    assert len(ledger_ids_for_module("src.prompt_facts_grading", ledger)) == 11
+    assert len(ledger_ids_for_module("src.prompt_facts_seat_memory", ledger)) == 3
     # 2026-10-01, item 210 step 10: the 2 `ExecutionStage._run_session` ids moved
     # with the class into `src.stage_execution`; step 11 then moved 12 more into
     # `src.pipeline_sizing` and `src.pipeline_earnings_quality`; step 12 moved

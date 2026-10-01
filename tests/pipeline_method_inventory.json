@@ -176,18 +176,15 @@
     },
     "src/pipeline_prompt_facts.py": {
       "module_functions": [
-        "_missed_ops_quality_metrics",
-        "_valuation_signal_from",
         "prompt_facts_for"
       ],
       "classes": {
         "PromptFacts": [
           "__init__",
-          "_actualize_trade_row",
+          "_bind_override",
           "_build_active_state_changes",
           "_build_blocked_proposals",
           "_build_calibration_note",
-          "_build_macro_tech_alignment",
           "_build_macro_trajectory",
           "_build_missed_opportunities_digest",
           "_build_own_recent_decisions",
@@ -212,7 +209,6 @@
           "_build_weekly_narrative",
           "_compute_recent_performance",
           "_ensure_correlation_matrix",
-          "_log_conviction_outcome_for_operator",
           "_missed_ops_earnings_signal",
           "_missed_ops_held_set",
           "_missed_ops_macro_sector_map",
@@ -264,8 +260,108 @@
           "_prompt_facts_service",
           "_thesis_news_events_map",
           "_thesis_tech_trajectory_map"
+        ],
+        "_FamilyMirroringModule": [
+          "__delattr__",
+          "__setattr__"
         ]
       }
+    },
+    "src/prompt_facts_book.py": {
+      "module_functions": [],
+      "classes": {
+        "BookFacts": [
+          "__init__",
+          "_build_pm_facts",
+          "_build_portfolio_heat",
+          "_build_position_facts",
+          "_build_position_history",
+          "_build_review_metric_deltas",
+          "_build_stop_map",
+          "_compute_recent_performance"
+        ]
+      }
+    },
+    "src/prompt_facts_projection.py": {
+      "module_functions": [],
+      "classes": {
+        "ProjectionFacts": [
+          "__init__",
+          "_build_projected_portfolio",
+          "_ensure_correlation_matrix"
+        ]
+      }
+    },
+    "src/prompt_facts_seat_memory.py": {
+      "module_functions": [],
+      "classes": {
+        "SeatMemoryFacts": [
+          "__init__",
+          "_build_own_recent_decisions",
+          "_build_pm_recent_decisions",
+          "_build_rm_recent_verdicts",
+          "_build_weekly_narrative"
+        ]
+      }
+    },
+    "src/prompt_facts_grading.py": {
+      "module_functions": [],
+      "classes": {
+        "GradingFacts": [
+          "__init__",
+          "_actualize_trade_row",
+          "_build_calibration_note",
+          "_build_post_exit_reality",
+          "_build_recent_buys_for_grading",
+          "_build_recent_loss_pits",
+          "_build_recent_missed_lessons",
+          "_build_recent_outlook_calibration",
+          "_build_recent_sells_for_grading",
+          "_build_trade_grade_summary",
+          "_log_conviction_outcome_for_operator",
+          "_persist_evening_replay_inputs"
+        ]
+      }
+    },
+    "src/prompt_facts_market_context.py": {
+      "module_functions": [],
+      "classes": {
+        "MarketContextFacts": [
+          "__init__",
+          "_build_active_state_changes",
+          "_build_macro_tech_alignment",
+          "_build_macro_trajectory"
+        ]
+      }
+    },
+    "src/prompt_facts_candidates.py": {
+      "module_functions": [
+        "_missed_ops_quality_metrics",
+        "_valuation_signal_from"
+      ],
+      "classes": {
+        "CandidateFacts": [
+          "__init__",
+          "_build_blocked_proposals",
+          "_build_missed_opportunities_digest",
+          "_build_thesis_health_context",
+          "_build_watchlist_candidates",
+          "_missed_ops_earnings_signal",
+          "_missed_ops_held_set",
+          "_missed_ops_macro_sector_map",
+          "_missed_ops_news_signal",
+          "_missed_ops_tech_signal",
+          "_missed_ops_theme_tags",
+          "_thesis_news_events_map",
+          "_thesis_tech_trajectory_map"
+        ]
+      }
+    },
+    "src/prompt_facts_ports.py": {
+      "module_functions": [
+        "bind_ports"
+      ],
+      "classes": {}
     },
     "src/pipeline_protection.py": {
       "module_functions": [
