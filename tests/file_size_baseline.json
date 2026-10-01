@@ -71,7 +71,7 @@
  "src/models/evening.py": 489,
  "src/models/portfolio.py": 565,
  "src/models/smart_money.py": 519,
- "src/notifier.py": 3984,
+ "src/notifier/transport.py": 592,
  "src/number_sources.py": 1533,
  "src/pipeline.py": 3832,
  "src/pipeline_admission.py": 546,
