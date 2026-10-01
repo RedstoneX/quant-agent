@@ -264,6 +264,12 @@ def record_stop_shift_legs(
 def stop_shift_incomplete_text(symbol: str, status: str, shifted: int, total: int) -> str:
     """The plain sentence the owner reads when a shift did not fully land."""
     sym = str(symbol or "").upper()
+    if status == "naked":
+        return (
+            f"a protective stop on {sym} is GONE: the broker was re-read after "
+            f"a dead order replacement and shows no resting stop for it, so "
+            f"the position is UNPROTECTED until coverage repair places one"
+        )
     if status == "unknown":
         return (
             f"the ex-dividend stop shift on {sym} got no answer from the broker "

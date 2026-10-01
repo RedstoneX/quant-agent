@@ -6271,6 +6271,14 @@ class AlpacaBroker:
                         "nothing cancelled", symbol, leg["id"], leg["new_stop"],
                         leg["detail"], leg["old_stop"],
                     )
+                elif leg["outcome"] == "naked":
+                    logger.error(
+                        "shift_stops_down: %s stop %s is GONE after a dead "
+                        "replacement (%s) — the broker shows NO protective "
+                        "stop for this symbol; the position is UNPROTECTED and "
+                        "coverage repair must place one",
+                        symbol, leg["id"], leg["detail"],
+                    )
                 else:
                     logger.error(
                         "shift_stops_down: %s stop %s amend outcome UNKNOWN (%s) "
@@ -6281,7 +6289,9 @@ class AlpacaBroker:
                     )
             amended = [l for l in legs if l["outcome"] == "amended"]
             unknown = [l for l in legs if l["outcome"] == "unknown"]
-            if unknown:
+            if any(l["outcome"] == "naked" for l in legs):
+                status = "naked"
+            elif unknown:
                 status = "unknown"
             elif len(amended) == len(legs):
                 status = "accepted"
@@ -6329,6 +6339,135 @@ class AlpacaBroker:
     #: level. Anything else coming back from a replace is treated as live.
     _AMEND_DEAD_STATES = frozenset({"rejected", "canceled", "cancelled", "expired", "done_for_day"})
 
+    @staticmethod
+    def _failed_amend_payload(symbol: str, legs: list[dict]) -> dict:
+        """The non-success return of an in-place amend.
+
+        A bare `None` preserved protection and threw the evidence away: the
+        caller could not tell a partial from a refusal, could not record which
+        leg moved, and could not alert. `id` is None so `accepted_stop_order`
+        still rejects it — nothing is written back — but the legs travel.
+        """
+        amended = [l for l in legs if l.get("outcome") == "amended"]
+        if any(l.get("outcome") == "naked" for l in legs):
+            status = "naked"
+        elif any(l.get("outcome") == "unknown" for l in legs):
+            status = "unknown"
+        elif amended:
+            status = "partial"
+        else:
+            status = "refused"
+        return {"id": None, "status": status, "amend_status": status,
+                "symbol": symbol, "legs": legs,
+                "shifted": len(amended), "total": len(legs)}
+
+    def normalise_stop_leg_levels(
+        self, symbol: str, *, is_short: bool = False,
+    ) -> dict | None:
+        """Heal a symbol whose protective stop legs rest at DIFFERENT levels.
+
+        A partly-applied amend leaves a straddle: one leg moved, the others
+        did not. Returning early on the failure preserved protection but
+        preserved the inconsistency with it, and the trailing path only
+        re-prices when a NEW proposal arrives, so a stalled price would leave
+        the legs mismatched indefinitely rather than until the next session.
+
+        Never loosens: every leg is amended to the MOST protective level
+        already resting (the highest for a long's sell-stops, the lowest for
+        a short's buy-stops), which is a level the broker is already holding.
+        Returns None when there is nothing to heal.
+        """
+        side = "buy" if is_short else "sell"
+        try:
+            orders = list(self._list_open_protective_stop_orders(symbol, side=side) or [])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("stop-leg heal: could not list %s's stops: %s", symbol, exc)
+            return None
+        if len(orders) < 2:
+            return None
+        specs = [sp for sp in (self._snapshot_stop_order(o) for o in orders) if sp]
+        if len(specs) != len(orders):
+            return None
+        levels = {sp["stop_price"] for sp in specs}
+        if len(levels) < 2:
+            return None
+        if not all(self._stop_order_amendable_in_place(o) for o in orders):
+            logger.warning(
+                "stop-leg heal: %s's %d stop legs rest at %d DIFFERENT levels "
+                "but at least one is not an in-place-amendable shape — leaving "
+                "them alone rather than cancelling anything", symbol,
+                len(specs), len(levels),
+            )
+            return None
+        target = min(levels) if is_short else max(levels)
+        legs = [self._amend_one_stop_price(symbol=symbol, spec=sp, new_price=target)
+                for sp in specs if sp["stop_price"] != target]
+        payload = self._failed_amend_payload(symbol, legs)
+        healed = payload["shifted"]
+        logger.warning(
+            "stop-leg heal: %s's stop legs rested at %d different levels; "
+            "%d/%d off-level leg(s) amended up to the most protective resting "
+            "level $%.4f (nothing cancelled, nothing loosened)",
+            symbol, len(levels), healed, len(legs), target,
+        )
+        payload["mode"] = "heal_amend"
+        payload["target"] = target
+        if healed == len(legs):
+            payload["status"] = payload["amend_status"] = "accepted"
+        return payload
+
+    def _classify_after_dead_replacement(
+        self, *, symbol: str, spec: dict, new_price: float, leg: dict,
+    ) -> str:
+        """Read the book after a replacement came back dead. Never guess.
+
+        ASSUMED, NOT VERIFIED: that a replace moves the original order to
+        REPLACED before the replacement is accepted. If that is how it works,
+        a rejected or cancelled REPLACEMENT can mean the symbol has NO
+        protective stop at all — so "the original is still resting" must be
+        read off the broker, not inferred. What would settle the assumption:
+        a rehearsal that forces a replacement to be rejected and then lists
+        the symbol's open orders.
+
+        Returns "refused" (the original is confirmed still resting),
+        "amended" (something IS resting at the new level), "naked" (the book
+        shows no protective stop for this symbol) or "unknown" (the book
+        could not be read, or shows a level that is neither).
+        """
+        errors: list = []
+        try:
+            sells, buys = self._list_open_stop_orders_by_side(symbol, errors=errors)
+            live_orders = list(sells or []) + list(buys or [])
+        except Exception as exc:  # noqa: BLE001
+            leg["detail"] += f"; the book could not be re-read ({exc})"
+            return "unknown"
+        if errors:
+            leg["detail"] += "; the book could not be re-read"
+            return "unknown"
+        live = [spec_ for spec_ in (self._snapshot_stop_order(o) for o in live_orders)
+                if spec_ is not None]
+        if not live:
+            leg["detail"] += (
+                "; the broker shows NO resting protective stop for this symbol "
+                "— the position is UNPROTECTED"
+            )
+            return "naked"
+        if any(str(s["id"]) == str(spec.get("id")) for s in live):
+            leg["detail"] += "; the ORIGINAL order was read back, still resting"
+            return "refused"
+        at_new = [s for s in live if abs(s["stop_price"] - new_price) <= 1e-9]
+        if at_new:
+            leg["new_id"] = at_new[0]["id"]
+            leg["detail"] += (
+                "; a stop was read back at the NEW level despite the dead "
+                "replacement"
+            )
+            return "amended"
+        leg["detail"] += (
+            "; a stop is resting but at neither the old nor the new level"
+        )
+        return "unknown"
+
     def _amend_one_stop_price(self, *, symbol: str, spec: dict, new_price: float) -> dict:
         """Amend ONE resting stop's price and report what is KNOWN afterwards.
 
@@ -6373,8 +6512,10 @@ class AlpacaBroker:
         leg["new_id"] = new_id
         leg["status"] = status
         if status in self._AMEND_DEAD_STATES:
-            leg["outcome"] = "refused"
             leg["detail"] = f"the replacement order came back {status}"
+            leg["outcome"] = self._classify_after_dead_replacement(
+                symbol=symbol, spec=spec, new_price=new_price, leg=leg,
+            )
             return leg
         leg["outcome"] = "amended"
         return leg
@@ -6479,6 +6620,17 @@ class AlpacaBroker:
                 for spec in stop_specs]
         amended = [l for l in legs if l["outcome"] == "amended"]
         unknown = [l for l in legs if l["outcome"] == "unknown"]
+        if any(l["outcome"] == "naked" for l in legs):
+            # Read off the broker, not inferred: the symbol has no resting
+            # protective stop. Say UNPROTECTED and let coverage repair place
+            # one; cancelling or resubmitting from here would race it.
+            logger.error(
+                "replace_stop_loss: after a dead replacement %s has NO resting "
+                "protective stop — the position is UNPROTECTED, nothing was "
+                "cancelled, and coverage repair must place a stop",
+                symbol,
+            )
+            return self._failed_amend_payload(symbol, legs)
         if len(amended) == len(legs):
             logger.info(
                 "Trailing stop AMENDED IN PLACE for %s: %d leg(s) moved to "
@@ -6487,7 +6639,7 @@ class AlpacaBroker:
             )
             return {"id": amended[0]["new_id"],
                     "status": amended[0].get("status", "accepted"),
-                    "symbol": symbol, "legs": legs}
+                    "amend_status": "accepted", "symbol": symbol, "legs": legs}
         if unknown:
             # The amend MAY have landed. Cancelling now could cancel a stop the
             # broker already moved, so the fallback must NOT run: take the
@@ -6499,7 +6651,7 @@ class AlpacaBroker:
                 "re-read the book before trailing %s again",
                 len(unknown), len(legs), symbol, symbol,
             )
-            return None
+            return self._failed_amend_payload(symbol, legs)
         if amended:
             logger.error(
                 "replace_stop_loss: only %d of %d stop legs for %s moved to "
@@ -6508,14 +6660,14 @@ class AlpacaBroker:
                 "the legs sit at MIXED levels until the next trail.",
                 len(amended), len(legs), symbol, price,
             )
-            return None
+            return self._failed_amend_payload(symbol, legs)
         logger.warning(
             "replace_stop_loss: the broker REFUSED the in-place amend of all "
             "%d stop leg(s) for %s to $%.4f — the ORIGINAL stops are still "
             "resting, so protection is intact and nothing is cancelled",
             len(legs), symbol, price,
         )
-        return None
+        return self._failed_amend_payload(symbol, legs)
 
     def replace_stop_loss(
         self,

@@ -617,11 +617,16 @@ def test_shift_requires_a_confirmed_id_and_a_live_status(mock_tc_cls):
         _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
     ])
     client.replace_order_by_id.side_effect = [_replaced(None), _replaced("s2b", "rejected")]
+    # A dead replacement is NOT evidence the original survived — the book is
+    # re-read, and here it still holds the original s2.
+    b._list_open_stop_orders_by_side = MagicMock(
+        return_value=([_plain_stop("s2", 350.0, qty=16)], []))
 
     out = b.shift_stops_down("GE", 0.51)
 
     assert out["shifted"] == 0
     assert [l["outcome"] for l in out["legs"]] == ["unknown", "refused"]
+    b._list_open_stop_orders_by_side.assert_called_once()
 
 
 @patch("src.execution.broker.TradingClient")
@@ -675,7 +680,10 @@ def test_trailing_multi_leg_amend_with_no_answer_does_not_fall_back_to_cancel(mo
         new_stop_price=95.0, position_qty=12.3456,
     )
 
-    assert out is None
+    # The payload must TRAVEL — a bare None threw away which leg moved, so
+    # nothing could be recorded and nobody could be told.
+    assert out["id"] is None and out["amend_status"] == "unknown"
+    assert [l["outcome"] for l in out["legs"]] == ["amended", "unknown"]
     client.cancel_order_by_id.assert_not_called()
 
 
@@ -699,3 +707,87 @@ def test_the_shift_leg_record_is_durable_and_names_each_leg(tmp_path):
     payload = json.loads(rows[0][0])
     assert payload["status"] == "partial" and payload["shifted"] == 1
     assert [l["outcome"] for l in payload["legs"]] == ["amended", "refused"]
+
+
+@patch("src.execution.broker.TradingClient")
+def test_a_dead_replacement_with_an_empty_book_is_reported_as_naked(mock_tc_cls):
+    """Alpaca's replace is assumed to move the original to REPLACED first, so
+    a dead replacement can mean there is NO stop at all. The code must read
+    the book rather than assert that protection is intact."""
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 340.0, qty=10)])
+    client.replace_order_by_id.return_value = _replaced("s1b", "canceled")
+    b._list_open_stop_orders_by_side = MagicMock(return_value=([], []))
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["status"] == "naked" and out["id"] is None
+    assert out["legs"][0]["outcome"] == "naked"
+    client.cancel_order_by_id.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_a_dead_replacement_whose_new_level_is_resting_counts_as_amended(mock_tc_cls):
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 340.0, qty=10)])
+    client.replace_order_by_id.return_value = _replaced("s1b", "canceled")
+    b._list_open_stop_orders_by_side = MagicMock(
+        return_value=([_plain_stop("s1c", 339.49, qty=10)], []))
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["status"] == "accepted" and out["legs"][0]["new_id"] == "s1c"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_a_dead_replacement_with_an_unreadable_book_is_unknown(mock_tc_cls):
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 340.0, qty=10)])
+    client.replace_order_by_id.return_value = _replaced("s1b", "rejected")
+    b._list_open_stop_orders_by_side = MagicMock(side_effect=RuntimeError("no answer"))
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["status"] == "unknown"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_mismatched_stop_legs_are_healed_up_to_the_most_protective_level(mock_tc_cls):
+    """A partly-applied amend leaves a straddle, and a stalled price produces
+    no new proposal — so the pair must be normalised on its own, never by
+    loosening and never by cancelling."""
+    b, client = _broker(mock_tc_cls)
+    b._list_open_protective_stop_orders = MagicMock(return_value=[
+        _plain_stop("moved", 95.0, qty=12), _plain_stop("stuck", 90.0, qty=0.3456),
+    ])
+    client.replace_order_by_id.return_value = _replaced("stuck2")
+
+    out = b.normalise_stop_leg_levels("ZZZ")
+
+    assert out["status"] == "accepted" and out["target"] == 95.0
+    assert [l["id"] for l in out["legs"]] == ["stuck"]
+    client.cancel_order_by_id.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_legs_already_at_one_level_are_left_alone(mock_tc_cls):
+    b, client = _broker(mock_tc_cls)
+    b._list_open_protective_stop_orders = MagicMock(return_value=[
+        _plain_stop("a", 95.0, qty=12), _plain_stop("b", 95.0, qty=0.3456),
+    ])
+
+    assert b.normalise_stop_leg_levels("ZZZ") is None
+    client.replace_order_by_id.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_a_short_pair_is_healed_DOWN_to_its_most_protective_level(mock_tc_cls):
+    b, client = _broker(mock_tc_cls)
+    b._list_open_protective_stop_orders = MagicMock(return_value=[
+        _plain_stop("a", 105.0, qty=12), _plain_stop("b", 101.0, qty=0.5),
+    ])
+    client.replace_order_by_id.return_value = _replaced("a2")
+
+    out = b.normalise_stop_leg_levels("ZZZ", is_short=True)
+
+    assert out["target"] == 101.0 and [l["id"] for l in out["legs"]] == ["a"]

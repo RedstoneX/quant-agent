@@ -7032,7 +7032,7 @@ class TradingPipeline:
                     total=int(order.get("total") or 0),
                     legs=order.get("legs"), run_id=run_id,
                 )
-                if shift_status in ("partial", "refused", "unknown"):
+                if shift_status in ("partial", "refused", "unknown", "naked"):
                     # An un-shifted stop across an ex-dividend open is wrong by
                     # exactly the dividend IN THE DIRECTION THAT TRIGGERS IT, so
                     # this is an owner-visible change in protection, not a nit.
@@ -11488,6 +11488,29 @@ class TradingPipeline:
             _sc_raw = (buy or {}).get("structural_ceiling")
             structural_ceiling = None if _sc_raw is None else bool(_sc_raw)
 
+            # Items 201 fault 4/6: a partly-applied amend leaves the legs at
+            # different levels, and nothing else looks for that — the
+            # per-symbol live-stop reconcile reads ONE price, so a straddle is
+            # invisible to it. This runs before the proposal gate on purpose:
+            # a stalled price produces no proposal, and the pair would
+            # otherwise stay mismatched indefinitely.
+            try:
+                _healed = self.broker.normalise_stop_leg_levels(
+                    symbol, is_short=(float(position.qty) < 0),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("trail: stop-leg heal failed for %s: %s", symbol, e)
+                _healed = None
+            if isinstance(_healed, dict) and _healed.get("legs"):
+                from src.execution.exit_path_records import record_stop_shift_legs
+                _hlegs = _healed.get("legs") or []
+                record_stop_shift_legs(
+                    self.db, symbol=symbol, amount=0.0, mode="heal_amend",
+                    status=str(_healed.get("status") or ""),
+                    shifted=int(_healed.get("shifted") or 0),
+                    total=len(_hlegs), legs=_hlegs, run_id=run_id,
+                )
+
             evaluation = evaluate_trailing_stop(
                 symbol=symbol,
                 setup_type=(buy or {}).get("setup_type"),
@@ -11548,18 +11571,52 @@ class TradingPipeline:
                 from src.execution.exit_path_records import record_stop_shift_legs
                 _legs = order.get("legs") or []
                 _ok = [l for l in _legs if l.get("outcome") == "amended"]
+                # `amend_status` is the AMEND's own verdict. The broker status
+                # on a live replacement is "new"/"accepted"/..., so reading
+                # that would call an ordinary success a failure.
+                _astatus = str(order.get("amend_status") or (
+                    "accepted" if len(_ok) == len(_legs) else "partial"))
                 record_stop_shift_legs(
                     self.db, symbol=symbol, amount=0.0, mode="trail_amend",
-                    status=("accepted" if len(_ok) == len(_legs) else "partial"),
-                    shifted=len(_ok), total=len(_legs), legs=_legs,
-                    run_id=getattr(self, "run_id", None),
+                    status=_astatus, shifted=len(_ok), total=len(_legs),
+                    legs=_legs, run_id=run_id,
                 )
+                if _astatus != "accepted":
+                    # Telegram is muted, so this row and this alert are the
+                    # whole evidence that a leg did not move.
+                    try:
+                        from src.notifier import send_owner_alert
+                        from src.execution.exit_path_records import (
+                            stop_shift_incomplete_text,
+                        )
+                        send_owner_alert(
+                            stop_shift_incomplete_text(
+                                symbol, _astatus, len(_ok), len(_legs)),
+                            symbols=[symbol],
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("trail: owner alert failed for %s: %s", symbol, e)
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
+                _detail = str((order or {}).get("status") or "") if isinstance(order, dict) else ""
+                if isinstance(order, dict) and order.get("legs"):
+                    # `record_trail_state_if_changed` writes nothing when the
+                    # code repeats, and a bare status names no leg, no level
+                    # and no order id. Spell the outcome out here as well.
+                    _detail = "; ".join(
+                        [_detail or "amend did not fully land"]
+                        + [
+                            f"leg {l.get('id')} qty {l.get('qty')} "
+                            f"{l.get('old_stop')}->{l.get('new_stop')} "
+                            f"{l.get('outcome')}"
+                            + (f" (new id {l.get('new_id')})" if l.get("new_id") else "")
+                            + (f": {l.get('detail')}" if l.get("detail") else "")
+                            for l in (order.get("legs") or [])
+                        ]
+                    )
                 _note(
-                    symbol, "replace_not_accepted",
-                    str((order or {}).get("status") or "") if isinstance(order, dict) else "",
+                    symbol, "replace_not_accepted", _detail,
                     proposed_stop=proposal.new_stop, current_stop=current_stop,
                 )
                 continue
