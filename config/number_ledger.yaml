@@ -2735,6 +2735,34 @@ numbers:
       (src/risk/constants.py:10-14). It decides whether a cash-only-policy
       ACTION fires on what is arithmetically dust; it does not size, price,
       gate or exit a trade.
+  - id: src.risk.constants.REWARD_RISK_PARITY
+    value: 1.0
+    status: sourced
+    site: src/risk/constants.py
+    source: >-
+      docs/BOARD_NOTES.md:1198 (section "## item 218 — Arithmetically losing
+      geometry is refused (owner ruling 2026-10-01)") records the ruling
+      verbatim, and src/portfolio_constructor.py:517 carries it beside the
+      constant that applies it. Owner ruling 2026-10-01, verbatim: "For now,
+      let's refuse a bad risk
+      reward ratio. See if that improves the desk purchases." He was shown
+      the worked case (buy 100, stop 94, nearest structural level above 104
+      — risking 6 to make 4) and chose refusal over both leaving it alone
+      and shrinking the position. Parity is not a picked number: it is the
+      boundary between arithmetically losing and arithmetically winning
+      geometry, the only line on the scale statable without inventing a
+      value, and any higher figure would be barred as arbitrary. Board item
+      218. CAVEAT RECORDED WITH IT, and accepted by the owner: parity is
+      not mathematically DERIVED. The risk side is a real transactable
+      price; the reward side is the nearest structural level above entry,
+      which is a forecast the desk never actually sells at (it rides a
+      trailing stop out), so the ratio compares one real number against one
+      estimated one.
+    cost_while_unanswered: >-
+      None outstanding; measured effect is recorded instead. Against the
+      production book [measured 2026-10-01, read-only, decision-time
+      initial_stop_loss / initial_take_profit on 33 BUY trades] median
+      reward:risk is 1.24 and eleven buys sit below parity.
   - id: src.risk.constants.REWARD_RISK_FLOOR
     value: 1.5
     status: arbitrary
