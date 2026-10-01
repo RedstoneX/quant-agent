@@ -302,7 +302,7 @@ def test_mechanical_size_down_is_not_a_midday_hard_trigger():
     """Do not add the constructor phrase to the midday substring gate.
     A reviewer LLM could emit it with nothing behind it.
     """
-    from src.pipeline import _reason_cites_hard_trigger
+    from src.pipeline_exits import _reason_cites_hard_trigger
     from src.portfolio_constructor import format_mechanical_size_down_reason
 
     reason = format_mechanical_size_down_reason(
