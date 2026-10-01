@@ -170,13 +170,6 @@ DONE WHEN:
   - [ ] the 12/10 drift pair and the two prompt-only sets above carry a `config/number_ledger.yaml` entry with a source, or the open question and what the desk pays meanwhile
 detail: docs/BOARD_NOTES.md (item 107)
 
-**119. The economics feed can leave required series un-attempted at the open, and the re-derived fix is only measured mid-morning — OPEN, filed 2026-09-18.** Re-filed out of PR #435 (closed unmerged).
-
-DONE WHEN:
-  - [ ] every required series demonstrably gets a real attempt inside the existing ceiling, proven against open-like conditions rather than a healthy mid-morning batch
-  - [x] (b) a series still missing is named, the verdict it produced is visibly partial wherever it travels, and the desk never pays a second time on the same holes — RESTATED and met 2026-09-26. "The economist is not paid on the holes" was DECIDED AGAINST on measurement: the macro seat is bought once a day at the open and nowhere else, so skipping it deletes the regime frame rather than delaying it, and both measured partial runs had already burned the full ceiling so there was nothing bounded to wait for. The economist is paid once on what arrived; `MacroCoverage.verdict_stamp()` stamps `coverage_state`/`coverage_note` onto the verdict from the fetch record, and that stamp now survives `MacroStore.save_last_state`, the carry-forward into midday/close/intra, the PM sheet and the owner's `📊 Market:` line. A second paid call on the same holes was already impossible (`"partial"` is `CATEGORY_REPORTED`, never healable) and is now pinned by a test instead of left to the table. No coverage threshold was picked; 14/15 and 1/15 are both `partial`. Measurement, money and the argument against the other three options: docs/BOARD_NOTES.md (item 119)
-detail: docs/BOARD_NOTES.md (item 119)
-
 **203. A provider success with no usable cost or token telemetry — carried over from item 147 (2026-09-30), zero occurrences measured across all of  as of that date.**
 
 DONE WHEN:
@@ -386,6 +379,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 196
 - retired queue: 99
 - retired queue: 157
+- retired queue: 119
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
