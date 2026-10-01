@@ -233,8 +233,8 @@ detail: docs/board_notes/item-208.md
 
 
 DONE WHEN:
-  - [ ] (a) a recorded decision, in `docs/INCIDENT_HISTORY.md`, on what enables a range position's structural trail once PR #853's alignment exit has landed — either the alignment reading itself replaces the target gate, or the gate is removed and the reason the entry stop alone suffices is written down.
-  - [ ] (b) the chosen answer is live for Type A entries and a range position between entry and its target is observably protected by something that reads off the instrument, not by an unsourced level.
+  - [x] (a) DONE 2026-10-01 — gate REMOVED, not replaced; give-up and falsification recorded in `docs/INCIDENT_HISTORY.md` (2026-10-01, items 212/208); originally: a recorded decision, in `docs/INCIDENT_HISTORY.md`, on what enables a range position's structural trail once PR #853's alignment exit has landed — either the alignment reading itself replaces the target gate, or the gate is removed and the reason the entry stop alone suffices is written down.
+  - [x] (b) DONE 2026-10-01 — verified live on `src/risk/trailing.py` (`reference_target` unread; Type A falls through to the same structural/chandelier candidates) and the one call site in `src/pipeline.py`; originally: the chosen answer is live for Type A entries and a range position between entry and its target is observably protected by something that reads off the instrument, not by an unsourced level.
 detail: docs/board_notes/
 
 

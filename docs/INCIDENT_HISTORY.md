@@ -17803,3 +17803,71 @@ own range, permanently. A stop may no longer be placed inside the daily-noise
 band by any leg, so that tightening cannot happen. The replay cannot speak to
 it: it counts stop-outs over 18 positions in one market stretch, and the cost
 of a permanent tightening shows up on a later down-leg.
+
+### 2026-10-01 — DECISION CLOSED OUT: what a range position is protected by between entry and its old target, and what the desk gives up (item 208)
+
+Item 208 carried two leftovers asking for a recorded decision on what enables
+a range position's structural trail once the alignment exit shipped, and for
+proof that the answer is live. The decision itself is the entry above
+(2026-10-01, item 212): the take-profit gate is removed, not replaced. This
+entry records the two things that one did not — what the desk GIVES UP, and
+how the claim was verified against live code rather than against the board.
+
+**VERIFIED LIVE, 2026-10-01, on this branch.** In `src/risk/trailing.py`,
+`evaluate_trailing_stop` takes `reference_target` but no longer reads it
+anywhere in its body; it is a dead pass-through kept only for the call
+signature. The Type A branch runs the two R-multiple ratchets first, and then
+falls through to the SAME structural-pivot and chandelier candidate set as
+Type B, built from bars since entry. The one live call site is
+`src/pipeline.py::_apply_deterministic_trails`, which passes every position's
+`setup_type` without excluding range names. So between entry and its old
+target a range position is protected by: its entry stop, plus the +1R
+breakeven ratchet, plus the +2R lock-at-+1R ratchet, plus — new — a
+structural trail that follows the most recent confirmed higher low, with a
+chandelier level read off the instrument's own ATR where no pivot qualifies.
+Every one of those reads off the instrument. None of them is a chosen level.
+
+**WHAT THE DESK GIVES UP.** The test deleted with the gate said it plainly: a
+range trade that trails early is stopped out inside the very range it was
+bought to traverse. That risk is real and the desk is now taking it. Before
+this change a range position could not be trailed out of its range at all,
+because nothing followed price; now it can. The desk has traded "never
+stopped out early, always gives back the whole move on a reversal" for
+"follows price, and can be shaken out by a swing the range would have
+survived." That is a worse outcome in one specific case — a wide, slow range
+where price makes a lower swing on the way to the other side — and a better
+one in the case the 2026-09-04 audit named as the single largest
+asymmetric-downside rule on the book.
+
+**HOW THE REPLACEMENT ADDRESSES IT.** Not with another gate. No leg may place
+a stop inside one ordinary day's noise, measured as a multiple of the
+instrument's own ATR rather than as a chosen distance — so an ordinary
+intra-range wiggle cannot reach the stop, by construction. Both legs are held
+to that test and to the minimum-ratchet test: a ratchet level that the
+structural leg's refusal would otherwise have handed straight to the broker
+is now band-checked too, which was the exact hole the old gate had been
+covering. And a trail cannot be read off too few bars: below a minimum bar
+count derived from the pivot window — the same window the structure leg needs
+to confirm its first pivot — both legs refuse outright with a recorded
+reason, rather than following today's print. Replay evidence is in the entry
+above: 18 of the 20 filled range BUYs in the production record replayed day
+by day, zero stopped out earlier under the ungated trail.
+
+**WHAT WOULD SHOW IT FAILING.** A range position stopped out by a
+`rule=trail` / `TRAIL_STOP`-sourced stop while price was still inside the
+entry-to-old-target band, and the name then traversing to that old level
+without the desk on board. One such case is evidence; a pattern of them means
+the noise band is too narrow for range names and the gate was carrying more
+weight than this decision credits it with. The trail-state records
+(`specialist_evidence`, `kind='trail_state'`) already name why each position
+did or did not trail, so the refusal reasons are on the record and the
+question can be answered from data rather than impression.
+
+**Correction shipped with this entry.** The module docstring of
+`src/risk/trailing.py` still described the removed gate as the live rule and
+called it "unchanged"; its Type A section is corrected here. Prose only — no
+number, no threshold and no behaviour changed. A comment at the
+`_apply_deterministic_trails` call site still reasons about a revised target
+crossing a range trade between the ratchets and the structural trail; that
+reasoning is now moot because the target is not read. It predates this task
+and was left alone.
