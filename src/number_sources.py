@@ -255,6 +255,11 @@ SCOPED_PATHS: tuple[str, ...] = (
     # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
     # Every trail multiple and every exit threshold it carries stays scoped.
     "src/pipeline_exits.py",
+    # 2026-10-01, board item 210 step 6: the universe-admission cluster --
+    # the external-nomination gates, the screen and its admission -- moved
+    # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
+    # scoped.
+    "src/pipeline_admission.py",
     "src/pipeline_prompt_facts.py",
     # 2026-10-01, board item 210 step 2: the protection cluster -- stop
     # coverage, repair, protected sells, write-ahead restore, the fill and

@@ -310,6 +310,7 @@ def test_the_two_split_modules_are_still_in_scoped_paths() -> None:
     from src.number_sources import SCOPED_PATHS
 
     assert "src/pipeline.py" in SCOPED_PATHS
+    assert "src/pipeline_admission.py" in SCOPED_PATHS
     assert "src/pipeline_delever.py" in SCOPED_PATHS
     assert "src/pipeline_stages.py" in SCOPED_PATHS
 
