@@ -624,6 +624,23 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
           flag divergence in reasoning_chain.support_resistance — does NOT
           override the technical call.
         """
+        #: {symbol: why} for symbols whose row came back from the model but
+        #: could NOT be read (schema-invalid, unquoted property name, wrong
+        #: shape). Reset on every batch. Board item 220: the desk used to
+        #: drop these rows and carry on, which left the technical seat's
+        #: silence about that name indistinguishable from the seat having
+        #: looked and found nothing to object to. The seat is the timing
+        #: VETO, so "no objection recorded" must never be readable as
+        #: agreement; this is the raw input to the per-name coverage record.
+        self.last_unreadable: dict[str, str] = {}
+        #: Symbols that WERE submitted and resolved to nothing usable without
+        #: an unreadable row to blame — absent from every answer. Distinct
+        #: from `last_unreadable` (a row came back and could not be read) and
+        #: distinct again from a name this seat was never asked about, which
+        #: appears in neither. Three different causes, three different fixes;
+        #: a later reader must be able to tell them apart from the fields
+        #: alone, never from prose (board item 220).
+        self.last_unanswered: set[str] = set()
         if not symbols_data:
             return {}, None
 
@@ -634,11 +651,22 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             benchmark_pool,
         )
         if len(chunks) <= 1:
-            return self._analyze_chunk(
+            single_unusable: dict[str, str] = {}
+            single_out, single_result = self._analyze_chunk(
                 symbols_data, prior_ratings, valuations,
                 prior_macro_regime, prior_macro_outlook, intraday_context,
                 benchmark_pool=benchmark_pool,
+                _malformed_sink=single_unusable,
             )
+            self.last_unreadable = {
+                sym: why for sym, why in single_unusable.items()
+                if single_out.get(sym) is None
+            }
+            self.last_unanswered = {
+                sym for sym, a in single_out.items()
+                if a is None and sym not in self.last_unreadable
+            }
+            return single_out, single_result
 
         merged: dict[str, TechAnalysisResult | None] = {}
         result_parts: list[tuple[str, AgentResult]] = []
@@ -710,6 +738,15 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             item.get("symbol") for item in symbols_data
             if merged.get(item.get("symbol")) is None
         ]
+        self.last_unreadable = {
+            sym: why for sym, why in unusable.items()
+            if merged.get(sym) is None
+        }
+        self.last_unanswered = {
+            str(item.get("symbol")) for item in symbols_data
+            if merged.get(item.get("symbol")) is None
+            and item.get("symbol") not in self.last_unreadable
+        }
         if final_missing:
             logger.error(
                 "Tech batch: %d symbol(s) unresolved after the single shared "

@@ -538,6 +538,12 @@ Retired from the queue 2026-09-30: the filed premise (a full reservation eating 
 
 ## item 203
 
+**Measured against production 2026-10-01 (`/home/qamc/quant-agent/data/quant_agent.db`, read-only; the repo-local DB is empty).** Across all 713 `agent_logs` rows, 2026-08-14 to 2026-10-01: ZERO rows where a provider request happened (`provider_requests > 0`) and no token counts and no cost came back. The eleven rows carrying no token counts at all are all `provider_requests = 0` -- no request was made -- which is item 147's already-settled cache-hit case. 238 successes report $0 against real token counts, all from the `google` free route: a correctly measured zero, not a hole. So the occurrence count this item was filed to watch for is still zero, and nothing can be priced from an occurrence that has never happened -- the item stays OPEN rather than being closed on a fallback price the desk would have to invent.
+
+**What shipped anyway (2026-10-01): the case is now counted as unknown instead of banked as a measured zero.** `_unknown_cost_row_expr` in `src/cost_circuit.py` scored a row unknown only when `cost_usd IS NULL`. A success whose provider request happened and returned no usage would be written with a literal `cost_usd = 0.0` -- zero because nothing was reported, not because anything was measured -- and that row read to the budget as a proven free call. It now scores 1 (unknown) whenever `telemetry = 'no_usage'`, which `src/agents/base.py:usage_telemetry_word` writes only for a row whose request reached the provider. Disjoint from `_PROVEN_ZERO_ROW_SQL` by construction, and the clause is dropped (not fabricated) on an older `agent_logs` with no `telemetry` column. No price is substituted from a model list, an average of other calls, or anything else: the day simply loses `costs_exact` and the hole stays visible.
+
+**The `telemetry` recorder (#879, merged 2026-09-30) has captured nothing in production yet -- UNPROVEN, not proven dead.** All 713 rows have `telemetry` NULL. The only session since the merge ran 2026-10-01 00:01-00:02 ET while the production checkout's HEAD was being updated at 00:01:13 ET, so no row has yet been written by a process that provably loaded the recorder. Re-check after the next full session: three consecutive successes still NULL would make it dead and a defect in its own right. Until a row carries the word, the clause added above is correct but unexercised in production.
+
 Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured zero rows in agent_logs where a provider request actually happened and returned no usable cost or token telemetry, so nothing needs building today; this item exists only so that case is tracked if it ever fires, rather than silently dropped when 147 was retired.
 
 ## item 157 — RETIRED 2026-09-30, the enforced answer format shipped on both wire routes; the live-call criterion is structurally unreachable and was replaced by an on-every-real-call hygiene recorder
@@ -610,6 +616,27 @@ What is left open is the **way in**. The recalculation only runs on a stock one 
 
 **No owner decision needed on the fix itself** — it is the same measurement the desk already does, run in one more circumstance. The open question above may need one, because it changes live position records without a human in the loop.
 
+**RESOLVED 2026-10-01.** The way in is no longer the flag. `_adjudicate_target_revision_flags` now builds its work list from the OPEN BOOK: every held position is adjudicated every session, and a seat flag only supplies the seat label and the prose evidence for the symbols it did raise. Both Apple and Nokia are open positions, so both are in the swept population from the next session on, each producing either a re-derivation or a named, recorded refusal; the row appears when that session runs, not at merge.
+
+**Why this did not need the owner's decision, and why it introduced no number.** The flag was argued above to be the human in the loop. It is not: the seat is a model, and `src.models.TargetRevisionFlag` has exactly two fields, a symbol and a prose evidence string, with no price. Every number the adjudication uses is either recomputed from bars that session or read off the already-ratified `risk_engine.config` bars, so the flag supplies no input to the arithmetic and removing it as a gate changes nothing about HOW a target is worked out — only about WHICH positions get the measurement. The algebra was checked explicitly for the trap of a number that looks per-name but cancels to a constant: no term was added, removed or rearranged in the derivation at all, so there is nothing new to source and no new ledger row. What the gate actually produced was arbitrary coverage, and the cost of that coverage is live: the stored target decides which trailing-stop regime a range trade is in (`src/risk/trailing.py` — below the target the breakeven and +2R ratchets hold the stop, above it the structural trail takes over), so a target left aiming past a wall nobody mentioned was already governing a live stop.
+
+**MEASURED 2026-10-01, production DB read-only** (`/home/qamc/quant-agent/data/quant_agent.db`): the book holds 11 open positions, and across the entire record only 3 distinct symbols have ever carried a `target_revision` outcome row. That is the size of the gap the flag-only gate left — the sweep takes the session's coverage from whatever a seat happened to say to all 11.
+
+**ROUND 2, 2026-10-01 — the sweep shipped a one-way tightening, now fixed, and the item is UN-RETIRED for two brakes it still lacks.**
+
+*What actually changes at merge: nothing* [MEASURED 2026-10-01, production DB read-only, `/home/qamc/quant-agent/data/quant_agent.db`]. Of the eleven open positions, ten carry a live target identical to their entry target, and exactly one — a SHORT range trade — differs, by about 2.2% of price. For that one, current price sits OUTSIDE the band between the two targets, so it is on the same side of both boundaries. No position changes trailing regime on the day this merges. That is the strongest thing that can be said for the change and it was missing from the first telling: the correction is to the rule, not to today's stops.
+
+
+*The money fault.* A wall-triggered re-derivation can move a target DOWN toward entry. The stored target is what `_apply_deterministic_trails` passed as the trailing `reference_target`, and that boundary decides whether a range trade is held by the below-target breakeven/+2R ratchets or by the structural trail. Crossing it tightens the stop; the trail only ever ratchets toward price; so when the next session restores the old target the stop is NOT given back. Oscillation did not cancel, it accumulated tightening — and the sweep had just widened that exposure from the handful of flagged names to the whole book, with the give-back case (a winner stopped out on a pullback it would have ridden) measured nowhere. FIXED by reading the entry column, `trades.initial_take_profit`, instead of the live `take_profit`. **This moves protection in BOTH directions and both are intended.** It removes a ratchet that could never be given back; it also LOOSENS the boundary case, because where a revised target sits below the entry target, a fall to just under the old boundary used to hand the stop to the structural trail and now leaves it in the earlier ratchets — strictly less tightening there, which is a real loosening of future protection. The trade is accepted because the ratchet it removes was irreversible and this loosening is not, but it is a trade and not a pure win. **"Pinned" is the INTENT of that column, not a verified property of every row:** the `initial_take_profit` migration backfilled it FROM `take_profit` for every legacy row carrying a target, so a row revised before the migration ran was backfilled with an already-revised number, and whether any such row exists is UNVERIFIED. The null fallback is safe either way, since it only applies to rows the migration left empty. No number was involved: the code's own comment at that call site already claimed every field it read was pinned at entry, and `take_profit` stopped being pinned the day `update_open_take_profit` was written. The regime boundary is now a property of the trade, so a revision cannot ratchet a stop the desk would not otherwise have moved, and the revised target is once again a quoted number that no deterministic gate reads — which is what the owner's 2026-09-30 alignment ruling says it should be. It is not inert: it still feeds `distance_to_target_pct` into the facts the reviewing model reads, so it can still colour a later session's prose.
+
+*Three smaller faults, fixed.* The sweep now reads its bars in ONE `get_ohlcv_batch` call rather than a serial per-name fetch that the seat flag had been quietly rationing; no timeout constant was added, because any seconds value would be invented and batching removes the serial exposure that motivated one. Every name is adjudicated inside its own guard, so a mid-sweep exception costs exactly one name and that name gets a durable `FAULT_POSITION_NOT_MEASURED` row — previously one exception unwound to a single `try` at the call site that returned an empty list, and because the work list is sorted the SAME tail of the book was dropped every time, each dropped name keeping a stored target the record did not mark as unverified. And an unapplied outcome identical to the symbol's last one is no longer re-filed, the same rule `record_trail_state_if_changed` already applies to trail state.
+
+*Stated plainly, not fixed.* A revision binds from the NEXT session: the trails run before the sweep in the same review, deliberately, so that a revision cannot reach the exits that have already run.
+
+*STILL OPEN, and why the item is un-retired.* (1) Only the level-broken trigger has a brake. The ATR-reach and wall triggers recompute off today's ATR and today's level set with no hysteresis and no cooldown, so the quoted target can flip session to session; the trailing stop carries both a cooldown and a noise band for exactly this failure mode. The fix must be a brake of the same KIND as the two-close confirmation — a second day's agreement — and not a damping constant, because no damping constant can be sourced and borrowing the trail's cooldown, which is owner appetite for a different decision, would be the same invented number with a newer date. (2) The outcomes reach the dashboard (`src/api/holding_why.py` reads the `target_revision` evidence rows) and reach Telegram nowhere: `src/notifier.py` and `src/trader_feed.py` contain no rendering for them at all. Work that reaches neither surface did not happen for the owner, and this one reaches only half of them.
+
+**What this deliberately does NOT do.** It does not make the target a sell rule. The re-derived number reaches no broker and places no order; the alignment exit remains the only way a position is closed on a thesis, and the owner's 2026-09-30 ruling that the desk exits on alignment and never on a target is untouched. It is NOT, however, true that the number can never contribute to a sale: the live target still feeds `distance_to_target_pct` into the position facts the reviewing model reads, so a revision can influence a later session's sale through that model's prose. What is true, and narrower, is that no DETERMINISTIC gate reads it — not the exit guard, not progress or pace, and since this change not the trailing-stop regime either. This also does not touch the accept-or-decline side, which is a separate change in flight.
+
 ## item 177
 
 **Moved from WORK.md (2026-09-24) —** Questions: the 3 `IntradayScanConfig` ledger entries. Cadence: 3 code sites. Stop coverage is separately scheduled and free; the intra preamble (fills, stop-outs, loss check, drains) is not.
@@ -639,10 +666,10 @@ The trigger sets how many movers *qualify*; the cap decides how many of those ar
 ### Still open, and exactly why
 
 1. **The 3 `IntradayScanConfig` ledger rows.** `move_threshold_pct` cannot leave `arbitrary` yet: the measurement that would source it started on 2026-09-26 and has no rows. `max_candidates_per_scan` and `cooldown_hours` are **owner-appetite**, not research questions — see below.
-2. **Every intra-preamble job on its own schedule.** Not attempted. Splitting fill reconcile, stop-out reconcile, protection-restore drain and repeg drain out of `run_intra_check` onto their own timers is a real infrastructure change across `src/pipeline.py`, `scripts/run_if_et_window.sh` and four new unit pairs, and it is the *precondition* for ever cutting the paid cadence — today the free safety work and the paid scan are welded to one 13-tick schedule.
+2. **Every intra-preamble job on its own schedule.** **DONE 2026-10-01.** The free safety work no longer depends on the paid tick: it is one shared method with two callers — the paid `intra_check` tick (unchanged) and a new free `intra_safety` mode with its own systemd service and timer. Additive, not a move, so there is no window in which protection is not restored; both callers take the same broker-write flock and the same blocking-owner check (item 127), so concurrent firing serialises rather than races, and each tick now has two independent chances at the safety work instead of one. The new timer's interval is the already-ledgered `INTRA_CHECK_TICK_MINUTES` (the cadence this work runs on today, so latency is unchanged by construction) and its phase is the midpoint of the two phases already in use on the box, which is the only one at that interval colliding with no existing unit; both are pinned by `tests/test_intra_safety_schedule.py`. **Nothing here licenses choosing a different interval** — the input that would, the observed distribution of how long a position actually stays unprotected, cannot be computed at all yet — `pending_protection_restores` records when the intent was written but the drain deletes the row on success, so nothing records when protection came back [measured 2026-10-01 against the production DB, read-only]. A cleared-at record has to exist before an interval can be chosen on evidence. **Consequence for the rest of this item:** cutting the paid cadence is now a pure spend decision and no longer trades against loss-protection latency.
 3. **A correction the ledger needs and this change could not make** (`config/number_ledger.yaml` is held by another change): the `source:` on `src.config.INTRA_CHECK_TICK_MINUTES` names `src/scheduler.py:56` as "the authority for how often the intraday control actually fires". That is **false in production** — `src/scheduler.py` is the `--mode live` path and the box runs the systemd timer. The row's status can stay `sourced`; the source text should name `scripts/systemd/quant-agent-intra_check.timer` crossed with `run_if_et_window.sh`'s window, with `src/scheduler.py` as the live-mode mirror, and cite `tests/test_systemd_units.py` for the pin that now holds all three sites together.
 
-## item 193
+## item 193 — RETIRED 2026-10-01, the write-ahead row-id gap is explained: the id sequence is shared with the ordinary protective-sell restore path, every one of the 15 production cancels carries its own row id, and all 15 pair with a later rearm, so the pair count is complete and not a floor
 
 Measurement only. No production code was written or changed for it; both events already exist.
 
@@ -723,7 +750,41 @@ scale-in adds routinely are. A test now pins that the path never reaches for
 `replace_order_by_id` at all, so the refusal cannot be hit and the resting stop
 is never left in an unknown state.
 
-**Still open.** The second DONE WHEN (explaining the historical write-ahead-log
+**2026-10-01 — the row-id gap is EXPLAINED, and the pair count is COMPLETE.**
+Measured read-only against the production database
+(`/home/qamc/quant-agent/data/quant_agent.db`, snapshot taken 2026-10-01; the
+repo-local DB is empty): 15 `scale_in|protective_sell_cancelled` events exist
+(2026-09-17..2026-09-30, one more than the 14 of the first pass), ALL 15 pair
+with a later same-run same-symbol `protection|placed`, and ZERO
+`scale_in|skipped` events of any reason have ever been filed, so no preparation
+has yet aborted between the write-ahead insert and the confirmed cancel. Each
+cancel event now carries the row id it allocated: 5, 6, 7, 9, 10, 11, 12, 13,
+14, 15, 16, 18, 19, 20, 23, against an AUTOINCREMENT sequence standing at 23.
+The eight ids scale-in does not hold — 1, 2, 3, 4, 8, 17, 21, 22 — belong to the
+OTHER writer of the same table, the ordinary protective-sell restore path in
+`src/pipeline.py`. The sequence is shared, so the highest row id was never a
+count of scale-ins and the apparent "20 ids vs 14 events" shortfall was an
+artefact of reading one writer's census off two writers' counter. The census
+that is correct filters on the sentinel `sell_order_id`, and
+`tests/test_scale_in_wal_row_id_census.py` pins both properties so the argument
+stays mechanical. No production code was changed by this pass and no broker
+order was placed.
+
+**The amend merged to main does not reach this path — verified in code, not
+assumed.** `_amend_resting_stop_price` in `src/execution/broker.py` has exactly
+one caller, the trailing-stop re-price, and it amends a stop's PRICE. A price
+amend leaves the protective SELL resting, which is the thing that collides with
+the BUY add, so it cannot replace the cancel; the quantity amend that would
+cover an enlarged position is refused by this broker on a fractional order
+(42210000). `tests/test_scale_in.py` already pins that the scale-in path never
+reaches for `replace_order_by_id`. The window is therefore still real, and this
+item closes on measurement and detection, not on removal.
+
+**Nothing remains open** (the paragraph below is kept as the record of what was
+open on 2026-09-30; the second DONE WHEN was settled on 2026-10-01 above, and
+the third was met on 2026-09-30 by the coverage sweep's named skips).
+
+**Was open on 2026-09-30.** The second DONE WHEN (explaining the historical write-ahead-log
 row-id gap, so the 14-pair count is known complete rather than a floor) is
 unaddressed: the new event makes FUTURE pairs complete by construction but says
 nothing about the rows already filed. The third (answering "is any position
@@ -763,55 +824,6 @@ Moved out of `docs/WORK.md` on 2026-09-30 to keep that file under the
 100,000-byte cap `tests/test_status_board.py` enforces. Nothing is
 changed; this is the item body verbatim.
  `risk.min_stop_atr_multiple` (2.5) is not sourced — there is no citation for a fixed entry stop at that multiple and both ends of the band quoted at its definition site are unsupported (item 90, 2026-09-30) — so `docs/OUTCOME.md`'s first-ranked remedy applies: reformulate the rule so it needs no constant. Doctrine's own worked example is structural ("does the last higher low still hold?" needs no number because the chart supplies the level), and item 90's pass established that this desk can already do it. `_level_backing_stop` discards any level with fewer than `min_level_touches_for_stop_honor` (5) touches, after which the stop falls to the flat ATR multiple; but that 5 was measured for whether a level is trustworthy enough to justify a stop TIGHTER than the floor, where a level that fails costs a whipsaw. Used as a WIDENING anchor the bet inverts: the stop sits beyond the level, so a level that fails leaves the stop merely wider than needed, which under risk-based sizing costs position size and not loss. That asymmetry has never been examined and it is where the constant's blast radius shrinks. The measured backing is in the repo and is not fitting, because it is measured off bars rather than off this desk's trades: pooled bounce probability rises from 0.516 at first touch to 0.644 at 5+ touches against a flat ~0.48-0.51 shuffled control (7,218 touch episodes, 101 symbols, 5 years; `src/data/levels.py`, `docs/RESEARCH_FINDINGS.md` §7), so a 2-touch level (`MIN_TOUCHES` = 2) still carries real information. The machinery also exists: `_derive_structural_stop_no_atr` (owner-ratified, item 80) already reads a protective stop from structure using the ratified `structural_stop_buffer_pct`; only its trigger condition would change. **Two things this must settle rather than assume, both of which could sink it:** what the floor does when the nearest computed level below entry is very far away (a distant anchor shrinks the position toward `position_sized_to_zero` and may be worse than the flat multiple), and what happens when no computed level exists below entry at all — that residue is the only population an ATR multiple would still govern, and item 90 stays open on it.
-
-## item 90 — the 2026-10-01 LIVENESS measurement (is the settling recording actually filling?)
-
-No number was derived, moved or re-picked in this pass, and nothing was routed to
-the owner. The question asked was the one a settlement route cannot answer about
-itself: a route pointing at a recording that writes nothing closes nothing, and
-several recordings built in the last two days turned out to be writing nothing in
-production. Measured directly against the live database on 2026-10-01, read-only,
-per column of `trades` (80 rows):
-
-- `entry_atr` — non-null on 0 of 80. DEAD so far, cause dated: the write read
-  ATR(14) off `decision`, which has no such field, so it resolved to its default on
-  every trade. Corrected in `d9a853e7` (2026-09-30 17:57) and that commit IS an
-  ancestor of the deployed `208b2c67` (2026-09-30 23:28). The last entry in the
-  database is `2026-09-30 14:47`, i.e. BEFORE the corrected code reached the box, so
-  the correction is UNPROVEN rather than refuted. Zero trades have been written
-  since the deploy.
-- `stop_basis` — non-null on 0 of 80, same write site and same dating.
-- `max_adverse_excursion` / `max_favourable_excursion` — non-null on 0 of 80, and
-  they cannot fill ahead of `entry_atr`: the accumulating UPDATE in
-  `src/storage/db.py` filters on `entry_atr IS NOT NULL`, so every trade entered
-  before the correction is permanently excluded from the excursion record. The
-  falsification evidence therefore begins at the first entry after the deploy and
-  cannot be backfilled.
-- `structural_ceiling` — non-null on 0 of 80. This one is NOT item 90's (it is item
-  82's) and it is recorded here only because the same measurement produced it: its
-  writer landed `f37410e7` (2026-09-24 22:00) and is deployed, and exactly one BUY
-  has been written since (`2026-09-30 14:47`) with the column NULL. That is one
-  observation, not a proof, but it is the only post-deploy entry there is and it did
-  not fill. Reported, not fixed — it predates this task.
-- The per-position stop-basis record described as added today is NOT on `origin/main`
-  and the production `positions` table has no such column; the production table has
-  the eight columns it always had. Whatever built it is unmerged, so no route may
-  cite it yet.
-
-Checked explicitly rather than assumed, because the brief warned about it: the
-floor's route is a per-closed-trade record, which is the shape of barred fitting,
-but its `closes_when` asks only whether the floor was ever VIOLATED. Falsification
-of a standing number is not fitting a new one, and the route says in terms that the
-multiple may not be optimised against it. The route is left in place. The four
-ceiling rows that joined state 3 on the same day are `state: specified` and belong to
-item 186; they were read and left alone.
-
-Why item 90 does not retire today: half two is not met on any reading. The ledger
-still carries 131 rows in none of the three states, `MAX_ARBITRARY_ENTRIES` is not
-zero, all four tranche items (182, 183, 185, 186) are open, and the one state-3 row
-this item owns has a recording that has so far recorded nothing. The honest status is
-that the item moved from "the recording is built" to "the recording is built and
-measurably empty, with a dated reason and a named observation that would settle it".
 
 ## item 90 — the 2026-10-01 classification pass (mechanical, no number changed)
 **Verdict: the item stays OPEN, and the honest count of remaining work is 134, not the "half done" the board carried.** What was built is the CLASSIFICATION itself, mechanically and from the ledger, plus the ratchet that keeps it honest; what was deliberately NOT done is any re-derivation, because that is the move this item has already recorded as failing every time — the desk cannot derive these numbers from data it never recorded. (a) `src/number_sources.py` gains `classification()`, which partitions all 329 ledger rows into item 90's three states — sourced or measured; ratified as a structural bound with the reason recorded; unsourceable today with a NAMED recording, built or specified, that would settle it — and a fourth bucket that is the defect, a live number in none of the three. A test pins that every row lands in exactly one bucket, so a row cannot fall through the classification unnoticed. (b) `status: arbitrary` rows may now carry `settles_by:` (`kind`, `state` built/specified, `where`, `records`, `closes_when`). That is the only way to express state 3; before this the schema could not tell "unsourceable but recorded against" from "nothing will ever answer this", which is why the classification could only be produced by hand and never stayed produced. A malformed or unactionable route is a HARD build failure, on the ground that it reads as an answer while silently removing the row from the outstanding count; a missing route is counted instead, because 134 of them exist and deleting rows is not the fix. (c) `MAX_ROUTELESS_ARBITRARY` is computed from `config/number_ledger_route_history.yaml` and checked for EQUALITY — identical in shape to `MAX_ARBITRARY_ENTRIES` and chosen for the same two reasons already learned on that ratchet: a hand-edited literal drifts from its own record, and a ceiling rewards deleting a row rather than answering it. Lowering it requires an appended negative delta naming the row and the recording, in the same commit. (d) MEASURED from the ledger 2026-10-01: 109 not trade-governing, 82 sourced or measured, 3 ratified as a bound, 1 in state 3, 134 in none of the three. The 134 are enumerated by the check, not duplicated in prose, and group as `src.config` 36, `src.agents` 30, `src.risk` 21, `src.pipeline` 18, `src.portfolio_constructor` 9, `src.execution` 8, `src.data` 5, `src.verdicts` 4, `src.pipeline_stages` 2, `src.rotation` 1. (e) The single state-3 row is `src.config.RiskConfig.min_stop_atr_multiple`, routed to the per-closed-trade excursion recording built by the 2026-09-30 pass; its value is UNCHANGED and the recording may not be optimised against, since fitting a number to this desk's own trading record is barred outright. (f) One sentinel moved for a non-trade reason and is declared: `MAX_UNSCOPED_NUMERIC_SITES` 154 -> 155 for `MIN_ROUTE_PROSE_CHARS` (40), the shortest route prose the schema accepts — it governs the ledger's own schema and no size, price, stop or exit.
@@ -943,6 +955,9 @@ text points here.
 
 ## item 63 — detail moved from the board 2026-09-30
 
+**2026-10-01 — why no sale was ever on the record, measured, and what now records them.** The parser was never the problem. The desk's own insider cache holds 16,019 sale rows against 2,384 buy rows, yet every one of the 828 observation rows in the stored evidence is a buy. The cause is the cut: each run keeps only forty rows, and the first thing it sorts on is whether a row could pull a brand-new name into the universe — which only a purchase can ever do — so with thousands of purchases competing for forty slots a sale is cut every single time. Nothing was retuned to fix that, because widening the cut would change what the desk looks at, and this item is forbidden from moving anything that governs a trade. Instead every run now writes down, separately, how many sales it saw, how big each was relative to what the person held, and the price and date a later pass needs to work out what happened next. That record decides nothing and is read by nothing. **Two honest attempts at the number have now failed and both are written down:** no published signed scoring scheme exists for insider sales (searched 2026-09-13, recorded in `docs/INCIDENT_HISTORY.md`), and the desk's own history cannot supply one either because it holds zero sale outcomes to read. **The recording is UNPROVEN, not dead** — the write fires in tests but has never run in production, so the next pass must count its rows and check its newest timestamp before believing it.
+
+
 One scalar in [0,1] is both the ranking key and the dollar multiplier, with no direction. **STRUCTURE FIX 2026-09-25:** a derived `SmartMoneyObservation.signal_direction` channel now carries the sign (buy +1, sale/exchange/unknown 0), and both deterministic ranking keys in the smart-money analyst multiply value*weight by it, so a contra/bearish sale can no longer rank or size as a bullish buy of equal magnitude; buys keep their exact former contribution. The desk is long-only on smart-money admission (admission requires direction=="buy"), so a sale is safely neutralised, never counted as bullish. **open_question (owner-appetite/research):** the magnitude→sign boundary that would let a large sale (Scott & Xu's sourced >50%-of-holdings band, already on the row as `holdings_fraction_band`) score bearish (-1) versus a small sale's mild-positive — no published SIGNED scoring scheme exists; ruled out pending a source or enough own outcome data. Do NOT pick that number.
 
 
@@ -1067,6 +1082,8 @@ The 187-reference estimate is low: ~550 mentions across 88 files, including four
 
 The rest of step 4 is blocked rather than skipped. Steps 2 and 3 — rewriting the owner-facing funding wording, and deleting the sweeper itself — have not reached the main branch, so the sweeper is still live code. Deleting its number-ledger entries now would leave constants that still run with no record of where they came from, and stripping the sweep fields out of the account view and the frontend would remove the only place a leftover holding would be visible. The item stays open with those criteria written into its board entry.
 
+**Retirement BLOCKED 2026-10-01 — measured, not estimated.** A full sweep of this checkout plus a read-only query of the production DB (`/home/qamc/quant-agent/data/quant_agent.db`) found the feature is not dead code. The sweeper's remaining method `release_retired_vehicle` runs on every session lane and places a real sell order with protection when a vehicle is held; the production ledger shows the feature really traded (8 `SWEEP_BUY`, 6 `SWEEP_SELL`, 2026-09-02 to 2026-09-17) and holds none of the vehicle now, so that path is idle because of the book's state and not because the code cannot fire. The $500 minimum-order number the board recorded as vestigial still refuses a small addition to a short position outright, and still decides whether the rotation report calls funding a binding constraint. The 1% reserve band still produces the reserve figures the account view shows. Deleting any of the three changes what the desk does with money, so the remaining retirement is an owner decision, not the mechanical cleanup this item was filed as.
+
 ## item 192 — detail moved from the board 2026-09-30
 
 CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured 3.12.3, and nothing anywhere pinned or checked the two against each other. The drift already cost real time once: a prompt-drift check hashed `ast.dump()` of a parsed function, and Python 3.12 added a `type_params` field to `FunctionDef`/`AsyncFunctionDef`/`ClassDef` that 3.11 doesn't have, so the same unchanged source hashed differently under the two interpreters — CI went red, local ran green, and two agents produced confident but wrong diagnoses before the version skew itself was found.
@@ -1122,6 +1139,62 @@ The order matters and is the completion criteria:
 ## item 195 — RETIRED 2026-09-30, the window-start inconsistency it named is fixed and merged, and the only remaining lever on the structural leg is barred
 
 The measured finding stands and is preserved in the retired item's own text: the structural pivot has never produced a candidate, because a confirmed pivot needs `2 * PIVOT_WINDOW + 1` = 7 bars and a scale-in additionally reset the caller's bar window to zero. That second half was the defect in how the candidate is FOUND and it is fixed on main (`Database.get_position_open_timestamp`, `tests/test_position_open_timestamp.py`); re-running all 21 recorded refusals through the new window flipped none. The first half is arithmetic reach, and the only way to shorten it is to move `PIVOT_WINDOW`, which the module documents as unsourceable in the literature — moving it to obtain a result the data would like is picking a number, which doctrine bars. The leg is NOT deleted: item 196's change means it now competes with the chandelier on equal terms instead of pre-empting it, and `tests/test_trailing_candidate_set.py` pins that it is still preferred where it does produce a usable pivot.
+
+## item 218 — RECORD ONLY: two measurements, no behaviour change; the parity refusal was built and then REMOVED before merge
+
+**Nothing in this item changes what the desk does.** A refusal of a range buy
+whose reward:risk is below 1.0 ("parity") was written, reviewed adversarially
+and deleted. Two measurements survive, as evidence for this board item only,
+with no behaviour attached to either.
+
+**Measurement 1 — the production reward:risk distribution.** Measured
+2026-10-01 against the production database, read-only, over the 33 recorded
+BUY trades that carry an entry, a stop and a target: median reward:risk 1.44,
+minimum 0.68, and SIX below parity — RSG 0.76, RSG 0.90 and NUE 0.82 (range
+entries) and COP 0.68, OXY 0.87 and RKLB 0.82 (breakout entries). Recorded
+target distance over the same set is a median 3.25 ATR. This is the state of
+the book's geometry on that date and nothing more; it is not a threshold, not
+a ranking input and not a size input.
+
+**Measurement 2 — the realised-advance study behind the reach cap.** Measured
+2026-10-01 on the desk's own stored 400-bar daily set, 101 symbols, ATR(14),
+rolling windows: over a 15-session hold the MEDIAN per-name realised
+favourable excursion is 1.93 ATR and the per-name MAXIMUM is 8.78 ATR, against
+`MAX_REACH_ATR_MULTIPLE`'s 1.5 * sqrt(15) = 5.81 ATR. `MAX_REACH_ATR_MULTIPLE`
+is KEPT and unchanged; the note now sits beside it in `src/data/levels.py`.
+
+**Correction to the record.** The reach cap was investigated and it is NOT
+what holds the desk's targets close. An earlier diagnosis written down in this
+repo treats the reach multiple as the thing clipping targets in; the
+measurement above contradicts it — at a typical hold the cap sits at ~5.8 ATR
+while the instrument's own typical advance is ~1.9 ATR and the recorded target
+distance is a median 3.25 ATR, so the cap binds only in the tail and not on
+the ordinary trade. Whatever keeps targets near entry, it is not this number.
+A measured replacement for the multiple would also still need a QUANTILE — the
+median (1.93) and the maximum (8.78) differ by 4.5x and straddle today's value
+— so reading the instrument does not avoid picking a number.
+
+**Why the refusal was removed.** It keyed off the WIDENED stop inside the
+stop-widening path, so it fired as a function of stop width — the deleted
+stop-width gate under a new name — and the owner's standing ruling is that a
+wide stop ships and is answered by SMALLER SIZE, never by refusing the trade.
+Seven existing guard tests fail against it, four of them the owner's own
+worked examples of that ruling, and they are left untouched. The "parity is
+arithmetic" argument does not survive either: the break-even identity assumes
+the position is SOLD AT THE TARGET, and this desk never does that — profit
+taking is trailing-stop driven (owner 2026-09-30, exits on alignment), so the
+reward side is a FLOOR on the payoff, not the payoff, and 1.0 is not the
+structural bound the change claimed. A size-based variant is barred too: the
+reward:risk helper's own docstring records the owner ruling that the figure is
+for RANKING, never a cutoff and never a size cap. The breakout exemption was
+also backwards in effect — it spared the three worst measured ratios (COP
+0.68, RKLB 0.82, OXY 0.87) and refused three better ones.
+
+**What is left open, and it is an owner question.** The desk can presently
+neither refuse arithmetically losing geometry nor resize for it, because the
+ruling set forbids both. Only the owner can say whether such a trade may ship
+at all. That question is recorded here and deliberately not routed, not
+answered and not pre-empted by this branch.
 
 ## item 196 — RETIRED 2026-10-01, both criteria met: refusing was MEASURED to be the better policy and the frequency it left unmeasured is now counted in production
 
@@ -1207,7 +1280,7 @@ and an SMA cross agree the trend is over, never on a single made-up level.
 The alignment exit on open PR #853 is the candidate replacement for this
 gate. Do not build a replacement under this item, and do not re-derive,
 widen or replace any multiple.
-## item 211
+## item 211 — RETIRED 2026-10-01, both-edge paging deferred to the circuit's own self-clear window, repeat suppression made per-type, and every refusal now readable at /alerts/suppressed
 
 Why the threshold is not a new number. The circuit already answers "how long
 before this stops being a blip": `_auto_clear_transient_latch_locked` refuses
@@ -1232,30 +1305,35 @@ trigger still pages immediately, because there is no window it can expire
 inside. It does not migrate the three existing per-symbol markers in
 `src/coverage_watchdog.py` onto the new generic helper; that is a refactor of
 working code and was left alone so this change cannot alter what they already
-suppress. And it does not put the suppression record on the API — the counts
-are durable in `data/alerting/` and in `llm_circuit_events`, but reading them
-today means reading those, which is the honest state and is filed above.
-## item 214 — RETIRED 2026-10-01, counters read off production: 0 fenced/extra-key hits in 8 checked Google-route answers, but that same route returned invalid JSON inside a strict schema once in the window
+suppress. The suppression record IS now on the API, which was the item's last open
+criterion: `GET /alerts/suppressed` returns the `suspend_alert_deferred`
+rows from `llm_circuit_events` alongside the `suppressed_alerts` block from
+BOTH watchdog state files, and reports "could not read it" separately from
+"nothing was suppressed" rather than collapsing the two into an empty list.
+It still does not migrate the three existing per-symbol markers in
+`src/coverage_watchdog.py` onto the generic helper; that is a refactor of
+working code and was left alone so this change cannot alter what they
+already suppress. There is no dashboard tile — the criterion reads
+"API/dashboard" and the API is what shipped.
 
-**Read 2026-10-01, read-only, from the production database and the production log file on the box.** The source for every number is named inline; nothing here is estimated.
+Correction to the item text as filed. It said `scripts/check_deploy_drift.py`
+claims through `coverage_watchdog.claim_typed_alert`. It does not: it keeps
+its own `drift_alerted_for` marker in `deploy_drift.json`, which is still a
+per-type, per-key, per-day claim but a separate implementation. What it was
+genuinely missing is the recording half — a repeat it declined to send left
+no trace at all — so `record_state` now writes that refusal through
+`_record_suppressed_alert`, into the same state file, where the endpoint
+reads it.
 
-Window. The production log file on the box covers 2026-09-29 17:16 to 2026-10-01 04:00. The hygiene counters live only in process memory and are emitted there, so that is the only window that exists: the production database holds no hygiene table and no hygiene field, and `agent_logs.telemetry` is NULL or empty for all 182 tech-seat rows [measured, production database].
-
-Counts. Zero fenced-markdown hits and zero undeclared-key hits [measured: no hygiene line anywhere in that window]. The denominator is 8 tech-seat calls, every one of them tagged `google` [measured, production database, `agent_logs`]. The window holds no openrouter-tagged tech call at all, so the openrouter half of the first DONE WHEN is satisfied only by absence; it is recorded here as unmeasured, not as clean.
-
-The counter is alive, not dead. The deployed checkout contains `_record_answer_hygiene` [measured, production source], and a sibling counter on the same telemetry object did fire and report in the same window ("Explicit nulls coerced to defaults during research (27): TechAnalysisResult.thesis"). The zero is therefore a real zero over 8 answers, not a write path that cannot fire.
-
-The conclusion, and it is not a clean bill of health. A strict `json_schema` response format is supposed to make a malformed answer impossible. On 2026-09-29 18:46 the Google route returned one anyway: a tech answer carried 1 malformed row, dropped individually, with the 2 well-formed rows beside it kept, the parse error being an unquoted property name on VLO [measured]. The call behind it is recorded `actual_provider=google`, `status=success`, `finish_reason=stop`, `truncated=0` [measured, production database] — so it was not a cut-off answer, it was syntactically invalid JSON inside an enforced schema. That is 1 of the 8 Google-route answers in the window. Eight calls cannot support a rate and no rate is claimed.
-
-What the desk does when the seat's answer is malformed. The row is dropped on its own and the well-formed rows beside it are kept (`parse_json_rows`, built after the 2026-09-17 incident in which one garbled row cost every good row beside it). A dropped row means that symbol has no technical read that pass: the timing veto does not fail loudly, it goes quiet for that one name, and the drop is logged and counted by the existing drop counter.
-
-What changed here. `record_hygiene_observation` now tallies every answer that is checked, so the counter carries a denominator and the research stage reports "0 violations in N checked answer(s), by provider" on a clean run. Before this, a clean run and a check that never ran produced identical output, which is the reason nobody could read these counters in the first place. No value governing a buy, a sell or a position size is touched.
-
-Left open deliberately. Persisting the counters to the database was NOT done. The readable window will stay short because the source rotates, but adding a table is not what this item asked for and the desk already carries item 210 on recorded evidence.
-
-
-**Filed 2026-09-30 out of item 157's retirement.** Item 157 built the enforced answer format and both OpenAI-wire routes now send a strict `json_schema` response format for `TechAnalystAnswer`. Its first DONE WHEN — a live call confirming the Google route enforces what was sent — is structurally unreachable, not merely undone: the rehearsal identity is not granted the Google credential and production is the only identity that could make the call, so the confirming pytest would spend real money on the shared account. The replacement shipped on 2026-09-23: `_record_answer_hygiene` tags every real answer with the provider that served it and records fenced-markdown and extra-key violations to `parse_telemetry`. That evidence is being collected and has never been read. This item carries the unanswered question, not the build.
-
+Where the live-risk line is drawn. A live-risk alert is one about a position
+whose protection is gone or never arrived: a stop that failed to place, a
+stop that failed to re-arm after a scale-in, an uncovered position, a broker
+rejection. None of them is ever silenced: the cost circuit's deferral applies
+only to `_SELF_CLEARING_HARD_TRIGGERS` (paid-provider faults), and the typed
+claim helper always releases the FIRST occurrence for a symbol on an ET day,
+holding only a byte-identical repeat of the same fault for the same symbol on
+the same day — and recording even that. Both halves are proved in
+`tests/test_alert_suppression_api.py` and `tests/test_cost_circuit.py`.
 ## item 201
 
 The naked window is real and ordinary: every place the desk cancels a protective stop and submits a replacement, the position is unprotected for the width of that round trip, on paths that run on normal days against real open positions.

@@ -4821,6 +4821,25 @@ def _record_scale_advisory(decisions, verdict) -> tuple[list, float, list]:
     return list(decisions), scale, advised
 
 
+
+def _probe_sale_census(provider: object) -> dict | None:
+    """Board item 63: find the SEC provider's last sale census, however the
+    provider happens to be wrapped. Duck-typed on purpose -- the combined
+    provider delegates by attribute, exactly as `form4_coverage` is probed
+    a few lines below. Returns None when nothing recorded one."""
+    candidates: list[object] = [provider]
+    nested = getattr(provider, "providers", None)
+    if isinstance(nested, (list, tuple)):
+        candidates.extend(nested)
+    if hasattr(provider, "__dict__"):
+        candidates.extend(vars(provider).values())
+    for candidate in candidates:
+        census = getattr(candidate, "last_sale_census", None)
+        if isinstance(census, dict) and census.get("sale_rows"):
+            return census
+    return None
+
+
 class MorningResearchStage:
     """Parallel data + LLM fan-out at morning open.
 
@@ -5258,6 +5277,15 @@ class MorningResearchStage:
                     for s in symbols_data if s["symbol"] in live_context
                 },
             )
+            ctx.tech_unreadable = dict(
+                getattr(self.tech_analyst, "last_unreadable", None) or {}
+            )
+            ctx.tech_unanswered = set(
+                getattr(self.tech_analyst, "last_unanswered", None) or set()
+            )
+            ctx.tech_unanswered = set(
+                getattr(self.tech_analyst, "last_unanswered", None) or set()
+            )
             resolved = [a for a in analyses_map.values() if a is not None]
             if resolved:
                 try:
@@ -5365,6 +5393,21 @@ class MorningResearchStage:
             ctx.smart_money_findings = findings
             ctx.smart_money_provider_error = provider_error or analysis_error
             import json as _sm_json
+            # Board item 63. The sale side of the insider signal, recorded
+            # because nothing else records it: the fetch truncation puts
+            # admission-eligible buys first and admission requires a buy,
+            # so no sale has ever reached `finding`/`admission` evidence.
+            # This row governs nothing -- no gate, no rank, no size reads
+            # it -- it exists so the magnitude->sign question can one day
+            # be answered from the desk's own data instead of guessed.
+            _sale_census = _probe_sale_census(self.smart_money_provider)
+            if _sale_census:
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id,
+                    agent_name="smart_money_analyst",
+                    kind="insider_sale_census", scope="run",
+                    evidence_json=_sm_json.dumps(_sale_census),
+                )
             _persist_evidence(
                 self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
                 kind="scan_summary", scope="run",
@@ -6296,6 +6339,9 @@ class MorningResearchStage:
             prior_macro_outlook=prior_macro_state.get("equity_outlook"),
             # Same live-price rule as the main morning Tech pass (2026-09-14).
             intraday_context=self._live_context([s["symbol"] for s in symbols_data]),
+        )
+        ctx.tech_unreadable = dict(
+            getattr(self.tech_analyst, "last_unreadable", None) or {}
         )
         resolved = [a for a in analyses_map.values() if a is not None]
         if resolved:
