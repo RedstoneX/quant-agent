@@ -79,6 +79,34 @@ def test_range_trail_never_moves_a_stop_away_from_price():
     ) is None
 
 
+def test_range_trail_refuses_outright_when_there_are_no_bars():
+    """Missing data must not produce an action. With no bars the chandelier
+    used to read its extreme off CURRENT PRICE, which tightens a stop off
+    nothing on an entry-day position and on every bar-fetch failure. Below
+    +1R the ratchet has nothing either, so the answer is a recorded refusal."""
+    from src.risk.trailing import TRAIL_CODE_NO_BARS, evaluate_trailing_stop
+    ev = evaluate_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=105.0,
+        current_stop=90.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=90.0,
+    )
+    assert ev.proposal is None
+    assert ev.structural_code == TRAIL_CODE_NO_BARS
+
+
+def test_range_trail_keeps_the_structural_refusal_on_the_record():
+    """The ratchet leg answers, and the structural leg's own reason survives
+    on the evaluation instead of being overwritten by the ratchet's code."""
+    from src.risk.trailing import TRAIL_CODE_NO_BARS, evaluate_trailing_stop
+    ev = evaluate_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=90.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=90.0,
+    )
+    assert ev.proposal is not None and ev.proposal.new_stop == 100.0
+    assert ev.structural_code == TRAIL_CODE_NO_BARS
+
+
 def test_range_trail_takes_the_tighter_of_ratchet_and_structure():
     """Both legs may propose on the same call; the tighter wins. Entry 100,
     initial stop 90 -> the breakeven ratchet proposes 100 and the higher low
@@ -134,7 +162,7 @@ def test_range_setup_reaches_breakeven_at_plus_1r():
     proposal = compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
         current_stop=90.0, reference_target=130.0,
-        bars=[], atr=None, initial_stop=90.0,
+        bars=[], atr=2.0, initial_stop=90.0,
     )
     assert proposal is not None
     assert proposal.new_stop == 100.0
@@ -146,7 +174,7 @@ def test_range_setup_below_1r_still_gets_no_protection():
     assert compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=105.0,
         current_stop=90.0, reference_target=130.0,
-        bars=[], atr=None, initial_stop=90.0,
+        bars=[], atr=2.0, initial_stop=90.0,
     ) is None
 
 
@@ -155,7 +183,7 @@ def test_range_setup_does_not_re_propose_breakeven_once_already_there():
     assert compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=115.0,
         current_stop=100.0, reference_target=130.0,
-        bars=[], atr=None, initial_stop=90.0,
+        bars=[], atr=2.0, initial_stop=90.0,
     ) is None
 
 
@@ -171,7 +199,7 @@ def test_range_setup_retrace_after_1r_no_longer_gives_back_the_full_risk():
     first = compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
         current_stop=initial_stop, reference_target=130.0,
-        bars=[], atr=None, initial_stop=initial_stop,
+        bars=[], atr=2.0, initial_stop=initial_stop,
     )
     assert first is not None and first.new_stop == 100.0
     live_stop = first.new_stop
@@ -180,7 +208,7 @@ def test_range_setup_retrace_after_1r_no_longer_gives_back_the_full_risk():
     second = compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=91.0,
         current_stop=live_stop, reference_target=130.0,
-        bars=[], atr=None, initial_stop=initial_stop,
+        bars=[], atr=2.0, initial_stop=initial_stop,
     )
     assert second is None  # no further ratchet proposed on the way down
     # The live stop is what the broker actually holds; it stayed at
@@ -193,7 +221,7 @@ def test_range_setup_short_mirror_reaches_breakeven_at_plus_1r():
     proposal = compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=90.0,
         current_stop=110.0, reference_target=70.0,
-        bars=[], atr=None, initial_stop=110.0, qty=-10,
+        bars=[], atr=2.0, initial_stop=110.0, qty=-10,
     )
     assert proposal is not None
     assert proposal.new_stop == 100.0
@@ -207,7 +235,7 @@ def test_range_setup_with_no_initial_stop_gets_no_breakeven_ratchet():
     assert compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
         current_stop=90.0, reference_target=130.0,
-        bars=[], atr=None,
+        bars=[], atr=2.0,
     ) is None
 
 
@@ -219,7 +247,7 @@ def test_range_setup_with_no_target_still_gets_the_breakeven_ratchet():
     proposal = compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
         current_stop=90.0, reference_target=None,
-        bars=[], atr=None, initial_stop=90.0,
+        bars=[], atr=2.0, initial_stop=90.0,
     )
     assert proposal is not None
     assert proposal.new_stop == 100.0
@@ -234,7 +262,7 @@ def test_breakeven_ratchet_uses_the_initial_stop_not_the_live_one():
     proposal = compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
         current_stop=80.0, reference_target=130.0,
-        bars=[], atr=None, initial_stop=90.0,
+        bars=[], atr=2.0, initial_stop=90.0,
     )
     assert proposal is not None
     assert proposal.new_stop == 100.0
@@ -358,7 +386,7 @@ def test_range_second_ratchet_needs_the_initial_stop():
     assert compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
         current_stop=95.0, reference_target=130.0,
-        bars=[], atr=None,
+        bars=[], atr=2.0,
     ) is None
 
 

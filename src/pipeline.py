@@ -11594,6 +11594,11 @@ class TradingPipeline:
             if proposal is None:
                 _note(
                     symbol, evaluation.code,
+                    # Item 212 follow-up: on a range name the R-ratchet leg
+                    # supplies the code, so the STRUCTURAL leg's own refusal
+                    # reason would otherwise never be recorded again. It
+                    # travels here as the detail.
+                    getattr(evaluation, "structural_code", None) or "",
                     current_stop=current_stop,
                     current_price=position.current_price,
                     entry=position.avg_entry,

@@ -17664,3 +17664,24 @@ was stopped out as a result. Separately, by construction the trail cannot
 loosen a stop: every candidate must sit strictly between the live stop and
 current price, must clear the minimum-ratchet and noise-band invariants, and
 is re-checked after rounding.
+
+### 2026-10-01 addendum — four defects fixed before the change shipped (item 212)
+
+Review of the first patch found four defects, all fixed on the same branch.
+(1) MISSING DATA PRODUCED AN ACTION: with no bars the chandelier took its
+extreme from CURRENT PRICE, making the stop a pure price-follower on an
+entry-day position and on every bar-fetch failure; an empty bar set now
+refuses with `no_bars_since_entry`. (2) Four ratchet tests had been quieted by
+removing their ATR, which is what hid (1); all are restored to the ATR they
+had and the code satisfies them. (3) The structural leg's refusal reason had
+become unrecordable for any range name; it now travels on the evaluation as
+`structural_code` and is written as the detail of the trail-state row. (4)
+Preferring the tighter R-ratchet level over an ACCEPTED structural candidate
+could place a stop inside the noise band the structural leg honours, so that
+override must now clear the same minimum-ratchet and noise-band invariants;
+the ratchets' own unconditional path is untouched.
+
+The replay was re-run against the fixed code: same result, zero positions
+stopped out earlier and three ending with a tighter stop. The sample's power
+is stated in the board note — zero events in 18 positions bounds the harm
+rate at only about 15%, so this is the expected result, not proof of safety.

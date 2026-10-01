@@ -1226,6 +1226,34 @@ date, gated against ungated. 18 of the 20 replayed (two are for a symbol
 absent from the bar set). MEASURED: zero positions stopped out earlier under
 the ungated trail and zero stopped out that did not before; three positions
 ended with a tighter stop and none of the three was stopped out as a result.
+
+The two positions that could NOT be replayed are both RSG, absent from the
+101-symbol daily-bar set. Named here rather than described, so a reader can
+judge for themselves whether that exclusion correlates with volatility; this
+note does not claim it does not.
+
+POWER OF THE SAMPLE, stated so the replay is not read as proof: zero events in
+18 positions puts the 95% upper bound on the per-position harm rate at roughly
+15%. Zero differences is therefore the EXPECTED result at n=18 even if the
+change were harmful at a rate the desk would care about. Bounding that rate
+below 5% needs roughly 59 range positions, which the production record does
+not yet hold. The structural argument — that a candidate must sit strictly
+between the live stop and current price — is the stronger half of the
+evidence; the replay only fails to contradict it.
+
+Four defects found by the adversary on PR #928 and fixed in the same branch:
+(1) with no bars the chandelier read its extreme off CURRENT PRICE, so an
+entry-day position or any bar-fetch failure tightened a stop off nothing —
+an empty bar set now refuses with `no_bars_since_entry`; (2) the first patch
+had quieted four ratchet tests by removing their ATR, which is what hid
+defect 1 — every one is restored to its original ATR and the code satisfies
+them; (3) the structural leg's refusal reason could no longer be recorded for
+any range name — it now travels on the evaluation as `structural_code` and is
+written as the detail of the trail-state row; (4) preferring the tighter
+R-ratchet level over an ACCEPTED structural candidate could place a stop
+inside the noise band the structural leg honours, so that override now has to
+clear the same minimum-ratchet and noise-band invariants. The ratchets' own
+unconditional path, where no structural candidate exists, is untouched.
 ## item 211
 
 Why the threshold is not a new number. The circuit already answers "how long

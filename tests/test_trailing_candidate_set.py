@@ -120,12 +120,29 @@ def test_a_chandelier_inside_the_band_still_refuses_and_invents_nothing():
     assert result.code == TRAIL_CODE_INSIDE_NOISE_BAND
 
 
-def test_no_legs_at_all_still_reports_no_candidate():
-    """The empty-set reason code is unchanged by the widened search."""
+def test_no_legs_at_all_reports_that_no_bar_arrived():
+    """With no bars at all the refusal now names the MISSING DATA rather than
+    an empty candidate set: `no_structure_and_no_usable_chandelier` reads as
+    "we looked and found nothing", which is wrong when nothing was there to
+    look at. The distinction matters because the caller leaves `bars` empty on
+    every bar-fetch failure."""
+    from src.risk.trailing import TRAIL_CODE_NO_BARS
     result = evaluate_trailing_stop(
         symbol="AAA", setup_type="breakout", entry=100.0,
         current_price=PRICE, current_stop=STOP, reference_target=None,
         bars=[], atr=None,
+    )
+    assert result.proposal is None
+    assert result.code == TRAIL_CODE_NO_BARS
+
+
+def test_bars_present_but_no_usable_leg_still_reports_no_candidate():
+    """Bars DID arrive and neither leg could use them: the empty-set reason
+    code is unchanged by the widened search."""
+    result = evaluate_trailing_stop(
+        symbol="AAA", setup_type="breakout", entry=100.0,
+        current_price=PRICE, current_stop=STOP, reference_target=None,
+        bars=_bars([130.0] * 7, peak=131.0), atr=None,
     )
     assert result.proposal is None
     assert result.code == TRAIL_CODE_NO_CANDIDATE
