@@ -290,6 +290,15 @@ DONE WHEN:
   - [ ] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs
 detail: docs/BOARD_NOTES.md (item 199) — item 90's ledger entry carries the retracted arguments so they are not re-proposed
 
+**201. The rest of the cancel+resubmit stop path — filed 2026-09-30 alongside the in-place amend fix. Detail: `docs/BOARD_NOTES.md` ("item 201").** `replace_stop_loss` now amends one plain resting protective stop's price atomically, but every other stop-moving path (the fractional hybrid pair, `shift_stops_down`, multi-stop positions, bracket/OTO legs) still cancels then resubmits and still opens an unprotected window.
+
+DONE WHEN:
+  - [ ] each remaining cancel+resubmit stop path is either measured against the broker and converted to an in-place amend, or documented as genuinely unable to amend
+  - [ ] the fractional hybrid pair's two legs are measured for whether both can be amended in place without collapsing to one stop
+  - [ ] a test fails if any converted path cancels before its amend is refused
+
+detail: docs/BOARD_NOTES.md (item 201)
+
 **200. The status board's own file was one change away from blocking every other change — filed 2026-09-30. OPEN: the move is made, the guard against it recurring is not.**
 
 DONE WHEN:
