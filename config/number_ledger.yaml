@@ -2710,6 +2710,47 @@ numbers:
       The band that decides whether an adverse move is real sits below every
       published volatility multiple, and it is the measured cause of the
       7-of-8 discretionary exits the reviewer approved and this gate blocked.
+    derivation_attempts: >-
+      THE TWO ATTEMPTS ARE SPENT; do not open a third blind one. ATTEMPT 1
+      (2026-09-26) -- adopt the nearest published volatility-band multiple.
+      FAILED: Wilder, the Chandelier Exit and Kaufman all sit near 3 ATR but
+      all measure a stop's distance from a RUNNING EXTREME, not an adverse
+      move from ENTRY, so they do not measure this quantity; adopting 3.0
+      would also be a large unexplained loosening of when the desk sells.
+      ATTEMPT 2 (2026-09-30) -- replace it with each name's own historical
+      adverse move. BUILT, REVIEWED and REJECTED: the justifying example was
+      arithmetically a counter-example, the bar depth was a second chosen
+      round number, the measurement windows overlapped so the same days were
+      counted repeatedly, a 29-session hold returned ONE observation reported
+      as a median, one of the two call sites was left unpatched, and a failed
+      bars fetch reverted silently to the wider number. More fundamentally,
+      ANY summary statistic of a distribution is a choice of percentile, and
+      that choice is exactly the appetite figure this item exists to remove --
+      so no statistic over history can ever settle this, and the owner ruling
+      that risk is read per name from the instrument, never set as a global
+      dial, also closes the "ask the owner to pick a figure" route.
+    settlement_route: >-
+      Not by measurement over history and not by an owner dial -- both routes
+      are closed above. Two live routes remain. (1) The band's FIRST home, the
+      midday gate standing in front of every non-external SELL, measures the
+      move from the AVERAGE ENTRY PRICE; nothing else in the exit path is
+      anchored to what the desk paid, and being anchored to it is precisely
+      what the per-name alignment ruling forbids. Removing that gate and
+      letting the structure-and-trend test decide removes the number by
+      removing the mechanism. That is an exit-behaviour change and is NOT made
+      under a record-truth pass. (2) The band's SECOND home, the
+      `check_structural_protection` fallback, is the only protection a holding
+      with neither a written invalidation nor a qualifying level has; it must
+      not be deleted with the first and needs its own answer.
+    recording_status: >-
+      MEASURED 2026-10-01 against the PRODUCTION database (read-only,
+      /home/qamc/quant-agent/data/quant_agent.db, latest row 2026-09-30
+      18:15): the machine-readable refusal payload added 2026-09-30 has
+      produced ZERO observations. intraday_evaluations holds 334 rows, none
+      with a noise-band status and none carrying any `rule=` payload at all.
+      The settlement recording for this number therefore exists in code but
+      has recorded nothing yet, and the board's headline "7 of 8 discretionary
+      exits blocked" is NOT reproducible from that table.
   - id: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     value: 1
     status: arbitrary
@@ -2736,18 +2777,52 @@ numbers:
     open_question: >-
       Re-express the break margin in the units the literature actually uses --
       a percentage of price, scaled by whether the level is major or
-      short-term -- or accept an ATR margin nobody can source? The first is a
-      real reformulation of the exit path and changes behaviour; the second is
-      owner appetite. Nothing measurable decides between them.
-      SUPERSEDED 2026-09-30: the owner ruling that risk tolerance is read per
-      name, never as a global dial, closes the second option. NO BASIS
-      EXISTS, plainly stated: this margin is unidentifiable in ATRs, and no
-      replacement ATR figure is proposed here. What would give it one, and
-      the only remaining route, is re-expressing the margin in the units the
-      published work uses -- a percentage of price scaled by whether the
-      level is major or short-term (Edwards & Magee ~3% / ~1%) -- read per
-      name rather than set globally. That is a separate build; it was not
-      done here because it changes which positions keep their protection.
+      short-term -- or accept an ATR magnitude that nothing identifies.
+    derivation_attempts: >-
+      TWO HONEST ATTEMPTS, 2026-10-01 (board item 70), both FAILED; the limit
+      is two and there must not be a third blind one.
+      ATTEMPT 1 -- adopt the literature's own units (Edwards & Magee ~3% of
+      price for a major level, ~1% for a short-term one). FAILED for two
+      independent reasons. First, choosing WHICH of the two applies needs a
+      major/short-term classifier the desk does not have in those terms; its
+      only level-importance signal is the touch count, and selecting a cut on
+      it would import a second chosen number into a fix meant to remove one.
+      Second, 3% and 1% are themselves round picks from a 1948 text calibrated
+      on the Dow quoted in eighths; adopting them swaps an unsourced ATR
+      multiple for an unsourced percentage, which is not a derivation.
+      ATTEMPT 2 -- read the margin live off the instrument as the smallest
+      distance at which a close is distinguishable from the level, i.e. the
+      instrument's own minimum price increment. This DOES yield a real,
+      external, non-degenerate bound and is recorded below as a structural
+      floor -- but it bounds only that the margin must be strictly POSITIVE
+      (at zero, a close exactly AT a level counts as a break, so every retest
+      of a support the stop sits on would lift protection). It derives the
+      floor, not the magnitude: 1.0 ATR is orders of magnitude above a
+      one-cent increment. FAILED to produce 1.0.
+      NOT ATTEMPTED, and must not be: any percentile of this desk's own past
+      break outcomes. Choosing where to stand in a distribution IS the
+      appetite figure this item exists to remove, and fitting to the desk's
+      own trading record is barred outright.
+    structural_floor: >-
+      RATIFIED 2026-10-01 as a genuine arithmetic non-degeneracy bound, with
+      the reason written down: the break margin must be strictly greater than
+      zero, because a zero margin makes "closed at the level" identical to
+      "closed beyond the level" and would lift protection on every ordinary
+      retest of a support the stop is sitting on. This ratifies POSITIVITY
+      ONLY. The magnitude 1.0 remains arbitrary and is not ratified by it.
+    settlement_route: >-
+      Its own route, independent of the noise band (the two were one literal
+      until 2026-09-26 and may not be re-collapsed). Settles when the
+      recording added 2026-10-01 in `check_structural_protection` -- every
+      break evaluation now emits `rule=break_confirmation_margin` carrying the
+      margin as an ATR multiple AND as a percentage of the close, with the
+      level's touch count -- has accrued enough live evaluations to say what
+      1.0 ATR actually IS in the units the literature measures, per name and
+      per level importance. Until then the honest status is `arbitrary`.
+    cost_while_unanswered: >-
+      Whether a support level counts as broken -- and therefore whether the
+      desk lifts protection and sells -- turns on a distance that no published
+      work measures in these units.
     cost_while_unanswered: >-
       Whether a structural level counts as broken, and therefore whether a
       position keeps its protection, turns on an ATR distance no published
