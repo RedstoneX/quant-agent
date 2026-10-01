@@ -107,31 +107,89 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      Minimum order value for the spare-cash SWEEP -- its original, still-live
-      job. Not a broker minimum -- the broker accepts fractional notional
-      well below it. A round $500 with nothing behind it.
-      Fixed 2026-09-24 (real incident: a genuine ~$295 / 2.95%-of-equity MRVL
-      trade was refused as "under the $500 minimum order ... pays full
-      commission" -- false, Alpaca charges no stock commission), completed
-      the same day across every trade-sizing site that read this value:
-      (1) the sector-crowding check in
-      `PortfolioConstructor._apply_sector_crowding_scale`; (2) NEW-entry
-      blocking inside `apply_gross_ceiling` (src/risk/rules.py), via
-      `ConstructorConfig.min_order_usd`; (3) the rotation buy-leg
-      `below_min_notional` gate (retired outright from
-      `REQUIRED_BUY_LEG_GATES`, src/rotation.py -- no code path can produce
-      that refusal any more); (4) the execution-time cash re-size refusal
-      in src/pipeline_stages.py. All four now let a small, nonzero trade
-      through at whatever size is left; only a genuine ZERO still refuses.
-      This value's only remaining live job is gating the spare-cash SWEEP
-      (src/execution/cash_sweep.py) -- it is fully decoupled from trade
-      sizing everywhere else.
+      UNSOURCED AND TRADE-GOVERNING. A round $500 with nothing behind it.
+      CORRECTED 2026-10-01 (board item 190): the 2026-09-24 note below said
+      this value's only remaining live job was gating the spare-cash SWEEP and
+      that it was "fully decoupled from trade sizing everywhere else". That is
+      now exactly inverted and must not be repeated. The sweep funding step was
+      DELETED with the sweeper (item 190 step 3), so the sweep job is gone,
+      while two trade-governing consumers remain and were missed:
+      (1) `src/pipeline_stages.py` reads it through `_min_order_usd` and DROPS
+      a short scale-in add whose estimated notional falls under it, recording
+      `below_min_notional` as an execution skip and a refused `funding`
+      pipeline event -- a live refusal to trade;
+      (2) `src.rotation.rotation_binding_constraints` appends `funding` to the
+      binding-constraint tuple when the entry budget is under this value, and
+      `rotation_constraint_clause` renders that tuple into the rotation report
+      and the owner-facing funding wording, so the number also decides what the
+      desk SAYS is constraining it.
+      ALGEBRA CHECKED 2026-10-01, and the answer is no: the floor does NOT
+      cancel to a constant fraction of equity and is not a disguised global
+      dial. Both sizing paths make the order notional proportional to equity
+      (`qty_by_alloc` gives `allocation_pct/100 * total_value`; `qty_by_risk`
+      gives `total_value * risk_pct/100 * price / |price - stop|`), so the test
+      `estimated_cost < 500` reduces to `fraction_of_equity < 500 / total_value`.
+      The equity term survives on one side only. The effective weight threshold
+      therefore DRIFTS INVERSELY with account size -- the same floor refuses a
+      larger share of the book on a small account than on a large one, and
+      silently loosens as equity grows. That is its own defect, and it is the
+      reason this is a per-name read waiting to be built rather than a dial.
+      RULED 2026-10-01: not deleted, not ratified, value unchanged. A global
+      constant governing what the desk may trade is a defect to be replaced by
+      a per-name read, not a value for the owner to set.
+      DERIVATION ATTEMPT 1 (2026-09-24, FAILED): justify it as the notional
+      below which commission makes a trade uneconomic. Refuted by the broker
+      fact -- Alpaca charges no stock commission -- after a real incident in
+      which a genuine ~$295 trade was refused as "under the $500 minimum order
+      ... pays full commission", a false statement. The fix removed the floor
+      from all four trade-sizing sites then known: the sector-crowding scale in
+      `PortfolioConstructor._apply_sector_crowding_scale`, NEW-entry blocking
+      inside `apply_gross_ceiling` via `ConstructorConfig.min_order_usd`, the
+      rotation buy-leg gate (retired outright from `REQUIRED_BUY_LEG_GATES`),
+      and the execution-time cash re-size refusal. The two consumers above were
+      not in that sweep and survived it.
+      DERIVATION ATTEMPT 2 (2026-10-01, FAILED to settle): derive it from how
+      often it has actually refused an order. Measured read-only against the
+      production DB `/home/qamc/quant-agent/data/quant_agent.db`: across 13,823
+      `specialist_evidence` rows the entire retained record holds 18
+      `execution_skip` rows, of which exactly ONE is `below_min_notional` -- a
+      short add refused at a notional well under a fifth of the floor. One
+      observation cannot distinguish a floor at $100 from one at $500: every
+      candidate value in that range would have refused the same single order
+      and permitted everything else on record. The attempt is recorded as
+      failed rather than retried; the route below is what would settle it.
+    settles_by:
+      kind: recording
+      state: built
+      where: src/pipeline_stages.py `_record_execution_skip`, persisted via src/storage/db.py
+      writes:
+        - specialist_evidence.kind
+        - specialist_evidence.evidence_json
+      records: >-
+        every order this floor refuses, as an `execution_skip` evidence row
+        carrying the reason `below_min_notional`, the symbol, the refused
+        notional and the floor it was measured against, alongside the skip rows
+        for every OTHER refusal reason so the floor's share of all refusals is
+        readable rather than assumed. The recording already exists and is
+        already collecting; nothing new had to be built for it.
+      closes_when: >-
+        enough refusals accumulate to show the distribution of refused
+        notionals and what the desk did with each name afterwards, so the
+        smallest order worth placing is read off this account's own refused
+        orders and their outcomes instead of being a round number. On the
+        current rate -- one refusal in the whole retained record -- that is
+        the evidence this number is waiting on, and the honest reading is that
+        the floor is nearly never binding, which is an argument for the
+        per-name read rather than for any particular dollar figure.
     open_question: >-
-      What is the smallest sweep order whose expected slippage and commission
-      are a tolerable fraction of the interest it earns, on this account's
-      actual cash balances?
+      What is the smallest order this account should place, read off each
+      name's own spread, tick size and the refused-order record, rather than
+      one dollar figure applied to every name and every account size?
     cost_while_unanswered: >-
-      Cash under $500 is never swept and earns nothing.
+      A small, correct addition to a short position is refused outright, and
+      the rotation report calls funding binding, on a number nobody derived --
+      and the share of the book that number silently refuses changes as equity
+      changes.
   - id: src.config.CashSweepConfig.reserve_pct
     value: 1
     status: arbitrary
@@ -192,6 +250,18 @@ numbers:
     cost_while_unanswered: >-
       Too narrow and the advisory nags on noise; too wide and real idle cash
       goes unflagged.
+  - id: src.coverage_watchdog._SUPPRESSION_LOG_LIMIT
+    value: 50
+    status: not-trade-governing
+    site: src/coverage_watchdog.py
+    note: >-
+      How many per-event suppression records to retain per alert type in the
+      watchdog's own state file. It bounds a durable log so the file cannot
+      grow without limit; the running suppression `count` is never truncated,
+      only the per-event list behind it. Nothing downstream reads this list to
+      decide whether, when or how much to trade -- a wrong value loses old
+      forensic detail about alerts the desk declined to resend, which is a
+      reporting loss, not a trade decision.
   - id: src.config.EventRiskConfig.calendar_deadline_s
     value: 20
     status: not-trade-governing
@@ -530,6 +600,24 @@ numbers:
     note: >-
       The measured move claimed when no structural level stands in the way, in
       sqrt(session)-scaled ATRs (src/config.py:879-884).
+  - id: src.agents.base._INSUFFICIENT_CREDIT_STATUS
+    value: 402
+    status: instrument
+    site: src/agents/base.py
+    source: >-
+      RFC 9110 section 15.5.3, "402 Payment Required": the HTTP status code
+      reserved for a request that cannot be served until payment is made.
+      https://www.rfc-editor.org/rfc/rfc9110.html#name-402-payment-required
+      It is a PROTOCOL CONSTANT fixed by that specification and by the model
+      provider's use of it for an exhausted credit balance -- the desk does
+      not choose it and cannot change it, exactly as it does not choose a
+      broker tick size. It is read only at src/agents/base.py:1305 and :2530,
+      both of them an equality test against `status_code` on a provider
+      exception, and it governs whether the desk re-asks the provider once at
+      a smaller allowance. It never enters a price, a size, a stop or a
+      ranking. Falsifiable: if the provider ever signalled credit exhaustion
+      with a different status, this equality test would stop matching and the
+      re-ask would never fire.
   - id: src.config.RiskConfig.maintenance_margin_pct
     value: 25
     status: instrument
@@ -770,6 +858,11 @@ numbers:
       kind: recording
       state: built
       where: src/storage/db.py
+      writes:
+        - trades.entry_atr
+        - trades.stop_basis
+        - trades.max_adverse_excursion
+        - trades.max_favourable_excursion
       records: >-
         Per CLOSED trade: entry price, entry ATR, the entry stop and the basis
         it was computed from, and the maximum ADVERSE and FAVOURABLE excursions
@@ -784,6 +877,22 @@ numbers:
         NOT be optimised against: fitting a number to this desk's own trading
         record is barred outright (docs/OUTCOME.md), and that is how the 1.5
         was produced in the first place.
+        LIVENESS, MEASURED in production on 2026-10-01 and not
+        inferred: the columns this route depends on are EMPTY --
+        entry_atr, stop_basis, max_adverse_excursion and
+        max_favourable_excursion are non-null on 0 of the 80 rows in
+        trades. The route is therefore BUILT but has settled nothing,
+        and the reason is dated rather than unknown: the entry-side
+        write read ATR off the wrong object until it was corrected and
+        deployed late on 2026-09-30, and no entry has been written
+        since that deploy, so the recording is UNPROVEN rather than
+        demonstrated dead. The excursion columns cannot fill
+        independently of that: their accumulating UPDATE filters on
+        entry_atr IS NOT NULL, so they stay empty for every trade
+        entered before the correction. The first entry taken after it
+        is the observation that decides whether this route is alive;
+        until one exists, no reader may treat the floor as being under
+        falsification.
     note: >-
       Minimum stop distance in ATRs where no real level backs the stop, a
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
@@ -2649,6 +2758,63 @@ numbers:
       RSG. docs/INCIDENT_HISTORY.md:330 attributes that shrinking to the 1.5
       reward:risk starter cap, not to this 0.5% floor - two different numbers
       in one sentence.
+  - id: src.risk.alignment_exit.SMA_LADDER[20]
+    value: 50
+    status: not-trade-governing
+    site: src/risk/alignment_exit.py
+    note: >-
+      Not a tunable and not a choice. 20/50/200 are the ONLY moving-average
+      periods computed anywhere upstream (`src.data.technical`), so "the
+      next longer average the desk already computes" has exactly one answer
+      for 20 (50) and one for 50 (200), and none for 200. Read off the
+      existing indicator set rather than picked; changing it would require
+      the desk to compute an average it does not compute.
+  - id: src.risk.alignment_exit.SMA_LADDER[50]
+    value: 200
+    status: not-trade-governing
+    site: src/risk/alignment_exit.py
+    note: >-
+      Not a tunable and not a choice. 20/50/200 are the ONLY moving-average
+      periods computed anywhere upstream (`src.data.technical`), so "the
+      next longer average the desk already computes" has exactly one answer
+      for 20 (50) and one for 50 (200), and none for 200. Read off the
+      existing indicator set rather than picked; changing it would require
+      the desk to compute an average it does not compute.
+  - id: src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
+    value: 3.0
+    status: arbitrary
+    site: src/risk/alignment_exit.py
+    note: >-
+      Give-back below the last CHART MARK (a moving average, or the level
+      `check_structural_protection` confirmed broken), in the name's own
+      ATR, before the alignment exit reads the move as over. AN OWNER
+      APPETITE DIAL, recorded as arbitrary on purpose. A draft of this
+      entry claimed the value was SOURCED to Wilder's Volatility System
+      ARC (~2.8-3.1, New Concepts, 1978) and Le Beau's Chandelier Exit
+      (3.0 x ATR default). That claim is WITHDRAWN, for three reasons.
+      (1) The `NOISE_BAND_ATR_MULTIPLE` note gives TWO reasons for
+      refusing 3.0 and the draft answered only the anchor one; the other
+      stands -- "how readily the desk blocks a sale is owner appetite".
+      (2) Wilder and Le Beau measure give-back from a running EXTREME
+      (highest high since entry); this measures it from a MOVING AVERAGE,
+      which sits materially below an extreme, so the same multiple is a
+      looser stop and their calibration does not transfer. (3)
+      Chandelier's 3.0 is calibrated on ATR(22); this divides by ATR(14).
+      The published 2.5-3.5 band is retained as CONTEXT for the order of
+      magnitude only. Deliberately NOT reused from
+      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE`, which is 1.0 and
+      measures excess over noise FROM ENTRY.
+    open_question: >-
+      Where the desk sits is the owner's dial, left at 3.0 until he moves
+      it: tighter realises gains sooner and whipsaws more often, looser
+      gives more back. No research can settle it -- see reason (1).
+    cost_while_unanswered: >-
+      Until the owner sets the dial, every alignment exit realises its
+      gain 3.0 ATR below the last chart mark. Too loose and a finished
+      move hands back more than it needed to before the desk sells; too
+      tight and a live trend is sold into an ordinary pullback and the
+      rest of the move is forgone. The exposure is the whole unrealised
+      gain of any position this exit fires on.
   - id: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
     value: 1
     status: arbitrary
@@ -2696,6 +2862,47 @@ numbers:
       The band that decides whether an adverse move is real sits below every
       published volatility multiple, and it is the measured cause of the
       7-of-8 discretionary exits the reviewer approved and this gate blocked.
+    derivation_attempts: >-
+      THE TWO ATTEMPTS ARE SPENT; do not open a third blind one. ATTEMPT 1
+      (2026-09-26) -- adopt the nearest published volatility-band multiple.
+      FAILED: Wilder, the Chandelier Exit and Kaufman all sit near 3 ATR but
+      all measure a stop's distance from a RUNNING EXTREME, not an adverse
+      move from ENTRY, so they do not measure this quantity; adopting 3.0
+      would also be a large unexplained loosening of when the desk sells.
+      ATTEMPT 2 (2026-09-30) -- replace it with each name's own historical
+      adverse move. BUILT, REVIEWED and REJECTED: the justifying example was
+      arithmetically a counter-example, the bar depth was a second chosen
+      round number, the measurement windows overlapped so the same days were
+      counted repeatedly, a 29-session hold returned ONE observation reported
+      as a median, one of the two call sites was left unpatched, and a failed
+      bars fetch reverted silently to the wider number. More fundamentally,
+      ANY summary statistic of a distribution is a choice of percentile, and
+      that choice is exactly the appetite figure this item exists to remove --
+      so no statistic over history can ever settle this, and the owner ruling
+      that risk is read per name from the instrument, never set as a global
+      dial, also closes the "ask the owner to pick a figure" route.
+    settlement_route: >-
+      Not by measurement over history and not by an owner dial -- both routes
+      are closed above. Two live routes remain. (1) The band's FIRST home, the
+      midday gate standing in front of every non-external SELL, measures the
+      move from the AVERAGE ENTRY PRICE; nothing else in the exit path is
+      anchored to what the desk paid, and being anchored to it is precisely
+      what the per-name alignment ruling forbids. Removing that gate and
+      letting the structure-and-trend test decide removes the number by
+      removing the mechanism. That is an exit-behaviour change and is NOT made
+      under a record-truth pass. (2) The band's SECOND home, the
+      `check_structural_protection` fallback, is the only protection a holding
+      with neither a written invalidation nor a qualifying level has; it must
+      not be deleted with the first and needs its own answer.
+    recording_status: >-
+      MEASURED 2026-10-01 against the PRODUCTION database (read-only,
+      /home/qamc/quant-agent/data/quant_agent.db, latest row 2026-09-30
+      18:15): the machine-readable refusal payload added 2026-09-30 has
+      produced ZERO observations. intraday_evaluations holds 334 rows, none
+      with a noise-band status and none carrying any `rule=` payload at all.
+      The settlement recording for this number therefore exists in code but
+      has recorded nothing yet, and the board's headline "7 of 8 discretionary
+      exits blocked" is NOT reproducible from that table.
   - id: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     value: 1
     status: arbitrary
@@ -2722,18 +2929,52 @@ numbers:
     open_question: >-
       Re-express the break margin in the units the literature actually uses --
       a percentage of price, scaled by whether the level is major or
-      short-term -- or accept an ATR margin nobody can source? The first is a
-      real reformulation of the exit path and changes behaviour; the second is
-      owner appetite. Nothing measurable decides between them.
-      SUPERSEDED 2026-09-30: the owner ruling that risk tolerance is read per
-      name, never as a global dial, closes the second option. NO BASIS
-      EXISTS, plainly stated: this margin is unidentifiable in ATRs, and no
-      replacement ATR figure is proposed here. What would give it one, and
-      the only remaining route, is re-expressing the margin in the units the
-      published work uses -- a percentage of price scaled by whether the
-      level is major or short-term (Edwards & Magee ~3% / ~1%) -- read per
-      name rather than set globally. That is a separate build; it was not
-      done here because it changes which positions keep their protection.
+      short-term -- or accept an ATR magnitude that nothing identifies.
+    derivation_attempts: >-
+      TWO HONEST ATTEMPTS, 2026-10-01 (board item 70), both FAILED; the limit
+      is two and there must not be a third blind one.
+      ATTEMPT 1 -- adopt the literature's own units (Edwards & Magee ~3% of
+      price for a major level, ~1% for a short-term one). FAILED for two
+      independent reasons. First, choosing WHICH of the two applies needs a
+      major/short-term classifier the desk does not have in those terms; its
+      only level-importance signal is the touch count, and selecting a cut on
+      it would import a second chosen number into a fix meant to remove one.
+      Second, 3% and 1% are themselves round picks from a 1948 text calibrated
+      on the Dow quoted in eighths; adopting them swaps an unsourced ATR
+      multiple for an unsourced percentage, which is not a derivation.
+      ATTEMPT 2 -- read the margin live off the instrument as the smallest
+      distance at which a close is distinguishable from the level, i.e. the
+      instrument's own minimum price increment. This DOES yield a real,
+      external, non-degenerate bound and is recorded below as a structural
+      floor -- but it bounds only that the margin must be strictly POSITIVE
+      (at zero, a close exactly AT a level counts as a break, so every retest
+      of a support the stop sits on would lift protection). It derives the
+      floor, not the magnitude: 1.0 ATR is orders of magnitude above a
+      one-cent increment. FAILED to produce 1.0.
+      NOT ATTEMPTED, and must not be: any percentile of this desk's own past
+      break outcomes. Choosing where to stand in a distribution IS the
+      appetite figure this item exists to remove, and fitting to the desk's
+      own trading record is barred outright.
+    structural_floor: >-
+      RATIFIED 2026-10-01 as a genuine arithmetic non-degeneracy bound, with
+      the reason written down: the break margin must be strictly greater than
+      zero, because a zero margin makes "closed at the level" identical to
+      "closed beyond the level" and would lift protection on every ordinary
+      retest of a support the stop is sitting on. This ratifies POSITIVITY
+      ONLY. The magnitude 1.0 remains arbitrary and is not ratified by it.
+    settlement_route: >-
+      Its own route, independent of the noise band (the two were one literal
+      until 2026-09-26 and may not be re-collapsed). Settles when the
+      recording added 2026-10-01 in `check_structural_protection` -- every
+      break evaluation now emits `rule=break_confirmation_margin` carrying the
+      margin as an ATR multiple AND as a percentage of the close, with the
+      level's touch count -- has accrued enough live evaluations to say what
+      1.0 ATR actually IS in the units the literature measures, per name and
+      per level importance. Until then the honest status is `arbitrary`.
+    cost_while_unanswered: >-
+      Whether a support level counts as broken -- and therefore whether the
+      desk lifts protection and sells -- turns on a distance that no published
+      work measures in these units.
     cost_while_unanswered: >-
       Whether a structural level counts as broken, and therefore whether a
       position keeps its protection, turns on an ATR distance no published
@@ -5505,3 +5746,15 @@ numbers:
       inline literal, newly named, still unsourced, informational-only (see
       that entry for the full reasoning; not repeated to avoid two owners of
       one explanation).
+  - id: src.data.levels.STOP_LEVEL_BASIS_VERSION
+    value: 1
+    status: not-trade-governing
+    site: src/data/levels.py
+    note: >
+      Board item 55. A record-format version for the stop-level-basis row,
+      not a quantity. It is compared only for equality by a later reader
+      deciding which fields a stored row carries; it is never multiplied,
+      added to a price, or compared against a market value, so no buy, sell,
+      size or stop depends on it. It is bumped only when a field is added or
+      an existing field's meaning changes. There is nothing to source: the
+      value is an identifier that happens to be written as a number.
