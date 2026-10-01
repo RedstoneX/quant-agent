@@ -18,6 +18,12 @@ same day on sourced research, before it ran a session:
     refused exactly that population.
   * What published practice constrains is the stop's WIDTH; the answer to
     a wide stop is a smaller position (Van Tharp sizing), not refusal.
+    AMENDED 2026-10-01 (owner ruling, board item 218): that is still the
+    answer to WIDTH, and width alone. A separate rule, measured where the
+    trade as a whole is accepted or declined, refuses a purchase whose
+    reward is smaller than its risk. Fixtures in this file were given
+    parity-clearing targets so they keep testing width rather than
+    silently testing the new rule.
 
 Pinned here: (1) the level scan's relevance window is still read from the
 instrument (kept from #330); (2) an unbacked or missing stop is read from
@@ -359,7 +365,13 @@ class TestTheWidthGateIsDeletedAndCannotComeBack:
         13.42 and a level-backed stop $20 away was refused as "a stop price
         cannot reach". It ships now. Nothing is recorded as a refusal."""
         constructor = PortfolioConstructor()
-        a = _analysis("WIDE", entry=100.0, stop=80.0, levels=[80.0, 110.0])
+        # Level moved 110.0 -> 130.0 on 2026-10-01 (owner ruling, board
+        # item 218). This test is about WIDTH and must stay about width:
+        # $20 of risk against $10 of reward is now refused on the separate
+        # parity rule, which would have made this assertion pass or fail
+        # for the wrong reason. $30 of reward keeps the geometry sound so
+        # the only thing under test is still the deleted width cap.
+        a = _analysis("WIDE", entry=100.0, stop=80.0, levels=[80.0, 130.0])
         assert 20.0 > horizon_reach(2.0, 20), "still the width case"
         decisions = _orders(constructor, a, risk_pct=1.0)
         assert [d.action for d in decisions] == ["BUY"]
@@ -394,7 +406,11 @@ class TestTheWidthGateIsDeletedAndCannotComeBack:
 
     def test_the_gate_no_longer_refuses_a_short_either(self):
         constructor = PortfolioConstructor()
-        a = _analysis("SHRT", entry=100.0, stop=120.0, levels=[120.0, 90.0],
+        # Target moved 90.0 -> 70.0 on 2026-10-01 (owner ruling, board item
+        # 218) for the same reason as the long case above: $20 of risk
+        # against $10 of reward now fails the parity rule, and this test is
+        # about the deleted WIDTH gate, not about geometry.
+        a = _analysis("SHRT", entry=100.0, stop=120.0, levels=[120.0, 70.0],
                       rating="sell")
         assert [d.action for d in _orders(constructor, a, direction="short",
                                           risk_pct=1.0)] == ["SHORT"]
@@ -402,7 +418,7 @@ class TestTheWidthGateIsDeletedAndCannotComeBack:
 
     def test_the_eligibility_preview_refuses_nothing_on_width(self):
         constructor = PortfolioConstructor()
-        a = _analysis("WIDE", entry=100.0, stop=80.0, levels=[80.0, 110.0])
+        a = _analysis("WIDE", entry=100.0, stop=80.0, levels=[80.0, 130.0])
         assert constructor.real_reward_risk_preview(a, "long") is not None
         assert constructor.last_refusals == {}
 

@@ -13,6 +13,9 @@ inside ordinary noise.
 """
 
 from src.models import Position, TargetPosition, TechAnalysisResult, TechReasoningChain
+from src.portfolio_constructor import (  # noqa: F401
+    STOP_REFUSAL_REWARD_BELOW_RISK,
+)
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 
 
@@ -977,7 +980,7 @@ def test_the_atr_multiple_is_not_one_constant_for_every_trade():
     assert stop("range", "risk-off") == 93.66
 
 
-def test_widening_a_stop_into_a_bad_payoff_no_longer_rejects_the_trade():
+def test_widening_a_stop_into_a_sub_parity_payoff_now_refuses_the_trade():
     """**Inverted 2026-09-11, docs/WORK.md item 1(d).** The target still does
     not move when the stop does, so the reward:risk still falls — and it is
     still computed and logged. What changed is that a range trade is no
@@ -997,9 +1000,19 @@ def test_widening_a_stop_into_a_bad_payoff_no_longer_rejects_the_trade():
         analyses=[_vol_analysis("MSFT", 100.0, 97.6, 104.0, atr=2.35)],
         total_value=EQUITY, price_map={"MSFT": 100.0},
     )
-    assert len(decisions) == 1
-    assert decisions[0].stop_loss == round(100.0 - 2.25 * 2.35, 2)
-    assert decisions[0].reward_risk < 1.5
+    # AMENDED 2026-10-01 (owner ruling, board item 218). 4.00 of reward
+    # against 5.2875 of risk is 0.76 — below parity — so the purchase is
+    # now refused. Read what this does and does not say: the refusal is NOT
+    # a width rule. It is measured where the trade as a whole is accepted
+    # or declined, on the final entry, the final stop and the derived
+    # target; a stop that widens and still clears parity ships untouched,
+    # and no stop, target or trailing behaviour changed.
+    assert decisions == []
+    assert (
+        constructor.last_refusals["MSFT"]["refusal"]
+        == STOP_REFUSAL_REWARD_BELOW_RISK
+    )
+    assert "below parity" in constructor.last_refusals["MSFT"]["detail"]
 
 
 def test_no_volatility_reading_derives_structural_stop_and_holds():

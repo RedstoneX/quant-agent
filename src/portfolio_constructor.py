@@ -44,7 +44,11 @@ from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision,
     reward_to_risk, stated_soft_exit,
 )
-from src.risk.constants import reward_risk_floor_applies
+from src.risk.constants import (
+    REWARD_RISK_PARITY,
+    reward_risk_floor_applies,
+    reward_risk_parity_refuses,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +511,15 @@ STOP_REFUSAL_GEOMETRY_AT_BAND = "reward_risk_below_floor_at_widened_stop"
 STOP_REFUSAL_GEOMETRY_AT_LEVEL = "reward_risk_below_floor_at_honoured_stop"
 STOP_REFUSAL_GEOMETRY_AT_KEPT = "reward_risk_below_floor_at_kept_stop"
 STOP_REFUSAL_GEOMETRY_UNMEASURABLE = "reward_risk_not_measurable"
+
+#: Owner ruling 2026-10-01 — "For now, let's refuse a bad risk reward ratio.
+#: See if that improves the desk purchases." Reward below risk REFUSES the
+#: purchase outright: no resize, no change to any stop, target or trailing
+#: behaviour. Distinct from the four GEOMETRY codes above, which belonged to
+#: the retired 1.5 floor measured inside the stop-widening path; this one is
+#: measured at the point where the trade as a whole is accepted or declined,
+#: so the refusal is not a function of stop width wearing a new name.
+STOP_REFUSAL_REWARD_BELOW_RISK = "reward_below_risk_at_parity"
 #: Not a refusal — the one PERMIT code in this block. A below-floor ratio let
 #: through because the PM's sub-floor catalyst gate verified the citation and
 #: capped the size (docs/WORK.md item 1, parts (b)+(c)). Greppable so "how
@@ -2259,6 +2272,74 @@ class PortfolioConstructor:
             invalid = stop_loss is None or stop_loss <= 0 or stop_loss <= entry_price
         else:
             invalid = stop_loss is None or stop_loss <= 0 or stop_loss >= entry_price
+        if not invalid:
+            # ---- Owner ruling 2026-10-01: refuse arithmetically losing
+            # geometry ---------------------------------------------------
+            # "For now, let's refuse a bad risk reward ratio. See if that
+            # improves the desk purchases." This SUPERSEDES the previous
+            # standing rule, which was that a wide stop ships and is
+            # answered by a smaller position. Here, and only here: the
+            # trade is refused outright. Nothing is resized, and no stop,
+            # target or trailing behaviour changes.
+            #
+            # It sits at this line on purpose. Inside
+            # `_widen_stop_past_noise` the comparison would key off the
+            # WIDENED stop, which makes the refusal a function of stop
+            # width — the deleted width gate (board item 56) wearing a new
+            # name. This is the point where the trade as a whole is
+            # accepted or declined, on its own final entry, final stop and
+            # derived target.
+            #
+            # Threshold is PARITY and nothing above it; see
+            # `REWARD_RISK_PARITY` for why that is the only line needing no
+            # invented number, and for the caveat the owner accepted: the
+            # risk side is a real transactable price, the reward side is a
+            # forecast level this desk never actually sells at (it rides a
+            # trailing stop out), so the ratio compares one real number
+            # against one estimated one.
+            # Measured against `level_used` — the structural level the
+            # desk's own scan found — and NOT against `derivation.price`,
+            # which is that level after the horizon reach cap. Measuring
+            # the capped price would compare stop width against the
+            # instrument's reach, and refuse every stop wider than reach:
+            # that IS the deleted stop-width gate (board item 56) under a
+            # new name, and it broke the three guard tests that pin "a
+            # stop past the instrument's reach still ships, answered by
+            # size". The owner's own worked case is stated in structural
+            # levels ("nearest level above 104"), so the level is also the
+            # number he ruled on. `level_used is None` — no ceiling found
+            # — stands the refusal down, which is the already-settled
+            # measured half of the trend-trade test.
+            refuse_rr, rr_ratio = reward_risk_parity_refuses(
+                entry_price, stop_loss, derivation.level_used,
+                is_short=is_short,
+                reward_is_measured_level=(derivation.level_used is not None),
+            )
+            if refuse_rr:
+                # Durable, per-symbol, and carrying the measured ratio, so
+                # "see if that improves the desk purchases" can be answered
+                # later from data rather than from impression.
+                self._note_refusal(
+                    target.symbol, target.direction,
+                    STOP_REFUSAL_REWARD_BELOW_RISK,
+                    f"reward:risk {rr_ratio:.2f} is below parity "
+                    f"({REWARD_RISK_PARITY:.2f}): entry ${entry_price:,.2f}, "
+                    f"stop ${stop_loss:,.2f} (risking "
+                    f"${abs(entry_price - stop_loss):,.2f}/share) against the "
+                    f"nearest structural level at ${derivation.level_used:,.2f} "
+                    f"(making ${abs(derivation.level_used - entry_price):,.2f}"
+                    f"/share). Owner ruling 2026-10-01 refuses the purchase "
+                    f"outright rather than shrinking it. Caveat recorded "
+                    f"with the number: the reward side is a forecast level "
+                    f"the desk never actually sells at.",
+                )
+                logger.warning(
+                    "Constructor: %s %s refused — reward:risk %.2f below "
+                    "parity (entry=$%.2f, stop=$%.2f, level=$%.2f)",
+                    "SHORT" if is_short else "BUY", target.symbol,
+                    rr_ratio, entry_price, stop_loss, derivation.level_used,
+                )
+                return (None, None)
         if invalid:
             # Board item 10 (2026-09-14, second pass). THE BACKSTOP. Every
             # named stop refusal in `_widen_stop_past_noise` arrives here as
