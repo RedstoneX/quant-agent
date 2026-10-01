@@ -269,7 +269,7 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
     ledger = load_ledger()
 
     stop_buffer = "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT"
-    exit_offset = "src.pipeline_stages.ExecutionStage._run_session:factor[0]"
+    exit_offset = "src.stage_execution.ExecutionStage._run_session:factor[0]"
 
     # The two canonical bases: arbitrary, with their unchanged values.
     assert ledger[stop_buffer]["status"] == "arbitrary", stop_buffer
@@ -280,7 +280,7 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
     # Every other order-price site at these values derives from the base above.
     derived_from_base = {
         "src.pipeline_delever.DeleverMixin._force_delever:factor[0]": stop_buffer,
-        "src.pipeline_stages.ExecutionStage._run_session:factor[1]": exit_offset,
+        "src.stage_execution.ExecutionStage._run_session:factor[1]": exit_offset,
         "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]": exit_offset,
         "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]": exit_offset,
         "src.pipeline_stages._projected_post_sale_cash:factor[0]": exit_offset,
@@ -796,7 +796,7 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # the haircut factor[1] -> factor[0]. One site still proves rule (e).
     assert "src.pipeline_delever.DeleverMixin._force_delever:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" not in ids
-    assert "src.pipeline_stages.ExecutionStage._run_session:factor[0]" in ids
+    assert "src.stage_execution.ExecutionStage._run_session:factor[0]" in ids
     assert "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]" in ids
 
 

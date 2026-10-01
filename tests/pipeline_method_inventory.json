@@ -304,6 +304,8 @@
     },
     "src/pipeline_stages.py": {
       "module_functions": [
+        "__dir__",
+        "__getattr__",
         "_account_for_pm_candidates",
         "_adopt_stream_stall",
         "_alert_holding_discipline_block",
@@ -314,7 +316,6 @@
         "_alert_unmeasurable_symbols",
         "_apply_repeg",
         "_apply_rotation_execution",
-        "_apply_sector_unresolved_alert",
         "_book_risk_inputs",
         "_check_levels_coverage",
         "_classify_earnings_status",
@@ -341,10 +342,8 @@
         "_macro_analysis_as_dict",
         "_macro_regime",
         "_min_order_usd",
-        "_parse_loss_advisories",
         "_parse_reported_figure",
         "_pending_cover_symbols",
-        "_persist_dropped_reasons",
         "_persist_evidence",
         "_pin_approved_entry_ceilings",
         "_probe_sale_census",
@@ -353,7 +352,6 @@
         "_projected_post_sale_cash",
         "_projected_sale_qty",
         "_qty_by_risk_budget",
-        "_reconcile_parse_loss",
         "_record_accounted_candidate",
         "_record_constructor_drops",
         "_record_constructor_side_flips",
@@ -361,7 +359,6 @@
         "_record_heal_safely",
         "_record_mechanical_soft_exit_restores",
         "_record_pipeline_event",
-        "_record_queued_earnings_refusals",
         "_record_realised_sector_weights",
         "_record_rotation_buy_leg_outcome",
         "_record_rotation_precheck",
@@ -401,26 +398,56 @@
         "_warm_trade_updates"
       ],
       "classes": {
-        "DecisionStage": [
-          "__init__",
-          "run"
-        ],
-        "ExecutionStage": [
-          "__init__",
-          "_run_session",
-          "run"
-        ],
+        "_StageMirroringModule": [
+          "__delattr__",
+          "__setattr__"
+        ]
+      }
+    },
+    "src/stage_morning_research.py": {
+      "module_functions": [],
+      "classes": {
         "MorningResearchStage": [
           "__init__",
           "_live_context",
           "_live_price_kwarg",
           "_run_nomination_responder_pass",
           "run"
-        ],
+        ]
+      }
+    },
+    "src/stage_decision.py": {
+      "module_functions": [],
+      "classes": {
+        "DecisionStage": [
+          "__init__",
+          "run"
+        ]
+      }
+    },
+    "src/stage_risk.py": {
+      "module_functions": [
+        "_apply_sector_unresolved_alert",
+        "_parse_loss_advisories",
+        "_persist_dropped_reasons",
+        "_reconcile_parse_loss",
+        "_record_queued_earnings_refusals"
+      ],
+      "classes": {
         "RiskStage": [
           "__init__",
           "_build_event_risk_block",
           "_run_review",
+          "run"
+        ]
+      }
+    },
+    "src/stage_execution.py": {
+      "module_functions": [],
+      "classes": {
+        "ExecutionStage": [
+          "__init__",
+          "_run_session",
           "run"
         ]
       }

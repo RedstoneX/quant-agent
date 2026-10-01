@@ -7886,7 +7886,7 @@ numbers:
     value: 1.005
     status: derived
     site: src/pipeline_exits.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the midday COVER limit, price x 1.005
@@ -7896,7 +7896,7 @@ numbers:
     value: 0.995
     status: derived
     site: src/pipeline_exits.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
@@ -7936,7 +7936,7 @@ numbers:
       (src/pipeline.py:8731-8745). Its output reaches a prompt only as a
       STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
       evolution enabled with dry_run true (stage-only).
-  - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+  - id: src.stage_execution.ExecutionStage._run_session:factor[0]
     settles_by:
       kind: measurement
       state: specified
@@ -7950,10 +7950,10 @@ numbers:
         never binds a fill
     value: 0.995
     status: arbitrary
-    site: src/pipeline_stages.py
+    site: src/stage_execution.py
     note: >-
       Board item 138, the 0.5% offset: an ordinary decision-path SELL is
-      limited at price x 0.995 (src/pipeline_stages.py:6501-6502). The midday
+      limited at price x 0.995 (src/stage_execution.py:240-241). The midday
       and cover sites mirror it.
     open_question: >-
       What limit distance fills an ordinary exit on this desk's names without
@@ -7978,7 +7978,7 @@ numbers:
     value: 1.005
     status: derived
     site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The same mirrored 0.5% exit offset as the
@@ -7990,7 +7990,7 @@ numbers:
     value: 0.995
     status: derived
     site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The SELL side of the same mirrored offset:
@@ -8000,7 +8000,7 @@ numbers:
     value: 1.005
     status: derived
     site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The COVER mirror of the SELL offset below,
@@ -8013,7 +8013,7 @@ numbers:
     value: 0.995
     status: derived
     site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The rotation sequencing gate projects the
@@ -8022,15 +8022,15 @@ numbers:
       at the mark. This is that same 0.5% offset, read from the loop it
       mirrors - not a second number. If the two ever differ, the projection
       is describing a fill that never happens.
-  - id: src.pipeline_stages.ExecutionStage._run_session:factor[1]
+  - id: src.stage_execution.ExecutionStage._run_session:factor[1]
     value: 1.005
     status: derived
-    site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    site: src/stage_execution.py
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the COVER mirror of the 0.5% SELL offset
-      (src/pipeline_stages.py:6638-6642), 1.005 = 2 - 0.995. One number,
+      (src/stage_execution.py:396-397), 1.005 = 2 - 0.995. One number,
       mirrored.
   - id: src.risk.budget.allocate_risk_budget(ceiling_pct)
     value: 25

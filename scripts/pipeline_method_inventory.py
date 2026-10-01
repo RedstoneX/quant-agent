@@ -28,6 +28,12 @@ TRACKED_MODULES: tuple[str, ...] = (
     "src/pipeline_prompt_facts.py",
     "src/pipeline_protection.py",
     "src/pipeline_stages.py",
+    # Board item 210 step 10: the four stage classes moved out of
+    # `src/pipeline_stages.py` verbatim into one file each.
+    "src/stage_morning_research.py",
+    "src/stage_decision.py",
+    "src/stage_risk.py",
+    "src/stage_execution.py",
 )
 
 _FUNC = (ast.FunctionDef, ast.AsyncFunctionDef)
