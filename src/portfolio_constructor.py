@@ -1113,6 +1113,18 @@ class PortfolioConstructor:
         # Reset per call; `pipeline_stages.DecisionStage` persists it.
         self.last_side_flips: dict[str, dict] = {}
 
+        # REALISED SECTOR of every entry order this call built (board item
+        # 224, 2026-10-01): {SYMBOL: sector-or-None}. Filled by
+        # `_accrue_sector`, which already resolves the sector while sizing,
+        # so this capture buys NO extra data — `_get_sector` is a live
+        # network lookup for an uncached name and a RECORDING must never
+        # pay for itself. A name whose sector could not be determined is
+        # stored as None (NULL in the row), NEVER as "other" or "Unknown":
+        # "the desk could not tell" and "the desk placed it in a bucket"
+        # are different facts. Reset per call; `pipeline_stages` persists
+        # the realised weights from the FINISHED order list.
+        self.last_order_sectors: dict[str, str | None] = {}
+
     def drain_data_faults(self) -> dict[str, dict[str, str]]:
         """Return every data fault recorded since the last drain, and clear.
 
@@ -1332,6 +1344,7 @@ class PortfolioConstructor:
         capture = _DropReasonCapture()
         logger.addHandler(capture)
         self.last_side_flips = {}
+        self.last_order_sectors = {}
         try:
             return self._construct_orders_impl(*args, **kwargs)
         finally:
@@ -3983,6 +3996,12 @@ class PortfolioConstructor:
         if decision.action not in ("BUY", "SHORT"):
             return
         sector = _get_sector(decision.symbol)
+        # Board item 224 recording: keep what this lookup said, including
+        # that it said nothing. None means "could not determine", and the
+        # realised-weights row stores it as NULL rather than as a bucket.
+        self.last_order_sectors[decision.symbol] = (
+            sector if sector and sector != "Unknown" else None
+        )
         if not sector or sector == "Unknown":
             return
         # Spec §12.2 — into THIS order's side. A SHORT booked into the long
