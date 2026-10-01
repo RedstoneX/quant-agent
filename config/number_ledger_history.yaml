@@ -1026,3 +1026,14 @@ changes:
       adversary's measurement: it would have fired
       zero times. The citation `config/settings.yaml:751` was stale in four
       places and is corrected to 685 in the same commit.
+  - delta: -1
+    date: '2026-10-01'
+    why: >-
+      2026-10-01, board item 90, eighth routing tranche: -1 for
+      `src.pipeline_stages.LEVELS_DEGRADED_RUN_EMPTY_SHARE` (0.5), which
+      leaves the `arbitrary` set for `not-trade-governing`. Every consumer
+      was read: the share is used only by the levels-coverage check, and
+      only to choose between the red blind-spot owner alert and the orange
+      degraded one. Nothing downstream reads the blind/degraded lists, so
+      the number cannot change what the desk buys, sells, sizes or stops.
+      No VALUE was changed by this tranche.
