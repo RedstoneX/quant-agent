@@ -249,6 +249,16 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 190)
 
+**194. The wall re-derivation now sweeps the whole book; two brakes on it are still missing — filed 2026-09-30, UN-RETIRED 2026-10-01. Detail: `docs/BOARD_NOTES.md` ("item 194").**
+
+DONE WHEN:
+  - [x] either the scheduled check's `TARGET_AIMS_PAST_A_STANDING_WALL` finding feeds the same `assess_target_revision` adjudication a seat flag does, or it is recorded why a seat flag must stay the only way in — MET 2026-10-01: every open position is adjudicated every session, the flag now supplies only the seat label
+  - [x] AAPL and NOK are each either re-derived or recorded, by name, as findings the desk has decided not to correct — MET 2026-10-01 by the same change: both are open positions, so both are in the swept population and each produces a re-derivation or a named refusal every session
+  - [ ] the ATR-reach trigger and the wall trigger carry a brake of the same kind the level-broken trigger's two-close confirmation is, so a target sitting near a bound cannot flip session to session off one day's ATR and one day's level set — no damping CONSTANT may be picked for this
+  - [ ] a target revision is voiced to the owner, saying what actually changed rather than only quoting a new number; the outcomes reach the dashboard today (`src/api/holding_why.py`) and reach Telegram nowhere
+
+detail: docs/BOARD_NOTES.md (item 194)
+
 **193. The scale-in cancel-to-rearm window leaves the WHOLE held position unprotected, and it is now measured — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 193").**
 
 DONE WHEN:
@@ -354,7 +364,6 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 19
 - retired queue: 99
 - retired queue: 157
-- retired queue: 194
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

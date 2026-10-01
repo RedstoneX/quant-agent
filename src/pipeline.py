@@ -10335,6 +10335,46 @@ class TradingPipeline:
         if not work:
             return []
 
+        # ONE batched bar read for the whole sweep (item 194 fault 3). The
+        # seat flag used to ration a serial per-name fetch; removing the
+        # gate without removing the serialism would have turned one or two
+        # round trips a session into one per held name. `get_ohlcv_batch`
+        # already exists and is what the rest of the desk uses for a
+        # multi-name read. A miss falls through to the per-name fetch
+        # below, so a provider that cannot batch is degraded, not broken.
+        # NO timeout number is introduced: any seconds value would be an
+        # invented constant, and batching removes the serial exposure that
+        # motivated one.
+        batched_bars: dict[str, list] = {}
+        try:
+            batched_bars = dict(self.market.get_ohlcv_batch(
+                [sym for sym, _, _ in work],
+                self.config.trading.lookback_days,
+            ) or {})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "target revision: batched bar read failed (%s) — falling "
+                "back to a per-name fetch", exc,
+            )
+
+        # FAULT 6: an unchanged, unapplied, fully recomputable outcome is
+        # not re-filed every session. Same intent as the trail's own
+        # `record_trail_state_if_changed`: the row says WHEN a thing
+        # changed, and a book of eleven names filing an identical
+        # no-pinned-horizon refusal daily is storage of recomputable state.
+        prior_codes: dict[str, str] = {}
+        try:
+            for _sym, _rows in (self.db.get_target_revisions(
+                    [sym for sym, _, _ in work]) or {}).items():
+                if _rows:
+                    prior_codes[str(_sym).upper()] = str(
+                        _rows[0].get("code") or "")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "target revision: prior-outcome read failed (%s) — every "
+                "outcome is filed this session", exc,
+            )
+
         risk_cfg = getattr(getattr(self, "risk_engine", None), "config", None)
         target_cfg = {
             "min_target_atr_multiple": getattr(
@@ -10350,216 +10390,242 @@ class TradingPipeline:
 
         outcomes: list[dict] = []
         for sym, flag_seat, evidence in work:
-            position = held.get(sym)
-            if position is None:
-                # The seat flagged something not held. Filed, not silently
-                # dropped, because a flag on a symbol that is not in the
-                # book is itself a finding about the seat's view of the book.
-                outcomes.append(self._file_target_revision(
-                    run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
-                    code="REFUSAL_NOT_HELD", applied=False,
-                    detail=(
-                        "the seat flagged a take-profit revision for a symbol "
-                        "the broker does not show as held"
-                    ),
-                ))
-                continue
-
-            is_short = float(getattr(position, "qty", 0) or 0) < 0
+            # FAULT 4 (item 194): every name is adjudicated inside its own
+            # guard. Before this, one unexpected exception anywhere in the
+            # body unwound to the single try at the call site, which logs
+            # and returns an empty list — and because the work list is
+            # sorted, the SAME tail of the book was silently dropped every
+            # time, each dropped name keeping a stored target the record
+            # did not mark as unmeasured. A failure now costs exactly one
+            # name, and that name gets a durable row saying so.
             try:
-                buy = self.db.get_symbol_last_buy(
-                    sym, action="SHORT" if is_short else None,
-                ) if is_short else self.db.get_symbol_last_buy(sym)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "target revision: opening-row lookup failed for %s (%s)",
-                    sym, exc,
-                )
-                buy = None
-            buy = buy or {}
-
-            # Same bars, same window, same helpers as
-            # `_structural_protection_for_holding` — and the same rule that
-            # the price fed to a break test is the latest COMPLETED DAILY
-            # CLOSE, never a live quote.
-            levels: list[float] = []
-            atr = close_price = bar_date = None
-            coverage = None
-            try:
-                bars = self.market.get_ohlcv(
-                    sym, self.config.trading.lookback_days,
-                ) or []
-                from src.data.levels import (
-                    find_structural_levels,
-                    structure_coverage,
-                )
-                from src.data.technical import compute_indicators
-                # What the bar history behind `levels` was, so an empty list
-                # from a dead feed is a DATA fault and one from a measured,
-                # structureless chart is a refusal — the same distinction
-                # `_derive_target` passes at entry.
-                coverage = structure_coverage(bars)
-                if bars:
-                    last_bar = sorted(bars, key=lambda b: b.date)[-1]
-                    close_price = float(last_bar.close)
-                    bar_date = str(last_bar.date)
-                    atr = compute_indicators(sym, bars).atr_14
-                    supports, resistances = find_structural_levels(bars)
-                    levels = sorted(lv.price for lv in (*supports, *resistances))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "target revision: bars/indicator fetch failed for %s (%s) "
-                    "— the flag is filed as a data fault, not judged",
-                    sym, exc,
-                )
-
-            stored_target = None
-            try:
-                stored_target = float(buy.get("take_profit") or 0) or None
-            except (TypeError, ValueError):
-                stored_target = None
-
-            # Which level this target was measured against, recovered by the
-            # same identity test the stop side uses. None for a measured-move
-            # target, which is correct: it never sat on a level.
-            target_level = level_backing_target(
-                stored_target=stored_target,
-                computed_levels=levels,
-                # NOT a knob — the exact constant `find_structural_levels`
-                # clustered these zones with (docs/WORK.md item 46).
-                level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
-            )
-
-            # Cross-day confirmation, keyed off THIS READ's own bar_date so
-            # several intraday cycles re-reading one close are never
-            # miscounted as two confirming days.
-            effective_bar_date = bar_date or str(et_today())
-            break_seen_prior_close = False
-            try:
-                prior = self.db.get_prior_target_level_break(
-                    [sym], today_bar_date=effective_bar_date,
-                    exclude_run_id=run_id,
-                )
-                break_seen_prior_close = bool(prior.get(sym, False))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "target revision: prior-close read failed for %s (%s) — "
-                    "today's break, if any, starts unconfirmed", sym, exc,
-                )
-
-            # Sessions this position has already spent out of its pinned
-            # horizon — the HOLIDAY-AWARE broker count (item 165), the same
-            # `broker.trading_sessions_held` the reviewer's own facts and
-            # the exit guard's noise band read; never a calendar-day count
-            # and never a default. It is what lets a target the price has
-            # run past be re-anchored on the close over the REMAINING
-            # horizon (item 114); a None here simply means no re-anchor is
-            # attempted and the existing refusal stands.
-            sessions_held: int | None = None
-            entry_ts = (buy.get("timestamp") or "")[:10]
-            if entry_ts:
-                try:
-                    from datetime import date as _date
-                    sessions_held = self.broker.trading_sessions_held(
-                        _date.fromisoformat(entry_ts), et_today(),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "target revision: sessions-held read failed for %s "
-                        "(%s) — no remaining horizon, so a target behind "
-                        "price is refused rather than re-anchored", sym, exc,
-                    )
-                    sessions_held = None
-
-            outcome = assess_target_revision(
-                symbol=sym,
-                direction="short" if is_short else "long",
-                entry_price=float(getattr(position, "avg_entry", 0) or 0) or None,
-                stored_target=stored_target,
-                target_level=target_level,
-                pinned_horizon_sessions=buy.get("expected_horizon_sessions"),
-                setup_type=buy.get("setup_type") or None,
-                levels=levels,
-                atr=atr,
-                close_price=close_price,
-                levels_coverage=coverage or COVERAGE_UNKNOWN,
-                break_seen_prior_close=break_seen_prior_close,
-                sessions_held=sessions_held,
-                # The same ratified derivation bars the constructor passes at
-                # entry, read off `risk_engine.config` (what
-                # `ConstructorConfig` itself mirrors). Read defensively
-                # because this method must survive a lightweight pipeline
-                # double in unit tests that never built a real risk_engine;
-                # the fallbacks are `src.data.levels`' own module constants,
-                # not a second invented set of numbers.
-                **target_cfg,
-            )
-
-            # File today's raw break state for the NEXT trading day to
-            # confirm against — the same read/persist shape as
-            # `_structural_protection_for_holding`. A `None` from the break
-            # test means the question could not be asked; nothing is filed,
-            # so a missing input can never become half of a confirmation.
-            raw_broken = target_level_broken(
-                target_level=target_level, close_price=close_price,
-                atr=atr, is_short=is_short,
-            )
-            if raw_broken is not None and bar_date:
-                try:
-                    self.db.save_target_level_break(
-                        run_id=run_id, symbol=sym,
-                        raw_broken=bool(raw_broken), bar_date=bar_date,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "target revision: failed to persist %s break state "
-                        "(%s) — tomorrow's read starts unconfirmed", sym, exc,
-                    )
-
-            applied = False
-            if outcome.revised and outcome.new_price:
-                try:
-                    applied = bool(self.db.update_open_take_profit(
-                        sym, outcome.new_price,
-                        action="SHORT" if is_short else "BUY",
+                position = held.get(sym)
+                if position is None:
+                    # The seat flagged something not held. Filed, not silently
+                    # dropped, because a flag on a symbol that is not in the
+                    # book is itself a finding about the seat's view of the book.
+                    outcomes.append(self._file_target_revision(
+                        run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
+                        code="REFUSAL_NOT_HELD", applied=False,
+                        detail=(
+                            "the seat flagged a take-profit revision for a symbol "
+                            "the broker does not show as held"
+                        ),
                     ))
+                    continue
+
+                is_short = float(getattr(position, "qty", 0) or 0) < 0
+                try:
+                    buy = self.db.get_symbol_last_buy(
+                        sym, action="SHORT" if is_short else None,
+                    ) if is_short else self.db.get_symbol_last_buy(sym)
                 except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "target revision: write-back failed for %s (%s) — "
-                        "the stored target stands", sym, exc,
+                    logger.warning(
+                        "target revision: opening-row lookup failed for %s (%s)",
+                        sym, exc,
                     )
-                    applied = False
-                if applied:
-                    logger.info(
-                        "Target revised: %s $%.2f -> $%.2f (%s, %s) — "
-                        "progress/pace stay measured against the pinned "
-                        "entry target",
-                        sym, outcome.prior_price or 0.0, outcome.new_price,
-                        outcome.basis, outcome.trigger,
+                    buy = None
+                buy = buy or {}
+
+                # Same bars, same window, same helpers as
+                # `_structural_protection_for_holding` — and the same rule that
+                # the price fed to a break test is the latest COMPLETED DAILY
+                # CLOSE, never a live quote.
+                levels: list[float] = []
+                atr = close_price = bar_date = None
+                coverage = None
+                try:
+                    bars = batched_bars.get(sym)
+                    if bars is None:
+                        bars = self.market.get_ohlcv(
+                            sym, self.config.trading.lookback_days,
+                        ) or []
+                    from src.data.levels import (
+                        find_structural_levels,
+                        structure_coverage,
                     )
-            if not applied and outcome.revised:
-                # The derivation succeeded but the row did not move. Recorded
-                # as its own outcome so the record can never claim a revision
-                # the trade row does not carry.
+                    from src.data.technical import compute_indicators
+                    # What the bar history behind `levels` was, so an empty list
+                    # from a dead feed is a DATA fault and one from a measured,
+                    # structureless chart is a refusal — the same distinction
+                    # `_derive_target` passes at entry.
+                    coverage = structure_coverage(bars)
+                    if bars:
+                        last_bar = sorted(bars, key=lambda b: b.date)[-1]
+                        close_price = float(last_bar.close)
+                        bar_date = str(last_bar.date)
+                        atr = compute_indicators(sym, bars).atr_14
+                        supports, resistances = find_structural_levels(bars)
+                        levels = sorted(lv.price for lv in (*supports, *resistances))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "target revision: bars/indicator fetch failed for %s (%s) "
+                        "— the flag is filed as a data fault, not judged",
+                        sym, exc,
+                    )
+
+                stored_target = None
+                try:
+                    stored_target = float(buy.get("take_profit") or 0) or None
+                except (TypeError, ValueError):
+                    stored_target = None
+
+                # Which level this target was measured against, recovered by the
+                # same identity test the stop side uses. None for a measured-move
+                # target, which is correct: it never sat on a level.
+                target_level = level_backing_target(
+                    stored_target=stored_target,
+                    computed_levels=levels,
+                    # NOT a knob — the exact constant `find_structural_levels`
+                    # clustered these zones with (docs/WORK.md item 46).
+                    level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
+                )
+
+                # Cross-day confirmation, keyed off THIS READ's own bar_date so
+                # several intraday cycles re-reading one close are never
+                # miscounted as two confirming days.
+                effective_bar_date = bar_date or str(et_today())
+                break_seen_prior_close = False
+                try:
+                    prior = self.db.get_prior_target_level_break(
+                        [sym], today_bar_date=effective_bar_date,
+                        exclude_run_id=run_id,
+                    )
+                    break_seen_prior_close = bool(prior.get(sym, False))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "target revision: prior-close read failed for %s (%s) — "
+                        "today's break, if any, starts unconfirmed", sym, exc,
+                    )
+
+                # Sessions this position has already spent out of its pinned
+                # horizon — the HOLIDAY-AWARE broker count (item 165), the same
+                # `broker.trading_sessions_held` the reviewer's own facts and
+                # the exit guard's noise band read; never a calendar-day count
+                # and never a default. It is what lets a target the price has
+                # run past be re-anchored on the close over the REMAINING
+                # horizon (item 114); a None here simply means no re-anchor is
+                # attempted and the existing refusal stands.
+                sessions_held: int | None = None
+                entry_ts = (buy.get("timestamp") or "")[:10]
+                if entry_ts:
+                    try:
+                        from datetime import date as _date
+                        sessions_held = self.broker.trading_sessions_held(
+                            _date.fromisoformat(entry_ts), et_today(),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "target revision: sessions-held read failed for %s "
+                            "(%s) — no remaining horizon, so a target behind "
+                            "price is refused rather than re-anchored", sym, exc,
+                        )
+                        sessions_held = None
+
+                outcome = assess_target_revision(
+                    symbol=sym,
+                    direction="short" if is_short else "long",
+                    entry_price=float(getattr(position, "avg_entry", 0) or 0) or None,
+                    stored_target=stored_target,
+                    target_level=target_level,
+                    pinned_horizon_sessions=buy.get("expected_horizon_sessions"),
+                    setup_type=buy.get("setup_type") or None,
+                    levels=levels,
+                    atr=atr,
+                    close_price=close_price,
+                    levels_coverage=coverage or COVERAGE_UNKNOWN,
+                    break_seen_prior_close=break_seen_prior_close,
+                    sessions_held=sessions_held,
+                    # The same ratified derivation bars the constructor passes at
+                    # entry, read off `risk_engine.config` (what
+                    # `ConstructorConfig` itself mirrors). Read defensively
+                    # because this method must survive a lightweight pipeline
+                    # double in unit tests that never built a real risk_engine;
+                    # the fallbacks are `src.data.levels`' own module constants,
+                    # not a second invented set of numbers.
+                    **target_cfg,
+                )
+
+                # File today's raw break state for the NEXT trading day to
+                # confirm against — the same read/persist shape as
+                # `_structural_protection_for_holding`. A `None` from the break
+                # test means the question could not be asked; nothing is filed,
+                # so a missing input can never become half of a confirmation.
+                raw_broken = target_level_broken(
+                    target_level=target_level, close_price=close_price,
+                    atr=atr, is_short=is_short,
+                )
+                if raw_broken is not None and bar_date:
+                    try:
+                        self.db.save_target_level_break(
+                            run_id=run_id, symbol=sym,
+                            raw_broken=bool(raw_broken), bar_date=bar_date,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "target revision: failed to persist %s break state "
+                            "(%s) — tomorrow's read starts unconfirmed", sym, exc,
+                        )
+
+                applied = False
+                if outcome.revised and outcome.new_price:
+                    try:
+                        applied = bool(self.db.update_open_take_profit(
+                            sym, outcome.new_price,
+                            action="SHORT" if is_short else "BUY",
+                        ))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "target revision: write-back failed for %s (%s) — "
+                            "the stored target stands", sym, exc,
+                        )
+                        applied = False
+                    if applied:
+                        logger.info(
+                            "Target revised: %s $%.2f -> $%.2f (%s, %s) — "
+                            "progress/pace stay measured against the pinned "
+                            "entry target",
+                            sym, outcome.prior_price or 0.0, outcome.new_price,
+                            outcome.basis, outcome.trigger,
+                        )
+                if not applied and outcome.revised:
+                    # The derivation succeeded but the row did not move. Recorded
+                    # as its own outcome so the record can never claim a revision
+                    # the trade row does not carry.
+                    outcomes.append(self._file_target_revision(
+                        run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
+                        code="FAULT_REVISION_WRITE_FAILED", applied=False,
+                        trigger=outcome.trigger, prior_price=outcome.prior_price,
+                        detail=(
+                            f"{outcome.trigger} fired and re-derived "
+                            f"${outcome.new_price:,.2f}, but the opening row could "
+                            f"not be updated — the stored target stands"
+                        ),
+                    ))
+                    continue
+
                 outcomes.append(self._file_target_revision(
                     run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
-                    code="FAULT_REVISION_WRITE_FAILED", applied=False,
-                    trigger=outcome.trigger, prior_price=outcome.prior_price,
+                    code=outcome.code, applied=applied, trigger=outcome.trigger,
+                    prior_price=outcome.prior_price, new_price=outcome.new_price,
+                    basis=outcome.basis, level_used=outcome.level_used,
+                    detail=outcome.detail, prior_code=prior_codes.get(sym),
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "target revision: %s could not be adjudicated (%s) — "
+                    "filed as unmeasured; the stored target stands", sym, exc,
+                )
+                outcomes.append(self._file_target_revision(
+                    run_id=run_id, symbol=sym, seat=flag_seat,
+                    evidence=evidence, code="FAULT_POSITION_NOT_MEASURED",
+                    applied=False,
                     detail=(
-                        f"{outcome.trigger} fired and re-derived "
-                        f"${outcome.new_price:,.2f}, but the opening row could "
-                        f"not be updated — the stored target stands"
+                        "this position could not be adjudicated this "
+                        "session, so its stored target is unverified rather "
+                        "than confirmed"
                     ),
                 ))
-                continue
-
-            outcomes.append(self._file_target_revision(
-                run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
-                code=outcome.code, applied=applied, trigger=outcome.trigger,
-                prior_price=outcome.prior_price, new_price=outcome.new_price,
-                basis=outcome.basis, level_used=outcome.level_used,
-                detail=outcome.detail,
-            ))
         return outcomes
 
     def _file_target_revision(
@@ -10567,6 +10633,7 @@ class TradingPipeline:
         code: str, applied: bool, trigger: str = "",
         prior_price: float | None = None, new_price: float | None = None,
         basis: str = "", level_used: float | None = None, detail: str = "",
+        prior_code: str | None = None,
     ) -> dict:
         """Write one adjudicated flag and return its payload.
 
@@ -10581,6 +10648,16 @@ class TradingPipeline:
             "prior_price": prior_price, "new_price": new_price,
             "level_used": level_used, "applied": bool(applied),
         }
+        # FAULT 6 (item 194): an unapplied outcome identical to this
+        # symbol's last one is recomputable state, and the sweep would
+        # otherwise re-file it for every held name every session forever.
+        # Same rule the trail's `record_trail_state_if_changed` applies:
+        # the row marks a CHANGE. An applied revision is always written.
+        if not applied and prior_code is not None and prior_code == code:
+            payload["evidence_id"] = None
+            payload["unchanged_since_last_session"] = True
+            return payload
+
         evidence_id = None
         try:
             evidence_id = self.db.record_target_revision(
@@ -11569,7 +11646,25 @@ class TradingPipeline:
                 entry=position.avg_entry,
                 current_price=position.current_price,
                 current_stop=current_stop,
-                reference_target=(buy or {}).get("take_profit"),
+                # THE PINNED ENTRY TARGET, never the live `take_profit`
+                # (item 194, 2026-10-01). The comment above says every
+                # field read off `buy` is pinned at entry; `take_profit`
+                # stopped being so the moment `update_open_take_profit`
+                # existed. That mattered once the re-derivation swept the
+                # whole book: a target revised DOWN crosses a range trade
+                # from the below-target breakeven/+2R ratchets into the
+                # structural trail, the trail only ever ratchets toward
+                # price, and so restoring the target on the next session
+                # does NOT give the stop back. The tightening accumulated
+                # instead of cancelling. Reading the frozen column makes
+                # the regime boundary a property of the trade, so a
+                # revision can no longer ratchet a stop the desk would not
+                # otherwise have moved. Falls back to `take_profit` only
+                # for rows predating the `initial_take_profit` migration.
+                reference_target=(
+                    (buy or {}).get("initial_take_profit")
+                    or (buy or {}).get("take_profit")
+                ),
                 bars=bars,
                 atr=self._atr_for_symbol(symbol),
                 # Shorts-safe (Stage 2): `qty` supplies only the side so a
