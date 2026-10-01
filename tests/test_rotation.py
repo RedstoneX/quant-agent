@@ -800,7 +800,7 @@ def test_the_prompt_names_the_constraint_that_is_actually_binding():
     )
     assert "Capital is constrained" in result
     assert "$92.20 still deployable for new entries" in result
-    assert "$500 minimum order" in result
+    assert "the smallest order the desk will place" in result
     assert "real room exists" not in result
 
 

@@ -40,3 +40,51 @@ changes:
       `min_stop_atr_multiple` pass: the per-closed-trade excursion columns in
       `src/storage/db.py`. The value is untouched and is not re-derived here;
       only the route to its answer is now written where the check can see it.
+  - delta: +1
+    date: "2026-10-01"
+    why: |
+      The ALIGNMENT EXIT (owner ruling 2026-09-30, docs/WORK.md item 205)
+      adds `src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE` (3.0)
+      as an `arbitrary` row with NO settlement route, and this +1 records
+      that honestly rather than hiding it. The row gains no `settles_by:`
+      block because none of the three route kinds applies: it is not a
+      structural bound, no recording in this desk accumulates it, and its
+      own `open_question` states that no research can settle it -- how
+      readily the desk blocks a sale is owner appetite, and the only thing
+      that closes this row is the owner moving the dial. The published
+      2.5-3.5 give-back band is context for the order of magnitude only;
+      it is not a source, because Wilder and Le Beau measure give-back from
+      a running extreme on ATR(22) while this measures it from a moving
+      average on ATR(14). Lower this count by -1 the day a recording of
+      realised give-back per alignment exit exists, or the day the owner
+      ratifies the dial as a bound with his reason written down.
+  - delta: -4
+    date: "2026-10-01"
+    why: |
+      Item 186's portfolio and cluster ceilings gain settlement routes:
+      `max_portfolio_risk_pct` (25), `SECTOR_HARD_CEILING_MAX` (90) with its
+      constructor mirror `max_sector_hard_pct`, and
+      `max_cluster_risk_share_pct` (40). No value moved and no appetite was
+      routed to the owner, which his 2026-09-30 ruling bars. Each row now
+      names the recording that would settle it -- per-session book
+      loss-if-stopped, per-session sector shares of gross notional, and
+      per-session cluster membership with each cluster's share of total
+      at-risk -- and each records BOTH failed derivation attempts, including
+      the algebraic cancellations: 25 is five full-size names at the ratified
+      5% per-trade envelope, and 40% of 25% is exactly two, so deriving
+      either reduces to picking a name count.
+  - delta: -1
+    date: "2026-10-01"
+    why: |
+      Board item 190: `CashSweepConfig.min_order_usd` (500) gains a settlement
+      route. The row previously claimed the value's only live job was gating
+      the retired cash sweep; measurement found the sweep job gone and two
+      trade-governing consumers missed -- the short scale-in add it refuses
+      outright as `below_min_notional`, and the `funding` binding constraint
+      the rotation report renders. The value did not move and no appetite was
+      routed to the owner. The route names the execution-skip recording that
+      already collects every refusal, and the row records BOTH failed
+      derivation attempts plus the algebra check: the dollar floor does NOT
+      cancel to a constant fraction of equity, so it is not a disguised global
+      dial but a bound whose effective weight drifts inversely with account
+      size.
