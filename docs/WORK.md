@@ -278,6 +278,12 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 208)
 
 
+DONE WHEN:
+  - [ ] (a) a recorded decision, in `docs/INCIDENT_HISTORY.md`, on what enables a range position's structural trail once PR #853's alignment exit has landed — either the alignment reading itself replaces the target gate, or the gate is removed and the reason the entry stop alone suffices is written down.
+  - [ ] (b) the chosen answer is live for Type A entries and a range position between entry and its target is observably protected by something that reads off the instrument, not by an unsourced level.
+detail: docs/BOARD_NOTES.md (item 212)
+
+
 **217. Prompt claims that another part of the desk "handles" something — verify each against the code (filed 2026-10-01 after the risk seat was told a thin reward:risk had been "paid for in size by the constructor"; it had not, and that sentence is corrected).** The sweep was by text search only, so claims phrased differently may remain. Not yet verified: the portfolio-manager prompt's statements that "the constructor will deny it" (immaterial-payoff trades), "the constructor REJECTS the trade outright" (stop on the wrong side of entry), and "the constructor will NOT flip" a held short in one session.
 
 DONE WHEN:
@@ -320,14 +326,6 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 218)
 
 
-**212. A range (Type A) position's structural trail is gated behind the recorded take-profit target, a number nobody sourced, so from entry until price passes that target the position is protected by its original entry stop alone and by nothing that follows price up. Measured on 33 real production BUY trades: the target's reward-to-risk is median 1.33 and at most 1.72, so the target IS reached in practice while +2R never has been — which is why PR #857's attempt to move the gate to +2R was reverted as strictly worse on live data. Separately verified: the target has no power to close or cap a position, since no take-profit order ever reaches the broker and a target rationale cannot authorise a sale, so gating this trail is its ONLY live behaviour. The owner's ratified answer is exit-on-alignment — sell when structure, ATR and an SMA cross agree the trend is over, never on a made-up level — and the alignment exit on open PR #853 is the candidate replacement for this gate; do NOT build a replacement, re-derive the gate, or widen any multiple under this item. Detail: `docs/BOARD_NOTES.md` (item 212).** The defect is the unprotected stretch between entry and the gate, not the choice of multiple.
-
-DONE WHEN:
-  - [ ] (a) a recorded decision, in `docs/INCIDENT_HISTORY.md`, on what enables a range position's structural trail once PR #853's alignment exit has landed — either the alignment reading itself replaces the target gate, or the gate is removed and the reason the entry stop alone suffices is written down.
-  - [ ] (b) the chosen answer is live for Type A entries and a range position between entry and its target is observably protected by something that reads off the instrument, not by an unsourced level.
-detail: docs/BOARD_NOTES.md (item 212)
-
-
 **220. A technical row the model returned malformed was dropped and the name carried on with the timing veto unrecorded — filed 2026-10-01.** The technical seat is the desk's timing veto and the standing rule is that every seat must be right to ENTER and to STAY, but a row that failed schema parsing was dropped individually, logged, and the run continued; the name then reached the decision with no technical answer and nothing in the durable record said the seat had been asked and lost. MEASURED: over 2026-09-29 17:16 to 2026-10-01 04:00 the technical seat made 8 calls, all on the free Google route, all recorded success and none truncated, and ONE returned syntactically invalid JSON inside the strict schema (an unquoted property name) on a complete answer [production database, read-only, plus the retained box log]. Eight calls cannot support a rate and none is stated or assumed here. What was ALREADY right and is not changed: `risk.rules.own_bar_block_reason` already refuses ENTRY on "no technical read this review", and rotation's `ineligible_hold` tier already drops a held name that fails that same bar out of the ranked survivors, so absence was already blocking at both decisions. What was WRONG is the record: the per-name coverage record (item 20) never saw held names at all, never saw a name whose only appearance was the lost row, and could not tell a seat that was never asked from a seat that answered unreadably. CLOSING CONDITION: a name whose technical row came back unreadable appears in the per-name coverage record with the technical seat listed as uncovered AND as unreadable, held names are inside that record's universe, and `evidence_gate.names_missing_blocking_seat` names it; no retry, no JSON repair and no new refusal are added. RULED 2026-10-01, no longer open: a lost technical row does NOT cull a held name. The stay test is opposition-only by the owner's 2026-09-25 ruling, and an answer nobody could read is not opposition; selling on an absence would be inventing a verdict, the same failure as inventing a number. Dropping the name out of the ranked survivors is the right strength — it loses its claim to be KEPT on conviction without being forced out on silence. The reasoning is written beside the test that pins it so the next reader does not "fix" it. DELIBERATE NON-CHOICE, also 2026-10-01: no retry of an unreadable row. NOT a cost decision — the route is free today. A retry that silently succeeded would hide the very signal this record exists to capture, and a retry inside a session that has a time ceiling is a change to the session's shape rather than a one-line fix. On file as a decision, not as an omission; revisit only with the session-shape question answered.
 
 DONE WHEN:
@@ -335,7 +333,6 @@ DONE WHEN:
 - [ ] held names are inside the per-name coverage record's universe, so the staying decision has the same per-name seat record the entry decision has
 - [ ] the record tells the three causes apart from the FIELDS alone — asked and unreadable, asked and nothing usable came back, never asked about this name — because they share one consequence but have three different fixes
 - [ ] no retry, no JSON repair and no new refusal is added by this change, and the entry and stay refusals keep the behaviour the 2026-09-25 ruling gave them
-
 
 
 **221. The sector preview sizes every candidate at a flat 5% while the constructor would size each one off its own stop distance, so the portfolio manager self-corrects against a mix no candidate is ever given — filed 2026-10-01.** Found during item 90's second routing tranche and deliberately not fixed there. The preview the portfolio manager reads to judge sector crowding assumes one identical position size for every candidate; the constructor that actually places the orders sizes each name from its own stop distance, so a wide-stopped name gets far less than the preview showed and a tight-stopped name far more. The manager therefore trims, drops or reorders names against a portfolio that will never exist. It governs how much money goes into each name, so it is a sizing defect, not a display one. Detail in `docs/BOARD_NOTES.md` item 221.
@@ -387,18 +384,19 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
-- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 193
+- retired queue: 157
 - retired queue: 119
+- retired queue: 193
 - retired queue: 211
-- retired queue: 185
-- retired queue: 214
 - retired queue: 107
+- retired queue: 185
 - retired queue: 76
-- retired queue: 174
+- retired queue: 214
 - retired queue: 199
+- retired queue: 212
+- retired queue: 174
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

@@ -1585,13 +1585,7 @@ sessions, MEASURED above, against a window needing `2 * PIVOT_WINDOW + 1`
 bars), remains unfixable while that constant is documented as unsourceable.
 No number was invented here; the band width, the chandelier multiple and the
 minimum ratchet are all unchanged.
-## item 219
-
-The pruning pass's owner-facing report. `src/rotation.py::pruning_pass_lines` is the single renderer; it reads only the durable row `precheck_record` writes, so the sentence and the audit trail cannot drift apart. `src/trader_feed.py::_append_rotation` renders it into the Telegram session message beside `owner_precheck_lines`; `src/api/routes_history.py::_rotation_lines` serves the identical list on the run detail and `src/api/static/app.js` renders it. Tier 2 (`ranked_margin`) stays OFF and the report says so out loud, reading the recorded switch rather than a constant, so it tells the truth if it is ever turned on. The telemetry-unavailable outcome deliberately renders NO pruning block: the pass did not run that session, and saying how many holdings it examined would be exactly the untrue owner line this item exists to remove.
-## item 217
-
-Found 2026-10-01: the risk seat's tech-signals block said a thin range ratio "has already been paid for in size by the constructor". Measured in the code: the constructor computes the ratio, logs it and returns the stop unchanged; nothing resizes on it. The sentence was corrected and a test pins the new wording. The sweep for the same class of claim was a text search, so the portfolio-manager statements listed on the board item are unverified, not known false.
-## item 212
+## item 212 — RETIRED 2026-10-01, target gate removed: the structural trail now runs from entry
 
 Filed 2026-09-30 alongside the revert of PR #857.
 
@@ -1623,60 +1617,91 @@ and an SMA cross agree the trend is over, never on a single made-up level.
 The alignment exit on open PR #853 is the candidate replacement for this
 gate. Do not build a replacement under this item, and do not re-derive,
 widen or replace any multiple.
-## item 211 — RETIRED 2026-10-01, both-edge paging deferred to the circuit's own self-clear window, repeat suppression made per-type, and every refusal now readable at /alerts/suppressed
 
-Why the threshold is not a new number. The circuit already answers "how long
-before this stops being a blip": `_auto_clear_transient_latch_locked` refuses
-to retire a transient latch until `transient_latch_cooldown_minutes` of wall
-clock have passed, and refuses again if the day's
-`max_transient_latch_auto_clears_per_day` allowance is spent. Paging the owner
-the instant the latch is set contradicts the circuit's own stated belief that
-the fault may not be real yet. So the paging threshold IS that field. There was
-no need to invent one, and inventing one would have been a barred arbitrary
-number.
+RESOLVED 2026-10-01. The alignment exit (PR #853) is merged and live, so the
+owner's ratified answer to "when do we sell" exists in code and the gate had
+nothing left to stand on. The gate is REMOVED: a Type A position now runs the
+SAME structural/chandelier trail as Type B from entry, the two ratified
+R-multiple ratchets are unchanged and still run, and whichever leg proposes
+the TIGHTER stop is the one placed. No multiple was widened, no replacement
+gate was built, and no new constant was introduced.
 
-Why an episode is one trigger code on one ET day. The auto-clear allowance is
-already counted per ET day against `llm_circuit_events` for exactly this
-purpose — "a fault recurring this often is not transient". The episode
-boundary reuses that unit rather than defining a second, differently-shaped
-notion of "the same fault again".
+The load-bearing question — can ungating ever move a stop AWAY from price —
+is answered twice. By construction: every candidate must already sit strictly
+between the live stop and current price, must clear the minimum-ratchet and
+noise-band invariants, and is re-checked after rounding, so a looser level
+cannot be proposed at all. And by replay: all 20 filled range BUYs in the
+production record were replayed day by day over daily bars from each entry
+date, gated against ungated. 18 of the 20 replayed (two are for a symbol
+absent from the bar set). MEASURED: zero positions stopped out earlier under
+the ungated trail and zero stopped out that did not before; two positions
+ended with a tighter stop and neither was stopped out as a result (three
+before the noise-band invariant was made to bind on every leg; the invariant
+removed one of them).
 
-What this does NOT do. It does not re-enable Telegram: the owner muted it
-deliberately on 2026-09-30 and it stays muted. It does not make the desk
-quieter about anything an operator must act on — every non-self-clearing
-trigger still pages immediately, because there is no window it can expire
-inside. It does not migrate the three existing per-symbol markers in
-`src/coverage_watchdog.py` onto the new generic helper; that is a refactor of
-working code and was left alone so this change cannot alter what they already
-suppress. The suppression record IS now on the API, which was the item's last open
-criterion: `GET /alerts/suppressed` returns the `suspend_alert_deferred`
-rows from `llm_circuit_events` alongside the `suppressed_alerts` block from
-BOTH watchdog state files, and reports "could not read it" separately from
-"nothing was suppressed" rather than collapsing the two into an empty list.
-It still does not migrate the three existing per-symbol markers in
-`src/coverage_watchdog.py` onto the generic helper; that is a refactor of
-working code and was left alone so this change cannot alter what they
-already suppress. There is no dashboard tile — the criterion reads
-"API/dashboard" and the API is what shipped.
+The two positions that could NOT be replayed are both RSG, absent from the
+101-symbol daily-bar set. Named here rather than described, so a reader can
+judge for themselves whether that exclusion correlates with volatility; this
+note does not claim it does not.
 
-Correction to the item text as filed. It said `scripts/check_deploy_drift.py`
-claims through `coverage_watchdog.claim_typed_alert`. It does not: it keeps
-its own `drift_alerted_for` marker in `deploy_drift.json`, which is still a
-per-type, per-key, per-day claim but a separate implementation. What it was
-genuinely missing is the recording half — a repeat it declined to send left
-no trace at all — so `record_state` now writes that refusal through
-`_record_suppressed_alert`, into the same state file, where the endpoint
-reads it.
+POWER OF THE SAMPLE, stated so the replay is not read as proof: zero events in
+18 positions puts the 95% upper bound on the per-position harm rate at roughly
+15%. Zero differences is therefore the EXPECTED result at n=18 even if the
+change were harmful at a rate the desk would care about. Bounding that rate
+below 5% needs roughly 59 range positions, which the production record does
+not yet hold. The structural argument — that a candidate must sit strictly
+between the live stop and current price — is the stronger half of the
+evidence; the replay only fails to contradict it.
 
-Where the live-risk line is drawn. A live-risk alert is one about a position
-whose protection is gone or never arrived: a stop that failed to place, a
-stop that failed to re-arm after a scale-in, an uncovered position, a broker
-rejection. None of them is ever silenced: the cost circuit's deferral applies
-only to `_SELF_CLEARING_HARD_TRIGGERS` (paid-provider faults), and the typed
-claim helper always releases the FIRST occurrence for a symbol on an ET day,
-holding only a byte-identical repeat of the same fault for the same symbol on
-the same day — and recording even that. Both halves are proved in
-`tests/test_alert_suppression_api.py` and `tests/test_cost_circuit.py`.
+Four defects found by the adversary on PR #928 and fixed in the same branch:
+(1) with no bars the chandelier read its extreme off CURRENT PRICE, so an
+entry-day position or any bar-fetch failure tightened a stop off nothing —
+an empty bar set now refuses with `no_bars_since_entry`; (2) the first patch
+had quieted four ratchet tests by removing their ATR, which is what hid
+defect 1 — every one is restored to its original ATR and the code satisfies
+them; (3) the structural leg's refusal reason could no longer be recorded for
+any range name — it now travels on the evaluation as `structural_code` and is
+written as the detail of the trail-state row; (4) preferring the tighter
+R-ratchet level over an ACCEPTED structural candidate could place a stop
+inside the noise band the structural leg honours, so that override now has to
+clear the same minimum-ratchet and noise-band invariants. The ratchets' own
+unconditional path, where no structural candidate exists, is untouched.
+
+Second review pass, 2026-10-01: three of those four fixes did not hold and
+are now redone. (1) The refusal only caught a ZERO-length bar set, while the
+caller filters bars to since-entry, so a position entered today handed the
+module one bar and the chandelier still read `today's high - 3 x ATR`. The
+minimum is now the window the STRUCTURE leg already needs before it can
+confirm a pivot — three bars either side of it, seven in all — and it is
+derived from that window in code, not chosen. Below it both legs refuse and
+the reason is recorded as `too_few_bars_since_entry`. (2) The noise-band and
+minimum-ratchet invariants bound only on the override branch, so a structural
+candidate refused as `inside_noise_band` still handed the decision to an
+unchecked ratchet level. They are now one function that every leg able to
+place a stop must clear. (3) The structural reason was dropped on the success
+branch and the recorder deduped on the primary code alone, so a changed
+structural reason wrote nothing; it is now carried on both branches and is
+part of the dedupe identity.
+
+THE ARGUMENT THE GATE WAS REALLY MAKING, answered here rather than in code.
+The gate's rationale was never the target number: it was that trailing a
+range trade early is how it gets stopped out inside the very range it was
+bought to traverse, and because every tightening is permanent, a stop
+ratcheted to the top of a range is still there on the next down-leg. Removing
+the gate because the TARGET is unsourced would discard that rationale along
+with it. What replaces it is defect 2 fixed properly: no leg may place a stop
+inside the daily-noise band, so a stop cannot be ratcheted into the range's
+own noise in the first place, and the band is measured from ATR rather than
+from a number anybody picked. The replay cannot speak to this at all — it
+counts stop-outs over 18 positions in a single market stretch, and the
+failure being argued about is a permanent tightening whose cost shows up on a
+later down-leg that may not be in the window.
+## item 219
+
+The pruning pass's owner-facing report. `src/rotation.py::pruning_pass_lines` is the single renderer; it reads only the durable row `precheck_record` writes, so the sentence and the audit trail cannot drift apart. `src/trader_feed.py::_append_rotation` renders it into the Telegram session message beside `owner_precheck_lines`; `src/api/routes_history.py::_rotation_lines` serves the identical list on the run detail and `src/api/static/app.js` renders it. Tier 2 (`ranked_margin`) stays OFF and the report says so out loud, reading the recorded switch rather than a constant, so it tells the truth if it is ever turned on. The telemetry-unavailable outcome deliberately renders NO pruning block: the pass did not run that session, and saying how many holdings it examined would be exactly the untrue owner line this item exists to remove.
+## item 217
+
+Found 2026-10-01: the risk seat's tech-signals block said a thin range ratio "has already been paid for in size by the constructor". Measured in the code: the constructor computes the ratio, logs it and returns the stop unchanged; nothing resizes on it. The sentence was corrected and a test pins the new wording. The sweep for the same class of claim was a text search, so the portfolio-manager statements listed on the board item are unverified, not known false.
 ## item 201
 
 The naked window is real and ordinary: every place the desk cancels a protective stop and submits a replacement, the position is unprotected for the width of that round trip, on paths that run on normal days against real open positions.
