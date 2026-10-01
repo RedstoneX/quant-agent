@@ -724,7 +724,11 @@ def test_a_wall_in_front_of_the_stored_target_is_a_trigger():
     wall, and the re-derivation returns the wall."""
     out = tr.assess_target_revision(
         stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
-        atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        # The wall was already in the way on the PRIOR close (item 194's
+        # brake); without that this is a one-session reading, which the
+        # dedicated test below pins as a refusal.
+        wall_seen_prior_close=True, **_COMMON,
     )
     assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
     assert out.revised
@@ -798,7 +802,7 @@ def test_the_new_trigger_cannot_substitute_a_number_when_it_refuses():
     out = tr.assess_target_revision(
         stored_target=120.0, target_level=120.0, levels=[110.0, 120.0],
         atr=5.0, close_price=113.0, break_seen_prior_close=False,
-        sessions_held=10, **_COMMON,
+        wall_seen_prior_close=True, sessions_held=10, **_COMMON,
     )
     assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
     assert out.new_price is None
@@ -1100,3 +1104,271 @@ def test_a_serial_bar_read_is_recorded_not_merely_logged():
         _SweepReview(), positions, run_id="r2", seat="position_reviewer")
     assert again[0].get("unchanged_since_last_session") is not True
     assert len(p.db.recorded) == before + 1
+
+
+# ---------------------------------------------------------------------------
+# item 194 — THE BRAKE. The level-broken trigger has always required the
+# same condition on two consecutive completed daily closes. The reach and
+# wall triggers did not, so a target sitting near either bound flipped
+# session to session. These pin that all three now go through the ONE
+# existing confirmation mechanism, and that it is the same mechanism and
+# not a copy of it.
+# ---------------------------------------------------------------------------
+
+
+def test_a_wall_seen_only_today_is_refused_by_name():
+    """Identical inputs to the wall trigger's own test, minus the prior
+    day's agreement. The target stands, and the refusal says why."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        wall_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_WALL_PENDING_CONFIRMATION
+    assert out.new_price is None
+    assert out.prior_price == pytest.approx(110.0)
+    assert "prior trading day" in out.detail
+
+
+def test_a_reach_breach_seen_only_today_is_refused_by_name():
+    """A stored target outside today's reach, with no prior day's reading
+    to agree. One session's ATR is not a structural change."""
+    args = dict(_COMMON)
+    out = tr.assess_target_revision(
+        stored_target=200.0, target_level=None, levels=[200.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        reach_seen_prior_close=False, **args,
+    )
+    assert out.code == tr.REVISION_REACH_PENDING_CONFIRMATION
+    assert out.new_price is None
+
+
+def test_the_same_reach_breach_confirmed_is_a_trigger():
+    """The brake is a brake, not a block: the prior day's agreement lets
+    exactly the same reading through."""
+    out = tr.assess_target_revision(
+        stored_target=200.0, target_level=None, levels=[200.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        reach_seen_prior_close=True, **_COMMON,
+    )
+    assert out.trigger == tr.TRIGGER_TARGET_BEYOND_REACH
+
+
+def test_all_three_brakes_are_the_same_mechanism_not_three():
+    """The load-bearing claim. There is ONE definition of confirmed: the
+    raw state of a completed daily close, persisted under that close's own
+    bar_date, re-read on a strictly later one. No trigger carries a count
+    of closes or a margin of its own."""
+    flags = tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=2.5, close_price=101.0, horizon_sessions=10,
+        levels=[105.0, 110.0], is_short=False,
+    )
+    assert set(flags) == {"raw_broken", "raw_reach", "raw_wall"}
+    assert flags["raw_broken"] is False
+    assert flags["raw_reach"] is False
+    assert flags["raw_wall"] is True
+    src = inspect.getsource(tr)
+    # No second count of closes anywhere in the module.
+    assert "prior_break_streak" not in src
+
+
+def test_an_unmeasurable_input_is_never_half_a_confirmation():
+    """A question that cannot be asked is None, not False — a None is
+    never persisted, so it can neither confirm nor deny tomorrow."""
+    flags = tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=None, close_price=None, horizon_sessions=10,
+        levels=[105.0], is_short=False,
+    )
+    assert flags == {"raw_broken": None, "raw_reach": None, "raw_wall": None}
+
+
+def test_the_brake_adds_no_number():
+    """No new constant may be introduced by a brake. The module's constant
+    set is unchanged from the three bars it already held."""
+    consts = {
+        n for n in dir(tr)
+        if n.isupper() and isinstance(getattr(tr, n), (int, float))
+        and not isinstance(getattr(tr, n), bool)
+    }
+    assert consts == {
+        "MIN_TARGET_ATR_MULTIPLE", "BREAKOUT_PROJECTION_ATR_MULTIPLE",
+        "MAX_REACH_ATR_MULTIPLE", "MAX_HORIZON_SESSIONS",
+        "BREAK_CONFIRMATION_ATR_MULTIPLE",
+    }
+
+
+# ---------------------------------------------------------------------------
+# item 194 — THE VOICING. A revision changes the number the desk quotes the
+# owner. It reached the dashboard and reached Telegram nowhere.
+# ---------------------------------------------------------------------------
+
+
+def test_a_revision_is_voiced_with_its_reason_not_just_a_number():
+    from src import notifier
+    lines = notifier.describe_target_revisions({"target_revisions": [{
+        "symbol": "TEST", "applied": True, "prior_price": 110.0,
+        "new_price": 105.0, "basis": tr.STRUCTURAL_LEVEL_BASIS,
+        "trigger": tr.TRIGGER_WALL_IN_FRONT_OF_TARGET,
+    }]})
+    body = "\n".join(lines)
+    assert "TEST" in body
+    assert "ceiling" in body          # the REASON, in plain words
+    assert "$110.00" in body and "$105.00" in body
+    assert "down" in body
+    assert "not a sell order" in body
+
+
+def test_every_trigger_the_module_can_emit_has_owner_words():
+    """A revision the owner cannot read a reason for is the defect this
+    fixes, so no trigger may fall through to its raw code."""
+    from src.notifier import _target_revision_reason
+    for code in (
+        tr.TRIGGER_LEVEL_BROKEN, tr.TRIGGER_TARGET_BEYOND_REACH,
+        tr.TRIGGER_WALL_IN_FRONT_OF_TARGET, tr.TRIGGER_DERIVATION_CORRECTED,
+    ):
+        words = _target_revision_reason(code)
+        assert words and not words.startswith("trigger ")
+
+
+def test_a_session_with_no_applied_revision_says_nothing():
+    """Refusals are the normal outcome on most held names every session;
+    voicing them all would bury the one that moved."""
+    from src import notifier
+    assert notifier.describe_target_revisions({"target_revisions": [
+        {"symbol": "TEST", "applied": False, "code": tr.REVISION_NO_TRIGGER},
+    ]}) == []
+    assert notifier.describe_target_revisions({}) == []
+
+
+# ---------------------------------------------------------------------------
+# item 194 ROUND 3 — four defects the adversary traced in the brake itself.
+# ---------------------------------------------------------------------------
+
+
+def test_a_missing_level_set_cannot_persist_no_wall_as_a_fact():
+    """DEFECT 1. `levels_still_in_the_way([])` is `[]` and `walls_between`
+    on `[]` is a definite "no wall", so a degraded bar fetch used to write
+    False and erase a genuine True recorded earlier the same day. An
+    absent reading must never produce an action."""
+    for levels in (None, []):
+        flags = tr.raw_trigger_flags(
+            entry_price=100.0, stored_target=110.0, target_level=110.0,
+            atr=2.5, close_price=101.0, horizon_sessions=10,
+            levels=levels, is_short=False,
+        )
+        assert flags["raw_wall"] is None, levels
+    # A real level set still answers the question both ways.
+    assert tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=2.5, close_price=101.0, horizon_sessions=10,
+        levels=[105.0, 110.0], is_short=False,
+    )["raw_wall"] is True
+    assert tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=2.5, close_price=101.0, horizon_sessions=10,
+        levels=[110.0], is_short=False,
+    )["raw_wall"] is False
+
+
+def test_an_unconfirmed_trigger_cannot_suppress_a_confirmed_one():
+    """DEFECT 3. A confirmed wall plus a one-day reach blip used to yield
+    no revision at all, and when it finally fired it fired under the reach
+    trigger — so the owner was handed the reach reason for a change the
+    wall caused."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=101.0,
+        break_seen_prior_close=False,
+        reach_seen_prior_close=False, wall_seen_prior_close=True, **_COMMON,
+    )
+    assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
+    assert out.revised
+    assert out.new_price == pytest.approx(105.0)
+
+
+def test_a_pending_trigger_is_reported_as_pending_not_as_no_trigger():
+    """A hold on a number the desk has stopped believing is not a clean
+    bill of health, and only a chart with no trigger at all may say so."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        wall_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_WALL_PENDING_CONFIRMATION
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_NO_TRIGGER
+
+
+def test_the_confirmation_is_keyed_on_the_close_not_on_the_last_row(tmp_path):
+    """DEFECT 2. Several intraday cycles can re-read one close; whichever
+    ran last used to decide the flag. The reading is now the earliest row
+    recorded for the latest prior bar date, and a row that does not answer
+    the question is skipped rather than read as False."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    # Two cycles re-read the SAME prior close and disagree. The first
+    # reading of that close wins, whichever ran last.
+    db.save_target_level_break(
+        run_id="r1", symbol="TEST", bar_date="2026-09-29",
+        raw_broken=True, raw_wall=True,
+    )
+    db.save_target_level_break(
+        run_id="r2", symbol="TEST", bar_date="2026-09-29",
+        raw_broken=False, raw_wall=False,
+    )
+    for flag in ("raw_broken", "raw_wall"):
+        got = db.get_prior_target_level_break(
+            ["TEST"], today_bar_date="2026-09-30", flag=flag,
+        )
+        assert got.get("TEST") is True, flag
+    # A degraded later cycle that could not answer the wall question must
+    # not erase the answer already given for that close.
+    db.save_target_level_break(
+        run_id="r3", symbol="TEST", bar_date="2026-09-29",
+        raw_broken=False, raw_wall=None,
+    )
+    assert db.get_prior_target_level_break(
+        ["TEST"], today_bar_date="2026-09-30", flag="raw_wall",
+    ).get("TEST") is True
+    # Today's own close never confirms itself.
+    assert db.get_prior_target_level_break(
+        ["TEST"], today_bar_date="2026-09-29", flag="raw_wall",
+    ) == {}
+
+
+def test_a_session_that_applied_nothing_still_names_a_held_target():
+    """DEFECT 4. The brake makes an all-refused session the common case,
+    and the owner was told nothing at all while positions sat on quoted
+    targets the desk had stopped believing."""
+    from src import notifier
+
+    lines = notifier.describe_target_revisions({"target_revisions": [
+        {"symbol": "TEST", "applied": False, "prior_price": 110.0,
+         "code": tr.REVISION_WALL_PENDING_CONFIRMATION},
+        {"symbol": "OTHR", "applied": False, "code": tr.REVISION_NO_TRIGGER},
+    ]})
+    body = "\n".join(lines)
+    assert "TEST" in body                      # named, not counted
+    assert "$110.00" in body                   # the number he is still quoted
+    assert "second day's close" in body        # why it is being held
+    assert "OTHR" not in body                  # a clean name is not noise
+    assert "1 other position(s) measured" in body
+
+
+def test_every_pending_code_the_module_can_emit_has_owner_words():
+    from src.notifier import _pending_confirmation_reason
+
+    for code in (
+        tr.REVISION_BREAK_PENDING_CONFIRMATION,
+        tr.REVISION_REACH_PENDING_CONFIRMATION,
+        tr.REVISION_WALL_PENDING_CONFIRMATION,
+    ):
+        words = _pending_confirmation_reason(code)
+        assert words and words != code and "close" in words
