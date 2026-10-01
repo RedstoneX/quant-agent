@@ -802,3 +802,123 @@ def test_the_new_trigger_cannot_substitute_a_number_when_it_refuses():
     assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
     assert out.new_price is None
     assert out.code == tr.REVISION_BEHIND_PRICE
+
+
+# ---------------------------------------------------------------------------
+# item 194 — THE WAY IN. The re-derivation used to run only on a symbol a
+# seat had raised a flag for, so a position that quietly grew a wall between
+# its entry and its stored target was never re-measured. These tests pin the
+# unconditional sweep: EVERY open position is adjudicated every session, and
+# a seat flag now only supplies the seat label and the prose evidence.
+# ---------------------------------------------------------------------------
+
+class _SweepPos:
+    def __init__(self, symbol, qty, avg_entry):
+        self.symbol = symbol
+        self.qty = qty
+        self.avg_entry = avg_entry
+
+
+class _SweepDB:
+    def __init__(self):
+        self.recorded = []
+        self.take_profit_writes = []
+
+    def get_symbol_last_buy(self, symbol, action=None):
+        return {"take_profit": 100.0, "expected_horizon_sessions": 20,
+                "setup_type": "range", "timestamp": "2026-09-01T00:00:00"}
+
+    def get_prior_target_level_break(self, symbols, **kwargs):
+        return {}
+
+    def save_target_level_break(self, **kwargs):
+        return None
+
+    def update_open_take_profit(self, symbol, price, action=None):
+        self.take_profit_writes.append((symbol, price))
+        return True
+
+    def record_target_revision(self, **kwargs):
+        self.recorded.append(kwargs)
+        return len(self.recorded)
+
+
+class _SweepMarket:
+    def get_ohlcv(self, symbol, lookback_days):
+        # A dead feed. The point of these tests is the WAY IN, not the
+        # derivation arithmetic, which `assess_target_revision`'s own tests
+        # above already pin; an unreadable chart must still produce a
+        # durable, named outcome rather than a blank.
+        return []
+
+
+class _SweepBroker:
+    def trading_sessions_held(self, start, end):
+        return 10
+
+
+def _sweep_pipeline():
+    from src.pipeline import TradingPipeline
+    import types
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = _SweepDB()
+    p.market = _SweepMarket()
+    p.broker = _SweepBroker()
+    p.config = types.SimpleNamespace(
+        trading=types.SimpleNamespace(lookback_days=400))
+    p.risk_engine = None
+    return p
+
+
+class _SweepReview:
+    def __init__(self, flags=()):
+        self.target_revision_flags = list(flags)
+
+
+def test_every_open_position_is_adjudicated_with_no_seat_flag():
+    """The residue of item 194: no flag, two open positions, two durable
+    outcomes — both attributed to the unconditional sweep, not to a seat."""
+    p = _sweep_pipeline()
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0)]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert [o["symbol"] for o in out] == ["AAA", "BBB"]
+    assert {o["seat"] for o in out} == {tr.SEAT_STRUCTURAL_SWEEP}
+    # Every outcome is persisted: the sweep can never produce a blank.
+    assert len(p.db.recorded) == 2
+    assert all(o["code"] for o in out)
+
+
+def test_seat_flag_is_not_duplicated_by_the_sweep():
+    """A symbol a seat did raise keeps the seat's label and its evidence,
+    and is adjudicated exactly once."""
+    p = _sweep_pipeline()
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0)]
+    flag = TargetRevisionFlag(symbol="aaa", evidence="the seat's words")
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview([flag]), positions, run_id="r1", seat="position_reviewer")
+    by_sym = {o["symbol"]: o for o in out}
+    assert sorted(by_sym) == ["AAA", "BBB"]
+    assert by_sym["AAA"]["seat"] == "position_reviewer"
+    assert by_sym["AAA"]["evidence"] == "the seat's words"
+    assert by_sym["BBB"]["seat"] == tr.SEAT_STRUCTURAL_SWEEP
+
+
+def test_flag_on_an_unheld_symbol_still_files_not_held():
+    """Widening the way in must not lose the existing finding that a seat
+    flagged something the broker does not show as held."""
+    p = _sweep_pipeline()
+    flag = TargetRevisionFlag(symbol="ZZZ", evidence="not in the book")
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview([flag]), [], run_id="r1", seat="position_reviewer")
+    assert len(out) == 1
+    assert out[0]["code"] == "REFUSAL_NOT_HELD"
+    assert out[0]["seat"] == "position_reviewer"
+
+
+def test_no_open_positions_and_no_flags_is_still_a_no_op():
+    p = _sweep_pipeline()
+    assert p._adjudicate_target_revision_flags(
+        _SweepReview(), [], run_id="r1", seat="position_reviewer") == []
+    assert p.db.recorded == []

@@ -249,14 +249,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 190)
 
-**194. A wall that forms after entry now re-derives the target, but only when a seat flags the symbol — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 194").**
-
-DONE WHEN:
-  - [ ] either the scheduled check's `TARGET_AIMS_PAST_A_STANDING_WALL` finding feeds the same `assess_target_revision` adjudication a seat flag does, or it is recorded why a seat flag must stay the only way in
-  - [ ] AAPL and NOK are each either re-derived or recorded, by name, as findings the desk has decided not to correct
-
-detail: docs/BOARD_NOTES.md (item 194)
-
 **193. The scale-in cancel-to-rearm window leaves the WHOLE held position unprotected, and it is now measured — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 193").**
 
 DONE WHEN:
@@ -362,6 +354,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 19
 - retired queue: 99
 - retired queue: 157
+- retired queue: 194
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

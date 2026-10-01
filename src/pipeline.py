@@ -10247,7 +10247,16 @@ class TradingPipeline:
     def _adjudicate_target_revision_flags(
         self, review, positions, *, run_id: str, seat: str,
     ) -> list[dict]:
-        """Adjudicate this review's take-profit revision flags.
+        """Re-measure every open position's take-profit, every session.
+
+        THE WAY IN IS THE OPEN BOOK, NOT A FLAG (item 194, 2026-10-01).
+        Every held position is adjudicated on every run. A seat raising
+        `src.models.TargetRevisionFlag` no longer decides WHETHER a symbol
+        is measured, only the seat label and prose evidence recorded
+        against it; a flag for a symbol the broker does not show as held is
+        still filed as its own finding. Widening the way in added no
+        number: the flag carries symbol and evidence and no price, so it
+        never fed the arithmetic, and the derivation itself is unchanged.
 
         A seat raises `src.models.TargetRevisionFlag` — SYMBOL AND EVIDENCE,
         no price; the schema has no price field. This method supplies
@@ -10282,14 +10291,48 @@ class TradingPipeline:
             MIN_TARGET_ATR_MULTIPLE,
         )
         from src.risk.target_revision import (
+            SEAT_STRUCTURAL_SWEEP,
+            SWEEP_EVIDENCE,
             assess_target_revision,
             level_backing_target,
             target_level_broken,
         )
         from src.trading_calendar import et_today
 
-        flags = list(getattr(review, "target_revision_flags", None) or [])
-        if not flags:
+        # Direction comes from BROKER TRUTH (the sign of the held qty), never
+        # from the flag — the seat names a symbol, not a side.
+        held: dict[str, object] = {}
+        for p in positions or []:
+            _sym = str(getattr(p, "symbol", "") or "").strip().upper()
+            if _sym:
+                held[_sym] = p
+
+        # THE WAY IN (item 194). Every OPEN POSITION is adjudicated every
+        # session, not only the symbols a seat happened to raise. A seat
+        # flag carries symbol and evidence and no price, so it contributes
+        # nothing to the arithmetic below and widening the way in
+        # introduces NO new number: the sweep makes the identical call with
+        # the identical ratified bars. What the flag-only gate produced was
+        # not safety but arbitrary coverage — a position that quietly grew
+        # a wall between its entry and its stored target kept quoting a
+        # target aimed past that wall for as long as nobody mentioned the
+        # ticker, and the stored target decides which trailing-stop regime
+        # a range trade is in (`src/risk/trailing.py`), so the stale number
+        # was already governing a live stop.
+        work: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for flag in list(getattr(review, "target_revision_flags", None) or []):
+            sym = str(getattr(flag, "symbol", "") or "").strip().upper()
+            if not sym or sym in seen:
+                continue
+            seen.add(sym)
+            work.append((sym, seat, str(getattr(flag, "evidence", "") or "")))
+        for sym in sorted(held):
+            if sym in seen:
+                continue
+            seen.add(sym)
+            work.append((sym, SEAT_STRUCTURAL_SWEEP, SWEEP_EVIDENCE))
+        if not work:
             return []
 
         risk_cfg = getattr(getattr(self, "risk_engine", None), "config", None)
@@ -10305,27 +10348,15 @@ class TradingPipeline:
                 risk_cfg, "max_target_horizon_sessions", MAX_HORIZON_SESSIONS),
         }
 
-        # Direction comes from BROKER TRUTH (the sign of the held qty), never
-        # from the flag — the seat names a symbol, not a side.
-        held: dict[str, object] = {}
-        for p in positions or []:
-            held[str(getattr(p, "symbol", "")).upper()] = p
-
         outcomes: list[dict] = []
-        seen: set[str] = set()
-        for flag in flags:
-            sym = str(getattr(flag, "symbol", "") or "").strip().upper()
-            evidence = str(getattr(flag, "evidence", "") or "")
-            if not sym or sym in seen:
-                continue
-            seen.add(sym)
+        for sym, flag_seat, evidence in work:
             position = held.get(sym)
             if position is None:
                 # The seat flagged something not held. Filed, not silently
                 # dropped, because a flag on a symbol that is not in the
                 # book is itself a finding about the seat's view of the book.
                 outcomes.append(self._file_target_revision(
-                    run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
+                    run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
                     code="REFUSAL_NOT_HELD", applied=False,
                     detail=(
                         "the seat flagged a take-profit revision for a symbol "
@@ -10511,7 +10542,7 @@ class TradingPipeline:
                 # as its own outcome so the record can never claim a revision
                 # the trade row does not carry.
                 outcomes.append(self._file_target_revision(
-                    run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
+                    run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
                     code="FAULT_REVISION_WRITE_FAILED", applied=False,
                     trigger=outcome.trigger, prior_price=outcome.prior_price,
                     detail=(
@@ -10523,7 +10554,7 @@ class TradingPipeline:
                 continue
 
             outcomes.append(self._file_target_revision(
-                run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
+                run_id=run_id, symbol=sym, seat=flag_seat, evidence=evidence,
                 code=outcome.code, applied=applied, trigger=outcome.trigger,
                 prior_price=outcome.prior_price, new_price=outcome.new_price,
                 basis=outcome.basis, level_used=outcome.level_used,
@@ -16699,6 +16730,9 @@ class TradingPipeline:
             # exits anything, and the trailing stop remains the only
             # automatic exit (PR #321).
             try:
+                # Runs over the WHOLE open book, not only the symbols a
+                # seat flagged (item 194); `seat` here is only the label
+                # worn by the outcomes that a seat did raise.
                 target_revisions = self._adjudicate_target_revision_flags(
                     review, review_positions, run_id=run_id,
                     seat="position_reviewer",

@@ -585,7 +585,7 @@ Right now nobody owns that job. It is only described inside another item's write
 
 **No owner decision needed here** — this is an engineering bookkeeping fix (remove dead, switched-off code) rather than a money or risk-appetite question.
 
-## item 194
+## item 194 — RETIRED 2026-10-01, the flag-only way in is gone: every open position is adjudicated by the same deterministic re-derivation every session
 
 **Filed 2026-09-30.** When the desk buys something it works out, from the chart, the nearest price level the stock has to get through on the way up, and that becomes the profit target it quotes you. The number is then frozen for the life of the position.
 
@@ -594,6 +594,14 @@ Until now the desk only revisited that number when the level it was measured aga
 What is left open is the **way in**. The recalculation only runs on a stock one of the desk's analysts has specifically raised a hand about. A stock that quietly grows a wall while nobody mentions it gets reported every morning and never recalculated. Two positions are in exactly that state right now: Apple and Nokia. Whether the morning report should be allowed to trigger the recalculation by itself is the open question — it would mean an automatic change to a live position's record, which is not something to switch on without a decision.
 
 **No owner decision needed on the fix itself** — it is the same measurement the desk already does, run in one more circumstance. The open question above may need one, because it changes live position records without a human in the loop.
+
+**RESOLVED 2026-10-01.** The way in is no longer the flag. `_adjudicate_target_revision_flags` now builds its work list from the OPEN BOOK: every held position is adjudicated every session, and a seat flag only supplies the seat label and the prose evidence for the symbols it did raise. Both Apple and Nokia are open positions, so both are in the swept population from the next session on, each producing either a re-derivation or a named, recorded refusal; the row appears when that session runs, not at merge.
+
+**Why this did not need the owner's decision, and why it introduced no number.** The flag was argued above to be the human in the loop. It is not: the seat is a model, and `src.models.TargetRevisionFlag` has exactly two fields, a symbol and a prose evidence string, with no price. Every number the adjudication uses is either recomputed from bars that session or read off the already-ratified `risk_engine.config` bars, so the flag supplies no input to the arithmetic and removing it as a gate changes nothing about HOW a target is worked out — only about WHICH positions get the measurement. The algebra was checked explicitly for the trap of a number that looks per-name but cancels to a constant: no term was added, removed or rearranged in the derivation at all, so there is nothing new to source and no new ledger row. What the gate actually produced was arbitrary coverage, and the cost of that coverage is live: the stored target decides which trailing-stop regime a range trade is in (`src/risk/trailing.py` — below the target the breakeven and +2R ratchets hold the stop, above it the structural trail takes over), so a target left aiming past a wall nobody mentioned was already governing a live stop.
+
+**MEASURED 2026-10-01, production DB read-only** (`/home/qamc/quant-agent/data/quant_agent.db`): the book holds 11 open positions, and across the entire record only 3 distinct symbols have ever carried a `target_revision` outcome row. That is the size of the gap the flag-only gate left — the sweep takes the session's coverage from whatever a seat happened to say to all 11.
+
+**What this deliberately does NOT do.** It does not make the target a sell rule. The re-derived number still reaches no broker and sells nothing; the alignment exit remains the only way a position is closed on a thesis, and the owner's 2026-09-30 ruling that the desk exits on alignment and never on a target is untouched. It also does not touch the accept-or-decline side, which is a separate change in flight.
 
 ## item 177
 
