@@ -1058,6 +1058,22 @@ numbers:
       ships disabled today (`universe_screen.enabled: false`), which
       bounds the live cost to sizing alone; it does not bound the cost if
       the screen is ever switched on.
+      ITEM 199 OUTCOME 2026-09-30: the chart cannot replace this number, and
+      the population it governs is stated here rather than assumed. Measured
+      over 867 production technical-seat candidates carrying entry price,
+      ATR14 and computed levels: 97.2% have a computed level at or below entry
+      at any touch count, but the NEAREST such level sits closer to entry than
+      this flat floor for 71.8% of them (gap distribution in ATRs: p10 0.15,
+      p50 1.41, p75 2.65, p90 5.14, max 10.1). A structural level used as a
+      WIDENING anchor therefore changes nothing for roughly seven candidates
+      in ten, and on the 28.2% where it does bind it runs out to 10.1 ATRs,
+      which is a four-fold position-size cut. Capping that widening at this
+      multiple makes the rule arithmetically inert; any other cap is a new
+      invented money number. So this value governs the WHOLE unbacked-stop
+      population, not a residue, and its status stays arbitrary. The only
+      thing that can change that is an owner-appetite dial: the maximum stop
+      widening, in ATRs, the desk will accept in order to sit behind real
+      structure. It is deliberately not picked here.
   - id: src.config.RiskConfig.min_target_atr_multiple
     value: 1
     status: sourced
@@ -1189,6 +1205,25 @@ numbers:
     cost_while_unanswered: >-
       Independent purchases are read as a cluster, or a real cluster is missed
       - and cluster presence feeds nomination.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.congress_assumed_max_disclosure_lag_days
     value: 45
     status: instrument
@@ -1219,6 +1254,25 @@ numbers:
       information, given disclosure lag?
     cost_while_unanswered: >-
       Stale rows are read as signal, or fresh ones are discarded.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.congress_max_trades_per_source
     value: 10000
     status: not-trade-governing
@@ -1263,6 +1317,25 @@ numbers:
     cost_while_unanswered: >-
       Programmatic selling is read as a signal, or a real discretionary
       pattern is discarded as routine.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.insider_cadence_max_mean_gap_days
     value: 120
     status: arbitrary
@@ -1279,6 +1352,25 @@ numbers:
       than opportunism?
     cost_while_unanswered: >-
       As above.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.insider_cadence_min_mean_gap_days
     value: 20
     status: arbitrary
@@ -1295,6 +1387,25 @@ numbers:
       rather than a cadence?
     cost_while_unanswered: >-
       As above.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.insider_calendar_routine_years
     value: 3
     status: arbitrary
@@ -1312,6 +1423,25 @@ numbers:
     cost_while_unanswered: >-
       A routine annual grant is read as conviction, or a genuine repeat buyer
       is filtered out.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.insider_history_retention_days
     value: 1830
     status: not-trade-governing
@@ -1338,6 +1468,25 @@ numbers:
       statistically meaningful at all?
     cost_while_unanswered: >-
       A cadence is asserted from too few observations to support it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.lookback_days
     value: 365
     status: arbitrary
@@ -1354,6 +1503,25 @@ numbers:
     cost_while_unanswered: >-
       The screen reads a year of filings because a year is round, not because
       the edge lasts a year.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.max_external_candidates
     value: 3
     status: arbitrary
@@ -1363,11 +1531,41 @@ numbers:
       2026-09-14 verification as affordability caps, not measurements. They
       bound what the desk can ever consider, so a name outside them is never
       looked at.
+
+      DERIVATION ATTEMPT 1 (2026-10-01, FAILED to settle): derive this cap
+      from the per-run time and cost budget it serves. Failed -- that budget
+      is itself unledgered; no row in this file names a per-run wall-clock or
+      token budget, so the cap would hang off an unsourced number. DERIVATION
+      ATTEMPT 2 (2026-10-01, FAILED to settle): derive it from the demand
+      actually seen. Failed -- the scan computes whether the cap bound and
+      whether the deadline cut it (`discovery_cap_reached`,
+      `watched_drain_deadline_hit`) and the pipeline writes those booleans to
+      a log line, but nothing persists the demand behind them; a boolean
+      saying the cap bound cannot distinguish a true demand of 1000 from one
+      of 2000. Stopped at two attempts: the recording below is what would
+      settle it.
     open_question: >-
       How many externally-sourced candidates can the pipeline resolve per run
       within budget?
     cost_while_unanswered: >-
       A candidate is dropped unseen once the cap binds.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        per refresh, the pre-cap DEMAND rather than the boolean that exists
+        today: how many filings the discovery scan would have returned had the
+        cap not bound, how long the scan would have run had the deadline not
+        cut it, and how many external candidates cleared the admission screen
+        before the nomination cap truncated them.
+      closes_when: >-
+        enough refreshes accumulate to show the distribution of demand against
+        each cap, so the cap is set where it stops discarding evidence the
+        desk would otherwise have used -- or is shown never to bind, which
+        retires the cap rather than re-deriving it.
   - id: src.config.SmartMoneyConfig.max_filings_per_refresh
     value: 1000
     status: arbitrary
@@ -1454,6 +1652,19 @@ numbers:
       market-wide inflow is 38.5 s of the 180 s budget, so 1,000 is
       reachable and the deadline is not the binding constraint. The value
       is still an underived round 1,000 and the status stays `arbitrary`.
+
+      DERIVATION ATTEMPT 1 (2026-10-01, FAILED to settle): derive this cap
+      from the per-run time and cost budget it serves. Failed -- that budget
+      is itself unledgered; no row in this file names a per-run wall-clock or
+      token budget, so the cap would hang off an unsourced number. DERIVATION
+      ATTEMPT 2 (2026-10-01, FAILED to settle): derive it from the demand
+      actually seen. Failed -- the scan computes whether the cap bound and
+      whether the deadline cut it (`discovery_cap_reached`,
+      `watched_drain_deadline_hit`) and the pipeline writes those booleans to
+      a log line, but nothing persists the demand behind them; a boolean
+      saying the cap bound cannot distinguish a true demand of 1000 from one
+      of 2000. Stopped at two attempts: the recording below is what would
+      settle it.
     open_question: >-
       How many DISTINCT Form 4 accessions are filed on a busy day, and what
       cap does that imply for market-wide reading -- read off
@@ -1464,6 +1675,23 @@ numbers:
       Since 2026-09-18 this no longer starves the desk's own names or
       refuses decisions: the watched drain covers those separately. Set too
       high, the refresh exceeds its deadline and reads less, not more.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        per refresh, the pre-cap DEMAND rather than the boolean that exists
+        today: how many filings the discovery scan would have returned had the
+        cap not bound, how long the scan would have run had the deadline not
+        cut it, and how many external candidates cleared the admission screen
+        before the nomination cap truncated them.
+      closes_when: >-
+        enough refreshes accumulate to show the distribution of demand against
+        each cap, so the cap is set where it stops discarding evidence the
+        desk would otherwise have used -- or is shown never to bind, which
+        retires the cap rather than re-deriving it.
   - id: src.config.SmartMoneyConfig.max_observations
     value: 40
     status: arbitrary
@@ -1480,6 +1708,25 @@ numbers:
       changing its read?
     cost_while_unanswered: >-
       Either evidence is truncated away or the prompt is padded at cost.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.min_cluster_owners
     value: 2
     status: arbitrary
@@ -1497,6 +1744,25 @@ numbers:
       coincidence?
     cost_while_unanswered: >-
       Two independent buyers are read as agreement.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every insider and congressional purchase the desk ingests, with its
+        transaction and filing dates, the filer's role, the gaps to that
+        filer's own prior purchases, the other filers buying the same name in
+        the same span, and the price path of the name afterwards -- read off
+        the filings record and market prices, never off this desk's own fills.
+      closes_when: >-
+        that record is long enough to show how post-filing price behaviour
+        varies with each window -- the span that makes a cluster, the length
+        of the lookback, the cadence gaps that mark a buy routine, and the age
+        of a calendar pattern -- so each window is read off where behaviour
+        actually changes rather than set to a round number; a window across
+        which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.min_external_avg_dollar_volume_usd
     value: 10000000
     status: arbitrary
@@ -1515,6 +1781,24 @@ numbers:
     cost_while_unanswered: >-
       A liquidity floor set by round number rather than by this account's own
       order sizes.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        for every external candidate this screen admits or rejects: its quoted
+        spread, tick size, average dollar volume, length of available price
+        history, the reject reason where it was rejected, and the stop
+        distance this desk's own rules would have placed on it, so tradability
+        is recorded rather than presumed.
+      closes_when: >-
+        the record shows the price, liquidity and history levels at which stop
+        placement stops being reliable for the order sizes this account
+        actually places, so each floor is read off tradability instead of
+        chosen; a floor that rejects nothing untradable is removed rather than
+        re-derived.
   - id: src.config.SmartMoneyConfig.min_external_history_days
     value: 20
     status: arbitrary
@@ -1533,6 +1817,24 @@ numbers:
     cost_while_unanswered: >-
       A young listing is either analysed blind or excluded when it had enough
       history.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        for every external candidate this screen admits or rejects: its quoted
+        spread, tick size, average dollar volume, length of available price
+        history, the reject reason where it was rejected, and the stop
+        distance this desk's own rules would have placed on it, so tradability
+        is recorded rather than presumed.
+      closes_when: >-
+        the record shows the price, liquidity and history levels at which stop
+        placement stops being reliable for the order sizes this account
+        actually places, so each floor is read off tradability instead of
+        chosen; a floor that rejects nothing untradable is removed rather than
+        re-derived.
   - id: src.config.SmartMoneyConfig.min_external_price_usd
     value: 5
     status: arbitrary
@@ -1551,6 +1853,24 @@ numbers:
     cost_while_unanswered: >-
       A price floor standing in for a spread-and-tick constraint nobody
       measured.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        for every external candidate this screen admits or rejects: its quoted
+        spread, tick size, average dollar volume, length of available price
+        history, the reject reason where it was rejected, and the stop
+        distance this desk's own rules would have placed on it, so tradability
+        is recorded rather than presumed.
+      closes_when: >-
+        the record shows the price, liquidity and history levels at which stop
+        placement stops being reliable for the order sizes this account
+        actually places, so each floor is read off tradability instead of
+        chosen; a floor that rejects nothing untradable is removed rather than
+        re-derived.
   - id: src.config.SmartMoneyConfig.refresh_deadline_s
     value: 180
     status: arbitrary
@@ -1580,6 +1900,19 @@ numbers:
       probe's per-issuer index reads (82 GETs, 11.0 s measured 2026-09-19).
       The open question below is therefore narrower than written: the
       drain half of it is answered by that entry.
+
+      DERIVATION ATTEMPT 1 (2026-10-01, FAILED to settle): derive this cap
+      from the per-run time and cost budget it serves. Failed -- that budget
+      is itself unledgered; no row in this file names a per-run wall-clock or
+      token budget, so the cap would hang off an unsourced number. DERIVATION
+      ATTEMPT 2 (2026-10-01, FAILED to settle): derive it from the demand
+      actually seen. Failed -- the scan computes whether the cap bound and
+      whether the deadline cut it (`discovery_cap_reached`,
+      `watched_drain_deadline_hit`) and the pipeline writes those booleans to
+      a log line, but nothing persists the demand behind them; a boolean
+      saying the cap bound cannot distinguish a true demand of 1000 from one
+      of 2000. Stopped at two attempts: the recording below is what would
+      settle it.
     open_question: >-
       What is the right network budget for one pre-market refresh plus a
       watched-name drain -- read off the measured time to read the desk's
@@ -1591,6 +1924,23 @@ numbers:
       not advance, and the pre-open check reports that the desk will refuse
       to decide all day. Set too high, a stuck SEC endpoint delays the
       pre-market path by up to this many seconds per refresh.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        per refresh, the pre-cap DEMAND rather than the boolean that exists
+        today: how many filings the discovery scan would have returned had the
+        cap not bound, how long the scan would have run had the deadline not
+        cut it, and how many external candidates cleared the admission screen
+        before the nomination cap truncated them.
+      closes_when: >-
+        enough refreshes accumulate to show the distribution of demand against
+        each cap, so the cap is set where it stops discarding evidence the
+        desk would otherwise have used -- or is shown never to bind, which
+        retires the cap rather than re-deriving it.
   - id: src.config.SmartMoneyConfig.watched_drain_deadline_s
     value: 859
     status: sourced
@@ -4855,6 +5205,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -4864,6 +5224,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['analyses']
     value: 40
     status: arbitrary
@@ -4875,6 +5253,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -4884,6 +5272,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['approved']
     value: 50
     status: arbitrary
@@ -4895,6 +5301,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -4904,6 +5320,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['daily_summary']
     value: 40
     status: arbitrary
@@ -4915,6 +5349,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -4924,6 +5368,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['decisions']
     value: 50
     status: arbitrary
@@ -4935,6 +5397,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -4944,6 +5416,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['findings']
     value: 50
     status: arbitrary
@@ -4955,6 +5445,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -4964,6 +5464,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['investment_implications']
     value: 40
     status: arbitrary
@@ -4975,6 +5493,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -4984,6 +5512,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['macro_narrative']
     value: 40
     status: arbitrary
@@ -4995,6 +5541,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -5004,6 +5560,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['portfolio_view']
     value: 20
     status: arbitrary
@@ -5015,6 +5589,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -5024,6 +5608,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['rating']
     value: 5
     status: arbitrary
@@ -5035,6 +5637,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -5044,6 +5656,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['reasoning_chain']
     value: 20
     status: arbitrary
@@ -5055,6 +5685,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -5064,6 +5704,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['regime']
     value: 40
     status: arbitrary
@@ -5075,6 +5733,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -5084,6 +5752,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['symbol']
     value: 5
     status: arbitrary
@@ -5095,6 +5781,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -5104,6 +5800,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['targets']
     value: 50
     status: arbitrary
@@ -5115,6 +5829,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -5124,6 +5848,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['tomorrow_outlook']
     value: 40
     status: arbitrary
@@ -5135,6 +5877,16 @@ numbers:
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
+
+      SORT-KEY CHECK, 2026-10-01: this table is NOT the sort-key shape the
+      smart-money tranche found. `_shape_score` SUMS the weight of every
+      expected key present in a candidate and compares those sums across
+      candidates, and a top-level list scores the SUM of its elements, so the
+      spacing is load-bearing and does not cancel -- the 2026-08-17/20
+      collapse was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Only a
+      measurement of real contests can settle the spacing; an order-preserving
+      relabelling would NOT be safe here.
     open_question: >-
       Replayed over the recorded seat replies (tests/fixtures/pm_response_*
       and the stored raw outputs), does any reply's chosen fragment change if
@@ -5144,6 +5896,24 @@ numbers:
       A seat reply containing a stray fragment can be parsed as the wrong
       object, which has already emptied a morning's trades once; a new seat
       key missing from this table repeats it.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md `## item 90` -- the 2026-10-01 tranche-three
+        routing pass, which specifies each recording field by name
+      records: >-
+        every seat reply that produced more than one JSON candidate: the key
+        set of each competing candidate, the shape score each one scored,
+        which candidate was taken and by which parse route, so every contest
+        this table has decided is readable instead of assumed.
+      closes_when: >-
+        the recorded contests show which key sets actually compete in
+        production, so each weight is set from the key sets that must
+        out-score each other -- including the container-sum collision that
+        ended 10 of 13 decision runs on 2026-08-17/20 -- rather than chosen; a
+        key that never appears in any contest is deleted rather than
+        re-derived.
   - id: src.agents.base.AgentResult.provider_requests
     value: 1
     status: not-trade-governing
