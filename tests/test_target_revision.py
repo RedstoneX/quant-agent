@@ -845,6 +845,11 @@ class _SweepDB:
 
 
 class _SweepMarket:
+    def get_ohlcv_batch(self, symbols, lookback_days):
+        # Batches fine, carries nothing — the normal, non-degraded shape
+        # for these tests, so the serial-fallback record stays off.
+        return {}
+
     def get_ohlcv(self, symbol, lookback_days):
         # A dead feed. The point of these tests is the WAY IN, not the
         # derivation arithmetic, which `assess_target_revision`'s own tests
@@ -1042,3 +1047,56 @@ def test_an_unchanged_refusal_is_not_refiled_every_session():
     assert second[0]["code"] == code
     assert second[0].get("unchanged_since_last_session") is True
     assert len(p.db.recorded) == before, "the identical refusal was re-filed"
+
+
+# --- round 3 faults 4 and 5 ------------------------------------------------
+
+def test_a_failure_to_file_the_fault_row_still_does_not_truncate_the_book():
+    """The per-name guard was right, but the call that files the
+    not-measured row sat INSIDE the except block unguarded, so a failure
+    there unwound the remaining names after all — the same sorted-tail
+    truncation, one layer deeper."""
+    p = _sweep_pipeline()
+    real_file = p._file_target_revision
+
+    def _file(*, code, **kw):
+        if code == "FAULT_POSITION_NOT_MEASURED":
+            raise RuntimeError("synthetic filing failure")
+        return real_file(code=code, **kw)
+
+    p._file_target_revision = _file
+    positions = [_SweepPos("AAA", 10, 90.0),
+                 _SweepPos("BBB", "not-a-number", 40.0),
+                 _SweepPos("CCC", 7, 20.0)]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert [o["symbol"] for o in out] == ["AAA", "CCC"], (
+        "the tail of the book was truncated by the fault-filing failure"
+    )
+
+
+class _NoBatchMarket(_SweepMarket):
+    def get_ohlcv_batch(self, symbols, lookback_days):
+        raise RuntimeError("provider cannot batch today")
+
+
+def test_a_serial_bar_read_is_recorded_not_merely_logged():
+    """The batch fallback degraded to exactly the old serial path with only
+    a log line; somebody measuring a slow session later could not tell why.
+    A degraded session is also never deduped away."""
+    p = _sweep_pipeline()
+    p.market = _NoBatchMarket()
+    positions = [_SweepPos("AAA", 10, 90.0)]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert "one name at a time" in out[0]["detail"]
+    assert p.db.recorded and "one name at a time" in p.db.recorded[0]["detail"]
+    # Same outcome next session, but still written, because the session was
+    # degraded and that is the fact being preserved.
+    code = out[0]["code"]
+    p.db.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
+    before = len(p.db.recorded)
+    again = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r2", seat="position_reviewer")
+    assert again[0].get("unchanged_since_last_session") is not True
+    assert len(p.db.recorded) == before + 1

@@ -10272,8 +10272,11 @@ class TradingPipeline:
         `metric_deltas` built before this point, so a revision cannot reach
         them even in principle. That is the second of two independent
         defences; the first is that progress/pace are measured against the
-        PINNED `initial_take_profit` (see `_build_position_facts`), so a
-        revision cannot move a guarded metric at all.
+        entry `initial_take_profit` (see `_build_position_facts`), so a
+        revision cannot move a guarded metric at all. It can still reach
+        a LATER session's reviewing model as prose, through
+        `distance_to_target_pct`; what no deterministic gate does is read
+        it.
 
         EVERY flag produces a durable row — a re-derivation, a named refusal,
         or a named data fault. Never a silent no-op and never a blank.
@@ -10346,12 +10349,14 @@ class TradingPipeline:
         # invented constant, and batching removes the serial exposure that
         # motivated one.
         batched_bars: dict[str, list] = {}
+        serial_bar_read = False
         try:
             batched_bars = dict(self.market.get_ohlcv_batch(
                 [sym for sym, _, _ in work],
                 self.config.trading.lookback_days,
             ) or {})
         except Exception as exc:  # noqa: BLE001
+            serial_bar_read = True
             logger.warning(
                 "target revision: batched bar read failed (%s) — falling "
                 "back to a per-name fetch", exc,
@@ -10387,6 +10392,14 @@ class TradingPipeline:
             "max_horizon_sessions": getattr(
                 risk_cfg, "max_target_horizon_sessions", MAX_HORIZON_SESSIONS),
         }
+
+        # FAULT 5 (item 194): the batch fallback must not degrade
+        # silently. When the batched read failed, every outcome this
+        # session carries the fact in its durable detail text.
+        _serial_note = (
+            " [the batched bar read was unavailable this session, so this "
+            "position's bars were fetched one name at a time]"
+        ) if serial_bar_read else ""
 
         outcomes: list[dict] = []
         for sym, flag_seat, evidence in work:
@@ -10609,23 +10622,38 @@ class TradingPipeline:
                     code=outcome.code, applied=applied, trigger=outcome.trigger,
                     prior_price=outcome.prior_price, new_price=outcome.new_price,
                     basis=outcome.basis, level_used=outcome.level_used,
-                    detail=outcome.detail, prior_code=prior_codes.get(sym),
+                    detail=(
+                        outcome.detail + _serial_note
+                    ) if _serial_note else outcome.detail,
+                    # A degraded session is never deduped away: the whole
+                    # point of recording it is that somebody measuring a
+                    # slow session later can see WHY it was slow.
+                    prior_code=None if serial_bar_read else prior_codes.get(sym),
                 ))
             except Exception as exc:  # noqa: BLE001
                 logger.error(
                     "target revision: %s could not be adjudicated (%s) — "
                     "filed as unmeasured; the stored target stands", sym, exc,
                 )
-                outcomes.append(self._file_target_revision(
-                    run_id=run_id, symbol=sym, seat=flag_seat,
-                    evidence=evidence, code="FAULT_POSITION_NOT_MEASURED",
-                    applied=False,
-                    detail=(
-                        "this position could not be adjudicated this "
-                        "session, so its stored target is unverified rather "
-                        "than confirmed"
-                    ),
-                ))
+                try:
+                    outcomes.append(self._file_target_revision(
+                        run_id=run_id, symbol=sym, seat=flag_seat,
+                        evidence=evidence, code="FAULT_POSITION_NOT_MEASURED",
+                        applied=False,
+                        detail=(
+                            "this position could not be adjudicated this "
+                            "session, so its stored target is unverified "
+                            "rather than confirmed" + _serial_note
+                        ),
+                    ))
+                except Exception as exc2:  # noqa: BLE001
+                    # The filing itself sat unguarded inside this handler,
+                    # so a failure HERE unwound the remaining names after
+                    # all — the sorted-tail truncation, one layer deeper.
+                    logger.error(
+                        "target revision: could not even file %s as "
+                        "unmeasured (%s); the sweep continues", sym, exc2,
+                    )
         return outcomes
 
     def _file_target_revision(
@@ -11646,21 +11674,36 @@ class TradingPipeline:
                 entry=position.avg_entry,
                 current_price=position.current_price,
                 current_stop=current_stop,
-                # THE PINNED ENTRY TARGET, never the live `take_profit`
-                # (item 194, 2026-10-01). The comment above says every
-                # field read off `buy` is pinned at entry; `take_profit`
-                # stopped being so the moment `update_open_take_profit`
-                # existed. That mattered once the re-derivation swept the
-                # whole book: a target revised DOWN crosses a range trade
-                # from the below-target breakeven/+2R ratchets into the
-                # structural trail, the trail only ever ratchets toward
-                # price, and so restoring the target on the next session
-                # does NOT give the stop back. The tightening accumulated
-                # instead of cancelling. Reading the frozen column makes
-                # the regime boundary a property of the trade, so a
-                # revision can no longer ratchet a stop the desk would not
-                # otherwise have moved. Falls back to `take_profit` only
-                # for rows predating the `initial_take_profit` migration.
+                # THE ENTRY TARGET, never the live `take_profit` (item
+                # 194, 2026-10-01). The comment above says every field read
+                # off `buy` is pinned at entry; `take_profit` stopped being
+                # so the moment `update_open_take_profit` existed. That
+                # mattered once the re-derivation swept the whole book: a
+                # target revised DOWN crosses a range trade from the
+                # below-target breakeven/+2R ratchets into the structural
+                # trail, the trail only ever ratchets toward price, and so
+                # restoring the target on the next session does NOT give
+                # the stop back — the tightening accumulated instead of
+                # cancelling.
+                #
+                # THIS MOVES PROTECTION IN BOTH DIRECTIONS AND BOTH ARE
+                # INTENDED. It removes a ratchet that could never be given
+                # back; it also LOOSENS the boundary case, because where a
+                # revised target sits below the entry target, a fall to
+                # just under the old boundary used to hand the stop to the
+                # structural trail and now leaves it in the earlier
+                # ratchets. Less tightening there is a real loosening of
+                # future protection, accepted because the ratchet it
+                # replaces was irreversible and this one is not.
+                #
+                # "PINNED" IS THE INTENT OF THE COLUMN, NOT A VERIFIED
+                # PROPERTY OF EVERY ROW: the `initial_take_profit`
+                # migration backfilled it FROM `take_profit` for every
+                # legacy row carrying a target, so a row revised before
+                # that migration ran was backfilled with an already-revised
+                # number. Whether any such row exists is UNVERIFIED. The
+                # null fallback below is safe either way — it only applies
+                # to rows the migration left empty.
                 reference_target=(
                     (buy or {}).get("initial_take_profit")
                     or (buy or {}).get("take_profit")
@@ -16820,10 +16863,19 @@ class TradingPipeline:
             # exit decision this session makes. A re-derived target
             # therefore cannot reach this session's exits even in
             # principle; and because progress/pace are measured against
-            # the PINNED entry target, it cannot reach a later session's
+            # the entry target, it cannot reach a later session's
             # exit-guard veto either. Places no orders: nothing here
             # exits anything, and the trailing stop remains the only
             # automatic exit (PR #321).
+            #
+            # NOT the same as "it can never contribute to a sale" (item
+            # 194, corrected 2026-10-01). The LIVE target still feeds
+            # `distance_to_target_pct` in the position facts the reviewing
+            # model reads, so a revised target can still influence a sale
+            # through that model's prose on a LATER session. What is true
+            # is narrower and worth stating precisely: no DETERMINISTIC
+            # gate reads it — not the exit guard, not progress or pace,
+            # and since item 194 not the trailing-stop regime either.
             try:
                 # Runs over the WHOLE open book, not only the symbols a
                 # seat flagged (item 194); `seat` here is only the label

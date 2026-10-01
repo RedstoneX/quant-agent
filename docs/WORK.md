@@ -251,6 +251,8 @@ detail: docs/BOARD_NOTES.md (item 190)
 
 **194. The wall re-derivation now sweeps the whole book; two brakes on it are still missing — filed 2026-09-30, UN-RETIRED 2026-10-01. Detail: `docs/BOARD_NOTES.md` ("item 194").**
 
+AT MERGE THIS CHANGES NO STOP [measured 2026-10-01, production DB read-only]: ten of the eleven open positions carry a live target identical to their entry target, and the one that differs — a short range trade, by about 2.2% of price — has price on the same side of both boundaries. The trailing-regime correction moves protection in BOTH directions: it removes a ratchet that could never be given back, and it loosens the boundary case.
+
 DONE WHEN:
   - [x] either the scheduled check's `TARGET_AIMS_PAST_A_STANDING_WALL` finding feeds the same `assess_target_revision` adjudication a seat flag does, or it is recorded why a seat flag must stay the only way in — MET 2026-10-01: every open position is adjudicated every session, the flag now supplies only the seat label
   - [x] AAPL and NOK are each either re-derived or recorded, by name, as findings the desk has decided not to correct — MET 2026-10-01 by the same change: both are open positions, so both are in the swept population and each produces a re-derivation or a named refusal every session
