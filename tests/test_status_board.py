@@ -965,8 +965,7 @@ _RETIRED_PARA = "**Retired item numbers"
 #: below fails if one is kept alive after that, so the list cannot rot.
 _WORK_MD_OVERSIZE_ON_ARRIVAL = {
     "63": 3431, "70": 8294, "75": 3708, "78": 2656, "90": 7548,
-    "177": 5572, "186": 4065, "190": 6372, "201": 5526,
-    "218": 4005,
+    "177": 5572, "186": 4065, "201": 5526, "218": 4005,
 }
 
 #: Items on the board when this check landed that do not resolve to a note
