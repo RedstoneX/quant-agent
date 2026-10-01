@@ -550,6 +550,31 @@ def agreement_refuses_trade(score: int) -> bool:
 OWN_BAR_REASON_PREFIX = "R7 conviction bar"
 
 
+def queued_earnings_block_reason(symbol: str) -> str:
+    """The one refusal string for a BUY whose just-filed report is unread.
+
+    An unread filing is not a smaller edge, it is an UNCONVICTED SEAT: the
+    earnings seat has the one document that matters sitting in a queue and
+    has formed no view on it. Standing doctrine (owner ruling 2026-09-25,
+    `own_bar_block_reason` above) is that a name enters only when the seats
+    are RIGHT about it, so a seat that cannot be right about it refuses the
+    entry instead of shrinking it. This replaced the 5%-of-book weight clamp
+    (`TradingPipeline._refuse_queued_earnings_buys`, board item 186,
+    2026-10-01): that clamp was an invented share of the book with no source,
+    and reformulating the condition retires the number rather than
+    re-deriving it.
+
+    It carries `OWN_BAR_REASON_PREFIX` because it IS the conviction bar
+    applied to the earnings seat, not a second gate with its own vocabulary.
+    """
+    return (
+        f"{OWN_BAR_REASON_PREFIX} \u2014 earnings seat not convicted on "
+        f"{symbol.strip().upper()}: a just-filed report is queued and unread, "
+        "so that seat has formed no view on this name and cannot be right "
+        "about it; entry refused rather than sized down"
+    )
+
+
 def _has_supported_directional_thesis(v: "AnalystVerdict", aligned: str) -> bool:
     """A NON-technical seat that took a SUPPORTED DIRECTIONAL side.
 

@@ -1360,6 +1360,42 @@ Item 90's half two, surfaced for visibility. Three numbers: the 3x-ATR chandelie
 
 ## item 186 — detail moved from the board 2026-09-30
 
+UPDATE 2026-10-01 (queued-earnings BUY clamp) — THE NUMBER IS GONE, REMOVED
+BY REFORMULATION RATHER THAN RE-DERIVED. The 5%-of-book cap on a BUY whose
+just-filed report is queued and unread no longer exists. The condition is now
+read for what it is: an unread filing is an UNCONVICTED EARNINGS SEAT, and
+standing doctrine (owner ruling 2026-09-25, `risk.rules.own_bar_block_reason`)
+already refuses an entry the seats are not right about. The gate therefore
+REFUSES the BUY and carries no percentage at all.
+
+- The refusal reuses the conviction bar's own vocabulary
+  (`queued_earnings_block_reason`, carrying `OWN_BAR_REASON_PREFIX`), so it is
+  the existing bar applied to the earnings seat, not a second gate with a
+  parallel flag.
+- Every refusal is recorded per symbol as a `deterministic_gate` / `blocked`
+  event with the size that was asked for and the reason, so the change can be
+  judged later from the record. The `modified` (cut) outcome the old clamp
+  produced cannot occur any more and its test was rewritten, not dropped.
+- The ledger row is DELETED and the arbitrary ratchet moved -1. The two failed
+  derivations stay recorded above so neither is retried: 5.07% is the size of
+  a MOVE and not a share of a BOOK, and the per-trade risk envelope run
+  forward permits a weight near 100%, so it cannot be the cap's parent.
+- Nothing already held is sold. Refusing to BUY is not a decision to SELL,
+  the same contract `agreement_refuses_trade` carries.
+
+MEASURED EFFECT, AGAINST THE PRODUCTION RECORD READ-ONLY (2026-10-01, span
+2026-09-02 → 2026-10-01): ZERO recorded BUYs change. The queued-earnings gate
+has produced NO rows at all in `specialist_evidence` (the recording exists
+since 2026-09-19, board item 164), and the `"queued": true` placeholder that
+triggers it appears nowhere in the retained evidence either, against 54
+recorded proposed BUYs. So the path is UNPROVEN rather than dead: the record
+cannot say how often it will fire, only that it has not fired while the desk
+has been recording. What the desk gives up is the one case the old clamp
+allowed — a fresh entry of up to 5% of the book on a name whose filing nobody
+has read. Every other case the old clamp covered already ended in no order.
+It is strictly tighter in every direction; it can never open a larger
+position than before.
+
 UPDATE 2026-09-30 (short-side haircut) — TWO DERIVATIONS ATTEMPTED, BOTH
 WITHDRAWN, NO SIZING CHANGE SHIPPED. The desk sizes shorts exactly as it did
 before this pass. `RiskConfig.short_gap_risk_multiple` (1.5) and the
@@ -1442,7 +1478,7 @@ verified in source this pass, not from the board:
     be there.
   * `RiskConfig.short_gap_risk_multiple` = 1.5 (mirrored on ConstructorConfig)
     — genuine per-name risk appetite, and therefore a defect under the ruling.
-  * `TradingPipeline._clamp_queued_earnings_buys(max_pct)` = 5 — genuine
+  * `TradingPipeline._clamp_queued_earnings_buys(max_pct)` = 5 — DELETED 2026-10-01 (item 186: the clamp is gone, an unread filing refuses the BUY), recorded here as history only — genuine
     per-name risk appetite, and therefore a defect under the ruling.
 
 NEITHER OF THE TWO DEFECTS WAS REPLACED, AND NEITHER WAS ROUTED TO THE OWNER.

@@ -712,7 +712,7 @@ def test_pm_renders_weight_pct_and_drift_flag():
         assert "⚠️DRIFT" not in msft_line
 
 
-def test_clamp_queued_earnings_buys_caps_allocation():
+def test_queued_earnings_buys_are_refused_not_capped():
     from src.models import TradeDecision
     from src.pipeline import TradingPipeline
 
@@ -733,11 +733,13 @@ def test_clamp_queued_earnings_buys_caps_allocation():
          "form_type": "10-Q", "filing_date": "2026-04-18"},
         {"symbol": "MSFT", "queued": False, "analysis": {"investment_implications": {}}},
     ]
-    out = TradingPipeline._clamp_queued_earnings_buys(decisions, earnings_results)
-    nvda = next(d for d in out if d.symbol == "NVDA")
+    out = TradingPipeline._refuse_queued_earnings_buys(decisions, earnings_results)
     msft = next(d for d in out if d.symbol == "MSFT")
     aapl = next(d for d in out if d.symbol == "AAPL")
-    assert nvda.allocation_pct == 5.0  # capped
+    # Board item 186 (2026-10-01): an unread filing is an UNCONVICTED earnings
+    # seat, and doctrine refuses an entry the seats are not right about, so the
+    # BUY is gone rather than shrunk to a 5%-of-book figure nothing sourced.
+    assert [d.symbol for d in out if d.action == "BUY"] == ["MSFT"]
     assert msft.allocation_pct == 8.0   # untouched (no queued flag)
     assert aapl.allocation_pct == 100   # SELL untouched
 
@@ -871,7 +873,7 @@ def test_earnings_record_failure_abandons_after_max_attempts(tmp_path):
            provider.manifest["NVDA_10-Q"].get("abandoned") is not True
 
 
-def test_clamp_queued_earnings_noop_when_nothing_queued():
+def test_queued_earnings_refusal_noop_when_nothing_queued():
     from src.models import TradeDecision
     from src.pipeline import TradingPipeline
 
@@ -883,7 +885,7 @@ def test_clamp_queued_earnings_noop_when_nothing_queued():
     # Only fully-analyzed entries
     earnings_results = [{"symbol": "NVDA", "queued": False,
                          "analysis": {"investment_implications": {}}}]
-    out = TradingPipeline._clamp_queued_earnings_buys(decisions, earnings_results)
+    out = TradingPipeline._refuse_queued_earnings_buys(decisions, earnings_results)
     assert out[0].allocation_pct == 12.0
 
 

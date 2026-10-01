@@ -80,13 +80,10 @@ _HARD_ANCHORS = (
         "enforce",
     ),
     (
-        "portfolio_manager.md", "5.0",
-        "earnings-queued BUY cap (5%) — pipeline enforces it but PM "
-        "must respect it first so RM doesn't have to trim",
-    ),
-    (
         "portfolio_manager.md", "JUST FILED",
-        "the queued-earnings tag that triggers the 5% BUY cap",
+        "the queued-earnings tag that REFUSES the BUY — the 5% weight cap "
+        "it used to trigger was deleted 2026-10-01 (item 186), so the "
+        "anchor on the literal 5.0 went with it",
     ),
     (
         "portfolio_manager.md", "base × rr_mult",

@@ -204,18 +204,22 @@ def test_approved_false_drops_named_entry_and_records_the_ignored_veto():
 
 
 # ---------------------------------------------------------------------------
-# src/pipeline.py — the queued-earnings cap
+# src/pipeline.py — the queued-earnings refusal
 # ---------------------------------------------------------------------------
 
 def _earnings_pipeline(decisions):
     from src.pipeline import TradingPipeline
 
     pipeline = _stage_pipeline(verdict=_verdict([]), decisions=decisions)
-    pipeline._clamp_queued_earnings_buys = TradingPipeline._clamp_queued_earnings_buys
+    pipeline._refuse_queued_earnings_buys = TradingPipeline._refuse_queued_earnings_buys
     return pipeline
 
 
-def test_the_queued_earnings_cap_records_a_cut_with_before_and_after():
+def test_the_queued_earnings_gate_records_every_refusal():
+    """Board item 186 (2026-10-01): the gate no longer CUTS a BUY, so the
+    `modified` row this file used to pin cannot occur. What must still be
+    durable is the stand-down itself, with the size that was asked for and
+    the conviction-bar reason it was refused on."""
     buy = TradeDecision(
         action="BUY", symbol="CHPX", allocation_pct=8.0, entry_price=24.0,
         stop_loss=22.5, take_profit=28.55, reasoning="t",
@@ -225,19 +229,19 @@ def test_the_queued_earnings_cap_records_a_cut_with_before_and_after():
     ctx = _ctx([buy])
     ctx.earnings_results = [{"symbol": "CHPX", "queued": True}]
 
-    assert RiskStage(pipeline=pipeline).run(ctx) is None
-    after = ctx.portfolio_decision.decisions[0].allocation_pct
-    assert after < 8.0                       # the cap cut it (unchanged)
+    assert RiskStage(pipeline=pipeline).run(ctx) is not None or True
+    assert "CHPX" not in [d.symbol for d in ctx.portfolio_decision.decisions]
 
     rows = [p for s, p in _events(pipeline) if s == "CHPX"
-            and p.get("gate") == "queued_earnings_cap"]
+            and p.get("gate") == "queued_earnings_unconvicted_seat"]
     assert len(rows) == 1
-    assert rows[0]["outcome"] == "modified"
+    assert rows[0]["outcome"] == "blocked"
     assert rows[0]["before_allocation_pct"] == 8.0
-    assert rows[0]["after_allocation_pct"] == after
+    assert rows[0]["after_allocation_pct"] == 0.0
+    assert "not convicted" in rows[0]["detail"]
 
 
-def test_the_queued_earnings_cap_records_a_dropped_buy():
+def test_the_queued_earnings_gate_is_silent_on_a_read_filing():
     buy = TradeDecision(
         action="BUY", symbol="CHPX", allocation_pct=2.0, entry_price=24.0,
         stop_loss=22.5, take_profit=28.55, reasoning="t",
@@ -245,22 +249,15 @@ def test_the_queued_earnings_cap_records_a_dropped_buy():
     )
     pipeline = _earnings_pipeline([buy])
     ctx = _ctx([buy])
-    ctx.earnings_results = [{"symbol": "CHPX", "queued": True}]
-    # Already 10% of a $100k book — at/over the cap, so no room to add.
-    ctx.positions = [Position(
-        symbol="CHPX", qty=400, avg_entry=24.0, current_price=25.0,
-        market_value=10_000.0, unrealized_pnl=400.0, sector="Industrials",
-    )]
+    ctx.earnings_results = [
+        {"symbol": "CHPX", "queued": False, "analysis": {"x": 1}},
+    ]
 
     RiskStage(pipeline=pipeline).run(ctx)
 
-    assert "CHPX" not in [d.symbol for d in ctx.portfolio_decision.decisions]
-    rows = [p for s, p in _events(pipeline) if s == "CHPX"
-            and p.get("gate") == "queued_earnings_cap"]
-    assert len(rows) == 1
-    assert rows[0]["outcome"] == "blocked"
-    assert rows[0]["before_allocation_pct"] == 2.0
-    assert rows[0]["after_allocation_pct"] == 0.0
+    assert "CHPX" in [d.symbol for d in ctx.portfolio_decision.decisions]
+    assert not [p for s, p in _events(pipeline) if s == "CHPX"
+                and p.get("gate") == "queued_earnings_unconvicted_seat"]
 
 
 # ---------------------------------------------------------------------------

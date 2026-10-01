@@ -253,12 +253,14 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   the engine refuses new exposure and trims the live book on its own) ·
   `require_stop_loss`.
   A name that has `JUST FILED` and is not yet analysed carries no earnings
-  stance: that seat is simply absent from the agreement count below, and
-  size the name on the seats that remain. (No ladder prices them; only the refusal exists.)
-  No separate risk number applies to it. The pipeline additionally clamps
-  the RESULTING position WEIGHT on such a name — a concentration backstop
-  on notional, a different quantity from risk, enforced in
-  `TradingPipeline._clamp_queued_earnings_buys`.
+  stance: that seat is not convicted on the name, it is holding the one
+  document that matters unread. DO NOT PROPOSE A BUY ON IT. The pipeline
+  REFUSES such a BUY outright — all seats must be right to enter, and a seat
+  that has not read the filing cannot be right — in
+  `TradingPipeline._refuse_queued_earnings_buys`. There is no weight cap and
+  no separate risk number any more: the old 5%-of-book clamp was an invented
+  share with no source and was removed on 2026-10-01 (board item 186).
+  Holding such a name is untouched; refusing to BUY is not a reason to SELL.
   A short carries the SAME caps as a long (`max_position_pct` per name,
   the gross and net exposure ceilings for the book). For a short,
   additionally: a borrow gate that
