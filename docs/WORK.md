@@ -240,16 +240,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 201)
 
-**200. The status board's own file was one change away from blocking every other change — filed 2026-09-30. OPEN: the move is made, the guard against it recurring is not.**
-
-DONE WHEN:
-  - [x] `docs/WORK.md` is back under 70% of its cap by MOVING argument, history and measurement out of open items — not deleting it, not raising the cap — with every moved byte proved verbatim in `docs/BOARD_NOTES.md` by a line-level diff and the rendered owner prose unchanged block-for-block
-  - [x] the cap and the growth budget are named as what they are: both PICKED, not derived (100,000 gave ~5% headroom over a measured 94,801; the 0.5 growth share calls itself provisional), and both allowed to be picked because a documentation size limit governs no money
-  - [ ] the move is REPEATABLE without a human deciding what to carve: nothing yet stops the same items re-accreting history in place, so the next time the cap binds it will again be hand-work
-   — the file passing (say) 80% should say so in the same place the growth-budget failure already speaks, rather than the first warning being a blocked merge
-
-detail: docs/BOARD_NOTES.md (item 200)
-
 **202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, and (2026-10-01) rebinding the market provider on the morning-research stage, which held its own reference and so kept the live one after the swap — tech_analyst now runs offline [measured 2026-10-01]. `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis` still XFAILs. 2026-10-01: the replay now covers the FOURTH transport (`_openai_wire_call`, which the failover and tertiary routes called directly) so the Portfolio Manager runs offline, and sector lookups no longer build their own yfinance client; the run now stops loudly on a missing recorded PM response instead of `APIConnectionError`, and FRED plus 20 news feeds are still not recorded. detail: docs/BOARD_NOTES.md (item 202)
 
 DONE WHEN:
@@ -314,7 +304,6 @@ DONE WHEN:
 - [ ] held names are inside the per-name coverage record's universe, so the staying decision has the same per-name seat record the entry decision has
 - [ ] the record tells the three causes apart from the FIELDS alone — asked and unreadable, asked and nothing usable came back, never asked about this name — because they share one consequence but have three different fixes
 - [ ] no retry, no JSON repair and no new refusal is added by this change, and the entry and stay refusals keep the behaviour the 2026-09-25 ruling gave them
-
 
 
 **223. A portfolio-manager target below `min_position_risk_pct` is sized and shipped, not denied — found 2026-10-01 while verifying item 217's prompt claims.** The prompt told the PM the constructor would deny a sub-floor target anyway; it does not. `allocate_risk_budget` grants a request in full whenever it fits the remaining headroom, and its floor only denies a grant the budget had to CUT; the allocator is skipped entirely when book risk is unreadable. The prompt sentence is corrected under item 217, so the floor now rests on the seat alone — whether the desk wants a deterministic sub-floor refusal is an owner/route call, not fixed here. Detail in `docs/BOARD_NOTES.md` item 223.
@@ -394,8 +383,9 @@ DONE WHEN:
 - retired queue: 212
 - retired queue: 174
 - retired queue: 20
-- retired queue: 216
 - retired queue: 217
+- retired queue: 200
+- retired queue: 216
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
