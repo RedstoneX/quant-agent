@@ -201,6 +201,19 @@ changes:
       The sort-key shape that explained eight rows in the first tranche was
       checked for and is absent here: every one of these eight is multiplied
       into a dollar size or a stop distance, so its magnitude is load-bearing.
+
+  - delta: 1
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 55 (PR 880): +1 routeless arbitrary row.
+      `src.config.RiskConfig.min_level_touches_for_stop_honor` moved from
+      `sourced` to `arbitrary` because the clustering its source table was
+      measured on no longer exists, and it arrives with NO settlement route
+      because none is built: the re-derivation failed twice and the study
+      that would close it is named in docs/WORK.md item 55 rather than
+      claimed as a recording. Filing a route that does not exist would be
+      the same defect as the label it is replacing.
+
   - delta: -12
     date: "2026-10-01"
     why: |

@@ -39,6 +39,7 @@ from src.data.levels import (
     TargetDerivation,
     derive_structural_target,
     level_zone_halfwidth,
+    stop_rests_on_level,
     touch_probability,
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
@@ -2558,6 +2559,7 @@ class PortfolioConstructor:
         """
         raw_levels = getattr(analysis, "computed_levels", None) or []
         touches_by_price = getattr(analysis, "computed_level_touches", None) or {}
+        bars_by_price = getattr(analysis, "computed_level_bars", None) or {}
         min_touches = self.cfg.min_level_touches_for_stop_honor
 
         best: float | None = None
@@ -2583,15 +2585,40 @@ class PortfolioConstructor:
                 # "below the bar" — fail closed, per Invariant 2, rather than
                 # honour a tight stop we cannot show cleared the bar.
                 continue
-            # "At" this level means INSIDE this level's own zone. The bound
-            # is read per-level off `CLUSTER_TOLERANCE_PCT`, the same
-            # constant `find_structural_levels` used to build the zone in the
-            # first place, so the tolerance is exactly as wide as the thing
-            # it is matching against — never narrower, never a second number
-            # that can drift. docs/WORK.md item 46.
-            tolerance = level_zone_halfwidth(price)
+            # "At" this level means ON ONE OF ITS BARS, not merely inside
+            # its band — docs/WORK.md item 215. Item 55 made the zone the
+            # MEASURED combined span of the bars that formed the level
+            # (`computed_level_zones`), which is honest about how wide the
+            # structure is but is exactly why "inside the zone" cannot earn
+            # the exemption: that span reaches a fifth of the price on some
+            # names, and a stop at one end of it can be taken out with the
+            # level itself never broken. The stop must instead lie inside
+            # the traded high-low range of at least one bar that DREW the
+            # level, carried here on `computed_level_bars`. No tolerance and
+            # no width cap is introduced: the bound is the instrument's own
+            # smallest statement that structure traded at that price.
+            #
+            # Fail closed: a level with no bar ranges recorded (older stored
+            # analysis, fixture) is NOT backing, and the stop falls through
+            # to the ordinary ATR floor, exactly as an unmatched stop does.
+            # The measured zone stays on the level for reporting; it is no
+            # longer what decides the exemption.
+            # ...AND the level must be more precise than the trade it is
+            # backing: its measured zone strictly narrower than the stop
+            # distance. Bar membership alone put NO ceiling on how far the
+            # stop could sit from the level (the zone edges are bar extremes,
+            # so the furthest passing stop is the halfwidth exactly — median
+            # 3.33% of price and up to 36.07% on this desk's own 704-level
+            # set), while the break check reads the LEVEL price. No number is
+            # introduced: the ceiling is this trade's own risk.
+            if not stop_rests_on_level(
+                stop_loss,
+                bars_by_price.get(price),
+                stop_distance=abs(entry_price - stop_loss),
+            ):
+                continue
             gap = abs(stop_loss - price)
-            if gap <= tolerance and gap < best_gap:
+            if gap < best_gap:
                 best, best_gap = price, gap
         return best
 
