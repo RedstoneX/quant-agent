@@ -10763,6 +10763,7 @@ class TradingPipeline:
                 self.db.save_holding_protection_break(
                     run_id=run_id, symbol=symbol, raw_broken=check.raw_broken,
                     bar_date=effective_bar_date, close=close_price,
+                    basis=check.basis, detail=check.detail,
                 )
         except Exception as e:  # noqa: BLE001
             logger.warning(

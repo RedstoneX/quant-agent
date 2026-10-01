@@ -413,6 +413,58 @@ def routeless_ratchet(path: Path | None = None) -> int:
 MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
 
 
+#: Fields `src/storage/db.py` actually WRITES, as opposed to merely creating.
+#: A settlement route whose state is `built` has to name where its evidence
+#: lands, and this is what makes that claim falsifiable: the named field must
+#: be used by executable code in the storage layer, NOT merely declared by the
+#: `_ensure_column` migration. The three dead recordings found on 2026-10-01
+#: all passed "the column exists" and failed "something writes it" -- the
+#: break-confirmation-margin payload, for one, is built into a prose `detail`
+#: string that the only persisting call throws away.
+_DB_SOURCE_PATH = "src/storage/db.py"
+
+
+def written_fields(source: str | None = None) -> frozenset[str]:
+    """Every field name the storage layer writes, read out of its own AST.
+
+    A name counts when it appears as a string constant in EXECUTABLE code --
+    an SQL column list, a `(column, value)` update pair, a persisted payload
+    key. It does NOT count when its only appearance is the `_ensure_column`
+    migration that creates it (a column nothing writes is exactly the defect)
+    or a docstring/comment mentioning it.
+    """
+    import ast as _ast
+
+    if source is None:
+        source = (REPO_ROOT / _DB_SOURCE_PATH).read_text(encoding="utf-8")
+    tree = _ast.parse(source)
+    migration_only: set[int] = set()
+    docstrings: set[int] = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Call):
+            fname = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if fname == "_ensure_column":
+                for arg in node.args[1:]:
+                    if isinstance(arg, _ast.Constant) and isinstance(arg.value, str):
+                        migration_only.add(id(arg))
+        if isinstance(node, _ast.Expr) and isinstance(node.value, _ast.Constant):
+            if isinstance(node.value.value, str):
+                docstrings.add(id(node.value))
+    found: set[str] = set()
+    ident = re.compile(r"^[a-z_][a-z0-9_]*$")
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Constant) or not isinstance(node.value, str):
+            continue
+        if id(node) in migration_only or id(node) in docstrings:
+            continue
+        text = node.value
+        for token in re.split(r"[\s,()=?]+", text):
+            token = token.strip().strip("'\"")
+            if ident.match(token):
+                found.add(token)
+    return frozenset(found)
+
+
 def settlement_route_problem(entry: dict[str, Any]) -> str | None:
     """Why this entry's `settles_by` is not a route, or None if it is one."""
     route = entry.get("settles_by")
@@ -439,6 +491,31 @@ def settlement_route_problem(entry: dict[str, Any]) -> str | None:
                 f"`settles_by.{field}` is under {MIN_ROUTE_PROSE_CHARS} "
                 f"characters, which is not a route anybody can act on"
             )
+    if route["state"] == "built":
+        writes = route.get("writes")
+        if not isinstance(writes, list) or not writes:
+            return (
+                "`settles_by.state` is `built` but the route names no "
+                "`writes:` list. A BUILT recording has to say which fields "
+                "carry its evidence, or nobody can tell a recording that is "
+                "collecting from one that is silently collecting nothing"
+            )
+        written = written_fields()
+        for target in writes:
+            if not isinstance(target, str) or "." not in target:
+                return (
+                    f"`settles_by.writes` entry {target!r} is not a "
+                    f"`<table-or-kind>.<field>` name"
+                )
+            field = target.rsplit(".", 1)[1].strip()
+            if field not in written:
+                return (
+                    f"`settles_by.writes` names {target!r} but nothing in "
+                    f"{_DB_SOURCE_PATH} writes {field!r} -- it appears only "
+                    f"in the migration that creates it, in prose, or not at "
+                    f"all. A settlement route pointing at a field nothing "
+                    f"writes can never close"
+                )
     return None
 
 
