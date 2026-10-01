@@ -262,6 +262,14 @@ agent has widened the rule to work around it.
 
 **Moved from WORK.md (2026-09-24) —** Open, both convention: the pivot window is 3 in one module and 5 in another, and the cluster tolerance is a flat 1% (a 2% span). **Every ruled-out source, and why harmonising the windows is not an answer: `docs/INCIDENT_HISTORY.md`, 2026-09-14. Do not re-search.** **Settles with** Tsinaslanidis §4.5's bounce test on the desk's own universe and bars, sweeping tolerance 0.5/1/2/3/5% and window 3/5/10/25 — a reading, not a fit; if flat, prefer a zone equal to the span of the pivot bars, which needs no constant. Cost: 1% decides "the same level", hence whether a stop is level-backed, the ATR floor, R/R and size.
 
+**Re-verified 2026-09-30, STILL OPEN, and nothing was changed — the blocker is DATA ACCESS, not analysis.** Live code confirms neither number moved: `src/data/levels.py::PIVOT_WINDOW` is still 5, `src/data/levels.py::CLUSTER_TOLERANCE_PCT` is still 1.0, `src/risk/trailing.py::PIVOT_WINDOW` is still 3, and `config/number_ledger.yaml` still carries both as `status: arbitrary`. The "runnable experiment" in the Recommendation above is NOT runnable from a build worktree, and saying it was is the part of this note that was wrong: there is no local bar cache in the repo, `tests/fixtures/` holds no OHLCV series, and the only daily-bar source in the codebase is `src/execution/broker.py::get_bars`, which needs broker credentials. So the Tsinaslanidis 4.5 bounce sweep over this desk's own universe cannot be run by an agent that is barred from production credentials — it needs either a one-off bar pull into a committed fixture, or the rehearsal account's read path, and NEITHER EXISTS YET. That is the real next step for this item, ahead of any sweep.
+
+**What a threshold-free answer would look like, recorded so it is not re-derived, and deliberately NOT shipped.** For the ZONE there is a genuine candidate that invents nothing: two pivots belong to the same level when the HIGH-LOW RANGES OF THE BARS THAT MADE THEM OVERLAP, and the level's zone is the union of those bar ranges. That reads the width off the instrument's own volatility — a wide-range bar states a wide level, a quiet one states a narrow level — and it removes both `CLUSTER_TOLERANCE_PCT` and the percentage in `level_zone_halfwidth` rather than replacing them with another constant. For the BAR COUNT there is NO equivalent: every candidate (a fixed window either side, a reversal of N ATRs, a zigzag percentage) ends in a picked multiple, and the only window that is not picked is the minimum symmetric one, which is a choice dressed as a derivation. So half of this item has a threshold-free form available and half does not.
+
+**Why the zone change was not shipped anyway.** It moves where protective stops sit on live positions — a wider or narrower zone changes whether a proposed stop counts as level-backed, which changes whether it is honoured as-is or pushed wider, which changes size. The same missing bar data that blocks the sweep also blocks measuring how many currently-open positions would get a different stop, and shipping a stop-placement change with that number unmeasured is exactly the move this desk does not make. Change nothing was the correct outcome of this pass.
+
+**Measured cost, new and belonging here:** a confirmed pivot on the trailing path needs 7 bars (`src/risk/trailing.py::PIVOT_WINDOW` = 3, so 3 either side plus the pivot), and the structural leg of the trailing stop has NEVER ONCE produced a candidate on a real position — partly because holds have run 4-9 sessions, which cannot reliably contain a 7-bar confirmation plus room to trail from it. So the bar count is not merely unsourced; on the trailing path it is currently switched off by arithmetic. This is the strongest argument yet that the window is the half of this item worth settling first, and it is an argument for MEASURING it, not for lowering it.
+
 ## item 63
 
 **Plain language —** When a company insider sells shares, the desk wants to know whether that's a real opinion about the stock or just someone raising cash. The best measure is how much of their own pile they sold. The research that measures this found something counter-intuitive: an insider selling a *small* slice of what they hold is actually a mildly *good* sign — they need money, they're keeping the rest, they still like the company. Selling more than half is the only case that reliably means bad news. The desk was doing the opposite of reading that correctly: it treated small sales as meaningless and threw them out of the ranking entirely. That's now fixed — nothing is thrown out, and every insider trade arrives at the analyst carrying how big it was relative to what the person held, plus what the research says that size means. What's still missing is narrower: the desk's internal "how much does this matter" score is a single dial from 0 to 1, and a dial cannot say "this matters, and it points the *other* way." So the analyst reads the direction in the notes, but the automatic ranking underneath it doesn't.
@@ -473,6 +481,8 @@ Retired from the queue 2026-09-30: the filed premise (a full reservation eating 
 ## item 203
 
 Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured zero rows in agent_logs where a provider request actually happened and returned no usable cost or token telemetry, so nothing needs building today; this item exists only so that case is tracked if it ever fires, rather than silently dropped when 147 was retired.
+
+**2026-09-30 — the case is now RECORDED, not yet priced.** `agent_logs.telemetry` says `complete`, `no_cost` (tokens known, no price) or `no_usage` (no token counts), so a missing measurement no longer looks like a measured zero; NULL on every older row means unknown. Recording only: the pricing/exclusion question in the criterion stays open, and the free model in use today is the normal source of `no_cost`/`no_usage` rows.
 
 ## item 157
 
@@ -832,6 +842,49 @@ Item 90's half two, surfaced for visibility. Three numbers: the 3x-ATR chandelie
 
 
 ## item 186 — detail moved from the board 2026-09-30
+
+UPDATE 2026-09-30 (second pass, owner ruling on global risk dials). Live-code
+inventory of every portfolio- and cluster-level ceiling still standing, each
+verified in source this pass, not from the board:
+
+  * `RiskConfig.max_portfolio_risk_pct` = 25 — total capital at risk across the
+    book. Owner-ratified 2026-09-25, unsourced. AGGREGATE rationing, not a
+    per-name risk read, so the new ruling does not convert it into a defect;
+    there is no instrument to read a book-wide ceiling off. Stays, labelled.
+  * `RiskConfig.SECTOR_HARD_CEILING_MAX` = 90 (mirrored at the constructor as
+    `max_sector_hard_pct`) — terminal sector ceiling. Same shape, same verdict.
+  * `RiskConfig.max_cluster_risk_share_pct` = 40 — share of total risk one
+    correlation cluster may hold. Same shape, same verdict. What defines a
+    cluster is no longer a number (see above); what a cluster may hold still is.
+  * `correlation.CLUSTER_CORRELATION_THRESHOLD` = 0.7 — GONE, confirmed absent
+    from live code this pass; the module keeps only a comment saying it used to
+    be there.
+  * `RiskConfig.short_gap_risk_multiple` = 1.5 (mirrored on ConstructorConfig)
+    — genuine per-name risk appetite, and therefore a defect under the ruling.
+  * `TradingPipeline._clamp_queued_earnings_buys(max_pct)` = 5 — genuine
+    per-name risk appetite, and therefore a defect under the ruling.
+
+NEITHER OF THE TWO DEFECTS WAS REPLACED, AND NEITHER WAS ROUTED TO THE OWNER.
+Plainly, why:
+
+  * The short haircut's honest per-name form is that stock's own overnight-gap
+    magnitude relative to its stop distance. The sizing sites
+    (`_build_short`, and the risk-plan loop) receive `analysis.atr_14` and a
+    stop price; no bar history reaches them and the database holds no OHLCV
+    table, so the gap term cannot be read. Substituting "one ATR of gap" would
+    invent the coefficient, which is the thing doctrine bars, so it was not
+    done. Unblocked by a stored daily-bar build and nothing else.
+  * The queued-earnings clamp's honest per-name form needs that name's expected
+    earnings-day move; the desk has no implied-move or historical-reaction
+    source, so the same blocker applies. There IS a threshold-free alternative
+    that needs no number at all — an unread filing means the fundamental seat
+    is not convicted, and standing doctrine already says all five seats must be
+    right to enter, so the BUY would be refused rather than capped. That turns
+    a size cap into a block on live capital and belongs in front of the
+    adversary first, so it is recorded here and not shipped.
+
+Both numbers keep `status: arbitrary` in the ledger with the blocker named and
+the withdrawn appetite question marked withdrawn. No value was picked.
 
 UPDATE 2026-09-30: the correlation-cluster cutoff (0.7) is REMOVED rather than
 ratified. Cluster membership is read structurally — Mantegna correlation
