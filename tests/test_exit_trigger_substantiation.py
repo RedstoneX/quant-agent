@@ -24,9 +24,7 @@ import pytest
 
 from src.models import PositionAction
 from src.risk.exit_guard import compute_deltas, holding_discipline_claim_check
-from src.risk.exit_trigger import (
-    TRIGGER_PHRASES, ExitTrigger, check_exit_trigger,
-)
+from src.risk.exit_trigger import ExitTrigger, check_exit_trigger
 
 
 # ---------------------------------------------------------------------------
@@ -34,13 +32,18 @@ from src.risk.exit_trigger import (
 # ---------------------------------------------------------------------------
 
 def test_the_trigger_vocabulary_cannot_diverge_from_the_executor_gate():
-    """`TRIGGER_PHRASES` is a REGROUPING of `pipeline._HARD_TRIGGER_KEYWORDS`,
-    never a second list. Mechanical, because the rule that relies on
-    remembering slips."""
-    from src.pipeline import _HARD_TRIGGER_KEYWORDS
+    """Mechanical, because the rule that relies on remembering slips.
 
-    grouped = {p for phrases in TRIGGER_PHRASES.values() for p in phrases}
-    assert grouped == set(_HARD_TRIGGER_KEYWORDS)
+    The assertion itself lives in `tests/test_exit_trigger_canonical_names.py`
+    and is CALLED here, not copied: this file once carried its own copy, the
+    chart-verified carve-out was added to the other one only, and the stale
+    copy then failed a branch it was not describing.
+    """
+    from tests.test_exit_trigger_canonical_names import (
+        assert_trigger_vocabulary_matches_executor_gate,
+    )
+
+    assert_trigger_vocabulary_matches_executor_gate()
 
 
 def test_the_2026_09_16_two_word_exit_is_now_unsubstantiated():

@@ -192,6 +192,18 @@ numbers:
     cost_while_unanswered: >-
       Too narrow and the advisory nags on noise; too wide and real idle cash
       goes unflagged.
+  - id: src.coverage_watchdog._SUPPRESSION_LOG_LIMIT
+    value: 50
+    status: not-trade-governing
+    site: src/coverage_watchdog.py
+    note: >-
+      How many per-event suppression records to retain per alert type in the
+      watchdog's own state file. It bounds a durable log so the file cannot
+      grow without limit; the running suppression `count` is never truncated,
+      only the per-event list behind it. Nothing downstream reads this list to
+      decide whether, when or how much to trade -- a wrong value loses old
+      forensic detail about alerts the desk declined to resend, which is a
+      reporting loss, not a trade decision.
   - id: src.config.EventRiskConfig.calendar_deadline_s
     value: 20
     status: not-trade-governing
@@ -530,6 +542,24 @@ numbers:
     note: >-
       The measured move claimed when no structural level stands in the way, in
       sqrt(session)-scaled ATRs (src/config.py:879-884).
+  - id: src.agents.base._INSUFFICIENT_CREDIT_STATUS
+    value: 402
+    status: instrument
+    site: src/agents/base.py
+    source: >-
+      RFC 9110 section 15.5.3, "402 Payment Required": the HTTP status code
+      reserved for a request that cannot be served until payment is made.
+      https://www.rfc-editor.org/rfc/rfc9110.html#name-402-payment-required
+      It is a PROTOCOL CONSTANT fixed by that specification and by the model
+      provider's use of it for an exhausted credit balance -- the desk does
+      not choose it and cannot change it, exactly as it does not choose a
+      broker tick size. It is read only at src/agents/base.py:1305 and :2530,
+      both of them an equality test against `status_code` on a provider
+      exception, and it governs whether the desk re-asks the provider once at
+      a smaller allowance. It never enters a price, a size, a stop or a
+      ranking. Falsifiable: if the provider ever signalled credit exhaustion
+      with a different status, this equality test would stop matching and the
+      re-ask would never fire.
   - id: src.config.RiskConfig.maintenance_margin_pct
     value: 25
     status: instrument
@@ -2633,6 +2663,63 @@ numbers:
       RSG. docs/INCIDENT_HISTORY.md:330 attributes that shrinking to the 1.5
       reward:risk starter cap, not to this 0.5% floor - two different numbers
       in one sentence.
+  - id: src.risk.alignment_exit.SMA_LADDER[20]
+    value: 50
+    status: not-trade-governing
+    site: src/risk/alignment_exit.py
+    note: >-
+      Not a tunable and not a choice. 20/50/200 are the ONLY moving-average
+      periods computed anywhere upstream (`src.data.technical`), so "the
+      next longer average the desk already computes" has exactly one answer
+      for 20 (50) and one for 50 (200), and none for 200. Read off the
+      existing indicator set rather than picked; changing it would require
+      the desk to compute an average it does not compute.
+  - id: src.risk.alignment_exit.SMA_LADDER[50]
+    value: 200
+    status: not-trade-governing
+    site: src/risk/alignment_exit.py
+    note: >-
+      Not a tunable and not a choice. 20/50/200 are the ONLY moving-average
+      periods computed anywhere upstream (`src.data.technical`), so "the
+      next longer average the desk already computes" has exactly one answer
+      for 20 (50) and one for 50 (200), and none for 200. Read off the
+      existing indicator set rather than picked; changing it would require
+      the desk to compute an average it does not compute.
+  - id: src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
+    value: 3.0
+    status: arbitrary
+    site: src/risk/alignment_exit.py
+    note: >-
+      Give-back below the last CHART MARK (a moving average, or the level
+      `check_structural_protection` confirmed broken), in the name's own
+      ATR, before the alignment exit reads the move as over. AN OWNER
+      APPETITE DIAL, recorded as arbitrary on purpose. A draft of this
+      entry claimed the value was SOURCED to Wilder's Volatility System
+      ARC (~2.8-3.1, New Concepts, 1978) and Le Beau's Chandelier Exit
+      (3.0 x ATR default). That claim is WITHDRAWN, for three reasons.
+      (1) The `NOISE_BAND_ATR_MULTIPLE` note gives TWO reasons for
+      refusing 3.0 and the draft answered only the anchor one; the other
+      stands -- "how readily the desk blocks a sale is owner appetite".
+      (2) Wilder and Le Beau measure give-back from a running EXTREME
+      (highest high since entry); this measures it from a MOVING AVERAGE,
+      which sits materially below an extreme, so the same multiple is a
+      looser stop and their calibration does not transfer. (3)
+      Chandelier's 3.0 is calibrated on ATR(22); this divides by ATR(14).
+      The published 2.5-3.5 band is retained as CONTEXT for the order of
+      magnitude only. Deliberately NOT reused from
+      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE`, which is 1.0 and
+      measures excess over noise FROM ENTRY.
+    open_question: >-
+      Where the desk sits is the owner's dial, left at 3.0 until he moves
+      it: tighter realises gains sooner and whipsaws more often, looser
+      gives more back. No research can settle it -- see reason (1).
+    cost_while_unanswered: >-
+      Until the owner sets the dial, every alignment exit realises its
+      gain 3.0 ATR below the last chart mark. Too loose and a finished
+      move hands back more than it needed to before the desk sells; too
+      tight and a live trend is sold into an ordinary pullback and the
+      rest of the move is forgone. The exposure is the whole unrealised
+      gain of any position this exit fires on.
   - id: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
     value: 1
     status: arbitrary

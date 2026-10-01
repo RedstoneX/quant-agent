@@ -236,9 +236,31 @@ are not the same thing and the rule itself says so. It is now its own
 category; it still counts as a degraded run and it is now named to you
 explicitly whenever a decision leans on one.
 
-**The decision —** Still yours, and now the only thing left in this item:
-whether *partial* evidence should also stop a decision, and if so, where the
-line sits. Not "did the seat answer" — that is settled and built, morning
+**The counting half, settled 2026-10-01 — it is a RECORD, not a bar.** We
+tried twice to source the number and failed twice, and both failures are
+written down in the code: nothing published says what share of a candidate
+list a research seat must cover, and our own record cannot say either,
+because the news seat has never once written down WHICH companies it looked
+at, and the macro seat covers at most half. Fitting a bar to that would be
+fitting it to a hole. So the question was not answered with a number, it was
+dissolved the same way the first half was: asked once per company instead of
+once per list. "Did this seat answer about THIS company" is a yes-or-no
+fact. The desk now writes that down for every candidate on every decision —
+which seats spoke about that name, which said nothing about it, and which
+seats are about the market rather than any one name. It refuses nothing and
+holds no minimum. The one per-name coverage rule you already have still
+bites: a company with no chart read cannot be bought or shorted.
+
+**What that leaves for you —** nothing on counting; the paragraph below is
+superseded and kept only so the history reads straight. One unrelated
+question is still open in this item: whether the thirty-minute scan's chart
+seat should be able to report a lost answer at all. Today it cannot, and
+since the chart seat is the only one that can stop the desk, that scan can
+never be stopped by missing evidence. That is a consequence of your own
+"only technical analysis can stop the desk" ruling, so no agent may widen
+it.
+
+The superseded question, kept for the record: Not "did the seat answer" — that is settled and built, morning
 and the later scan alike — but "the seat answered about 40 of 65 companies,
 is that enough?". Nothing published answers that, so it either gets a
 number from you or a ruling that partial coverage should never stop a
@@ -306,7 +328,7 @@ agent has widened the rule to work around it.
 
 **What WOULD settle it, if the band survives at all.** Either a published, citable derivation of the quantity the band claims to bound — the adverse excursion at which a move stops being ordinary daily wobble — carrying its own number, or a live reading taken from the instrument at the moment of the decision that no one had to choose the level of. Absent one of those, the honest route is the one below.
 
-**2026-09-30, is the band redundant with the alignment rule? Read from the code, not the prose: NO, and the two places it lives are not the same.** The alignment exit you ruled for — sell only when structure, the stock's own volatility and the trend agree the move is over — is not yet built as its own mechanism; what exists is the protection check, which asks whether the seller's stated invalidation has happened, or whether a genuine support level under the stop has broken, and gates a break on the trend it reads. The band's FIRST home is a blanket gate standing in front of all of that: every sale that is not triggered by outside news is compared against how far the stock has moved from the PRICE THE DESK PAID, before any structure is consulted at all. Nothing else in the selling path measures anything from the purchase price. That is its unique job, and it is the wrong job: measuring from what the desk paid is the definition of fitting the decision to the desk's own history rather than reading the instrument, which is what your ruling forbids. Removing this gate, and letting the structure-and-trend test decide, is the honest fix and it removes the number by removing the mechanism — the same move that retired the correlation cutoff. It is a real change to when the desk sells, so it is not made here.
+**2026-09-30, is the band redundant with the alignment rule? Read from the code, not the prose: NO, and the two places it lives are not the same.** The alignment exit you ruled for — sell only when structure, the stock's own volatility and the trend agree the move is over — WAS not yet built as its own mechanism when this note was written; it now is (`src/risk/alignment_exit.py`), and since the alignment SCAN landed it is read against every held position every session and can start a sale of its own, not only confirm one a model already asked for; what exists is the protection check, which asks whether the seller's stated invalidation has happened, or whether a genuine support level under the stop has broken, and gates a break on the trend it reads. The band's FIRST home is a blanket gate standing in front of all of that: every sale that is not triggered by outside news is compared against how far the stock has moved from the PRICE THE DESK PAID, before any structure is consulted at all. Nothing else in the selling path measures anything from the purchase price. That is its unique job, and it is the wrong job: measuring from what the desk paid is the definition of fitting the decision to the desk's own history rather than reading the instrument, which is what your ruling forbids. Removing this gate, and letting the structure-and-trend test decide, is the honest fix and it removes the number by removing the mechanism — the same move that retired the correlation cutoff. It is a real change to when the desk sells, so it is not made here.
 
 The band's SECOND home is genuinely not redundant and must not be deleted with the first: it is the last resort for a holding that has neither a written invalidation nor a qualifying support level, where the structure test has nothing to read. Delete it there and every such holding loses its protection outright. That case needs its own answer before anything is removed.
 
@@ -322,6 +344,16 @@ The band's SECOND home is genuinely not redundant and must not be deleted with t
 **Recommendation —** Show the target on the chart. Then track, without placing orders, what four exit rules would have done on every trade — sell all at target; sell half at target and trail the rest; hitting target tightens the trailing stop instead of selling; and today's desk — with the rules fixed before anyone looks and no tuning afterwards. Nothing is built on one trade.
 
 **Moved from WORK.md (2026-09-24) —** **Every number, narrative and blind spot is in `docs/BOARD_NOTES.md` ("item 75") and `docs/INCIDENT_HISTORY.md` (2026-09-14). Read them before working this; do not re-derive.** Short version: the TA target justified the trade, was seen by the Risk Manager and shown to the reviewer as "soft — you manage exit", while the reviewer's sell gate refuses profit-taking. Selling at target was +9.1%; the only automatic exit the code allows filled below entry. The target never reaches the broker, the breach flag needs >150% progress, an 8-K results release is invisible, and six trail constants are unsourced (in item 90's list). Profit-taking, rejection off a high and upcoming earnings are not allowed SELL reasons, and only the news seat emits state changes, so a chart breakdown cannot unlock an exit. Structural finding carried out of the same work: **the desk never sees today's bar**, so every intraday indicator and level describes yesterday's close. Answered 2026-09-14 [measured]: no single standard technical sell rule gave a timely ORCL exit that also beat chance on a 10-name basket — it supports multi-signal confirmation, nothing more. **Settles with a fix, never fitted to ORCL:** exits confirmed by several independent signals; trail tightness read off the instrument or a cited source; a ruling on whether target-plus-confirmed-breakdown may exit; the 8-K gap closed. One number changed alone is the patch this item exists to prevent.
+
+**Rewritten 2026-10-01 — the two derivations of a trim fraction that FAILED, written down so neither is retried blind.**
+
+**Attempt 1 — read the fraction off the position's own risk (trim back to the original risk budget).** Sell the share of the position that restores the risk the trade was opened with, now that the stop has ratcheted. The fraction is `1 - d0/d1`, where `d0` is the entry stop distance and `d1` the current one. The desk's ratchets move the stop to multiples of `d0` that the owner ratified (+1R, +2R), so `d0` cancels and the fraction is the SAME number for every name, every sector, every volatility. It looks per-name and is algebraically a global constant. Rejected: a global risk constant is a defect on this desk, not a value to ratify.
+
+**Attempt 2 — read the fraction off how far the position has weakened.** Scale the trim by the ATR distance already travelled below the last mark, as a share of the full alignment-exit tolerance. Rejected for two independent reasons: the denominator is the alignment-exit tolerance, which that module's own docstring and its ledger entry declare to be owner appetite and NOT sourced, so the fraction inherits an unsourced denominator and is an appetite dial in disguise; and no record exists of any position ever sitting in that intermediate band, so there is nothing to read the shape off even if the denominator were sound.
+
+**What the live code actually does, checked 2026-10-01 (claims in the original filing had rotted).** The target reaches no broker — still true. The target no longer gates whether the structural trail runs: item 142 removed that switch, and the trail runs for a range trade once it is past the +2R ratchet trigger. One live effect survives — whether price has exceeded the target decides whether the +1R lock floor constrains that trail — and the owner-facing note now says so instead of implying the number is inert. The alignment exit (`src/risk/alignment_exit.py`) sells a WHOLE position and contains no partial path, so the trim case is genuinely untouched by it.
+
+**Three of the original six criteria are VOID, not deferred.** "Sell all at target", "sell half at target and trail the rest", and "target tightens the trail" are all barred outright by the 2026-09-30 ruling. Tracking what a barred rule would have done is only worth doing if it might be adopted, and it may not be.
 
 ## item 78
 
@@ -493,15 +525,15 @@ Retired from the queue 2026-09-30: the filed premise (a full reservation eating 
 
 Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured zero rows in agent_logs where a provider request actually happened and returned no usable cost or token telemetry, so nothing needs building today; this item exists only so that case is tracked if it ever fires, rather than silently dropped when 147 was retired.
 
-**2026-09-30 — the case is now RECORDED, not yet priced.** `agent_logs.telemetry` says `complete`, `no_cost` (tokens known, no price) or `no_usage` (no token counts), so a missing measurement no longer looks like a measured zero; NULL on every older row means unknown. Recording only: the pricing/exclusion question in the criterion stays open, and the free model in use today is the normal source of `no_cost`/`no_usage` rows.
-
-**2026-10-01 — measured against production (713 agent_logs rows, read-only; telemetry column not yet deployed there, so classified from token and cost fields).** Zero successful rows have no token count at all, so the no-usage case has never fired in production. The no-cost case is the whole direct-Google route (238 of 238 successes, tokens present, cost zero) and it is a PRICE-TABLE zero, not provider silence: that model is pinned at 0.0 input and output in the cost table. Every OpenRouter and earlier-route success carries a non-zero cost. Still open: whether the 0.0 pin is genuinely free (then exclude from unknown-cost counting) or a placeholder to price; that is a pricing call, not a telemetry gap. Separate unfiled gap noticed, not fixed: the cost circuit's manual reset records no duration and sends no alert.
-
-## item 157
+## item 157 — RETIRED 2026-09-30, the enforced answer format shipped on both wire routes; the live-call criterion is structurally unreachable and was replaced by an on-every-real-call hygiene recorder
 
 **Live-call criterion is BLOCKED on a credential grant, not on effort (measured 2026-09-26).** The rehearsal identity the desk uses for live proofs is granted the broker, economics, messaging and general-model credentials and is NOT granted the Google one, so the only identity that can make the confirming call is production — a live attempt spends real money on the shared account. Either grant the Google credential to the rehearsal identity or accept one production-billed call; until then this box cannot be ticked from a rehearsal. Evidence: `docs/INCIDENT_HISTORY.md` (2026-09-26).
 
 **Moved from WORK.md (2026-09-24) —** Per that write-up, constrained output needs a wrapper object (answer is a bare list, strict schema needs an object), a separate model-facing schema (eight desk-filled fields), `strict=false` (one free-form map field), and a live call to confirm the Google route actually enforces a sent schema — untried.
+
+**2026-09-30 — the case is now RECORDED, not yet priced.** `agent_logs.telemetry` says `complete`, `no_cost` (tokens known, no price) or `no_usage` (no token counts), so a missing measurement no longer looks like a measured zero; NULL on every older row means unknown. Recording only: the pricing/exclusion question in the criterion stays open, and the free model in use today is the normal source of `no_cost`/`no_usage` rows.
+
+**2026-10-01 — measured against production (713 agent_logs rows, read-only; telemetry column not yet deployed there, so classified from token and cost fields).** Zero successful rows have no token count at all, so the no-usage case has never fired in production. The no-cost case is the whole direct-Google route (238 of 238 successes, tokens present, cost zero) and it is a PRICE-TABLE zero, not provider silence: that model is pinned at 0.0 input and output in the cost table. Every OpenRouter and earlier-route success carries a non-zero cost. Still open: whether the 0.0 pin is genuinely free (then exclude from unknown-cost counting) or a placeholder to price; that is a pricing call, not a telemetry gap. Separate unfiled gap noticed, not fixed: the cost circuit's manual reset records no duration and sends no alert.
 
 ## item 174
 
@@ -1079,3 +1111,34 @@ sessions, MEASURED above, against a window needing `2 * PIVOT_WINDOW + 1`
 bars), remains unfixable while that constant is documented as unsourceable.
 No number was invented here; the band width, the chandelier multiple and the
 minimum ratchet are all unchanged.
+## item 211
+
+Why the threshold is not a new number. The circuit already answers "how long
+before this stops being a blip": `_auto_clear_transient_latch_locked` refuses
+to retire a transient latch until `transient_latch_cooldown_minutes` of wall
+clock have passed, and refuses again if the day's
+`max_transient_latch_auto_clears_per_day` allowance is spent. Paging the owner
+the instant the latch is set contradicts the circuit's own stated belief that
+the fault may not be real yet. So the paging threshold IS that field. There was
+no need to invent one, and inventing one would have been a barred arbitrary
+number.
+
+Why an episode is one trigger code on one ET day. The auto-clear allowance is
+already counted per ET day against `llm_circuit_events` for exactly this
+purpose — "a fault recurring this often is not transient". The episode
+boundary reuses that unit rather than defining a second, differently-shaped
+notion of "the same fault again".
+
+What this does NOT do. It does not re-enable Telegram: the owner muted it
+deliberately on 2026-09-30 and it stays muted. It does not make the desk
+quieter about anything an operator must act on — every non-self-clearing
+trigger still pages immediately, because there is no window it can expire
+inside. It does not migrate the three existing per-symbol markers in
+`src/coverage_watchdog.py` onto the new generic helper; that is a refactor of
+working code and was left alone so this change cannot alter what they already
+suppress. And it does not put the suppression record on the API — the counts
+are durable in `data/alerting/` and in `llm_circuit_events`, but reading them
+today means reading those, which is the honest state and is filed above.
+## item 214
+
+**Filed 2026-09-30 out of item 157's retirement.** Item 157 built the enforced answer format and both OpenAI-wire routes now send a strict `json_schema` response format for `TechAnalystAnswer`. Its first DONE WHEN — a live call confirming the Google route enforces what was sent — is structurally unreachable, not merely undone: the rehearsal identity is not granted the Google credential and production is the only identity that could make the call, so the confirming pytest would spend real money on the shared account. The replacement shipped on 2026-09-23: `_record_answer_hygiene` tags every real answer with the provider that served it and records fenced-markdown and extra-key violations to `parse_telemetry`. That evidence is being collected and has never been read. This item carries the unanswered question, not the build.
