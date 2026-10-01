@@ -16,6 +16,7 @@ from src.token_rate import TokenRateGovernor
 from src import llm_route_journal
 from src.cost_circuit import (
     OptionalPaidAnalysisRetrySkipped,
+    is_payment_refusal,
     PaidAnalysisSuspended,
     UnavailableLLMCostCircuit,
 )
@@ -2546,18 +2547,31 @@ class BaseAgent(ABC):
                     self.max_tokens = affordable
                     continue
                 if not _is_retryable(e):
-                    if (affordable is None
-                            and getattr(e, "status_code", None)
-                            == _INSUFFICIENT_CREDIT_STATUS):
-                        logger.warning(
-                            "Agent %s attempt %d: insufficient-credit refusal "
-                            "names no servable allowance — not guessing one. "
-                            "Failing this route.", self.name, attempt + 1,
+                    if is_payment_refusal(e):
+                        # TERMINAL, on the first occurrence. The account is
+                        # out of credit; only a human topping it up changes
+                        # that, so this route stops here and every remaining
+                        # rung on the SAME account is skipped below. Zero
+                        # retries is not a tuned number — a terminal error
+                        # has no retry count to pick. (The one shrink-retry
+                        # above is not a retry of this request: it is a
+                        # smaller request the provider itself said it would
+                        # still serve, and it has already been spent or
+                        # declined by the time we get here.)
+                        logger.error(
+                            "Agent %s attempt %d: the paid research account is "
+                            "OUT OF CREDIT — the provider refused to serve the "
+                            "call%s. Not retrying; topping the account up is "
+                            "the only fix. (%s)", self.name, attempt + 1,
+                            "" if affordable is not None
+                            else " and named no allowance it would serve",
+                            e,
                         )
-                    logger.warning(
-                        "Agent %s attempt %d hit a non-retryable error: %s. "
-                        "No more retries.", self.name, attempt + 1, e,
-                    )
+                    else:
+                        logger.warning(
+                            "Agent %s attempt %d hit a non-retryable error: %s. "
+                            "No more retries.", self.name, attempt + 1, e,
+                        )
                     break
                 # Attempt budget. For a CAPACITY refusal (429/5xx — the
                 # provider saying "busy now, usually temporary") the bound is
@@ -2657,7 +2671,12 @@ class BaseAgent(ABC):
                 route=f"{self._provider}/{self.model}", tier=1,
                 input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
                 wait_s=cooldown, error=primary_error,
-                detail=f"primary exhausted; demoted for {cooldown:.0f}s",
+                detail=(
+                    f"account out of credit; demoted for {cooldown:.0f}s "
+                    "without further attempts"
+                    if is_payment_refusal(primary_error)
+                    else f"primary exhausted; demoted for {cooldown:.0f}s"
+                ),
             )
         if primary_error is not None or not primary_allowed:
             # === The ladder ===================================================
@@ -2674,6 +2693,16 @@ class BaseAgent(ABC):
             # fails on that path, since there is no primary error to re-raise.
             failover = None
             last_route_error: Exception | None = primary_error
+            # Providers that have already refused this call for lack of
+            # credit. A payment refusal is an ACCOUNT-level answer, not a
+            # model-level one, so every remaining rung on the same account
+            # is skipped instead of being paid for out of the attempt budget
+            # the circuit then has to account for. Keyed on the status code
+            # (see `is_payment_refusal`), never on the provider's wording.
+            refused_providers: set[str] = {
+                self._provider for exc in attempt_errors
+                if is_payment_refusal(exc)
+            }
             # Skip route 2 when ITS provider is inside a cooldown: paying a
             # call to an account that refused one minutes ago is the same
             # waste the primary skip removes, one rung down.
@@ -2684,8 +2713,16 @@ class BaseAgent(ABC):
                     "route 2 and going straight to the tertiary.",
                     self.name, self._fallback_provider,
                 )
+            if self._fallback_provider in refused_providers:
+                logger.error(
+                    "Agent %s: skipping route 2 — %s has already refused this "
+                    "call because the account is out of credit, and another "
+                    "attempt on the same account cannot succeed.",
+                    self.name, self._fallback_provider,
+                )
             if (not single_provider_attempt and self._failover_reachable
-                    and secondary_open):
+                    and secondary_open
+                    and self._fallback_provider not in refused_providers):
                 try:
                     failover = self._try_failover(
                         user_message, primary_error, authorize=_authorize_failover,
@@ -2696,6 +2733,8 @@ class BaseAgent(ABC):
                     raise
                 if failover is None:
                     self._fallback_breaker.record_failure()
+                    if any(is_payment_refusal(exc) for exc in attempt_errors):
+                        refused_providers.add(self._fallback_provider)
                 else:
                     self._fallback_breaker.record_success()
             if failover is not None:
@@ -2723,7 +2762,14 @@ class BaseAgent(ABC):
                 # means the desk produces nothing. A demoted tertiary is
                 # still tried — the cooldown's job at this depth is to
                 # inform, not to forbid.
-                if not single_provider_attempt and self._tertiary_reachable:
+                if self._tertiary_provider in refused_providers:
+                    logger.error(
+                        "Agent %s: skipping route 3 — %s is out of credit, so "
+                        "the last rung cannot answer either. The account needs "
+                        "topping up.", self.name, self._tertiary_provider,
+                    )
+                if (not single_provider_attempt and self._tertiary_reachable
+                        and self._tertiary_provider not in refused_providers):
                     try:
                         tertiary = self._try_tertiary(
                             user_message, authorize=_authorize_tertiary,
