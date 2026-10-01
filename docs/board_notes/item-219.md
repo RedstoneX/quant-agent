@@ -1,3 +1,32 @@
 ## item 219
 
 The pruning pass's owner-facing report. `src/rotation.py::pruning_pass_lines` is the single renderer; it reads only the durable row `precheck_record` writes, so the sentence and the audit trail cannot drift apart. `src/trader_feed.py::_append_rotation` renders it into the Telegram session message beside `owner_precheck_lines`; `src/api/routes_history.py::_rotation_lines` serves the identical list on the run detail and `src/api/static/app.js` renders it. Tier 2 (`ranked_margin`) stays OFF and the report says so out loud, reading the recorded switch rather than a constant, so it tells the truth if it is ever turned on. The telemetry-unavailable outcome deliberately renders NO pruning block: the pass did not run that session, and saying how many holdings it examined would be exactly the untrue owner line this item exists to remove.
+
+### 2026-10-01 — the cull stops being gated on the book being full
+
+OWNER RULING (verbatim): "Yes, hundred percent sell whatever it's true. This is survival of the fittest and cut the losses fast... Every position needs to justify its reason to be there multiple times a day." A holding that no longer clears the desk's own fresh-entry bar is SOLD — not gated on the book being capital-constrained, not gated on a replacement candidate existing.
+
+MEASURED, against the production record (read-only, 2026-10-01): the categorical tier fired 8 times on 24-25 Sep and died 8 of 8 at the buy-leg precondition, recorded as `pm_did_not_target_new_candidate`. The trap was circular — the tier only ran on a full book, the prompt then told the model there was no room to buy, so the model never wrote the buy and the sell was never proposed. In 80 closed trades the desk has never sold a holding for ceasing to earn its place. Today's live row: `binding` empty, 15.09% headroom, $1,266.43 deployable against a $500 minimum, and `held_below_entry_bar` = FLNC, NOK, UPS — the desk declined to prune precisely because it had money. `src/rotation.py` previously claimed this tier "had fired zero times in the retained logs"; that was FALSE and has been corrected in place.
+
+What changed: C1 (book capital-constrained) and C5 (the PM targeted the new candidate) are no longer preconditions for the CATEGORICAL sale; both still gate the ranked-margin tier, which sells a still-eligible name purely to fund a replacement and therefore genuinely needs them. C3 (the fresh-entry bar) is untouched — no new threshold, grace period, cooldown, minimum holding time or score margin, and `rotation_ranked_margin_enabled` stays off with its 25% margin unproposed.
+
+C8 (structural protection already broken) — REMOVED for the categorical tier, argued not inherited. Item 25 protects a "still-eligible, thesis-intact" position; a name in `blocked` is not still-eligible, and the owner has now ruled that failing the fresh-entry bar IS a real trigger. Keeping it would have let a name fail the bar indefinitely with its stop intact and never be sold, which is the state the ruling exists to end. Protection is still measured and still stated in the sale's reason. Downstream is consistent: `holding_discipline_claim_check` blocks only a regime-flip or bearish-state-change CLAIM proven false, and a rotation reason claims neither.
+
+C6 (LONG only) — KEPT, argued not inherited, and it is the headline gap. Two of today's three below-bar names are SHORTS (FLNC -36, UPS -17); only NOK (+100.58) would be closed by this change. This function appends a zero-size `TargetPosition`, which `_build_sell` turns into a SELL, and the SELL execution loop hard-refuses a SELL on a short; a short needs the separate COVER path, whose caps, protective BUY-stop cancel/replace and partial-fill restore have never been exercised from here. Removing the restriction today would either do nothing or put an unverified order shape on live capital with the remainder's protection unproven, which the one-way protection rule forbids. Below-bar shorts are recorded every session and skipped under their own audited reason.
+
+Protection is one-way, unchanged: the close is an ordinary PM-shaped target, so it goes through `_build_sell`, the hard risk rules, the AI Risk Manager, the holding-discipline check and `_submit_protected_sell`, which cancels the resting stop, sells, and restores protection over the remainder under a durable pending-protection-restore WAL row. A partial fill or a failed sell leaves that WAL row open, and the rotation tier refuses outright to touch a symbol carrying one (`sell_already_in_flight_wal_row`), so no second operation can start on an unprotected remainder. Nothing in this change alters that path.
+
+- [x] the categorical cull no longer requires a full book
+- [x] the categorical cull no longer requires a replacement candidate
+- [x] the false "fired zero times" claim corrected to the measured 8
+- [x] every sale states the entry rule it now fails, on the order, the alert and the run detail
+- [x] per-session outcome stays durable: `held_examined`, `held_below_entry_bar` and one `rotation` row per decision
+- [ ] below-bar SHORTS are culled (needs the COVER leg proved safe first)
+
+### NOT BUILT HERE — the 2026-10-01 ordering ruling
+
+Ruled after this change was written; recorded so it is not lost, and deliberately NOT half-built:
+
+- [ ] intra-session ordering: protection first, then refresh the evidence on held names, then test and sell the failures, then buy with the cash including what the sell just freed
+- [ ] per-session evidence freshness. FINDING: it cannot be established cleanly today. The `blocked` set is rebuilt each session from whatever evidence exists, but nothing stamps a seat's read as refreshed THIS session, and the sessions differ (morning exercises every analyst seat plus the manager; the half-hourly exercises the technical seat and the manager; midday exercises news and a position review). Judging a holding on a clock rather than on a refreshed read would re-decide on hours-old evidence. The unit of work is the RECORDING — a per-seat refreshed-this-session stamp — not a rule written over the gap.
+- [ ] anti-churn, buy-side mirror. It is implementable with NO new number: the sell side already refuses a symbol with a BUY recorded today (`held_symbol_bought_today`); the mirror refuses a BUY of a symbol carrying a bar-failure SELL recorded today, read from the same `get_trades(today_only=True)` state. No cooldown, no minimum holding time, no period. It is simply not in this diff.

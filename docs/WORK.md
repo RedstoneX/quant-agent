@@ -269,7 +269,7 @@ DONE WHEN:
 detail: docs/board_notes/
 
 
-**219. The pruning pass reports nowhere the owner looks — OPEN, filed 2026-10-01; the rendering is built, the live confirmation is not.** The rotation/pruning pass ran every session and wrote a durable `rotation`/`precheck` row, but the owner saw nothing of it on either surface he actually reads: the Telegram session message said only what the rotation PRE-CHECK concluded, and the dashboard said nothing at all, so a session that examined the whole book and kept all of it was indistinguishable from a session in which the pass never ran. Reporting only; no number that governs a buy, a sell or a size was touched.
+**219. The pruning pass reports nowhere the owner looks — OPEN, filed 2026-10-01; the rendering is built, the live confirmation is not. 2026-10-01: the cull itself no longer waits for a full book or a replacement (owner ruling), and the ordering/freshness/anti-churn ruling that followed is recorded as NOT BUILT.** The rotation/pruning pass ran every session and wrote a durable `rotation`/`precheck` row, but the owner saw nothing of it on either surface he actually reads: the Telegram session message said only what the rotation PRE-CHECK concluded, and the dashboard said nothing at all, so a session that examined the whole book and kept all of it was indistinguishable from a session in which the pass never ran. Reporting only; no number that governs a buy, a sell or a size was touched.
 
 DONE WHEN:
   - [x] the session message states that the pass ran and how many holdings it examined, read off the held set the pre-check itself received (`held_examined`), never inferred

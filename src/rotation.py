@@ -268,11 +268,16 @@ bar has, by the identical rule a new buy must clear, "stopped earning its
 place," and a candidate that clears that same bar displaces it — pass/fail,
 no score margin, no invented number. It is live and, since PR #604 pointed
 the precondition at the union of every binding limit, actually reachable on
-a full book. Its real firing rate is UNMEASURED (it had fired zero times in
-the retained logs, and the rate at which a holding's structural protection
-breaks on this book — the other conjunct — is itself unmeasured, PR #604
-"found not fixed"), so it is honestly described as "categorically reachable,
-delivery rate unmeasured," never as "the mandate is fully delivered."
+a full book. CORRECTED 2026-10-01 (this file previously said the tier "had fired zero
+times in the retained logs" — that was FALSE and is a defect in the desk's
+own record). MEASURED against the production `specialist_evidence` rows: it
+fired 8 times on 24-25 Sep and died 8 of 8 at the buy-leg precondition,
+recorded as `pm_did_not_target_new_candidate`. The trap was circular — the
+tier only ran when the book was full, the prompt then told the model there
+was no room to buy, the model never wrote the buy, so the sell was never
+proposed. In 80 closed trades the desk had never once sold a holding for
+ceasing to earn its place. That is why the owner removed the capital and
+replacement preconditions from this tier on 2026-10-01.
 
 REJECTED, do not re-propose (adversary review, 2026-09-23): choosing WHICH
 below-the-bar holding to prune by seat-weighted CONVICTION score. The
@@ -399,8 +404,12 @@ class RotationOpportunity:
     not because it ranked low among names that passed them.
     """
 
-    new_symbol: str
-    new_score: float
+    #: `None` on the categorical tier when NO new candidate exists. Owner
+    #: ruling 2026-10-01: a holding that no longer clears the fresh-entry
+    #: bar is sold on its own merits, so the replacement is no longer a
+    #: precondition and must not be faked with a placeholder score.
+    new_symbol: str | None
+    new_score: float | None
     held_symbol: str
     held_score: float | None
     #: "ineligible_hold" (categorical — no margin needed) or "ranked_margin"
@@ -730,29 +739,15 @@ def evaluate_rotation(
             weakest_held=weakest_held, margin_pct=margin_pct, binding=binding,
         ))
 
-    if not binding:
-        measured = funding_view_measured(entry_budget_usd, min_order_usd)
-        return _refuse(
-            "book_not_constrained",
-            f"risk headroom {headroom_pct:.2f}% is at or above the "
-            f"{floor_pct:.2f}% floor, and "
-            + (
-                f"${entry_budget_usd:,.2f} deployable is at or above "
-                "the smallest order the desk will place — real room on every "
-                "constraint"
-                if measured else
-                "the funding view was NOT MEASURED this session, so no "
-                "funding constraint could be tested"
-            ),
-        )
-
-    if best_new is None:
-        return _refuse(
-            "no_new_candidates",
-            f"every one of the {len(ranked)} ranked names is already held, "
-            f"so there is no candidate to rotate INTO",
-        )
-
+    # Tier 1 — categorical. OWNER RULING 2026-10-01 ("every position needs
+    # to justify its reason to be there"): this tier is evaluated BEFORE the
+    # capital precondition and BEFORE any replacement candidate is required.
+    # A holding that would not be bought today is sold on its own merits —
+    # not because the book is full, and not because something is queued to
+    # take its place. The replacement BUY, where one exists, stays an
+    # ordinary separate decision. Both preconditions below still gate the
+    # RANKED-MARGIN tier, which sells a still-eligible name purely to fund a
+    # replacement and therefore genuinely needs both.
     # Tier 1 — categorical. A held name failing the desk's own entry gates
     # needs no ranking margin: it would not be bought today. Ties broken by
     # the MOST blocking reasons first (worse, more clearly stale), then
@@ -776,8 +771,8 @@ def evaluate_rotation(
         )
         held_symbol = ordered[0]
         return RotationOutcome(opportunity=RotationOpportunity(
-            new_symbol=best_new.symbol,
-            new_score=best_new.score,
+            new_symbol=best_new.symbol if best_new else None,
+            new_score=best_new.score if best_new else None,
             held_symbol=held_symbol,
             held_score=None,
             tier="ineligible_hold",
@@ -787,6 +782,30 @@ def evaluate_rotation(
                 (sym, ineligible_held[sym]) for sym in ordered
             ),
         ))
+
+
+    if not binding:
+        measured = funding_view_measured(entry_budget_usd, min_order_usd)
+        return _refuse(
+            "book_not_constrained",
+            f"risk headroom {headroom_pct:.2f}% is at or above the "
+            f"{floor_pct:.2f}% floor, and "
+            + (
+                f"${entry_budget_usd:,.2f} deployable is at or above "
+                "the smallest order the desk will place — real room on every "
+                "constraint"
+                if measured else
+                "the funding view was NOT MEASURED this session, so no "
+                "funding constraint could be tested"
+            ),
+        )
+
+    if best_new is None:
+        return _refuse(
+            "no_new_candidates",
+            f"every one of the {len(ranked)} ranked names is already held, "
+            f"so there is no candidate to rotate INTO",
+        )
 
     # Tier 2 — ranked margin. Both sides eligible; the weakest held name is
     # simply the last held entry in `ranked`'s own (already-sorted) order.
@@ -1189,13 +1208,24 @@ def rotation_sell_reason(
             "executable"
         )
     failed_rules = ("; ".join(opportunity.reasons) or "entry rules")[:100]
+    # Owner ruling 2026-10-01. The sale stands on the entry bar alone, so the
+    # reason states the bar it fails and nothing it does not depend on. The
+    # replacement, where one exists, is named as a SEPARATE decision — never
+    # as this sale's justification — and is omitted entirely when there is
+    # none, rather than rendered from a placeholder score.
+    replacement = ""
+    if opportunity.new_symbol and opportunity.new_score is not None:
+        replacement = (
+            f" Best-ranked candidate {opportunity.new_symbol} (score "
+            f"{opportunity.new_score:.2f}) is its own separate decision."
+        )
     return (
         f"ROTATION (deterministic, src/rotation.py): {opportunity.held_symbol} "
-        f"fails the desk's own entry rules today ({failed_rules}); structural "
-        f"protection not intact ({protection_basis}: {protection_detail[:60]}). "
-        f"{rotation_constraint_clause(binding=binding, headroom_pct=headroom_pct, ceiling_pct=ceiling_pct, floor_pct=floor_pct, entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd)} Full close to free room for "
-        f"{opportunity.new_symbol}, the best-ranked eligible candidate (score "
-        f"{opportunity.new_score:.2f}) the PM targeted."
+        f"fails the desk's own entry rules today ({failed_rules}); it would "
+        f"not be bought today, so it has stopped earning its place (owner "
+        f"ruling 2026-10-01 — neither a full book nor a replacement is "
+        f"required). Protection: {protection_basis}: "
+        f"{protection_detail[:40]}.{replacement}"
     )
 
 

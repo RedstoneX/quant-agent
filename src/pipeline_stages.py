@@ -384,12 +384,25 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
       2. The PM's own prompt must have surfaced a comparison this session,
          and it must be the categorical tier. The ranked-margin tier is
          information only (see `src/rotation.py`).
-      3. The held name must be a LONG the broker actually shows. Shorts
-         are not automated — a COVER is a different order shape with its
-         own caps, and nothing here has been verified against it.
-      4. The PM must itself have targeted the new candidate with a real
-         size this session. The desk never invents the buy leg; the close
-         only makes room for a trade the model already decided to make.
+      3. The held name must be a LONG the broker actually shows. KEPT, and
+         re-examined under the 2026-10-01 ruling rather than inherited: this
+         function only appends a zero-size `TargetPosition`, which
+         `_build_sell` turns into a SELL, and the SELL execution loop
+         hard-refuses a SELL on a short (`existing[0].qty <= 0: continue`).
+         A short needs the separate COVER path, whose caps, protective
+         BUY-stop cancel/replace and partial-fill restore have never been
+         exercised from here. Removing the restriction today would therefore
+         either do nothing or put an unverified order shape on live capital
+         with the remainder's protection unproven — which the one-way
+         protection rule forbids. It is a REPORTED GAP, not a silent one:
+         below-bar SHORTS are recorded every session by
+         `holdings_below_entry_bar` and skipped under their own audited
+         reason, and automating the cover leg is its own piece of work.
+      4. RANKED-MARGIN TIER ONLY: the PM must itself have targeted the new
+         candidate with a real size this session. The CATEGORICAL tier no
+         longer requires it (owner ruling 2026-10-01) — a holding below the
+         desk's own entry bar is closed whether or not the book is full and
+         whether or not anything is queued to replace it.
       5. The PM must not already be targeting the held symbol (closing it
          itself, or adding to it). Either way the model has spoken and
          this function does not override a decision the PM made.
@@ -399,12 +412,13 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
          breathe" is exactly what the exit noise band exists to prevent —
          OKLO 2026-08-26), no pending protection-restore WAL row (a sell
          already mid-flight), no pending re-peg row (an entry mid-chase).
-      7. Its structural protection must ALREADY be broken under the item-25
-         holding-discipline check (`_structural_protection_for_holding`,
-         the same call `RiskStage` makes). A position whose thesis level
-         is intact is protected from a plain, no-real-trigger sale by this
-         desk's own doctrine, and opportunity cost is not one of the three
-         real triggers — so it is surfaced, never sold.
+      7. RANKED-MARGIN TIER ONLY: its structural protection must ALREADY be
+         broken under the item-25 holding-discipline check. That tier sells
+         a still-ELIGIBLE name for opportunity cost, which is not one of the
+         three real triggers. On the CATEGORICAL tier the holding is by
+         definition no longer eligible, and the owner ruled on 2026-10-01
+         that failing the fresh-entry bar IS the real trigger, so protection
+         is measured and reported but does not veto.
     """
     if not _rotation_execution_enabled(pipeline):
         return
@@ -439,17 +453,23 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         return
 
     targets = list(getattr(portfolio_decision, "targets", None) or [])
-    new_targeted = any(
-        t.symbol.upper() == new_symbol and not t.is_close for t in targets
-    )
-    if not new_targeted:
-        # The buy leg is invariant across held candidates: with no new name
-        # targeted there is nothing to make room FOR, so this abandons the
-        # whole rotation, not merely the current candidate.
-        _rotation_skip(
-            pipeline, ctx, opportunity, "pm_did_not_target_new_candidate",
+    # OWNER RULING 2026-10-01. The buy leg is NO LONGER a precondition for a
+    # categorical sale. MEASURED: this tier fired 8 times (24-25 Sep) and
+    # died 8 of 8 right here, because the tier only ran on a full book and
+    # the prompt then told the model there was no room to buy — so the model
+    # never wrote the buy and the sell was never proposed. A holding below
+    # the entry bar is now closed on its own merits. The RANKED-MARGIN tier
+    # keeps the precondition: it sells a still-eligible name purely to fund a
+    # replacement, so without the replacement it has no reason at all.
+    if opportunity.tier == "ranked_margin":
+        new_targeted = any(
+            t.symbol.upper() == new_symbol and not t.is_close for t in targets
         )
-        return
+        if not new_targeted:
+            _rotation_skip(
+                pipeline, ctx, opportunity, "pm_did_not_target_new_candidate",
+            )
+            return
 
     def _sellable_this_run(cand_symbol: str, cand_reasons):
         """Every per-holding sell guard for ONE below-bar candidate.
@@ -562,7 +582,25 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
                 detail=str(exc),
             )
             return None
-        if cand_protection.protected:
+        if cand_protection.protected and cand_opp.tier == "ranked_margin":
+            # RANKED-MARGIN ONLY. That tier sells a name that still PASSES the
+            # desk's own entry gates, purely to fund something else, and
+            # opportunity cost is not one of item 25's real triggers — so a
+            # thesis-intact name is surfaced there, never sold.
+            #
+            # CATEGORICAL tier, owner ruling 2026-10-01: item 25 protects a
+            # "still-eligible, thesis-intact" position. A holding in `blocked`
+            # is NOT still-eligible — it fails the identical bar a fresh buy
+            # must clear — and the owner has now ruled that failing that bar
+            # IS a real trigger ("it has to earn its right to be there").
+            # Keeping this conjunct would have meant a name could fail the
+            # entry bar indefinitely with its stop intact and never be sold,
+            # which is the state the ruling exists to end. The protection
+            # state is still measured and is still stated in the sale's
+            # reason and on the owner-facing surfaces; it no longer vetoes.
+            # Downstream is consistent: `holding_discipline_claim_check`
+            # blocks only a regime-flip or bearish-state-change CLAIM proven
+            # false, and a rotation reason claims neither.
             _rotation_skip(
                 pipeline, ctx, cand_opp, "held_symbol_structurally_protected",
                 protection_basis=cand_protection.basis,
@@ -631,6 +669,13 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         thesis=reason,
         thesis_invalid_if=str(hist.get("thesis_invalid_if") or ""),
     ))
+    # `None` when the ruling sold a below-bar holding with nothing queued to
+    # replace it. Never a placeholder score — see `RotationOpportunity`.
+    new_symbol = opportunity.new_symbol or None
+    new_score = (
+        float(opportunity.new_score)
+        if opportunity.new_score is not None else None
+    )
     ctx.rotation = {
         "held_symbol": held_symbol,
         "new_symbol": new_symbol,
@@ -654,7 +699,7 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         "binding": tuple(precheck.binding or ()),
         "entry_budget_usd": precheck.entry_budget_usd,
         "min_order_usd": precheck.min_order_usd,
-        "new_score": float(opportunity.new_score),
+        "new_score": new_score,
         "held_reasons": list(opportunity.reasons),
         "protection_basis": protection.basis,
         "protection_detail": str(protection.detail),
@@ -663,12 +708,13 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         "reason": reason,
     }
     logger.warning(
-        "Rotation: proposing a full close of %s to free room for %s — %s",
-        held_symbol, new_symbol, reason,
+        "Rotation: proposing a full close of %s (below the desk's own entry "
+        "bar; replacement candidate: %s) — %s",
+        held_symbol, new_symbol or "none", reason,
     )
     _record_pipeline_event(
         pipeline, ctx, held_symbol, "rotation", "proposed", reason,
-        new_symbol=new_symbol, new_score=float(opportunity.new_score),
+        new_symbol=new_symbol, new_score=new_score,
         held_reasons=list(opportunity.reasons),
         protection_basis=protection.basis,
         protection_detail=str(protection.detail)[:400],
