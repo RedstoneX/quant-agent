@@ -494,6 +494,41 @@ This is deliberately the OPPOSITE carve-out from `_is_broadcast_macro_verdict`, 
 
 **Moved from WORK.md (2026-09-24) —** Three gaps, none a wording fix: **(a) Behaviour that changed without being deleted** — nothing is registered, so nothing is scanned, and the shipped check is blind to the whole class. The live instance is item 108. **(b) Numbers that exist ONLY in prompt prose** — invisible to a code audit and to any drift check: the PM's whole sizing arithmetic (bases 3.0/1.75/0.75, +0.25 R/R bonus, ±0.20/±0.10 evening tilt, 0.5 stale halving at age ≥8d) and Tech's "3+ aligned signals", 1-3/4-7/8+ freshness tiers and forward-PE 40/60 + P/S 15/25 levels. Trade-governing, unsourced; source, derive or delete each. A DIFFERENT shape added 2026-09-18: the reviewer's `weight_pct > 12%` escalation and the `DRIFT` flag's matching 12 are bare inline literals in `src/pipeline.py` and `src/agents/portfolio_manager.py`, with no settings key and no named constant, so the number has three homes and the rendering mechanism can reach none of them. Name it, or move it to settings, before it can be rendered. **(c) Rendering coverage** — `prompt_limits.py` renders limits from live settings in 2 of 10 prompt files; the other eight hand-type every number. Mechanical where a number has a settings key; otherwise it is (b). It raises at agent construction, so a bad placeholder halts the desk — fail-closed, and a new way a settings edit stops trading.
 
+## item 119 — RETIRED 2026-09-30, open-like proof measured: 15 of 15 series served from cache at the 13:30 UTC open and the 14:00 and 14:46 runs
+
+**Moved from WORK.md (2026-09-24) —** On 2026-09-17 the morning open brought back 8 of the 15 required FRED series; the other 7 were never requested at all and the log said the deadline was exceeded. That is not a St. Louis outage: the observation calls and the due-date metadata calls share the same worker slots under the existing 90s ceiling, so a healthy batch spends nearly the whole clock and one slow series starves the rest. PR #435 built an observations-first fix (one attempt per series, then one bounded re-ask of the misses inside whatever budget remains, metadata on leftover budget, unknown freshness named rather than invented, ceiling NOT lengthened). **That code was never merged and the item does not inherit its verdict.** Its measurements — isolated series 1.5-6.7s, a clean full batch 15/15 in ~85s — were taken MID-MORNING, when FRED was already healthy. The defect is at the open. Mid-morning numbers are a starting point, not merge-readiness. Do not lengthen the timeout and do not invent a missing value; an incomplete set is a lost economics seat.
+
+**DECISION 2026-09-26 — the economist is paid ONCE on what arrived, and the verdict is stamped partial. The sentence above ("an incomplete set is a lost economics seat") is SUPERSEDED for the paid call; it stands for the series values themselves, which are still never invented.**
+
+Measured first, from production `agent_logs` and `quant_agent.log*` on the box (read-only):
+
+- 19 paid `macro_analyst` calls carry a coverage section. TWO were formed on a partial set: 2026-09-17 13:33:56 UTC at 8/15 and 2026-09-22 13:34:56 UTC at 7/15. Both land within five minutes of the 09:30 ET open. Both are missing the same tail of `CONFIGURED_SERIES` (UNRATE, BAMLH0A0HYM2, DFII10, T10YIE, DTWEXBGS, BAMLC0A0CM, ICSA, plus PCEPI on the 7/15 run), every one of them named `fetch_deadline_exceeded` — never asked, not asked-and-refused.
+- The verdict DID differ. 2026-09-17 came back `transitional`/`low` where 09-16 and 09-18 both said `risk-on`/`medium`. 2026-09-22 came back `risk-on`/`low` between a `risk-on`/`low` and a `risk-on`/`high`. So a partial set is not cosmetic: it moved the regime label once in two, and the economist self-downgraded confidence to `low` on both.
+- Both partial runs predate the pre-open series cache (`2bb22eb2`, 2026-09-23 02:25 -0400). Every session since — 09-23, 09-24, 09-25 — returned 15/15. **That is three sessions. It is not evidence the defect is gone**, which is exactly why criterion (a) stays unticked and why item 187 stays open.
+- Money: the economist runs on `gemini-3.5-flash-lite` at ~8.4k in / 1.4k out per call, recorded cost **$0.0000** over its last 10 calls, and its highest per-call cost ever recorded is **$0.0018** (2026-08-31, on the earlier model). For comparison the portfolio manager cost **$11.1359 over 74 calls** in the same 14 days (~$0.15 a call).
+
+Why option 1 (pay once, label it partial) and not the other three:
+
+- **Not "defer until the set is complete."** The economist is paid exactly ONCE A DAY, in the morning stage; midday, close and evening read `macro_summary` but never buy a macro verdict. Deferring therefore does not delay the read, it deletes it, and the book gets built at the open with no regime frame at all. Both measured partial runs had already burned the full 90s ceiling, so "wait for complete" has no known finish time to wait for. Under the standing ruling that macro is a weighted per-name input that can never green-light a name on its own, a labelled partial read is strictly more informative than an absent one.
+- **Not "pay again when the set completes."** The money objection is weak — a second economist call is $0.0018 at worst — but the second verdict has no consumer. The book is already built, no later session pays for macro, and nothing is wired to unwind an order on a revised regime. The only way to make the repair matter is to re-run the portfolio manager at ~$0.15 a call, which is 80x the economist and sits under a ceiling that genuinely binds (the intraday scan alone is 62.8% of all model spend). Building that path for a trigger that has fired zero times since the cache shipped is PR #435's own mistake — optimising a path that has never succeeded.
+- **Not "refuse below some coverage."** That needs a threshold. No literature or broker fact gives one, the desk's no-arbitrary-numbers rule bars picking one, and `tests/test_macro_partial_verdict.py::test_stamp_never_compares_coverage_against_a_threshold` pins the absence of a cutoff: 14/15 and 1/15 are both simply `partial`.
+
+What shipped, and what the gap actually was. The desk already named the holes on the INPUT side (`MacroCoverage.describe()` in the economist's own prompt) and already raised the operator's degraded banner (`data_status["macro"] = "partial"`). It also already refused to pay twice: `"partial"` maps to `CATEGORY_REPORTED` in `src/evidence_gate.py`, never into `HEALABLE_CATEGORIES`, so the one-paid-retry seat heal cannot buy a second opinion on the same holes — that is now pinned by a test rather than left as an accident of the table. The real gap was the OUTPUT side: the verdict outlives the run and carried no trace. It is persisted by `MacroStore.save_last_state` (an explicit key whitelist, which silently dropped anything not listed), read back by midday/close/intra as `carried_from_morning` and by later days as `remembered`, rendered into the PM's sheet and the 7-day regime trajectory, and sent to the owner as the `📊 Market:` line. A 7/15 read looked identical to a 15/15 read on every one of them. `MacroCoverage.verdict_stamp()` now stamps `coverage_state`/`coverage_note` onto `MacroAnalysis` straight after validation — from the deterministic fetch record, never from the model's own self-assessment — and the stamp travels through all of those surfaces. `unknown` is the default and is deliberately not a claim in either direction, so pre-existing snapshots are neither laundered into "complete" nor given a caveat nothing supports.
+
+## item 147 — RETIRED 2026-09-30
+
+**Moved from WORK.md (2026-09-24) —** An inexact day blocks the quota rearm, so a provider omitting usage costs budget never spent.
+
+**Investigated 2026-09-25, STILL OPEN, no code change — the honest fix is out of `cost_circuit.py`.** Since item 14 (2026-09-02) removed reservations, a null-usage success is no longer "charged the reserve": `complete_call` books $0 but increments `unknown_cost_rows`, marks the day inexact, and HARD-latches `unknown_actual_cost` (operator-only). Doctrine (`cost_circuit.py` ~112-115, added 2026-09-22) keeps that on purpose: "real tokens were generated; the unknown is real spend." Adversary-verified 2026-09-25: `complete_call` sees only `cost is None` and conflates TWO cases `src/agents/base.py` produces — (a) genuine zero-token success (`base.py` ~2340, no telemetry, real unknown spend, hard latch defensible) and (b) known non-zero tokens but the model is absent from the pricing table so `estimate_cost` returns None (`base.py` ~2374, `cost_table.py` `estimate_cost`). Case (b) is a pricing-data defect, not unbounded spend, and the hard latch over-punishes it. BUT `cost_circuit` cannot book a measured figure for (b) either — the missing thing is the per-token RATE, and the pricing table is the same one that failed, so there is no rate to multiply by. A real fix must (1) pass token counts from `base.py` into `complete_call` to route (a) vs (b) — which breaks the breaker's deliberate provider-independence — and (2) source a rate for the unpriceable model (add it to `cost_table`, needs a real number). Neither is verifiable/safe on the paper/free-data setup, and whether case (b) has EVER fired in production is unconfirmed (needs a prod-DB read of `llm_budget_days`/`agent_logs`; the "three null-cost rows on 2026-08-31" are not classified (a)-vs-(b)). Left for owner decision; no behaviour changed.
+
+**Measured and half-fixed 2026-09-26 — the filed premise does not survive the data.** Production DB, read-only: 667 `agent_logs` rows over 2026-08-14..2026-09-26, exactly 7 with `cost_usd IS NULL`. All 7 are `smart_money_analyst` synthesis-cache hits (`provider_requests=0`, `latency_s=0.0`, `input_message='[cached evidence hash]'`, 0/0 tokens, `status='success'`) — six on 2026-08-31, one on 2026-09-17. No provider was called, so nothing was spent and nothing was over-charged; `llm_budget_days` shows `unknown_cost_rows=0, costs_exact=1` for both days, because the day row is seeded at 12:00:41 UTC and the cache hits land from 14:23 onward. `unknown_actual_cost` has never tripped in production (0 events in `llm_circuit_events`), and zero rows have tokens > 0 with a NULL cost, so the (a)-vs-(b) split this section left open resolves as: case (a) never, case (b) never, and all 7 rows are a third case neither branch describes — no call at all.
+
+The real defect that remained is the day seeder, not `complete_call`: `_seed_day_locked` counted every NULL-cost row as unknown, so on any day whose `llm_budget_days` row is created AFTER a cache-hit row (a mid-day deploy — the exact case the seeder exists to handle, or a restored/standalone breaker DB), the day seeds inexact and arms `legacy_unknown_cost`, an operator-only hard latch, over calls that provably cost nothing. That is the 2026-09-16 failure shape (events 27/28) with a different source row. Fixed two ways: the cache path now books an exact `cost_usd=0.0`, and the seeder forgives a row proven free by its own record. The proof is deliberately narrow, in the spirit of `_KNOWN_ZERO_COST_STATUS_CODES` — `status='success'` is load-bearing because `src/pipeline.py`'s evening exception path also synthesises `provider_requests=0` with no cost after a call that may have reached the provider, and NULL `provider_requests` (194 legacy rows) is not a proof of zero.
+
+Still open and unchanged on purpose: a success whose provider request DID happen and returned no telemetry. No rate source exists to charge it at, so it keeps booking unknown and latching. Charging it anything invented would be the reservation layer under a new name, which item 14 deleted for cause.
+
+Retired from the queue 2026-09-30: the filed premise (a full reservation eating budget on an untelemetered success) never existed in the data, and the only real defect it uncovered (the day seeder latching legacy_unknown_cost on a proven-zero cache hit) shipped 2026-09-26 per item 14's cost_circuit.py fix. What remains — a success whose provider request truly happened with no usable cost or token telemetry — has zero measured occurrences across the full agent_logs history, so there is no defect left to build against; it stays a documented edge case above, not a queue item.
+
 ## item 119 — RETIRED 2026-10-01, (b) shipped and the remaining criterion (a) is the same observation item 187 already owns
 
 **RETIREMENT 2026-10-01.** Criterion (b) was met 2026-09-26 (below). Criterion (a) — "every required series demonstrably gets a real attempt inside the existing ceiling, proven against open-like conditions" — has no build left in it: item 187 shipped the fair-share reserves, the pre-open series cache and the move of the release-schedule wire off the trading path, and its own fourth criterion is the exact proof (a recorded production open with `series_not_attempted` empty). Keeping 119 open would have two items waiting on one row. Criterion (a) is deferred to item 187.
@@ -1004,6 +1039,70 @@ Item 90's half two, surfaced for visibility. Three numbers: the 3x-ATR chandelie
 
 ## item 186 — detail moved from the board 2026-09-30
 
+UPDATE 2026-09-30 (short-side haircut) — TWO DERIVATIONS ATTEMPTED, BOTH
+WITHDRAWN, NO SIZING CHANGE SHIPPED. The desk sizes shorts exactly as it did
+before this pass. `RiskConfig.short_gap_risk_multiple` (1.5) and the
+constructor's mirror of it are both untouched and both still
+`status: arbitrary`.
+
+Why each attempt died, recorded so nobody spends a third one on either:
+- WORST HISTORICAL GAP over the lookback the desk already fetches. The
+  lookback is a ~5-year window chosen for CHART STRUCTURE, not for a gap
+  distribution, and a maximum over a fixed window can only grow until the bar
+  ages out. One old gap would govern every short's size for years, and a
+  regime change could not update it. That is a number fitted to past
+  outcomes on a sizing path, which doctrine bars.
+- STOP DISTANCE PLUS ONE ATR. Dead on algebra, not on data. The entry stop is
+  ITSELF placed at 2.5 ATR, so the multiple is (2.5 + 1) / 2.5 = exactly 1.40
+  for every name — the per-name ATR cancels out of the ratio. It is a flat
+  haircut wearing a per-name costume, and it is LOWER than the 1.5 it claimed
+  to replace, so it would have quietly opened every short LARGER.
+
+ALSO ESTABLISHED, AND THE REASON A LEDGER LINE HAD TO BE PULLED. Execution
+sizes with min(qty_by_alloc, qty_by_risk), and the risk-budget leg in
+`src/pipeline_stages.py` multiplies by `RiskConfig.short_gap_risk_multiple`.
+A constructor-only change therefore does NOT retire that number: whenever the
+risk leg binds, the execution-side read is the one that sizes the live short.
+The withdrawn work carried a ledger line saying the number "NO LONGER SIZES
+ANY SHORT". That was untrue and is removed rather than softened. The
+construction / execution split is a latent defect in its own right and is
+filed as board item 216.
+
+WHAT SHIPPED INSTEAD — THE RECORDING. The reason this number cannot be read
+off the instrument is not that the reading is hard; it is that the desk has
+never kept the evidence. Bars are fetched live each session and discarded and
+there is no OHLCV table, so there has never been a record of what a short
+actually suffers overnight. That is now recorded, on the trade row, beside
+the facts already pinned at entry:
+- `trades.max_adverse_overnight_gap` — the worst adverse overnight gap
+  (session open minus prior session's close, in price units, positive =
+  against the short) observed on any session the short was held. Stored
+  SIGNED and unfiltered, so a short whose every gap ran in its favour records
+  a negative worst, which is a real and different fact from "never observed".
+- `trades.overnight_gap_sessions` — how many sessions a gap was actually
+  observed on, so absence of evidence stays distinguishable from evidence of
+  absence.
+- `trades.last_overnight_gap_date` — idempotence by date; a second position
+  sync in one session cannot count the same gap twice.
+These sit on the same opening row as `entry_atr` (the volatility read at
+entry) and `initial_stop_loss` (the stop distance), and join to
+`realized_pnl` / `exit_reason_category` when the position closes. Written by
+`PortfolioManager._record_short_overnight_gaps` off the existing position
+sync, shorts only, fail-soft per symbol.
+
+HARD LIMIT ON ITS USE, same as the stop-floor excursion evidence beside it:
+RECORDING ONLY. No threshold, no gate, no sizing change; nothing reads it
+back into a trading decision. It may NOT be swept for the multiple that would
+have been optimal — that is fitting a number to this desk's own history,
+which doctrine bars whatever the sample size. What it can eventually support
+is a statement about the DISTRIBUTION of adverse short gaps relative to the
+stop distance and the volatility read, which is a measurement, not a fit.
+
+The item's completion criterion is changed on the board to match: it closes
+on that recording plus enough closed shorts to read, never on another
+derivation.
+
+
 UPDATE 2026-09-30 (second pass, owner ruling on global risk dials). Live-code
 inventory of every portfolio- and cluster-level ceiling still standing, each
 verified in source this pass, not from the board:
@@ -1141,6 +1240,31 @@ The order matters and is the completion criteria:
 ## item 195 — RETIRED 2026-09-30, the window-start inconsistency it named is fixed and merged, and the only remaining lever on the structural leg is barred
 
 The measured finding stands and is preserved in the retired item's own text: the structural pivot has never produced a candidate, because a confirmed pivot needs `2 * PIVOT_WINDOW + 1` = 7 bars and a scale-in additionally reset the caller's bar window to zero. That second half was the defect in how the candidate is FOUND and it is fixed on main (`Database.get_position_open_timestamp`, `tests/test_position_open_timestamp.py`); re-running all 21 recorded refusals through the new window flipped none. The first half is arithmetic reach, and the only way to shorten it is to move `PIVOT_WINDOW`, which the module documents as unsourceable in the literature — moving it to obtain a result the data would like is picking a number, which doctrine bars. The leg is NOT deleted: item 196's change means it now competes with the chandelier on equal terms instead of pre-empting it, and `tests/test_trailing_candidate_set.py` pins that it is still preferred where it does produce a usable pivot.
+
+
+## item 216 — the short-side gap haircut has two application sites
+
+Filed 2026-09-30 out of the item 186 pass. Execution sizes a position as
+min(qty_by_alloc, qty_by_risk). The constructor applies the short-side
+haircut on the allocation leg; the risk-budget leg in
+`src/pipeline_stages.py` reads `RiskConfig.short_gap_risk_multiple` and
+applies it there too. Whenever the risk leg is the binding one — which is
+whenever risk is the tighter constraint, not an exotic case — the number
+that actually sizes the live short is the execution-side read.
+
+How it surfaced: a constructor-only rewrite of the haircut was about to ship
+a number-ledger line stating the value "NO LONGER SIZES ANY SHORT". Checked
+against the code, that was false. The rewrite stood down; this item records
+the split that made the false claim possible.
+
+Severity: LATENT, not live-breaking. Both sites hold the same value today,
+so they agree — by coincidence of configuration, not by construction. The
+defect is that a change to one site is silently a partial change, and that
+any claim about "the" short haircut is ambiguous about which site it means.
+
+Not to be conflated with item 186, which is about whether the VALUE is
+sourced. This item is about WHERE it is applied and would remain open even
+if the value were settled tomorrow.
 
 ## item 218 — RECORD ONLY: two measurements, no behaviour change; the parity refusal was built and then REMOVED before merge
 
