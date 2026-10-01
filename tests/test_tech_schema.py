@@ -48,6 +48,9 @@ _DESK_FILLED_FIELDS = {
     "atr_14", "computed_levels", "computed_level_touches", "levels_coverage",
     "signal_bar_low", "signal_bar_high", "bars_available", "signal_age_days",
     "computed_level_bars", "computed_level_zones",
+    # Board item 177: the input fingerprint and the fresh-vs-carried state
+    # are set by the desk, never asked of the model.
+    "input_fingerprint", "read_state",
 }
 
 _VALID_ITEM = {

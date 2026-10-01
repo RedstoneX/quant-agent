@@ -1485,6 +1485,19 @@ class TechAnalysisResult(TechAnalystAnswerItem):
     # high-volatility names than a hardcoded 5% stop.
     atr_14: float | None = None
 
+    #: PYTHON-SET (board item 177). A hash over every input this verdict is a
+    #: function of — the submitted bars and indicators, the prior-rating
+    #: context, the valuation line, the live/forming-session block and the
+    #: macro strings. Never shown to the model (it is not on
+    #: `TechAnalystAnswerItem`, so the response schema is unchanged). None
+    #: means the inputs could not be pinned down, which forces a fresh call.
+    input_fingerprint: str | None = None
+    #: PYTHON-SET. "refreshed_this_session" when this run actually asked the
+    #: seat, "carried_forward" when the verdict was reused because no input
+    #: had moved. Board item 227's per-seat stamp must never read a reuse as
+    #: a fresh read, so a carried verdict says so on the row itself.
+    read_state: str = "refreshed_this_session"
+
     @computed_field
     @property
     def risk_reward(self) -> float | None:
