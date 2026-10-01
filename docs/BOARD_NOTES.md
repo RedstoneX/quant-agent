@@ -764,6 +764,33 @@ That test is marked `xfail(strict=False)` with the reason above — NOT as a
 flake. It flips to XPASS the moment this item serves recorded market data,
 which is the signal that item 202 is done.
 
+### Item 202 update 2 — the swap missed the stage that owns the provider (2026-10-01)
+
+Serving recorded bars was not enough on its own. `TradingPipeline.__init__`
+hands the SAME market-data object to the stages it builds
+(`MorningResearchStage(market=self.market, ...)`), so replacing
+`pipeline.market` afterwards left the technical read — the read a rehearsal
+most needs served from the recording — still pointing at the LIVE provider.
+Offline that read as "No data for SPY, skipping" for every symbol and the
+session degraded to `status='no_data'`; online, before the curl_cffi hole was
+closed, it is what actually downloaded the bars. `run_rehearsal` now rebinds
+every holder and raises rather than starting if one still points at the live
+provider.
+
+Measured after the rebind (2026-10-01): `tech_analyst` runs offline and
+appears in `agents_ran`, where before it did not. The test still XFAILs, now
+for two different and named reasons: the run ends on
+`APIConnectionError: Connection error.` before the Portfolio Manager, and
+other components still construct their own `MarketDataProvider`, whose
+blocked yfinance crumb fetches retry per symbol (~188s). Those two are what
+is left of item 202; the xfail reason on the test says the same thing and
+flips to XPASS when they are served.
+
+Not found, and checked because the same class of bug bit elsewhere: nothing
+under `ops/rehearsal/` dates anything by `date.today()` or `datetime.now()`.
+The only `utcnow()` is the capture timestamp written into the recording's
+metadata, which is a provenance stamp, not a trading date.
+
 It also fails on `origin/main` today, taking ~196 seconds of live fetching
 [measured 2026-09-30], so the defect predates the guard rather than being
 caused by it.

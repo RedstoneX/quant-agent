@@ -309,11 +309,11 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 200)
 
-**202. The rehearsal harness is not hermetic — a test that replays a RECORDED session downloads live market data — filed 2026-09-30.** `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis` reaches yfinance for price history on every run and takes ~196s doing it; it FAILS on main today [measured 2026-09-30, `origin/main`, network reachable]. Pre-existing, not caused by the conftest network guard that exposed it. detail: docs/BOARD_NOTES.md (item 202)
+**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, and (2026-10-01) rebinding the market provider on the morning-research stage, which held its own reference and so kept the live one after the swap — tech_analyst now runs offline [measured 2026-10-01]. `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis` still XFAILs. detail: docs/BOARD_NOTES.md (item 202)
 
 DONE WHEN:
-  - [ ] the rehearsal harness serves its market data from the recorded session rather than from the network, so the test passes with outbound HTTP fully blocked
-  - [ ] the test is not skipped, not retried and not marked flaky to achieve that, and its runtime drops because it no longer waits on a live fetch
+  - [ ] the run reaches the Portfolio Manager offline instead of ending `APIConnectionError: Connection error.` — find what still calls a live provider there and serve it from the recording or fail loudly
+  - [ ] no component builds its own live MarketDataProvider during a rehearsal: blocked yfinance crumb fetches still retry per symbol and cost ~188s [measured 2026-10-01]
   - [ ] any OTHER test that still reaches the network is named, because the conftest guard now makes such a dependency fail loudly instead of silently
 
 
