@@ -58,7 +58,6 @@ changes:
       average on ATR(14). Lower this count by -1 the day a recording of
       realised give-back per alignment exit exists, or the day the owner
       ratifies the dial as a bound with his reason written down.
-||||||| 7bc35ee7
   - delta: -4
     date: "2026-10-01"
     why: |
