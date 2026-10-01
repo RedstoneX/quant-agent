@@ -532,7 +532,7 @@ Right now nobody owns that job. It is only described inside another item's write
 
 **No owner decision needed here** — this is an engineering bookkeeping fix (remove dead, switched-off code) rather than a money or risk-appetite question.
 
-## item 194
+## item 194 — RETIRED 2026-10-01, both DONE WHEN boxes are ticked: the scheduled check's wall finding now feeds the target re-derivation without a seat flag
 
 **Filed 2026-09-30.** When the desk buys something it works out, from the chart, the nearest price level the stock has to get through on the way up, and that becomes the profit target it quotes you. The number is then frozen for the life of the position.
 
