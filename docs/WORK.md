@@ -305,17 +305,6 @@ DONE WHEN:
   - [ ] any OTHER test that still reaches the network is named, because the conftest guard now makes such a dependency fail loudly instead of silently
 
 
-**209. Paid hunting for new trades ran at full cadence even with a full book — SHIPPED 2026-09-30.** The desk pays for model and search research across the whole 101-symbol universe on every morning session, but when the book is already at its own invested / gross / deployable-cash ceilings there is no room to buy anything it finds, so that spend buys nothing. Owner ask 2026-09-30, in his words: "when the portfolio is already full, that hunting is largely wasted, so the paid AI and paid search should run fewer times a day — but still everything has to justify and earn its right to be in the portfolio. So it's a balancing act." Implemented as a SEARCH throttle only: when the book is full against its own ratified ceilings the research surface narrows to held names plus this run's free deterministic admissions; the REVIEW of every holding keeps its normal cadence because all five seats must be right to STAY, not only to enter. No cadence number was invented — "full" is read off existing ceilings, so the throttle releases itself the moment capital is freed.
-
-DONE WHEN:
-  - [x] the new-candidate search narrows to held names whenever the book is full against `risk.max_total_position_pct`, `risk.max_gross_exposure_x` or zero deployable cash, with no new threshold introduced
-  - [x] every held position still gets its full five-seat read on the normal cadence, and the midday / close / intraday review sessions are untouched
-  - [x] a throttled session can still act on something urgent: all deterministic safety runs before the paid boundary, run-scoped free admissions survive the narrowing, and freeing capital un-throttles the very next session
-  - [x] the behaviour is documented, which the owner specifically noted it never was
-
-detail: docs/BOARD_NOTES.md (item 209)
-
-
 **208. Item 18's three residuals, carried forward — filed 2026-09-30 when item 18 was retired. The prompt-bulk defect that item 18 was opened for no longer applies and was re-measured under that item; these three leftovers remain OPEN, share no subject with it and were blocking item 19 for no reason. Detail: `docs/BOARD_NOTES.md` (item 208).** One changes what the ranking seat decides, one is an account setting outside this repo, and one cannot be closed by building at all.
 
 DONE WHEN:
@@ -357,6 +346,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 19
 - retired queue: 196
 - retired queue: 99
+- retired queue: 209
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

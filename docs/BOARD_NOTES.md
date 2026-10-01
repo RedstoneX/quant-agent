@@ -1004,7 +1004,7 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
         raised 25 to 40 in 2026-08 for exactly that drift); (b) re-measure the untruncated fill rate, newly
         possible because the deleted 2% ask-skip lets a too-tight entry rest and be recorded. Both belong to
         item 90's half-two re-derivation, not to a gate inventory.
-## item 209 — full-book search throttle, shipped 2026-09-30
+## item 209 — RETIRED 2026-10-01, full-book search throttle shipped and wired into the session pipeline
 WHY IT EXISTS. Owner ask 2026-09-30, unprompted and previously unbuilt and
 undocumented: the desk hunts for new trades several times a day, and that
 hunting is largely wasted paid spend when the portfolio is already full.
