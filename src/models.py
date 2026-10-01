@@ -1726,6 +1726,19 @@ class TradeDecision(LLMOutputModel):
     # bars. Recomputing level-backing there instead would have created
     # exactly the second data path §12.1 was careful not to build.
     stop_rule: str | None = None
+    # --- Item 55 RECORDING: what the stop was BASED on (2026-10-01) ------
+    # A JSON record, written at entry and read by nothing in the decision
+    # path, describing the structural level standing behind `stop_loss`:
+    # its price, how many times price turned there, how many bars confirm a
+    # swing point, how wide its zone was and how far the stop sat from it —
+    # or `level_backed: false` when no computed level stood behind it, which
+    # is the control the question needs. Produced by
+    # `PortfolioConstructor.shipped_stop_level_basis`, stored on the
+    # `trades` row, and governed by the FALSIFICATION-ONLY limit in
+    # `src.data.levels.describe_stop_level_basis`: it may show the current
+    # definition of a level is wrong and may NEVER be swept for a better bar
+    # count or zone width. Changes no behaviour whatsoever.
+    stop_level_basis: str | None = None
     # --- The sub-floor catalyst exception, carried to execution (2026-09-11)
     # True when this order was permitted BELOW `min_reward_risk_after_
     # widening` because the PM's sub-floor catalyst gate verified its

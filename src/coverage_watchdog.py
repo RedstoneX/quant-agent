@@ -2494,6 +2494,37 @@ def _typed_alerted_symbols(
     }
 
 
+#: How many suppression records to retain per alert type. Bounds the state
+#: file; the running `count` is never truncated, only the per-event list.
+_SUPPRESSION_LOG_LIMIT = 50
+
+
+def _record_suppressed_alert(
+    state: dict[str, Any], kind: str, day: str, keys: Iterable[str],
+) -> None:
+    """Durably note an alert this helper declined to resend (item 211).
+
+    Nothing is silently dropped: the owner not being paged a second time is
+    a presentation decision, and the underlying fact still has to be
+    readable afterwards or the desk has stopped reporting its true state.
+    """
+    log = state.get("suppressed_alerts")
+    if not isinstance(log, dict):
+        log = {}
+    entry = log.get(kind)
+    if not isinstance(entry, dict) or entry.get("day") != day:
+        entry = {"day": day, "count": 0, "events": []}
+    events = entry.get("events")
+    if not isinstance(events, list):
+        events = []
+    for key in keys:
+        entry["count"] = int(entry.get("count") or 0) + 1
+        events.append({"key": key, "day": day})
+    entry["events"] = events[-_SUPPRESSION_LOG_LIMIT:]
+    log[kind] = entry
+    state["suppressed_alerts"] = log
+
+
 def claim_typed_alert(
     kind: str, symbols: Iterable[str], *, now: datetime | None = None,
     path: Path | None = None,
@@ -2515,7 +2546,14 @@ def claim_typed_alert(
         )
         if sym not in already
     ]
+    stale = [sym for sym in dict.fromkeys(
+        str(raw).strip().upper() for raw in symbols if str(raw).strip()
+    ) if sym in already]
+    if stale:
+        _record_suppressed_alert(state, key, day, stale)
     if not fresh:
+        if stale:
+            save_state(state, path)
         return []
     state[f"typed_alerted_symbols::{key}"] = {
         "day": day, "symbols": sorted(already | set(fresh)),

@@ -7,14 +7,14 @@
 # share this script so the system fires at correct US market times regardless
 # of the host's timezone — survives the user flying across continents.
 #
-# Usage: run_if_et_window.sh <earnings_preprocess|morning|intra_check|midday|close|evening>
+# Usage: run_if_et_window.sh <earnings_preprocess|morning|intra_check|intra_safety|midday|close|evening>
 #        run_if_et_window.sh morning --operator-rerun "reason"
 
 set -eu
 
 MODE="${1:-}"
 if [[ -z "$MODE" ]]; then
-    echo "usage: $0 <earnings_preprocess|morning|intra_check|midday|close|evening>" >&2
+    echo "usage: $0 <earnings_preprocess|morning|intra_check|intra_safety|midday|close|evening>" >&2
     exit 2
 fi
 
@@ -121,6 +121,13 @@ case "$MODE" in
     earnings_preprocess) LO=480; HI=555  ;;
     morning)             LO=570; HI=720  ;;
     intra_check)         LO=570; HI=960  ;;
+    # intra_safety is the FREE half of intra_check's preamble on its own unit
+    # (board item 177). Its window is intra_check's window BY CONSTRUCTION —
+    # the same work, the same hours — so these bounds are copied, not chosen.
+    # It is deliberately NOT a src/trading_calendar.py SESSION_WINDOWS mode:
+    # that table feeds src/config.py's expected PAID-session count, and this
+    # mode can never spend.
+    intra_safety)        LO=570; HI=960  ;;
     midday)              LO=780; HI=870  ;;
     close)               LO=930; HI=960  ;;
     evening)             LO=1200; HI=1320 ;;
@@ -140,7 +147,7 @@ fi
 # See the longer note at the session-lock exemption below, and board item 128.
 LAST_FILE="${LAST_RUN_DIR}/last-${MODE}"
 NOW_UNIX="${NOW_UNIX_OVERRIDE:-$(date +%s)}"
-if [[ "$MODE" != "intra_check" && "$OPERATOR_RERUN" -ne 1 && -f "$LAST_FILE" ]]; then
+if [[ "$MODE" != "intra_check" && "$MODE" != "intra_safety" && "$OPERATOR_RERUN" -ne 1 && -f "$LAST_FILE" ]]; then
     LAST_VALUE="$(cat "$LAST_FILE" 2>/dev/null || echo 0)"
     LAST_DATE="${LAST_VALUE%% *}"
     # Primary guard: never fire the same mode twice in the same ET session date.
@@ -175,7 +182,7 @@ LOCK_ACQUIRED=0
 LOCK_OWNER_FILE="${SESSION_LOCK_DIR}/owner"
 
 acquire_session_lock() {
-    if [[ "$MODE" == "intra_check" ]]; then
+    if [[ "$MODE" == "intra_check" || "$MODE" == "intra_safety" ]]; then
         return 0
     fi
 
