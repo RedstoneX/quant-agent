@@ -333,11 +333,22 @@ def find_deployable_cash_definitions(tree: ast.AST, path: Path) -> list[Finding]
                 continue  # a default, not a definition
             # A CALL to the sanctioned function is the fix, not the defect.
             # Both the old engine-private owner and the shared one count.
+            owners = {"_compute_deployable_cash", "compute_deployable_cash",
+                      "deployable_cash", "cash_above_reserve"}
             calls = _calls(value)
-            if ("_compute_deployable_cash" in calls
-                    or "deployable_cash" in calls
-                    or "cash_above_reserve" in calls):
+            if calls & owners:
                 continue  # delegates to the owner
+            # Holding a REFERENCE to the owner is not a second definition.
+            # `self._compute_deployable_cash = compute_deployable_cash` binds
+            # the sanctioned function so it can be called later; no arithmetic
+            # happens here, so there is no second number to disagree with the
+            # first. Only a bare Name/Attribute counts -- anything with an
+            # operator, a comparison or a call to something else in it is
+            # still a definition, and aliasing some OTHER function under a
+            # `deployable*` name is still a second definition because the
+            # identifier must be one of the sanctioned owners above.
+            if isinstance(value, (ast.Name, ast.Attribute)) and _name(value) in owners:
+                continue  # an alias of the owner, not a re-implementation
             out.append(
                 Finding(_rel(path), node.lineno, fn.name,
                         ast.unparse(value)[:72], "second definition")
@@ -821,3 +832,37 @@ def test_the_matchers_do_not_fire_on_sound_code():
         "the guard fired on code that is correct — this is how guards get "
         "switched off:\n    " + "\n    ".join(noisy)
     )
+
+
+def test_binding_the_owner_is_not_a_second_definition():
+    """A constructor that STORES the sanctioned function must not be flagged.
+
+    Every step of the pipeline split hands the extracted service the owner's
+    own callable (`self._compute_deployable_cash = compute_deployable_cash`)
+    so the service can call it later. No arithmetic happens at that line, so
+    there is no second number that could disagree with the first. Before this
+    case existed the matcher only exempted CALLS to the owner and flagged the
+    binding, which would have made the guard block every remaining extraction
+    -- the exact pressure that gets a guard switched off.
+    """
+    snippet = (
+        "def __init__(self, compute_deployable_cash):\n"
+        "    self._compute_deployable_cash = compute_deployable_cash\n"
+    )
+    found = find_deployable_cash_definitions(ast.parse(snippet), SRC / "synthetic.py")
+    assert not found, f"binding the owner was flagged: {found}"
+
+
+def test_aliasing_a_different_function_is_still_a_second_definition():
+    """The exemption above is for the OWNER's name, not for bare names.
+
+    Pointing a `deployable*` name at some other function is exactly the
+    two-numbers-one-name failure the guard exists to catch, and it must stay
+    caught even though it also contains no arithmetic.
+    """
+    snippet = (
+        "def __init__(self, some_other_cash_fn):\n"
+        "    self._deployable_cash_fn = some_other_cash_fn\n"
+    )
+    found = find_deployable_cash_definitions(ast.parse(snippet), SRC / "synthetic.py")
+    assert found, "aliasing a non-owner under a deployable* name was NOT flagged"
