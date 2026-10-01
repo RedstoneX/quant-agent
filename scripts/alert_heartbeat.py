@@ -499,6 +499,45 @@ def run_coverage_check(now: datetime | None = None) -> str:
             f"stop-repair all-clear "
             f"{'delivered' if ok else 'could NOT be delivered'}"
         )
+    if status.should_alert_repair_performed:
+        # 2026-09-30: this event used to log "alert none sent". A repair
+        # means something upstream failed silently; same owner channel as
+        # every other message here, no second channel invented.
+        from src.coverage_watchdog import repair_performed_text
+        from src.notifier import send_owner_alert as _send_repaired
+
+        text = repair_performed_text(status)
+        print(text, file=sys.stderr)
+        told = {
+            str(s).strip().upper() for s in status.resolution_notice_symbols
+        }
+        # Durable, not in-memory: this unit is a timer-run process, so a
+        # set built here lives only for one run and the same repair pages
+        # again on the next sweep. `claim_typed_alert` reserves today's
+        # page for each symbol in the watchdog state file, the same
+        # per-ET-day store `claim_repair_failure_alert` already uses, and
+        # errs towards telling the owner twice over not at all when the
+        # file cannot be read.
+        from src.coverage_watchdog import claim_typed_alert
+
+        names = claim_typed_alert(
+            "repair_performed",
+            [
+                r.symbol for r in status.repaired
+                if str(r.symbol).strip().upper() not in told
+            ],
+        )
+        if names:
+            ok = bool(_send_repaired(text, symbols=names))
+            sent.append(
+                f"stop-repaired alert "
+                f"{'delivered' if ok else 'could NOT be delivered'}"
+            )
+        else:
+            sent.append(
+                "stop-repaired alert suppressed — every repaired name was "
+                "already reported to the owner today"
+            )
     if (
         status.should_alert or status.should_alert_repair_failure
         or status.should_alert_unreadable
