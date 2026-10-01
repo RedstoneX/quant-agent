@@ -1235,7 +1235,24 @@ working code and was left alone so this change cannot alter what they already
 suppress. And it does not put the suppression record on the API — the counts
 are durable in `data/alerting/` and in `llm_circuit_events`, but reading them
 today means reading those, which is the honest state and is filed above.
-## item 214
+## item 214 — RETIRED 2026-10-01, counters read off production: 0 fenced/extra-key hits in 8 checked Google-route answers, but that same route returned invalid JSON inside a strict schema once in the window
+
+**Read 2026-10-01, read-only, from the production database and the production log file on the box.** The source for every number is named inline; nothing here is estimated.
+
+Window. The production log file on the box covers 2026-09-29 17:16 to 2026-10-01 04:00. The hygiene counters live only in process memory and are emitted there, so that is the only window that exists: the production database holds no hygiene table and no hygiene field, and `agent_logs.telemetry` is NULL or empty for all 182 tech-seat rows [measured, production database].
+
+Counts. Zero fenced-markdown hits and zero undeclared-key hits [measured: no hygiene line anywhere in that window]. The denominator is 8 tech-seat calls, every one of them tagged `google` [measured, production database, `agent_logs`]. The window holds no openrouter-tagged tech call at all, so the openrouter half of the first DONE WHEN is satisfied only by absence; it is recorded here as unmeasured, not as clean.
+
+The counter is alive, not dead. The deployed checkout contains `_record_answer_hygiene` [measured, production source], and a sibling counter on the same telemetry object did fire and report in the same window ("Explicit nulls coerced to defaults during research (27): TechAnalysisResult.thesis"). The zero is therefore a real zero over 8 answers, not a write path that cannot fire.
+
+The conclusion, and it is not a clean bill of health. A strict `json_schema` response format is supposed to make a malformed answer impossible. On 2026-09-29 18:46 the Google route returned one anyway: a tech answer carried 1 malformed row, dropped individually, with the 2 well-formed rows beside it kept, the parse error being an unquoted property name on VLO [measured]. The call behind it is recorded `actual_provider=google`, `status=success`, `finish_reason=stop`, `truncated=0` [measured, production database] — so it was not a cut-off answer, it was syntactically invalid JSON inside an enforced schema. That is 1 of the 8 Google-route answers in the window. Eight calls cannot support a rate and no rate is claimed.
+
+What the desk does when the seat's answer is malformed. The row is dropped on its own and the well-formed rows beside it are kept (`parse_json_rows`, built after the 2026-09-17 incident in which one garbled row cost every good row beside it). A dropped row means that symbol has no technical read that pass: the timing veto does not fail loudly, it goes quiet for that one name, and the drop is logged and counted by the existing drop counter.
+
+What changed here. `record_hygiene_observation` now tallies every answer that is checked, so the counter carries a denominator and the research stage reports "0 violations in N checked answer(s), by provider" on a clean run. Before this, a clean run and a check that never ran produced identical output, which is the reason nobody could read these counters in the first place. No value governing a buy, a sell or a position size is touched.
+
+Left open deliberately. Persisting the counters to the database was NOT done. The readable window will stay short because the source rotates, but adding a table is not what this item asked for and the desk already carries item 210 on recorded evidence.
+
 
 **Filed 2026-09-30 out of item 157's retirement.** Item 157 built the enforced answer format and both OpenAI-wire routes now send a strict `json_schema` response format for `TechAnalystAnswer`. Its first DONE WHEN — a live call confirming the Google route enforces what was sent — is structurally unreachable, not merely undone: the rehearsal identity is not granted the Google credential and production is the only identity that could make the call, so the confirming pytest would spend real money on the shared account. The replacement shipped on 2026-09-23: `_record_answer_hygiene` tags every real answer with the provider that served it and records fenced-markdown and extra-key violations to `parse_telemetry`. That evidence is being collected and has never been read. This item carries the unanswered question, not the build.
 

@@ -338,14 +338,6 @@ DONE WHEN:
   - [x] repeat suppression is per alert TYPE and per key, never global, so one noisy fault cannot silence an unrelated one
   - [ ] the `suppressed_alerts` record and the `suspend_alert_deferred` events are surfaced on the read-only API/dashboard — NOT DONE HERE, they are durable in the state file and the DB but no endpoint reads them yet
 
-**214. Nobody has read the technical seat's schema-hygiene counters, so whether the Google route actually honours the sent schema is still unanswered — filed 2026-09-30, OPEN, carrying item 157's first criterion.** Item 157's enforced answer format shipped on both wire routes, but its live-confirmation criterion could never run: no deployed process holds a real Google credential for a pytest call. `_record_answer_hygiene` was shipped instead and records fenced-markdown and undeclared-key hits per provider on every real call; nobody has since looked at what it recorded.
-
-DONE WHEN:
-  - [ ] the recorded hygiene counts are read off production for both the openrouter-tagged and google-tagged calls, over a stated window
-  - [ ] a conclusion is written down on whether the Google route enforces the sent schema, or the counts are shown to be too sparse to conclude
-detail: docs/BOARD_NOTES.md (item 214)
-
-
 **210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/BOARD_NOTES.md` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are.
 
 DONE WHEN:
@@ -380,6 +372,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 99
 - retired queue: 157
 - retired queue: 119
+- retired queue: 214
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
