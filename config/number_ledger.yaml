@@ -7056,33 +7056,6 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline.TradingPipeline._build_projected_portfolio(default_buy_pct)
-    value: 5
-    status: arbitrary
-    site: src/pipeline.py
-    note: >-
-      Size assumed for every BUY-rated candidate in the sector-concentration
-      preview the PM reads before deciding (src/pipeline.py:6150-6160); the
-      one caller (src/pipeline_stages.py:4942) passes nothing. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): take the size from `_clamp_queued_earnings_buys(max_pct)`, the other 5.0 in this file. FAILED -- same digits, different quantity (a cap on resulting weight versus an assumed fresh buy), and tying them would invent a relationship the code does not have. Attempt (2): derive it from the constructor's own sizing. FAILED as a derivation but SURVIVES as the measurement below, because the constructor sizes off a stop distance this preview has not computed yet, so there is no arithmetic -- only a side-by-side read. Value unchanged.
-    open_question: >-
-      Should the preview size each candidate at the size the constructor would
-      actually give it (its risk budget over its stop distance) rather than a
-      flat figure?
-    cost_while_unanswered: >-
-      The PM is shown a projected sector mix computed at a size no candidate
-      is actually given, and self-corrects against it.
-    settles_by:
-      kind: "measurement"
-      state: "specified"
-      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
-      records: >-
-        the pre-decision sector-concentration preview computed twice each session: once at this flat assumed size and
-        once at the size the constructor would actually give each candidate (its risk budget over its stop distance),
-        the two projected sector mixes stored side by side
-      closes_when: >-
-        the paired previews show whether the flat figure ever moves a sector past a ceiling the constructor-sized
-        preview would not. If it does, the flat number is replaced by the constructor's own sizing and this row
-        becomes `derived`; if it never does, the row becomes not-trade-governing
   - id: src.pipeline.TradingPipeline._build_recent_buys_for_grading(lookback_days)
     value: 5
     status: not-trade-governing

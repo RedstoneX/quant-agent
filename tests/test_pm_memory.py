@@ -1,6 +1,9 @@
 """Sanity tests for PM's multi-layer memory: position history + L3 trajectories."""
 
 from datetime import timedelta
+import textwrap
+
+import pytest
 from unittest.mock import MagicMock, patch
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
@@ -912,7 +915,11 @@ def _projection_pipeline(target_pct: float | None = None):
     return pipeline
 
 
-def _tech_buy_analyses():
+def _tech_buy_analyses(stops: dict[str, float] | None = None):
+    """Three Tech BUYs. `stops` overrides a symbol's stop so a test can give
+    candidates DELIBERATELY UNEQUAL stop distances — the whole point of
+    board item 221 is that unequal stops must produce unequal preview
+    sizes."""
     from src.models import TechAnalysisResult, TechReasoningChain
     _trc = TechReasoningChain(
         trend="x", momentum="x", volatility="x",
@@ -921,8 +928,9 @@ def _tech_buy_analyses():
     return [
         TechAnalysisResult(
             symbol=sym, rating="buy", conviction="high",
-            entry_price=100, stop_loss=95, reference_target=110,
-            support_levels=[95], resistance_levels=[110],
+            entry_price=100, stop_loss=(stops or {}).get(sym, 95),
+            reference_target=110,
+            support_levels=[(stops or {}).get(sym, 95)], resistance_levels=[110],
             setup_type="range", expected_horizon_sessions=10,
             reasoning="test", reasoning_chain=_trc,
         thesis_invalid_if="closes below support",
@@ -932,12 +940,19 @@ def _tech_buy_analyses():
 
 
 def test_projected_portfolio_flags_sector_overweight(tmp_path):
-    """With 3 Tech BUYs at 5% each on top of 30% held Tech, projection → 45%.
+    """3 Tech BUYs on top of 30% held Tech, each sized from its OWN stop.
 
-    The warning threshold now comes from `risk.max_sector_pct` (spec §12.3
-    put it at 75) rather than the hardcoded 35 this preview carried. Set to
-    40 here so the same book still trips it, and asserted through the config
-    so the two cannot drift apart again.
+    REWRITTEN for board item 221. This test used to assert 3 x a FLAT 5%
+    = 45%, which is exactly the defect: no candidate is ever given a flat
+    slice. Each candidate here has entry 100 / stop 95, so its stop-derived
+    size is 5% x 100/5 = 100% of equity, clamped by the 65% single-name
+    ceiling the constructor also clamps to — 30 + 3 x 65 = 225%. The new
+    expectation is right because it is computed from the candidates' own
+    geometry, not chosen.
+
+    The warning threshold comes from `risk.max_sector_pct` (spec §12.3 put
+    it at 75) rather than the hardcoded 35 this preview once carried. Set
+    to 40 here, and asserted through the config so the two cannot drift.
     """
     pipeline = _projection_pipeline(target_pct=40.0)
     # Existing 30% Tech position
@@ -948,35 +963,42 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
     with patch("src.execution.broker._get_sector") as mock_get_sector:
         out = pipeline._build_projected_portfolio(
             positions, _tech_buy_analyses(), total_value=10000,
-            default_buy_pct=5.0,
         )
     # `invested` is capital at work (unsigned, un-leveraged) and `net
     # direction` is the signed leverage-aware figure, both from the one
     # `book_exposure` call. Long-only book, so the two agree at 30%.
     assert "Current: 30% invested (capital at work)" in out
     assert "net direction +30%" in out
-    # 30 + 3*5 = 45% Tech, all long-side (spec §12.2 labels the side).
-    assert "Technology long 45%" in out
+    # 30 + 3*65 = 225% Tech, all long-side (spec §12.2 labels the side).
+    assert "Technology long 225%" in out
+    # Each name is shown at ITS OWN size, not a shared constant.
+    assert "NVDA 65%" in out
+    assert "OWN stop distance allows" in out
     assert "over the 40% concentration target" in out
     assert "Technology (long)" in out
     mock_get_sector.assert_not_called()
 
 
 def test_projected_portfolio_does_not_warn_below_the_configured_target(tmp_path):
-    """The same book, with the production §12.3 target of 75, is not flagged
-    — the preview must draw the line the rest of the system draws, not one of
-    its own."""
+    """With the production §12.3 target of 75 and candidates whose own stops
+    keep them small, nothing is flagged — the preview must draw the line the
+    rest of the system draws, not one of its own.
+
+    REWRITTEN for item 221: the stops here are WIDE (entry 100 / stop 50),
+    so each candidate's stop-derived size is 5% x 100/50 = 10% rather than
+    the flat 5% this test used to assume. 30 + 3 x 10 = 60%, under 75.
+    """
     pipeline = _projection_pipeline(target_pct=75.0)
     positions = [
         Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
                  market_value=3000, unrealized_pnl=0, sector="Technology"),
     ]
+    wide = {"NVDA": 50.0, "AMD": 50.0, "AAPL": 50.0}
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            positions, _tech_buy_analyses(), total_value=10000,
-            default_buy_pct=5.0,
+            positions, _tech_buy_analyses(wide), total_value=10000,
         )
-    assert "Technology long 45%" in out
+    assert "Technology long 60%" in out
     assert "concentration target" not in out
 
 
@@ -985,9 +1007,11 @@ def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
     it made the LONG side look smaller in the very preview whose job is to
     surface concentration.
 
-    Here 30% held Tech LONG and 20% held Tech SHORT: the long line must still
-    read 30 (projecting to 45 with the three BUYs), and the short must appear
-    as its own 20, not as -20 netted off the long.
+    Here 30% held Tech LONG and 20% held Tech SHORT: the long line must
+    still read 30 (projecting to 225 with the three BUYs, each sized at the
+    65% single-name ceiling its own entry-100/stop-95 geometry reaches —
+    item 221), and the short must appear as its own 20, not as -20 netted
+    off the long.
     """
     pipeline = _projection_pipeline(target_pct=40.0)
     positions = [
@@ -999,11 +1023,120 @@ def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
             positions, _tech_buy_analyses(), total_value=10000,
-            default_buy_pct=5.0,
         )
-    assert "Technology long 45%" in out, "the short must not net off the longs"
+    assert "Technology long 225%" in out, "the short must not net off the longs"
     assert "Technology short 20%" in out
     assert "Technology -" not in out
+
+
+# === Board item 221 — the preview sizes from each candidate's own stop ===
+
+def _sizing_pipeline(target_pct: float = 75.0):
+    """A projection pipeline carrying the constructor the pipeline would
+    really build orders with, so the preview reads the SAME sizing dials."""
+    from types import SimpleNamespace
+    pipeline = _projection_pipeline(target_pct=target_pct)
+    pipeline.portfolio_constructor = SimpleNamespace(
+        cfg=SimpleNamespace(risk_budget_pct=5.0, max_position_pct=65.0),
+    )
+    return pipeline
+
+
+def _preview_sizes(out: str) -> dict[str, float]:
+    """The per-candidate percentages the preview printed, by symbol."""
+    import re
+    line = next(ln for ln in out.splitlines() if "OWN stop distance" in ln)
+    inner = line[line.rindex("(") + 1:line.rindex(")")]
+    return {
+        m.group(1): float(m.group(2))
+        for m in re.finditer(r"([A-Z]+) (\d+)%", inner)
+    }
+
+
+def test_preview_sizes_each_candidate_exactly_as_the_constructor_would():
+    """ITEM 221 criterion 1. Deliberately UNEQUAL stop distances; the
+    preview's size for each name must equal the constructor's own
+    stop-derived cap for that name, to the digit."""
+    from src.risk.constants import risk_budget_allocation_pct
+    stops = {"NVDA": 90.0, "AMD": 85.0, "AAPL": 80.0}
+    pipeline = _sizing_pipeline()
+    with patch("src.execution.broker._get_sector"):
+        out = pipeline._build_projected_portfolio(
+            [], _tech_buy_analyses(stops), total_value=10000,
+        )
+    shown = _preview_sizes(out)
+    assert set(shown) == {"NVDA", "AMD", "AAPL"}
+    for sym, stop in stops.items():
+        expected = risk_budget_allocation_pct(
+            entry_price=100.0, stop_price=stop, total_value=10000.0,
+            risk_budget_pct=5.0,
+        )
+        assert expected is not None
+        assert shown[sym] == pytest.approx(round(expected), abs=0)
+    # Unequal stops MUST give unequal sizes; equal sizes here would mean the
+    # flat slice survived under another name.
+    assert len(set(shown.values())) == 3
+
+
+def test_preview_size_is_not_independent_of_the_stop():
+    """ITEM 221 criterion 2. The same candidate, same entry, same book, only
+    the stop moved: if the preview's size does not move with it, a flat
+    per-candidate size is still in the path somewhere."""
+    pipeline = _sizing_pipeline()
+    sizes = []
+    for stop in (90.0, 80.0):
+        with patch("src.execution.broker._get_sector"):
+            out = pipeline._build_projected_portfolio(
+                [], _tech_buy_analyses({"NVDA": stop, "AMD": stop,
+                                        "AAPL": stop}),
+                total_value=10000,
+            )
+        sizes.append(_preview_sizes(out)["NVDA"])
+    assert sizes[0] != sizes[1], (
+        "the preview's size for a candidate is independent of its stop — "
+        "the flat per-candidate size is back"
+    )
+    # Wider stop, smaller position: the direction matters, not just change.
+    assert sizes[1] < sizes[0]
+
+
+def test_preview_and_constructor_share_ONE_sizing_definition():
+    """ITEM 221. Not two implementations that happen to agree today: the
+    constructor and the preview must resolve to the same function object."""
+    import src.portfolio_constructor as pc
+    import src.risk.constants as rc
+    assert pc.risk_budget_allocation_pct is rc.risk_budget_allocation_pct
+    import ast
+    import inspect
+    from src.pipeline import TradingPipeline
+    params = inspect.signature(
+        TradingPipeline._build_projected_portfolio,
+    ).parameters
+    assert "default_buy_pct" not in params, (
+        "the flat per-candidate preview size is back in the preview path"
+    )
+    # And no flat per-candidate constant survives in the body either: the
+    # only `default_buy_pct` left in the module is the historical note in
+    # the docstring, which is prose, not code.
+    body = inspect.getsource(TradingPipeline._build_projected_portfolio)
+    tree = ast.parse(textwrap.dedent(body))
+    names = {
+        n.id for n in ast.walk(tree) if isinstance(n, ast.Name)
+    } | {
+        n.arg for n in ast.walk(tree) if isinstance(n, ast.arg)
+    }
+    assert "default_buy_pct" not in names
+    assert "risk_budget_allocation_pct" in names
+
+
+def test_preview_names_a_candidate_it_cannot_size_rather_than_assuming_one():
+    """ITEM 221. Unusable stop geometry is reported, never back-filled with
+    an assumed size — inventing one is the defect being fixed."""
+    from src.risk.constants import risk_budget_allocation_pct
+    assert risk_budget_allocation_pct(
+        entry_price=100.0, stop_price=100.0, total_value=10000.0,
+        risk_budget_pct=5.0,
+    ) is None
 
 
 # === MacroStore history ===

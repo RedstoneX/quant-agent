@@ -934,3 +934,16 @@ changes:
       moving it would be inventing a number; only the honesty of the label
       changes.
 
+  - date: 2026-10-01
+    delta: -1
+    why: >-
+      Board item 221. The sector-concentration preview's flat per-candidate
+      size, `TradingPipeline._build_projected_portfolio(default_buy_pct)` at
+      5, is DELETED rather than re-valued: the preview now sizes each
+      candidate through `risk_budget_allocation_pct`, the same single
+      definition the constructor caps a long and a short with, from that
+      candidate's own entry and stop. The row leaves the ledger because the
+      number no longer exists, not because it was sourced, and no new
+      arbitrary number replaced it -- the two fallbacks the preview reads
+      when no constructor is attached are `ConstructorConfig`'s own existing
+      ratified defaults, already carried elsewhere in the ledger.

@@ -7894,7 +7894,6 @@ class TradingPipeline:
         positions,
         analyses: list[TechAnalysisResult],
         total_value: float,
-        default_buy_pct: float = 5.0,
     ) -> str:
         """Preview of the book if PM rubber-stamped every BUY-rated TA candidate.
 
@@ -7902,8 +7901,26 @@ class TradingPipeline:
         self-correct instead of waiting for RM or the hard sector cap to flag
         it. Kept simple on purpose: no correlation math here (that's RM's
         correlation_cluster advisory). Just current vs projected sector mix.
+
+        BOARD ITEM 221 — every candidate used to be previewed at a FLAT
+        `default_buy_pct=5.0`, a per-candidate constant nothing else in the
+        desk used. The constructor sizes each name from its OWN stop
+        distance, so the mix shown here was a book no candidate would ever
+        be given, and the PM trimmed, dropped and reordered names against
+        it. Each candidate is now sized through
+        `risk_budget_allocation_pct` — the SAME helper
+        `PortfolioConstructor._build_buy` caps with — and clamped by the
+        same single-name ceiling the constructor clamps to.
+
+        What this preview still CANNOT know: the constructor ships
+        `min(PM target delta, risk cap, ...)`, and the PM's target does not
+        exist yet when the preview is built (it is an input TO the PM). So
+        the sizes here are the LARGEST size each candidate's own stop
+        distance permits, which is the binding constraint in the ordinary
+        case, not a prediction of the PM's own asked-for weight.
         """
         from src.execution.broker import _get_sector
+        from src.risk.constants import risk_budget_allocation_pct
         from src.risk.rules import (
             SECTOR_SIDE_LONG, BookExposure, _effective_multiplier,
             _gross_multiplier, book_exposure, sector_side_gross,
@@ -7956,8 +7973,46 @@ class TradingPipeline:
         proj_deployed = current_book.deployed_usd
         proj_sector = dict(sector_gross)
         unresolved_symbols: list[str] = []
+        unsized_symbols: list[str] = []
+        # The constructor's own sizing dials, read off the constructor the
+        # pipeline actually builds orders with, so the preview cannot drift
+        # from it. The fallbacks are `ConstructorConfig`'s own ratified
+        # defaults, not numbers chosen here, and they are reached only when
+        # no constructor is attached (a bare pipeline in a test) or when a
+        # MagicMock config auto-creates a non-numeric attribute.
+        cstr_cfg = getattr(
+            getattr(self, "portfolio_constructor", None), "cfg", None,
+        )
+
+        def _dial(name: str, fallback: float) -> float:
+            raw = getattr(cstr_cfg, name, None)
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                return fallback
+            return float(raw) if raw > 0 else fallback
+
+        risk_budget_pct = _dial("risk_budget_pct", 5.0)
+        max_position_pct = _dial("max_position_pct", 65.0)
+        sized: list[tuple[str, float]] = []
         for a in buy_candidates:
-            raw = total_value * (default_buy_pct / 100)
+            # ITEM 221: the candidate's OWN stop distance, through the one
+            # shared definition the constructor caps with. A candidate with
+            # no usable stop geometry is NOT given an assumed size — it is
+            # named as unsized, because inventing one is the defect.
+            alloc_pct = risk_budget_allocation_pct(
+                entry_price=a.entry_price,
+                stop_price=a.stop_loss if a.stop_loss is not None else 0.0,
+                total_value=total_value,
+                risk_budget_pct=risk_budget_pct,
+            )
+            if alloc_pct is None or alloc_pct <= 0:
+                unsized_symbols.append(a.symbol)
+                continue
+            # The constructor clamps to the single-name notional ceiling the
+            # risk engine hard-blocks above; mirror it, or the preview shows
+            # a position the engine would drop outright.
+            alloc_pct = min(alloc_pct, max_position_pct)
+            sized.append((a.symbol, alloc_pct))
+            raw = total_value * alloc_pct / 100
             proj_net += raw * _effective_multiplier(a.symbol)
             proj_deployed += raw
             sec = _resolve_sector(a.symbol)
@@ -7986,12 +8041,14 @@ class TradingPipeline:
             f"- Current: {current_invested_pct:.0f}% invested (capital at work) · "
             f"net direction {current_book.net_pct:+.0f}% · sectors: {_sector_line(sector_gross)}",
         ]
-        if buy_candidates:
-            n = len(buy_candidates)
-            shown = [a.symbol for a in buy_candidates[:8]]
+        if sized:
+            n = len(sized)
+            shown = [f"{sym} {pct:.0f}%" for sym, pct in sized[:8]]
             tail = f" +{n - 8} more" if n > 8 else ""
             lines.append(
-                f"- If you allocate {default_buy_pct:.0f}% to each of {n} BUY-rated candidate(s) "
+                f"- If each of {n} BUY-rated candidate(s) is taken at the size its "
+                f"OWN stop distance allows ({risk_budget_pct:.1f}% risk budget, "
+                f"capped at the {max_position_pct:.0f}% single-name ceiling) "
                 f"({', '.join(shown)}{tail}):"
             )
             lines.append(
@@ -8024,6 +8081,11 @@ class TradingPipeline:
                     f"    ⚠ Sector sides over the {target_pct:.0f}% concentration "
                     f"target (each further trade there is scaled down, not "
                     f"refused): {', '.join(sorted(overweight))}"
+                )
+            if unsized_symbols:
+                lines.append(
+                    "    ⚠ No usable stop geometry, so NOT sized into the "
+                    f"projection: {', '.join(dict.fromkeys(unsized_symbols))}"
                 )
             if unresolved_symbols:
                 unique = list(dict.fromkeys(unresolved_symbols))
