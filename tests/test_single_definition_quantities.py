@@ -92,12 +92,12 @@ def _book_as_api_payload() -> dict:
     }
 
 
-def _pipeline(reserve_pct: float = RESERVE_PCT) -> TradingPipeline:
+def _pipeline() -> TradingPipeline:
     p = TradingPipeline.__new__(TradingPipeline)
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(
             enabled=True, symbol=SWEEP_SYMBOL,
-            reserve_pct=reserve_pct, min_order_usd=500.0,
+            min_order_usd=500.0,
         ),
         risk=RiskConfig(
             max_position_pct=20, max_total_position_pct=90,
@@ -119,7 +119,7 @@ def api_routes(monkeypatch):
 
     monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: True)
     monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: SWEEP_SYMBOL)
-    monkeypatch.setattr(routes_live, "get_cash_sweep_reserve_pct", lambda: RESERVE_PCT)
+    monkeypatch.setattr(routes_live, "get_cash_reserve_pct", lambda: RESERVE_PCT)
     monkeypatch.setattr(routes_live, "read_positions", _book_as_api_payload)
     return routes_live
 
@@ -161,9 +161,13 @@ def test_total_liquidity_is_an_alias_not_a_second_computation(api_routes):
 
 
 def test_sweep_reserve_formula_is_written_exactly_once():
-    """`portfolio_value * reserve_pct / 100` existed in three files."""
-    engine_reserve = _pipeline().cash_sweeper.reserve_usd(EQUITY)
-    assert engine_reserve == pytest.approx(5_900.0)
+    """`portfolio_value * reserve_pct / 100` existed in three files.
+
+    The band moved out of `CashSweepConfig` to `CashReserveConfig.pct`
+    2026-10-01 (board item 190) and the sweeper's own `reserve_usd` wrapper
+    went with the retired feature; the shared arithmetic did not move."""
+    from src.quantities import sweep_reserve_usd as _reserve
+    assert _reserve(EQUITY, RESERVE_PCT) == pytest.approx(5_900.0)
 
     offenders = []
     for path in _python_sources():
@@ -472,7 +476,7 @@ def test_disabled_sweep_does_not_inflate_the_dashboard_deployable(monkeypatch):
 
     monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: False)
     monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: SWEEP_SYMBOL)
-    monkeypatch.setattr(routes_live, "get_cash_sweep_reserve_pct", lambda: RESERVE_PCT)
+    monkeypatch.setattr(routes_live, "get_cash_reserve_pct", lambda: RESERVE_PCT)
     monkeypatch.setattr(routes_live, "read_positions", _book_as_api_payload)
 
     pipeline = _pipeline()

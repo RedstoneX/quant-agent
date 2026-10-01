@@ -1035,7 +1035,7 @@ risk:
 # was CONFIRMING that fill before the BUY phase; fund_buys now verifies
 # raw cash actually rose and reports only the confirmed increase, and
 # ExecutionStage's raw-cash recheck remains the final authority.
-# reserve_pct stays at 1.0 — an earlier pass raised it to 5.0, which
+# The reserve band stays at 1.0 — an earlier pass raised it to 5.0, which
 # treated the symptom and starved the sweep.
 #
 # 2026-09-17 OWNER MANDATE — SWEEP OFF: "I want 100% invested. I don't want
@@ -1048,13 +1048,20 @@ risk:
 cash_sweep:
   enabled: false
   symbol: "SGOV"        # iShares 0-3mo T-bills; BIL is the fallback choice
-  reserve_pct: 1.0      # % of equity kept as raw cash for fees/slippage
   min_order_usd: 500    # don't churn sub-$500 parking orders
 
 # Board item 190 step 1: tolerance band (pp under 100% invested) for the
 # `deployment_gap` advisory. Was read from cash_sweep.reserve_pct; same value.
 deployment_gap:
   band_pct: 1.0
+
+# Board item 190: the raw-cash reserve band the /account liquidity view
+# reports as reserve_usd / cash_above_reserve. RELOCATED here 2026-10-01 out
+# of `cash_sweep` — same value — because its reader is the account view, not
+# the retired sweep, and leaving it inside the sweep's section invited a
+# later cleanup to delete a live display band along with dead code.
+cash_reserve:
+  pct: 1.0
 
 # 2026-08-19 intraday opportunity-discovery fix — bounded, cheap trigger
 # added onto the existing intra_check cadence (every 30 min): a single bulk

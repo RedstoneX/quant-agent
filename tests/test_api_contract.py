@@ -715,7 +715,7 @@ def test_account_liquidity_breakdown_separates_raw_cash_from_sweep_parked(
     monkeypatch.setattr(routes_live, "get_alpaca_paper", lambda: True)
     monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: True)
     monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: "SGOV")
-    monkeypatch.setattr(routes_live, "get_cash_sweep_reserve_pct", lambda: 1.0)
+    monkeypatch.setattr(routes_live, "get_cash_reserve_pct", lambda: 1.0)
 
     r = client.get("/account")
     assert r.status_code == 200

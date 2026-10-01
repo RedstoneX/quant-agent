@@ -56,12 +56,12 @@ NVDA = Position(symbol="NVDA", qty=10, avg_entry=900, current_price=950,
                 market_value=9_500, unrealized_pnl=500, sector="Technology")
 
 
-def _sweep_pipeline(enabled=True, reserve_pct=1.0, min_order_usd=500.0):
+def _sweep_pipeline(enabled=True, min_order_usd=500.0):
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(
             enabled=enabled, symbol="SGOV",
-            reserve_pct=reserve_pct, min_order_usd=min_order_usd,
+            min_order_usd=min_order_usd,
         ),
         risk=RiskConfig(
             max_position_pct=20, max_total_position_pct=90,

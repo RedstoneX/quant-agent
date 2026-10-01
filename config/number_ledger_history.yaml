@@ -934,3 +934,18 @@ changes:
       moving it would be inventing a number; only the honesty of the label
       changes.
 
+  - delta: -3
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 190: -3 for the three cash-sweep constants that
+      became unreachable when the parking buy and the funding sell were
+      deleted — `_BUY_LIMIT_PAD` (1.001), `_FUND_BUFFER_FRAC` (0.01) and
+      `_FUND_BUFFER_MIN_USD` (50). Each was grepped across the whole tree
+      before deletion and had exactly one definition site and no reader in
+      src/, scripts/, ops/ or tests/. Their ledger rows went with the code,
+      rather than being left describing constants that no longer exist. No
+      surviving number changed value: `_SELL_LIMIT_PAD` still prices the
+      release sell, the three `_FUND_*` timeout constants are still read by
+      the session kill budget in src/pipeline_stages.py, and the reserve band
+      only changed its home (`CashSweepConfig.reserve_pct` ->
+      `CashReserveConfig.pct`), which is a rename, not a count move.

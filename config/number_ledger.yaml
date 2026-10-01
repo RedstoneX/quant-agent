@@ -190,40 +190,27 @@ numbers:
       the rotation report calls funding binding, on a number nobody derived --
       and the share of the book that number silently refuses changes as equity
       changes.
-  - id: src.config.CashSweepConfig.reserve_pct
+  - id: src.config.CashReserveConfig.pct
     value: 1
     status: arbitrary
     site: src/config.py
     note: >-
-      % of equity kept as raw cash for fees, slippage and partial fills;
-      everything above it is parked in the T-bill ETF (src/config.py:1175).
-      src/config.py:1178 records that an earlier pass raised it to 5.0 as a
-      workaround for BUYs being skipped and it was deliberately put back.
-      CHECKED 2026-09-26, board item 183 -- the question was whether the
-      deployment-gap advisory that still reads this band should be deleted
-      along with the retired sweep. FINDING, and the reason nothing was
-      deleted here: this number has TWO readers, not one. The advisory
-      (`sweep_reserve_usd` / `cash_above_reserve`, surfaced on the /account
-      response as `reserve_usd` and `cash_above_reserve`) is display-only --
-      `src/quantities.py` says in terms that subtracting it from deployable
-      produced a figure no part of the engine ever used, and no front-end
-      consumer of either field exists in this repo. But the sweeper itself
-      (`CashSweeper.reserve_usd`) also reads it, and the sweeper is DISABLED,
-      not removed: `config/settings.yaml:973` sets `cash_sweep.enabled:
-      false` while `src/pipeline.py` and `src/pipeline_stages.py` still
-      construct and call `CashSweeper`. Deleting the advisory on its own would
-      leave this band alive, unreported and still reachable by flipping one
-      flag -- less honest than today, not more. So this constant, the four
-      dead sweep constants item 183 names (`_BUY_LIMIT_PAD`,
-      `_SELL_LIMIT_PAD`, `_FUND_BUFFER_FRAC`, `_FUND_BUFFER_MIN_USD`) and
-      `CashSweepConfig.min_order_usd` all die together, with the sweeper and
-      the advisory, or not at all. That retirement touches roughly 187
-      references across `src/pipeline.py`, `src/pipeline_stages.py`, the API
-      and nine test modules, and is its own job; it was NOT started here.
-      UPDATE 2026-09-30, board item 190 step 1: the deployment-gap advisory no
-      longer reads this row; its band moved, value unchanged, to
-      `DeploymentGapConfig.band_pct`. Only the sweeper and the /account
-      `reserve_usd` display still read this one.
+      % of equity the /account liquidity view reports as held back as raw
+      cash for fees, slippage and partial fills. RELOCATED 2026-10-01 (board
+      item 190) from `CashSweepConfig.reserve_pct` to its own
+      `CashReserveConfig.pct`; the VALUE and the `arbitrary` label are
+      unchanged, only the home. Why it moved rather than died with the sweep:
+      measured over this checkout, its only readers are
+      `src.api.deps.get_cash_reserve_pct` -> `routes_live._compute_liquidity`,
+      which renders `reserve_usd` and `cash_above_reserve`, and the
+      branch-preview shim that reconstructs the same two fields. The sweeper's
+      own `CashSweeper.reserve_usd` wrapper, its last in-engine reader, had no
+      production caller left once the parking buy and funding sell were
+      deleted and went with them. The deployment-gap advisory stopped reading
+      this band at item 190 step 1 (`DeploymentGapConfig.band_pct`, same
+      value). Leaving it inside the retired feature's namespace was the live
+      risk: a later cleanup reading "cash_sweep" as dead would have deleted a
+      band the account view still reports.
     open_question: >-
       What is the largest observed shortfall between an order's sized cost and
       its settled cost on this account - fees, slippage and partial fills
@@ -2475,105 +2462,6 @@ numbers:
       verified already present on main. The two neighbouring history counts
       (`min_external_history_days` 20, src/universe_screen.py's ~210) are
       SEPARATE gates in their own modules and out of this item's scope.
-  - id: src.execution.cash_sweep._BUY_LIMIT_PAD
-    value: 1.001
-    status: arbitrary
-    site: src/execution/cash_sweep.py
-    note: >-
-      Limit-price padding on a sweep order -- 10bps either side, a round
-      number rather than a reading off the name's own spread. It sets the
-      worst price the desk will accept on a real fill.
-    open_question: >-
-      What limit pad is needed for a sweep BUY to fill reliably on the parking
-      vehicle's own spread?
-    cost_while_unanswered: >-
-      Too tight and cash sits unswept; too loose and the desk pays through the
-      spread on every sweep.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
-      records: >-
-        the parking vehicle's own quoted bid-ask spread and its intraday
-        distribution, read off the broker's quote feed across a month of
-        sessions, together with the submitted limit, the fill price and the
-        filled/unfilled outcome of every sweep buy the desk sends, so the pad is
-        a multiple of a measured spread rather than a round ten basis points.
-      closes_when: >-
-        the measured spread distribution supports stating the pad as a multiple
-        of that instrument's own spread, and the constant becomes that reading.
-        DELETE outcome: if the measured spread never approaches the pad and
-        every sweep buy fills at or inside the touch, the pad is doing nothing
-        and the sweep leg should become a plain marketable order with the pad
-        removed rather than re-picked.
-  - id: src.execution.cash_sweep._FUND_BUFFER_FRAC
-    value: 0.01
-    status: arbitrary
-    site: src/execution/cash_sweep.py
-    note: >-
-      The fees/slippage buffer held back when funding a sweep. A round 1% with
-      a round $50 floor. Read only by `CashSweeper.fund_buys`
-      (src/execution/cash_sweep.py); the cash-drag / deployment-gap advisory
-      reads `cash_sweep.reserve_pct`, not this constant.
-    open_question: >-
-      How much cash must be held back for fees, partial fills and price drift
-      between sizing and fill?
-    cost_while_unanswered: >-
-      Too small and a sweep leaves the account short for a real trade; too
-      large and cash earns nothing.
-    settles_by:
-      kind: recording
-      state: specified
-      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
-      records: >-
-        for every funded buy, the cash the sizing step assumed it would consume,
-        the cash the fill actually consumed, the broker's own commission and fee
-        charge on that order, and the price drift between sizing and fill, so
-        the shortfall this buffer exists to cover is an arithmetic reading off
-        the account rather than a round percentage with a round floor. This is a
-        cash-arithmetic recording, not a study of the desk's returns, so it does
-        not fit anything to the desk's own trading record.
-      closes_when: >-
-        the recording shows the largest fee-plus-drift shortfall actually
-        observed and the balance below which the fractional part rounds to
-        nothing, and the two constants become those two readings. DELETE
-        outcome: if no funded buy ever came up short across the recording
-        window, the buffer is holding cash back for nothing and both constants
-        go rather than being re-picked.
-  - id: src.execution.cash_sweep._FUND_BUFFER_MIN_USD
-    value: 50
-    status: arbitrary
-    site: src/execution/cash_sweep.py
-    note: >-
-      The fees/slippage buffer held back when funding a sweep. A round 1% with
-      a round $50 floor. Read only by `CashSweeper.fund_buys`
-      (src/execution/cash_sweep.py); the cash-drag / deployment-gap advisory
-      reads `cash_sweep.reserve_pct`, not this constant.
-    open_question: >-
-      The absolute floor under the same buffer: what is the largest
-      fee-plus-drift shortfall observed on this account?
-    cost_while_unanswered: >-
-      As above, on small balances where the fractional buffer rounds to
-      nothing.
-    settles_by:
-      kind: recording
-      state: specified
-      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
-      records: >-
-        for every funded buy, the cash the sizing step assumed it would consume,
-        the cash the fill actually consumed, the broker's own commission and fee
-        charge on that order, and the price drift between sizing and fill, so
-        the shortfall this buffer exists to cover is an arithmetic reading off
-        the account rather than a round percentage with a round floor. This is a
-        cash-arithmetic recording, not a study of the desk's returns, so it does
-        not fit anything to the desk's own trading record.
-      closes_when: >-
-        the recording shows the largest fee-plus-drift shortfall actually
-        observed and the balance below which the fractional part rounds to
-        nothing, and the two constants become those two readings. DELETE
-        outcome: if no funded buy ever came up short across the recording
-        window, the buffer is holding cash back for nothing and both constants
-        go rather than being re-picked.
   - id: src.execution.cash_sweep._FUND_CASH_SETTLE_POLL_S
     value: 2
     status: not-trade-governing
