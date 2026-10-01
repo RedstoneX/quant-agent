@@ -1691,6 +1691,12 @@ def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
     """
     if not buy_decisions:
         return buy_decisions
+    rotation = getattr(ctx, "rotation", None)
+    sold_this_session = ""
+    if isinstance(rotation, dict) and rotation.get("sell_order_id"):
+        sold_this_session = str(
+            rotation.get("held_symbol") or "",
+        ).strip().upper()
     try:
         sold_today = pipeline.db.get_rotation_sell_symbols_today()
     except Exception as exc:  # noqa: BLE001
@@ -1698,7 +1704,35 @@ def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
             "rotation re-buy guard could not read its own record (%s) — "
             "buys proceed through their ordinary gates", exc,
         )
+        # Fail-open is the ruling (a bookkeeping hiccup must never block an
+        # independently approved buy), but a SILENT fail-open is invisible.
+        # One durable per-symbol row per buy that went unchecked, so a churn
+        # round trip leaves something countable afterwards.
+        for d in buy_decisions:
+            _record_pipeline_event(
+                pipeline, ctx, getattr(d, "symbol", None), "rotation",
+                "rebuy_guard_failed_open",
+                "the buy-side anti-churn guard could not read the desk's "
+                f"own rotation sell record ({exc}), so this buy was NOT "
+                "checked against today's rotation sales and proceeded "
+                "through its ordinary gates",
+                failure="record_unreadable",
+            )
         return buy_decisions
+    if sold_this_session and sold_this_session not in set(sold_today or ()):
+        # The other half of the same hole: `_persist_evidence` swallows
+        # write failures, so the `sell_submitted` row can be LOST as well as
+        # unreadable. A rotation sale was submitted this session and the
+        # guard cannot see it, which means the guard is open for that name.
+        _record_pipeline_event(
+            pipeline, ctx, sold_this_session, "rotation",
+            "rebuy_guard_failed_open",
+            "the rotation closed this name this session, but no durable "
+            "sell record for it could be read back, so the buy-side "
+            "anti-churn guard is open for it and a same-day re-buy would "
+            "not be stopped",
+            failure="record_unwritten",
+        )
     if not sold_today:
         return buy_decisions
     kept: list = []

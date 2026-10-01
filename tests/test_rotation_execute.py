@@ -1270,3 +1270,104 @@ def test_a_rotation_sale_from_another_day_does_not_block_the_buy(tmp_path):
     assert [d.symbol
             for d in _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys)
             ] == ["OLD"]
+
+
+# ---------------------------------------------------------------------------
+# The PROMPT side of the replacementless case. Three tests above exercise the
+# replacementless execution path and none of them rendered the prompt, which
+# is why `_render_rotation_section` kept crashing on `new_score=None` inside
+# `build_user_message`, BEFORE the decision stage was ever reached.
+# ---------------------------------------------------------------------------
+
+def _render_replacementless(*, execute_enabled: bool) -> str:
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    return PortfolioManagerAgent._render_rotation_section(
+        ranked=[],
+        blocked={},
+        held_symbols={"OLD"},
+        existing_risk_pct={"OLD": 2.0},
+        ceiling_pct=25.0,
+        precheck=_precheck(_opportunity_no_replacement()),
+        execute_enabled=execute_enabled,
+    )
+
+
+@pytest.mark.parametrize("execute_enabled", [False, True])
+def test_the_prompt_renders_for_a_below_bar_holding_with_no_replacement(
+    execute_enabled,
+):
+    """Crashed with `TypeError: unsupported format string passed to
+    NoneType.__format__` before the fix, on both switch settings."""
+    text = _render_replacementless(execute_enabled=execute_enabled)
+    assert "OLD" in text
+    assert "None" not in text
+    assert HELD_REASONS[0] in text
+
+
+def test_the_categorical_prompt_states_what_the_code_actually_does():
+    """OWNER RULING 2026-10-01 removed BOTH preconditions this paragraph
+    used to assert. Prompt text is code that can rot."""
+    text = _render_replacementless(execute_enabled=True)
+    assert "AUTOMATIC ROTATION IS ENABLED" in text
+    assert "None" not in text
+    # The two REMOVED conditions must not be asserted any more.
+    assert "protection has already broken" not in text
+    assert "if you include a BUY target" not in text.lower()
+    # The two that remain in the code must still be stated.
+    assert "not bought today" in text
+    assert "in flight" in text
+
+
+# ---------------------------------------------------------------------------
+# A fail-open anti-churn guard must leave a trace somebody can count.
+# ---------------------------------------------------------------------------
+
+def _failed_open(db) -> list:
+    return [
+        (sym, payload) for sym, payload in _rotation_events(db)
+        if payload["outcome"] == "rebuy_guard_failed_open"
+    ]
+
+
+def test_an_unreadable_anti_churn_record_leaves_a_durable_reason(
+    tmp_path, monkeypatch,
+):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+
+    def _boom():
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(
+        pipeline.db, "get_rotation_sell_symbols_today", _boom,
+    )
+    real_db = pipeline.db
+    buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
+    # Fail-open behaviour is UNCHANGED: the buy still proceeds.
+    assert _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys) == buys
+
+    (symbol, payload), = _failed_open(real_db)
+    assert symbol == "OLD"
+    assert payload["failure"] == "record_unreadable"
+    assert "could not read" in payload["reason"]
+
+
+def test_a_lost_anti_churn_write_leaves_a_durable_reason(tmp_path):
+    """`_persist_evidence` swallows write failures, so the `sell_submitted`
+    row can be LOST as well as unreadable. Same silent hole, other half."""
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+    # A rotation sale WAS submitted this session, but no durable record of
+    # it can be read back — the write was lost.
+    ctx.rotation = {"held_symbol": "OLD", "sell_order_id": "o-1"}
+    buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
+    assert _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys) == buys
+
+    (symbol, payload), = _failed_open(db)
+    assert symbol == "OLD"
+    assert payload["failure"] == "record_unwritten"
