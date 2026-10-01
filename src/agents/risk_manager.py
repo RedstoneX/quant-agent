@@ -586,9 +586,11 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                 "not PM inconsistency; both are computed by the same Python "
                 "function. **There is no reward:risk floor.** Nothing has been "
                 "refused for failing one, a breakout has no ratio at all, and a "
-                "thin ratio on a range trade has already been paid for in size "
-                "by the constructor before you see it. A low number is not, on "
-                "its own, grounds to refuse anything.\n"
+                "thin ratio on a range trade is NOT resized by anything: the "
+                "constructor computes the ratio for ranking and logging only, "
+                "so no size has been adjusted for it before you see it. It is "
+                "information; the sizing judgement is yours. A low number is "
+                "not, on its own, grounds to refuse anything.\n"
                 + "\n".join(tech_lines)
             )
         else:
@@ -785,6 +787,7 @@ Review these proposed trades and provide your verdict as JSON."""
         parsed = result.parse_json()
         if parsed is None:
             logger.error("Risk manager returned non-JSON response")
+            result.gate_reason = "risk_non_json"  # item 188, recording only
             return None, result
         # Per-entry isolation for modifications: a single malformed
         # RiskModification (e.g. non-numeric original_value, wrong field
@@ -829,6 +832,7 @@ Review these proposed trades and provide your verdict as JSON."""
                     "failing closed: %s",
                     ", ".join(decision_fields), e,
                 )
+                result.gate_reason = "risk_decision_field_validation_failure"
                 return None, result
             repaired = self.repair_reprompt(result, e, schema_name)
             reparsed = repaired.parse_json()
@@ -845,6 +849,7 @@ Review these proposed trades and provide your verdict as JSON."""
                         "failing closed.",
                         "/".join(decision_fields),
                     )
+                    repaired.gate_reason = "risk_repair_changed_decision"
                     return None, repaired
                 try:
                     verdict = verdict_model(**reparsed)
@@ -860,14 +865,17 @@ Review these proposed trades and provide your verdict as JSON."""
                     logger.error(
                         "Failed to parse risk verdict after repair: %s", e2,
                     )
+                    repaired.gate_reason = "risk_repair_schema_error"
                     return None, repaired
             logger.error(
                 "Risk verdict repair returned %s, not an object",
                 type(reparsed).__name__,
             )
+            repaired.gate_reason = "risk_repair_not_object"
             return None, repaired
         except Exception as e:
             logger.error("Failed to parse risk verdict: %s", e)
+            result.gate_reason = "risk_parse_exception"
             return None, result
 
     # `rejected_symbols` (Phase 10.1) belongs here for exactly the reason the

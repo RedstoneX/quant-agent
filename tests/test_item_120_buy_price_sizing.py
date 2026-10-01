@@ -128,7 +128,12 @@ def test_new_name_buy_sizes_off_the_resolved_last_trade():
     decisions = constructor.construct_orders(
         targets=[TargetPosition(symbol="NVDA", target_weight_pct=8.0,
                                 conviction="high", thesis="AI")],
-        positions=[], analyses=[_analysis("NVDA", entry=100, stop=95, target=115)],
+        # Level above entry is 135, not 115: priced off the live 110 print a
+        # 115 level would risk 15 to make 5, which the parity refusal declines
+        # outright (owner ruling 2026-10-01, board item 218). This test is
+        # about WHICH price sizes the buy, so the geometry is made passable
+        # rather than the refusal being bypassed.
+        positions=[], analyses=[_analysis("NVDA", entry=100, stop=95, target=135)],
         total_value=100_000, price_map=price_map,
         unpriceable_symbols=unpriceable,
     )

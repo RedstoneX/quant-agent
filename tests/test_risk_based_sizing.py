@@ -13,6 +13,9 @@ inside ordinary noise.
 """
 
 from src.models import Position, TargetPosition, TechAnalysisResult, TechReasoningChain
+from src.portfolio_constructor import (  # noqa: F401
+    STOP_REFUSAL_REWARD_BELOW_RISK,
+)
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 
 
@@ -988,7 +991,7 @@ def test_the_atr_multiple_is_not_one_constant_for_every_trade():
     assert stop("range", "risk-off") == 93.66
 
 
-def test_widening_a_stop_into_a_bad_payoff_no_longer_rejects_the_trade():
+def test_widening_a_stop_into_a_sub_parity_payoff_now_refuses_the_trade():
     """**Inverted 2026-09-11, docs/WORK.md item 1(d).** The target still does
     not move when the stop does, so the reward:risk still falls — and it is
     still computed and logged. What changed is that a range trade is no
@@ -1008,9 +1011,21 @@ def test_widening_a_stop_into_a_bad_payoff_no_longer_rejects_the_trade():
         analyses=[_vol_analysis("MSFT", 100.0, 97.6, 104.0, atr=2.35)],
         total_value=EQUITY, price_map={"MSFT": 100.0},
     )
-    assert len(decisions) == 1
-    assert decisions[0].stop_loss == round(100.0 - 2.25 * 2.35, 2)
-    assert decisions[0].reward_risk < 1.5
+    # AMENDED 2026-10-01 (owner ruling, board item 218). 4.00 of reward
+    # against 5.2875 of risk is 0.76 — below parity — so the purchase is
+    # now refused. Stated truthfully: the stop here HAS been widened, and
+    # the refusal reads that final widened stop, so for this name the
+    # refusal IS a function of the widened width. That is the departure
+    # the owner's ruling makes from "a wide stop is answered by size" —
+    # the widened stop is the risk the desk actually transacts. What did
+    # NOT change: no stop, target or trailing behaviour moved, and nothing
+    # was resized within this name.
+    assert decisions == []
+    assert (
+        constructor.last_refusals["MSFT"]["refusal"]
+        == STOP_REFUSAL_REWARD_BELOW_RISK
+    )
+    assert "below parity" in constructor.last_refusals["MSFT"]["detail"]
 
 
 def test_no_volatility_reading_derives_structural_stop_and_holds():
