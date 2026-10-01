@@ -277,14 +277,6 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 212)
 
 
-**211. Alert coalescing was keyed to the wrong quantity, the unprotected-position alert was deduped per DAY not per symbol, and the mute dropped messages before recording them — re-opened 2026-10-01 after measurement.** The 2026-10-01 coalescing shipped and SAVES NOTHING on real data: all 22 suspension episodes of 26-30 Sep ran 24 to 253 minutes, none was inside the 15-minute self-clear window it keys on, so all 44 of 107 messages still paged [measured, production `llm_circuit_events` + `notifier_sends`, read-only]. Suppression now spans the EPISODE — same trigger code, same ET budget day, resolved or not — with no duration invented. detail: docs/BOARD_NOTES.md (item 211)
-
-DONE WHEN:
-- [x] a re-latch of one unresolved fault inside its budget day pages the owner once, not once per flap, and the hold is written to the event record with its reason
-- [x] the "position is unprotected" owner alert is deduped per symbol per day like its two siblings, so a second name going naked the same day still pages
-- [x] every message the global mute drops is recorded with its type, symbols and timestamp; nothing is un-muted and no configuration is touched
-- [ ] the owner is shown what the mute has been swallowing since 30 September
-
 **217. Prompt claims that another part of the desk "handles" something — verify each against the code (filed 2026-10-01 after the risk seat was told a thin reward:risk had been "paid for in size by the constructor"; it had not, and that sentence is corrected).** The sweep was by text search only, so claims phrased differently may remain. Not yet verified: the portfolio-manager prompt's statements that "the constructor will deny it" (immaterial-payoff trades), "the constructor REJECTS the trade outright" (stop on the wrong side of entry), and "the constructor will NOT flip" a held short in one session.
 
 DONE WHEN:
@@ -321,6 +313,7 @@ DONE WHEN:
 - [ ] held names are inside the per-name coverage record's universe, so the staying decision has the same per-name seat record the entry decision has
 - [ ] the record tells the three causes apart from the FIELDS alone — asked and unreadable, asked and nothing usable came back, never asked about this name — because they share one consequence but have three different fixes
 - [ ] no retry, no JSON repair and no new refusal is added by this change, and the entry and stay refusals keep the behaviour the 2026-09-25 ruling gave them
+
 
 
 **221. The sector preview sizes every candidate at a flat 5% while the constructor would size each one off its own stop distance, so the portfolio manager self-corrects against a mix no candidate is ever given — filed 2026-10-01.** Found during item 90's second routing tranche and deliberately not fixed there. The preview the portfolio manager reads to judge sector crowding assumes one identical position size for every candidate; the constructor that actually places the orders sizes each name from its own stop distance, so a wide-stopped name gets far less than the preview showed and a tight-stopped name far more. The manager therefore trims, drops or reorders names against a portfolio that will never exist. It governs how much money goes into each name, so it is a sizing defect, not a display one. Detail in `docs/BOARD_NOTES.md` item 221.
@@ -372,19 +365,20 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
+- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 157
-- retired queue: 119
 - retired queue: 193
-- retired queue: 107
+- retired queue: 119
+- retired queue: 211
 - retired queue: 185
-- retired queue: 76
 - retired queue: 214
-- retired queue: 199
-- retired queue: 212
+- retired queue: 107
+- retired queue: 76
 - retired queue: 174
+- retired queue: 199
 - retired queue: 20
+- retired queue: 212
 - retired queue: 216
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
