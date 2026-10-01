@@ -1,6 +1,6 @@
 """Step-0 guards for the pipeline split (board item 210, docs/PIPELINE_SPLIT_PLAN.md).
 
-Two things are guarded here and nothing is moved:
+Three things are guarded here and nothing is moved:
 
 1. The METHOD INVENTORY. What each tracked module contains -- module-level
    functions and the method names of every class -- is frozen in
@@ -12,9 +12,15 @@ Two things are guarded here and nothing is moved:
    exercised on a SYNTHETIC move against copies of the real files, so the
    helper is proved to rewrite ids rather than merely to exist.
 
-Both guards are themselves proved to be able to fail: the inventory check is run
-against mutated source text with a method added, removed and renamed, and the
-verifier is run against a deliberately half-applied move.
+3. THE COMPATIBILITY SHIMS. A name re-exported from `src/pipeline.py` purely
+   so old importers keep working is imported there and used nowhere there, so
+   `patch("src.pipeline.<name>")` rebinds an unused alias and intercepts
+   nothing while the test still passes. No test may patch such a name.
+
+All three guards are themselves proved to be able to fail: the inventory check
+is run against mutated source text with a method added, removed and renamed,
+the verifier is run against a deliberately half-applied move, and the shim
+check is run against a synthetic patch of a real re-exported name.
 """
 
 from __future__ import annotations
@@ -306,3 +312,84 @@ def test_the_two_split_modules_are_still_in_scoped_paths() -> None:
     assert "src/pipeline.py" in SCOPED_PATHS
     assert "src/pipeline_delever.py" in SCOPED_PATHS
     assert "src/pipeline_stages.py" in SCOPED_PATHS
+
+
+# ---------------------------------------------------------------------------
+# 3. COMPATIBILITY SHIMS MUST NOT BECOME SILENT PATCH TARGETS.
+#
+# Each split step re-exports the names it moved from `src/pipeline.py` so that
+# existing importers keep working. Those names are imported there and never
+# used there. A test that writes `patch("src.pipeline.<name>", ...)` against
+# such a name still SUCCEEDS -- it rebinds the old module's unused alias -- but
+# it intercepts nothing, because the moved code resolves the name in its own
+# module. The test then passes while testing nothing.
+#
+# WHICH CHECK THIS IS: the second of the two options -- no test may patch a
+# name on `src.pipeline` that `src.pipeline` itself no longer uses.
+#
+# WHAT IT CANNOT CATCH:
+#   * a patch target built at runtime from pieces, or passed as a variable,
+#     rather than written as a literal `src.pipeline.<name>` in the test text;
+#   * `patch.object(pipeline_module, "name")`, which never spells the dotted
+#     path;
+#   * a name used by `src/pipeline.py` only inside a string annotation, which
+#     this reads as unused and would therefore flag (a false alarm, not a
+#     miss -- it fails loudly rather than quietly).
+# ---------------------------------------------------------------------------
+
+import ast
+import re
+
+OLD_MODULE_PATH = REPO_ROOT / "src" / "pipeline.py"
+TESTS_DIR = Path(__file__).resolve().parent
+
+_PATCH_TARGET_RE = re.compile(r"src\.pipeline\.([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def compat_only_names(source: str) -> set[str]:
+    """Names imported by `source` and referenced nowhere else in it."""
+    tree = ast.parse(source)
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                imported.add(alias.asname or alias.name.split(".")[0])
+    used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    used |= {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    return imported - used
+
+
+def dead_patch_targets(test_source: str, compat_names: set[str]) -> set[str]:
+    return {m for m in _PATCH_TARGET_RE.findall(test_source) if m in compat_names}
+
+
+def test_no_test_patches_a_name_the_old_module_no_longer_uses():
+    compat_names = compat_only_names(OLD_MODULE_PATH.read_text())
+    assert compat_names, (
+        "expected src/pipeline.py to still carry compatibility re-exports; if "
+        "the split finished and they are all gone, delete this guard"
+    )
+    offenders: dict[str, set[str]] = {}
+    for path in sorted(TESTS_DIR.glob("test_*.py")):
+        if path.name == Path(__file__).name:
+            continue
+        found = dead_patch_targets(path.read_text(), compat_names)
+        if found:
+            offenders[path.name] = found
+    assert not offenders, (
+        "these tests patch a name on `src.pipeline` that `src.pipeline` no "
+        "longer uses, so the patch binds an unused alias and intercepts "
+        f"nothing: {offenders}\n\nWHAT TO DO: patch the name on the module "
+        "that now DEFINES it (the `src/pipeline_*.py` module the split moved "
+        "it to), not on `src.pipeline`."
+    )
+
+
+def test_dead_patch_target_detector_can_fail():
+    """Prove the check above can fail, against the real re-export list."""
+    compat_names = compat_only_names(OLD_MODULE_PATH.read_text())
+    victim = sorted(compat_names)[0]
+    synthetic = f'with patch("src.pipeline.{victim}", autospec=True):\n    pass\n'
+    assert dead_patch_targets(synthetic, compat_names) == {victim}
+    # A name the old module still uses is NOT flagged.
+    assert dead_patch_targets('patch("src.pipeline.TradingPipeline")', compat_names) == set()
