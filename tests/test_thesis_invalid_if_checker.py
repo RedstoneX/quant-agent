@@ -178,3 +178,114 @@ def test_result_is_frozen_dataclass_with_status_and_detail():
     assert isinstance(result, ThesisInvalidationCheck)
     assert result.status == "TRIGGERED"
     assert isinstance(result.detail, str) and result.detail
+
+
+# ---------------------------------------------------------------------------
+# Named macro-series levels — item 99's third checkable shape (2026-09-30)
+# ---------------------------------------------------------------------------
+#
+# Added when all five analyst seats began stating their own falsifier. The
+# two price shapes were measured off `tech_analyst` alone, whose condition is
+# always about price; `config/prompts/macro_analyst.md` ships "HY OAS widens
+# back above 420bps" as its own worked example, and that returned UNPARSEABLE.
+
+_MACRO = {
+    "credit_spread": 455.0,      # HY OAS, basis points
+    "ig_credit_spread": 92.0,    # IG OAS, basis points
+    "vix": 18.2,                 # index points
+    "treasury_10y": 4.12,        # percent
+    "unemployment": 4.3,         # percent
+}
+
+
+def test_the_macro_prompts_own_worked_example_is_now_evaluated() -> None:
+    """`macro_analyst.md`'s shipped example must not come back UNPARSEABLE."""
+    result = check_thesis_invalid_if(
+        "HY OAS widens back above 420bps",
+        current_price=150.00,
+        macro_levels=_MACRO,
+    )
+    assert result.status == "TRIGGERED", result  # 455bps is above 420bps
+
+
+def test_macro_series_not_triggered_reads_the_macro_level_not_the_price() -> None:
+    result = check_thesis_invalid_if(
+        "VIX closes above 30", current_price=455.00, macro_levels=_MACRO,
+    )
+    assert result.status == "NOT_TRIGGERED", result
+    assert "vix 18.2" in result.detail
+
+
+def test_percent_on_a_bps_series_is_the_exact_definitional_conversion() -> None:
+    """1% = 100bps is a definition, so it is applied; nothing else is."""
+    result = check_thesis_invalid_if(
+        "high-yield spread above 4.9%", current_price=150.00,
+        macro_levels=_MACRO,
+    )
+    assert result.status == "NOT_TRIGGERED", result  # 455bps < 490bps
+
+
+def test_bps_series_with_no_unit_is_refused_rather_than_assumed() -> None:
+    result = check_thesis_invalid_if(
+        "HY OAS above 420", current_price=150.00, macro_levels=_MACRO,
+    )
+    assert result.status == "UNPARSEABLE", result
+    assert "unit" in result.detail
+
+
+def test_index_series_quoted_in_a_unit_it_does_not_have_is_refused() -> None:
+    result = check_thesis_invalid_if(
+        "VIX above 30%", current_price=150.00, macro_levels=_MACRO,
+    )
+    assert result.status == "UNPARSEABLE", result
+
+
+def test_a_digit_inside_the_series_name_is_not_read_as_the_threshold() -> None:
+    """"10y yield above 4.5%" must compare 4.12 to 4.5, never to 10."""
+    result = check_thesis_invalid_if(
+        "10y yield above 4.5%", current_price=150.00, macro_levels=_MACRO,
+    )
+    assert result.status == "NOT_TRIGGERED", result
+    assert "vs level 4.5" in result.detail
+
+
+def test_macro_series_with_no_supplied_level_is_unparseable_never_a_guess() -> None:
+    result = check_thesis_invalid_if(
+        "fed funds rate above 5.0%", current_price=150.00, macro_levels=_MACRO,
+    )
+    assert result.status == "UNPARSEABLE", result
+    assert "fed_funds_rate" in result.detail
+
+
+def test_named_macro_series_wins_over_the_bare_price_shape() -> None:
+    """The latent wrong answer: a decimal bps level read as the stock price.
+
+    Before the macro shape existed, "HY OAS above 420.5bps" matched the
+    direction-word price pattern and was compared against `current_price`,
+    which would have said NOT_TRIGGERED (150 < 420.5) about a condition that
+    is in fact true (455bps > 420.5bps).
+    """
+    result = check_thesis_invalid_if(
+        "HY OAS above 420.5bps", current_price=150.00, macro_levels=_MACRO,
+    )
+    assert result.status == "TRIGGERED", result
+    assert "credit_spread" in result.detail
+
+
+def test_a_qualitative_condition_stays_unparseable_by_design() -> None:
+    """The remaining, deliberate limit: words the desk cannot compute."""
+    result = check_thesis_invalid_if(
+        "the contract award is rescinded", current_price=150.00,
+        macro_levels=_MACRO,
+    )
+    assert result.status == "UNPARSEABLE", result
+
+
+def test_price_and_ma_shapes_are_unchanged_by_the_macro_addition() -> None:
+    assert check_thesis_invalid_if(
+        "closes below MA50", current_price=150.00, ma_50=160.00,
+        macro_levels=_MACRO,
+    ).status == "TRIGGERED"
+    assert check_thesis_invalid_if(
+        "loses the $142.50 level", current_price=150.00, macro_levels=_MACRO,
+    ).status == "NOT_TRIGGERED"
