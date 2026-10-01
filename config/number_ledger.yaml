@@ -796,8 +796,18 @@ numbers:
       trades picks the magnitude. Interacts with board item 91, the
       calendar-vs-trading-day defect.
     open_question: >-
-      What is the longest hold over which this desk's own closed trades show a
-      target being reached?
+      BARRED AND REPLACED 2026-10-01 (found by board item 185's sweep; this was
+      the FOURTH copy of a question that can only be answered by a study over
+      this desk's own trade record, which docs/OUTCOME.md forbids). The honest
+      question is not how long a target takes but whether this horizon governs
+      anything at all: Rex's 2026-09-30 ruling is that the desk exits on
+      ALIGNMENT - structure, ATR and an SMA cross agreeing the trend is over -
+      and never on a target, so a ceiling on how far out a target may sit may
+      now be guarding a decision nothing makes. Settle it by reading the live
+      exit path for a surviving consumer, and delete the number if there is
+      none; that reading belongs to board items 75 and 91, which own the
+      target's status and the calendar-vs-trading-day defect. Do not re-derive
+      the magnitude, and do not route 60 to the owner as an appetite dial.
     cost_while_unanswered: >-
       A target 60 sessions out licenses a claim of roughly 8 ATRs of travel
       with nothing measured behind the horizon.
@@ -3492,9 +3502,23 @@ numbers:
       convention adopted is still a number this desk did not read off
       anything.
     open_question: >-
-      At what R of open profit does moving the stop to breakeven stop costing
-      more in premature exits than it saves in given-back gains, on this
-      desk's own closed trades?
+      BARRED AND REPLACED 2026-10-01 (board item 185). The old question asked
+      what this desk's own closed trades say about the breakeven ratchet; a
+      study over this desk's own trade record is forbidden by docs/OUTCOME.md
+      and item 90 had already deleted the identical shape of question from
+      min_stop_atr_multiple, so this is the third copy and the reason
+      tests/test_no_fitted_open_questions.py now also matches it. The question
+      that can be answered off the instrument instead: does this ratchet ever
+      BIND? The chandelier trail already reads giveback off the name's own
+      ATR(14) every session, so a fixed R ratchet changes an exit only on the
+      bars where it sits tighter than the instrument-read trail, and the
+      honest outcome may be DELETING it as double-counting rather than
+      re-picking it. THE RECORDING THAT SETTLES IT DOES NOT EXIST: verified
+      2026-10-01 against the production database, no table stores a trailing
+      decision's reason code or the candidate levels it chose between, so
+      nothing can say how often the range ratchet, rather than structure or
+      the chandelier, actually set a stop. Build that recording under item
+      142, which owns these three numbers; do not re-derive the multiple.
     cost_while_unanswered: >-
       Every range trade's stop moves on a borrowed convention; too early it
       exits winners at scratch, too late it gives back the bank.
@@ -3513,9 +3537,16 @@ numbers:
       sourced -- ratification records WHO chose the number, not a measurement
       behind it.
     open_question: >-
-      At what R of open profit does moving the stop up to lock gain stop costing
-      more in premature exits than it saves in given-back gains, on this desk's
-      own closed trades?
+      BARRED AND REPLACED 2026-10-01 (board item 185), same reason and same
+      replacement as RANGE_BREAKEVEN_R_MULTIPLE: the old wording promised a
+      study over this desk's own closed trades, which docs/OUTCOME.md forbids.
+      Answerable off the instrument instead: on how many bars does this
+      ratchet sit TIGHTER than the chandelier trail, which already reads
+      giveback off the name's own ATR(14)? If the answer is never, the ratchet
+      is inert and deleting it is the correct outcome. The recording that
+      settles it does not exist - no production table stores a trailing
+      decision's reason code or its rejected candidates (verified 2026-10-01)
+      - and building it belongs to item 142. Do not re-pick the multiple.
     cost_while_unanswered: >-
       The second ratchet fires on a chosen multiple; too early it exits winners
       at the lock for a scratch-plus, too late it gives back the bank on a
@@ -3536,9 +3567,16 @@ numbers:
       2026-09-25 for item 142; ratified is not sourced -- ratification records
       WHO chose the number, not a measurement behind it.
     open_question: >-
-      At what R of open profit does moving the stop up to lock gain stop costing
-      more in premature exits than it saves in given-back gains, on this desk's
-      own closed trades?
+      BARRED AND REPLACED 2026-10-01 (board item 185), same reason and same
+      replacement as RANGE_BREAKEVEN_R_MULTIPLE: the old wording promised a
+      study over this desk's own closed trades, which docs/OUTCOME.md forbids.
+      Answerable off the instrument instead: on how many bars does this
+      ratchet sit TIGHTER than the chandelier trail, which already reads
+      giveback off the name's own ATR(14)? If the answer is never, the ratchet
+      is inert and deleting it is the correct outcome. The recording that
+      settles it does not exist - no production table stores a trailing
+      decision's reason code or its rejected candidates (verified 2026-10-01)
+      - and building it belongs to item 142. Do not re-pick the multiple.
     cost_while_unanswered: >-
       The lock level is a chosen multiple; too high it rarely engages and gives
       back more, too low it caps the trade near scratch on a normal pullback.

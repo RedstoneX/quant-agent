@@ -52,7 +52,7 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 ### Ordered backlog — RESUME POINT
 
 **PRIORITY ORDER, set 2026-09-17 (the owner authorised the ordering). Work it top-down — it overrides item-number order.**
-- **Tier 1, can cost money or hide risk:** 89 (its residue), 80, 90, 111, 112, 127, 199. (87 and 88 closed 2026-09-18; 130 retired 2026-09-25.)
+- **Tier 1, can cost money or hide risk:** 89 (its residue), 80, 90, 111, 112, 127, 199, 201. (87 and 88 closed 2026-09-18; 130 retired 2026-09-25.)
 - **Tier 2, wastes money or opportunity:** 91, 82, 81, 92.
 - **Tier 3, clarity and hygiene:** 89 (its thirteen clarity defects), 94. (93 retired 2026-09-25.)
 - **To be decided by the orchestrator after an adversary run, not parked on the owner (ruling 2026-09-18 — his words: "I don't want you waiting on me on anything. You have the adversary in my place. Just make sure it gets documented." The adversary argues, it never rules; the orchestrator decides and records the decision and its reason before anything is built on it):** 86. (109(a) closed 2026-09-26 — the OWNER ruled it himself on 2026-09-25, so it never took the delegated route; item 109(c) retired 2026-10-01. 96 retired 2026-09-25 — the delegated question is stale, the veto it asked about is built and wired. 95 retired 2026-09-26 — decided yes, under the already-ratified cap and ladder, with the cost of the debit now shown to the seat.)
@@ -188,18 +188,6 @@ DONE WHEN:
   - [x] spend and actions re-measured — 2026-09-26, against the production cost circuit read-only. `intra_check` is the desk's largest spender: **$13.93 of $22.18 all-time, 62.8%**, over 211 sessions of which 106 were paid, against morning's $7.66 over 31. 13 paid ticks a day since the timer moved, 14 before. A tick carrying the held book costs **1.54x** a movers-only tick ($0.167 vs $0.108 mean). **80% of paid ticks (85 of 106) produced no order**, and the whole record attributes 21 new positions to intraday discovery — **$0.66 of model spend per position opened**. The mover cap binds on 21.5% of runs and drops the excess with no record. Figures and method in `docs/BOARD_NOTES.md`.
 detail: docs/BOARD_NOTES.md (item 177)
 
-**185. Trailing-stop numbers are made-up money numbers with no board item — filed 2026-09-25. OPEN.**
-
-DONE WHEN:
-  - [x] `CHANDELIER_ATR_MULTIPLE` sourced (published Chandelier default) and `MIN_RATCHET_PCT` owner-ratified as churn appetite with its false cost premise corrected
-  - [x] the 50%-of-price literal is removed from the code and from the ledger, and the guard/screen circularity is broken — both ends now compute from `widest_reachable_stop_atr_multiple` (2026-09-30)
-  - [x] the screen-divisor mismatch (base 2.5 vs reachable 3.00, the 16.67-20% band the screen admitted and the guard would have argued with) is FIXED, not accepted
-  - [x] no refusal on this path can leave a position unprotected — the midday guard clamps and places instead of skipping, per board item 80 (2026-09-30)
-  - [ ] the ELIGIBILITY question is BLOCKED, not declined — 2026-10-01 names the blocker and the recording that lifts it, and no further derivation attempt is permitted. Blocked because: no primary methodology document stating an ABSOLUTE ATR/price bound exists to cite (searched 2026-09-30); the published form is cross-sectional and the screen has NEVER executed, so there is no cross-section to take a quantile of; and routing the quantile to the owner as appetite is barred by his 2026-09-30 ruling that risk is per name and never a global dial. CLOSES WHEN: the screen runs and persists each run's full ATR(14)/price cross-section with names and date, giving the quantile form a measured distribution. Until then 33.3% is an arithmetic non-degeneracy floor ONLY and must not be described as a volatility appetite — re-measured 2026-10-01 off the desk's own stored daily bars (101 symbols, 276 sessions to 2026-09-30): median 2.53%, p90 5.50%, max 8.33%, not one name above 10%, so it has never bound and would not
-  - [x] the two rows the 3.00 depends on are explicitly INHERITED by this item rather than left orphaned (2026-10-01), and the 1.20 risk-off scaler's open question was found to be the barred maximum-adverse-excursion study item 90 had already deleted from `min_stop_atr_multiple` — it is replaced by a lag-correction reading off the instrument (ATR(14) already re-measures volatility every session, so the scaler may be double-counting and deleting it is a legitimate outcome), the recording that would settle it is named, and `tests/test_no_fitted_open_questions.py` now fails the build on any ledger open question promising a fitted resolution
-
-detail: docs/BOARD_NOTES.md (item 185)
-
 **186. Portfolio and cluster risk ceilings are made-up money numbers with no board item — filed 2026-09-25.**
 
 DONE WHEN:
@@ -314,6 +302,13 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 208)
 
 
+**217. Prompt claims that another part of the desk "handles" something — verify each against the code (filed 2026-10-01 after the risk seat was told a thin reward:risk had been "paid for in size by the constructor"; it had not, and that sentence is corrected).** The sweep was by text search only, so claims phrased differently may remain. Not yet verified: the portfolio-manager prompt's statements that "the constructor will deny it" (immaterial-payoff trades), "the constructor REJECTS the trade outright" (stop on the wrong side of entry), and "the constructor will NOT flip" a held short in one session.
+
+DONE WHEN:
+  - [ ] (a) each constructor claim above is confirmed against the live code or corrected, with a test pinning the wording
+  - [ ] (b) any other seat-prompt sentence of the form "X already handles Y" found by reading the rendered prompts is confirmed or corrected
+detail: docs/BOARD_NOTES.md (item 217)
+
 **216. The short-side gap haircut is applied in TWO places and the constructor's copy is not the one that binds — filed 2026-09-30.**
 
 Execution sizes a position as min(qty_by_alloc, qty_by_risk). The constructor
@@ -398,13 +393,14 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
-- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 193
+- retired queue: 157
 - retired queue: 119
+- retired queue: 193
 - retired queue: 211
 - retired queue: 174
+- retired queue: 185
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
