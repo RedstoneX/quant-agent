@@ -857,7 +857,8 @@ def test_trimming_the_held_book_has_exactly_one_owner():
     catch — each would be individually correct and the book would be sold
     down twice. So: across all of `src/`, exactly ONE call to
     `apply_gross_ceiling` may leave `emit_trims` at its default of True, and
-    it must be the run preamble in `pipeline.py`, which runs before any agent
+    it must be the run preamble, now in `pipeline_delever.py` (split step 3),
+    which runs before any agent
     and therefore keeps working when the Portfolio Manager returns nothing.
     """
     import ast
@@ -884,7 +885,7 @@ def test_trimming_the_held_book_has_exactly_one_owner():
     # de-lever does not call `apply_gross_ceiling` itself — it delegates to
     # `_enforce_gross_ceiling` with a cut order — precisely so a second owner
     # cannot appear. A duplicate entry here means one did.
-    assert trim_owners == ["pipeline.py"], (
+    assert trim_owners == ["pipeline_delever.py"], (
         f"exactly one caller may author de-lever orders; found {trim_owners}"
     )
     assert sizing_callers == ["portfolio_constructor.py"], (
@@ -2944,13 +2945,16 @@ def test_an_unreadable_in_flight_exit_leaves_the_debt_owed():
 
 def test_only_one_place_may_mark_the_gross_ceiling_debt_paid():
     """Structural pin: the flag is cleared in exactly ONE assignment in
-    pipeline.py — inside the enforcement itself, after it has measured and
+    pipeline_delever.py (split step 3) — inside the enforcement itself, after
+    it has measured and
     acted. A second `= False` anywhere is how the debt gets marked paid
     without anything being enforced, which is the bug this pins."""
     import ast
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parent.parent / "src" / "pipeline.py").read_text()
+    src = (
+        Path(__file__).resolve().parent.parent / "src" / "pipeline_delever.py"
+    ).read_text()
     tree = ast.parse(src)
     clears = []
     for node in ast.walk(tree):
