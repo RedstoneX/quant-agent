@@ -1225,18 +1225,6 @@ class CashSweepConfig(BaseModel):
     anything with real market beta breaks the cash-equivalence assumption
     that justifies every exemption listed above."""
 
-    reserve_pct: float = Field(default=1.0, ge=0, le=20)
-    """% of equity kept as raw cash (fees, slippage, partial fills).
-    Excess above the reserve is parked.
-
-    Deliberately left at 1.0. An earlier pass in the 2026-08-19 tranche
-    raised this to 5.0 as a workaround for BUYs being skipped for lack of
-    cash — that was treating a symptom. Alpaca credits `cash` as soon as a
-    SELL fills, so a filled SGOV liquidation funds an equity BUY in the
-    same session; the real fix was confirming that fill before the BUY
-    phase, not starving the sweep of the idle cash it exists to put to
-    work. That pre-BUY funding sale no longer exists (item 190)."""
-
     min_order_usd: float = Field(default=500.0, ge=0)
     """Don't churn sub-$500 parking orders — spread + noise beat the
     few cents of yield."""
@@ -1248,6 +1236,26 @@ class CashSweepConfig(BaseModel):
         if not v:
             raise ValueError("cash_sweep.symbol must be a non-empty ticker")
         return v
+
+
+class CashReserveConfig(BaseModel):
+    """The raw-cash reserve band the /account liquidity view reports.
+
+    RELOCATED 2026-10-01 (board item 190) out of `CashSweepConfig`, value
+    unchanged. It was never part of the retired cash sweep's own machinery:
+    `src.api.routes_live._compute_liquidity` reads it on every /account
+    request to report `reserve_usd` and `cash_above_reserve`, and that
+    reader outlives the sweep. Kept here so retiring the rest of the sweep
+    cannot delete a live display band by association.
+    """
+
+    pct: float = Field(default=1.0, ge=0, le=20)
+    """% of equity reported as held back as raw cash for fees, slippage and
+    partial fills. Deliberately 1.0 — an earlier pass in the 2026-08-19
+    tranche raised it to 5.0 as a workaround for BUYs being skipped for lack
+    of cash, which treated a symptom and was put back. Still `arbitrary` in
+    config/number_ledger.yaml; relocation changed its home, not its value or
+    its honesty label."""
 
 
 class IntradayScanConfig(BaseModel):
@@ -2291,6 +2299,7 @@ class AppConfig(BaseModel):
     # (enabled=False default), so older configs keep working unchanged.
     cash_sweep: CashSweepConfig = Field(default_factory=CashSweepConfig)
     deployment_gap: DeploymentGapConfig = Field(default_factory=DeploymentGapConfig)
+    cash_reserve: CashReserveConfig = Field(default_factory=CashReserveConfig)
     # Optional section — a settings.yaml without it gets the scan disabled
     # (enabled=False default), so intra_check's existing behavior is
     # unchanged unless explicitly opted in.

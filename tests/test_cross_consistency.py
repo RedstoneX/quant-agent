@@ -359,7 +359,7 @@ def test_deployable_cash_on_the_sweep_book_is_cash_plus_parked(monkeypatch):
 
     monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: True)
     monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: SWEEP_SYMBOL)
-    monkeypatch.setattr(routes_live, "get_cash_sweep_reserve_pct", lambda: 5.0)
+    monkeypatch.setattr(routes_live, "get_cash_reserve_pct", lambda: 5.0)
     monkeypatch.setattr(
         routes_live,
         "read_positions",
