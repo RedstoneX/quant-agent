@@ -17909,32 +17909,82 @@ is classified by code AND text and the existing order is read back by client
 id; if the read-back fails the call raises "treat as PLACED", never a quiet
 rejection. Any other failure propagates exactly as before.
 
+**Which broker rule applies — settled 2026-10-01 (adversary round 3).**
+An earlier draft of this note said both "Alpaca keeps the key on a dead
+order" and "uniqueness applies to active orders only"; those contradict each
+other and the first is wrong. The one source the change cites (Alpaca's
+troubleshooting guide) says: "Make sure to use a unique client_order_id for
+each active order." The POST /v2/orders reference says only "a unique
+identifier" and is silent on scope. The desk therefore designs against
+ACTIVE-ONLY uniqueness, the weaker guarantee: a key is refused only while a
+non-terminal order holds it; once that order is `canceled`, `filled`,
+`expired` or `rejected` the key is FREE and a resubmission under it is
+ACCEPTED as a brand-new order. The stub broker in the proof file models
+exactly that (its first draft modelled global uniqueness — a broker that does
+not exist — and the tests passed against it).
+
 **Defect introduced by the first draft of this change, found by the adversary
-and fixed in the same PR (2026-10-01).** Alpaca keeps the key on a dead order,
-and `_restore_stop_orders` resubmits the same qty, trigger and side moments
-after cancelling the stop — while that stop is still `pending_cancel`. The
+and fixed in the same PR (2026-10-01).** `_restore_stop_orders` resubmits the
+same qty, trigger and side moments after cancelling the stop — while that stop
+is still `pending_cancel`, i.e. still active and still holding the key. The
 first draft returned the read-back order without reading its status, so the
-restore loop counted a cancelled stop as restored and the stop-leg retry
-returned it as placed: the position was naked while the desk believed it
-covered. Now every duplicate read-back on the stop path is judged against
-`PROTECTIVE_ORDER_ALIVE_STATUSES` (the desk's one definition of "a resting
-stop"; `pending_cancel` is deliberately outside it). A live order is returned
-as the placed stop; a dying or dead one (`pending_cancel`, `canceled`,
-`expired`, `rejected`, `filled`) is superseded by a genuinely new submission
-whose key folds in the dead order's broker id — a stable fact of the broker's
-record, not a timestamp, so a retry of the replacement derives the same key
-and is still refused as a duplicate. The restore loop and the stop-leg retry
-also refuse to count any result whose status is outside that set, whatever
-path produced it. Proof: stub brokers answering the duplicate 422 with a
-`pending_cancel` and with a `canceled` order fail both the restore and the
-retry test before the fix (no live stop placed) and pass after.
+restore loop counted a dying stop as restored and the stop-leg retry returned
+it as placed. Now every duplicate read-back on the stop path is judged by
+status: an order that still holds the shares is returned as the placed stop;
+a dying one (`pending_cancel`) is superseded by a new submission whose key
+folds in the dying order's broker id.
+
+**Which statuses "hold the shares" — corrected 2026-10-01 (adversary round
+3, hole 2).** The first fix judged the read-back against
+`PROTECTIVE_ORDER_ALIVE_STATUSES`, which was built for an aged order-book
+read and excludes three states that still hold the shares: `pending_replace`
+(the desk amends stops IN PLACE via `replace_order_by_id`, so a stop read
+back mid-amend is the live stop), `stopped` (Alpaca: "a trade is guaranteed
+... but has not yet occurred" — the shares are being sold by that order) and
+`calculated` (completed, settlement pending — already sold). Superseding any
+of them is a second sell over shares already protected or already gone. The
+same mis-judgement applied to the placement response itself: a stop-MARKET
+placed through its trigger can come back `filled`, and the retry loop would
+have treated that as a failed attempt and sold the shares again on each
+retry. The shared set is NOT mutated — its two existing readers are right for
+their own questions — a third set, `PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES`
+(the alive set plus `pending_replace`, `stopped`, `calculated`, `filled`), is
+the single answer to "may a second stop be submitted over this order?", read
+by the duplicate read-back, the restore loop and the stop-leg retry. Proof:
+six cases fail before the fix (a `pending_replace` / `stopped` read-back was
+superseded; a `pending_replace` / `stopped` / `calculated` / `filled`
+placement response was retried) and pass after [measured 2026-10-01].
+
+**What this change does NOT guarantee (adversary round 3, hole 1) — "never
+two live stops" is NOT delivered.** Under active-only uniqueness the
+superseding key does not survive a retry. Sequence: stop A is
+`pending_cancel` and holds the plain key; the restore POSTs the plain key,
+gets the 422, reads back A, POSTs the superseding key, and the broker
+ACCEPTS stop B but the connection drops; A's cancel then completes, freeing
+the plain key; the retry POSTs the plain key and it is accepted outright as
+stop C — no 422 anywhere, B and C both rest. The proof file carries this as
+`test_KNOWN_LIMITATION_retry_after_cancel_completes_leaves_two_live_stops`,
+asserting what the code DOES (two live stops), so the day it is closed the
+test, not the note, says so. The change is still strictly better than main,
+which placed the restore blind; it narrows the window to "cancel completes
+between the timed-out POST and its retry" but does not close it.
+
+**Known limitation, unchanged from main (finding, not a regression, and
+deliberately NOT fixed here):** a stop that was partially filled and then
+cancelled is restored by `_restore_stop_orders` at the ORIGINAL quantity in
+its spec, not the remaining one — the spec carries the quantity the stop was
+placed with. A second stop for more shares than remain is a sell over shares
+already gone. This predates the idempotency change and is left for its own
+item.
 
 **Proof run (tests/test_idempotent_client_order_id.py):** same intent twice
-gives one key and each changed fact gives another; a stub broker that accepts
-then times out leaves ONE order after the retry for both the entry and the
-stop path; every other request field is byte-identical to the pre-change
-request; the two dead-status read-back cases above. 2,256 tests across the
-order-submission, stop and restore test files pass [measured 2026-10-01].
+gives one key and each changed fact gives another; a stub broker with
+ACTIVE-ONLY uniqueness that accepts then times out leaves ONE order after the
+retry for both the entry and the stop path; every other request field is
+byte-identical to the pre-change request; the `pending_cancel` read-back is
+superseded; the amending / executing cases above are not; the two-live-stops
+limitation is asserted as reality. 22 tests in the file; the wider
+order/stop/broker run is reported in the PR.
 
 **What this does not cover.** Two genuinely distinct same-day intents with
 identical symbol, side, quantity and price (for example an identical second

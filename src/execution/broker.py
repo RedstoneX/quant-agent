@@ -1530,16 +1530,22 @@ def _client_order_id(
     'STP' protective stop-MARKET, 'STL' the stop-LIMIT safety fallback.
     `price` is the limit (entry) or trigger (stop); None for a market order.
 
-    `supersedes` is the broker id of a DEAD order (canceled / pending_cancel
-    / expired / rejected / filled) that already holds this intent's plain
-    key. Alpaca keeps the key on the dead order, so the SAME stop placed
-    again after a cancel is refused as a duplicate of an order that no
-    longer protects anything. Folding the dead order's id into the key
-    makes the replacement a distinct order WITHOUT reopening the duplicate
-    hole: the id is a stable fact of the broker's own record, not a
-    timestamp or counter, so a retry of the replacement (after a timed-out
-    POST) reads back the same dead order, derives the same superseding
-    key, and is refused as the duplicate it is.
+    `supersedes` is the broker id of a DYING order (`pending_cancel`, or
+    any other status outside `PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES`) that
+    still holds this intent's plain key. Alpaca's uniqueness rule is among
+    ACTIVE orders only ("use a unique client_order_id for each active
+    order", its troubleshooting guide), so in practice the plain key is
+    refused only while the prior stop is still in flight; once it is
+    terminal the key is free and the plain key is accepted outright.
+    Folding the dying order's id into the key lets the replacement go in
+    without waiting for the cancel to complete.
+
+    KNOWN LIMITATION (adversary round 3, 2026-10-01): this does NOT give
+    "never two live stops". If the replacement's POST is accepted but times
+    out, and the prior stop's cancel completes before the retry, the retry
+    derives the PLAIN key (nothing holds it any more), is accepted with no
+    422, and a second live stop rests. Proven by
+    test_KNOWN_LIMITATION_retry_after_cancel_completes_leaves_two_live_stops.
     """
     import hashlib
     side_token = side.lower().replace("_", "")
@@ -1573,17 +1579,20 @@ def _is_duplicate_client_order_id_rejection(exc: BaseException) -> bool:
 
 
 def _is_dead_stop_result(result: object) -> bool:
-    """True when a stop-placement result dict names a status that is NOT a
-    resting order (`PROTECTIVE_ORDER_ALIVE_STATUSES`). A result that carries
-    no status at all is not judged here — the id/kill-switch checks around
-    the call sites own that case.
+    """True when a stop-placement result dict names a status under which the
+    order holds NO shares (outside `PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES`:
+    `pending_cancel`, `canceled`, `expired`, `rejected`, ...), so a retry is
+    safe. A `pending_replace`, `stopped`, `calculated` or `filled` result is
+    NOT dead: retrying over it would sell the shares a second time. A result
+    that carries no status at all is not judged here — the id/kill-switch
+    checks around the call sites own that case.
     """
     if not isinstance(result, dict):
         return False
     status = result.get("status")
     if not isinstance(status, str) or not status:
         return False
-    return status.lower() not in PROTECTIVE_ORDER_ALIVE_STATUSES
+    return status.lower() not in PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES
 
 
 def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
@@ -1949,6 +1958,30 @@ PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES = frozenset(
 #: protection, whichever question is being asked.
 PROTECTIVE_ORDER_ALIVE_STATUSES = (
     PROTECTIVE_ORDER_ACTIVE_STATUSES | PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES
+)
+
+#: The set for a THIRD question, asked only by the idempotent stop-submit
+#: path: "does this order still hold the shares, so that submitting another
+#: stop over it would be a SECOND sell?" (adversary round 3, 2026-10-01).
+#: It is wider than `PROTECTIVE_ORDER_ALIVE_STATUSES` because that set was
+#: built for an AGED order-book read ("is this resting order coverage?") and
+#: deliberately excludes states that still hold the shares:
+#:   `pending_replace` — the desk amends stops IN PLACE via
+#:                       `replace_order_by_id`; a stop read back mid-amend
+#:                       is still the live stop, not a dead one;
+#:   `stopped`         — Alpaca: "a trade is guaranteed for the order ...
+#:                       but has not yet occurred" — the shares are being
+#:                       sold by THIS order;
+#:   `calculated`      — Alpaca: "completed for the day (either filled or
+#:                       done for day), settlement pending" — already sold;
+#:   `filled`          — already sold; a stop-MARKET placed through its
+#:                       trigger can come back `filled` on the placement
+#:                       response itself, and retrying that is a fresh sell.
+#: `pending_cancel`, `canceled`, `expired`, `rejected` stay OUT: those hold
+#: nothing and may be superseded. The shared set is NOT mutated: its two
+#: existing readers are correct for their own questions.
+PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES = PROTECTIVE_ORDER_ALIVE_STATUSES | frozenset(
+    {"pending_replace", "stopped", "calculated", "filled"}
 )
 
 
@@ -5717,9 +5750,9 @@ class AlpacaBroker:
                 return None
             if _is_dead_stop_result(order):
                 # Adversary finding 2026-10-01: a response whose status is
-                # outside `PROTECTIVE_ORDER_ALIVE_STATUSES` (pending_cancel,
-                # canceled, rejected, ...) is NOT a resting stop, whatever
-                # path produced it. Treat it as a failed attempt.
+                # outside `PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES`
+                # (pending_cancel, canceled, rejected, ...) holds no shares,
+                # whatever path produced it. Treat it as a failed attempt.
                 logger.error(
                     "protective stop [%s] attempt %d/%d for %s came back "
                     "with status %r — not a live stop; not reporting it "
@@ -6049,20 +6082,28 @@ class AlpacaBroker:
         return the order that genuinely rests for it.
 
         Adversary finding 2026-10-01: a duplicate-key 422 read back WITHOUT
-        inspecting status counted a `pending_cancel` or `canceled` stop as
-        live protection — the exact case `_restore_stop_orders` hits, since
-        it resubmits the same qty/trigger/side moments after cancelling and
-        Alpaca keeps the key on the dead order. So:
+        inspecting status counted a `pending_cancel` stop as live protection
+        — the exact case `_restore_stop_orders` hits, since it resubmits the
+        same qty/trigger/side moments after cancelling, while the cancel is
+        still in flight and the key is therefore still held (Alpaca's rule
+        is uniqueness among ACTIVE orders; a terminal order frees its key,
+        so a fully `canceled` stop never produces this 422 at all). So:
 
         * duplicate 422 -> read the existing order back and INSPECT it;
-        * status in `PROTECTIVE_ORDER_ALIVE_STATUSES` -> that is the resting
-          stop, return it (the guard working);
+        * status in `PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES` (resting,
+          placement-pending, mid-amend `pending_replace`, executing
+          `stopped`, or already executed) -> that order holds the shares;
+          return it and NEVER place a second stop over it;
         * any other status (`pending_cancel`, `canceled`, `expired`,
-          `rejected`, `filled`, ...) -> NOT protection: derive a superseding
-          key from the dead order's id (see `_client_order_id`) and submit
-          a genuinely NEW stop. A dead replacement chains the same way; the
+          `rejected`, ...) -> holds nothing: derive a superseding key from
+          the dying order's id (see `_client_order_id`) and submit a
+          genuinely NEW stop. A dead replacement chains the same way; the
           loop ends because every hop names a distinct dead order and a
           never-seen key is accepted outright.
+
+        What this does NOT guarantee: see the KNOWN LIMITATION in
+        `_client_order_id` — a timed-out replacement retried after the
+        prior stop's cancel completes is accepted as a second live stop.
 
         Every non-duplicate exception propagates untouched so the caller's
         own classification (unsupported-type fallback, held_for_orders,
@@ -6088,9 +6129,10 @@ class AlpacaBroker:
             status = str(
                 getattr(existing.status, "value", existing.status)
             ).lower()
-            if status in PROTECTIVE_ORDER_ALIVE_STATUSES:
+            if status in PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES:
                 # The guard working: this exact stop already rests at the
-                # broker (a retry after a timed-out POST).
+                # broker (a retry after a timed-out POST) — or is being
+                # amended / is executing, which equally holds the shares.
                 logger.info(
                     "protective stop already rests at broker for %s %s "
                     "qty=%s @ %s (client_order_id=%s, status=%s) — "
@@ -6501,8 +6543,9 @@ class AlpacaBroker:
                 continue
             if _is_dead_stop_result(restore_result):
                 # Adversary finding 2026-10-01: a restore whose status is
-                # outside `PROTECTIVE_ORDER_ALIVE_STATUSES` (pending_cancel,
-                # canceled, ...) is NOT coverage and must not be counted.
+                # outside `PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES`
+                # (pending_cancel, canceled, ...) is NOT coverage and must
+                # not be counted.
                 logger.critical(
                     "replace_stop_loss: restore of prior stop for %s @ "
                     "$%.2f came back with status %r — NOT a live stop; NOT "
