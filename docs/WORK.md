@@ -346,6 +346,17 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 109
 - retired queue: 19
 - retired queue: 99
+**219. The pruning pass reports nowhere the owner looks — OPEN, filed 2026-10-01; the rendering is built, the live confirmation is not.** The rotation/pruning pass ran every session and wrote a durable `rotation`/`precheck` row, but the owner saw nothing of it on either surface he actually reads: the Telegram session message said only what the rotation PRE-CHECK concluded, and the dashboard said nothing at all, so a session that examined the whole book and kept all of it was indistinguishable from a session in which the pass never ran. Reporting only; no number that governs a buy, a sell or a size was touched.
+
+DONE WHEN:
+  - [x] the session message states that the pass ran and how many holdings it examined, read off the held set the pre-check itself received (`held_examined`), never inferred
+  - [x] anything put up to be cut is reported with the CONVICTION reason it was cut on — the entry-bar reasons the holding failed — and never a profit-or-loss one
+  - [x] the holdings it KEPT are named as considered and kept, so a silent pass can no longer pass for a pass that never ran
+  - [x] every session says whether the score-margin tier is on or off, so the owner is never told the desk pruned more thoroughly than it did
+  - [x] the dashboard renders the SAME sentences from the SAME durable row via the run detail, with no second reporting path invented
+  - [ ] a real session's stored report is read back and shown carrying the block, on both surfaces, against a run the desk actually made — until then this is rendering proven only by test
+detail: docs/BOARD_NOTES.md (item 219)
+
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
