@@ -122,6 +122,10 @@ class AlertChannelHealth:
       stale    — the most recent check succeeded but is older than
                  STALE_AFTER_HOURS. Nothing is known to be wrong and nothing
                  is known to be right; the checks themselves have stopped.
+      muted    — the operator deliberately silenced the channel
+                 (TELEGRAM_DISABLED). Nothing is BROKEN — and nothing
+                 will be sent either, so the desk still cannot raise an
+                 alarm. Its own status, and still degraded.
       unknown  — no check has ever been recorded. A fresh database, or a
                  deploy that has not run a session yet. Explicitly NOT "ok".
     """
@@ -141,8 +145,12 @@ class AlertChannelHealth:
         """True when Mission Control should show red. `unknown` is amber:
         it is a missing measurement, not a detected fault, and flipping the
         whole board red on a fresh database would train the operator to
-        ignore the colour that matters."""
-        return self.status in ("broken", "stale")
+        ignore the colour that matters. `muted` IS degraded: the operator
+        chose the silence, but while it holds no alarm reaches him, and
+        calling that healthy would be the same lie in a friendlier
+        costume. Separating it from `broken` fixes the other half of the
+        lie — nothing is broken, and the repair is different."""
+        return self.status in ("broken", "stale", "muted")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -310,7 +318,8 @@ def read_health(
 
     age_hours = _age_hours(str(newest["checked_at"]), moment)
     if int(newest["ok"] or 0) != 1:
-        status = "broken"
+        # A mute is a failed send by construction; it is not a failure.
+        status = "muted" if str(newest["stage"] or "") == "muted" else "broken"
     elif age_hours is not None and age_hours > STALE_AFTER_HOURS:
         status = "stale"
     else:
