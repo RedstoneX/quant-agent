@@ -1079,6 +1079,34 @@ sessions, MEASURED above, against a window needing `2 * PIVOT_WINDOW + 1`
 bars), remains unfixable while that constant is documented as unsourceable.
 No number was invented here; the band width, the chandelier multiple and the
 minimum ratchet are all unchanged.
+## item 211
+
+Why the threshold is not a new number. The circuit already answers "how long
+before this stops being a blip": `_auto_clear_transient_latch_locked` refuses
+to retire a transient latch until `transient_latch_cooldown_minutes` of wall
+clock have passed, and refuses again if the day's
+`max_transient_latch_auto_clears_per_day` allowance is spent. Paging the owner
+the instant the latch is set contradicts the circuit's own stated belief that
+the fault may not be real yet. So the paging threshold IS that field. There was
+no need to invent one, and inventing one would have been a barred arbitrary
+number.
+
+Why an episode is one trigger code on one ET day. The auto-clear allowance is
+already counted per ET day against `llm_circuit_events` for exactly this
+purpose — "a fault recurring this often is not transient". The episode
+boundary reuses that unit rather than defining a second, differently-shaped
+notion of "the same fault again".
+
+What this does NOT do. It does not re-enable Telegram: the owner muted it
+deliberately on 2026-09-30 and it stays muted. It does not make the desk
+quieter about anything an operator must act on — every non-self-clearing
+trigger still pages immediately, because there is no window it can expire
+inside. It does not migrate the three existing per-symbol markers in
+`src/coverage_watchdog.py` onto the new generic helper; that is a refactor of
+working code and was left alone so this change cannot alter what they already
+suppress. And it does not put the suppression record on the API — the counts
+are durable in `data/alerting/` and in `llm_circuit_events`, but reading them
+today means reading those, which is the honest state and is filed above.
 ## item 214
 
 **Filed 2026-09-30 out of item 157's retirement.** Item 157 built the enforced answer format and both OpenAI-wire routes now send a strict `json_schema` response format for `TechAnalystAnswer`. Its first DONE WHEN — a live call confirming the Google route enforces what was sent — is structurally unreachable, not merely undone: the rehearsal identity is not granted the Google credential and production is the only identity that could make the call, so the confirming pytest would spend real money on the shared account. The replacement shipped on 2026-09-23: `_record_answer_hygiene` tags every real answer with the provider that served it and records fenced-markdown and extra-key violations to `parse_telemetry`. That evidence is being collected and has never been read. This item carries the unanswered question, not the build.

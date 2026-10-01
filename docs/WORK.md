@@ -307,6 +307,17 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 208)
 
 
+**211. Alarm flapping — the desk paged the owner on BOTH edges of a self-clearing fault, and he muted every alert — filed 2026-09-30.** 107 Telegram messages went out between 26 and 29 Sep, 46 on the 28th and 42 on the 29th [measured, production `notifier_sends`]. 22 "PAID ANALYSIS SUSPENDED" and 22 "PAID ANALYSIS RESUMED" of those are ONE underlying fault — paid provider calls failing — latching and self-clearing all weekend, announced twice per cycle, plus 5 identical deploy-drift repeats from a timer-run unit that had no per-type suppression at all. The owner turned every desk alert off, including live-risk ones, so this defect is currently suppressing the alerts that protect money. FIXED HERE: `LLMCostCircuitBreaker._notify_if_needed` defers the owner page for a `_SELF_CLEARING_HARD_TRIGGERS` latch until it has outlived `transient_latch_cooldown_minutes` — the circuit's OWN self-clear timing, read from the same config field `_auto_clear_transient_latch_locked` gates on, not a threshold picked here. A latch that expires inside that window leaves `alert_state` at 0, which the existing item-174 pairing already reads to suppress the matching "RESUMED" note, so a blip is one recorded episode and zero messages. Both owner-facing messages now carry the episode's duration and how many times the same trigger self-cleared today. Nothing is dropped: the trip event, a once-per-latch `suspend_alert_deferred` event and the CRITICAL log line all still land in `llm_circuit_events`, and `scripts/check_deploy_drift.py` now claims through a new GENERIC per-type, per-key, ET-day marker (`coverage_watchdog.claim_typed_alert`) that writes every refused claim to `suppressed_alerts` in the watchdog state file.
+
+detail: docs/BOARD_NOTES.md (item 211)
+
+DONE WHEN:
+  - [x] a transient provider latch that self-clears inside the circuit's own self-clear window sends the owner NOTHING and is still fully recorded
+  - [x] the durability threshold is read from `transient_latch_cooldown_minutes`, so changing the self-clear timing moves the paging threshold with it
+  - [x] the suspension and resume messages both state the episode's duration and its self-clear count
+  - [x] repeat suppression is per alert TYPE and per key, never global, so one noisy fault cannot silence an unrelated one
+  - [ ] the `suppressed_alerts` record and the `suspend_alert_deferred` events are surfaced on the read-only API/dashboard — NOT DONE HERE, they are durable in the state file and the DB but no endpoint reads them yet
+
 **214. Nobody has read the technical seat's schema-hygiene counters, so whether the Google route actually honours the sent schema is still unanswered — filed 2026-09-30, OPEN, carrying item 157's first criterion.** Item 157's enforced answer format shipped on both wire routes, but its live-confirmation criterion could never run: no deployed process holds a real Google credential for a pytest call. `_record_answer_hygiene` was shipped instead and records fenced-markdown and undeclared-key hits per provider on every real call; nobody has since looked at what it recorded.
 
 DONE WHEN:
@@ -334,20 +345,20 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
-- retired queue: 77
 - retired queue: 152
-- retired queue: 183
 - retired queue: 197
 - retired queue: 18
-- retired queue: 192
 - retired queue: 147
+- retired queue: 77
+- retired queue: 183
 - retired queue: 182
+- retired queue: 192
 - retired queue: 195
+- retired queue: 196
 - retired queue: 109
 - retired queue: 19
-- retired queue: 157
-- retired queue: 196
 - retired queue: 99
+- retired queue: 157
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

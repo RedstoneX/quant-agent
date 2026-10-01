@@ -192,6 +192,18 @@ numbers:
     cost_while_unanswered: >-
       Too narrow and the advisory nags on noise; too wide and real idle cash
       goes unflagged.
+  - id: src.coverage_watchdog._SUPPRESSION_LOG_LIMIT
+    value: 50
+    status: not-trade-governing
+    site: src/coverage_watchdog.py
+    note: >-
+      How many per-event suppression records to retain per alert type in the
+      watchdog's own state file. It bounds a durable log so the file cannot
+      grow without limit; the running suppression `count` is never truncated,
+      only the per-event list behind it. Nothing downstream reads this list to
+      decide whether, when or how much to trade -- a wrong value loses old
+      forensic detail about alerts the desk declined to resend, which is a
+      reporting loss, not a trade decision.
   - id: src.config.EventRiskConfig.calendar_deadline_s
     value: 20
     status: not-trade-governing
