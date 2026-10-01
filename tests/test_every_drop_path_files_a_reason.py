@@ -241,6 +241,16 @@ _CANNOT_END_A_CANDIDATE = {
     "_derive_structural_stop_no_atr": "returns a structural stop or None; the no-ATR caller files any refusal",
     "_reward_risk_at": "arithmetic",
     "_note_refusal": "the recorder itself",
+    "_parity_verdict": (
+        "returns (refuse, ratio, standdown) — pure geometry, reward against "
+        "risk between real levels; the caller drops the candidate and files "
+        "the reason with _note_refusal (owner ruling 2026-10-01, item 218)"
+    ),
+    "_note_parity_standdown": "the recorder itself — files why the gate stood down",
+    "_record_parity_refusal": (
+        "durable row in trade_refusals for an already-decided refusal; "
+        "writes a record, never a verdict"
+    ),
     "_note_data_fault": "the recorder itself",
     "shipped_stop_rule": "names the rule on an order already built",
     "shipped_stop_level_basis": (
