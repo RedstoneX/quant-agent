@@ -162,17 +162,6 @@ DONE WHEN:
   - [ ] half one is already DONE (2026-09-18): the ledger gate exists and the build fails on an unsourced trade-governing number. Its honest limit stands recorded — it proves a reason was WRITTEN, never that the reason is TRUE — and that limit is not something this item can close.
 detail: docs/BOARD_NOTES.md (item 90)
 
-**107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17; parts (a) and (c) SHIPPED 2026-09-26, (b) still open.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17 and 2026-09-26. **Do not re-propose the three designs rejected on 2026-09-17, and do not build a second deletion-site grep — that one exists.**
-
-DONE WHEN:
-  - [x] (a) a behaviour that CHANGES without being deleted forces the prose describing it to be re-read — `src/prompt_bindings.py` + `config/prompt_bindings.yaml` pin code and prompt prose to each other by digest and fail the build when one side moves; the deletion-site check was checked for first and left alone
-  - [x] (c) all ten standing sheets are covered by the rendering check, an unregistered sheet is refused, and a placeholder no renderer can resolve fails in CI instead of at agent construction on a live morning
-  - [x] the 12/10 drift pair has one definition (`src.risk.metrics.DRIFT_WEIGHT_PCT` / `DRIFT_PNL_PCT`), both sheets render it, and the one remaining literal site is named in the test so the count can only go down — `src/pipeline.py:_build_position_facts`, not editable in that pass
-  - [ ] the last literal drift-threshold site in `src/pipeline.py` uses the named constant
-  - [ ] (b) the trade-picking sheet's prompt-only sizing arithmetic (bases 3.0/1.75/0.75 and their ranges, the 0.25 reward:risk bonus, the 0.5 stale halving at age >=8d, the +/-0.5pp shade) and the technical sheet's prompt-only levels ("3+ aligned signals", the 1-3/4-7/8+ freshness tiers, forward-PE 40/60 and P/S 15/25) are each sourced or taken OUT of the path — verified 2026-09-26 that no code computes any of them and none is in the number ledger. The +/-0.20/+/-0.10 evening tilt this item listed was already gone from the formula (2026-09-17); its dangling mention was removed 2026-09-26
-  - [ ] the 12/10 drift pair and the two prompt-only sets above carry a `config/number_ledger.yaml` entry with a source, or the open question and what the desk pays meanwhile
-detail: docs/BOARD_NOTES.md (item 107)
-
 **203. A provider success with no usable cost or token telemetry — carried over from item 147 (2026-09-30), zero occurrences measured across all of  as of that date.**
 
 DONE WHEN:
@@ -224,7 +213,7 @@ detail: docs/BOARD_NOTES.md (item 187)
 
 DONE WHEN:
   - [x] no seat has every reachable route on one provider, enforced mechanically against `config/settings.yaml` rather than by reading the config by eye
-  - [ ] every decision seat persists, beside the responding model, whether its answer passed that seat's own acceptance gate and why it did not — the database, not a paid benchmark, is what makes the substitute measurable (2026-09-30: only 3 free-model answers exist at these seats and no acceptance verdict is stored beside ANY model, so no rate is computable; 2026-10-01 re-read: still exactly 1 per seat, all three well-formed with every required field but n=1 proves nothing, so this recording is now the ONLY closing condition and the measurement box waits on it)
+  - [x] DONE 2026-10-01: every decision seat persists, beside the responding model, whether its answer passed that seat's own acceptance gate and WHY it did not — the acceptance columns existed but carried one collapsed word per seat, so the portfolio manager, risk manager and position reviewer now each store the gate's own machine-readable reason (previously prose in a log line only). RECORDING ONLY; nothing reads it back. UNPROVEN: the production rows for these three seats are still all NULL, so the third criterion stays open until sessions produce rows — the database, not a paid benchmark, is what makes the substitute measurable (2026-09-30: only 3 free-model answers exist at these seats and no acceptance verdict is stored beside ANY model, so no rate is computable; 2026-10-01 re-read: still exactly 1 per seat, all three well-formed with every required field but n=1 proves nothing, so this recording is now the ONLY closing condition and the measurement box waits on it)
   - [ ] with that recording in place, the substitute is either measured at the three decision seats from the desk's own rows, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
 
 detail: docs/BOARD_NOTES.md (item 188)
@@ -311,6 +300,14 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 208)
 
 
+**211. Alert coalescing was keyed to the wrong quantity, the unprotected-position alert was deduped per DAY not per symbol, and the mute dropped messages before recording them — re-opened 2026-10-01 after measurement.** The 2026-10-01 coalescing shipped and SAVES NOTHING on real data: all 22 suspension episodes of 26-30 Sep ran 24 to 253 minutes, none was inside the 15-minute self-clear window it keys on, so all 44 of 107 messages still paged [measured, production `llm_circuit_events` + `notifier_sends`, read-only]. Suppression now spans the EPISODE — same trigger code, same ET budget day, resolved or not — with no duration invented. detail: docs/BOARD_NOTES.md (item 211)
+
+DONE WHEN:
+- [x] a re-latch of one unresolved fault inside its budget day pages the owner once, not once per flap, and the hold is written to the event record with its reason
+- [x] the "position is unprotected" owner alert is deduped per symbol per day like its two siblings, so a second name going naked the same day still pages
+- [x] every message the global mute drops is recorded with its type, symbols and timestamp; nothing is un-muted and no configuration is touched
+- [ ] the owner is shown what the mute has been swallowing since 30 September
+
 **217. Prompt claims that another part of the desk "handles" something — verify each against the code (filed 2026-10-01 after the risk seat was told a thin reward:risk had been "paid for in size by the constructor"; it had not, and that sentence is corrected).** The sweep was by text search only, so claims phrased differently may remain. Not yet verified: the portfolio-manager prompt's statements that "the constructor will deny it" (immaterial-payoff trades), "the constructor REJECTS the trade outright" (stop on the wrong side of entry), and "the constructor will NOT flip" a held short in one session.
 
 DONE WHEN:
@@ -361,14 +358,6 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 212)
 
 
-**214. Nobody has read the technical seat's schema-hygiene counters, so whether the Google route actually honours the sent schema is still unanswered — filed 2026-09-30, OPEN, carrying item 157's first criterion.** Item 157's enforced answer format shipped on both wire routes, but its live-confirmation criterion could never run: no deployed process holds a real Google credential for a pytest call. `_record_answer_hygiene` was shipped instead and records fenced-markdown and undeclared-key hits per provider on every real call; nobody has since looked at what it recorded.
-
-DONE WHEN:
-  - [ ] the recorded hygiene counts are read off production for both the openrouter-tagged and google-tagged calls, over a stated window
-  - [ ] a conclusion is written down on whether the Google route enforces the sent schema, or the counts are shown to be too sparse to conclude
-detail: docs/BOARD_NOTES.md (item 214)
-
-
 **220. A technical row the model returned malformed was dropped and the name carried on with the timing veto unrecorded — filed 2026-10-01.** The technical seat is the desk's timing veto and the standing rule is that every seat must be right to ENTER and to STAY, but a row that failed schema parsing was dropped individually, logged, and the run continued; the name then reached the decision with no technical answer and nothing in the durable record said the seat had been asked and lost. MEASURED: over 2026-09-29 17:16 to 2026-10-01 04:00 the technical seat made 8 calls, all on the free Google route, all recorded success and none truncated, and ONE returned syntactically invalid JSON inside the strict schema (an unquoted property name) on a complete answer [production database, read-only, plus the retained box log]. Eight calls cannot support a rate and none is stated or assumed here. What was ALREADY right and is not changed: `risk.rules.own_bar_block_reason` already refuses ENTRY on "no technical read this review", and rotation's `ineligible_hold` tier already drops a held name that fails that same bar out of the ranked survivors, so absence was already blocking at both decisions. What was WRONG is the record: the per-name coverage record (item 20) never saw held names at all, never saw a name whose only appearance was the lost row, and could not tell a seat that was never asked from a seat that answered unreadably. CLOSING CONDITION: a name whose technical row came back unreadable appears in the per-name coverage record with the technical seat listed as uncovered AND as unreadable, held names are inside that record's universe, and `evidence_gate.names_missing_blocking_seat` names it; no retry, no JSON repair and no new refusal are added. RULED 2026-10-01, no longer open: a lost technical row does NOT cull a held name. The stay test is opposition-only by the owner's 2026-09-25 ruling, and an answer nobody could read is not opposition; selling on an absence would be inventing a verdict, the same failure as inventing a number. Dropping the name out of the ranked survivors is the right strength — it loses its claim to be KEPT on conviction without being forced out on silence. The reasoning is written beside the test that pins it so the next reader does not "fix" it. DELIBERATE NON-CHOICE, also 2026-10-01: no retry of an unreadable row. NOT a cost decision — the route is free today. A retry that silently succeeded would hide the very signal this record exists to capture, and a retry inside a session that has a time ceiling is a change to the session's shape rather than a one-line fix. On file as a decision, not as an omission; revisit only with the session-shape question answered.
 
 DONE WHEN:
@@ -387,13 +376,16 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 210)
 
 
-**211. Alert coalescing was keyed to the wrong quantity, the unprotected-position alert was deduped per DAY not per symbol, and the mute dropped messages before recording them — re-opened 2026-10-01 after measurement.** The 2026-10-01 coalescing shipped and SAVES NOTHING on real data: all 22 suspension episodes of 26-30 Sep ran 24 to 253 minutes, none was inside the 15-minute self-clear window it keys on, so all 44 of 107 messages still paged [measured, production `llm_circuit_events` + `notifier_sends`, read-only]. Suppression now spans the EPISODE — same trigger code, same ET budget day, resolved or not — with no duration invented. detail: docs/BOARD_NOTES.md (item 211)
+**219. The pruning pass reports nowhere the owner looks — OPEN, filed 2026-10-01; the rendering is built, the live confirmation is not.** The rotation/pruning pass ran every session and wrote a durable `rotation`/`precheck` row, but the owner saw nothing of it on either surface he actually reads: the Telegram session message said only what the rotation PRE-CHECK concluded, and the dashboard said nothing at all, so a session that examined the whole book and kept all of it was indistinguishable from a session in which the pass never ran. Reporting only; no number that governs a buy, a sell or a size was touched.
 
 DONE WHEN:
-- [x] a re-latch of one unresolved fault inside its budget day pages the owner once, not once per flap, and the hold is written to the event record with its reason
-- [x] the "position is unprotected" owner alert is deduped per symbol per day like its two siblings, so a second name going naked the same day still pages
-- [x] every message the global mute drops is recorded with its type, symbols and timestamp; nothing is un-muted and no configuration is touched
-- [ ] the owner is shown what the mute has been swallowing since 30 September
+  - [x] the session message states that the pass ran and how many holdings it examined, read off the held set the pre-check itself received (`held_examined`), never inferred
+  - [x] anything put up to be cut is reported with the CONVICTION reason it was cut on — the entry-bar reasons the holding failed — and never a profit-or-loss one
+  - [x] the holdings it KEPT are named as considered and kept, so a silent pass can no longer pass for a pass that never ran
+  - [x] every session says whether the score-margin tier is on or off, so the owner is never told the desk pruned more thoroughly than it did
+  - [x] the dashboard renders the SAME sentences from the SAME durable row via the run detail, with no second reporting path invented
+  - [ ] a real session's stored report is read back and shown carrying the block, on both surfaces, against a run the desk actually made — until then this is rendering proven only by test
+detail: docs/BOARD_NOTES.md (item 219)
 
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in the matching scheme, and never edits an existing line; the running lists used to live on this one physical line, and even the merge driver's own union rule (`scripts/resolve_doc_conflict.py::merge_retired`) could not save it, because GitHub's own squash-merge — what actually runs when a pull request merges on GitHub.com — never invokes a local git merge driver at all. Two closures now append two different lines and merge with no conflict, by construction; no driver needed for this part. **This still takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry the same way. `tests/test_status_board.py` fails a change that adds a reason to any line below, or that edits an existing line instead of appending a new one. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays; the ladder's own unmeasurable-drawdown behaviour is a separate live question. Run `scripts/next_board_number.py` for the next free number — it reads every line below, the live board, and open pull requests; never eyeball this list. It FAILS CLOSED as of 2026-09-30: if the open-pull-request read fails for any reason it exits non-zero and prints no number at all, because it used to print a warning and a number anyway and two pull requests both claimed item 192 that way. Treat a non-zero exit as a hard stop, not a prompt to guess; `--accept-unchecked-number` is the deliberate offline opt-out and labels its answer UNCHECKED.
 
@@ -422,8 +414,8 @@ DONE WHEN:
 - retired queue: 193
 - retired queue: 119
 - retired queue: 185
-- reopened queue: 211 — the 2026-10-01 retirement is withdrawn; the remedy did not remedy it (see the item block above and docs/BOARD_NOTES.md item 211)
-
+- retired queue: 214
+- retired queue: 107
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

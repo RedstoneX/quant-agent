@@ -345,9 +345,7 @@ def test_the_flags_namespace_renders_and_refuses():
 #: in the same pass. It is named here rather than tolerated silently, so the
 #: count can only go down: a second entry cannot appear without this test
 #: failing. Item 107 stays open on exactly this line.
-KNOWN_UNCONVERTED = {
-    "src/pipeline.py",
-}
+KNOWN_UNCONVERTED: set[str] = set()
 
 _WEIGHT_LITERAL = re.compile(r"weight_pct\s*[><]=?\s*12\b")
 _PROSE_LITERAL = re.compile(r"[Ww]eight\s*>\s*12%|weight\s*>\s*12\b|>12% weight")
