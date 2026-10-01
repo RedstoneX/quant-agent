@@ -256,6 +256,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     # Every trail multiple and every exit threshold it carries stays scoped.
     "src/pipeline_evening.py",
     "src/pipeline_exits.py",
+    # The intra-check session and the intraday opportunity scan -- moved here
+    # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
+    "src/pipeline_intraday.py",
     "src/pipeline_prompt_facts.py",
     # 2026-10-01, board item 210 step 2: the protection cluster -- stop
     # coverage, repair, protected sells, write-ahead restore, the fill and

@@ -26,6 +26,7 @@ TRACKED_MODULES: tuple[str, ...] = (
     "src/pipeline_delever.py",
     "src/pipeline_evening.py",
     "src/pipeline_exits.py",
+    "src/pipeline_intraday.py",
     "src/pipeline_prompt_facts.py",
     "src/pipeline_protection.py",
     "src/pipeline_research_continuity.py",
