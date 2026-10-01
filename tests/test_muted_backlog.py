@@ -140,3 +140,38 @@ def test_endpoint_returns_the_record_without_unmuting_anything(muted_db, monkeyp
     # The read must not have touched the mute.
     import os
     assert os.environ["TELEGRAM_DISABLED"] == "1"
+
+
+def test_live_risk_is_never_buried_by_volume(muted_db):
+    """The owner muted the desk because the important ones got buried.
+
+    A flood of ordinary messages must not push a live-risk one out of the
+    list OR out of any count. The read is uncapped for exactly this reason,
+    so a live-risk message recorded before 500 ordinary ones still shows.
+    """
+    rows = [
+        ("owner_alert", "muted", None,
+         "\U0001f534 UNPROTECTED SHARES, AND THE DESK IS NOT RUNNING\nno stop",
+         "suppressed by TELEGRAM_DISABLED; symbols: zzz", "2026-10-01 09:00:00"),
+    ]
+    rows += [
+        ("intra_check", "muted", None, f"routine note {i}", None,
+         f"2026-10-01 1{i // 60:01d}:{i % 60:02d}:00")
+        for i in range(500)
+    ]
+    muted_db(rows)
+    out = db_reads.get_muted_backlog()
+    assert out["total"] == 501
+    assert out["live_risk_total"] == 1
+    assert len(out["live_risk"]) == 1
+    assert out["live_risk"][0]["symbols"] == ["ZZZ"]
+
+
+def test_empty_backlog_payload_carries_everything_the_panel_prints(muted_db):
+    """The empty state must have words to render, not a blank or an error."""
+    muted_db([])
+    out = db_reads.get_muted_backlog()
+    assert out["record_available"] is True
+    assert out["total"] == 0
+    assert out["coverage_gap"].strip()
+    assert out["oldest"] is None and out["newest"] is None

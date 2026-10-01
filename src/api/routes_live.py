@@ -204,7 +204,7 @@ def get_suppressed_alerts(limit: int = 50) -> SuppressedAlertsResponse:
 
 
 @router.get("/alerts/muted-backlog", response_model=MutedBacklogResponse)
-def get_muted_backlog(limit: int = 200) -> MutedBacklogResponse:
+def get_muted_backlog() -> MutedBacklogResponse:
     """Item 211 — what the global mute has swallowed, for the dashboard.
 
     A muted desk cannot page the owner about its own muting, so the backlog
@@ -216,7 +216,7 @@ def get_muted_backlog(limit: int = 200) -> MutedBacklogResponse:
     from src.api.db_reads import get_muted_backlog as _read
 
     try:
-        payload = _read(limit=limit)
+        payload = _read()
     except Exception:
         return MutedBacklogResponse()
     return MutedBacklogResponse(**payload)

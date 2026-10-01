@@ -1417,7 +1417,7 @@ document.getElementById("search-input").addEventListener("keydown", (e) => {
 async function loadMutedBacklog() {
   const body = document.querySelector("#panel-muted [data-body]");
   try {
-    const data = await fetchJSON("/alerts/muted-backlog?limit=200");
+    const data = await fetchJSON("/alerts/muted-backlog");
     const parts = [];
     if (!data.record_available) {
       parts.push(el("p", {
@@ -1434,7 +1434,7 @@ async function loadMutedBacklog() {
       }));
     } else if (data.total) {
       parts.push(el("p", {
-        text: `${data.total} muted message${data.total === 1 ? "" : "s"} recorded${data.truncated ? " (showing the most recent 200)" : ""}, ${data.live_risk_total} of them about a position whose protection was gone or never arrived.`,
+        text: `${data.total} muted message${data.total === 1 ? "" : "s"} recorded, ${data.live_risk_total} of them about a position whose protection was gone or never arrived.`,
       }));
       parts.push(evidenceSection(
         `Live-risk messages (${data.live_risk.length})`,

@@ -1449,4 +1449,3 @@ class MutedBacklogResponse(BaseModel):
     live_risk: list[MutedLiveRiskMessage] = []
     oldest: str | None = None
     newest: str | None = None
-    truncated: bool = False

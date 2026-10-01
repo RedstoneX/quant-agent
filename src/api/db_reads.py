@@ -1527,7 +1527,7 @@ def _headline(text: str | None) -> str:
     return ""
 
 
-def get_muted_backlog(limit: int = 200) -> dict:
+def get_muted_backlog() -> dict:
     """Item 211 — what the global mute has swallowed, grouped to be judged.
 
     Grouping answers the owner's two real questions rather than counting.
@@ -1538,6 +1538,13 @@ def get_muted_backlog(limit: int = 200) -> dict:
     `coverage_complete` is False whenever the record begins after the mute
     did, which it does; the gap is stated in the payload so no caller can
     present a partial list as the whole story.
+
+    DELIBERATELY UNCAPPED. An earlier draft read only the most recent 200
+    rows, which would have let a flood of ordinary messages push live-risk
+    ones out of the list and out of the counts — burying the important ones
+    in volume, the exact failure that made the owner mute the desk. The
+    record holds one row per message the mute dropped and nothing else, so
+    reading all of it is cheap; a cap here would be a silent lie.
     """
 
     out: dict = {
@@ -1560,7 +1567,6 @@ def get_muted_backlog(limit: int = 200) -> dict:
         "live_risk": [],
         "oldest": None,
         "newest": None,
-        "truncated": False,
     }
     conn = None
     try:
@@ -1573,8 +1579,7 @@ def get_muted_backlog(limit: int = 200) -> dict:
         out["record_available"] = True
         rows = conn.execute(
             "SELECT kind, text, detail, timestamp FROM notifier_sends "
-            "WHERE status = 'muted' ORDER BY timestamp DESC LIMIT ?",
-            (max(1, int(limit)) + 1,),
+            "WHERE status = 'muted' ORDER BY timestamp DESC"
         ).fetchall()
     except Exception:
         return out
@@ -1585,9 +1590,7 @@ def get_muted_backlog(limit: int = 200) -> dict:
             except Exception:
                 pass
 
-    cap = max(1, int(limit))
-    out["truncated"] = len(rows) > cap
-    rows = list(rows)[:cap]
+    rows = list(rows)
     if not rows:
         return out
 
