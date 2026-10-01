@@ -17875,10 +17875,22 @@ and was left alone.
 ### 2026-10-01 — Every order now carries a deterministic `client_order_id` (idempotent submission)
 
 **Defect [measured on main]:** `client_order_id` appeared zero times in
-`src/`. Every order was a fresh request with no deduplication key, so an HTTP
-timeout AFTER Alpaca accepted the order was indistinguishable from a
-rejection, and a resubmission in that window was a second real position. The
-orphan-pending-submit reconcile is recovery after the fact, not prevention.
+`src/`, so no order carried a deduplication key and an HTTP timeout AFTER
+Alpaca accepted the order was indistinguishable from a rejection.
+
+**What WAS protected before this change (corrected 2026-10-01 after the
+adversary pass; the first draft of this note claimed nothing prevented a
+duplicate, which overstated the defect).** The protective-stop path already
+had two guards: `_existing_stop_covering_qty` is a post-hoc check that, on a
+`held_for_orders` refusal, looks for a live stop of the same qty and trigger
+and treats it as coverage; and Alpaca's own held-quantity rule refuses a
+second SELL stop over shares a resting stop already holds. A retried stop
+therefore produced a broker refusal and a lookup, not a second stop.
+
+**What was NOT protected.** The ENTRY path had neither guard: a timed-out
+entry POST retried in the acceptance window was a second real position, and
+the orphan-pending-submit reconcile is recovery after the fact, not
+prevention. That is the hole this change closes.
 
 **Fix.** All three submission sites (entry/exit order, protective stop-MARKET,
 stop-LIMIT fallback) derive a `client_order_id` from the intent only —
@@ -17890,21 +17902,54 @@ API orders reference; the Trading API reference says 128); a longer natural key
 keeps its readable prefix and fills the rest of the budget with its SHA-256
 hex. Sources are cited beside the constant in `src/execution/broker.py`.
 
-**A duplicate reply is the guard working, not a failure.** Alpaca answers a
-duplicate with HTTP 422 "client_order_id must be unique" (its own
-troubleshooting guide). That reply is classified by code AND text, the
-existing order is read back by client id and returned as the placed order;
-if the read-back fails the call raises "treat as PLACED", never a quiet
+**A duplicate reply is the guard working, not a failure — but only after the
+read-back's STATUS is inspected.** Alpaca answers a duplicate with HTTP 422
+"client_order_id must be unique" (its own troubleshooting guide). That reply
+is classified by code AND text and the existing order is read back by client
+id; if the read-back fails the call raises "treat as PLACED", never a quiet
 rejection. Any other failure propagates exactly as before.
+
+**Defect introduced by the first draft of this change, found by the adversary
+and fixed in the same PR (2026-10-01).** Alpaca keeps the key on a dead order,
+and `_restore_stop_orders` resubmits the same qty, trigger and side moments
+after cancelling the stop — while that stop is still `pending_cancel`. The
+first draft returned the read-back order without reading its status, so the
+restore loop counted a cancelled stop as restored and the stop-leg retry
+returned it as placed: the position was naked while the desk believed it
+covered. Now every duplicate read-back on the stop path is judged against
+`PROTECTIVE_ORDER_ALIVE_STATUSES` (the desk's one definition of "a resting
+stop"; `pending_cancel` is deliberately outside it). A live order is returned
+as the placed stop; a dying or dead one (`pending_cancel`, `canceled`,
+`expired`, `rejected`, `filled`) is superseded by a genuinely new submission
+whose key folds in the dead order's broker id — a stable fact of the broker's
+record, not a timestamp, so a retry of the replacement derives the same key
+and is still refused as a duplicate. The restore loop and the stop-leg retry
+also refuse to count any result whose status is outside that set, whatever
+path produced it. Proof: stub brokers answering the duplicate 422 with a
+`pending_cancel` and with a `canceled` order fail both the restore and the
+retry test before the fix (no live stop placed) and pass after.
 
 **Proof run (tests/test_idempotent_client_order_id.py):** same intent twice
 gives one key and each changed fact gives another; a stub broker that accepts
 then times out leaves ONE order after the retry for both the entry and the
 stop path; every other request field is byte-identical to the pre-change
-request. 2,019 tests across the order-submission files pass.
+request; the two dead-status read-back cases above. 2,256 tests across the
+order-submission, stop and restore test files pass [measured 2026-10-01].
 
 **What this does not cover.** Two genuinely distinct same-day intents with
 identical symbol, side, quantity and price (for example an identical second
 scale-in tranche at the identical limit) would be read as a retry and return
 the first order; the probability is low because the limit is derived from the
 live quote, but it is a known edge and is stated here rather than hidden.
+
+**What this change does and does NOT cover (adversary, 2026-10-01).** It
+covers exactly one case: the SAME intent re-POSTed while the first order is
+still ACTIVE at Alpaca, which is when Alpaca's uniqueness rule applies. It
+does NOT cover a fast-filling entry: once the first order has filled, the
+key is free again and a resubmission is accepted as a second position. It
+does NOT add any same-key retry to the entry path — the only retry there is
+the vendor library's own 429/504 loop, which already reuses the request —
+so the key defends a retry the desk does not yet make deliberately. The
+entry path's duplicate read-back is also still returned without a status
+check; that was left alone here (the stop path was the money defect) and is
+an open item, not a covered one.

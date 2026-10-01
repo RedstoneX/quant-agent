@@ -222,3 +222,92 @@ def test_stop_limit_fallback_also_carries_key(_d):
     limit_req = client.submit_order.call_args_list[1].args[0]
     assert isinstance(limit_req, StopLimitOrderRequest)
     assert limit_req.client_order_id == f"STL-AAPL-sell-{DAY}-3.0-95.0"
+
+
+# ---------------------------------------------------------------------------
+# Adversary finding (2026-10-01): the duplicate-key read-back must INSPECT the
+# order's status. A stop cancelled moments ago still holds its key while it is
+# `pending_cancel` (and keeps it once `canceled`), so the resubmission of the
+# same stop gets the duplicate 422 and reads back a DEAD order. Counting that
+# as protection leaves the position naked while the desk believes it covered.
+# ---------------------------------------------------------------------------
+from src.execution.broker import PROTECTIVE_ORDER_ALIVE_STATUSES
+
+
+class _Status:
+    """Stand-in for an alpaca OrderStatus enum member (`.value`)."""
+
+    def __init__(self, value: str):
+        self.value = value
+
+
+def _stub_holding_dead_stop(status: str) -> _StubBroker:
+    """A broker already holding THIS stop's key on an order that is dying
+    (`pending_cancel`) or dead (`canceled`), as it does right after
+    `cancel_protective_stops` / `replace_stop_loss` cancel it."""
+    stub = _StubBroker()
+    key = broker_mod._client_order_id(
+        purpose="STP", symbol="AAPL", side="sell", session_date=DAY,
+        qty=10, price=95.0,
+    )
+    stub.orders[key] = SimpleNamespace(
+        id="dead-1", status=_Status(status), symbol="AAPL", client_order_id=key,
+    )
+    return stub
+
+
+def _live_orders(stub: _StubBroker) -> list:
+    return [
+        o for o in stub.orders.values()
+        if str(getattr(o.status, "value", o.status)) in PROTECTIVE_ORDER_ALIVE_STATUSES
+    ]
+
+
+@pytest.mark.parametrize("dead", ["pending_cancel", "canceled"])
+@patch("src.execution.broker._session_date_key", return_value=DAY)
+def test_restore_does_not_count_dead_readback_as_protection(_d, dead):
+    stub = _stub_holding_dead_stop(dead)
+    b = _broker_with(stub)
+    restored, failed = b._restore_stop_orders(
+        "AAPL", [{"qty": 10, "stop_price": 95.0}],
+    )
+    live = _live_orders(stub)
+    assert live, (
+        f"restore read back a {dead} order for its key and placed nothing — "
+        "the position is unprotected"
+    )
+    assert live[0].id != "dead-1"
+    assert restored == 1 and failed == []
+
+
+@pytest.mark.parametrize("dead", ["pending_cancel", "canceled"])
+@patch("src.execution.broker._session_date_key", return_value=DAY)
+def test_stop_leg_retry_does_not_return_dead_readback(_d, dead):
+    stub = _stub_holding_dead_stop(dead)
+    b = _broker_with(stub)
+    with patch("src.execution.broker.time.sleep"):
+        res = b._submit_stop_leg_retrying(
+            symbol="AAPL", qty=10, stop_price=95.0, limit_price=None,
+            side="sell", leg="GTC",
+        )
+    live = _live_orders(stub)
+    assert live, (
+        f"stop leg read back a {dead} order for its key and placed nothing — "
+        "the position is unprotected"
+    )
+    assert res is not None
+    assert res["id"] == live[0].id and res["id"] != "dead-1"
+    assert res["status"] in PROTECTIVE_ORDER_ALIVE_STATUSES
+
+
+@patch("src.execution.broker._session_date_key", return_value=DAY)
+def test_superseding_key_is_itself_idempotent(_d):
+    """The replacement stop's key differs from the dead one's, but a RETRY
+    of the replacement reuses it — one dead order, ONE live order, never
+    two live ones."""
+    stub = _stub_holding_dead_stop("canceled")
+    b = _broker_with(stub)
+    first = b._submit_stop_limit_order("AAPL", 10, 95.0)
+    again = b._submit_stop_limit_order("AAPL", 10, 95.0)
+    assert first["id"] == again["id"] != "dead-1"
+    assert len(stub.orders) == 2 and len(_live_orders(stub)) == 1

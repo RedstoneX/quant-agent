@@ -1522,13 +1522,24 @@ def _session_date_key() -> str:
 
 def _client_order_id(
     *, purpose: str, symbol: str, side: str, session_date: str,
-    qty: float, price: float | None,
+    qty: float, price: float | None, supersedes: str | None = None,
 ) -> str:
     """Deterministic idempotency key for ONE order intent (see block above).
 
     `purpose` discriminates the intent class: 'ENT' entry/exit order,
     'STP' protective stop-MARKET, 'STL' the stop-LIMIT safety fallback.
     `price` is the limit (entry) or trigger (stop); None for a market order.
+
+    `supersedes` is the broker id of a DEAD order (canceled / pending_cancel
+    / expired / rejected / filled) that already holds this intent's plain
+    key. Alpaca keeps the key on the dead order, so the SAME stop placed
+    again after a cancel is refused as a duplicate of an order that no
+    longer protects anything. Folding the dead order's id into the key
+    makes the replacement a distinct order WITHOUT reopening the duplicate
+    hole: the id is a stable fact of the broker's own record, not a
+    timestamp or counter, so a retry of the replacement (after a timed-out
+    POST) reads back the same dead order, derives the same superseding
+    key, and is refused as the duplicate it is.
     """
     import hashlib
     side_token = side.lower().replace("_", "")
@@ -1537,6 +1548,8 @@ def _client_order_id(
         f"{purpose}-{symbol}-{side_token}-{session_date}-"
         f"{repr(float(qty))}-{price_token}"
     )
+    if supersedes:
+        natural += f"-s{supersedes}"
     if len(natural) <= _CLIENT_ORDER_ID_MAX_LEN:
         return natural
     prefix = f"{purpose}-{symbol}-{session_date}-"
@@ -1557,6 +1570,20 @@ def _is_duplicate_client_order_id_rejection(exc: BaseException) -> bool:
         getattr(exc, "status_code", None) == 422
         and _CLIENT_ORDER_ID_DUPLICATE_TEXT in str(exc).lower()
     )
+
+
+def _is_dead_stop_result(result: object) -> bool:
+    """True when a stop-placement result dict names a status that is NOT a
+    resting order (`PROTECTIVE_ORDER_ALIVE_STATUSES`). A result that carries
+    no status at all is not judged here — the id/kill-switch checks around
+    the call sites own that case.
+    """
+    if not isinstance(result, dict):
+        return False
+    status = result.get("status")
+    if not isinstance(status, str) or not status:
+        return False
+    return status.lower() not in PROTECTIVE_ORDER_ALIVE_STATUSES
 
 
 def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
@@ -5688,6 +5715,24 @@ class AlpacaBroker:
                     leg, symbol, qty,
                 )
                 return None
+            if _is_dead_stop_result(order):
+                # Adversary finding 2026-10-01: a response whose status is
+                # outside `PROTECTIVE_ORDER_ALIVE_STATUSES` (pending_cancel,
+                # canceled, rejected, ...) is NOT a resting stop, whatever
+                # path produced it. Treat it as a failed attempt.
+                logger.error(
+                    "protective stop [%s] attempt %d/%d for %s came back "
+                    "with status %r — not a live stop; not reporting it "
+                    "as placed.", leg, attempt, attempts, symbol,
+                    order.get("status"),
+                )
+                last_exc = None
+                if attempt < attempts:
+                    delay = _STOP_PLACEMENT_BACKOFF_S[
+                        min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
+                    ]
+                    time.sleep(delay)
+                continue
             if attempt > 1:
                 logger.warning(
                     "protective stop [%s] placed for %s on attempt %d/%d — the "
@@ -5996,6 +6041,81 @@ class AlpacaBroker:
                 f"read back ({lookup_exc}); treat as PLACED, not rejected"
             ) from duplicate_exc
 
+    def _submit_stop_request_idempotent(
+        self, build_request, *, purpose: str, alpaca_symbol: str, side: str,
+        session_date: str, qty: float, price: float,
+    ):
+        """Submit ONE protective-stop request under its idempotency key and
+        return the order that genuinely rests for it.
+
+        Adversary finding 2026-10-01: a duplicate-key 422 read back WITHOUT
+        inspecting status counted a `pending_cancel` or `canceled` stop as
+        live protection — the exact case `_restore_stop_orders` hits, since
+        it resubmits the same qty/trigger/side moments after cancelling and
+        Alpaca keeps the key on the dead order. So:
+
+        * duplicate 422 -> read the existing order back and INSPECT it;
+        * status in `PROTECTIVE_ORDER_ALIVE_STATUSES` -> that is the resting
+          stop, return it (the guard working);
+        * any other status (`pending_cancel`, `canceled`, `expired`,
+          `rejected`, `filled`, ...) -> NOT protection: derive a superseding
+          key from the dead order's id (see `_client_order_id`) and submit
+          a genuinely NEW stop. A dead replacement chains the same way; the
+          loop ends because every hop names a distinct dead order and a
+          never-seen key is accepted outright.
+
+        Every non-duplicate exception propagates untouched so the caller's
+        own classification (unsupported-type fallback, held_for_orders,
+        terminal rejections) is unchanged.
+        """
+        supersedes: str | None = None
+        seen_dead: set[str] = set()
+        while True:
+            client_order_id = _client_order_id(
+                purpose=purpose, symbol=alpaca_symbol, side=side,
+                session_date=session_date, qty=qty, price=price,
+                supersedes=supersedes,
+            )
+            request = build_request(client_order_id)
+            try:
+                return self.client.submit_order(request)
+            except Exception as exc:  # noqa: BLE001
+                if not _is_duplicate_client_order_id_rejection(exc):
+                    raise
+                existing = self._existing_order_for_client_id(
+                    client_order_id, exc,
+                )
+            status = str(
+                getattr(existing.status, "value", existing.status)
+            ).lower()
+            if status in PROTECTIVE_ORDER_ALIVE_STATUSES:
+                # The guard working: this exact stop already rests at the
+                # broker (a retry after a timed-out POST).
+                logger.info(
+                    "protective stop already rests at broker for %s %s "
+                    "qty=%s @ %s (client_order_id=%s, status=%s) — "
+                    "returning it instead of submitting a duplicate.",
+                    purpose, alpaca_symbol, qty, price, client_order_id,
+                    status,
+                )
+                return existing
+            dead_id = str(existing.id)
+            if dead_id in seen_dead:
+                raise RuntimeError(
+                    f"broker keeps returning dead order {dead_id} "
+                    f"(status={status}) for client_order_id="
+                    f"{client_order_id!r}; refusing to report it as a "
+                    f"placed stop"
+                )
+            seen_dead.add(dead_id)
+            logger.warning(
+                "protective stop key %s for %s is held by order %s whose "
+                "status is %s — that order is NOT protection; submitting a "
+                "new stop under a superseding key.",
+                client_order_id, alpaca_symbol, dead_id, status,
+            )
+            supersedes = dead_id
+
     def _submit_stop_limit_order(
         self,
         symbol: str,
@@ -6118,31 +6238,29 @@ class AlpacaBroker:
         # Idempotency keys derived from the intent (see `_client_order_id`).
         # The trigger price is part of the key, so a ratcheted trail is a NEW
         # intent while a retried placement of the same stop is a duplicate.
+        # A duplicate-key reply is resolved by `_submit_stop_request_idempotent`,
+        # which INSPECTS the existing order's status: only a live order is
+        # returned as the placed stop; a dying/dead one is superseded by a
+        # genuinely new submission.
         session_date = _session_date_key()
-        market_req = StopOrderRequest(
-            symbol=_alpaca_symbol(symbol),
-            qty=qty,
-            side=order_side,
-            time_in_force=time_in_force,
-            stop_price=stop_price_q,
-            client_order_id=_client_order_id(
-                purpose="STP", symbol=_alpaca_symbol(symbol), side=side,
-                session_date=session_date, qty=qty, price=stop_price_q,
-            ),
-        )
+
+        def _market_request(client_order_id: str) -> StopOrderRequest:
+            return StopOrderRequest(
+                symbol=_alpaca_symbol(symbol),
+                qty=qty,
+                side=order_side,
+                time_in_force=time_in_force,
+                stop_price=stop_price_q,
+                client_order_id=client_order_id,
+            )
+
         try:
-            order = self.client.submit_order(market_req)
+            order = self._submit_stop_request_idempotent(
+                _market_request, purpose="STP",
+                alpaca_symbol=_alpaca_symbol(symbol), side=side,
+                session_date=session_date, qty=qty, price=stop_price_q,
+            )
         except Exception as exc:  # noqa: BLE001
-            if _is_duplicate_client_order_id_rejection(exc):
-                # The guard working: this exact stop already rests at the
-                # broker (a retry after a timed-out POST). Report it as the
-                # placed stop it is — never as a failed placement.
-                order = self._existing_order_for_client_id(
-                    market_req.client_order_id, exc,
-                )
-                return {"id": str(order.id),
-                        "status": str(getattr(order.status, "value", order.status)),
-                        "symbol": _internal_symbol(symbol)}
             if not _is_unsupported_stop_market_rejection(exc):
                 # NOT a type/tif refusal — held_for_orders, buying-power,
                 # symbol, rate-limit, 5xx, etc. must propagate unchanged so
@@ -6161,26 +6279,22 @@ class AlpacaBroker:
                 "stop-LIMIT (limit $%s) so the position stays protected.",
                 symbol, qty, stop_price_q, exc, limit_price_q,
             )
-            limit_req = StopLimitOrderRequest(
-                symbol=_alpaca_symbol(symbol),
-                qty=qty,
-                side=order_side,
-                time_in_force=time_in_force,
-                stop_price=stop_price_q,
-                limit_price=limit_price_q,
-                client_order_id=_client_order_id(
-                    purpose="STL", symbol=_alpaca_symbol(symbol), side=side,
-                    session_date=session_date, qty=qty, price=stop_price_q,
-                ),
-            )
-            try:
-                order = self.client.submit_order(limit_req)
-            except Exception as limit_exc:  # noqa: BLE001
-                if not _is_duplicate_client_order_id_rejection(limit_exc):
-                    raise
-                order = self._existing_order_for_client_id(
-                    limit_req.client_order_id, limit_exc,
+            def _limit_request(client_order_id: str) -> StopLimitOrderRequest:
+                return StopLimitOrderRequest(
+                    symbol=_alpaca_symbol(symbol),
+                    qty=qty,
+                    side=order_side,
+                    time_in_force=time_in_force,
+                    stop_price=stop_price_q,
+                    limit_price=limit_price_q,
+                    client_order_id=client_order_id,
                 )
+
+            order = self._submit_stop_request_idempotent(
+                _limit_request, purpose="STL",
+                alpaca_symbol=_alpaca_symbol(symbol), side=side,
+                session_date=session_date, qty=qty, price=stop_price_q,
+            )
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),
@@ -6382,6 +6496,19 @@ class AlpacaBroker:
                     "$%.2f BLOCKED by the desk's own kill switch — NOT "
                     "counting this as restored; the position stays flagged "
                     "uncovered.", symbol, spec["stop_price"],
+                )
+                failed_specs.append(spec)
+                continue
+            if _is_dead_stop_result(restore_result):
+                # Adversary finding 2026-10-01: a restore whose status is
+                # outside `PROTECTIVE_ORDER_ALIVE_STATUSES` (pending_cancel,
+                # canceled, ...) is NOT coverage and must not be counted.
+                logger.critical(
+                    "replace_stop_loss: restore of prior stop for %s @ "
+                    "$%.2f came back with status %r — NOT a live stop; NOT "
+                    "counting this as restored; the position stays flagged "
+                    "uncovered.", symbol, spec["stop_price"],
+                    restore_result.get("status"),
                 )
                 failed_specs.append(spec)
                 continue
