@@ -516,6 +516,7 @@ _BLOCK_KWARGS = ("intraday_context=", "prior_macro_regime=", "prior_macro_outloo
 _ASSEMBLY_SITES = (
     "src/pipeline.py",
     "src/pipeline_stages.py",
+    "src/pipeline_intraday.py",
     # item 210 step 10 moved MorningResearchStage out of
     # pipeline_stages.py; its assembly site came with it.
     "src/stage_morning_research.py",

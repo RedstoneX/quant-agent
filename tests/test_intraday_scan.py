@@ -179,7 +179,7 @@ def test_scan_is_inert_when_disabled():
 
 # ---------- material move reaches the shared decision chain ----------
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     """A symbol that moved well past threshold since the last close must
     flow through tech_analyst and then the SAME DecisionStage -> RiskStage
@@ -233,7 +233,7 @@ def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     ] == []
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_bearish_move_surfaces_through_inverse_etf(mock_compute_indicators):
     """A broad-market decline shows up as a qualifying move in an approved
     inverse ETF (SQQQ) the same way a rally shows up in a long candidate —
@@ -268,7 +268,7 @@ def test_bearish_move_surfaces_through_inverse_etf(mock_compute_indicators):
     assert submitted_symbols == ["SQQQ"], "SPY's own sub-threshold move must not qualify"
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_below_threshold_move_never_calls_tech_analyst(mock_compute_indicators):
     p = _intraday_pipeline(universe=["AAPL"], move_threshold_pct=3.0)
     p.broker.get_intraday_snapshots.return_value = {
@@ -283,7 +283,7 @@ def test_below_threshold_move_never_calls_tech_analyst(mock_compute_indicators):
 
 # ---------- cooldown / dedup ----------
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_cooldown_suppresses_repeat_scan_of_same_symbol(mock_compute_indicators):
     """A symbol already evaluated by an intra_check-triggered scan within
     the cooldown window must not be re-submitted to tech_analyst on the
@@ -314,7 +314,7 @@ def test_cooldown_suppresses_repeat_scan_of_same_symbol(mock_compute_indicators)
     p.tech_analyst.analyze_batch.assert_not_called()
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_cooldown_expired_allows_rescan(mock_compute_indicators):
     """A prior intraday-scan row OLDER than the cooldown window must not
     suppress a fresh scan — the dedup is time-bounded, not permanent."""
@@ -340,7 +340,7 @@ def test_cooldown_expired_allows_rescan(mock_compute_indicators):
     p.tech_analyst.analyze_batch.assert_called_once()
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_non_intra_check_trades_do_not_count_toward_cooldown(mock_compute_indicators):
     """A morning-run HOLD/BUY for the symbol must not suppress the
     intraday scan — the symbol cooldown is specifically about repeat
@@ -380,7 +380,7 @@ def _held_position(symbol: str) -> Position:
 
 # ---------- held names join the Tech batch (produce Tech, don't drop) ----------
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_held_quiet_name_joins_intraday_tech_batch(mock_compute_indicators):
     """A name we already hold, even if it did not move 3%, must be in the
     paid Tech batch. Otherwise an increase on that hold fails
@@ -427,7 +427,7 @@ def test_held_quiet_name_joins_intraday_tech_batch(mock_compute_indicators):
     assert "MSFT" not in ledgered, "hold coverage must not consume mover cooldown"
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_holds_do_not_consume_mover_candidate_cap(mock_compute_indicators):
     """Discovery stays capped; held-name coverage is added on top."""
     mock_compute_indicators.return_value = MagicMock()
@@ -450,7 +450,7 @@ def test_holds_do_not_consume_mover_candidate_cap(mock_compute_indicators):
     assert submitted == {"SYM9", "SYM8", "MSFT"}
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_quiet_book_without_movers_does_not_pay_tech_just_for_holds(
     mock_compute_indicators,
 ):
@@ -468,7 +468,7 @@ def test_quiet_book_without_movers_does_not_pay_tech_just_for_holds(
     p.tech_analyst.analyze_batch.assert_not_called()
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_held_mover_is_not_submitted_twice(mock_compute_indicators):
     """A hold that also cleared the move threshold is one Tech name, not two."""
     mock_compute_indicators.return_value = MagicMock()
@@ -488,7 +488,7 @@ def test_held_mover_is_not_submitted_twice(mock_compute_indicators):
 
 # ---------- bounded cost ----------
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_candidates_capped_at_max_per_scan(mock_compute_indicators):
     """Even on a broad market-wide move day, only the top N movers (by
     move size) are selected for discovery — bounded, not high-frequency.
@@ -589,7 +589,7 @@ def test_run_intra_check_scan_crash_does_not_fail_the_tick():
 
 # ---------- concurrency guard (intra_check is session-lock exempt) ----------
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indicators):
     """Wait, don't skip on a live morning — but if the calendar window is
     already over, paid discovery cannot run this tick. Movers are named
@@ -613,7 +613,7 @@ def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indica
     p.tech_analyst.analyze_batch.assert_not_called()
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_scan_waits_then_runs_when_midday_lock_releases(mock_compute_indicators):
     """The 13:00 tick skipped paid discovery because midday held the owner
     lock. Wait for that process to finish instead of sleeping until the
@@ -639,7 +639,7 @@ def test_scan_waits_then_runs_when_midday_lock_releases(mock_compute_indicators)
     p.broker.get_positions.assert_called()
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_scan_skips_instead_of_hunting_when_morning_lock_releases(
     mock_compute_indicators,
 ):
@@ -667,7 +667,7 @@ def test_scan_skips_instead_of_hunting_when_morning_lock_releases(
     p.tech_analyst.analyze_batch.assert_not_called()
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_finished_session_trade_rows_do_not_skip_the_scan(mock_compute_indicators):
     """A morning fill sitting in trades is not an in-flight session. The
     15-minute trade-row heuristic was what slept the 09:30 and 13:00
@@ -692,7 +692,7 @@ def test_finished_session_trade_rows_do_not_skip_the_scan(mock_compute_indicator
     p.tech_analyst.analyze_batch.assert_called_once()
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_scan_proceeds_when_other_session_activity_is_old(mock_compute_indicators):
     """The concurrency guard is time-bounded — a morning run that finished
     hours ago must not suppress the scan for the rest of the day (a resting
@@ -763,7 +763,7 @@ def test_own_run_id_rows_do_not_trip_the_concurrency_guard():
     assert p._another_session_recently_active(ctx.run_id) is False
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_process_lock_excludes_a_second_concurrent_scan(mock_compute_indicators, tmp_path):
     """Independent-review finding: the DB-row concurrency guard can only see
     a rival session AFTER it has written a trade row, so two intra_check
@@ -831,7 +831,7 @@ def test_process_lock_propagates_scan_exception_and_releases(tmp_path):
         assert acquired_next is True
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_prelatched_real_intraday_scan_reports_suspension_before_agent_call(
     mock_compute_indicators, tmp_path,
 ):
@@ -914,7 +914,7 @@ def _session_snapshot(last, prev, o=None, h=None, lo=None, v=None,
     }
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_todays_move_is_passed_to_tech_as_current_session_context(mock_compute_indicators):
     """The live figures the scan triggered on must reach tech_analyst."""
     mock_compute_indicators.return_value = MagicMock()
@@ -998,7 +998,7 @@ def test_tech_prompt_omits_session_block_when_no_intraday_context():
     assert "CURRENT SESSION" not in msg
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_todays_move_propagates_through_the_full_decision_chain(mock_compute_indicators):
     """End-to-end for Blocker 2: a move that develops TODAY is detected on
     live prices, handed to Tech WITH that live evidence, and flows through
@@ -1163,7 +1163,7 @@ def _qualifying_move_pipeline():
     return p
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_empty_morning_carry_forward_is_advisory_and_is_disclosed(
     mock_alert, mock_compute_indicators,
@@ -1196,7 +1196,7 @@ def test_empty_morning_carry_forward_is_advisory_and_is_disclosed(
     assert ctx.evidence_freshness["fresh_seats"] == ["tech"]
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_failed_morning_carry_forward_skips_the_intraday_pm(
     mock_alert, mock_compute_indicators,
@@ -1219,7 +1219,7 @@ def test_failed_morning_carry_forward_skips_the_intraday_pm(
     assert set(ctx.evidence_freshness["absent_seats"]) == {"macro", "news"}
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_a_lost_news_seat_is_advisory_and_the_carried_book_is_disclosed(
     mock_alert, mock_compute_indicators,
@@ -1251,7 +1251,7 @@ def test_a_lost_news_seat_is_advisory_and_the_carried_book_is_disclosed(
 
 # ---------- item 20 (board): a fully lost intraday tech seat is LOST, not quiet ----------
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_intraday_total_tech_failure_is_lost_and_skips_the_pm(
     mock_alert, mock_compute_indicators,
@@ -1289,7 +1289,7 @@ def test_intraday_total_tech_failure_is_lost_and_skips_the_pm(
     assert maybe_alert_data_quality(result, mode="intra_check") is True
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 @patch("src.notifier.send_owner_alert", return_value=True)
 def test_intraday_tech_batch_raising_is_also_lost_not_a_crash(
     mock_alert, mock_compute_indicators,
@@ -1315,7 +1315,7 @@ def test_intraday_tech_batch_raising_is_also_lost_not_a_crash(
     p.decision_stage.run.assert_not_called()
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_intraday_partial_tech_failure_still_trades(mock_compute_indicators):
     """One symbol out of two fails to resolve. This must stay REPORTED
     (`partial`) and keep trading on the resolved subset — item 20 must not
@@ -1349,7 +1349,7 @@ def test_intraday_partial_tech_failure_still_trades(mock_compute_indicators):
     assert ctx.analyses == [analysis]
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_intraday_genuinely_empty_candidate_set_still_no_opportunity(
     mock_compute_indicators,
 ):
@@ -1406,7 +1406,7 @@ def test_move_in_atr_refuses_to_invent_a_denominator(atr_14, prev_close):
     ) == (None, None)
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_a_movers_ledger_row_records_the_atr_denominator(
     mock_compute_indicators,
 ):
@@ -1442,7 +1442,7 @@ def test_a_movers_ledger_row_records_the_atr_denominator(
     assert details[-1].startswith("move_pct=10.0000")
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_the_atr_stamp_reuses_the_selection_row_and_never_adds_one(
     mock_compute_indicators,
 ):
@@ -1475,7 +1475,7 @@ def test_the_atr_stamp_reuses_the_selection_row_and_never_adds_one(
     assert keys == {("AAPL", ctx.run_id, "selected")}
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_a_held_name_gets_no_trigger_measurement(mock_compute_indicators):
     """Held-book coverage never passed through `move_threshold_pct`, so
     stamping it would contaminate the very measurement meant to answer for
@@ -1509,7 +1509,7 @@ def test_a_held_name_gets_no_trigger_measurement(mock_compute_indicators):
     assert ledgered == {"AAPL"}
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_an_unreadable_atr_is_recorded_as_unreadable_not_dropped(
     mock_compute_indicators,
 ):
@@ -1543,7 +1543,7 @@ def test_an_unreadable_atr_is_recorded_as_unreadable_not_dropped(
     assert "move_atr=unreadable" in detail
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_a_ledger_write_failure_on_the_stamp_never_breaks_the_scan(
     mock_compute_indicators,
 ):
