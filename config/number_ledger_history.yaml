@@ -914,3 +914,23 @@ changes:
       behaviour changed. The old row `CashSweepConfig.reserve_pct` still
       exists because the /account display and the sweeper still read it; it
       is deleted in step 4, which takes the count back down by 1.
+
+  - delta: 1
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 55 (PR 880): +1 for
+      `src.config.RiskConfig.min_level_touches_for_stop_honor` (5), a
+      DOWNGRADE from `sourced` and not a new number. Its source was a
+      real-versus-shuffled bounce table over 101 symbols, and that table was
+      built on levels clustered by the flat 1%-of-price rule this item
+      deletes, so the object the touch count counts has changed and
+      docs/OUTCOME.md requires the derived number to be re-checked. The
+      re-derivation was attempted twice on the 276-bar panel this repo holds
+      and failed both times: n=27 real observations at 5 touches against the
+      original's hundreds, and a shuffled control that scored HIGHER than
+      real at every touch count, which means the reconstruction is not the
+      original test. Both failures and the recording that would settle it
+      are written down in docs/WORK.md item 55. The value stays at 5 because
+      moving it would be inventing a number; only the honesty of the label
+      changes.
+

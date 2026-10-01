@@ -80,6 +80,7 @@ def _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0,
         support_levels=[stop], resistance_levels=[target],
         computed_levels=[stop, target],
         computed_level_touches={stop: 5, target: 5},
+        computed_level_bars={stop: [(stop, stop)], target: [(target, target)]},
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
@@ -89,7 +90,7 @@ def _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0,
 
 def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
                      atr_14=None, horizon=60, computed=None,
-                     touches=None) -> TechAnalysisResult:
+                     touches=None, bars=None) -> TechAnalysisResult:
     """`computed_levels` deliberately carries the TARGET and not the stop.
 
     Since spec §12.1 that field also decides whether the ATR noise band
@@ -114,12 +115,19 @@ def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
     if not any(float(p) > float(entry) for p in levels):
         levels.append(round(float(entry) * 1.5, 2))
     default_touches = {price: 5 for price in levels}
+    # Item 215: each level states the narrowest bar that can have drawn it —
+    # its own price — so listing the stop in `computed` still means "the stop
+    # is ON this level" and omitting it still means "nothing is under it".
+    default_bars = {price: [(price, price)] for price in levels}
+    if bars:
+        default_bars.update(bars)
     return TechAnalysisResult(
         symbol=symbol, rating="sell", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test",
         support_levels=[target], resistance_levels=[stop],
         computed_levels=levels,
         computed_level_touches=default_touches if touches is None else touches,
+        computed_level_bars=default_bars,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
@@ -579,10 +587,13 @@ def test_short_level_backed_stop_inside_one_atr_is_floored_at_one_atr():
 
 
 def test_short_near_miss_outside_the_tolerance_is_not_level_backed():
-    """The boundary is the level's OWN zone: `CLUSTER_TOLERANCE_PCT` (1%)
-    of the computed level at $260.00 = $2.60. $258.00 is sitting on it (gap
-    $2.00); $257.00 is not (gap $3.00), and gets the band like any unbacked
-    stop.
+    """Since item 215 (2026-09-30) the boundary is the traded range of a BAR
+    that drew the level, not the level's zone: the session that turned at
+    $260.00 traded down to $258.00, so $258.00 is sitting on it and $257.00
+    is not, and the second gets the band like any unbacked stop. The two
+    candidate stops and every other number here are unchanged — only what
+    makes $258.00 count has changed, from "within 1% of the level" to
+    "inside a session the market actually defended".
 
     Both candidates are deliberately INSIDE the 2.25-ATR band ($261.25) and
     outside the 1-ATR hard floor ($255.00), so level-backing is the only
@@ -605,7 +616,8 @@ def test_short_near_miss_outside_the_tolerance_is_not_level_backed():
             "TSLA",
             _short_analysis(entry=_S_ENTRY, stop=stop,
                             target=_S_TARGET_LEVEL, atr_14=_S_ATR,
-                            computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP]),
+                            computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
+                            bars={_S_TIGHT_STOP: [(258.0, _S_TIGHT_STOP)]}),
             entry_price=_S_ENTRY, stop_loss=stop, direction="short",
             target_price=_S_TARGET_LEVEL,
         )
