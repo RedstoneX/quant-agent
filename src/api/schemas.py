@@ -669,6 +669,12 @@ class RunDetailResponse(BaseModel):
     # MISSION_CONTROL_API.md). Computed from `agent_logs`, never fabricated —
     # a run with no such row (the ordinary case) reports False.
     hard_risk_block_recorded: bool = False
+    # Board item 219. The pruning/rotation pass, in the SAME sentences the
+    # Telegram session message uses (`src.rotation.owner_precheck_lines` +
+    # `pruning_pass_lines`), read off the same durable `rotation`/`precheck`
+    # row. Empty only when no such row exists for this run. There is no
+    # second reporting path: both surfaces render this one list.
+    rotation_lines: list[str] = []
 
 
 class DecisionDetailResponse(BaseModel):

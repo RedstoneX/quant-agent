@@ -882,6 +882,29 @@ class Database:
                 run_id TEXT
             );
 
+            -- Board item 193. `pending_protection_restores.id` is a SHARED
+            -- AUTOINCREMENT: the scale-in cancel path and the protected-sell
+            -- exit path both draw ids from it, and every row is DELETED once
+            -- discharged. The id ceiling is therefore not a count of anything,
+            -- and an id spent by the other writer used to be indistinguishable
+            -- from a scale-in cancel that filed no event. This table is the
+            -- attribution: one never-deleted row per id handed out, written at
+            -- the single insert choke point, so a future gap between the id
+            -- ceiling and the scale-in cancel events is read off the record
+            -- instead of argued about. Bookkeeping only - nothing reads it to
+            -- decide anything, and failing to write it never blocks the
+            -- protective WAL row it describes.
+            CREATE TABLE IF NOT EXISTS protection_restore_wal_audit (
+                row_id INTEGER PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                sell_order_id TEXT NOT NULL,
+                position_qty_before_sell REAL,
+                side TEXT,
+                run_id TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+
             -- Bounded entry re-peg write-ahead queue. An Alpaca order
             -- replacement MINTS A NEW ORDER ID: the moment the PATCH is
             -- accepted, `trades.broker_order_id` is stale and points at a
@@ -1072,6 +1095,37 @@ class Database:
         # column existed. See `TradeDecision.structural_ceiling` in models.py
         # and `src.risk.constants.is_trend_trade`.
         _ensure_column("trades", "structural_ceiling", "structural_ceiling INTEGER")
+        # Board item 218 (owner ruling 2026-10-01). The parity refusal is
+        # an explicitly PROVISIONAL trial — "for now ... see if that
+        # improves the desk purchases" — so the thing it refused has to be
+        # recoverable as NUMBERS, not as prose. One row per refused name per
+        # run, every quantity in its own column, so "did refusing these
+        # improve the desk's purchases" is a query and not a grep. Nothing
+        # reads this table yet by design: it is the evidence the owner's own
+        # question will be answered from.
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trade_refusals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                run_id TEXT,
+                symbol TEXT NOT NULL,
+                direction TEXT,
+                refusal TEXT NOT NULL,
+                stage TEXT,
+                entry_price REAL,
+                stop_price REAL,
+                level_used REAL,
+                reward_risk REAL,
+                threshold REAL,
+                level_was_measured INTEGER
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trade_refusals_symbol_ts "
+            "ON trade_refusals (symbol, timestamp)"
+        )
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
@@ -1137,7 +1191,14 @@ class Database:
         # Did the SEAT accept this answer, and if not why — the fact `status`
         # never carried (`status` only ever meant "the call returned"). NULL
         # on every legacy row and on any site not yet instrumented; readers
-        # must treat NULL as unknown, never as accepted.
+        # must treat NULL as unknown, never as accepted. Board item 188:
+        # for the three DECISION seats `acceptance_reason` now carries the
+        # gate's OWN machine-readable word (pm_/risk_/review_ prefixed) when
+        # the gate named one, so the refusal says which way the answer was
+        # unusable. RECORDING ONLY: nothing may read either column back into
+        # a sizing, stop, exit or routing decision, and neither may be swept
+        # for an optimal threshold — they exist to make a model's
+        # usable-answer rate computable from the desk's own rows.
         _ensure_column("agent_logs", "acceptance", "acceptance TEXT")
         _ensure_column("agent_logs", "acceptance_reason", "acceptance_reason TEXT")
         # Whether the provider's answer carried usage information:
@@ -1231,6 +1292,44 @@ class Database:
         # against. NULL on every legacy row and every non-entry row.
         _ensure_column(
             "trades", "max_favourable_excursion", "max_favourable_excursion REAL",
+        )
+        # `max_adverse_overnight_gap` — SHORT-SIDE GAP EVIDENCE, the worst
+        # ADVERSE overnight gap (session open minus the prior session's
+        # close, in price units, positive = against the short) observed on
+        # any session this short was held. Its sibling
+        # `overnight_gap_sessions` counts the sessions on which a gap was
+        # actually observed, so a NULL/absent reading is distinguishable
+        # from "held, and never gapped against".
+        #
+        # WHY IT EXISTS (item 186): the short-side sizing haircut
+        # (`RiskConfig.short_gap_risk_multiple`, 1.5) is unsourced, and TWO
+        # attempts to read it off the instrument have failed — see the
+        # ledger row and docs/BOARD_NOTES.md item 186. Both failed for the
+        # same underlying reason: the desk has never recorded what a short
+        # actually suffers overnight. Bars are fetched live and discarded;
+        # no OHLCV table exists. This column, joined to the `entry_atr` and
+        # `initial_stop_loss` already pinned on the same opening row, is the
+        # evidence that would let the question ever be settled.
+        #
+        # WHAT IT MAY NOT BE USED FOR: the same hard limit the
+        # `max_adverse_excursion` note above states. RECORDING ONLY. Nothing
+        # reads it back into a sizing, stop or exit decision, and it may not
+        # be swept for the multiple that would have been optimal — doctrine
+        # bars fitting a number to this desk's own history. Carries the same
+        # snapshot-frequency caveat: a session on which no snapshot ran
+        # contributes nothing, so the stored figure is a FLOOR on the worst
+        # adverse gap, never an overstatement.
+        _ensure_column(
+            "trades", "max_adverse_overnight_gap", "max_adverse_overnight_gap REAL",
+        )
+        _ensure_column(
+            "trades", "overnight_gap_sessions", "overnight_gap_sessions INTEGER",
+        )
+        # `last_overnight_gap_date` — the session date of the most recently
+        # recorded gap, so a second sync in the same session cannot count
+        # the same gap twice. Idempotence by date, not by call count.
+        _ensure_column(
+            "trades", "last_overnight_gap_date", "last_overnight_gap_date TEXT",
         )
         # --- Item 55 evidence: WHAT the stop was based on, and what the
         # market then did with that level. RECORDING ONLY (2026-10-01).
@@ -1652,6 +1751,52 @@ class Database:
             self.conn.commit()
             return cur.lastrowid
         return self._locked_write(_do, label="insert_trade")
+
+    def insert_trade_refusal(
+        self, *, symbol: str, direction: str | None, refusal: str,
+        entry_price: float | None = None, stop_price: float | None = None,
+        level_used: float | None = None, reward_risk: float | None = None,
+        threshold: float | None = None, level_was_measured: bool | None = None,
+        stage: str | None = None, run_id: str | None = None,
+    ) -> int | None:
+        """Record one NAMED refusal with its numbers in their own columns.
+
+        Board item 218. `PortfolioConstructor.last_refusals` keeps the human
+        sentence and is drained only for the symbols that reach
+        `constructor_dropped`; this is the durable half, written at the
+        moment of refusal, and it stores no English at all. A trial the
+        owner asked to judge later ("see if that improves the desk
+        purchases") is judged from these columns.
+        """
+        def _do():
+            cur = self.conn.execute(
+                "INSERT INTO trade_refusals (timestamp, run_id, symbol, "
+                "direction, refusal, stage, entry_price, stop_price, "
+                "level_used, reward_risk, threshold, level_was_measured) "
+                "VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (run_id, str(symbol or "").strip().upper(), direction,
+                 refusal, stage, entry_price, stop_price, level_used,
+                 reward_risk, threshold,
+                 None if level_was_measured is None else int(bool(level_was_measured))),
+            )
+            self.conn.commit()
+            return cur.lastrowid
+        return self._locked_write(_do, label="insert_trade_refusal")
+
+    def get_trade_refusals(
+        self, *, refusal: str | None = None, limit: int = 500,
+    ) -> list[dict]:
+        """Read back the durable refusal rows, newest first."""
+        sql = "SELECT * FROM trade_refusals"
+        args: list = []
+        if refusal:
+            sql += " WHERE refusal = ?"
+            args.append(refusal)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(int(limit))
+        cur = self.conn.execute(sql, tuple(args))
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
 
     def update_open_stop_loss(
         self, symbol: str, new_stop_price: float, *, action: str | None = None,
@@ -2343,9 +2488,44 @@ class Database:
                 (symbol, sell_order_id, position_qty_before_sell, specs_json,
                  run_id, side),
             )
+            row_id = cur.lastrowid or 0
+            # Item 193: attribute the id before it can be forgotten. Best
+            # effort on purpose - an audit failure must never stop a
+            # protective-restore intent from being persisted.
+            try:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO protection_restore_wal_audit "
+                    "(row_id, symbol, sell_order_id, "
+                    "position_qty_before_sell, side, run_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (row_id, symbol, sell_order_id,
+                     position_qty_before_sell, side, run_id),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "protection-restore WAL audit row %s not written: %s",
+                    row_id, exc,
+                )
             self.conn.commit()
-            return cur.lastrowid or 0
+            return row_id
         return self._locked_write(_do, label="insert_pending_protection_restore")
+
+    def get_protection_restore_wal_audit(self) -> list[dict]:
+        """Every protection-restore WAL id ever handed out, oldest first.
+
+        Item 193's completeness check: join these against the
+        `scale_in|protective_sell_cancelled` events' own `wal_row_id`, and
+        an id present here but absent there was spent by the protected-sell
+        exit path or by a rolled-back preparation, not by an unrecorded
+        cancel.
+        """
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT row_id, symbol, sell_order_id, "
+                "position_qty_before_sell, side, run_id, created_at "
+                "FROM protection_restore_wal_audit ORDER BY row_id"
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_pending_protection_restores(self) -> list[dict]:
         """All currently-pending protection-restore rows, oldest first."""
@@ -2637,6 +2817,65 @@ class Database:
                 "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
                 (excursion, position.symbol, excursion, position.symbol),
             )
+
+    def record_overnight_gap(
+        self, symbol: str, prev_close: float, open_price: float,
+        session_date: str,
+    ) -> bool:
+        """Record one session's ADVERSE overnight gap against an open SHORT.
+
+        SHORT-SIDE GAP EVIDENCE, RECORDING ONLY. Read the
+        `max_adverse_overnight_gap` migration note in `_migrate` for why
+        this exists (item 186 — the sizing haircut cannot be read off the
+        instrument because the evidence was never kept) and for the hard
+        limit on its use: nothing may read it back into a sizing, stop or
+        exit decision, and it may not be swept for an optimal multiple.
+
+        The stored figure is the WORST (largest) adverse gap seen on any
+        session the short was held, `open - prev_close` in price units,
+        positive when the name gapped UP against the short. It is stored
+        SIGNED and unfiltered: a short every one of whose gaps ran in its
+        favour records a negative worst, which is a real and different fact
+        from "never observed". `overnight_gap_sessions` counts the sessions
+        observed so the two stay distinguishable.
+
+        Written onto the OPENING rows of the position (the `SHORT` rows
+        carrying `entry_atr`), which is where a later reader joins the gap
+        to the volatility read and the stop distance pinned at entry —
+        `entry_atr` and `initial_stop_loss` on the same row — and, once the
+        position closes, to its realised outcome.
+
+        Idempotent per session: `last_overnight_gap_date` gates the write,
+        so a second position sync on the same date cannot count one gap
+        twice. Returns True when a row was updated.
+        """
+        try:
+            prev_close = float(prev_close)
+            open_price = float(open_price)
+        except (TypeError, ValueError):
+            return False
+        if prev_close <= 0 or open_price <= 0 or not session_date:
+            return False
+        gap = open_price - prev_close
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE trades SET "
+                "  max_adverse_overnight_gap = CASE "
+                "    WHEN max_adverse_overnight_gap IS NULL "
+                "      OR max_adverse_overnight_gap < ? THEN ? "
+                "    ELSE max_adverse_overnight_gap END, "
+                "  overnight_gap_sessions = COALESCE(overnight_gap_sessions, 0) + 1, "
+                "  last_overnight_gap_date = ? "
+                "WHERE symbol = ? AND action = 'SHORT' "
+                "AND entry_atr IS NOT NULL "
+                "AND (last_overnight_gap_date IS NULL OR last_overnight_gap_date < ?) "
+                "AND position_id IN ("
+                "  SELECT position_id FROM trades WHERE symbol = ? "
+                "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
+                (gap, gap, session_date, symbol, session_date, symbol),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
 
     def _accumulate_level_distances(self, position) -> None:
         """Widen what the market has done to the stop's structural level.

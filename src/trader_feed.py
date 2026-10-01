@@ -1883,9 +1883,13 @@ def _append_rotation(lines: list[str], snap: dict[str, Any] | None) -> None:
     nothing for a run with no pre-check row (every session before this
     shipped, and any stored report replayed from one).
     """
-    from src.rotation import owner_precheck_lines
+    from src.rotation import owner_precheck_lines, pruning_pass_lines
 
-    lines.extend(owner_precheck_lines((snap or {}).get("rotation")))
+    record = (snap or {}).get("rotation")
+    lines.extend(owner_precheck_lines(record))
+    # Board item 219. The pruning pass itself — that it ran, over what, what
+    # it cut and why, what it kept, and that the second tier is off.
+    lines.extend(pruning_pass_lines(record))
 
 
 def _append_held(lines: list[str], symbols: list[str], profiles: dict) -> None:

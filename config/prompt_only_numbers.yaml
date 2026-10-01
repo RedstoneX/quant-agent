@@ -1,0 +1,37 @@
+# Numbers that live ONLY in prompt prose (board item 107(b)). No code computes
+# any of them and none can enter config/number_ledger.yaml, because that ledger
+# is keyed by a code definition site and rejects an entry with no site. Each is
+# recorded here as ARBITRARY, honestly: hand-chosen, unmeasured, steering a
+# model's reading rather than a computed order. `tests/test_prompt_only_numbers.py`
+# fails when a threshold-shaped figure appears in any sheet without a row here,
+# and when a row no longer matches its sheet (so a deleted number leaves no row).
+#
+# Settling any row needs the same recording: the technical seat's emitted
+# call with its realised forward move per setup, which the desk does not yet
+# persist per call. Until then these stay arbitrary; do not fit them to history.
+numbers:
+  - id: tech.high_conviction_aligned_signals
+    sheet: tech_analyst.md
+    pattern: '3\+ aligned signals'
+    status: arbitrary
+    open_question: how many independent confirming indicators justify `high` conviction; the signals are all derived from one price series and are not independent.
+  - id: tech.freshness_age_tiers
+    sheet: tech_analyst.md
+    pattern: 'age 1-3 days|age 4-7 days|age 8\+ days'
+    status: arbitrary
+    open_question: the age at which an unchanged call stops being informative; needs realised outcome by call age. The code-side staleness limit is a separate ledgered setting.
+  - id: tech.forward_pe_stretched_and_nosebleed
+    sheet: tech_analyst.md
+    pattern: 'Forward PE > (40|60)x'
+    status: arbitrary
+    open_question: forward-PE levels at which a technical buy should be discounted; sector-relative percentiles would be read off the instrument, a flat 40 or 60 is not.
+  - id: tech.price_to_sales_stretched_and_nosebleed
+    sheet: tech_analyst.md
+    pattern: 'P/S > (15|25)'
+    status: arbitrary
+    open_question: same as forward PE; a sector-relative P/S percentile would replace the flat levels.
+  - id: tech.stale_call_age_downgrade
+    sheet: tech_analyst.md
+    pattern: 'signal_age_days ≥ 8'
+    status: arbitrary
+    open_question: same recording as the freshness tiers; the 8 is the same figure as the 8+ tier.
