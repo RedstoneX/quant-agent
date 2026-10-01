@@ -269,7 +269,7 @@ DONE WHEN:
 - [ ] the three citations named in the note are corrected and the guard passes with no exemption list
 detail: docs/board_notes/item-225.md
 
-**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards) and 1 (the prompt-facts mixin) have landed; steps 2 (protection) and 3 (the de-levering ladder, 1,209 lines moved verbatim) are open and deliberately held off a trading day; eight moving steps remain.
+**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards) and 1 (the prompt-facts mixin) have landed; steps 2 (protection), 3 (the de-levering ladder) and 4 (the held-position exit engine, 3,711 lines moved verbatim) are open and deliberately held off a trading day; seven moving steps remain.
 
 DONE WHEN:
   - [ ] 1. the open pull-request queue is at zero, because the split moves `src/pipeline.py` and `src/pipeline_stages.py`, which nearly every open pull request touches, so splitting sooner collides with all of them
