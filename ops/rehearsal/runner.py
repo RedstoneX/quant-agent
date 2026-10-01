@@ -272,6 +272,7 @@ def run_rehearsal(
 
     from ops.rehearsal.broker import (
         BrokerSnapshot, blocked_market_data, install_rehearsal_broker,
+        recorded_sector_lookup,
     )
     from ops.rehearsal.clock import frozen_clock
     from ops.rehearsal.isolation import (
@@ -452,6 +453,13 @@ def run_rehearsal(
         checks.append(
             "every holder of the market-data provider was rebound to the "
             f"rehearsal's, not just the pipeline: {sorted(_rebound) or 'none'}"
+        )
+        # Board item 202, criterion 2: `broker._get_sector` builds its own
+        # live yfinance client, so the market-data swap above never reached
+        # it and every sector lookup went to the network (and was retried
+        # per symbol behind the wall, ~188s [measured 2026-10-01]).
+        checks.append(
+            stack.enter_context(recorded_sector_lookup(unavailable, _recording))
         )
         checks.append(assert_broker_is_stubbed(pipeline.broker))
         checks.append(

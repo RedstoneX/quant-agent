@@ -664,6 +664,17 @@ def replay_provider_calls(library: ResponseLibrary, faults=None):
         "_anthropic_call": BaseAgent._anthropic_call,
         "_call_openai": BaseAgent._call_openai,
         "_call_deepseek": BaseAgent._call_deepseek,
+        # The FOURTH transport, and the one that was reaching the live
+        # network from inside a "replayed" session until 2026-10-01. Patching
+        # only the three primary-path entry points left the two FAILOVER
+        # routes live: `_try_failover` and `_try_tertiary` both call
+        # `_openai_wire_call` DIRECTLY with a client they build themselves,
+        # so the moment a replayed primary raised, the Portfolio Manager went
+        # out to a real provider and the run ended on
+        # `openai.APIConnectionError: Connection error.` [measured
+        # 2026-10-01]. Replaying at the shared wire level closes both routes
+        # at once and keeps the retry/failover logic above it real.
+        "_openai_wire_call": BaseAgent._openai_wire_call,
     }
 
     def _replay(agent, model: str, user_message: str, authorize):
@@ -708,9 +719,16 @@ def replay_provider_calls(library: ResponseLibrary, faults=None):
         for line in faults.summary():
             logger.warning("Rehearsal FAULT INJECTION active — %s", line)
 
+    def openai_wire_call(
+        self, client, model, provider, user_message, *,
+        provider_order=None, authorize=None,
+    ):
+        return _replay(self, model, user_message, authorize)
+
     BaseAgent._anthropic_call = anthropic_call
     BaseAgent._call_openai = openai_call
     BaseAgent._call_deepseek = deepseek_call
+    BaseAgent._openai_wire_call = openai_wire_call
     try:
         yield library
     finally:

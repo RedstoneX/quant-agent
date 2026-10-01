@@ -1240,6 +1240,61 @@ That test is marked `xfail(strict=False)` with the reason above — NOT as a
 flake. It flips to XPASS the moment this item serves recorded market data,
 which is the signal that item 202 is done.
 
+### Item 202 update 3 — the fourth transport, and the sector lookup (2026-10-01)
+
+**The Portfolio Manager now runs offline.** `replay_provider_calls` replaced
+three transports — `_anthropic_call`, `_call_openai`, `_call_deepseek` — all of
+them PRIMARY-path entry points. `_try_failover` and `_try_tertiary` do not go
+through any of them: both build their own client and call
+`_openai_wire_call` directly. So the moment a replayed primary raised, the
+Portfolio Manager failed over to a REAL provider and the session ended on
+`openai.APIConnectionError: Connection error.` [measured 2026-10-01]. The
+shared wire call is now replayed as well, which closes both failover routes at
+once and leaves the retry, failover, cost-accounting and circuit logic above it
+untouched and real.
+
+What the run ends on now is `MissingRecordedResponse: no recorded response for
+agent 'portfolio_manager' (run run-574fda72): all 1 recorded response(s) were
+already replayed` [measured 2026-10-01]. That is the mandated behaviour, not a
+new defect: the session asks the PM more than once and the pinned recorded run
+holds one PM answer, so the replay stops and names exactly what the recording
+could not supply rather than inventing an answer or going out to buy one.
+
+**Nothing in the rehearsal builds a live market-data client any more.**
+`broker._get_sector` reads `yf.Ticker(symbol).info`, which is a second live
+fetch the `pipeline.market` swap never touched, and behind the wall yfinance
+retried its cookie/crumb handshake once per symbol. `recorded_sector_lookup`
+replaces the `yf` name inside `src.execution.broker` for the duration of the
+session — the single place that client is built, so no importer of
+`_get_sector` (`src.pipeline` binds it at import time) can route around it —
+and serves the sector from the recording when it is there, or records a missing
+recorded input when it is not. Nothing is substituted: an unrecorded symbol
+takes the same path a yfinance outage takes, which the sector gate already
+surfaces to the owner as "Unknown". `market_recording.capture` now records
+sectors alongside the bars so a freshly captured recording can serve them.
+
+**Measured:** blocked outbound attempts fell from 12 to 11, and the single
+`curl_cffi` entry — the yfinance one — is gone. Every attempt that remains is
+either FRED (`api.stlouisfed.org`, 15 series) or one of the 20 news feeds
+(CNBC, MarketWatch, Yahoo, Seeking Alpha, Investing.com, Nasdaq, BBC, NPR, Fed,
+SEC). Those have no recording of any kind yet, so the run is still correctly
+voided as non-hermetic. Recording them is a separate build and was not
+attempted here.
+
+**Not done in this pass, and deliberately not claimed:** the third criterion —
+naming every OTHER test that still reaches the network — needs a full-suite run
+that was not performed, so it stays open with no list attached. A grep produces
+candidates, not a measurement, and a candidate list posted as a finding is the
+kind of thing this item exists to stop.
+
+**The settling run is still outstanding.** No real rehearsal against the
+production snapshot was performed here, and none should be read into these
+numbers: everything above was measured through
+`tests/test_rehearsal_reproduces_cost_ceiling.py`. What a settling run would
+prove, and nothing else can, is that a full session over the production
+snapshot completes with an EMPTY breach journal and a verdict the rig is
+entitled to give.
+
 ### Item 202 update 2 — the swap missed the stage that owns the provider (2026-10-01)
 
 Serving recorded bars was not enough on its own. `TradingPipeline.__init__`
