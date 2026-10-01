@@ -1808,13 +1808,19 @@ PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES = frozenset(
 #: Its reader (`TradingPipeline._reprotect_residual`'s idempotency check)
 #: is looking at a stop this desk placed SECONDS ago on a prior attempt of
 #: the same reprotect, after excluding by order id every stop this run
-#: itself cancelled. In that window `pending_new` is the NORMAL state of a
-#: healthy just-submitted stop, and treating it as "not protection" is what
-#: makes a replay submit a duplicate. Nothing in this codebase reconciles a
-#: duplicate protective stop (see `src/coverage_watchdog.py`, which states
-#: it never cancels or modifies; the only duplicate handling anywhere is a
-#: message asking the owner to cancel one by hand), so the duplicate must
-#: be prevented rather than cleaned up.
+#: itself cancelled. Nothing in this codebase reconciles a duplicate
+#: protective stop (see `src/coverage_watchdog.py`, which states it never
+#: cancels or modifies; the only duplicate handling anywhere is a message
+#: asking the owner to cancel one by hand), so the duplicate must be
+#: prevented rather than cleaned up.
+#:
+#: CORRECTED 2026-10-01 (adversary round 2, defect 2): that reader no
+#: longer treats this union as one answer. A `pending_new` stop can still
+#: become `rejected`, so it is neither protection to bank nor an order to
+#: place a second stop over; the reprotect path reads the two member sets
+#: SEPARATELY and gives the in-flight case its own outcome — no write-back,
+#: no drain of the recovery intent, re-read on the next pass. The union is
+#: kept as the vocabulary for "neither terminal nor dying".
 #:
 #: `pending_cancel` stays OUT of both sets: a dying order is never
 #: protection, whichever question is being asked.

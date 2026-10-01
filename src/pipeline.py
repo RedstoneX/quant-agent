@@ -5946,7 +5946,8 @@ class TradingPipeline:
         # accept. It fails toward submitting only where identity genuinely
         # cannot be established.
         from src.execution.broker import (
-            PROTECTIVE_ORDER_ALIVE_STATUSES as _ALIVE_STATUSES,
+            PROTECTIVE_ORDER_ACTIVE_STATUSES as _ACTIVE_STATUSES,
+            PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES as _IN_FLIGHT_STATUSES,
             real_broker_order_id as _real_order_id,
         )
         # `_snapshot_stop_order` stamps `str(order.id)`, so an absent id
@@ -5963,14 +5964,18 @@ class TradingPipeline:
         # specs sharing one id is also a state we cannot reason from.
         missing_ids = sum(1 for oid in real_ids if not oid)
         ids_complete = missing_ids == 0 and len(cancelled_ids) == len(cancelled_specs)
-        # Alpaca's OPEN filter includes transitional statuses. Which of
-        # them count is a DIFFERENT question here than in
-        # `replace_stop_loss`, and the two sets are named separately in
-        # `src/execution/broker.py` with the reason written next to them:
-        # this path reads stops placed SECONDS ago by a prior attempt, for
-        # which `pending_new` is the healthy state, and calling that "not
-        # protection" is what makes a replay submit a second live stop.
-        # `pending_cancel` is excluded from both. No literal is copied.
+        # Alpaca's OPEN filter includes transitional statuses, and the
+        # two named sets in `src/execution/broker.py` are read SEPARATELY
+        # here (adversary round 2, defect 2). A `pending_new` stop has been
+        # received but not routed, and `pending_new` can still become
+        # `rejected`: it is therefore neither protection this run may bank
+        # nor an order this run may safely place a second stop over. That
+        # third state gets its own outcome below -- no write-back, no
+        # drain, return False -- so the recovery intent SURVIVES and the
+        # next pass re-reads a status that has by then resolved. Nothing
+        # here waits, retries or times out: no such number is derivable
+        # and none is invented. `pending_cancel` is in neither set.
+        # No literal is copied.
         try:
             if side == "buy":
                 existing = self.broker._list_open_protective_stop_orders(symbol, side="buy")
@@ -5983,23 +5988,89 @@ class TradingPipeline:
                 "exists)", symbol, exc,
             )
             existing = []
+        # HOISTED out of the per-order loop (adversary round 2, defect 4).
+        # `ids_complete` does not depend on `o`. Evaluated inside the loop
+        # it was only ever consulted for an order that had already passed
+        # the price and quantity filters, so the case it exists for -- this
+        # run cannot prove which stops are its own -- submitted in exactly
+        # the silence that preceded the fix whenever nothing matched. It is
+        # now decided BEFORE any order is examined, and its reason is
+        # written to the append-only per-symbol refusal record rather than
+        # living only in a log line.
+        if existing and not ids_complete:
+            logger.warning(
+                "Reprotect for %s will SUBMIT despite %d open stop(s) at "
+                "the broker: %d of %d cancelled spec(s) carried no broker "
+                "order id, so this run cannot prove an open stop is not "
+                "the one it just cancelled. Submitting risks a duplicate "
+                "stop, which nothing in this desk reconciles; skipping "
+                "risks a naked position. The ordering of those two harms "
+                "is NOT measured anywhere in this repo, so this branch "
+                "does not rank them -- it records the ambiguity and fails "
+                "toward the position having a stop.",
+                symbol, len(existing), missing_ids, len(cancelled_specs),
+            )
+            self._record_reprotect_identity_gap(
+                symbol,
+                f"{missing_ids} of {len(cancelled_specs)} cancelled stop "
+                f"spec(s) carried no broker order id; submitted a fresh "
+                f"stop at ${best_stop:.2f} over {len(existing)} open "
+                f"broker stop(s) that could not be identified. A DUPLICATE "
+                f"protective stop may now rest on {symbol} and nothing in "
+                f"this desk reconciles one.",
+            )
+            existing = []
         for o in existing or []:
             try:
                 existing_sp = float(getattr(o, "stop_price", 0) or 0)
             except (TypeError, ValueError):
                 continue
-            # MEASURED against the broker 2026-09-30 on rehearsal account
-            # PA30V8QHEW1C: immediately after a cancel the dead stop is
-            # STILL LISTED with status "new", and Alpaca ACCEPTS a second
-            # stop placed in that window. So a duplicate is not theoretical
+            # MEASURED against the broker 2026-09-30 on the separate
+            # rehearsal account (id deliberately not written down: this
+            # repository is public): immediately after a cancel the dead
+            # stop is STILL LISTED with status "new", and Alpaca ACCEPTS a
+            # second stop placed in that window. So a duplicate is not theoretical
             # and nothing here reconciles one.
             #
-            # Price therefore MUST NOT gate this check. Filtering on price
-            # first is the incident's own root filter: a stop resting a
-            # penny away is invisible, and the desk submits a second live
-            # stop on the same shares. Identity decides; price only
-            # decides how loudly we report what is already resting.
+            # PRICE DOES NOT PARTICIPATE IN THIS DECISION AT ALL (adversary
+            # round 2, defects 1 and 3). The old check compared the resting
+            # trigger with the wanted one inside a half-penny window, which
+            # made a prior attempt's stop that landed a cent away invisible
+            # and put a second live stop on the same shares -- the
+            # incident's own root filter. The window also required a
+            # tolerance constant, and the only justification ever offered
+            # for its size was an ASSERTED float<->Decimal round-trip that
+            # nobody measured. Two honest attempts to derive it failed: the
+            # production database at /home/qamc/quant-agent/data holds no
+            # record of a broker-returned trigger beside the submitted one
+            # (nothing stores the pair), and the rehearsal account is not
+            # usable for it here because this task forbids placing orders.
+            # Rather than guess the number, the need for it is REMOVED:
+            # identity, status and quantity decide, and the price that is
+            # recorded is the one actually resting at the broker.
             if existing_sp <= 0:
+                continue
+            order_id = _real_order_id(getattr(o, "id", None))
+            status_attr = getattr(o, "status", None)
+            status = str(
+                getattr(status_attr, "value", status_attr) or ""
+            ).lower()
+            if not order_id:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT: an open stop at $%.2f "
+                    "carries no readable order id, so it cannot be "
+                    "distinguished from the stop this run just cancelled.",
+                    symbol, existing_sp,
+                )
+                continue
+            if order_id in cancelled_ids:
+                logger.warning(
+                    "Reprotect for %s will SUBMIT: the open stop at $%.2f "
+                    "(order %s) is one THIS run just cancelled and is still "
+                    "being listed as open — not a prior successful attempt. "
+                    "Skipping here is what leaves the position naked.",
+                    symbol, existing_sp, order_id,
+                )
                 continue
             # QUANTITY, not just existence. The coverage sweep compares
             # covered_qty against held_qty and never reads stop_price
@@ -6018,85 +6089,81 @@ class TradingPipeline:
                     "covers only %s of the %s residual shares, so it is "
                     "not this position's protection and does not make "
                     "this run idempotent.",
-                    symbol, _real_order_id(getattr(o, "id", None)),
-                    existing_sp, self._format_qty(existing_qty),
+                    symbol, order_id, existing_sp,
+                    self._format_qty(existing_qty),
                     self._format_qty(residual_qty),
                 )
                 continue
-            price_matches = abs(existing_sp - best_stop) < 0.005
-            order_id = _real_order_id(getattr(o, "id", None))
-            status_attr = getattr(o, "status", None)
-            status = str(
-                getattr(status_attr, "value", status_attr) or ""
-            ).lower()
-            if not ids_complete:
+            if status in _IN_FLIGHT_STATUSES:
+                # DEFECT 2, adversary round 2. `pending_new` is a stop the
+                # broker has received and not yet routed, and it can still
+                # go to `rejected`. Counting it as protection drained the
+                # recovery intent and wrote a stop price into the desk's
+                # own record that the broker may refuse seconds later, with
+                # only the coverage sweep to notice -- and that sweep
+                # DEFERS repair while a trading session holds the lock,
+                # which is precisely when this path runs. Neither banking
+                # it nor placing a second stop over it is safe, so this
+                # returns False WITHOUT a write-back: the caller keeps the
+                # persisted recovery intent, and the next pass reads a
+                # status that has resolved one way or the other. No timeout
+                # and no retry count is invented to close the window; the
+                # surviving intent is what closes it.
                 logger.warning(
-                    "Reprotect for %s will SUBMIT despite an open stop at "
-                    "$%.2f: %d of %d cancelled spec(s) carried no broker "
-                    "order id, so this run cannot prove the open stop is "
-                    "not the one it just cancelled. Submitting risks a "
-                    "duplicate stop, which nothing in this desk reconciles; "
-                    "skipping risks a naked position. Neither is safe and "
-                    "this branch cannot tell them apart.",
-                    symbol, best_stop, missing_ids, len(cancelled_specs),
+                    "Reprotect for %s is NOT complete: a stop from a "
+                    "previous attempt (order %s) is still %s at $%.2f — "
+                    "received by the broker but not yet working, and a "
+                    "%s order can still be rejected. Not recording it as "
+                    "protection and not placing a second stop over it; "
+                    "the recovery intent stays alive so the next pass "
+                    "re-reads it.",
+                    symbol, order_id, status, existing_sp, status,
                 )
-                break
-            if order_id and order_id in cancelled_ids:
-                logger.warning(
-                    "Reprotect for %s will SUBMIT: the open stop at $%.2f "
-                    "(order %s) is one THIS run just cancelled and is still "
-                    "being listed as open — not a prior successful attempt. "
-                    "Skipping here is what leaves the position naked.",
-                    symbol, best_stop, order_id,
+                self._record_reprotect_identity_gap(
+                    symbol,
+                    f"a previous attempt's stop (order {order_id}) was "
+                    f"still {status} at ${existing_sp:.2f}; the recovery "
+                    f"intent was kept rather than banked as protection.",
                 )
-                continue
-            if not order_id:
-                logger.warning(
-                    "Reprotect for %s will SUBMIT: an open stop at $%.2f "
-                    "carries no readable order id, so it cannot be "
-                    "distinguished from the stop this run just cancelled.",
-                    symbol, best_stop,
-                )
-                continue
-            if status not in _ALIVE_STATUSES:
+                return False
+            if status not in _ACTIVE_STATUSES:
                 logger.warning(
                     "Reprotect for %s will SUBMIT: the open stop at $%.2f "
                     "(order %s) is in status %r, not a live protective "
                     "state — a dying order is not coverage.",
-                    symbol, best_stop, order_id, status or "unknown",
+                    symbol, existing_sp, order_id, status or "unknown",
                 )
                 continue
-            if not price_matches:
+            # Identity-proven, live, and covering the residual: this is a
+            # PREVIOUS attempt's stop. Record the trigger the broker is
+            # actually holding, never the one this run wanted -- they can
+            # differ, and the desk's record must say what rests.
+            if existing_sp != best_stop:
                 logger.warning(
                     "Reprotect NOT submitting for %s: a live stop from a "
                     "PREVIOUS attempt (order %s, status %s) already rests "
                     "at $%.2f, while this run wanted $%.2f. Submitting "
                     "would leave TWO live stops on the same shares, which "
                     "the broker accepts and nothing here reconciles. The "
-                    "resting stop is left in place. NOTE: the coverage "
-                    "sweep will NOT correct the price -- it compares "
-                    "quantity only and never reads stop_price -- so a "
-                    "wider-than-wanted stop persists until the trail "
-                    "moves it.",
+                    "resting stop is left in place and is what gets "
+                    "recorded. NOTE: the coverage sweep will NOT correct "
+                    "the price -- it compares quantity only and never "
+                    "reads stop_price -- so a wider-than-wanted stop "
+                    "persists until the trail moves it.",
                     symbol, order_id, status or "unknown",
                     existing_sp, best_stop,
                 )
-                from src.execution.stop_records import write_back_stop_loss
-                write_back_stop_loss(
-                    getattr(self, "db", None), symbol, existing_sp,
-                    is_short=(side == "buy"),
+            else:
+                logger.info(
+                    "Reprotect skipped for %s — a stop at $%.2f (order %s, "
+                    "status %s) placed by a PREVIOUS attempt is live at the "
+                    "broker and is not one this run cancelled (idempotent "
+                    "re-run)",
+                    symbol, existing_sp, order_id, status,
                 )
-                return True
-            logger.info(
-                "Reprotect skipped for %s — a stop at $%.2f (order %s, "
-                "status %s) placed by a PREVIOUS attempt is live at the "
-                "broker and is not one this run cancelled (idempotent "
-                "re-run)",
-                symbol, best_stop, order_id, status,
-            )
             from src.execution.stop_records import write_back_stop_loss
             write_back_stop_loss(
-                getattr(self, "db", None), symbol, best_stop,
+                getattr(self, "db", None), symbol, existing_sp,
                 is_short=(side == "buy"),
             )
             return True
@@ -6198,6 +6265,39 @@ class TradingPipeline:
             symbol, self._format_qty(residual_qty), best_stop,
         )
         return True
+
+    def _record_reprotect_identity_gap(self, symbol: str, detail: str) -> None:
+        """Durable, append-only, per-symbol record of a reprotect ambiguity.
+
+        Adversary round 2, defect 4: the reason this path could not prove
+        what rests at the broker was a log WARNING and nothing else, so it
+        existed only in a rotated file nobody reads per symbol. It is now
+        written through `src/risk/exit_refusal.py`, the desk's existing
+        append-only per-symbol refusal record, so the next reader of the
+        symbol sees why a duplicate may rest or why an intent survived.
+
+        The run id is synthesised from the symbol and the UTC instant
+        because this function runs inside broker restore/drain, which
+        carries no run context to thread one from; the row is forensic and
+        keyed by symbol, not joined to a pipeline run. Never raises: the
+        SELL already succeeded and a forensic write must not unwind it.
+        """
+        try:
+            from datetime import datetime, timezone
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            self._record_exit_refusal(
+                symbol=symbol,
+                run_id=f"reprotect-{str(symbol).strip().upper()}-{stamp}",
+                action="REPROTECT",
+                code="reprotect_broker_state_unprovable",
+                dropped=False,
+                detail=detail,
+                layer="execution",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "reprotect ambiguity record failed for %s: %s", symbol, exc,
+            )
 
     def _alert_owner_reprotect_left_naked(
         self, symbol: str, residual_qty: float, covered_qty: float,

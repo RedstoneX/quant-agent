@@ -128,20 +128,103 @@ def test_unusable_spec_price_pages_the_owner():
 # ---------------------------------------------------------------------------
 
 
-def test_freshly_placed_pending_new_stop_counts_as_protection():
-    """DEFECT 1. A stop a PRIOR attempt submitted seconds ago can still
-    report `pending_new`. That is a healthy just-submitted order, not a
-    dying one, and this path reads freshly placed stops — counting it as
-    'not protection' makes the replay submit a SECOND live stop, which
-    nothing in this codebase reconciles."""
+def test_pending_new_stop_is_neither_banked_nor_duplicated():
+    """ADVERSARY ROUND 2, DEFECT 2 — this REPLACES an earlier test that
+    asserted `pending_new` counts as protection.
+
+    That assertion was wrong in a way that costs money: a `pending_new`
+    order has been received and not routed and can still go to `rejected`,
+    so banking it wrote a stop price into the desk's own record that the
+    broker may refuse seconds later AND drained the recovery intent, with
+    only the coverage sweep left to notice — and that sweep defers repair
+    while a trading session holds the lock, which is exactly when this
+    runs. Placing a second stop over it is equally unsafe. The third
+    outcome: return False, write nothing back, keep the intent alive.
+    """
     specs = [{"id": "ord-A", "qty": 2.43, "stop_price": 323.74}]
     p = _pipeline([_order("ord-PREVIOUS", 323.74, status="pending_new")])
+    written = []
+    import src.execution.stop_records as sr
+    real = sr.write_back_stop_loss
+    sr.write_back_stop_loss = lambda *a, **k: written.append(a)
+    try:
+        result = p._reprotect_residual_after_partial_sell("AAPL", 2.43, specs)
+    finally:
+        sr.write_back_stop_loss = real
+
+    assert result is False, (
+        "an in-flight stop was banked as protection and the recovery "
+        "intent drained"
+    )
+    assert not p.broker._submit_stop_limit_order.called, (
+        "a second stop was submitted over an in-flight stop — the duplicate"
+    )
+    assert not written, "a stop the broker has not yet routed was recorded"
+
+
+def test_identity_decides_even_when_the_price_differs():
+    """ADVERSARY ROUND 2, DEFECT 1/3. A live stop from a PREVIOUS attempt
+    resting a cent away from the price this run wanted must still block the
+    submit, and the price RECORDED is the one actually resting. The old
+    half-penny window made that stop invisible and put a second live stop on
+    the same shares; there is no tolerance constant left in this path."""
+    specs = [{"id": "ord-A", "qty": 2.43, "stop_price": 323.74}]
+    p = _pipeline([_order("ord-PREVIOUS", 323.73, status="new")])
+    written = []
+    import src.execution.stop_records as sr
+    real = sr.write_back_stop_loss
+    sr.write_back_stop_loss = lambda db, sym, price, **k: written.append(price)
+    try:
+        result = p._reprotect_residual_after_partial_sell("AAPL", 2.43, specs)
+    finally:
+        sr.write_back_stop_loss = real
+
+    assert result is True
+    assert not p.broker._submit_stop_limit_order.called, (
+        "a duplicate stop was placed over a live stop one cent away — the "
+        "incident's own price-first filter"
+    )
+    assert written == [323.73], (
+        "the desk recorded the stop it WANTED, not the one resting at the "
+        "broker"
+    )
+
+
+def test_unprovable_identity_is_recorded_durably_before_any_price_filter():
+    """ADVERSARY ROUND 2, DEFECT 4. The completeness flag is loop-invariant.
+    Evaluated inside the loop after the price/quantity filters it was never
+    consulted when nothing matched, so the submit happened in silence. Here
+    the only open stop fails the quantity filter, so the old ordering could
+    not have reached the flag at all."""
+    specs = [{"id": None, "qty": 2.43, "stop_price": 323.74}]
+    p = _pipeline([_order("ord-PREVIOUS", 999.00, status="new", qty=0.1)])
+    recorded = []
+    p._record_exit_refusal = lambda **kw: recorded.append(kw)
 
     assert p._reprotect_residual_after_partial_sell("AAPL", 2.43, specs) is True
-    assert not p.broker._submit_stop_limit_order.called, (
-        "a second stop was submitted over shares a pending_new stop from a "
-        "previous attempt already covers — that is the duplicate"
+    assert p.broker._submit_stop_limit_order.called
+    assert recorded, (
+        "the desk submitted over an unidentifiable broker stop and left no "
+        "durable per-symbol record of why"
     )
+    assert recorded[0]["symbol"] == "AAPL"
+    assert recorded[0]["code"] == "reprotect_broker_state_unprovable"
+    assert "order id" in recorded[0]["detail"]
+
+
+def test_no_price_tolerance_literal_survives_in_the_reprotect_path():
+    """DOCTRINE. The 0.005 window was a chosen constant justified by an
+    asserted float<->Decimal round-trip that was never measured, and as a
+    bare literal in a comparison it was invisible to the number scanner by
+    construction. The need for it is removed, not re-justified."""
+    import inspect
+    from src.pipeline import TradingPipeline as _TP
+    body = inspect.getsource(_TP._reprotect_residual_after_partial_sell)
+    code = "\n".join(
+        line for line in body.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    assert "0.005" not in code
 
 
 def test_pending_cancel_is_still_not_protection_in_the_wider_set():
