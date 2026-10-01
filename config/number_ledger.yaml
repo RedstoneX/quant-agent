@@ -2102,9 +2102,29 @@ numbers:
       to read one off? Unanswered; 1% is a guess standing in for a
       measurement, exactly as before.
     cost_while_unanswered: >-
+      Level clustering decides where structure is, and structure places stops
+      - so this sets the granularity of every level-backed stop.
       A level reaching the risk seats without a zone is matched on a guessed
       1% band, so a stop can be reported as backed by structure on the
       strength of an unsourced width. docs/WORK.md item 55.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        over the universe the desk could trade, the price separation between
+        neighbouring pivots and whether a touch near one of them behaves as a
+        touch of the other -- bounce rate as a function of separation, expressed
+        both in percent and in ATR -- so the width at which two pivots stop
+        being one level is read off the instrument rather than halved from the
+        narrowest bin some outside study happened to test.
+      closes_when: >-
+        a separation exists at which the shared-bounce rate falls away, and the
+        tolerance becomes that reading in whatever unit the measurement
+        supports, percent or ATR. DELETE outcome: if the bounce rate is flat in
+        separation, clustering is adding nothing over the raw pivot list, and
+        the clustering step and its tolerance go together rather than the
+        percentage being re-picked.
   - id: src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
     value: 10
     status: arbitrary
@@ -2127,6 +2147,22 @@ numbers:
       This ranks the six levels shown to the Tech Analyst and feeds into
       which level a stop or target is read from, on a fall-off rate nothing
       has measured.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        over the universe the desk could trade, the bounce rate at a level as a
+        function of how far price currently sits from it, in percent and in ATR,
+        holding touch count fixed so the separately measured touch-count effect
+        is not read twice, giving any distance fall-off as a measured curve
+        rather than an assumed decay.
+      closes_when: >-
+        the measured fall-off supports a decay rate, and the divisor becomes
+        that reading. DELETE outcome: if the bounce rate does not fall with
+        distance once touch count is held fixed, the distance term leaves the
+        strength formula entirely and levels rank on touch count alone, rather
+        than the divisor being re-picked.
   - id: src.data.levels.MAX_HORIZON_SESSIONS
     value: 60
     status: derived
@@ -2212,6 +2248,25 @@ numbers:
     cost_while_unanswered: >-
       Stops are placed on levels found by a window nothing measured, and the
       desk carries two different answers to the same question.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        over the universe the desk could trade, swing points identified on daily
+        bars at windows of 2 through 10 bars either side, and what price did
+        next at each one: whether it reversed, how far in ATR terms, and how
+        often, so a swing point is defined by subsequent behaviour on the
+        instrument rather than by a chosen bar count. The same pass covers the
+        trailing-stop scan's window of 3, which answers the same question
+        differently today.
+      closes_when: >-
+        a window exists whose swing points reverse measurably more often than
+        its neighbours, and both the level scan and the trailing-stop scan adopt
+        that single reading. DELETE outcome: if reversal frequency is flat
+        across every window tested, the window is not selecting anything and the
+        desk should keep one scan at whichever window is cheapest, with the
+        second constant deleted rather than re-picked.
   - id: src.data.levels._CLEAN_FACTOR
     value: 5
     status: not-trade-governing
@@ -2409,6 +2464,23 @@ numbers:
     cost_while_unanswered: >-
       Too tight and cash sits unswept; too loose and the desk pays through the
       spread on every sweep.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        the parking vehicle's own quoted bid-ask spread and its intraday
+        distribution, read off the broker's quote feed across a month of
+        sessions, together with the submitted limit, the fill price and the
+        filled/unfilled outcome of every sweep buy the desk sends, so the pad is
+        a multiple of a measured spread rather than a round ten basis points.
+      closes_when: >-
+        the measured spread distribution supports stating the pad as a multiple
+        of that instrument's own spread, and the constant becomes that reading.
+        DELETE outcome: if the measured spread never approaches the pad and
+        every sweep buy fills at or inside the touch, the pad is doing nothing
+        and the sweep leg should become a plain marketable order with the pad
+        removed rather than re-picked.
   - id: src.execution.cash_sweep._FUND_BUFFER_FRAC
     value: 0.01
     status: arbitrary
@@ -2424,6 +2496,25 @@ numbers:
     cost_while_unanswered: >-
       Too small and a sweep leaves the account short for a real trade; too
       large and cash earns nothing.
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        for every funded buy, the cash the sizing step assumed it would consume,
+        the cash the fill actually consumed, the broker's own commission and fee
+        charge on that order, and the price drift between sizing and fill, so
+        the shortfall this buffer exists to cover is an arithmetic reading off
+        the account rather than a round percentage with a round floor. This is a
+        cash-arithmetic recording, not a study of the desk's returns, so it does
+        not fit anything to the desk's own trading record.
+      closes_when: >-
+        the recording shows the largest fee-plus-drift shortfall actually
+        observed and the balance below which the fractional part rounds to
+        nothing, and the two constants become those two readings. DELETE
+        outcome: if no funded buy ever came up short across the recording
+        window, the buffer is holding cash back for nothing and both constants
+        go rather than being re-picked.
   - id: src.execution.cash_sweep._FUND_BUFFER_MIN_USD
     value: 50
     status: arbitrary
@@ -2439,6 +2530,25 @@ numbers:
     cost_while_unanswered: >-
       As above, on small balances where the fractional buffer rounds to
       nothing.
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        for every funded buy, the cash the sizing step assumed it would consume,
+        the cash the fill actually consumed, the broker's own commission and fee
+        charge on that order, and the price drift between sizing and fill, so
+        the shortfall this buffer exists to cover is an arithmetic reading off
+        the account rather than a round percentage with a round floor. This is a
+        cash-arithmetic recording, not a study of the desk's returns, so it does
+        not fit anything to the desk's own trading record.
+      closes_when: >-
+        the recording shows the largest fee-plus-drift shortfall actually
+        observed and the balance below which the fractional part rounds to
+        nothing, and the two constants become those two readings. DELETE
+        outcome: if no funded buy ever came up short across the recording
+        window, the buffer is holding cash back for nothing and both constants
+        go rather than being re-picked.
   - id: src.execution.cash_sweep._FUND_CASH_SETTLE_POLL_S
     value: 2
     status: not-trade-governing
@@ -2479,6 +2589,23 @@ numbers:
       needs the cash back for a trade?
     cost_while_unanswered: >-
       An unfilled sweep sell means an approved trade cannot be funded.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        the parking vehicle's own quoted bid-ask spread and its intraday
+        distribution, read off the broker's quote feed across a month of
+        sessions, together with the submitted limit, the fill price and the
+        filled/unfilled outcome of every sweep sell the desk sends, so the pad
+        is a multiple of a measured spread rather than a round ten basis points.
+      closes_when: >-
+        the measured spread distribution supports stating the pad as a multiple
+        of that instrument's own spread, and the constant becomes that reading.
+        DELETE outcome: if the measured spread never approaches the pad and
+        every sweep sell fills at or inside the touch, the pad is doing nothing
+        and the sweep leg should become a plain marketable order with the pad
+        removed rather than re-picked.
   - id: src.execution.stop_records._ALPACA_TICK_AT_OR_ABOVE_DOLLAR
     value: 0.01
     status: instrument
@@ -4467,6 +4594,25 @@ numbers:
       -- the "real remedy" the comment names -- while still exposed, on any
       failure class the three-attempt/~2-second budget does not actually
       cover.
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        every protective-stop placement attempt the broker client makes after an
+        entry fills: the attempt index, the error class returned (rate limit,
+        5xx, dropped connection, fill/order eventual-consistency race, hard
+        rejection), the delay waited before it, and whether the following
+        attempt succeeded, so the clearing time of each transient failure class
+        is read off the broker rather than assumed to be under a second.
+      closes_when: >-
+        the recording shows, per failure class, the attempt count and the delay
+        at which placement actually succeeds, and the ceiling becomes that
+        reading for the worst class the desk is willing to wait out. DELETE
+        outcome: if no failure class is ever cleared by a retry, the retry
+        ladder goes entirely and a placement failure escalates to the
+        unprotected-position alert at once, rather than the attempt count being
+        re-picked.
   - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[0]
     value: 0.5
     status: arbitrary
@@ -4483,6 +4629,22 @@ numbers:
       Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS: a position
       can be left without a protective stop if the real clearing time
       exceeds the assumed one.
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        the same per-attempt stop-placement recording that routes the attempt
+        ceiling: error class, delay waited and whether the next attempt
+        succeeded, read off the broker's own responses, so the first delay is
+        the measured clearing time of a transient failure class rather than a
+        chosen fraction of a second.
+      closes_when: >-
+        the recording shows the delay at which each transient failure class
+        clears, and this rung becomes that reading. DELETE outcome: if success
+        on the following attempt is independent of the delay waited, the delay
+        is buying nothing, and this rung goes -- with the retry becoming
+        immediate -- rather than being re-picked at another round number.
   - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[1]
     value: 1.5
     status: arbitrary
@@ -4495,6 +4657,22 @@ numbers:
       Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
     cost_while_unanswered: >-
       Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        the same per-attempt stop-placement recording that routes the attempt
+        ceiling: error class, delay waited and whether the next attempt
+        succeeded, read off the broker's own responses, so the second delay is
+        the measured clearing time of a transient failure class rather than a
+        chosen fraction of a second.
+      closes_when: >-
+        the recording shows the delay at which each transient failure class
+        clears, and this rung becomes that reading. DELETE outcome: if success
+        on the following attempt is independent of the delay waited, the delay
+        is buying nothing, and this rung goes -- with the retry becoming
+        immediate -- rather than being re-picked at another round number.
   - id: src.execution.broker._FRACTIONAL_QTY_EPSILON
     value: 1.0e-9
     status: not-trade-governing
@@ -5213,6 +5391,23 @@ numbers:
     cost_while_unanswered: >-
       A pivot or micro-structure feature older than 40 bars is invisible to
       the seat's immediate-context read.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        over the universe the desk could trade, the swing pivots and micro-
+        structure features the level scan finds on daily bars at lookbacks of
+        20, 40, 60 and 120 bars, and how many of the features present at the
+        longest lookback are already present at 40, so the per-symbol bar cap is
+        a reading off the instrument rather than a judgement that 40 is enough.
+      closes_when: >-
+        a lookback exists past which the feature set stops changing materially,
+        and the cap becomes that reading. DELETE outcome: if the feature set at
+        40 bars is indistinguishable from the feature set at every other
+        lookback tested, the bar block is doing nothing for the seat's read and
+        the prompt should carry the structural level table alone, with the cap
+        removed rather than re-picked at some other round number.
   - id: src.agents.tech_analyst._MAX_SYMBOLS_PER_CALL
     value: 30
     status: not-trade-governing
@@ -6083,6 +6278,27 @@ numbers:
       does not fill, so the position stays open unprotected until a session
       acts; too wide and every such exit can give back up to 3% beyond the
       stop. The primary stop-market path is not exposed to this trade-off.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md, item 90, the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+      records: >-
+        over the universe the desk could trade, the distance between a prior-
+        session close and the next session's opening print on gap days, and the
+        intraday range travelled on the fastest sessions, read off daily bars,
+        so the limit distance a stop-LIMIT needs in order to stay marketable on
+        exactly the days it exists for is read off the instrument rather than
+        fitted to this desk's own fills; alongside it, a count of how often the
+        fallback and de-lever legs are actually taken now that primary
+        protective stops are stop-MARKET.
+      closes_when: >-
+        the measured gap distribution identifies a distance at which an
+        acceptable share of stop-limit exits would still have been marketable,
+        and the fallback buffer becomes that reading. DELETE outcome: if the
+        recorded leg count shows the stop-limit fallback is never taken because
+        the primary stop-market path absorbs every protective exit, the constant
+        and the leg it serves go together rather than the percentage being re-
+        picked.
   - id: src.execution.broker.AlpacaBroker._MAX_REPLACEMENT_HOPS
     value: 8
     status: not-trade-governing

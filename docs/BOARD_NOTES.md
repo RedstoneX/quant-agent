@@ -454,7 +454,7 @@ that exists the 5 is an unsourced bar deciding how tight a live stop may be.
 
 **Structure fix shipped (2026-09-25) —** The deterministic ranking now HAS a sign. `SmartMoneyObservation.signal_direction` (derived from `direction`, never stored) returns +1 for a buy, 0 for a sale/exchange/unknown; both ranking keys in `src/agents/smart_money_analyst.py` (`_symbol_rank`, `_transaction_rank`) multiply the `value * signal_weight` term by it. So a bearish sale can no longer tie or outrank a bullish buy of the same dollar value — the exact identity this item names — and a buy's contribution is unchanged (existing behaviour preserved; covered by `tests/test_smart_money.py`). The desk is long-only on smart-money admission (admission requires `direction == "buy"`), so a sale is NEUTRALISED (0), not counted as bullish; the row still reaches the analyst as evidence, so the LLM can still read it bearish. **What stays open:** signing a sale -1 by magnitude (the sourced >50%-of-holdings band is the hook) is the SIGNED SCORING SCHEME still ruled out above — owner appetite or a published source, not a number to guess.
 
-## item 70
+## item 70 — RETIRED 2026-09-30, the one literal doing two jobs is split and verified in code; the three leftover unsourced values are now item 213
 
 **Plain language —** One made-up number, 1.0, is doing two different jobs in the selling path, and neither job is read off anything. The first job is deciding how far a stock has to move against you before the move counts as real rather than ordinary daily wobble. The second is deciding how tight a stop-loss is allowed to be before the desk refuses it as too close. Both are expressed as "one average day's range". That they are the same figure is a coincidence — nothing ties them — so changing one would not change the other, and changing neither is not a source. The first job is also the only measured over-refusal on this path: of eight proposed sales the reviewer approved, seven were blocked as "too small a move". Closing the plumbing next door did not answer why.
 **Example —** A stock whose average daily range is $4 has to move $4 against you before the desk stops calling it noise, and separately, its stop is refused if it sits closer than $4 away. Those two rules constrain each other in a way nobody chose, because somebody typed 1.0 twice.
@@ -473,17 +473,11 @@ that exists the 5 is an unsourced bar deciding how tight a live stop may be.
 
 **What WOULD settle it, if the band survives at all.** Either a published, citable derivation of the quantity the band claims to bound — the adverse excursion at which a move stops being ordinary daily wobble — carrying its own number, or a live reading taken from the instrument at the moment of the decision that no one had to choose the level of. Absent one of those, the honest route is the one below.
 
-**2026-09-30, is the band redundant with the alignment rule? Read from the code, not the prose: NO, and the two places it lives are not the same.** The alignment exit you ruled for — sell only when structure, the stock's own volatility and the trend agree the move is over — WAS not yet built as its own mechanism when this note was written; it now is (`src/risk/alignment_exit.py`), and since the alignment SCAN landed it is read against every held position every session and can start a sale of its own, not only confirm one a model already asked for; what exists is the protection check, which asks whether the seller's stated invalidation has happened, or whether a genuine support level under the stop has broken, and gates a break on the trend it reads. The band's FIRST home is a blanket gate standing in front of all of that: every sale that is not triggered by outside news is compared against how far the stock has moved from the PRICE THE DESK PAID, before any structure is consulted at all. Nothing else in the selling path measures anything from the purchase price. That is its unique job, and it is the wrong job: measuring from what the desk paid is the definition of fitting the decision to the desk's own history rather than reading the instrument, which is what your ruling forbids. Removing this gate, and letting the structure-and-trend test decide, is the honest fix and it removes the number by removing the mechanism — the same move that retired the correlation cutoff. It is a real change to when the desk sells, so it is not made here.
+**2026-09-30, is the band redundant with the alignment rule? Read from the code, not the prose: NO, and the two places it lives are not the same.** The alignment exit you ruled for — sell only when structure, the stock's own volatility and the trend agree the move is over — is not yet built as its own mechanism; what exists is the protection check, which asks whether the seller's stated invalidation has happened, or whether a genuine support level under the stop has broken, and gates a break on the trend it reads. The band's FIRST home is a blanket gate standing in front of all of that: every sale that is not triggered by outside news is compared against how far the stock has moved from the PRICE THE DESK PAID, before any structure is consulted at all. Nothing else in the selling path measures anything from the purchase price. That is its unique job, and it is the wrong job: measuring from what the desk paid is the definition of fitting the decision to the desk's own history rather than reading the instrument, which is what your ruling forbids. Removing this gate, and letting the structure-and-trend test decide, is the honest fix and it removes the number by removing the mechanism — the same move that retired the correlation cutoff. It is a real change to when the desk sells, so it is not made here.
 
 The band's SECOND home is genuinely not redundant and must not be deleted with the first: it is the last resort for a holding that has neither a written invalidation nor a qualifying support level, where the structure test has nothing to read. Delete it there and every such holding loses its protection outright. That case needs its own answer before anything is removed.
 
 **Fixed today, no change to when the desk sells.** The refusal record used to state the move was inside the band without saying that the band's width had been widened by a hold length the desk could not actually read, and the durable per-stock record of the refusal carried only the model's own sentence — nothing saying which rule refused it or on what numbers. Both records now state the rule, the numbers behind it, and whether the hold length was measured or defaulted. Separately, two outcomes of the protection check were filed under the label "noise band held" when the band had never been evaluated at all — a holding that had not moved against the desk, and one with no usable price data. Those now carry their own labels.
-
-**2026-10-01, the break margin's two derivation attempts are spent — both written down so neither is retried blind.** Trying to express it the way the books do, as a percentage of the price, fails twice over: deciding whether a level is an important one or a minor one — which is what picks between the two published percentages — needs a judgement the desk cannot make in those terms, so it would have to invent a second number to replace one; and the published percentages are themselves round figures from a 1948 book written for a market quoted in eighths, so adopting them trades an unsourced figure for an unsourced figure. Trying instead to read the margin off the instrument itself — the smallest price step at which a closing price is even distinguishable from the level — does produce something real, but only that the margin must be bigger than nothing at all. That part IS now ratified with its reason: if the margin were zero, a stock merely touching the support its stop sits on would count as having broken it, and the desk would drop protection on every ordinary retest. The size of the margin is still a made-up figure and is still recorded as one. No third attempt will be made, and a figure taken from the desk's own past trades is barred.
-
-**2026-10-01, what was built instead: the recording that would settle it.** The reason this number could never be checked against the published work is that nothing ever wrote down what "one average day's range" actually came to as a percentage of the price at the moment a decision was taken — the only unit the books measure the same thing in. Every break check now records both, together with how many times the level has been tested. Nothing about when the desk sells changed.
-
-**2026-10-01, measured against the live database, read-only.** The equivalent recording added for the wobble band on 30 September has captured nothing at all: of 334 recorded position checks, not one is a wobble-band refusal and not one carries the machine-readable payload. So that number still has no evidence accruing, and the long-quoted "seven of eight approved sales blocked" cannot be reproduced from that record. Both of the wobble band's remaining routes change when the desk sells and were not taken here.
 
 **Moved from WORK.md (2026-09-24) —** Same round number, two questions, no source, nothing tying them. The first job blocked 7 of 8 recorded discretionary exits. Settles with, for each independently, a published measurement of the quantity it bounds, or a decision to derive one from the other as a single named constant. How readily the desk should block a sale at all is the owner's appetite, not this item.
 
@@ -1603,6 +1597,19 @@ The order matters and is the completion criteria:
 3. Rebuild the test suite in the same pass. The silent risk is measured: 42 tests patch `pipeline.compute_indicators` and 20 patch `pipeline._get_sector` on the module, so when that code moves they stop patching anything, run the real code, and still pass. Every such patch must be re-pointed at the new home, and a check added so a patch on a name that does not exist fails loudly.
 ## item 182 — RETIRED 2026-09-30, both criteria met: the cash-deficit cushion was reformulated away (sized off the order's own live limit floor) and GROSS_LADDER_ALERT_PCT is now SOURCED from the MiFID Article 62(1) / COBS 16A.4.3UK 10% depreciation-notification threshold, moving the owner alert from -20% to -10%
 
+## item 213 — Three separate ATR multiples, all reading 1.0, are still unsourced
+
+**Plain language —** Item 70 was about one made-up number being typed in two places and quietly doing two different jobs. That is fixed: the jobs now have their own names, and a third related number has its own name too, so changing one no longer moves the others. What is left is simpler and harder — none of the three has anything behind it.
+
+**Why this is a new item and not the old one —** The old item's subject was the collision. The collision is gone, so the item is retired rather than left open forever. The leftover question is about sourcing three numbers, which is a different job with a different test for being finished.
+
+**The decision —** None for you. Your 2026-09-30 ruling that risk is read off each holding's own behaviour, never set once for everything, closed the "ask the owner to pick a figure" route these three were parked on. They now close by being read off the instrument, or by being written down honestly as numbers nobody can source, with the reason.
+
+**Recommendation —** Do not retune any of them while sourcing them, and do not merge them back into one number because they happen to read the same. A test now pins that they stay three separate names.
+
+**2026-10-01, the noise band's evidence route is now this item's to read.** Item 70's last open criterion measured the noise band's own settlement recording against the production database, read-only, and found it has produced ZERO observations since it deployed on 2026-09-30: the recording is built but UNPROVEN, not dead, and nothing on the retirement branch could conjure the rows it is waiting for. Reading that recording once it carries observations is criterion (a) of this item, which already owns settling the exit-path noise band per name or recording it as permanently unsourceable, so no separate item was filed for it. Item 70's other leftover, the absolute minimum stop multiple, stays with item 90 as that criterion itself says.
+
+
 
 **Duplicate stale note removed 2026-09-30.** A SECOND `## item 182` heading survived the retirement further up this file, still titled "detail moved from the board" and still asserting "the item STAYS OPEN" and that `GROSS_LADDER_ALERT_PCT` was unsourced. Both were false once the MiFID threshold landed, and a reader hitting the first heading would have read a retired item as open. It is deleted; this block is the only item-182 note.
 
@@ -1968,3 +1975,65 @@ Filed 2026-10-01 from item 90's second routing tranche, which found the defect a
 **Why it governs money —** The manager uses the preview to decide it is too heavy in a sector and to trim, drop or reorder names. It is therefore correcting a portfolio that will never exist, and the correction lands on the real one. Both directions are live: a sector the preview shows as crowded may be light once the real sizes are applied, so a good name is dropped for nothing; a sector the preview shows as comfortable may be heavy, so the crowding the manager was asked to watch for goes through unflagged.
 
 **Not fixed here, deliberately —** The routing pass changes no values and no behaviour. The fix is a real behavioural change to what the manager sees, and it needs its own test evidence; the DONE WHEN criteria in `docs/WORK.md` item 221 are written to be falsifiable, including a test that fails if the preview's size for a candidate is independent of that candidate's stop distance.
+
+## item 90 — the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+
+Twelve `arbitrary` rows in `config/number_ledger.yaml` gained a `settles_by`
+route. No VALUE changed and no row changed status, so the arbitrary count is
+unmoved at 136; the routeless residue falls from 57 to 45 and
+`MAX_ROUTELESS_ARBITRARY` moves with its own delta line.
+
+The rows, grouped as they were routed:
+
+- **Cash sweep (4).** `_BUY_LIMIT_PAD`, `_SELL_LIMIT_PAD`, `_FUND_BUFFER_FRAC`,
+  `_FUND_BUFFER_MIN_USD`. The two pads route to a measurement of the parking
+  vehicle's own quoted bid-ask spread, so a round ten basis points becomes a
+  multiple of a measured spread. The two buffer rows route to a recording of
+  assumed-versus-consumed cash, broker fees and sizing-to-fill drift on every
+  funded buy. That is the one route in this tranche that reads the desk's own
+  orders, and it is deliberately cash arithmetic rather than a study of
+  returns: fitting a number to this desk's own trading record is barred by
+  `docs/OUTCOME.md`, and a fee-and-drift shortfall is not a return.
+- **Broker stop placement (4).** `AlpacaBroker.STOP_LIMIT_BUFFER_PCT`,
+  `_STOP_PLACEMENT_MAX_ATTEMPTS` and both `_STOP_PLACEMENT_BACKOFF_S` rungs.
+  The buffer routes to gap-distance and fast-session range measurements over
+  the universe the desk could trade, NOT to this desk's own stop fills, which
+  was the obvious and barred shape. The retry ceiling and the two delays share
+  one recording: per-attempt error class, delay waited and whether the next
+  attempt succeeded, which is what `docs/WORK.md` item 129 said the falsified
+  "must be a rejection after three attempts" reasoning never had.
+- **Level scan (3).** `PIVOT_WINDOW`, `CLUSTER_TOLERANCE_PCT`,
+  `LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT`. All three route to bounce-behaviour
+  measurements on daily bars over the tradable universe. The pivot-window
+  route is written to cover BOTH answers the desk holds today — 5 here and 3
+  in the trailing-stop scan — so one measurement retires the disagreement
+  instead of documenting it for a third time.
+- **Technical seat (1).** `_BARS_PER_SYMBOL`. Routes to a feature-stability
+  measurement across lookbacks of 20, 40, 60 and 120 bars.
+
+**Every route states the DELETE outcome beside the set-it outcome**, because
+a constant the measurement cannot distinguish from "no constant at all" should
+go rather than be re-picked at another round number. In this tranche that
+means: the bar cap goes if the feature set never changes with lookback; the
+sweep pads go, and the leg becomes a plain marketable order, if the measured
+spread never approaches them; each backoff rung goes if success on the next
+attempt is independent of the delay waited; the whole retry ladder goes, with
+placement failure escalating at once, if no failure class ever clears on a
+retry; the stop-limit buffer and its leg go together if the fallback leg is
+never taken now that primary protective stops are stop-MARKET; the clustering
+step goes if bounce rate is flat in pivot separation; and the distance term
+leaves the level-strength formula entirely, leaving touch count alone, if
+bounce rate does not fall with distance once touch count is held fixed.
+
+No derivation was attempted for any of the twelve, so the two-attempts limit
+was not reached. Nothing here was classified `not-trade-governing`: each of
+the twelve reaches a real order — the sweep constants decide how much cash is
+available to fund a buy and at what price the sweep legs fill, the broker
+constants decide whether and how a protective stop gets placed, and the level
+and bar-cap constants decide where structure is found, which is where stops
+are read from.
+
+**Still open on item 90 after this tranche:** 45 routeless `arbitrary` rows
+remain, concentrated in `src.config.RiskConfig` (7), `src.risk.rules` (7),
+`src.risk.exit_guard` (6), `src.risk.trailing` (6) and `src.verdicts` (4).
+The item stays OPEN.
