@@ -8,7 +8,7 @@
 # run that command is unaffected: git falls back to its normal conflicted
 # merge for these files, same as before this file existed.
 docs/WORK.md merge=docsmerge
-docs/BOARD_NOTES.md merge=docsmerge
+docs/board_notes/*.md merge=docsmerge
 docs/INCIDENT_HISTORY.md merge=docsmerge
 
 # The ratchet history is APPEND-ONLY: two branches that each retire a number

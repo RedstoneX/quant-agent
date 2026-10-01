@@ -3,7 +3,7 @@
 THE CASE THIS PINS. On 2026-09-14 the daily-loss breaker stopped liquidating
 the book and started halting (docs/WORK.md item 32); `_midday_emergency_
 liquidate` was deleted. That PR shipped a documentation pass — WORK.md,
-INCIDENT_HISTORY.md, BOARD_NOTES.md — and touched no file under
+INCIDENT_HISTORY.md, board_notes/ — and touched no file under
 `config/prompts/`. Three days later four places still described the deleted
 behaviour, and two of them were text a paid model reads every session:
 `src/agents/position_reviewer.py` assembles the reviewer's user message and
