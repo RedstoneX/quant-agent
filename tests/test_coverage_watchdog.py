@@ -1232,3 +1232,63 @@ def test_typed_alert_claim_is_per_type_and_records_what_it_held_back(tmp_path):
     suppressed = load_state(path)["suppressed_alerts"]["deploy_drift"]
     assert suppressed["count"] == 1
     assert suppressed["events"][-1]["key"] == "MAIN@ABC"
+
+
+# ===========================================================================
+# Item 211 defect 2 — the per-DAY unprotected marker silenced a second name
+# ===========================================================================
+
+def _two_name_broker(stopless: tuple[str, ...]):
+    """Two held longs; the ones named in `stopless` have no protective stop."""
+    broker = MagicMock()
+    broker.get_positions.return_value = [
+        SimpleNamespace(symbol="AAA", qty=10.0, current_price=100.0),
+        SimpleNamespace(symbol="BBB", qty=10.0, current_price=100.0),
+    ]
+
+    def _snapshot(symbol, side="sell"):
+        if symbol in stopless:
+            return True, []
+        return True, [{"id": f"stop-{symbol}", "qty": 10.0, "stop_price": 90.0}]
+
+    broker.snapshot_protective_stops.side_effect = _snapshot
+    broker.is_trading_day.return_value = True
+    broker.get_session_open.side_effect = lambda on_date=None: None
+    broker.get_session_close.side_effect = lambda on_date=None: None
+    return broker
+
+
+def test_a_second_name_going_unprotected_the_same_day_still_alerts(db, state_path):
+    """Item 211 defect 2, a live-risk hole. The "position is unprotected"
+    alert was deduped on a bare per-DAY marker while stop-repair-failure and
+    unreadable-stop both dedupe per SYMBOL per day, so a SECOND name going
+    naked later the same day was silenced completely. Two different symbols
+    going unprotected on the same day must produce two alerts.
+
+    Fails on the old behaviour: the first call wrote `alerted_for_day` and
+    the second returned `should_alert is False` with BBB naked and nothing
+    said about it anywhere.
+    """
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+
+    first = coverage_watchdog.check_coverage(
+        _two_name_broker(("AAA",)), now=_SAT_0615, db_path=db, state_path=state_path,
+    )
+    assert [g.symbol for g in first.gaps] == ["AAA"]
+    assert first.should_alert is True
+
+    # Same trading day, same state file. BBB's stop is now gone too.
+    second = coverage_watchdog.check_coverage(
+        _two_name_broker(("AAA", "BBB")), now=_SAT_0615, db_path=db, state_path=state_path,
+    )
+    assert {g.symbol for g in second.gaps} == {"AAA", "BBB"}
+    assert second.should_alert is True, (
+        "a second name going unprotected the same day must page the owner"
+    )
+    assert "BBB" in coverage_watchdog.alert_text(second)
+
+    # And a repeat of the SAME name alone is still only said once a day.
+    third = coverage_watchdog.check_coverage(
+        _two_name_broker(("AAA", "BBB")), now=_SAT_0615, db_path=db, state_path=state_path,
+    )
+    assert third.should_alert is False
