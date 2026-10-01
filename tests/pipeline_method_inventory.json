@@ -35,13 +35,11 @@
           "_evidence_gate_skip",
           "_execution_stage",
           "_expected_sessions_missing_today",
-          "_filter_hard_risk_decisions",
           "_filter_supported_symbols",
           "_forced_close_side_and_qty",
           "_form4_admission_is_current",
           "_format_qty",
           "_full_sell_qty",
-          "_has_actionable_signal_fn",
           "_install_sigterm_unwind",
           "_is_trading_day",
           "_kill_switch_halt_result",
@@ -62,13 +60,11 @@
           "_record_short_overnight_gaps",
           "_reduce_sell_qty",
           "_refresh_account_state",
-          "_refuse_queued_earnings_buys",
           "_release_retired_cash_park",
           "_require_paid_analysis",
           "_resolve_live_context",
           "_restore_sigterm",
           "_retired_cash_park_symbol",
-          "_risk_mod_floor_breach",
           "_risk_stage",
           "_run_earnings_preprocess_body",
           "_run_evening_body",
@@ -275,6 +271,20 @@
           "_surface_reconcile_outcomes",
           "_wire_protective_stop_block_recorder",
           "_write_ahead_protection_restore"
+        ]
+      }
+    },
+    "src/pipeline_risk_gate.py": {
+      "module_functions": [],
+      "classes": {
+        "RiskGateMixin": [
+          "_apply_risk_modifications",
+          "_filter_hard_risk_decisions",
+          "_has_actionable_signal_fn",
+          "_persist_hard_risk_block",
+          "_reconcile_size_to_risk_budget",
+          "_refuse_queued_earnings_buys",
+          "_risk_mod_floor_breach"
         ]
       }
     },

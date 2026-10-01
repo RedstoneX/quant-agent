@@ -779,7 +779,9 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # is pinned on the other parameter default it found, so the shape stays
     # covered and a new one still cannot arrive unseen.
     assert not any(
-        i.startswith("src.pipeline.TradingPipeline._refuse_queued_earnings_buys")
+        i.startswith(
+            "src.pipeline_risk_gate.RiskGateMixin._refuse_queued_earnings_buys"
+        )
         for i in ids
     )
     assert "src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)" in ids

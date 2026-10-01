@@ -7793,7 +7793,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_prompt_facts.py
     note: >-
-      Dead default (src/pipeline_intraday.py:100): every caller in src/ passes this
+      Dead default (src/pipeline.py:5308): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7844,10 +7844,10 @@ numbers:
       bid, whose displayed size is finite, so this is a reachable state, not
       a theoretical one. Booking from the filled quantity and continuing to
       sell while the deficit stands would delete this haircut entirely.
-  - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
+  - id: src.pipeline_risk_gate.RiskGateMixin._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary
-    site: src/pipeline.py
+    site: src/pipeline_risk_gate.py
     note: >-
       Research pre-filter: a symbol whose MA20/MA50 spread is under 0.5 x
       ATR14 counts as having an actionable signal and is sent to the technical

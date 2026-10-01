@@ -266,6 +266,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
     "src/pipeline_intraday.py",
     "src/pipeline_prompt_facts.py",
+    # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
+    # application moved here out of `src/pipeline.py`.
+    "src/pipeline_risk_gate.py",
     # 2026-10-01, board item 210 step 2: the protection cluster -- stop
     # coverage, repair, protected sells, write-ahead restore, the fill and
     # stop-out reconcilers -- moved here out of `src/pipeline.py`. Scoped at
