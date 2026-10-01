@@ -1126,6 +1126,80 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_trade_refusals_symbol_ts "
             "ON trade_refusals (symbol, timestamp)"
         )
+        # --- Item 75 evidence: the alignment-exit reading for EVERY open
+        # position EVERY session, INCLUDING the sessions it does not fire.
+        # RECORDING ONLY (2026-10-01).
+        #
+        # Board item 75 (automatic PARTIAL profit-taking — trimming part of
+        # a position rather than selling all of it) is blocked because
+        # nobody can say what fraction to trim without inventing it. Two
+        # derivations were attempted on 2026-10-01 and both failed; the
+        # reasons are in `docs/BOARD_NOTES.md` (item 75) and the item bars a
+        # third. The question that has to be answered first is empirical:
+        # do positions pass through a DURABLE intermediate band of
+        # weakening before their trend ends, or do they fall straight
+        # through? Today only a FIRING alignment exit leaves any trace, so
+        # the population that would answer it — positions that weakened and
+        # recovered — is invisible. These rows are that population.
+        #
+        # One row per open position per run. The reading is the one
+        # `src.risk.alignment_exit.check_alignment_exit` ALREADY computes;
+        # nothing here recomputes it a second way, and nothing here changes
+        # when the exit fires or what it does.
+        #
+        # WHAT THIS DATA MAY BE USED FOR: reading, once, whether a durable
+        # intermediate band of weakening exists at all.
+        #
+        # WHAT IT MAY NOT BE USED FOR: nothing may read it back into a
+        # sizing, stop or exit decision, and it may NEVER be swept for the
+        # trim fraction that would have performed best on these rows. That
+        # is fitting a number to this desk's own trading record, which
+        # doctrine bars outright ("no fitting, only reading") and which
+        # item 75's own last criterion bars by name. The bar holds however
+        # much data accumulates.
+        #
+        # NO CLASSIFICATION AND NO BAND EDGE IS STORED. "Weakening",
+        # "durable" and "recovered" each need a cutoff and a horizon nobody
+        # can source today, so only the RAW distance is kept, in the name's
+        # own ATR, alongside which of the exit's conditions were satisfied.
+        # A later reader states its own cutoff and applies it to these
+        # numbers, which were never rounded to one. Unknown is NULL — never
+        # a computed or assumed substitute, which is why an UNPARSEABLE
+        # read still writes a row (with `breach_atrs` NULL) rather than
+        # being dropped: "could not read the chart" and "the chart was
+        # intact" are different facts.
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alignment_exit_readings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                run_id TEXT,
+                session_date TEXT,
+                symbol TEXT NOT NULL,
+                is_short INTEGER,
+                status TEXT,
+                code TEXT,
+                breach_atrs REAL,
+                band_atrs REAL,
+                sessions_since_mark_lost INTEGER,
+                last_mark_price REAL,
+                last_mark_source TEXT,
+                marks_count INTEGER,
+                thesis_ma_period INTEGER,
+                thesis_ma_kind TEXT,
+                not_evaluated_reason TEXT,
+                UNIQUE (run_id, symbol)
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_alignment_exit_readings_symbol_ts "
+            "ON alignment_exit_readings (symbol, session_date)"
+        )
+        _ensure_column(
+            "alignment_exit_readings", "not_evaluated_reason",
+            "not_evaluated_reason TEXT",
+        )
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
@@ -1302,7 +1376,8 @@ class Database:
         # from "held, and never gapped against".
         #
         # WHY IT EXISTS (item 186): the short-side sizing haircut
-        # (`RiskConfig.short_gap_risk_multiple`, 1.5) is unsourced, and TWO
+        # (`src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT`, 1.5, the one
+        # definition since board item 216) is unsourced, and TWO
         # attempts to read it off the instrument have failed — see the
         # ledger row and docs/BOARD_NOTES.md item 186. Both failed for the
         # same underlying reason: the desk has never recorded what a short
@@ -2818,6 +2893,103 @@ class Database:
                 (excursion, position.symbol, excursion, position.symbol),
             )
 
+    def record_alignment_exit_reading(
+        self, *, symbol: str, verdict, run_id: str | None = None,
+        is_short: bool | None = None, session_date: str | None = None,
+        not_evaluated_reason: str | None = None,
+    ) -> bool:
+        """Record one open position's alignment-exit reading for this run.
+
+        ITEM 75 RECORDING, RECORDING ONLY, and it decides nothing. Read the
+        `alignment_exit_readings` note in `_migrate` for why it exists (a
+        trim fraction cannot be derived from a population the desk never
+        kept) and for the hard limit on its use: nothing may read it back
+        into a sizing, stop or exit decision, and it may NEVER be swept for
+        the trim fraction that would have performed best.
+
+        `verdict` is the `AlignmentExitCheck` the exit ALREADY produced for
+        this symbol this run — passed in rather than recomputed, so this
+        write cannot disagree with the decision the desk acted on. EVERY
+        open position is written EVERY run, fired or not: the whole point
+        is the sessions the exit does NOT fire, which leave no trace today.
+
+        THIS RECORDING BUYS NO DATA TO FILL ITSELF. A chart read is a live
+        `yfinance` download (`market.get_ohlcv`, uncached), so a position
+        the scan did not already evaluate is written with `verdict=None`
+        and an explicit `not_evaluated_reason`, leaving every reading
+        column NULL. A later reader needs those rows to know its own
+        denominator, and must not read a NULL reading as an intact chart.
+
+        Unknown stays NULL. A HOLD with nothing given up carries no
+        distance, and an UNPARSEABLE read carries no distance and no band;
+        neither is filled with a zero or an assumed value, because "price
+        is exactly at the mark", "the chart was intact" and "the chart
+        could not be read" are three different facts.
+
+        Idempotent per run per symbol (UNIQUE on `run_id, symbol`): a
+        second write for the same pair replaces the first rather than
+        double-counting a position.
+        """
+        sym = (symbol or "").strip().upper()
+        if not sym or (verdict is None and not not_evaluated_reason):
+            return False
+
+        def _num(x):
+            try:
+                v = float(x)
+            except (TypeError, ValueError):
+                return None
+            return v if math.isfinite(v) else None
+
+        last_mark = getattr(verdict, "last_mark", None)
+        marks = getattr(verdict, "marks", None) or ()
+        sessions = getattr(verdict, "sessions_since_mark_lost", None)
+        try:
+            sessions = int(sessions) if sessions is not None else None
+        except (TypeError, ValueError):
+            sessions = None
+        period = getattr(verdict, "thesis_ma_period", None)
+        try:
+            period = int(period) if period is not None else None
+        except (TypeError, ValueError):
+            period = None
+        try:
+            with self._lock:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO alignment_exit_readings ("
+                    "  timestamp, run_id, session_date, symbol, is_short,"
+                    "  status, code, breach_atrs, band_atrs,"
+                    "  sessions_since_mark_lost, last_mark_price,"
+                    "  last_mark_source, marks_count, thesis_ma_period,"
+                    "  thesis_ma_kind, not_evaluated_reason"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        self._sqlite_utc_timestamp(datetime.now(UTC)),
+                        run_id or None,
+                        session_date or str(et_today()),
+                        sym,
+                        None if is_short is None else int(bool(is_short)),
+                        getattr(verdict, "status", None),
+                        getattr(verdict, "code", None),
+                        _num(getattr(verdict, "breach_atrs", None)),
+                        _num(getattr(verdict, "band_atrs", None)),
+                        sessions,
+                        _num(getattr(last_mark, "price", None)),
+                        getattr(last_mark, "source", None),
+                        len(marks) if verdict is not None else None,
+                        period,
+                        (getattr(verdict, "thesis_ma_kind", "") or "") or None,
+                        not_evaluated_reason or None,
+                    ),
+                )
+                self.conn.commit()
+            return True
+        except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
+            logger.warning(
+                "alignment-exit reading for %s was not recorded (%s)", sym, e,
+            )
+            return False
+
     def record_overnight_gap(
         self, symbol: str, prev_close: float, open_price: float,
         session_date: str,
@@ -3861,26 +4033,49 @@ class Database:
     TARGET_REVISION_KIND = "target_revision"
 
     def save_target_level_break(
-        self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+        self, *, run_id: str, symbol: str, raw_broken: bool | None,
+        bar_date: str, raw_reach: bool | None = None,
+        raw_wall: bool | None = None,
     ) -> int:
-        """Record whether the close dated `bar_date` had cleared this
-        position's target level, so a LATER, DIFFERENT bar_date's read can
-        require it to still be cleared before treating the break as
-        confirmed."""
+        """Record the close dated `bar_date`'s RAW trigger state, so a
+        LATER, DIFFERENT bar_date's read can require the same condition to
+        still hold before treating it as confirmed.
+
+        THREE FLAGS, ONE ROW, ONE MECHANISM (item 194). `raw_broken` is the
+        original: the level the target was measured against was closed
+        through. `raw_reach` and `raw_wall` are the other two triggers' raw
+        state, carried in the SAME row under the same `bar_date` key so all
+        three are confirmed by one definition of "the prior trading day
+        agreed" rather than three. A flag omitted or passed None is written
+        as absent and read back as False — a question that could not be
+        asked can never be half of a confirmation.
+        """
+        payload: dict = {"bar_date": str(bar_date)}
+        for key, val in (
+            ("raw_broken", raw_broken),
+            ("raw_reach", raw_reach),
+            ("raw_wall", raw_wall),
+        ):
+            if val is not None:
+                payload[key] = bool(val)
         return self.insert_specialist_evidence(
             run_id=run_id, agent_name="risk_manager",
             kind=self.TARGET_LEVEL_BREAK_KIND, scope="symbol",
             symbol=symbol.upper(),
-            evidence_json=json.dumps({
-                "raw_broken": bool(raw_broken), "bar_date": str(bar_date),
-            }),
+            evidence_json=json.dumps(payload),
         )
 
     def get_prior_target_level_break(
         self, symbols, *, today_bar_date: str, exclude_run_id: str | None = None,
+        flag: str = "raw_broken",
     ) -> dict[str, bool]:
-        """The most recent target-level break flag per symbol from a close
-        dated STRICTLY BEFORE `today_bar_date`.
+        """The most recent target-revision trigger flag per symbol from a
+        close dated STRICTLY BEFORE `today_bar_date`.
+
+        `flag` picks which of the three raw states written by
+        `save_target_level_break` to read; the row selection, the
+        strictly-earlier bar_date rule and the missing-row rule are
+        identical for all three.
 
         A symbol absent from the result has no qualifying prior-day read, and
         callers must read that as False — a missing row can never manufacture
@@ -3889,13 +4084,14 @@ class Database:
         return self._prior_break_flags(
             symbols, kind=self.TARGET_LEVEL_BREAK_KIND,
             today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
+            flag=flag,
         )
 
     def _prior_break_flags(
         self, symbols, *, kind: str, today_bar_date: str,
-        exclude_run_id: str | None = None,
+        exclude_run_id: str | None = None, flag: str = "raw_broken",
     ) -> dict[str, bool]:
-        """Shared body of the two prior-close break reads."""
+        """Shared body of the prior-close break reads."""
         wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
         if not wanted:
             return {}
@@ -3908,24 +4104,50 @@ class Database:
         if exclude_run_id:
             sql += " AND run_id != ?"
             params.append(exclude_run_id)
-        sql += " ORDER BY timestamp DESC, id DESC LIMIT 500"
+        # KEYED ON THE CLOSE, NOT ON THE LAST ROW WRITTEN.
+        #
+        # This used to take the most recent row by timestamp. That is not
+        # "the prior trading day's close": several intraday cycles can
+        # re-read one close, and whichever of them happened to run last
+        # then decided the flag for the next day. The confirmation is a
+        # statement about a CLOSE, so it is now keyed on `bar_date` — the
+        # latest bar date strictly before today's that actually ANSWERED
+        # this question — and, among several readings of that same close,
+        # the EARLIEST recorded one (lowest id). Earliest, because it is
+        # the reading taken closest to the close itself and because it is
+        # the one choice that does not depend on how many cycles ran.
+        #
+        # A row that does not carry `flag` at all is a row that could not
+        # answer this question, and is SKIPPED rather than read as False —
+        # otherwise a degraded cycle's silence would erase an answer.
+        #
+        # [MEASURED 2026-10-01, production DB read-only] the stop-side
+        # twin holds 6 rows, exactly one per symbol+bar_date, and the
+        # target-side kind holds none at all, so no production row set is
+        # affected by this change today; it is a correctness fix against
+        # the intraday re-read, not a repair of an observed wrong answer.
+        sql += " ORDER BY id ASC LIMIT 500"
         with self._lock:
             rows = self.conn.execute(sql, tuple(params)).fetchall()
-        latest: dict[str, bool] = {}
+        best: dict[str, tuple[str, bool]] = {}
         for row in rows:
             row = dict(row)
             sym = row["symbol"]
-            if sym in latest:
-                continue
             try:
                 payload = json.loads(row.get("evidence_json") or "{}")
                 bar_date = payload.get("bar_date")
             except (TypeError, ValueError):
                 continue
-            if not bar_date or bar_date >= today_bar_date:
+            if not bar_date or str(bar_date) >= str(today_bar_date):
                 continue
-            latest[sym] = bool(payload.get("raw_broken"))
-        return latest
+            if flag not in payload:
+                continue
+            prior = best.get(sym)
+            # Rows arrive id-ascending, so the first one seen for a given
+            # bar date wins it; a strictly later bar date replaces it.
+            if prior is None or str(bar_date) > prior[0]:
+                best[sym] = (str(bar_date), bool(payload.get(flag)))
+        return {sym: val for sym, (_bd, val) in best.items()}
 
     def record_target_revision(
         self, *, run_id: str, symbol: str, code: str, seat: str,

@@ -253,12 +253,15 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   the engine refuses new exposure and trims the live book on its own) ·
   `require_stop_loss`.
   A name that has `JUST FILED` and is not yet analysed carries no earnings
-  stance: that seat is simply absent from the agreement count below, and
-  size the name on the seats that remain. (No ladder prices them; only the refusal exists.)
-  No separate risk number applies to it. The pipeline additionally clamps
-  the RESULTING position WEIGHT on such a name — a concentration backstop
-  on notional, a different quantity from risk, enforced in
-  `TradingPipeline._clamp_queued_earnings_buys`.
+  stance: the report reached this session UNREAD because the pre-market
+  preprocess did not analyse it. That is MISSING EVIDENCE, not a seat's
+  verdict. DO NOT PROPOSE A BUY ON IT — the pipeline refuses such a BUY
+  outright in `TradingPipeline._refuse_queued_earnings_buys`, because the
+  desk declines to open a position on a filing it meant to read and did not.
+  There is no weight cap and no separate risk number any more: the old
+  5%-of-book clamp was an invented share with no source and was removed on
+  2026-10-01 (board item 186). Holding such a name is completely untouched;
+  refusing to BUY is not a reason to SELL.
   A short carries the SAME caps as a long (`max_position_pct` per name,
   the gross and net exposure ceilings for the book). For a short,
   additionally: a borrow gate that
@@ -674,8 +677,11 @@ missing evidence.
 
 If `risk` lands below **{{risk.min_position_risk_pct}}**, do not emit the target at all. Below the
 floor the idea is not worth trading: it pays full commission and full
-attention for an immaterial payoff, and the constructor will deny it
-anyway.
+attention for an immaterial payoff. Do not rely on the constructor to
+catch it — the risk-budget floor there only denies a grant the budget
+had to CUT below the floor, so a sub-floor request that fits the
+remaining headroom is granted in full and sized as asked. This floor
+is yours.
 
 **Nothing in this formula refers to the stop distance, the share price
 or the position's weight.** That is deliberate. Those belong to the
@@ -1006,7 +1012,9 @@ Semantics of `risk_allocation_pct`:
   gap-risk haircut further reduce a short's actual size — see "Shorting"
 - Never emit a target below `min_position_risk_pct`
   ({{risk.min_position_risk_pct}}) — under the floor the idea is not
-  worth trading and the constructor will deny it
+  worth trading, and the constructor will NOT catch it for you: its
+  floor only denies a grant the risk budget had to cut, so a sub-floor
+  request that fits the headroom is sized as asked
 - **All weights are GROSS-leverage weights.** The `Weight:` tag on each
   position (and the current weight the constructor diffs your target
   against) multiplies a leveraged/inverse ETF's market value by

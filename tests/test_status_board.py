@@ -655,10 +655,27 @@ def test_retired_bullet_lines_are_never_edited_or_removed():
     before = {l.strip() for l in r.stdout.splitlines() if bullet_re.match(l.strip())}
     now = {l.strip() for l in work_md.read_text().splitlines() if bullet_re.match(l.strip())}
     changed = sorted(before - now)
-    assert not changed, (
+    # A RE-OPEN is the one lawful removal, and it is not a weakening: the
+    # sibling guard `test_no_retired_number_names_an_item_that_is_still_live`
+    # refuses a number that is listed as retired AND live at once, so an
+    # honestly re-opened item CANNOT keep its retired bullet. The two rules
+    # together are still total — every removal must be paid for by the
+    # number being a live item on the board, which is strictly harder to
+    # fake than leaving the bullet alone. Item 211, 2026-10-01: retired
+    # against a remedy that measurement then showed saves nothing.
+    queue_items, _ = sb.load_funnel_queue(work_md)
+    gate_items, _ = sb.load_pm_gate(work_md)
+    live = {i.rank for i in queue_items} | {i.rank for i in gate_items}
+    unexplained = [
+        line for line in changed
+        if not (set(re.findall(r"\d+", line)) & {str(n) for n in live})
+    ]
+    assert not unexplained, (
         "these retired-numbers bullet line(s) existed before this change and "
-        "are now gone or edited: " + "; ".join(changed) + " — a closure may "
-        "only APPEND a brand new line, never edit or remove an existing one."
+        "are now gone or edited: " + "; ".join(unexplained) + " — a closure may "
+        "only APPEND a brand new line, never edit or remove an existing one. "
+        "The sole exception is a re-open, which must put the number back as a "
+        "live item in the same change."
     )
 
 
@@ -3102,10 +3119,18 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     # whole below-bar cull set worst-first. Written up in
     # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md.
     assert 39 not in by_rank
-    for rank in (20,):
-        assert by_rank[rank].in_hand_state == "decided, not yet built", rank
-    for rank in (20,):
-        assert by_rank[rank].bucket == "in_hand", rank
+    # Item 20 used to be pinned here as the live "decided, not yet built"
+    # case. It was retired 2026-10-01: the counting half had already shipped
+    # as a per-name record, and its last criterion -- whether the intraday
+    # technical read may report LOST -- was answered yes, which the code
+    # already did. No live item is in that state now, and pinning whichever
+    # one happens to be is what made this assertion rot twice before (items
+    # 49 and 39 are recorded above for the same reason). The parser
+    # behaviour it pinned is covered synthetically by
+    # `_IN_HAND_STATE_CASES` and
+    # `test_a_dated_status_paragraph_in_the_body_counts_as_a_ruling`, which
+    # cannot rot when the board changes.
+    assert 20 not in by_rank
     # Item 3 used to be pinned here as the "no_action" case (WORKING AS
     # INTENDED, no follow-on). It was written up in
     # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md once

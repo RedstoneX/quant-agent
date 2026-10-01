@@ -255,3 +255,51 @@ Consumers (must stay aligned — if you edit one, verify the others):
   - `PortfolioManagerAgent.decide`                (the sub-floor cap default)
 """
 
+
+
+SHORT_GAP_RISK_MULTIPLE_DEFAULT = 1.5
+"""The short-side gap-risk SIZING haircut, in one place (board item 216).
+
+A short gaps through its stop upward with no bound, so the same nominal
+risk allocation must open a SMALLER short than an equivalent long at the
+same stop distance. SIZING ONLY — never applied to stop placement.
+
+The value is NOT re-derived here and is unchanged from what shipped: it is
+the deployed `risk.short_gap_risk_multiple` default. Whether 1.5 is the
+right magnitude is board item 186's question, not this constant's.
+
+Before 2026-10-01 this literal existed four times (`RiskConfig`,
+`ConstructorConfig`, the pipeline's config read and the execution-time
+risk-budget read) and the haircut was APPLIED at three separate sites, each
+with its own copy of the multiply. Execution sizes a position as
+`min(qty_by_alloc, qty_by_risk)`, so a change to one application site was
+silently a half-change to the quantity that actually reaches the market.
+Both legs now call `gap_adjusted_risk_per_share` below, and
+`tests/test_one_definition_per_quantity.py` fails if a second application
+of this multiple reappears anywhere under `src/`.
+"""
+
+
+def gap_adjusted_risk_per_share(
+    risk_per_share: float, *, is_short: bool, multiple: float | None = None,
+) -> float:
+    """Risk-per-share with the short-side gap haircut applied, or unchanged.
+
+    THE one application site. Callers pass the configured multiple when they
+    hold one; `None` (or anything that is not a real number greater than 1 —
+    a MagicMock config attribute, most often) falls back to
+    `SHORT_GAP_RISK_MULTIPLE_DEFAULT`. That Mock-safety check used to be
+    written out separately at the execution-time call site; it lives here now
+    so the two legs cannot disagree about what an unreadable config means.
+    """
+    if not is_short:
+        return risk_per_share
+    usable = (
+        not isinstance(multiple, bool)
+        and isinstance(multiple, (int, float))
+        and multiple > 1.0
+    )
+    gap_multiple = (
+        float(multiple) if usable else SHORT_GAP_RISK_MULTIPLE_DEFAULT
+    )
+    return risk_per_share * gap_multiple

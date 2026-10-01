@@ -94,7 +94,7 @@ def _stage_pipeline(*, verdict, decisions):
     pipeline.db = MagicMock()
     pipeline._sweeper = MagicMock(return_value=None)
     pipeline._filter_supported_symbols = MagicMock(return_value=(decisions, []))
-    pipeline._clamp_queued_earnings_buys = MagicMock(return_value=decisions)
+    pipeline._refuse_queued_earnings_buys = MagicMock(return_value=decisions)
     pipeline._filter_hard_risk_decisions = MagicMock(
         side_effect=lambda d, *a, **kw: (list(d), [], []),
     )

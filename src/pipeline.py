@@ -12,6 +12,7 @@ from src.trading_calendar import et_now, et_today, session_date_key
 from pydantic import ValidationError
 
 from src.config import AppConfig, RiskConfig
+from src.risk.constants import SHORT_GAP_RISK_MULTIPLE_DEFAULT
 from src.quantities import avg_dollar_volume, deployable_cash, dollar_volumes
 from src.data.market import MarketDataProvider
 from src.data.macro import MacroCoverage, MacroDataProvider
@@ -849,7 +850,9 @@ def build_constructor_config(config, risk_engine_config):
             # argument `apply_gross_ceiling` has ignored since 2026-09-24.
             # Stage 3 (shorts) — the sizing haircut. A short's single-name
             # ceiling is `max_position_pct` above, the same as a long's.
-            short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
+            short_gap_risk_multiple=_risk_setting(
+                "short_gap_risk_multiple", SHORT_GAP_RISK_MULTIPLE_DEFAULT,
+            ),
             # Spec §11.2 — same "size under the hard block" pattern again.
             # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
             # breaches the ceiling would be DROPPED rather than taken
@@ -6669,29 +6672,51 @@ class TradingPipeline:
         return True
 
     @staticmethod
-    def _clamp_queued_earnings_buys(
+    def _refuse_queued_earnings_buys(
         decisions: list[TradeDecision],
         earnings_results: list[dict],
-        max_pct: float = 5.0,
-        positions: list | None = None,
-        total_value: float | None = None,
     ) -> list[TradeDecision]:
-        """Hard-cap the RESULTING position weight on symbols with queued
-        (just-filed) earnings.
+        """REFUSE every BUY on a symbol whose just-filed report reached this
+        session unread. Board item 186, 2026-10-01.
 
-        A 10-Q filed today but not yet analyzed by the LLM can move the stock
-        ±10% overnight. PM shouldn't size up before the analyst has read it.
-        The prompt rule asks PM to self-comply ("cap at target_weight_pct <=
-        5.0"); this is the belt that holds when the LLM ignores it.
+        MISSING EVIDENCE, NOT LOW CONVICTION. `queued=True` is set in one
+        place only (the session-time earnings fetch below): a filing the
+        pre-market preprocess failed to pick up and analyse. It records an
+        operations failure of this desk's own pipeline, not a seat verdict
+        and not a market event, and this gate is argued on exactly those
+        terms — the desk meant to read the report before deciding, it did
+        not, and it declines to buy into the gap. It is NOT the conviction
+        bar and does not touch it: see `risk.rules.unread_filing_block_reason`
+        for why routing it through R7 would be wrong and would also change
+        behaviour on names the desk already holds.
 
-        2026-07-16 audit: the belt capped the wrong number. By this point in
-        the pipeline `allocation_pct` is the constructor's DELTA (target minus
-        current weight), not the target — so a name already held at 15% with
-        an unread filing could be topped up to 20% because the ADD itself was
-        <= 5%. The cap now measures what it documents: existing weight + add.
-        `positions`/`total_value` are optional so the old delta-only behavior
-        remains for callers that can't supply a book (tests, and any future
-        caller with no position context) rather than crashing.
+        WHAT THIS REPLACED, AND WHY THE NUMBER IS GONE. Until now this was a
+        clamp: the resulting position weight on such a name was held to 5% of
+        the book. That 5 had no source. It was researched to a definite
+        negative (the closest published quantity, the ~5.07% average
+        one-day absolute earnings-announcement move, measures the size of a
+        MOVE and not a share of a BOOK, and the desk's own per-trade risk
+        envelope runs forward to a weight near 100%, so it cannot be the
+        cap's parent). Under the owner's 2026-09-30 ruling a global constant
+        governing risk is a defect to be removed, not an appetite to be
+        answered, so the condition is REFORMULATED instead of re-derived and
+        no percentage survives. REFUSING rather than sizing down is
+        REASONING, not a quoted rule: the entry bar already refuses a name
+        whose technical read is merely ABSENT, so requiring the filing to
+        have been read before buying is consistent with how this desk
+        already treats evidence it does not have, and the standing doctrine
+        that all five seats must be right to ENTER is what makes an entry
+        the right thing to withhold.
+
+        BUY-ONLY, and silent about everything else. A SELL is untouched, a
+        name whose filing has been read is untouched, and nothing already
+        held is sold or reclassified — refusing to BUY is not a decision to
+        SELL, the same contract `agreement_refuses_trade` carries.
+
+        The refusal is recorded durably per symbol by
+        `pipeline_stages._record_queued_earnings_refusals`, which reads the
+        before/after lists, so a refused BUY can be judged later from the
+        record rather than from argument.
         """
         queued_symbols = {
             (ea.get("symbol") or "").strip().upper()
@@ -6702,50 +6727,17 @@ class TradingPipeline:
         if not queued_symbols:
             return decisions
 
-        # Existing GROSS weights, same convention as the risk engine.
-        current: dict[str, float] = {}
-        if positions and total_value and total_value > 0:
-            try:
-                from src.portfolio_constructor import PortfolioConstructor
-                current = PortfolioConstructor._current_weights(positions, total_value)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Earnings-queued cap: weight lookup failed (%s) — "
-                               "falling back to delta-only capping", e)
-                current = {}
-
-        clamped: list[TradeDecision] = []
+        from src.risk.rules import unread_filing_block_reason
+        kept: list[TradeDecision] = []
         for d in decisions:
             if d.action != "BUY" or d.symbol.upper() not in queued_symbols:
-                clamped.append(d)
+                kept.append(d)
                 continue
-            from src.risk.rules import _gross_multiplier
-            held_pct = current.get(d.symbol.upper(), 0.0)
-            # Room left under the cap, expressed in the RAW notional units
-            # `allocation_pct` is spent in (see PortfolioConstructor._build_buy).
-            allowed_raw = max(0.0, max_pct - held_pct) / _gross_multiplier(d.symbol)
-            if d.allocation_pct <= allowed_raw:
-                clamped.append(d)
-                continue
-            if allowed_raw <= 0:
-                logger.warning(
-                    "Earnings-queued cap: DROPPING %s BUY %.2f%% — already at "
-                    "%.1f%% weight, at/over the %.1f%% cap with a fresh filing "
-                    "not yet analyzed",
-                    d.symbol, d.allocation_pct, held_pct, max_pct,
-                )
-                continue   # a BUY with allocation_pct=0 is not a valid no-op downstream
-            try:
-                reduced = d.model_copy(update={"allocation_pct": round(allowed_raw, 2)})
-                logger.warning(
-                    "Earnings-queued cap: %s BUY %.2f%% → %.2f%% (held %.1f%%, "
-                    "cap %.1f%%; fresh filing not yet analyzed)",
-                    d.symbol, d.allocation_pct, allowed_raw, held_pct, max_pct,
-                )
-                clamped.append(reduced)
-            except Exception as e:
-                logger.warning("Earnings-queued cap copy failed for %s: %s — keeping original", d.symbol, e)
-                clamped.append(d)
-        return clamped
+            logger.warning(
+                "Unread-filing refusal: dropping %s BUY %.2f%% — %s",
+                d.symbol, d.allocation_pct, unread_filing_block_reason(d.symbol),
+            )
+        return kept
 
     def _is_trading_day(self) -> bool:
         try:
@@ -10951,8 +10943,8 @@ class TradingPipeline:
             SEAT_STRUCTURAL_SWEEP,
             SWEEP_EVIDENCE,
             assess_target_revision,
+            raw_trigger_flags,
             level_backing_target,
-            target_level_broken,
         )
         from src.trading_calendar import et_today
 
@@ -11152,17 +11144,37 @@ class TradingPipeline:
                 # several intraday cycles re-reading one close are never
                 # miscounted as two confirming days.
                 effective_bar_date = bar_date or str(et_today())
+                #
+                # ALL THREE triggers are confirmed the same way (item 194):
+                # the reach and wall triggers used to fire on one session's
+                # reading, so a target near a bound flipped session to
+                # session, and because a target moving down used to cross a
+                # range trade into a tighter trailing regime the flip was a
+                # one-way ratchet. The regime boundary now reads the pinned
+                # entry target, and this is the second brake.
                 break_seen_prior_close = False
+                reach_seen_prior_close = False
+                wall_seen_prior_close = False
                 try:
-                    prior = self.db.get_prior_target_level_break(
-                        [sym], today_bar_date=effective_bar_date,
-                        exclude_run_id=run_id,
-                    )
-                    break_seen_prior_close = bool(prior.get(sym, False))
+                    for _flag, _name in (
+                        ("raw_broken", "break_seen_prior_close"),
+                        ("raw_reach", "reach_seen_prior_close"),
+                        ("raw_wall", "wall_seen_prior_close"),
+                    ):
+                        _prior = self.db.get_prior_target_level_break(
+                            [sym], today_bar_date=effective_bar_date,
+                            exclude_run_id=run_id, flag=_flag,
+                        )
+                        if _name == "break_seen_prior_close":
+                            break_seen_prior_close = bool(_prior.get(sym, False))
+                        elif _name == "reach_seen_prior_close":
+                            reach_seen_prior_close = bool(_prior.get(sym, False))
+                        else:
+                            wall_seen_prior_close = bool(_prior.get(sym, False))
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "target revision: prior-close read failed for %s (%s) — "
-                        "today's break, if any, starts unconfirmed", sym, exc,
+                        "today's triggers, if any, start unconfirmed", sym, exc,
                     )
 
                 # Sessions this position has already spent out of its pinned
@@ -11202,6 +11214,8 @@ class TradingPipeline:
                     close_price=close_price,
                     levels_coverage=coverage or COVERAGE_UNKNOWN,
                     break_seen_prior_close=break_seen_prior_close,
+                    reach_seen_prior_close=reach_seen_prior_close,
+                    wall_seen_prior_close=wall_seen_prior_close,
                     sessions_held=sessions_held,
                     # The same ratified derivation bars the constructor passes at
                     # entry, read off `risk_engine.config` (what
@@ -11218,15 +11232,28 @@ class TradingPipeline:
                 # `_structural_protection_for_holding`. A `None` from the break
                 # test means the question could not be asked; nothing is filed,
                 # so a missing input can never become half of a confirmation.
-                raw_broken = target_level_broken(
-                    target_level=target_level, close_price=close_price,
-                    atr=atr, is_short=is_short,
+                raw_flags = raw_trigger_flags(
+                    entry_price=float(
+                        getattr(position, "avg_entry", 0) or 0
+                    ) or None,
+                    stored_target=stored_target, target_level=target_level,
+                    atr=atr, close_price=close_price,
+                    horizon_sessions=buy.get("expected_horizon_sessions"),
+                    levels=levels, is_short=is_short,
+                    # Every bar `raw_trigger_flags` reads EXCEPT the
+                    # breakout projection, which is a derivation input and
+                    # not a trigger test.
+                    **{k: v for k, v in target_cfg.items()
+                       if k != "breakout_projection_atr_multiple"},
                 )
-                if raw_broken is not None and bar_date:
+                raw_broken = raw_flags["raw_broken"]
+                if bar_date and any(v is not None for v in raw_flags.values()):
                     try:
                         self.db.save_target_level_break(
-                            run_id=run_id, symbol=sym,
-                            raw_broken=bool(raw_broken), bar_date=bar_date,
+                            run_id=run_id, symbol=sym, bar_date=bar_date,
+                            raw_broken=raw_broken,
+                            raw_reach=raw_flags["raw_reach"],
+                            raw_wall=raw_flags["raw_wall"],
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
@@ -11425,6 +11452,8 @@ class TradingPipeline:
 
         computed_levels: list[float] = []
         computed_level_touches: dict[float, int] = {}
+        computed_level_zones: dict[float, list[float]] = {}
+        computed_level_bars: dict[float, list[tuple[float, float]]] = {}
         atr = ma_20 = ma_50 = ma_200 = ma_200_prior = adx = close_price = bar_date = None
         # The completed trading sessions strictly before today's close, most
         # recent first, taken from THIS position's own daily bars — the
@@ -11453,6 +11482,14 @@ class TradingPipeline:
                 all_levels = (*supports, *resistances)
                 computed_levels = sorted(lv.price for lv in all_levels)
                 computed_level_touches = {lv.price: lv.touches for lv in all_levels}
+                computed_level_zones = {
+                    lv.price: [float(lv.zone_low), float(lv.zone_high)]
+                    for lv in all_levels
+                    if lv.zone_low is not None and lv.zone_high is not None
+                }
+                computed_level_bars = {
+                    lv.price: list(lv.pivot_bars) for lv in all_levels
+                }
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: bars/indicator fetch failed for %s "
@@ -11502,6 +11539,8 @@ class TradingPipeline:
             is_short=is_short,
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
+            computed_level_zones=computed_level_zones,
+            computed_level_bars=computed_level_bars,
             min_level_touches=min_level_touches,
             # NOT a setting and not a fallback default — this is the exact
             # constant `find_structural_levels` used to cluster pivots into
@@ -12385,6 +12424,11 @@ class TradingPipeline:
             if proposal is None:
                 _note(
                     symbol, evaluation.code,
+                    # Item 212 follow-up: on a range name the R-ratchet leg
+                    # supplies the code, so the STRUCTURAL leg's own refusal
+                    # reason would otherwise never be recorded again. It is
+                    # both a recorded field and part of the dedupe identity.
+                    structural_code=evaluation.structural_code,
                     current_stop=current_stop,
                     current_price=position.current_price,
                     entry=position.avg_entry,
@@ -12469,6 +12513,10 @@ class TradingPipeline:
                 continue
             _note(
                 symbol, TRAIL_CODE_TRAILED, proposal.reason,
+                # Carried on the SUCCESS branch too: the case this field
+                # exists for is the R-ratchet leg winning, which is a
+                # trailed row, not a refusal row.
+                structural_code=evaluation.structural_code,
                 proposed_stop=proposal.new_stop, current_stop=current_stop,
             )
             if isinstance(order, dict):
@@ -12671,9 +12719,29 @@ class TradingPipeline:
                 # (the executor's qty-sign gate rejects a SELL on one).
                 act = "COVER" if is_short else "SELL"
                 existing = best_by_symbol.get(symbol)
+                # ITEM 75 RECORDING, AND IT BUYS NOTHING IT DOES NOT ALREADY
+                # HAVE. A chart read is a live `yfinance` download
+                # (`market.get_ohlcv`, uncached), so reading the chart for a
+                # position this scan would have skipped is NEW network work,
+                # not free evidence — the record is therefore written from
+                # what the scan ALREADY computes, and a position the scan
+                # skips gets an explicit "not evaluated this session" row
+                # with a NULL reading rather than a chart read bought to
+                # fill it. A later reader needs the skipped rows to know its
+                # own denominator; it must not mistake them for health.
                 if existing is not None and priority.get(
                     existing.get("action"), 99,
                 ) <= priority.get(act, 99):
+                    self._record_alignment_reading(
+                        symbol=symbol, verdict=None, run_id=run_id,
+                        is_short=is_short,
+                        not_evaluated_reason=(
+                            "the review already proposed a "
+                            f"{existing.get('action')} for this name, which "
+                            "the scan does not override, so its chart was "
+                            "not read this session"
+                        ),
+                    )
                     continue
                 facts = (position_facts or {}).get(symbol, {}) or {}
                 verdict = self._alignment_exit_cached(
@@ -12685,6 +12753,14 @@ class TradingPipeline:
                     stop_loss=getattr(position, "stop_loss", None)
                     or facts.get("stop_loss"),
                     run_id=run_id,
+                )
+                # The reading the scan itself acts on, memoised, written
+                # whether or not it fires — the sessions it does NOT fire are
+                # the whole point. Nothing reads these rows back into any
+                # decision; see `db.record_alignment_exit_reading`.
+                self._record_alignment_reading(
+                    symbol=symbol, verdict=verdict, run_id=run_id,
+                    is_short=is_short,
                 )
                 if not verdict.exit_cleared:
                     continue
@@ -12725,6 +12801,23 @@ class TradingPipeline:
                     "is raised for it",
                     getattr(position, "symbol", "?"), e,
                 )
+
+    def _record_alignment_reading(
+        self, *, symbol: str, verdict, run_id: str, is_short: bool,
+        not_evaluated_reason: str | None = None,
+    ) -> None:
+        """Item 75 recording. Never raises, never blocks a sale, never
+        buys a chart read to fill itself."""
+        try:
+            self.db.record_alignment_exit_reading(
+                symbol=symbol, verdict=verdict, run_id=run_id,
+                is_short=is_short, not_evaluated_reason=not_evaluated_reason,
+            )
+        except Exception as e:  # noqa: BLE001 — a recording never blocks
+            logger.warning(
+                "alignment-exit reading for %s was not recorded (%s)",
+                symbol, e,
+            )
 
     def _position_opened_today(self, symbol: str) -> bool:
         """Was this position bought in TODAY's session? DATE EQUALITY ONLY.

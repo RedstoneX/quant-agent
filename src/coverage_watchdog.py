@@ -411,6 +411,11 @@ class CoverageStatus:
     def should_alert(self) -> bool:
         return self.is_exposed and not self.already_alerted_for_day
 
+    #: `already_alerted_for_day` is keyed per SYMBOL per day (item 211
+    #: defect 2): it is true only when EVERY currently-uncovered position
+    #: has already been reported today, so a second name going naked later
+    #: the same day still pages.
+
     @property
     def should_alert_repair_failure(self) -> bool:
         """A failed placement is its own alarm, on its own once-a-day
@@ -864,6 +869,7 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raw = {}
     raw.setdefault("alerted_for_day", None)
+    raw.setdefault("exposure_alerted_symbols", None)
     # Kept as a truthful record of the last day a placement-failure alert
     # went out, and still written; it is no longer what SUPPRESSES one.
     # Suppression reads `repair_failure_alerted_symbols` below, which is
@@ -925,6 +931,26 @@ def repair_failure_alert_day(now: datetime | None = None) -> str:
     paths must agree on the key or the shared marker is no marker at all.
     """
     return (now or _utc_now()).astimezone(ET).date().isoformat()
+
+
+def _exposure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
+    """Which UNPROTECTED positions the owner was already paged about today.
+
+    Item 211 defect 2, a live-risk hole. "This position is unprotected" was
+    deduped on a bare per-DAY marker while both of its siblings
+    (placement-failure, unreadable-stop) dedupe per symbol per day. A
+    SECOND name going naked later the same day was therefore silenced
+    completely — the exact trap `should_alert_repair_failure` was written
+    to avoid, one level down. Same shape, same discipline.
+    """
+    raw = state.get("exposure_alerted_symbols")
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
 
 
 def _repair_failure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
@@ -2054,6 +2080,11 @@ def check_coverage(
     # the marker is written inside this function, so a caller that re-claimed
     # would find this run's own marker and silence the message it wrote.
     already_unguarded = _unguarded_alerted_symbols(state, failure_day)
+    # Item 211 defect 2: per symbol per day, like both siblings.
+    exposure_symbols = {
+        str(g.symbol).strip().upper() for g in gaps if str(g.symbol).strip()
+    }
+    already_exposed = _exposure_alerted_symbols(state, day.isoformat())
     unguarded_fresh = [
         r for r in unguarded
         if r.over_bound and str(r.symbol).strip().upper() not in already_unguarded
@@ -2066,7 +2097,9 @@ def check_coverage(
         gaps_detected=gaps_detected,
         broker_error=broker_error,
         db_error=db_error,
-        already_alerted_for_day=(state.get("alerted_for_day") == day.isoformat()),
+        already_alerted_for_day=bool(exposure_symbols) and all(
+            sym in already_exposed for sym in exposure_symbols
+        ),
         repairs=repairs,
         market_open=market_open,
         market_reason=market_reason,
@@ -2095,6 +2128,10 @@ def check_coverage(
     )
     if status.should_alert:
         state["alerted_for_day"] = day.isoformat()
+        state["exposure_alerted_symbols"] = {
+            "day": day.isoformat(),
+            "symbols": sorted(already_exposed | exposure_symbols),
+        }
     if status.should_alert_repair_failure:
         _record_repair_failure_alert(state, failure_day, failing_symbols)
     if status.should_alert_unguarded:

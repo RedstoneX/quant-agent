@@ -12,7 +12,10 @@ from src.agents.base import (
     resolve_provider,
 )
 from src.trading_calendar import SESSION_WINDOWS
-from src.risk.constants import STARTER_POSITION_RISK_PCT
+from src.risk.constants import (
+    SHORT_GAP_RISK_MULTIPLE_DEFAULT,
+    STARTER_POSITION_RISK_PCT,
+)
 
 
 class ApiKeysConfig(BaseModel):
@@ -966,7 +969,9 @@ class RiskConfig(BaseModel):
     # daily-bar history this desk does not keep. The number ledger carries
     # the routed owner-appetite question; 1.5 means a short opens at
     # two-thirds the size of a long carrying the same stated risk.
-    short_gap_risk_multiple: float = Field(default=1.5, gt=1.0, le=3.0)
+    short_gap_risk_multiple: float = Field(
+        default=SHORT_GAP_RISK_MULTIPLE_DEFAULT, gt=1.0, le=3.0,
+    )
     # --- Kill switch (2026-09-02 operational safety guard) ---------------
     # A file whose mere EXISTENCE halts every order this desk would place —
     # entries, exits, covers, and protective-stop placement/replacement

@@ -39,6 +39,7 @@ from src.data.levels import (
     TargetDerivation,
     derive_structural_target,
     level_zone_halfwidth,
+    stop_rests_on_level,
     touch_probability,
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
@@ -48,6 +49,7 @@ from src.models import (
 )
 from src.risk.constants import (
     REWARD_RISK_PARITY,
+    gap_adjusted_risk_per_share,
     reward_risk_floor_applies,
     reward_risk_parity_refuses,
 )
@@ -667,9 +669,15 @@ class ConstructorConfig:
     # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
     # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
     # this before it is converted to a weight, so the same risk allocation
-    # opens a smaller short than an equivalent long. Keep in sync with
-    # `risk.short_gap_risk_multiple`.
-    short_gap_risk_multiple: float = 1.5
+    # opens a smaller short than an equivalent long. Plumbing only: the
+    # value is `risk.short_gap_risk_multiple` and the default literal lives
+    # once, in `src.risk.constants` (board item 216). The haircut itself is
+    # applied by `gap_adjusted_risk_per_share`, never inline. There is
+    # deliberately NO default literal here: this field used to carry its own
+    # copy of the number and its own number-ledger row, and a mirror kept in
+    # sync is the same defect waiting to recur. `None` means "whatever the
+    # one definition says", which is what the helper resolves it to.
+    short_gap_risk_multiple: float | None = None
     # Minimum stop distance, in ATRs. A stop inside ordinary volatility is not
     # a thesis invalidation, it is a coin flip on noise — Phase 3 already
     # established 1.25 ATR as one ordinary day's range for a TRAILING stop,
@@ -2042,13 +2050,14 @@ class PortfolioConstructor:
             # `entry - stop` would corrupt the weight's sign; `abs()` keeps
             # this an unsigned magnitude exactly like the long case (D4).
             risk_per_share = abs(entry - stop)
-            if directions.get(sym) == "short":
-                # D8: gap-risk sizing haircut — SIZING ONLY, never applied
-                # to the stop placed above (already resolved). A short gaps
-                # through its stop with no bound, so the same nominal risk
-                # allocation must open a SMALLER short than an equivalent
-                # long at the same stop distance.
-                risk_per_share *= self.cfg.short_gap_risk_multiple
+            # D8: gap-risk sizing haircut — SIZING ONLY, never applied to
+            # the stop placed above (already resolved). One definition, in
+            # `src.risk.constants` (board item 216); a no-op for a long.
+            risk_per_share = gap_adjusted_risk_per_share(
+                risk_per_share,
+                is_short=directions.get(sym) == "short",
+                multiple=self.cfg.short_gap_risk_multiple,
+            )
             raw_weight = granted * entry / risk_per_share
             plans[sym] = RiskPlan(
                 symbol=sym,
@@ -2558,6 +2567,7 @@ class PortfolioConstructor:
         """
         raw_levels = getattr(analysis, "computed_levels", None) or []
         touches_by_price = getattr(analysis, "computed_level_touches", None) or {}
+        bars_by_price = getattr(analysis, "computed_level_bars", None) or {}
         min_touches = self.cfg.min_level_touches_for_stop_honor
 
         best: float | None = None
@@ -2583,15 +2593,40 @@ class PortfolioConstructor:
                 # "below the bar" — fail closed, per Invariant 2, rather than
                 # honour a tight stop we cannot show cleared the bar.
                 continue
-            # "At" this level means INSIDE this level's own zone. The bound
-            # is read per-level off `CLUSTER_TOLERANCE_PCT`, the same
-            # constant `find_structural_levels` used to build the zone in the
-            # first place, so the tolerance is exactly as wide as the thing
-            # it is matching against — never narrower, never a second number
-            # that can drift. docs/WORK.md item 46.
-            tolerance = level_zone_halfwidth(price)
+            # "At" this level means ON ONE OF ITS BARS, not merely inside
+            # its band — docs/WORK.md item 215. Item 55 made the zone the
+            # MEASURED combined span of the bars that formed the level
+            # (`computed_level_zones`), which is honest about how wide the
+            # structure is but is exactly why "inside the zone" cannot earn
+            # the exemption: that span reaches a fifth of the price on some
+            # names, and a stop at one end of it can be taken out with the
+            # level itself never broken. The stop must instead lie inside
+            # the traded high-low range of at least one bar that DREW the
+            # level, carried here on `computed_level_bars`. No tolerance and
+            # no width cap is introduced: the bound is the instrument's own
+            # smallest statement that structure traded at that price.
+            #
+            # Fail closed: a level with no bar ranges recorded (older stored
+            # analysis, fixture) is NOT backing, and the stop falls through
+            # to the ordinary ATR floor, exactly as an unmatched stop does.
+            # The measured zone stays on the level for reporting; it is no
+            # longer what decides the exemption.
+            # ...AND the level must be more precise than the trade it is
+            # backing: its measured zone strictly narrower than the stop
+            # distance. Bar membership alone put NO ceiling on how far the
+            # stop could sit from the level (the zone edges are bar extremes,
+            # so the furthest passing stop is the halfwidth exactly — median
+            # 3.33% of price and up to 36.07% on this desk's own 704-level
+            # set), while the break check reads the LEVEL price. No number is
+            # introduced: the ceiling is this trade's own risk.
+            if not stop_rests_on_level(
+                stop_loss,
+                bars_by_price.get(price),
+                stop_distance=abs(entry_price - stop_loss),
+            ):
+                continue
             gap = abs(stop_loss - price)
-            if gap <= tolerance and gap < best_gap:
+            if gap < best_gap:
                 best, best_gap = price, gap
         return best
 
@@ -4286,14 +4321,15 @@ class PortfolioConstructor:
         # D4: unsigned risk-per-share (stop sits ABOVE entry for a short).
         risk_per_share = abs(entry_price - stop_loss)
         # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement
-        # (the stop above was already resolved before this line runs). A
-        # short gaps through its stop upward with no bound, so the same
-        # nominal risk allocation must open a SMALLER short than an
-        # equivalent long at the same stop distance. Paper trading fills
-        # unrealistically through a gap on IEX data with no borrow-cost
-        # model, so this haircut is what keeps the measured size honest
-        # relative to what live capital would actually risk.
-        risk_per_share *= self.cfg.short_gap_risk_multiple
+        # (the stop above was already resolved before this line runs). Paper
+        # trading fills unrealistically through a gap on IEX data with no
+        # borrow-cost model, so this haircut is what keeps the measured size
+        # honest relative to what live capital would actually risk. One
+        # definition, in `src.risk.constants` (board item 216).
+        risk_per_share = gap_adjusted_risk_per_share(
+            risk_per_share, is_short=True,
+            multiple=self.cfg.short_gap_risk_multiple,
+        )
         risk_dollars_allowed = total_value * self.cfg.risk_budget_pct / 100
         cap_note = ""
         if risk_per_share > 0:

@@ -72,6 +72,7 @@ from src.pipeline_context import RunContext
 from src.risk.constants import (
     REWARD_RISK_FLOOR,
     STARTER_POSITION_RISK_PCT,
+    gap_adjusted_risk_per_share,
 )
 
 if TYPE_CHECKING:
@@ -3531,21 +3532,21 @@ def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
         return None
     # D4: unsigned everywhere.
     risk_per_share = abs(sizing_price - stop_price)
-    if is_short:
-        # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement
-        # (the stop is untouched). A short gaps through its stop with no
-        # bound, so this execution-time vol-adjusted-sizing belt must be at
-        # least as conservative for a short as the constructor's own primary
-        # sizing already is.
-        _cfg = getattr(
+    # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement (the
+    # stop is untouched). This execution-time belt must be at least as
+    # conservative for a short as the constructor's own primary sizing, so
+    # both legs call the SAME application site (board item 216): execution
+    # ships `min(qty_by_alloc, qty_by_risk)`, and while these were two
+    # separate multiplies a change to one of them was silently a half-change
+    # to the quantity that actually reached the market.
+    risk_per_share = gap_adjusted_risk_per_share(
+        risk_per_share,
+        is_short=is_short,
+        multiple=getattr(
             getattr(pipeline.config, "risk", None),
             "short_gap_risk_multiple", None,
-        )
-        gap_multiple = (
-            float(_cfg) if isinstance(_cfg, (int, float)) and _cfg > 1.0
-            else 1.5
-        )
-        risk_per_share *= gap_multiple
+        ),
+    )
     if risk_per_share <= 0:
         return None
     risk_dollars = total_value * _risk_budget_pct(pipeline) / 100
@@ -5023,6 +5024,64 @@ class MorningResearchStage:
         effective_symbols = list(dict.fromkeys(
             sorted(ctx.admitted_symbols) + configured_symbols
         ))
+
+        # FULL-BOOK SEARCH THROTTLE (src/research_throttle.py, owner ask
+        # 2026-09-30). Hunting for new trades costs paid model and paid
+        # search on every session; when the book has no room for a new
+        # position that spend buys nothing. When — and only when — the book
+        # is full against its OWN ratified ceilings, the research surface
+        # narrows to the names already held plus this run's free,
+        # deterministic admissions. The REVIEW of every holding keeps its
+        # normal cadence, because all five seats must be right to stay, not
+        # only to enter. Fails open: any problem here runs the full hunt.
+        ctx.search_throttled_reason = None
+        try:
+            from src.research_throttle import full_book_reason, narrow_to_held
+            positions = getattr(ctx, "positions", None) or []
+            equity = float(getattr(ctx, "total_value", 0.0) or 0.0)
+            held, deployed_usd, gross_usd = [], 0.0, 0.0
+            for pos in positions:
+                symbol = getattr(pos, "symbol", None)
+                if symbol is None and isinstance(pos, dict):
+                    symbol = pos.get("symbol")
+                symbol = str(symbol or "").strip().upper()
+                if symbol:
+                    held.append(symbol)
+                value = getattr(pos, "market_value", None)
+                if value is None and isinstance(pos, dict):
+                    value = pos.get("market_value")
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                deployed_usd += abs(value)
+                gross_usd += abs(value)
+            risk_cfg = getattr(self.config, "risk", None)
+            reason = None
+            if equity > 0 and held:
+                reason = full_book_reason(
+                    deployable_cash=getattr(ctx, "deployable_cash", None),
+                    deployed_pct=deployed_usd / equity * 100,
+                    gross_pct=gross_usd / equity * 100,
+                    max_total_position_pct=getattr(
+                        risk_cfg, "max_total_position_pct", None),
+                    max_gross_exposure_x=getattr(
+                        risk_cfg, "max_gross_exposure_x", None),
+                )
+            if reason:
+                before = len(effective_symbols)
+                effective_symbols = narrow_to_held(
+                    effective_symbols, held, getattr(ctx, "admitted_symbols", None),
+                )
+                ctx.search_throttled_reason = reason
+                logger.info(
+                    "Full-book search throttle: %s — research surface %d -> %d "
+                    "symbols (held + free admissions only); holdings review "
+                    "unchanged.",
+                    reason, before, len(effective_symbols),
+                )
+        except Exception as exc:  # noqa: BLE001 - never block research
+            logger.warning("Full-book search throttle failed open: %s", exc)
 
         for observation in smart_money_observations:
             symbol = str(getattr(observation, "symbol", "") or "").strip().upper()
@@ -7133,58 +7192,50 @@ class DecisionStage:
         return ctx
 
 
-def _record_earnings_cap(pipeline, ctx, before: list, after: list) -> None:
-    """One durable per-symbol row for every BUY the queued-earnings cap
-    dropped or cut (`TradingPipeline._clamp_queued_earnings_buys`).
+def _record_queued_earnings_refusals(
+    pipeline, ctx, before: list, after: list,
+) -> None:
+    """One durable per-symbol row for every BUY the queued-earnings gate
+    REFUSED (`TradingPipeline._refuse_queued_earnings_buys`).
 
-    Board item 164 (2026-09-19). The cap is a BUY-only gate that either
-    removes a decision or replaces it with a smaller copy, so both outcomes
-    are read by comparing the list it was handed with the list it returned:
-    a BUY absent afterwards was DROPPED, one whose `allocation_pct` fell was
-    CUT. The size is stated before and after because the symbol's
-    `proposed_order` row, written earlier by DecisionStage, still carries
-    the pre-cap number. Never raises — a record failure must not stop the
+    Board item 164 (2026-09-19) built this recording for the old 5%-of-book
+    clamp, which could either drop a BUY or shrink it; board item 186
+    (2026-10-01) removed the clamp, so the only outcome left is a refusal and
+    the `modified` row no longer exists. A refused BUY is absent from the
+    list the gate returned, so it is read by comparing the two lists. The
+    size is stated before and after (after is always 0) because the symbol's
+    `proposed_order` row, written earlier by DecisionStage, still carries the
+    size that was asked for. The detail is the gate's own refusal string
+    (`risk.rules.unread_filing_block_reason`), which carries its own prefix
+    and is deliberately NOT the conviction bar's: this is missing evidence,
+    not a seat's verdict, and entries only — nothing here reads or changes a
+    held position. Never raises — a record failure must not stop the
     stage (`_persist_evidence`'s contract).
     """
     try:
-        after_by_symbol = {
-            d.symbol.strip().upper(): d
+        from src.risk.rules import unread_filing_block_reason
+        after_symbols = {
+            d.symbol.strip().upper()
             for d in (after or []) if d is not None and d.action == "BUY"
         }
         for d in before or []:
             if d is None or d.action != "BUY":
                 continue
-            sym = d.symbol.strip().upper()
-            kept = after_by_symbol.get(sym)
-            if kept is None:
-                _record_pipeline_event(
-                    pipeline, ctx, d.symbol, "deterministic_gate", "blocked",
-                    "queued_earnings_cap", gate="queued_earnings_cap",
-                    before_allocation_pct=d.allocation_pct,
-                    after_allocation_pct=0.0,
-                    detail=(
-                        f"BUY {d.symbol} DROPPED: a just-filed earnings "
-                        f"report is queued and not yet read, and the name is "
-                        f"already at or over the queued-earnings weight cap, "
-                        f"so there is no room to add. The proposed order "
-                        f"asked for {d.allocation_pct:.2f}%."
-                    ),
-                )
-            elif kept.allocation_pct < d.allocation_pct:
-                _record_pipeline_event(
-                    pipeline, ctx, d.symbol, "deterministic_gate", "modified",
-                    "queued_earnings_cap", gate="queued_earnings_cap",
-                    before_allocation_pct=d.allocation_pct,
-                    after_allocation_pct=kept.allocation_pct,
-                    detail=(
-                        f"BUY {d.symbol} CUT from {d.allocation_pct:.2f}% to "
-                        f"{kept.allocation_pct:.2f}%: a just-filed earnings "
-                        f"report is queued and not yet read, so the resulting "
-                        f"position is held to the queued-earnings weight cap."
-                    ),
-                )
+            if d.symbol.strip().upper() in after_symbols:
+                continue
+            _record_pipeline_event(
+                pipeline, ctx, d.symbol, "deterministic_gate", "blocked",
+                "queued_earnings_unread_filing",
+                gate="queued_earnings_unread_filing",
+                before_allocation_pct=d.allocation_pct,
+                after_allocation_pct=0.0,
+                detail=(
+                    f"BUY {d.symbol} REFUSED at {d.allocation_pct:.2f}%: "
+                    + unread_filing_block_reason(d.symbol)
+                ),
+            )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("queued-earnings cap recording failed: %s", exc)
+        logger.warning("queued-earnings refusal recording failed: %s", exc)
 
 
 def _apply_sector_unresolved_alert(data_status: dict, violations: list) -> None:
@@ -7605,20 +7656,18 @@ class RiskStage:
                 len(portfolio_decision.decisions),
             )
 
-        # Pass the book so the cap measures the RESULTING weight, not just the
-        # add: allocation_pct here is the constructor's delta, so a name already
-        # at 15% with an unread filing could otherwise be topped up to 20%.
-        # rm_positions (sweep-vehicle-free) is the right basis — parked T-bills
-        # are cash and never carry an earnings filing.
+        # Board item 186 (2026-10-01): no book is needed any more. The gate
+        # no longer measures a resulting weight against a 5%-of-book cap — an
+        # unread filing is an unconvicted earnings seat, so the BUY is refused
+        # outright and there is nothing to size.
         before_earnings_cap = list(portfolio_decision.decisions)
-        portfolio_decision.decisions = pipeline._clamp_queued_earnings_buys(
+        portfolio_decision.decisions = pipeline._refuse_queued_earnings_buys(
             portfolio_decision.decisions, earnings_results,
-            positions=rm_positions, total_value=total_value,
         )
-        # Board item 164: the cap used to reach the log only, while this
+        # Board item 164: the gate used to reach the log only, while this
         # symbol's `proposed_order` row (written by DecisionStage, before
-        # this gate) kept the pre-cap size. Recording only.
-        _record_earnings_cap(
+        # this gate) kept the pre-gate size. Recording only.
+        _record_queued_earnings_refusals(
             pipeline, ctx, before_earnings_cap, portfolio_decision.decisions,
         )
 

@@ -914,3 +914,41 @@ changes:
       behaviour changed. The old row `CashSweepConfig.reserve_pct` still
       exists because the /account display and the sweeper still read it; it
       is deleted in step 4, which takes the count back down by 1.
+
+  - delta: 1
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 55 (PR 880): +1 for
+      `src.config.RiskConfig.min_level_touches_for_stop_honor` (5), a
+      DOWNGRADE from `sourced` and not a new number. Its source was a
+      real-versus-shuffled bounce table over 101 symbols, and that table was
+      built on levels clustered by the flat 1%-of-price rule this item
+      deletes, so the object the touch count counts has changed and
+      docs/OUTCOME.md requires the derived number to be re-checked. The
+      re-derivation was attempted twice on the 276-bar panel this repo holds
+      and failed both times: n=27 real observations at 5 touches against the
+      original's hundreds, and a shuffled control that scored HIGHER than
+      real at every touch count, which means the reconstruction is not the
+      original test. Both failures and the recording that would settle it
+      are written down in docs/WORK.md item 55. The value stays at 5 because
+      moving it would be inventing a number; only the honesty of the label
+      changes.
+
+
+  - delta: -1
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 186: -1 for
+      `src.pipeline.TradingPipeline._clamp_queued_earnings_buys(max_pct)`
+      (5). The number is RETIRED BY REFORMULATION, not re-derived and not
+      re-labelled: the 5%-of-book weight cap on a BUY whose just-filed report
+      is queued and unread no longer exists, because an unread filing is an
+      UNCONVICTED earnings seat and standing doctrine (owner ruling
+      2026-09-25) already refuses an entry the seats are not right about.
+      The gate now refuses the BUY and has no percentage in it at all, so the
+      parameter default it was read from is gone from the source and the row
+      has no site left to describe. The owner's 2026-09-30 ruling — a global
+      constant governing risk is a defect to remove, not an appetite to
+      answer — is what made reformulation the required move rather than a
+      third derivation attempt. The two failed derivations stay recorded in
+      docs/BOARD_NOTES.md (item 186) so neither is tried again.

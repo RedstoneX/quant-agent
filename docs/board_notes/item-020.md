@@ -1,4 +1,4 @@
-## item 20
+## item 20 — RETIRED 2026-10-01, both halves closed: the counting half as a per-name record, and the intraday chart seat RULED able to report a lost answer
 
 **Plain language —** Your rule from 2 September: if the research behind a
 decision isn't really there, don't decide — skip the round loudly and try
@@ -125,4 +125,61 @@ agent has widened the rule to work around it.
 **Moved from WORK.md (2026-09-24) —** The categorical half is live on morning and the intraday scan since 2026-09-14. **MANDATE CHANGE, owner, 2026-09-18: "Only technical analysis can stop the desk"** — declared in `evidence_gate.BLOCKING_SEATS`, every other seat advisory. **Still open and still his:** the counting half — no published source gives a minimum count of usable reads, and fitting one to the desk's history is forbidden. Settles with his ratified number, or a ruling that partial coverage never gates. Never ship a placeholder. **Also open, surfaced by the mandate change and NOT acted on:** the intraday scan's technical-seat status is hard-coded, so the only blocking seat can never be lost there — needs his ruling, not an agent's second blocking seat.
 
 **Re-verified against live code, 2026-09-30 — nothing here has rotted, and no agent may close either box.** Both halves were checked on `origin/main`, not from the note above. The CATEGORICAL half is live and firing: `TradingPipeline._evidence_gate_skip` calls `evidence_gate.evaluate` before the paid decision step on morning and on the intraday scan, and the production log line "EVIDENCE GATE — decision skipped: N blocking seat(s) were asked and their answers were unusable" is that call and no other mechanism. The COUNTING half exists as DATA and as REPORTING only: per-seat freshness (`evidence_gate.freshness`, read-this-tick vs carried vs absent) is computed, attached to every decision and named to the owner through the feed and the alerts, and per-symbol coverage is counted in `RunContext.tech_bars_coverage` and `TechAnalysisResult.levels_coverage`. NOTHING COMPARES ANY OF THOSE COUNTS AGAINST A BAR, deliberately — `partial` classifies as an answer that ARRIVED, so partial coverage cannot refuse a decision today. So the state is "the counting exists, nothing acts on it", which is exactly what the two open boxes say. The unsourceable number, named precisely so it is not re-derived a third time: the minimum fraction of a seat's own intended scope that must come back usable before that seat's answer may be leaned on (the "40 of 65 companies" case). Nothing published gives it, the desk's own history cannot supply it without fitting, and it is a risk-appetite dial. Deliberately NOT done in this pass: no threshold invented, no seat added to `BLOCKING_SEATS`, and the existing refusal left exactly as strong as it was.
+
+**RULING 2026-10-01 — yes, the intraday scan's technical `data_status` must
+be able to report LOST, and it now does.** This was carried as OWNER'S CALL
+and is ruled here because it follows from doctrine already ratified rather
+than from any appetite still to be set.
+
+The reasons, for the record:
+
+- The standing rule is that the desk reports the TRUE state. A hard-coded
+  status that can never say "lost" asserts the chart read is present even
+  when it is not; that is an untrue statement in the desk's own record, and
+  an untrue statement is a lie.
+- The entry bar ALREADY refuses on a missing technical read — `src/risk/rules.py`
+  emits the own-bar refusal "no technical read this review" — so the same
+  missing data refused at one gate and was silently treated as present at
+  another. That inconsistency, not the gate's width, was the defect.
+- It does NOT widen the gate and does NOT add a blocking seat.
+  `evidence_gate.BLOCKING_SEATS` is untouched and still holds `tech` alone;
+  the blocking seat is only allowed to be honest about whether it has a
+  reading.
+
+**No number was invented.** "Lost" here means the reading is absent or
+unreadable — `analyses` empty after a `symbols_data` that was confirmed
+non-empty, or the batch call raising. No threshold, no coverage percentage,
+no staleness cut-off; the code can already tell without one. A PARTIAL batch
+stays REPORTED exactly as before, so one bad symbol still cannot stop
+intraday trading.
+
+**The behaviour on a lost read is the existing ratified one, matched, not
+redesigned:** `data_status["tech"]="failed"` classifies as `CATEGORY_LOST`,
+the standing heal order runs first (mechanical repair, then at most one paid
+retry), and if the seat is still lost the shared `_evidence_gate_skip` path
+refuses before the Portfolio Manager and the unsuppressible data-quality
+alert speaks — the same path morning uses.
+
+**The recording, checked rather than claimed.** The write is reached from
+executable product code: `Pipeline._evidence_gate_skip` is called from
+`_intraday_opportunity_scan_body` right after `ctx.data_status` is set, and
+it writes a run-level `evidence_gate` row plus, per symbol that did reach a
+read, a `not_decided / evidence_gate_skip` row carrying `lost_seats`,
+`blocking_lost_seats` and the full `data_status`; the per-symbol
+`technical_analysis_unresolved_after_retry` row distinguishes "asked and the
+answer was lost" from "asked and answered"
+(`technical_analysis_validated`) and from "never asked" (no row at all).
+Classification: **POPULATING** — the production evidence store holds 5,546
+`pipeline_event` rows, of which 241 are `evidence_gate` rows (newest
+2026-09-29 19:46:45) and 21 carry the tech-unresolved reason [measured
+read-only against the production DB backup of 2026-09-30]. Not measured, and
+not claimed: whether a FULLY lost intraday tech seat has yet occurred in
+production — the channel populates, that particular shape has not been
+confirmed to have fired.
+
+**Superseded above:** the paragraphs headed "What that leaves for you" and
+"One thing you may want to look at" state that the thirty-minute scan's
+chart seat can never be recorded as lost. That was true when written and is
+no longer true; the classification shipped with the intraday LOST change and
+is pinned by tests. They are kept only so the history reads straight.
 

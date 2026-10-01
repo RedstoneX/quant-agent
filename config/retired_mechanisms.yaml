@@ -277,7 +277,7 @@ retired:
       - src/retired_mechanisms.py
       - docs/INCIDENT_HISTORY.md
       - docs/WORK.md
-      - docs/BOARD_NOTES.md
+      - docs/board_notes/
       - tests/test_retired_mechanisms.py
 
 # ===========================================================================
