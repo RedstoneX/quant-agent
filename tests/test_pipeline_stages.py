@@ -4238,3 +4238,65 @@ def test_morning_research_stage_news_clean_answer_files_no_drop_records():
         c for c in stage.db.insert_specialist_evidence.call_args_list
         if c.kwargs.get("kind") == ANALYSIS_DROP_KIND
     ]
+
+
+def test_new_buy_records_entry_atr_from_the_analysis():
+    """A newly opened position must land with the ATR(14) it was sized against.
+
+    Regression guard for a silent `getattr` default: the pinning read
+    `getattr(decision, "atr_14", None)` but `TradeDecision` has no such
+    field (ATR lives on the analysis / TechnicalIndicators), so the column
+    was NULL on every row the desk ever wrote. The assertion below is on
+    the value actually handed to `insert_trade`, not on the column existing.
+    """
+    from types import SimpleNamespace
+
+    from src.models import PortfolioDecision, TradeDecision
+    from src.pipeline_context import RunContext
+
+    # The typo can only be caught if the wrong object genuinely lacks the
+    # attribute — pin that, or a future field addition would hide it again.
+    assert "atr_14" not in TradeDecision.model_fields
+
+    pipeline = MagicMock()
+    pipeline.broker.get_latest_price.return_value = 100.0
+    pipeline.broker.submit_order.return_value = {
+        "id": "order-1", "status": "accepted", "symbol": "SPY",
+    }
+    pipeline._format_qty = lambda q: str(q)
+    pipeline._order_accepted.return_value = True
+    pipeline._refresh_account_state.return_value = (
+        {"cash": 50_000.0, "portfolio_value": 100_000.0}, [], {},
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.cash = 50_000.0
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.positions = []
+    ctx.analyses = [SimpleNamespace(symbol="SPY", atr_14=3.25)]
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(),
+        decisions=[
+            TradeDecision(
+                action="BUY", symbol="SPY", allocation_pct=10,
+                entry_price=98.0, stop_loss=72.0, take_profit=140.0,
+                reasoning="fresh setup",
+                stop_rule="stop_honoured_at_computed_level",
+            ),
+        ],
+        portfolio_view="test",
+    )
+    ctx.symbols_bars = {}
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    opens = [
+        c for c in pipeline.db.insert_trade.call_args_list
+        if c.kwargs.get("action") == "BUY" or "BUY" in c.args
+    ]
+    assert opens, "no opening row was inserted"
+    kwargs = opens[0].kwargs
+    assert kwargs.get("entry_atr") == 3.25
+    # The stop rule travels on the decision and must survive the same hop.
+    assert kwargs.get("stop_basis") == "stop_honoured_at_computed_level"
