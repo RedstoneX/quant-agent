@@ -1884,6 +1884,21 @@ numbers:
   - id: src.data.smart_money_cluster.MAX_CLUSTER_RESERVED_SLOTS
     value: 5
     status: arbitrary
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche)
+      records: >-
+        the per-session count of distinct same-day opportunistic insider
+        purchase clusters detected across the watched and core universe, with
+        the session date, so the demand competing for reserved slots becomes a
+        series rather than a guess about a typical day.
+      closes_when: >-
+        enough sessions accumulate to show how often the detected cluster count
+        exceeds the reserved-slot count, so the slot count is set above observed
+        demand with the observation named, or is shown never to bind at all and
+        retires as a non-binding bound.
     site: src/data/smart_money_cluster.py
     note: >-
       Board item 124, corrected defect axis (2026-09-20): the previously
@@ -1914,6 +1929,23 @@ numbers:
   - id: src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS
     value: 2
     status: arbitrary
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche)
+      records: >-
+        two things: whether the Alldredge & Blank (2019) cluster definition can
+        be read from an obtainable copy of the paper rather than from a search
+        snippet, and, independently of that, the distribution of distinct-
+        insider counts per same-day purchase cluster across the SEC Form 4
+        record the desk already pulls.
+      closes_when: >-
+        either the paper's own definition is read from a retrievable copy and
+        the threshold matches it or moves to it, or the measured distinct-
+        insider distribution shows where coincidence ends, so two is kept or
+        replaced on filings evidence instead of resting on a citation nobody has
+        opened.
     site: src/data/smart_money_cluster.py
     note: >-
       CORRECTED 2026-09-20 (adversary review of board item 124): this was
@@ -4137,6 +4169,24 @@ numbers:
   - id: src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS
     value: 8
     status: arbitrary
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche)
+      records: >-
+        every time this cap binds, as a truncation row carrying the session, the
+        symbol, the cap's name, the number of symbols carrying a live finding
+        before truncation and the size kept, so how often it binds and by how
+        much becomes readable instead of assumed. Nothing records this today,
+        which is exactly why the cap has stood unexamined since it was written.
+      closes_when: >-
+        a run of sessions shows the distribution of the number of symbols
+        carrying a live finding before truncation: if the cap never binds it
+        governs nothing and the row leaves arbitrary as a non-binding bound; if
+        it binds, the cap is set from the observed distribution of what the
+        evidence actually carries, never from whichever value would have traded
+        best.
     site: src/agents/smart_money_analyst.py
     note: >-
       Caps how many symbols' findings the smart-money synthesis prompt asks
@@ -4158,6 +4208,24 @@ numbers:
   - id: src.agents.smart_money_analyst._MAX_REPRESENTATIVE_TRANSACTIONS
     value: 3
     status: arbitrary
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche)
+      records: >-
+        every time this cap binds, as a truncation row carrying the session, the
+        symbol, the cap's name, the number of transactions behind the finding
+        before truncation and the size kept, so how often it binds and by how
+        much becomes readable instead of assumed. Nothing records this today,
+        which is exactly why the cap has stood unexamined since it was written.
+      closes_when: >-
+        a run of sessions shows the distribution of the number of transactions
+        behind the finding before truncation: if the cap never binds it governs
+        nothing and the row leaves arbitrary as a non-binding bound; if it
+        binds, the cap is set from the observed distribution of what the
+        evidence actually carries, never from whichever value would have traded
+        best.
     site: src/agents/smart_money_analyst.py
     note: >-
       Caps how many representative transactions are kept per finding
@@ -4174,6 +4242,24 @@ numbers:
   - id: src.agents.smart_money_analyst._MAX_FINDING_TEXT_WORDS
     value: 24
     status: arbitrary
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche)
+      records: >-
+        every time this cap binds, as a truncation row carrying the session, the
+        symbol, the cap's name, the length in words of the finding text before
+        truncation and the size kept, so how often it binds and by how much
+        becomes readable instead of assumed. Nothing records this today, which
+        is exactly why the cap has stood unexamined since it was written.
+      closes_when: >-
+        a run of sessions shows the distribution of the length in words of the
+        finding text before truncation: if the cap never binds it governs
+        nothing and the row leaves arbitrary as a non-binding bound; if it
+        binds, the cap is set from the observed distribution of what the
+        evidence actually carries, never from whichever value would have traded
+        best.
     site: src/agents/smart_money_analyst.py
     note: >-
       Word cap the synthesis prompt is told to write each finding within
@@ -4189,6 +4275,24 @@ numbers:
   - id: src.agents.smart_money_analyst._MAX_CONTEXT_TEXT_CHARS
     value: 96
     status: arbitrary
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche)
+      records: >-
+        every time this cap binds, as a truncation row carrying the session, the
+        symbol, the cap's name, the length in characters of the context text
+        before truncation and the size kept, so how often it binds and by how
+        much becomes readable instead of assumed. Nothing records this today,
+        which is exactly why the cap has stood unexamined since it was written.
+      closes_when: >-
+        a run of sessions shows the distribution of the length in characters of
+        the context text before truncation: if the cap never binds it governs
+        nothing and the row leaves arbitrary as a non-binding bound; if it
+        binds, the cap is set from the observed distribution of what the
+        evidence actually carries, never from whichever value would have traded
+        best.
     site: src/agents/smart_money_analyst.py
     note: >-
       Character cap applied to context text via `_bounded_context`
@@ -4203,6 +4307,24 @@ numbers:
   - id: src.agents.smart_money_analyst._MAX_REASON_TEXT_CHARS
     value: 220
     status: arbitrary
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche)
+      records: >-
+        every time this cap binds, as a truncation row carrying the session, the
+        symbol, the cap's name, the length in characters of the discount reason
+        before truncation and the size kept, so how often it binds and by how
+        much becomes readable instead of assumed. Nothing records this today,
+        which is exactly why the cap has stood unexamined since it was written.
+      closes_when: >-
+        a run of sessions shows the distribution of the length in characters of
+        the discount reason before truncation: if the cap never binds it governs
+        nothing and the row leaves arbitrary as a non-binding bound; if it
+        binds, the cap is set from the observed distribution of what the
+        evidence actually carries, never from whichever value would have traded
+        best.
     site: src/agents/smart_money_analyst.py
     note: >-
       Character cap for the discount-reason text via `_bounded_context`
@@ -4218,6 +4340,23 @@ numbers:
   - id: src.agents.smart_money_analyst._MAX_ACTOR_ROLES
     value: 8
     status: arbitrary
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche)
+      records: >-
+        every time this cap binds, as a truncation row carrying the session, the
+        symbol, the cap's name, the number of actor roles on the finding before
+        truncation and the size kept, so how often it binds and by how much
+        becomes readable instead of assumed. Nothing records this today, which
+        is exactly why the cap has stood unexamined since it was written.
+      closes_when: >-
+        a run of sessions shows the distribution of the number of actor roles on
+        the finding before truncation: if the cap never binds it governs nothing
+        and the row leaves arbitrary as a non-binding bound; if it binds, the
+        cap is set from the observed distribution of what the evidence actually
+        carries, never from whichever value would have traded best.
     site: src/agents/smart_money_analyst.py
     note: >-
       Caps how many actor roles are kept per finding
@@ -4231,6 +4370,28 @@ numbers:
   - id: src.agents.smart_money_analyst._ROLE_RANK['actionable']
     value: 3
     status: arbitrary
+    settles_by:
+      kind: ratified-bound
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche);
+        src/agents/smart_money_analyst.py:153-155, 174-176
+      records: >-
+        the measured fact that this table's integers enter the code only as
+        elements of a lexicographic tuple sort key
+        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        summed, scaled, averaged or compared across tables, so the SPACING
+        algebraically cancels: any order-preserving relabelling of the table
+        ranks every finding identically. What is load-bearing is the ORDER, plus
+        the one deliberate tie where an unset signal class ranks equal to
+        `indeterminate`.
+      closes_when: >-
+        the ordering itself -- not the spacing, which cannot matter -- is
+        confirmed or overturned by post-filing behaviour measured by economic
+        role, freshness and signal class off the SEC filings record and market
+        prices, never off this desk's own fills or P&L. Until then the order
+        stands as a ratified structural bound and these integers are labels for
+        it, not magnitudes.
     site: src/agents/smart_money_analyst.py
     note: >-
       Ranking weight deciding which smart-money findings are prioritised
@@ -4250,6 +4411,28 @@ numbers:
   - id: src.agents.smart_money_analyst._ROLE_RANK['confirmatory']
     value: 2
     status: arbitrary
+    settles_by:
+      kind: ratified-bound
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche);
+        src/agents/smart_money_analyst.py:153-155, 174-176
+      records: >-
+        the measured fact that this table's integers enter the code only as
+        elements of a lexicographic tuple sort key
+        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        summed, scaled, averaged or compared across tables, so the SPACING
+        algebraically cancels: any order-preserving relabelling of the table
+        ranks every finding identically. What is load-bearing is the ORDER, plus
+        the one deliberate tie where an unset signal class ranks equal to
+        `indeterminate`.
+      closes_when: >-
+        the ordering itself -- not the spacing, which cannot matter -- is
+        confirmed or overturned by post-filing behaviour measured by economic
+        role, freshness and signal class off the SEC filings record and market
+        prices, never off this desk's own fills or P&L. Until then the order
+        stands as a ratified structural bound and these integers are labels for
+        it, not magnitudes.
     site: src/agents/smart_money_analyst.py
     note: >-
       Same table and same reasoning as
@@ -4261,6 +4444,28 @@ numbers:
   - id: src.agents.smart_money_analyst._ROLE_RANK['contradictory']
     value: 1
     status: arbitrary
+    settles_by:
+      kind: ratified-bound
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche);
+        src/agents/smart_money_analyst.py:153-155, 174-176
+      records: >-
+        the measured fact that this table's integers enter the code only as
+        elements of a lexicographic tuple sort key
+        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        summed, scaled, averaged or compared across tables, so the SPACING
+        algebraically cancels: any order-preserving relabelling of the table
+        ranks every finding identically. What is load-bearing is the ORDER, plus
+        the one deliberate tie where an unset signal class ranks equal to
+        `indeterminate`.
+      closes_when: >-
+        the ordering itself -- not the spacing, which cannot matter -- is
+        confirmed or overturned by post-filing behaviour measured by economic
+        role, freshness and signal class off the SEC filings record and market
+        prices, never off this desk's own fills or P&L. Until then the order
+        stands as a ratified structural bound and these integers are labels for
+        it, not magnitudes.
     site: src/agents/smart_money_analyst.py
     note: >-
       Same table and same reasoning as
@@ -4272,6 +4477,28 @@ numbers:
   - id: src.agents.smart_money_analyst._FRESHNESS_RANK['fresh']
     value: 2
     status: arbitrary
+    settles_by:
+      kind: ratified-bound
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche);
+        src/agents/smart_money_analyst.py:153-155, 174-176
+      records: >-
+        the measured fact that this table's integers enter the code only as
+        elements of a lexicographic tuple sort key
+        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        summed, scaled, averaged or compared across tables, so the SPACING
+        algebraically cancels: any order-preserving relabelling of the table
+        ranks every finding identically. What is load-bearing is the ORDER, plus
+        the one deliberate tie where an unset signal class ranks equal to
+        `indeterminate`.
+      closes_when: >-
+        the ordering itself -- not the spacing, which cannot matter -- is
+        confirmed or overturned by post-filing behaviour measured by economic
+        role, freshness and signal class off the SEC filings record and market
+        prices, never off this desk's own fills or P&L. Until then the order
+        stands as a ratified structural bound and these integers are labels for
+        it, not magnitudes.
     site: src/agents/smart_money_analyst.py
     note: >-
       Ranking weight for how fresh a finding is (src/agents/
@@ -4286,6 +4513,28 @@ numbers:
   - id: src.agents.smart_money_analyst._FRESHNESS_RANK['delayed']
     value: 1
     status: arbitrary
+    settles_by:
+      kind: ratified-bound
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche);
+        src/agents/smart_money_analyst.py:153-155, 174-176
+      records: >-
+        the measured fact that this table's integers enter the code only as
+        elements of a lexicographic tuple sort key
+        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        summed, scaled, averaged or compared across tables, so the SPACING
+        algebraically cancels: any order-preserving relabelling of the table
+        ranks every finding identically. What is load-bearing is the ORDER, plus
+        the one deliberate tie where an unset signal class ranks equal to
+        `indeterminate`.
+      closes_when: >-
+        the ordering itself -- not the spacing, which cannot matter -- is
+        confirmed or overturned by post-filing behaviour measured by economic
+        role, freshness and signal class off the SEC filings record and market
+        prices, never off this desk's own fills or P&L. Until then the order
+        stands as a ratified structural bound and these integers are labels for
+        it, not magnitudes.
     site: src/agents/smart_money_analyst.py
     note: >-
       Same table and same reasoning as
@@ -4297,6 +4546,28 @@ numbers:
   - id: src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['opportunistic']
     value: 2
     status: arbitrary
+    settles_by:
+      kind: ratified-bound
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche);
+        src/agents/smart_money_analyst.py:153-155, 174-176
+      records: >-
+        the measured fact that this table's integers enter the code only as
+        elements of a lexicographic tuple sort key
+        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        summed, scaled, averaged or compared across tables, so the SPACING
+        algebraically cancels: any order-preserving relabelling of the table
+        ranks every finding identically. What is load-bearing is the ORDER, plus
+        the one deliberate tie where an unset signal class ranks equal to
+        `indeterminate`.
+      closes_when: >-
+        the ordering itself -- not the spacing, which cannot matter -- is
+        confirmed or overturned by post-filing behaviour measured by economic
+        role, freshness and signal class off the SEC filings record and market
+        prices, never off this desk's own fills or P&L. Until then the order
+        stands as a ratified structural bound and these integers are labels for
+        it, not magnitudes.
     site: src/agents/smart_money_analyst.py
     note: >-
       Ranking weight for signal class (src/agents/smart_money_analyst.py:
@@ -4313,6 +4584,28 @@ numbers:
   - id: src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['']
     value: 1
     status: arbitrary
+    settles_by:
+      kind: ratified-bound
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche);
+        src/agents/smart_money_analyst.py:153-155, 174-176
+      records: >-
+        the measured fact that this table's integers enter the code only as
+        elements of a lexicographic tuple sort key
+        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        summed, scaled, averaged or compared across tables, so the SPACING
+        algebraically cancels: any order-preserving relabelling of the table
+        ranks every finding identically. What is load-bearing is the ORDER, plus
+        the one deliberate tie where an unset signal class ranks equal to
+        `indeterminate`.
+      closes_when: >-
+        the ordering itself -- not the spacing, which cannot matter -- is
+        confirmed or overturned by post-filing behaviour measured by economic
+        role, freshness and signal class off the SEC filings record and market
+        prices, never off this desk's own fills or P&L. Until then the order
+        stands as a ratified structural bound and these integers are labels for
+        it, not magnitudes.
     site: src/agents/smart_money_analyst.py
     note: >-
       Same table and same reasoning as
@@ -4325,6 +4618,28 @@ numbers:
   - id: src.agents.smart_money_analyst._SIGNAL_CLASS_RANK['indeterminate']
     value: 1
     status: arbitrary
+    settles_by:
+      kind: ratified-bound
+      state: specified
+      where: >-
+        docs/BOARD_NOTES.md (item 90, the 2026-10-01 smart-money tranche);
+        src/agents/smart_money_analyst.py:153-155, 174-176
+      records: >-
+        the measured fact that this table's integers enter the code only as
+        elements of a lexicographic tuple sort key
+        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        summed, scaled, averaged or compared across tables, so the SPACING
+        algebraically cancels: any order-preserving relabelling of the table
+        ranks every finding identically. What is load-bearing is the ORDER, plus
+        the one deliberate tie where an unset signal class ranks equal to
+        `indeterminate`.
+      closes_when: >-
+        the ordering itself -- not the spacing, which cannot matter -- is
+        confirmed or overturned by post-filing behaviour measured by economic
+        role, freshness and signal class off the SEC filings record and market
+        prices, never off this desk's own fills or P&L. Until then the order
+        stands as a ratified structural bound and these integers are labels for
+        it, not magnitudes.
     site: src/agents/smart_money_analyst.py
     note: >-
       Same table and same reasoning as
