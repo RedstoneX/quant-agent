@@ -147,19 +147,6 @@ DONE WHEN:
   - [ ] half one is already DONE (2026-09-18): the ledger gate exists and the build fails on an unsourced trade-governing number. Its honest limit stands recorded — it proves a reason was WRITTEN, never that the reason is TRUE — and that limit is not something this item can close.
 detail: docs/BOARD_NOTES.md (item 90)
 
-**99. The analyst seats' falsifier: only one of five states one — TIER 2, filed 2026-09-18, re-scoped and MEASURED 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 99").** Measured read-only on the production database 2026-09-30: `tech_analyst` states a falsifier on 195 of 195 actionable ratings since 2026-09-25 and on 1,664 of 1,665 before — the "blank on about 6 in 10" figure is entirely NEUTRAL ratings, where prompt and schema both REQUIRE it empty, and is not a defect. `news_analyst`, `earnings_analyst`, `macro_analyst` and `smart_money_analyst` state none at all: no prompt asks, no answer schema carries the field, and 0 of 103 recorded nominations have one. Their invalidation is SYNTHESISED downstream, so a name whose only backer is one of those seats clears the conviction bar on a templated falsifier. Pinned by `tests/test_analyst_seat_falsifier_contract.py`.
-
-DONE WHEN:
-  - [x] the analyst seats' real falsifier coverage is measured from recorded production output rather than inferred from prompt text, and pinned by a test that fails when the contract changes — 2026-09-30
-  - [x] the four uncovered seats state their OWN falsifier at the moment they make the call, stored with that call and readable by the existing exit checker in the same shape the technical seat's is — News/Earnings/Macro on `Nomination.thesis_invalid_if`, Smart Money on `SmartMoneyFinding.thesis_invalid_if`; a seat that names none leaves it empty and the nomination event records `falsifier_missing`, with no template substituted anywhere — 2026-09-30
-  - [ ] KNOWN LIMIT, not a gap to paper over: `exit_guard.check_thesis_invalid_if` evaluates only a numeric price level or MA20/MA50/MA200, so a news, earnings, macro or Form 4 condition stated in words returns UNPARSEABLE with a reason and is never treated as passed; whether the desk builds an evaluator for any non-price falsifier class is a separate, unfiled decision
-  - [ ] (b) the technical seat's prompt names the five data blocks it actually receives and does not claim ones it does not
-  - [ ] (d) the deletion-site check exists: removing a mechanism greps its symbol name across every prompt and every Python-assembled agent string at that moment
-  - [ ] no blanket prompt-text number scanner is built (rejected: ~1,825 numbers in the prompt files, mostly dates and list numbering)
-  - [ ] the mandate/horizon half is NOT re-opened — resolved 2026-09-25 as SWING, days to weeks
-  - [ ] SPLIT OUT 2026-09-30, do not re-file here: the ~55 prompt-only numbers and ~20 unsourced market claims (was 99(a)), the render-or-pin-every-code-controlled-sentence requirement (was 99(g)) and the (f) residue are item 107(b)/(c), which already carries them; the PM/RM/reviewer dead-weight prose (was 99(c)) is item 109(c). Item 99 is now the ANALYST seats' own prompts and their enforcement only.
-detail: docs/BOARD_NOTES.md (item 99)
-
 **107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17; parts (a) and (c) SHIPPED 2026-09-26, (b) still open.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17 and 2026-09-26. **Do not re-propose the three designs rejected on 2026-09-17, and do not build a second deletion-site grep — that one exists.**
 
 DONE WHEN:
@@ -351,6 +338,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
+- retired queue: 99
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
