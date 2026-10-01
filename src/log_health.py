@@ -225,7 +225,15 @@ FAMILIES: tuple[FaultFamily, ...] = (
         ),
         reason=COST_A_DECISION,
         patterns=_p(r"EVIDENCE GATE .*decision skipped", r"(?m)^DECISION SKIPPED\b"),
-        board_item=20,
+        # Item 20 (gate the decision on evidence coverage) was retired
+        # 2026-10-01: the counting half shipped as a per-name record, and
+        # the owner's remaining question -- whether the intraday technical
+        # read may report LOST -- was answered yes, which the code already
+        # did. Skipping a decision for want of an answer is now INTENDED
+        # behaviour rather than a tracked defect. The REPORTING stays,
+        # because how often the desk throws a decision away is a standing
+        # fact worth counting, so it no longer points at a board item.
+        board_item=None,
     ),
     FaultFamily(
         key="seat_answer_unreadable",

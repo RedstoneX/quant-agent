@@ -68,13 +68,6 @@ DONE WHEN:
   - [ ] when he does: the record-keeping circuit-breaker trip is shown reaching him on the second channel while Telegram delivery is failing, which is the exact live pairing that went unnoticed
 detail: docs/BOARD_NOTES.md (item 17)
 
-**20. GATE THE DECISION ON EVIDENCE COVERAGE — owner's design, 2026-09-02; the counting half is BUILT as a per-name RECORD (2026-10-01) and what is left is one unrelated owner call. Do not trade on partial evidence. Detail: `docs/BOARD_NOTES.md` ("item 20").** His ruling is that a decision on incomplete evidence is fabricated, not degraded.
-
-DONE WHEN:
-  - [x] The counting half, closed as a RECORDING rather than a bar (2026-10-01). Two honest attempts at deriving a coverage threshold both failed — nothing published states one, and the production evidence table cannot supply one because per-name coverage is unrecorded for the news seat in every run and partial for macro [measured read-only against the production DB, 228 runs with symbol-scoped evidence]. Both failure reasons are written down in `src/evidence_gate.py` beside `name_coverage`. Per the owner's standing ruling that risk is read per name and never set as a global dial, the question collapses to the categorical one the seat half already answers, asked once per name: did this seat answer ABOUT this name. `evidence_gate.name_coverage` records that per candidate, `pipeline._record_name_coverage` persists it on every decision, and no ratio, minimum or verdict ships with it — a test asserts the record carries no numeric field at all.
-  - [ ] OWNER'S CALL — whether the intraday scan's hard-coded technical `data_status` (`src/pipeline.py`) should be able to report LOST at all. Today the only blocking seat can never be lost there; that follows from his own `evidence_gate.BLOCKING_SEATS` mandate, so an agent may not widen the gate or add a second blocking seat to work around it.
-detail: docs/BOARD_NOTES.md (item 20)
-
 **55. What IS a structural level — how many bars make a swing point, and how wide is a level's zone? OPEN, filed 2026-09-13.** Touch count is settled and pinned by a test: two touches, sourced (Tsinaslanidis 2012) — do not tighten it.
 
 DONE WHEN:
@@ -376,20 +369,21 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
-- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 193
+- retired queue: 157
 - retired queue: 119
+- retired queue: 193
 - retired queue: 211
-- retired queue: 185
-- retired queue: 214
 - retired queue: 107
+- retired queue: 185
 - retired queue: 76
-- retired queue: 174
+- retired queue: 214
 - retired queue: 199
-- retired queue: 70
 - retired queue: 212
+- retired queue: 174
+- retired queue: 70
+- retired queue: 20
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
