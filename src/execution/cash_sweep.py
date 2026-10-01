@@ -46,6 +46,8 @@ import logging
 import math
 import time
 
+from src.storage.event_journal import DatabaseEventJournal
+
 logger = logging.getLogger(__name__)
 
 # Funding-sell confirmation budgets. The funding sale is the one order the
@@ -148,6 +150,14 @@ class CashSweeper:
         try:
             positions = pipeline.broker.get_positions()
         except Exception as e:  # noqa: BLE001
+            # Recorded, not just logged: a swallowed read failure is
+            # otherwise indistinguishable from "nothing held". The
+            # vehicle stays held and stopless until the next session.
+            DatabaseEventJournal(pipeline.db).record_pipeline_event(
+                run_id=str(run_id or ""), decision_id=None, symbol=sym,
+                stage="cash_sweep_release", outcome="skipped",
+                reason="position read failed", error=str(e),
+            )
             logger.warning("cash sweep retired: position read failed — "
                            "not releasing %s this session: %s", sym, e)
             return None
@@ -195,3 +205,27 @@ class CashSweeper:
         logger.info("cash sweep retired: submitted full release of %s (%s sh @ ~$%.2f)",
                     sym, pipeline._format_qty(sell_qty), price)
         return order
+
+
+def sweeper_or_none(cash_sweeper):
+    """The cash sweeper, or None when absent/disabled.
+
+    Former `TradingPipeline._sweeper` (conversion step 9). getattr-guarded
+    at the call site because ~58 tests build TradingPipeline via __new__()
+    without __init__ — for them (and for enabled=False configs) every sweep
+    hook must be a structural no-op.
+    """
+    sweeper = cash_sweeper
+    if not isinstance(sweeper, CashSweeper):
+        return None
+    try:
+        return sweeper if sweeper.enabled() else None
+    except Exception as e:  # noqa: BLE001 — a broken config must not take down a session
+        # Recorded, not just logged: a config that cannot even be read is
+        # otherwise indistinguishable from "sweep disabled".
+        DatabaseEventJournal(getattr(sweeper._pipeline, "db", None)).record_pipeline_event(
+            run_id="", decision_id=None, symbol=None,
+            stage="cash_sweep_config", outcome="disabled",
+            reason="config read failed", error=str(e),
+        )
+        return None

@@ -16,6 +16,7 @@ import math
 
 from src.pipeline import TradingPipeline
 from src.models import RiskModification, TradeDecision
+from tests.pipeline_factory import build_pipeline
 
 
 def _risk_fraction(d: TradeDecision) -> float:
@@ -27,7 +28,7 @@ def _risk_fraction(d: TradeDecision) -> float:
 def _pipeline() -> TradingPipeline:
     # Matches every other _apply_risk_modifications test: no __init__, so no
     # self.config and no bars — proving the reconciliation needs neither.
-    return TradingPipeline.__new__(TradingPipeline)
+    return build_pipeline()
 
 
 # --- 1. Core fix: widening a BUY stop shrinks the position -----------------
