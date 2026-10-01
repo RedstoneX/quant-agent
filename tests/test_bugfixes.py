@@ -399,7 +399,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_symbol_buy():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="ETF"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="ETF"), patch(
         "src.execution.broker._get_sector", return_value="ETF"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -553,7 +553,7 @@ def test_transient_admission_rejects_unresolved_sector(monkeypatch):
         )
         for i in range(30)
     ]
-    monkeypatch.setattr("src.pipeline._get_sector", lambda _symbol: "Unknown")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: "Unknown")
     observations = [SimpleNamespace(
         symbol="VST", transaction_code="P", admission_eligible=True,
         transaction_value_usd=500_000, accession_number="0001-26-000001",
@@ -1232,7 +1232,7 @@ def test_hedge_nets_out_for_total_exposure():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -1262,7 +1262,7 @@ def test_same_direction_longs_sum_for_total_exposure():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -1367,7 +1367,7 @@ def test_deployment_gap_emits_advisory_violation():
         TradeDecision(action="BUY", symbol="SPY", allocation_pct=40,
                       entry_price=500, stop_loss=480, take_profit=530, reasoning="aggressive"),
     ]
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -1392,7 +1392,7 @@ def test_deployment_gap_skipped_when_within_tolerance():
     held = [Position(symbol="SPY", qty=199, avg_entry=500, current_price=500,
                      market_value=99_500, unrealized_pnl=0.0,
                      unrealized_intraday_pnl=0.0, sector="Broad")]
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         _, violations, _ = pipeline._filter_hard_risk_decisions(

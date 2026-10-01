@@ -328,7 +328,7 @@ def test_pending_sector_investment_pools_unknown_across_the_batch():
         _buy("SECOND", allocation_pct=8.0),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Unknown"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Unknown"), patch(
         "src.execution.broker._get_sector", return_value="Unknown"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(

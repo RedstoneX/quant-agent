@@ -189,17 +189,22 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     leaving 9; step 3 (the de-levering ladder) moved `_force_delever`'s one id to
     `src.pipeline_delever.*` and then `src.pipeline_exits.*`, leaving 4; step 8
     (the intraday mixin) moved `_another_session_recently_active`'s one id to
-    `src.pipeline_intraday.*`, leaving 3. The point of this assertion is that a
+    `src.pipeline_intraday.*`, leaving 3; step 11 (sizing + earnings quality) moved 12 of `src.pipeline_stages.*`'s
+    22 ids out, 1 to `src.pipeline_sizing.*` and 11 to
+    `src.pipeline_earnings_quality.*`, leaving 10. The point of this assertion is that a
     later step cannot move ids without the count moving."""
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    assert len(ledger_ids_for_module("src.pipeline", ledger)) == 3
+    assert len(ledger_ids_for_module("src.pipeline", ledger)) == 2
     assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 25
     # 2026-10-01, item 210 step 10: the 2 `ExecutionStage._run_session` ids moved
-    # with the class into `src.stage_execution`, so 22 -> 20 + 2.
-    assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 20
+    # with the class into `src.stage_execution`; step 11 then moved 12 more into
+    # `src.pipeline_sizing` and `src.pipeline_earnings_quality`.
+    assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 8
     assert len(ledger_ids_for_module("src.stage_execution", ledger)) == 2
+    assert len(ledger_ids_for_module("src.pipeline_sizing", ledger)) == 1
+    assert len(ledger_ids_for_module("src.pipeline_earnings_quality", ledger)) == 11
 
 
 def test_module_prefix_does_not_swallow_the_sibling_module() -> None:
@@ -252,7 +257,7 @@ def test_migration_helper_rewrites_ids_and_scoped_paths_on_a_synthetic_move() ->
     # The entries that moved get the new `site:`; everything else keeps the old one.
     assert new_ledger.count("site: src/pipeline_split_canary.py") == len(plan.id_rewrites)
     untouched = len(ledger_ids_for_module("src.pipeline", new_ledger))
-    assert untouched == 3 - len(plan.id_rewrites)  # 3 ids remain under `src.pipeline.*` after step 8
+    assert untouched == 2 - len(plan.id_rewrites)  # 2 ids remain under `src.pipeline.*` after steps 5/6/11
     assert '    "src/pipeline_split_canary.py",\n' in new_scoped
     # Nothing but the id, the site and the scope list may change.
     assert len(new_ledger.splitlines()) == len(ledger.splitlines())

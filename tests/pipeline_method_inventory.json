@@ -14,15 +14,10 @@
         "TradingPipeline": [
           "__init__",
           "_activate_cost_session",
-          "_admit_nominated_external_symbols",
-          "_admit_screened_universe_symbols",
-          "_admit_transient_smart_money_symbols",
-          "_apply_risk_modifications",
           "_atr_for_symbol",
           "_attach_cost_circuit_to_agents",
           "_attach_evidence_freshness",
           "_attach_pnl",
-          "_attach_universe_changes",
           "_compute_deployable_cash",
           "_constructor_cfg_or_none",
           "_cost_circuit_status",
@@ -33,7 +28,6 @@
           "_evidence_gate_skip",
           "_execution_stage",
           "_expected_sessions_missing_today",
-          "_filter_supported_symbols",
           "_forced_close_side_and_qty",
           "_format_qty",
           "_full_sell_qty",
@@ -48,10 +42,8 @@
           "_paid_suspension_after_late_safety",
           "_parse_logged_agent_response",
           "_persist_evening_report",
-          "_persist_hard_risk_block",
           "_persist_review_metrics",
           "_persist_session_report",
-          "_reconcile_size_to_risk_budget",
           "_record_account_snapshot",
           "_record_name_coverage",
           "_record_short_overnight_gaps",
@@ -338,9 +330,35 @@
         ]
       }
     },
+    "src/pipeline_sizing.py": {
+      "module_functions": [
+        "_entry_deployment_budget",
+        "_execution_payoff_skip_reason",
+        "_fmt_shares",
+        "_fractional_sizing_allowed",
+        "_min_order_usd",
+        "_qty_by_risk_budget",
+        "_risk_budget_pct",
+        "_single_name_execution_cap",
+        "_size_shares"
+      ],
+      "classes": {}
+    },
+    "src/pipeline_earnings_quality.py": {
+      "module_functions": [
+        "_classify_earnings_status",
+        "_earnings_analysis_has_real_figures",
+        "_earnings_data_quality_flags_problem",
+        "_earnings_field_disclosed",
+        "_earnings_xbrl_mismatch_fields",
+        "_parse_reported_figure"
+      ],
+      "classes": {}
+    },
     "src/pipeline_stages.py": {
       "module_functions": [
         "__dir__",
+        "__getattr__",
         "__getattr__",
         "_account_for_pm_candidates",
         "_adopt_stream_stall",
@@ -354,23 +372,14 @@
         "_apply_rotation_execution",
         "_book_risk_inputs",
         "_check_levels_coverage",
-        "_classify_earnings_status",
         "_collect_seat_nominations",
         "_delete_repeg_wal",
         "_drop_buys_sold_today_below_bar",
         "_drop_rotation_buy_if_room_not_freed",
         "_dropped_since_proposal",
-        "_earnings_analysis_has_real_figures",
-        "_earnings_data_quality_flags_problem",
-        "_earnings_field_disclosed",
-        "_earnings_xbrl_mismatch_fields",
         "_encode_entry_submit_window",
-        "_entry_deployment_budget",
         "_entry_slippage_bps",
-        "_execution_payoff_skip_reason",
         "_fill_stream_enabled",
-        "_fmt_shares",
-        "_fractional_sizing_allowed",
         "_isolate_empty_soft_exit_entries",
         "_known_entry_submit_budget_s",
         "_link_nominations_to_decision",
@@ -378,8 +387,6 @@
         "_live_stops_from_heat",
         "_macro_analysis_as_dict",
         "_macro_regime",
-        "_min_order_usd",
-        "_parse_reported_figure",
         "_pending_cover_symbols",
         "_persist_evidence",
         "_pin_approved_entry_ceilings",
@@ -388,7 +395,6 @@
         "_projected_post_sale_book",
         "_projected_post_sale_cash",
         "_projected_sale_qty",
-        "_qty_by_risk_budget",
         "_record_accounted_candidate",
         "_record_constructor_drops",
         "_record_constructor_side_flips",
@@ -407,7 +413,6 @@
         "_repeg_entry_order",
         "_repeg_settings",
         "_repoint_trade",
-        "_risk_budget_pct",
         "_risk_edit_snapshot",
         "_risk_event_for",
         "_rotation_buy_leg_projected_refusal",
@@ -420,8 +425,6 @@
         "_scaled_position",
         "_session_candidate_ranking",
         "_session_gross_ceiling",
-        "_single_name_execution_cap",
-        "_size_shares",
         "_soft_exit_heal_detail",
         "_start_trade_updates_early",
         "_stash_macro_parse_failure",
@@ -435,6 +438,9 @@
         "_warm_trade_updates"
       ],
       "classes": {
+        "_MirroringModule": [
+          "__setattr__"
+        ],
         "_StageMirroringModule": [
           "__delattr__",
           "__setattr__"

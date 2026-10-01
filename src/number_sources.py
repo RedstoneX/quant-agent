@@ -237,6 +237,8 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/stage_decision.py",
     "src/stage_risk.py",
     "src/stage_execution.py",
+    "src/pipeline_sizing.py",
+    "src/pipeline_earnings_quality.py",
     "src/execution/cash_sweep.py",
     "src/execution/stop_records.py",
     # 2026-09-19, board item 130: `broker.py` IS the broker order -- the

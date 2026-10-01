@@ -31,6 +31,8 @@ TRACKED_MODULES: tuple[str, ...] = (
     "src/pipeline_protection.py",
     "src/pipeline_risk_gate.py",
     "src/pipeline_research_continuity.py",
+    "src/pipeline_sizing.py",
+    "src/pipeline_earnings_quality.py",
     "src/pipeline_stages.py",
     # Board item 210 step 10: the four stage classes moved out of
     # `src/pipeline_stages.py` verbatim into one file each.
