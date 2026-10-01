@@ -7289,7 +7289,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline.py
     note: >-
-      No caller in src/, and the docstring (src/pipeline.py:14620-14626)
+      No caller in src/, and the docstring (src/pipeline.py:10707-10713)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(lookback_days)
@@ -7418,7 +7418,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
+      (src/pipeline.py:13074-13077). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
@@ -7458,7 +7458,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
+      (src/pipeline.py:13074-13077). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
@@ -7500,7 +7500,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:16328-16330). The LIVE number is the keyword literal at
+      (src/pipeline.py:13074-13077). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_own_recent_decisions(limit)
@@ -7933,7 +7933,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       Window of the quarterly meta-reflection digest
-      (src/pipeline.py:16365-16379). Its output reaches a prompt only as a
+      (src/pipeline.py:13669-13683). Its output reaches a prompt only as a
       STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]

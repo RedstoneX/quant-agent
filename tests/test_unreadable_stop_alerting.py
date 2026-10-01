@@ -82,7 +82,7 @@ def _run(pipe, *, market_open=False):
         alerts.append((text, list(symbols or [])))
         return True
 
-    with patch("src.pipeline._market_is_open_now", return_value=market_open), \
+    with patch("src.pipeline_protection._market_is_open_now", return_value=market_open), \
          patch.object(TradingPipeline, "_sweeper", return_value=None), \
          patch.object(
              TradingPipeline, "_retired_cash_park_symbol", return_value=None,

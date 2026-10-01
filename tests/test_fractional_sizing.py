@@ -1000,7 +1000,7 @@ def _priced(symbol: str, qty: float, price: float = 900.0) -> MagicMock:
 
 
 def _sweep(pipeline, *, market_open: bool):
-    with patch("src.pipeline._market_is_open_now", return_value=market_open):
+    with patch("src.pipeline_protection._market_is_open_now", return_value=market_open):
         return TradingPipeline._reconcile_stop_coverage(pipeline)
 
 
@@ -1214,7 +1214,7 @@ def test_market_hours_check_fails_toward_open():
 
     broker = MagicMock()
     broker.get_session_close.side_effect = RuntimeError("calendar down")
-    with patch("src.pipeline.et_now", side_effect=RuntimeError("clock down")):
+    with patch("src.pipeline_protection.et_now", side_effect=RuntimeError("clock down")):
         assert _market_is_open_now(broker) is True
 
 
@@ -1229,7 +1229,7 @@ def test_market_hours_check_respects_an_early_close():
     broker = MagicMock()
     broker.get_session_close.return_value = datetime(2026, 11, 27, 13, 0, tzinfo=ET)
     now = datetime(2026, 11, 27, 13, 30, tzinfo=ET)
-    with patch("src.pipeline.et_now", return_value=now):
+    with patch("src.pipeline_protection.et_now", return_value=now):
         assert _market_is_open_now(broker) is False
 
 
