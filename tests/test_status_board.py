@@ -974,7 +974,7 @@ _WORK_MD_OVERSIZE_ON_ARRIVAL = {
 #: another author's note is not this check's job, but no NEW item may arrive
 #: without one, and an entry here is deleted the moment its note exists.
 _WORK_MD_POINTERLESS_ON_ARRIVAL = {
-    "186", "188", "210", "211", "218", "220", "221", "222", "223",
+    "186", "188", "210", "211", "218", "220", "221", "222",
 }
 
 
