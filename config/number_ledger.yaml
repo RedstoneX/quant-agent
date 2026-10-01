@@ -3027,11 +3027,17 @@ numbers:
       sites holding the same ratified number; the other two are
       src/risk/constants.py:144 and src/config.py:770.
     open_question: >-
-      What is the smallest risk allocation at which a position still earns
-      its commission, its slippage and the attention it consumes? Answerable
-      as: across this desk's own closed trades, does the realised net return
-      of the smallest positions differ from zero once costs are deducted,
-      and at what requested risk does that difference appear?
+      Does this floor bind anything at all? The VALUE is owner-ratified
+      appetite and is not for re-deriving. What is unknown is whether the
+      seat ever asks for less than it, which nothing observed until board
+      item 223 built the recording. Answerable as: across the recorded
+      sub-floor requests, does the seat ever emit a positive risk below the
+      floor, and under what circumstances. NOT answerable by asking this
+      desk's own closed trades what floor would have paid best -- that is
+      fitting a number to the desk's own record, which docs/OUTCOME.md
+      bars outright. DELETE outcome: if the seat never asks below it across
+      a stated run of sessions, the floor is inert and goes, rather than
+      being re-picked at some other level.
     cost_while_unanswered: >-
       The floor decides which ideas are tradeable at all. Set too high, sound
       ideas the seat would size small are never emitted and the desk never
@@ -3455,11 +3461,17 @@ numbers:
       reward:risk starter cap, not to this 0.5% floor - two different numbers
       in one sentence.
     open_question: >-
-      What is the smallest risk allocation at which a position still earns
-      its commission, its slippage and the attention it consumes? Answerable
-      as: across this desk's own closed trades, does the realised net return
-      of the smallest positions differ from zero once costs are deducted,
-      and at what requested risk does that difference appear?
+      Does this floor bind anything at all? The VALUE is owner-ratified
+      appetite and is not for re-deriving. What is unknown is whether the
+      seat ever asks for less than it, which nothing observed until board
+      item 223 built the recording. Answerable as: across the recorded
+      sub-floor requests, does the seat ever emit a positive risk below the
+      floor, and under what circumstances. NOT answerable by asking this
+      desk's own closed trades what floor would have paid best -- that is
+      fitting a number to the desk's own record, which docs/OUTCOME.md
+      bars outright. DELETE outcome: if the seat never asks below it across
+      a stated run of sessions, the floor is inert and goes, rather than
+      being re-picked at some other level.
     cost_while_unanswered: >-
       The floor decides which ideas are tradeable at all. Set too high, sound
       ideas the seat would size small are never emitted and the desk never
