@@ -209,6 +209,7 @@ DONE WHEN:
   - [x] STEP 2 DONE 2026-09-30: portfolio-manager and rotation funding prose no longer quotes the $500 `min_order_usd` (logic and number unchanged). STEP 3 PARTIAL 2026-09-30: `CashSweeper.fund_buys`, `park_excess`, their pipeline/stage call sites and their tests are deleted; STILL TO DO: the `sweep-vehicle liquidation before a BUY` registry entry must move to `retired:` and the three seat prompts that say the vehicle is auto-liquidated must be reworded; the enabled/view hooks (`_sweeper()` consumers, `split_positions`, `reserve_usd`) remain; `release_retired_vehicle` and `_retired_cash_park_symbol` are LIVE (run every session to sell a leftover vehicle and exempt it from the stop audit) and must stay until the vehicle is confirmed not held.
   - [x] STEP 4 PART DONE 2026-10-01: the `/account` liquidity view no longer counts the parked sweep vehicle as deployable cash when the sweep is disabled. MEASURED against the live checkout: the engine's `TradingPipeline._compute_deployable_cash` adds 0.0 when `_sweeper()` returns None (which it does on `enabled: false`), and `CashSweeper.fund_buys` returns 0.0 on its first line, so nothing converts the vehicle back to cash for the BUY phase; `src.api.routes_live._compute_liquidity` added it unconditionally and so would have read ABOVE the figure the PM sizes against. LATENT, never an incident: the production DB (`/home/qamc/quant-agent/data/quant_agent.db`, read-only, 2026-10-01) holds 0 SGOV position rows (14 historical SGOV trades). Guarded by `tests/test_single_definition_quantities.py::test_disabled_sweep_does_not_inflate_the_dashboard_deployable`
   - [ ] MEASURED 2026-10-01, this checkout plus the production DB read-only: full retirement is BLOCKED because `CashSweeper.release_retired_vehicle` is LIVE — `TradingPipeline._release_retired_cash_park` invokes it unconditionally on the morning, intra and evening lanes and it submits a real protected SELL plus a `SWEEP_SELL` trade row. The production ledger holds 8 `SWEEP_BUY` and 6 `SWEEP_SELL` rows dated 2026-09-02 to 2026-09-17 and no sweep vehicle among the 11 open positions, so it is idle by STATE, not by code. RULED 2026-10-01: KEEP IT — it is the only path that can sell a stranded vehicle, and removing a safety exit because it is currently idle is backwards. Steps 2 and 3 HAVE merged (the sweeper is down to its view and release surface) and the `sweep-vehicle liquidation before a BUY` entry is already under `retired:` in `config/retired_mechanisms.yaml`. `cash_sweep.reserve_pct` also still feeds `/account` `reserve_usd` / `cash_above_reserve`.
+  - [x] STEP 5 DONE 2026-10-01: the three constants that became unreachable when the parking buy and funding sell were deleted (`_BUY_LIMIT_PAD`, `_FUND_BUFFER_FRAC`, `_FUND_BUFFER_MIN_USD`) are gone with their ledger rows and a -3 ratchet delta, each grepped tree-wide first; the reserve band is RELOCATED, value unchanged, from `CashSweepConfig.reserve_pct` to `CashReserveConfig.pct` (yaml `cash_reserve.pct`) so a later cleanup cannot delete a band `/account` still reports; `min_order_usd`, `_SELL_LIMIT_PAD`, the three `_FUND_*` timeouts and `release_retired_vehicle` are all MEASURED live and stay. Item STAYS OPEN: `min_order_usd` still awaits its per-name read
   - [x] WHAT REMAINS, 2026-10-01: not a deletion. The ledger row for `CashSweepConfig.min_order_usd` is rewritten to name its two real trade-governing consumers, carry a settlement route pointing at the `below_min_notional` execution-skip recording that already exists, and record both failed derivation attempts. ALGEBRA CHECKED and stated in the row: the dollar floor does NOT cancel to a constant fraction of equity. The sweeper's view/release surface and `reserve_pct` stay, so their ledger rows stay too — orphaning live constants would be worse than leaving them described.
 
 detail: docs/board_notes/item-190.md
@@ -295,12 +296,6 @@ DONE WHEN:
 
 
 
-**223. A portfolio-manager target below `min_position_risk_pct` is sized and shipped, not denied — found 2026-10-01 while verifying item 217's prompt claims.** The prompt told the PM the constructor would deny a sub-floor target anyway; it does not. `allocate_risk_budget` grants a request in full whenever it fits the remaining headroom, and its floor only denies a grant the budget had to CUT; the allocator is skipped entirely when book risk is unreadable. The prompt sentence is corrected under item 217, so the floor now rests on the seat alone — whether the desk wants a deterministic sub-floor refusal is an owner/route call, not fixed here. Detail in `docs/board_notes/` item 223.
-
-DONE WHEN:
-  - [ ] the owner (or the risk route) rules whether a sub-floor target is refused deterministically or left to the seat
-  - [ ] whichever way it is ruled, the behaviour and the portfolio-manager prompt sentence say the same thing
-
 **224. The desk records no realised sector weights, so concentration can only be guessed before the fact and never read after it -- filed 2026-10-01 from item 221.** Item 221 established that the pre-decision preview cannot project a sector mix at all, because sizing depends on a PM target that does not exist when the preview is built; what the desk could record instead, and does not, is the sector weights of the orders the constructor ACTUALLY built, once per run. Without that row nobody can say afterwards whether a session concentrated the book or not. Detail in `docs/board_notes/item-221.md`.
 
 DONE WHEN:
@@ -371,9 +366,10 @@ DONE WHEN:
 - retired queue: 20
 - retired queue: 216
 - retired queue: 217
-- retired queue: 221
 - retired queue: 194
 - retired queue: 200
+- retired queue: 221
+- retired queue: 223
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

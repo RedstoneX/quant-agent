@@ -1118,7 +1118,8 @@ class Database:
                 level_used REAL,
                 reward_risk REAL,
                 threshold REAL,
-                level_was_measured INTEGER
+                level_was_measured INTEGER,
+                requested_risk_pct REAL
             )
             """
         )
@@ -1352,6 +1353,12 @@ class Database:
         # says the floor WAS violated is trustworthy while one that says it
         # was not is only "not observed". Any reader must carry that caveat.
         _ensure_column("trades", "max_adverse_excursion", "max_adverse_excursion REAL")
+        # Board item 223 (2026-10-01): the risk the seat ASKED for, so a
+        # sub-floor observation records the request itself and not only the
+        # floor it sat under. Existing databases get the column here.
+        _ensure_column(
+            "trade_refusals", "requested_risk_pct", "requested_risk_pct REAL"
+        )
         # `max_favourable_excursion` — the best price the position reached IN
         # ITS FAVOUR against its entry while open, in price units, the exact
         # mirror of `max_adverse_excursion` and accumulated by the same
@@ -1833,8 +1840,9 @@ class Database:
         level_used: float | None = None, reward_risk: float | None = None,
         threshold: float | None = None, level_was_measured: bool | None = None,
         stage: str | None = None, run_id: str | None = None,
+        requested_risk_pct: float | None = None,
     ) -> int | None:
-        """Record one NAMED refusal with its numbers in their own columns.
+        """Record one NAMED refusal, or one named OBSERVATION, by its numbers.
 
         Board item 218. `PortfolioConstructor.last_refusals` keeps the human
         sentence and is drained only for the symbols that reach
@@ -1842,17 +1850,28 @@ class Database:
         moment of refusal, and it stores no English at all. A trial the
         owner asked to judge later ("see if that improves the desk
         purchases") is judged from these columns.
+
+        Board item 223 (2026-10-01) adds the OBSERVATION case, which is not
+        a refusal and must never be read as one: it was ruled on the risk route 2026-10-01, on the adversary's measurement that a
+        portfolio-manager target asking for a positive risk below
+        `min_position_risk_pct` is NOT refused and NOT resized, only
+        recorded. Such a row carries `stage="observed_not_refused"`, the
+        requested risk in `requested_risk_pct` and the floor in force in
+        `threshold`. Read `refusal` and `stage` together before counting
+        anything in this table as a declined trade.
         """
         def _do():
             cur = self.conn.execute(
                 "INSERT INTO trade_refusals (timestamp, run_id, symbol, "
                 "direction, refusal, stage, entry_price, stop_price, "
-                "level_used, reward_risk, threshold, level_was_measured) "
-                "VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "level_used, reward_risk, threshold, level_was_measured, "
+                "requested_risk_pct) "
+                "VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (run_id, str(symbol or "").strip().upper(), direction,
                  refusal, stage, entry_price, stop_price, level_used,
                  reward_risk, threshold,
-                 None if level_was_measured is None else int(bool(level_was_measured))),
+                 None if level_was_measured is None else int(bool(level_was_measured)),
+                 requested_risk_pct),
             )
             self.conn.commit()
             return cur.lastrowid

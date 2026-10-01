@@ -251,6 +251,13 @@ _CANNOT_END_A_CANDIDATE = {
         "durable row in trade_refusals for an already-decided refusal; "
         "writes a record, never a verdict"
     ),
+    "_record_subfloor_risk_target": (
+        "board item 223 recording only — a durable row for a positive "
+        "sub-floor PM risk request; it was ruled on the risk route "
+        "2026-10-01 that such a "
+        "target is NOT refused and NOT resized, so this writes a record and "
+        "the candidate continues down the path it was already on"
+    ),
     "_note_data_fault": "the recorder itself",
     "shipped_stop_rule": "names the rule on an order already built",
     "shipped_stop_level_basis": (
