@@ -140,3 +140,44 @@ list of the inventory guard, which was re-recorded in the same change.
 Held deliberately: this sits on step 1 and is not merged on a trading day.
 
 Item 210 stays open: nine steps remain.
+
+## Step 3 — the de-levering ladder (`src/pipeline_delever.py`)
+
+The plan's cluster M, re-measured against the step-2 branch before anything was touched:
+the twelve methods from `_live_delever_price` to `_alert_owner_delever_incomplete` moved
+verbatim into `DeleverMixin`, 1,209 lines of the ~1,235 the plan predicted. `_sweep_symbol`
+sits inside the cluster's range and stayed in the base class exactly as the plan directs;
+the "Spec §11.2" banner comment moved with the ladder rather than staying above the cash
+sweep it does not describe.
+
+Two methods the plan listed in cluster M did NOT move, and this is the deviation to read:
+`_install_sigterm_unwind` and `_restore_sigterm` raise `SessionTerminated`, which the plan
+keeps in `src/pipeline.py`. Moving them would have forced the desk's session-control
+exception into the de-lever module, or forced a lazy import into a body that must stay
+byte-for-byte. They are 27 lines, they are called only from the morning body that stays,
+and leaving them is the smaller lie about the boundary.
+
+The risk-number coercion helpers `_optional_risk_number` and `_risk_number` travelled with
+the cluster and are re-exported from `src.pipeline`, which still uses them in
+`build_risk_config`. This is the same shape step 2 hit with its broker-fill coercion: a
+small private helper the base and the mixin both read, and the mixin may not import the
+base. Thirteen `src.risk.rules` names and `rank_verdicts` are no longer read by the base at
+all and moved with the cluster; nothing patches them on `src.pipeline` today.
+
+Three source-text scanners were re-pointed at the new file: the single-owner pin on
+`apply_gross_ceiling(emit_trims=True)`, the single-assignment pin on
+`gross_ceiling_deferred = False`, and their prose. No test patch site needed re-pointing:
+the ladder, margin-policy and kill-switch suites patch methods on the instance, not module
+names on `src.pipeline`.
+
+Ledger: one id moved, `_force_delever`'s first inline factor, migrated with the step-0
+helper and verified by its own verifier. The nested-function case step 1 hit was checked
+for explicitly across all twelve moved names and does not arise. `src/pipeline_delever.py`
+was added to `SCOPED_PATHS` and to the inventory guard's tracked modules, and the inventory
+was re-recorded in the same change. Three number-ledger prose citations quoting
+`src/pipeline.py` line ranges now past the end of the shortened file were corrected.
+
+Held deliberately: this sits on step 2, which is itself unmerged, and nothing lands on a
+trading day.
+
+Item 210 stays open: eight steps remain.

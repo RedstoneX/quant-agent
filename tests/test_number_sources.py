@@ -279,7 +279,7 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
 
     # Every other order-price site at these values derives from the base above.
     derived_from_base = {
-        "src.pipeline.TradingPipeline._force_delever:factor[0]": stop_buffer,
+        "src.pipeline_delever.DeleverMixin._force_delever:factor[0]": stop_buffer,
         "src.pipeline_stages.ExecutionStage._run_session:factor[1]": exit_offset,
         "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]": exit_offset,
         "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]": exit_offset,
@@ -794,7 +794,7 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # proceeds haircut: the sweep-sizing cushion that used to sit ahead of it
     # was reformulated away on 2026-09-30 (board item 182), which renumbered
     # the haircut factor[1] -> factor[0]. One site still proves rule (e).
-    assert "src.pipeline.TradingPipeline._force_delever:factor[0]" in ids
+    assert "src.pipeline_delever.DeleverMixin._force_delever:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" not in ids
     assert "src.pipeline_stages.ExecutionStage._run_session:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]" in ids
