@@ -368,3 +368,22 @@ described:
         contains:
           - "that raises it is refused by the engine; only a "
           - "that raises it is refused by the engine, only a "
+
+  - name: the technical seat's market-context and structural-levels blocks
+    why: >-
+      The technical seat's Input section tells it, in so many words, that it
+      receives a computed market-context block and Python-computed structural
+      levels. `format_context_block` and `format_levels_block` are the code
+      that makes those two sentences true. Delete or rename either and the
+      prompt is describing data the seat is no longer sent, which this desk
+      treats as a lie rather than a wording problem (item 99(b)).
+    symbols:
+      - file: src/data/context.py
+        symbol: format_context_block
+      - file: src/data/levels.py
+        symbol: format_levels_block
+    described_in:
+      - file: config/prompts/tech_analyst.md
+        contains:
+          - "**Market context** — computed returns"
+          - "**Structural levels** — support/resistance computed in Python"
