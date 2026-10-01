@@ -2337,12 +2337,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         Capacity section does not.
         """
         held_below = holdings_below_entry_bar(blocked, held_symbols)
+        # Board item 219. What the pass looked at, kept verbatim so the
+        # owner's report states a measured count rather than an inference.
+        held_examined = tuple(sorted(
+            str(s).strip().upper() for s in held_symbols if str(s).strip()
+        ))
         if existing_risk_pct is None:
             return RotationPrecheck(
                 opportunity=None, headroom_pct=0.0, ceiling_pct=ceiling_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT, telemetry_available=False,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
-                held_below_entry_bar=held_below,
+                held_below_entry_bar=held_below, held_examined=held_examined,
             )
         headroom_pct = allocate_risk_budget(
             [], existing_pct=existing_risk_pct, clusters=None,
@@ -2366,7 +2371,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 floor_pct=STARTER_POSITION_RISK_PCT,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
             ),
-            held_below_entry_bar=held_below,
+            held_below_entry_bar=held_below, held_examined=held_examined,
         )
 
     @staticmethod
