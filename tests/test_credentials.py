@@ -542,6 +542,10 @@ _UNITS_NEEDING_BROKER_CREDENTIALS = frozenset({
     "quant-agent-earnings_preprocess.service",
     "quant-agent-evening.service",
     "quant-agent-intra_check.service",
+    # Board item 177: the free safety preamble on its own schedule. It
+    # cancels and re-places protective stops and reconciles fills, so it
+    # writes to the broker exactly as intra_check does.
+    "quant-agent-intra_safety.service",
     "quant-agent-midday.service",
     "quant-agent-morning.service",
 })

@@ -92,10 +92,10 @@ def deployable_cash(cash: Any, parked_sweep_value: Any = 0.0) -> float:
     """Cash QAMC can deploy into equities WITHOUT borrowing.
 
     Raw broker `cash` plus the market value of the cash-equivalent sweep
-    vehicle, which `CashSweeper.fund_buys` liquidates before the BUY phase
-    and whose proceeds land in `cash` on fill. Both components are assets
-    the account already owns, so the sum can never exceed equity and never
-    creates leverage. See `TradingPipeline._compute_deployable_cash` for
+    vehicle. Both components are assets the account already owns, so the sum
+    can never exceed equity and never creates leverage. NOTE (item 190): the
+    automatic pre-BUY liquidation of the vehicle no longer exists, so the
+    parked component is owned but is not converted for you. See `TradingPipeline._compute_deployable_cash` for
     the Alpaca account-field semantics this rests on (verified 2026-08-19);
     that method is the engine's caller, not a second definition.
 
@@ -120,12 +120,12 @@ def deployable_cash(cash: Any, parked_sweep_value: Any = 0.0) -> float:
 def sweep_reserve_usd(total_value: Any, reserve_pct: Any) -> float:
     """The cash-sweep reserve floor in dollars: `total_value * pct / 100`.
 
-    A SWEEP MECHANIC, not a risk limit: it is the cushion `park_excess`
-    leaves behind so an ordinary settlement or fee does not overdraw the
-    account between sessions. It does not reduce what the desk may deploy
-    today — `fund_buys` sells the vehicle back on demand — which is why
-    subtracting it from "deployable" produced a number no part of the
-    engine ever used.
+    A SWEEP MECHANIC, not a risk limit: it was the cushion the end-of-session
+    parking step left behind so an ordinary settlement or fee did not overdraw
+    the account between sessions. It does not reduce what the desk may deploy
+    today, which is why subtracting it from "deployable" produced a number no
+    part of the engine ever used. Both bookend sweep operations were removed
+    in item 190.
 
     Returns 0.0 for a non-positive/non-finite book value or percentage.
     """
