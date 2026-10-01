@@ -97,9 +97,6 @@ CODE_AI_RISK_APPROVED = "ai_risk_approved"
 # price.
 CODE_TRAIL_CLAMPED_TO_WIDEST = "trail_stop_clamped_to_widest_placeable"
 
-_VALID_JUDGMENTS = frozenset({"named", "unnamed", "uncertain"})
-
-
 def classify_trigger_reason(
     reason: object,
     *,
@@ -231,40 +228,3 @@ def record_exit_refusal(
             action, symbol_u, e,
         )
 
-
-def load_exit_refusals(
-    db: Any, *, symbol: str | None = None, run_id: str | None = None,
-) -> list[dict]:
-    """Read back ``exit_refusal`` rows for tests and audit. Never used
-    by the trading decision chain."""
-    conn = getattr(db, "conn", None)
-    if conn is None:
-        return []
-    clauses = ["kind = ?"]
-    params: list[object] = [EXIT_REFUSAL_KIND]
-    if symbol:
-        clauses.append("symbol = ?")
-        params.append(symbol.strip().upper())
-    if run_id:
-        clauses.append("run_id = ?")
-        params.append(run_id)
-    sql = (
-        "SELECT symbol, run_id, evidence_json, timestamp FROM "
-        f"specialist_evidence WHERE {' AND '.join(clauses)} ORDER BY id"
-    )
-    rows = conn.execute(sql, params).fetchall()
-    out: list[dict] = []
-    for row in rows:
-        try:
-            payload = json.loads(row["evidence_json"] or "{}")
-        except (TypeError, ValueError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        out.append({
-            "symbol": row["symbol"],
-            "run_id": row["run_id"],
-            "timestamp": row["timestamp"],
-            **payload,
-        })
-    return out

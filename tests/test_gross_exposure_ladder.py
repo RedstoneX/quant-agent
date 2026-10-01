@@ -134,10 +134,15 @@ def test_each_step_is_strictly_tighter_than_the_one_above_it():
     assert len(set(ceilings)) == 4, "four rungs must produce four values"
 
 
-def test_the_deepest_rung_alerts_the_owner_and_the_others_do_not():
+def test_the_owner_is_told_from_the_sourced_ten_percent_level_onward():
+    """Board item 182, 2026-09-30: the alert threshold is no longer the
+    ladder's deepest rung. It is the 10% depreciation-notification level
+    published in MiFID Org Regulation Article 62(1) / COBS 16A.4.3UK, so the
+    owner hears at -10% and at every deeper drawdown."""
+    assert resolve_gross_ceiling(-10.0, base_x=BASE_X).alert_owner is True
     assert resolve_gross_ceiling(-20.0, base_x=BASE_X).alert_owner is True
     assert resolve_gross_ceiling(-25.0, base_x=BASE_X).alert_owner is True
-    assert resolve_gross_ceiling(-19.99, base_x=BASE_X).alert_owner is False
+    assert resolve_gross_ceiling(-9.99, base_x=BASE_X).alert_owner is False
     assert resolve_gross_ceiling(-8.0, base_x=BASE_X).alert_owner is False
     assert resolve_gross_ceiling(0.0, base_x=BASE_X).alert_owner is False
 
@@ -3257,12 +3262,15 @@ def test_the_owner_alert_stays_put_and_the_sentence_names_the_real_rung():
     import src.risk.rules as rules_mod
     from src.risk.rules import GROSS_LADDER_ALERT_PCT, resolve_gross_ceiling
 
-    # The owner-ratified value, not an inference off the table.
-    assert GROSS_LADDER_ALERT_PCT == -20.0
+    # SOURCED 2026-09-30, not inferred off the table and not a round number
+    # of this desk's own choosing: MiFID Org Regulation Article 62(1), as
+    # COBS 16A.4.3UK, requires the client be told at a 10% depreciation.
+    assert GROSS_LADDER_ALERT_PCT == -10.0
+    assert GROSS_LADDER_ALERT_PCT != min(t for t, _ in rules_mod.GROSS_LADDER)
 
-    assert resolve_gross_ceiling(-20.0, base_x=BASE_X).alert_owner
+    assert resolve_gross_ceiling(-10.0, base_x=BASE_X).alert_owner
     assert resolve_gross_ceiling(-25.0, base_x=BASE_X).alert_owner
-    assert not resolve_gross_ceiling(-19.9, base_x=BASE_X).alert_owner
+    assert not resolve_gross_ceiling(-9.9, base_x=BASE_X).alert_owner
 
     # At today's table the deepest rung IS the alert, so the sentence may
     # claim the floor.
@@ -3279,7 +3287,7 @@ def test_the_owner_alert_stays_put_and_the_sentence_names_the_real_rung():
         mid = rules_mod.resolve_gross_ceiling(-22.0, base_x=BASE_X)
         assert mid.alert_owner, "freezing the alert must not create silence"
         assert "NOT its most de-levered setting" in mid.reason
-        assert "-20% rung" in mid.reason
+        assert "-20% rung" in mid.reason  # the rung in force, not the alert
         assert "30%" in mid.reason
         floor = rules_mod.resolve_gross_ceiling(-31.0, base_x=BASE_X)
         assert floor.alert_owner

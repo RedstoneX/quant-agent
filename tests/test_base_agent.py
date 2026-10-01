@@ -1695,7 +1695,11 @@ def test_the_failovers_own_error_reaches_the_cost_circuit(monkeypatch):
 
     statuses = [getattr(e, "status_code", None) for e in seen["attempts"]]
     assert 401 in statuses, "the failover's 401 must reach the circuit"
-    assert statuses.count(429) == 2, "and both primary refusals"
+    from src.agents.base import capacity_max_attempts
+    assert statuses.count(429) == capacity_max_attempts(), (
+        "and EVERY primary refusal — the count is the deadline-derived "
+        "capacity cap, not a hand-pinned 2"
+    )
 
 
 # ===========================================================================

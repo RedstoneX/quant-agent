@@ -832,6 +832,31 @@ changes:
       the far-through reading is recorded as a
       `venue_quote_through_ceiling` pipeline event, which needs no
       threshold because it is a record and not a decision.
+  - delta: -1
+    date: 2026-09-30
+    item: 182
+    why: >-
+      `src.risk.rules.GROSS_LADDER_ALERT_PCT` moves `arbitrary` -> `sourced`,
+      and its value moves -20 -> -10. The row's open question was "at what
+      drawdown must the owner be told, independently of what the ladder does
+      to exposure?", and a published standard answers exactly that: Article
+      62(1) of Commission Delegated Regulation (EU) 2017/565, the MiFID Org
+      Regulation, reproduced as COBS 16A.4.3UK, requires a portfolio manager
+      to inform the client when the portfolio "depreciates by 10 % and
+      thereafter at multiples of 10 %", by the end of that business day.
+      Three differences are recorded in the ledger row rather than hidden:
+      the rule measures from the reporting period's start and this desk
+      measures peak-to-trough (always at least as deep, so the desk fires no
+      later); the FCA revoked its UK copy from 23 October 2025 as a
+      firm-burden measure, not as a finding that 10% is wrong, and the EU
+      text stands, so it is cited as published practice and not as a binding
+      rule; and the desk alerts every session past the threshold, which is
+      louder than "multiples of 10%" demands. The change is strictly LOUDER
+      -- the trigger is monotone and -10 is shallower than -20 -- which is
+      the direction the 2026-09-30 revert of the deduplication draft
+      insisted on. The six GROSS_LADDER rungs and multiples are untouched
+      owner-ratified appetite; only the notification threshold moved, and it
+      no longer coincides with the ladder's deepest rung.
 
   - delta: -1
     date: "2026-09-30"
@@ -859,3 +884,15 @@ changes:
       changes in 400 draws that nudged every correlation by up to 0.03. Clustering
       stays transitive on purpose (a theme transmits by chaining) and
       remains rationing only -- the desk still never buys to diversify.
+
+  - delta: 1
+    date: "2026-09-30"
+    why: |
+      2026-09-30, board item 190 step 1: +1 for
+      `src.config.DeploymentGapConfig.band_pct` (1.0), a MOVE and not a new
+      number. The `deployment_gap` advisory used to read its tolerance band
+      from `CashSweepConfig.reserve_pct`; the band now has its own home so
+      the cash-sweep feature can be deleted. Value is identical (1.0) and no
+      behaviour changed. The old row `CashSweepConfig.reserve_pct` still
+      exists because the /account display and the sweeper still read it; it
+      is deleted in step 4, which takes the count back down by 1.
