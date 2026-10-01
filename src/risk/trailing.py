@@ -153,6 +153,17 @@ __all__ = [
 #: on an eleven-name book. The money cost of a replace is zero (the ledger
 #: entry establishes this); the naked-window cost is not.
 #:
+#: That rejection is CONTINGENT, and the contingency is recorded so nobody
+#: re-derives it. Open PR 806 (`fix/atomic-stop-amend`) adds
+#: `_amend_resting_stop_price` to `src/execution/broker.py`, making a price
+#: amend atomic with no unprotected instant. It is NOT on main (verified
+#: 2026-09-30), which is why this constant is unchanged. If it lands, the
+#: only cost defending this gate is gone and the honest floor becomes one
+#: venue tick (SEC Rule 612 / Alpaca's $0.01-at-or-above-$1, $0.0001-below
+#: split, already carried by `_quantize_price` and `_prices_match`) -- a
+#: reading off the instrument instead of a picked percentage. See the
+#: `src.risk.trailing.MIN_RATCHET_PCT` entry in `config/number_ledger.yaml`.
+#:
 #: What the same pass DID settle is the redundancy question the ledger left
 #: open. On THIS deterministic path there are two gates, not three: the
 #: ~2-4-session ratchet cooldown (`_trail_tightened_recently`) is reached
