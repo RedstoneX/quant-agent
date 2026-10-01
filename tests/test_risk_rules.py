@@ -157,7 +157,7 @@ def test_check_zero_total_value_emits_blocking_violation(engine):
     violations = engine.check(decision, positions=[], total_value=0.0)
     assert len(violations) == 1
     # Must be in HARD_BLOCK_RULES so _filter_hard_risk_decisions blocks
-    from src.pipeline import HARD_BLOCK_RULES
+    from src.risk.rules import HARD_BLOCK_RULES
     assert violations[0].rule in HARD_BLOCK_RULES
     assert "not a valid equity" in violations[0].message
 
@@ -173,7 +173,7 @@ def test_check_nan_total_value_emits_blocking_violation(engine):
     )
     violations = engine.check(decision, positions=[], total_value=float("nan"))
     assert len(violations) == 1
-    from src.pipeline import HARD_BLOCK_RULES
+    from src.risk.rules import HARD_BLOCK_RULES
     assert violations[0].rule in HARD_BLOCK_RULES
 
 
