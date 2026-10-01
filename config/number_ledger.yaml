@@ -530,6 +530,24 @@ numbers:
     note: >-
       The measured move claimed when no structural level stands in the way, in
       sqrt(session)-scaled ATRs (src/config.py:879-884).
+  - id: src.agents.base._INSUFFICIENT_CREDIT_STATUS
+    value: 402
+    status: instrument
+    site: src/agents/base.py
+    source: >-
+      RFC 9110 section 15.5.3, "402 Payment Required": the HTTP status code
+      reserved for a request that cannot be served until payment is made.
+      https://www.rfc-editor.org/rfc/rfc9110.html#name-402-payment-required
+      It is a PROTOCOL CONSTANT fixed by that specification and by the model
+      provider's use of it for an exhausted credit balance -- the desk does
+      not choose it and cannot change it, exactly as it does not choose a
+      broker tick size. It is read only at src/agents/base.py:1305 and :2530,
+      both of them an equality test against `status_code` on a provider
+      exception, and it governs whether the desk re-asks the provider once at
+      a smaller allowance. It never enters a price, a size, a stop or a
+      ranking. Falsifiable: if the provider ever signalled credit exhaustion
+      with a different status, this equality test would stop matching and the
+      re-ask would never fire.
   - id: src.config.RiskConfig.maintenance_margin_pct
     value: 25
     status: instrument
