@@ -1,8 +1,12 @@
+import logging
+
 import numpy as np
 import pandas as pd
 import ta
 
 from src.models import OHLCV, TechnicalIndicators
+
+logger = logging.getLogger(__name__)
 
 #: Wilder's original lookback, and the one every chart package means by
 #: "ATR(14)". Named rather than repeated so the risk path and the analyst's
@@ -167,3 +171,25 @@ def compute_indicators(symbol: str, bars: list[OHLCV]) -> TechnicalIndicators:
             result.volume_change_pct = round(float((recent_vol - prev_vol) / prev_vol * 100), 2)
 
     return result
+
+
+def atr_for_symbol(market, symbol: str) -> float | None:
+    """ATR(14) from ~30 days of daily bars; None when unknowable.
+
+    `market` is any provider with `get_ohlcv(symbol, days)`. Used by the
+    TRAIL_STOP noise-band clamp and the position-facts vol-unit metrics.
+    Failure is always None (callers degrade to the pre-clamp behavior) --
+    never raises. Moved byte-for-byte from `TradingPipeline._atr_for_symbol`
+    (2026-10-01); the in-function import is kept so a patch of
+    `src.data.technical.compute_indicators` still reaches it.
+    """
+    try:
+        bars = market.get_ohlcv(symbol, 30) or []
+        if len(bars) < 15:
+            return None
+        from src.data.technical import compute_indicators
+        atr = compute_indicators(symbol, bars).atr_14
+        return float(atr) if atr and atr > 0 else None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ATR fetch failed for %s: %s", symbol, e)
+        return None

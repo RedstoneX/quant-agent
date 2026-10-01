@@ -1722,18 +1722,11 @@ class TradingPipeline(
 
         Used by the TRAIL_STOP noise-band clamp and the position-facts
         vol-unit metrics. Failure is always None (callers degrade to the
-        pre-clamp behavior) — never raises.
+        pre-clamp behavior) — never raises. The body lives in
+        `src.data.technical.atr_for_symbol`; this is the delegation.
         """
-        try:
-            bars = self.market.get_ohlcv(symbol, 30) or []
-            if len(bars) < 15:
-                return None
-            from src.data.technical import compute_indicators
-            atr = compute_indicators(symbol, bars).atr_14
-            return float(atr) if atr and atr > 0 else None
-        except Exception as e:  # noqa: BLE001
-            logger.warning("ATR fetch failed for %s: %s", symbol, e)
-            return None
+        from src.data.technical import atr_for_symbol
+        return atr_for_symbol(getattr(self, "market", None), symbol)
 
     def _constructor_cfg_or_none(self):
         """The LIVE `ConstructorConfig`, for rules that must agree with the
@@ -1741,10 +1734,12 @@ class TradingPipeline(
         screen's volatility ceiling is 1 / the widest stop this object can
         produce). `None` when no constructor has been built -- some tests
         drive a bare pipeline -- and the caller then falls back to
-        `config.risk` plus the class defaults.
+        `config.risk` plus the class defaults. The body lives in
+        `src.risk.constants.live_constructor_cfg_or_none`.
         """
-        return getattr(
-            getattr(self, "portfolio_constructor", None), "cfg", None,
+        from src.risk.constants import live_constructor_cfg_or_none
+        return live_constructor_cfg_or_none(
+            getattr(self, "portfolio_constructor", None),
         )
 
     def _sweep_symbol(self) -> str | None:
@@ -1896,13 +1891,13 @@ class TradingPipeline(
 
     @staticmethod
     def _parse_logged_agent_response(row: dict):
-        """Parse stored fenced/prose-wrapped JSON exactly as live agents do."""
+        """Parse stored fenced/prose-wrapped JSON exactly as live agents do.
 
-        return AgentResult(
-            raw_text=row.get("full_response") or "",
-            tokens_used=0,
-            model=row.get("model") or "",
-        ).parse_json()
+        The body lives in `src.agents.logged_response`; this delegation
+        keeps every `self._parse_logged_agent_response(row)` caller working.
+        """
+        from src.agents.logged_response import parse_logged_agent_response
+        return parse_logged_agent_response(row)
 
     @staticmethod
     def _paid_suspended_payload(
