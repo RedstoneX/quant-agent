@@ -2745,8 +2745,11 @@ def describe_target_revisions(result: dict | None) -> list[str]:
     the owner's attention belongs on the ones that moved.
 
     Nothing here changes what is sent to the broker. The revised target
-    places no order, and the alignment exit remains the only way a position
-    is closed on a thesis.
+    places no order. Two mechanisms close a position on a thesis rather
+    than on a price: the alignment exit, and — since the owner's ruling of
+    2026-10-01 — the rotation's categorical tier, which sells a holding
+    that no longer clears the desk's own entry bar. Neither is reachable
+    from here.
     """
     rows = [r for r in ((result or {}).get("target_revisions") or [])
             if isinstance(r, dict)]

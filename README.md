@@ -581,6 +581,7 @@ quant-agent/
 │   ├── pipeline_exits.py          # ExitEngineMixin — target revision, trigger substantiation, trails, exit execution
 │   ├── pipeline_delever.py        # DeleverMixin — Spec §11.2 gross-exposure ceiling and the de-lever ladder
 │   ├── pipeline_evening.py        # EveningMixin — evening session, proximity checks, quarterly meta reflection
+│   ├── pipeline_research_continuity.py  # ResearchContinuityMixin — change detectors, carry-forward, Form-4 backlog, seat healing
 │   ├── pipeline_stages.py         # MorningResearch / Decision / Risk / Execution stage classes
 │   ├── pipeline_context.py        # RunContext dataclass — explicit shared state across stages
 │   ├── notifier.py                # Telegram session-status push (opt-in via env vars; per-mode noise policy)
