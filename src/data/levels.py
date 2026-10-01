@@ -249,7 +249,9 @@ MAX_REACH_ATR_MULTIPLE = 1.5
 #   1. The cap is NOT the binding constraint it was believed to be. At a
 #      typical hold it sits at ~5.8 ATR while the instrument's own typical
 #      advance is ~1.9 ATR, and recorded target distance is a median 3.25
-#      ATR. It binds only in the tail, not on the ordinary trade.
+#      ATR. It binds only in the tail, not on the ordinary trade. Said
+#      plainly, because an earlier diagnosis in this repo says otherwise:
+#      this cap is NOT what holds the desk's targets close.
 #   2. A measured replacement still needs a QUANTILE -- median (1.93) and
 #      maximum (8.78) differ by 4.5x and sit either side of today's value.
 #      Picking between them is exactly the appetite choice the doctrine

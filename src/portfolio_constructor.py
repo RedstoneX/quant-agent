@@ -44,10 +44,7 @@ from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision,
     reward_to_risk, stated_soft_exit,
 )
-from src.risk.constants import (
-    REWARD_RISK_PARITY,
-    reward_risk_floor_applies,
-)
+from src.risk.constants import reward_risk_floor_applies
 
 logger = logging.getLogger(__name__)
 
@@ -3258,30 +3255,6 @@ class PortfolioConstructor:
         reward_risk = self._reward_risk_at(
             entry_price, honoured, target_price, is_short,
         )
-        if reward_risk is not None and reward_risk < REWARD_RISK_PARITY:
-            # PARITY REFUSAL (docs/WORK.md item 218). Restores the ONE
-            # reward:risk refusal this desk operates, after the 1.5 floor
-            # was removed on 2026-09-11/09-17 and left only a log line.
-            # Arithmetic, not appetite: reward below risk needs a
-            # better-than-coin-flip hit rate (break-even is 1/(1+X)) just
-            # to return nothing, and the desk has measured no such edge on
-            # any name. See `src.risk.constants.REWARD_RISK_PARITY` for the
-            # argument in full, including why no value ABOVE parity may be
-            # picked here. Both sides are measured: the stop is the one
-            # that will actually ship and the target came from
-            # `_derive_target`.
-            self._note_refusal(
-                symbol, direction,
-                _GEOMETRY_REFUSAL_BY_RULE.get(
-                    rule, STOP_REFUSAL_GEOMETRY_AT_KEPT,
-                ),
-                f"reward:risk {reward_risk:.2f} is below parity against the "
-                f"${honoured:,.2f} stop [{rule}] that will actually ship: "
-                f"the target is nearer than the stop, so this entry needs a "
-                f"better-than-even hit rate merely to break even. Geometry "
-                f"refusal, not a view on the target.",
-            )
-            return None
         if reward_risk is None and had_target:
             # Recorded fact, not a refuse. Owner 2026-09-17: unmeasurable
             # payoff honesty may stay as ranking hint with zero refuse,

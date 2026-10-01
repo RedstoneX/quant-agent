@@ -112,32 +112,6 @@ def reward_risk_floor_applies(
     )
 
 
-REWARD_RISK_PARITY = 1.0
-"""PARITY. Reward must at least EQUAL the risk taken. **A structural bound,
-not an appetite dial, and the ONE reward:risk refusal this desk operates.**
-
-Why this is not an invented number. Every other value on this axis answers
-"how much better than break-even do we insist on?", which is appetite and is
-barred without a measured per-setup hit rate (which this desk does not
-have). Parity answers a different question, and arithmetic answers it: a
-trade whose reward is SMALLER than its risk must be right more often than it
-is wrong merely to break even. R/R = X breaks even at a hit rate of
-1/(1+X); below parity that required hit rate exceeds 50%, i.e. the trade
-needs better than a coin flip before costs just to return nothing. The desk
-has no measurement entitling it to claim a better-than-coin-flip edge on any
-name, so it may not stake money on one. 1.0 is the only point on the axis
-that needs no hit-rate estimate to justify.
-
-Deliberately NOT above parity. `REWARD_RISK_FLOOR` (1.5) below is the
-retired example of the barred kind -- it encoded a 40%-hit-rate assumption
-nobody measured, and on 2026-09-01 it refused all 38 qualified signals.
-
-Scope: Type A / range trades only. A Type B / breakout has no overhead level
-to measure a reward against and is exempt by owner ruling 2026-09-11 --
-`reward_risk_floor_applies` is the one definition of that scope and this
-refusal sits behind it.
-"""
-
 REWARD_RISK_FLOOR = 1.5
 """Retired numeric reward:risk threshold. **Not a pass/fail gate and not a
 size cap anywhere** (owner 2026-09-17: invented R/R leftovers are a
