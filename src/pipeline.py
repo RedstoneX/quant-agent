@@ -12,6 +12,7 @@ from src.trading_calendar import et_now, et_today, session_date_key
 from pydantic import ValidationError
 
 from src.config import AppConfig, RiskConfig
+from src.risk.constants import SHORT_GAP_RISK_MULTIPLE_DEFAULT
 from src.quantities import avg_dollar_volume, deployable_cash, dollar_volumes
 from src.data.market import MarketDataProvider
 from src.data.macro import MacroCoverage, MacroDataProvider
@@ -849,7 +850,9 @@ def build_constructor_config(config, risk_engine_config):
             # argument `apply_gross_ceiling` has ignored since 2026-09-24.
             # Stage 3 (shorts) — the sizing haircut. A short's single-name
             # ceiling is `max_position_pct` above, the same as a long's.
-            short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
+            short_gap_risk_multiple=_risk_setting(
+                "short_gap_risk_multiple", SHORT_GAP_RISK_MULTIPLE_DEFAULT,
+            ),
             # Spec §11.2 — same "size under the hard block" pattern again.
             # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
             # breaches the ceiling would be DROPPED rather than taken

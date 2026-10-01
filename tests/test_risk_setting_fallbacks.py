@@ -63,6 +63,7 @@ THREE THINGS THIS CHECKS THAT AN EARLIER DRAFT DID NOT
 from __future__ import annotations
 
 import ast
+import importlib
 from pathlib import Path
 
 import yaml
@@ -100,10 +101,23 @@ def _scan_fallbacks() -> dict[str, float]:
     """`{field: fallback}` for every `_risk_setting(...)` call in the file.
 
     An AST walk rather than a regex, so a fallback hoisted to a named
-    module constant resolves to its value instead of vanishing.
+    module constant resolves to its value instead of vanishing. The constant
+    may live in src/pipeline.py or be IMPORTED from another module: board
+    item 216 (2026-10-01) collapsed the short-side gap haircut to a single
+    definition in `src.risk.constants`, so the wiring line now reads
+    `_risk_setting("short_gap_risk_multiple", SHORT_GAP_RISK_MULTIPLE_DEFAULT)`
+    with the number defined one import away. Following the import is the
+    right answer: restoring a literal here to keep the scanner happy would
+    recreate exactly the duplicate definition that item was closed to remove,
+    and the fallback stays genuinely checked against the deployed value.
     """
     tree = ast.parse(PIPELINE.read_text())
     module_consts: dict[str, float] = {}
+    imported_from: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                imported_from[alias.asname or alias.name] = node.module
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
             if isinstance(node.value.value, (int, float)) and not isinstance(
@@ -128,6 +142,18 @@ def _scan_fallbacks() -> dict[str, float]:
             found[name] = float(arg.value)
         elif isinstance(arg, ast.Name) and arg.id in module_consts:
             found[name] = module_consts[arg.id]
+        elif isinstance(arg, ast.Name) and arg.id in imported_from:
+            # A constant defined in another module and imported here.
+            module = importlib.import_module(imported_from[arg.id])
+            value = getattr(module, arg.id, None)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise AssertionError(
+                    f"`_risk_setting(\"{name}\", {arg.id})` falls back to "
+                    f"`{imported_from[arg.id]}.{arg.id}`, which is not a "
+                    "number. The fallback must resolve to the value the desk "
+                    "trades, not to an object this check cannot compare.",
+                )
+            found[name] = float(value)
         else:  # pragma: no cover - a shape this test cannot resolve
             raise AssertionError(
                 f"`_risk_setting(\"{name}\", ...)` has a fallback this test "

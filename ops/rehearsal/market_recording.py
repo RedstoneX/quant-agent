@@ -75,7 +75,19 @@ def capture(symbols, path: Path | str = DEFAULT_RECORDING, lookback_days: int = 
     provider = MarketDataProvider()
     bars: dict[str, list] = {}
     empty: list[str] = []
+    # Sectors are recorded too (board item 202): `broker._get_sector` reads
+    # `yf.Ticker(symbol).info`, which is a SECOND live fetch the bars
+    # recording did not cover, and a rehearsal that cannot serve it either
+    # reaches the network or degrades every name to "Unknown".
+    sectors: dict[str, str] = {}
     for symbol in sorted({s.strip().upper() for s in symbols if s and s.strip()}):
+        try:
+            import yfinance as yf
+            sector = (yf.Ticker(symbol).info or {}).get("sector")
+        except Exception:  # noqa: BLE001 — a missing sector is recorded as absent
+            sector = None
+        if sector:
+            sectors[symbol] = str(sector)
         series = provider.get_ohlcv(symbol, lookback_days=lookback_days) or []
         if series:
             bars[symbol] = [_row(b) for b in series]
@@ -87,6 +99,7 @@ def capture(symbols, path: Path | str = DEFAULT_RECORDING, lookback_days: int = 
         "source": "yfinance via src.data.market.MarketDataProvider.get_ohlcv",
         "symbols_with_no_data": empty,
         "bars": bars,
+        "sectors": sectors,
     }
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

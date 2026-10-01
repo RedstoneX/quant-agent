@@ -1113,9 +1113,34 @@ numbers:
       Labels the derived target; does not select it (changed 2026-09-30).
   - id: src.config.RiskConfig.short_gap_risk_multiple
     value: 1.5
-    status: arbitrary
+    status: derived
     site: src/config.py
+    derived_from: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
+    base_value: 1.5
     note: >-
+      The deployed, operator-overridable setting. It holds no literal of its
+      own: its Field default IS the one definition
+      (src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT), so base-drift
+      cannot happen silently and this row is `derived`, not a second
+      arbitrary number. Board item 216, 2026-10-01 — before that date the
+      literal 1.5 was written out four times and applied at three sites.
+  - id: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
+    value: 1.5
+    status: arbitrary
+    site: src/risk/constants.py
+    note: >-
+      MOVED 2026-10-01, board item 216: this is the SAME number, unchanged in
+      value, re-homed from src.config.RiskConfig.short_gap_risk_multiple to
+      the one place that now defines AND applies it. It previously had a
+      second ledger row (src.portfolio_constructor.ConstructorConfig.
+      short_gap_risk_multiple, `derived`); that row is deleted rather than
+      kept in sync, because a mirror kept in sync is the same defect waiting
+      to recur. The literal existed four times and the haircut was APPLIED at
+      three sites; execution ships min(qty_by_alloc, qty_by_risk), so the
+      execution-side copy, not the constructor's, sized a live short whenever
+      the risk leg bound. Both legs now call gap_adjusted_risk_per_share. No
+      sizing changed. The arbitrary count is unchanged: one row replaces one
+      row, and the deleted row was `derived`, never counted as arbitrary.
       Sizing-only haircut on a short's risk-per-share, never applied to stop
       placement: a short gaps through its stop upward with no bound, so the
       same risk allocation opens a SMALLER short than an equivalent long
@@ -3189,22 +3214,6 @@ numbers:
         in which case the per-name formula replaces it and this row leaves the
         ledger. Never set by searching for the envelope that would have performed
         best on this desk's own fills
-  - id: src.portfolio_constructor.ConstructorConfig.short_gap_risk_multiple
-    value: 1.5
-    status: derived
-    site: src/portfolio_constructor.py
-    derived_from: src.config.RiskConfig.short_gap_risk_multiple
-    base_value: 1.5
-    note: >-
-      Mirror of src.config.RiskConfig.short_gap_risk_multiple, the deployed
-      value. Recorded as `derived` rather than as a second arbitrary number:
-      it is ONE number with two definition sites, so counting it twice would
-      inflate the arbitrary total the same way this ledger's first version
-      claimed the 0.50% floor existed in one place while listing it in two.
-      Base-drift now fails the build if the pair stops agreeing, which nothing
-      previously checked. CORRECTION 2026-09-18: the first version quoted
-      "until a separate pass re-examines it" as text at this site; that phrase
-      is in docs/, not in src/portfolio_constructor.py.
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]
     value: 1.2
     status: arbitrary
@@ -3463,6 +3472,21 @@ numbers:
       initial_stop_loss / initial_take_profit on 33 BUY trades] median
       reward:risk is 1.24 and eleven buys sit below parity.
   - id: src.risk.constants.REWARD_RISK_FLOOR
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        for every name the desk COULD have traded on a session -- the nominated universe, never this
+        desk's own fills, because doctrine bars fitting to its own record -- the reward-to-risk the
+        name offered at nomination from its ATR-based stop distance and its structural room, paired
+        with what the name went on to do over the following sessions
+      closes_when: >-
+        that universe-wide distribution shows whether a reference point at any level separates names
+        that went on to work from names that did not, so the ordering nudge is read off the tradable
+        universe instead of a round 1.5. DELETE OUTCOME, and it is the likelier one: if re-running the
+        recorded rank_verdicts contests with this reference point removed changes no ordering, the
+        constant does nothing and is deleted rather than re-picked at some other figure
     value: 1.5
     status: arbitrary
     site: src/risk/constants.py
@@ -3531,6 +3555,21 @@ numbers:
       existing indicator set rather than picked; changing it would require
       the desk to compute an average it does not compute.
   - id: src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        across the tradable universe, not this desk's trades: for trends that later resumed and for
+        trends that had genuinely ended, how far price gave back below the last chart mark (a moving
+        average, or a level confirmed broken) measured in that name's own ATR
+      closes_when: >-
+        the two give-back distributions are separable, so the band is read off the difference between a
+        pullback and a finished move rather than set as an appetite dial. This replaces the appetite
+        question this row used to carry: the owner withdrew the risk dials on 2026-09-30 and asked for
+        the threshold-free alternative instead. DELETE OUTCOME: if the alignment rule's own three-way
+        agreement (structure, ATR and an SMA cross) already fires before this band is ever reached in
+        the recording, the band never governs an exit and is deleted
     value: 3.0
     status: arbitrary
     site: src/risk/alignment_exit.py
@@ -3566,6 +3605,22 @@ numbers:
       rest of the move is forgone. The exposure is the whole unrealised
       gain of any position this exit fires on.
   - id: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        every midday gate evaluation in front of a non-external SELL, carrying the adverse move from
+        AVERAGE ENTRY PRICE in the name's own ATR, the sqrt(sessions_held) widening applied, whether
+        the band blocked the exit, and what the position did afterwards -- this row's own
+        `settlement_route` and `derivation_attempts` fields hold the two spent derivation attempts and
+        must not be re-opened blind
+      closes_when: >-
+        the recording holds enough blocked and unblocked evaluations to show where the adverse move
+        from entry stops being ordinary wobble for THIS anchor, which is the anchor no published
+        volatility multiple uses. Its `recording_status` records the measurement of 2026-10-01: the
+        refusal payload has produced ZERO observations so far, so the route is UNPROVEN rather than
+        collecting, and the first closing condition is that the payload be shown to populate at all
     value: 1
     status: arbitrary
     site: src/risk/exit_guard.py
@@ -3654,6 +3709,20 @@ numbers:
       has recorded nothing yet, and the board's headline "7 of 8 discretionary
       exits blocked" is NOT reproducible from that table.
   - id: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        every structural break evaluation in `check_structural_protection`, each emitting
+        `rule=break_confirmation_margin` with the margin as an ATR multiple, the level tested, whether
+        the close cleared it, and whether the level held afterwards -- separately from the noise band,
+        which was one literal with this number until 2026-09-26 and may not be re-collapsed with it
+      closes_when: >-
+        enough break evaluations accumulate to show the margin at which a daily close beyond a level is
+        followed by the level staying broken, rather than an ATR magnitude no published work expresses
+        in ATRs. The strictly-positive floor on this number is already ratified as an arithmetic
+        non-degeneracy bound and that part does not reopen
     value: 1
     status: arbitrary
     site: src/risk/exit_guard.py
@@ -3769,6 +3838,18 @@ numbers:
       A character window for string matching inside the exit-reason phrase
       check. It parses English, not price.
   - id: src.risk.exit_guard._NOISE_FLOOR['distance_to_stop_pct']
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        the session-to-session dispersion of each position's distance-to-stop percentage as the exit
+        guard already records it, per name, so the floor is read off how much this metric moves on a
+        quiet day for that name instead of from a round number shared across four different units
+      closes_when: >-
+        the per-name dispersion is known, letting the floor become a per-name read rather than one
+        constant. DELETE OUTCOME: if the measured quiet-day dispersion sits at or below the resolution
+        this metric is recorded at, the floor is indistinguishable from zero and the key is deleted
     value: 0.1
     status: arbitrary
     site: src/risk/exit_guard.py
@@ -3785,6 +3866,20 @@ numbers:
       An exit is either taken on noise or suppressed while the position
       genuinely deteriorates.
   - id: src.risk.exit_guard._NOISE_FLOOR['pace']
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        the session-to-session dispersion of the thesis-pace input, per name, read off the recorded
+        evaluations -- this is a different quantity from the r_multiple floor and merely shares a digit
+        with it, confirmed by reading how each is consumed: the four floors are applied independently
+        to their own metric and are never summed or compared with one another, so their spacing carries
+        nothing and only each one's own magnitude matters
+      closes_when: >-
+        the pace input's own quiet-day dispersion is known and the floor is set from it. DELETE
+        OUTCOME: if pace moves by less than its own recording resolution on a quiet day, this floor is
+        doing nothing and the key is deleted
     value: 0.05
     status: arbitrary
     site: src/risk/exit_guard.py
@@ -3801,6 +3896,18 @@ numbers:
     cost_while_unanswered: >-
       As above, on the pace input.
   - id: src.risk.exit_guard._NOISE_FLOOR['r_multiple']
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        the session-to-session dispersion of open R-multiple per name, from the recorded evaluations,
+        so the floor is a fraction of how much R moves on an ordinary day for that name rather than a
+        round 0.05 shared with an unrelated metric
+      closes_when: >-
+        the per-name R dispersion is known and the floor follows from it. DELETE OUTCOME: if the
+        recorded R-multiple only ever moves in steps larger than this floor, the floor never suppresses
+        anything and the key is deleted
     value: 0.05
     status: arbitrary
     site: src/risk/exit_guard.py
@@ -3815,6 +3922,17 @@ numbers:
     cost_while_unanswered: >-
       As above, on the R input.
   - id: src.risk.exit_guard._NOISE_FLOOR['thesis_progress_pct']
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        the session-to-session dispersion of recorded thesis-progress percentage per name, so the floor
+        reflects how coarsely that figure is actually produced rather than being a round half a percent
+      closes_when: >-
+        the dispersion and the granularity of the progress figure are known, so the floor is set from
+        the measurement. DELETE OUTCOME: if thesis progress is only ever emitted in coarse steps, a
+        floor finer than one step is inert and the key is deleted
     value: 0.5
     status: arbitrary
     site: src/risk/exit_guard.py
@@ -3872,6 +3990,19 @@ numbers:
       "fully invested" in quotation marks as text at this site; it is not
       there.
   - id: src.risk.rules.EARNINGS_STANCE_MAX_AGE_DAYS
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        the realised gaps between consecutive reported earnings dates for the names in the tradable
+        universe, taken from the earnings calendar feed the desk already pulls -- never from this
+        desk's own holding periods
+      closes_when: >-
+        that gap distribution is known, so the staleness limit is set at a named quantile of real
+        inter-earnings gaps (a stance must expire before the next report can have changed it) instead
+        of a round quarter. DELETE OUTCOME: if every stance in the record is refreshed well inside any
+        plausible limit, the age cap never binds and is deleted
     value: 90
     status: arbitrary
     site: src/risk/rules.py
@@ -3885,6 +4016,19 @@ numbers:
       A stale stance either gates a trade it should not, or is trusted past
       the point the fundamentals changed.
   - id: src.risk.rules.GROSS_LADDER[0][0]
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        each session's peak-to-trough account drawdown with the ladder rung it selected and the
+        gross-exposure ceiling that resulted, so the thresholds become boundaries observed to be
+        crossed rather than three round depths. These thresholds are NOT sort positions: `check` walks
+        the ladder and takes min(base, rung) at every threshold the drawdown clears, so each threshold
+        is a real boundary and each rung a real multiplier
+      closes_when: >-
+        a run of sessions shows which depths are actually reached and what the book did at each, so the
+        first de-levering depth is read off the account's own equity series rather than chosen
     value: -8
     status: arbitrary
     site: src/risk/rules.py
@@ -3908,6 +4052,20 @@ numbers:
       accepted appetite pending a measurement of the account's own recovery
       behaviour.
   - id: src.risk.rules.GROSS_LADDER[0][1]
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        for every session the first rung was active, the gross exposure the ceiling allowed, the
+        exposure the book actually carried, and whether the ceiling bound anything at all -- the
+        spacing between rungs is load-bearing here because the rung is a multiplier applied to equity,
+        not a position in an ordering
+      closes_when: >-
+        the recording shows whether a 1.5x ceiling ever refused an order the 2.0x configured cap would
+        have allowed. DELETE OUTCOME: a rung whose multiple is not strictly below the configured gross
+        cap can never bind, because the ceiling is min(base, rung); if the configured cap is ever
+        lowered to or below this rung, this rung is deleted rather than re-picked
     value: 1.5
     status: arbitrary
     site: src/risk/rules.py
@@ -3926,6 +4084,16 @@ numbers:
     cost_while_unanswered: >-
       As above.
   - id: src.risk.rules.GROSS_LADDER[1][0]
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        each session's drawdown against the second threshold, with the rung selected and the resulting
+        ceiling, so the middle boundary is observed rather than interpolated between the other two
+      closes_when: >-
+        a run of sessions shows whether the middle depth is ever occupied for long enough to matter,
+        and at what depth de-levering actually changed the book
     value: -15
     status: arbitrary
     site: src/risk/rules.py
@@ -3944,6 +4112,19 @@ numbers:
     cost_while_unanswered: >-
       As above.
   - id: src.risk.rules.GROSS_LADDER[1][1]
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        every session this rung was the binding one, with the ceiling it produced and the exposure the
+        book was carrying, so it is visible whether the rung changed anything
+      closes_when: >-
+        the recording shows this rung binding at least once. DELETE OUTCOME stated up front because it
+        is the live risk here: this rung is 1.0x against a configured 2.0x cap today, but if the
+        configured cap is ever set to 1.0x or lower this rung becomes indistinguishable from no
+        de-levering at all, and a rung that cannot be told apart from no scaling is deleted, never
+        re-picked at some other multiple
     value: 1
     status: arbitrary
     site: src/risk/rules.py
@@ -3962,6 +4143,17 @@ numbers:
       Part of a ratified owner table of fixed percentages; carried as accepted
       appetite pending a measurement of this book's own recovery record.
   - id: src.risk.rules.GROSS_LADDER[2][0]
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        each session's drawdown against the deepest threshold, recorded alongside the separate
+        owner-alert level so the two are never conflated -- they answer different questions and merely
+        agree today
+      closes_when: >-
+        a run of sessions shows whether the deepest depth is ever reached, and the depth at which the
+        book should carry its most de-levered setting is read off that record
     value: -20
     status: arbitrary
     site: src/risk/rules.py
@@ -3980,6 +4172,17 @@ numbers:
     cost_while_unanswered: >-
       As above, and this is the rung that halves the book.
   - id: src.risk.rules.GROSS_LADDER[2][1]
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        every session the deepest rung was active, the ceiling it produced, the exposure carried, and
+        how long the account stayed there before recovering
+      closes_when: >-
+        the recording shows what the most de-levered setting actually costs and whether it ever bound.
+        DELETE OUTCOME: if the deepest depth is never reached in the record, the rung is unexercised
+        and the honest reading is that the ladder has two rungs, not three
     value: 0.5
     status: arbitrary
     site: src/risk/rules.py
@@ -4086,6 +4289,20 @@ numbers:
       NOT the published indicator's fixed 22-bar lookback and ATR(22); so the
       3.0 multiple carries this citation, the surrounding geometry does not.
   - id: src.risk.trailing.MIN_RATCHET_PCT
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        the broker's own behaviour -- what an amend of a resting stop costs and whether it is charged
+        at all, read off the broker's fee schedule and confirmed against real amends -- paired with the
+        distribution of proposed ratchet sizes the trailing logic generates before this gate is applied
+      closes_when: >-
+        the cost of an amend is known from the broker rather than assumed, and the proposed-move
+        distribution shows how many moves this gate suppresses. DELETE OUTCOME, and the likely one: the
+        desk's broker charges nothing for amending a stop and the noise band already refuses the moves
+        that would be unsafe, so if the recording shows this percentage gate suppressing only moves the
+        noise band would also have refused, it is doing nothing and is deleted rather than re-set
     value: 2
     status: arbitrary
     site: src/risk/trailing.py
@@ -4180,6 +4397,21 @@ numbers:
       (`kind='trail_state'`, `src/risk/trailing.py::TRAIL_CODE_*`) already
       name which gate refused each trail, which is what this entry wanted.
   - id: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        across the tradable universe, how far price routinely retraces against a live trend in the
+        name's own ATR without the trend ending, so the distance a new stop must keep from price is
+        read off universe price behaviour and not off this desk's fills -- and, in the same pass,
+        whether this 1.25 and the exit guard's 1.0 of the same name are one quantity or two
+      closes_when: >-
+        the universe measurement names the retracement distance, AND the one-definition question is
+        settled either by collapsing the two noise bands into one ledgered quantity or by writing down
+        what makes them different. DELETE OUTCOME: if every stop placement refused by this band is also
+        refused by the minimum-ratchet gate or the chandelier, the band is redundant here and is
+        deleted
     value: 1.25
     status: arbitrary
     site: src/risk/trailing.py
@@ -4195,6 +4427,20 @@ numbers:
       This band is roughly the width of a stop, which is why broker stops do
       almost all real exiting - see docs/WORK.md item 18.
   - id: src.risk.trailing.PIVOT_WINDOW
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        over the tradable universe's daily bars, which lookback width reproduces the swing lows and
+        highs a chart reader would mark, evaluated against the same bars at several widths -- together
+        with the open discrepancy that the levels module uses 5 for the same named quantity while this
+        uses 3
+      closes_when: >-
+        one width is chosen from universe price data and the two definitions of the pivot window are
+        reconciled into one ledgered quantity. DELETE OUTCOME: if the structure-based trail never fires
+        at any width because an earlier refusal always precedes it, the window governs nothing and the
+        structure trail, not just its width, is what needs deciding
     value: 3
     status: arbitrary
     site: src/risk/trailing.py
@@ -4236,6 +4482,17 @@ numbers:
       exit rule, not a trail. It inherits `PIVOT_WINDOW`'s own unresolved
       question and adds none of its own.
   - id: src.risk.trailing.RANGE_BREAKEVEN_R_MULTIPLE
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        across the tradable universe, for range setups identified from price structure alone: how often
+        a name that reached a given multiple of its initial risk subsequently returned to its entry
+        level, measured on universe bars rather than on this desk's own trades
+      closes_when: >-
+        that curve shows the gain level beyond which giving the whole move back becomes the dominant
+        risk, so the breakeven trigger is read off price behaviour rather than set at a round 1R
     value: 1
     status: arbitrary
     site: src/risk/trailing.py
@@ -4268,6 +4525,18 @@ numbers:
       Every range trade's stop moves on a borrowed convention; too early it
       exits winners at scratch, too late it gives back the bank.
   - id: src.risk.trailing.RANGE_SECOND_RATCHET_TRIGGER_R
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        the same universe measurement, extended: for names that reached each successive multiple of
+        initial risk, how far they subsequently retraced, so the depth at which a second stop move pays
+        for itself is visible
+      closes_when: >-
+        the retracement curve names the trigger level. DELETE OUTCOME: if the trigger is never reached
+        before the alignment exit or the chandelier has already moved the stop at least as high, the
+        second rung never binds and is deleted
     value: 2
     status: arbitrary
     site: src/risk/trailing.py
@@ -4297,6 +4566,19 @@ numbers:
       at the lock for a scratch-plus, too late it gives back the bank on a
       reversal before +2R is tagged.
   - id: src.risk.trailing.RANGE_SECOND_RATCHET_LOCK_R
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        for each candidate lock level, how much of the eventual move was forgone by stopping out there
+        versus how much was handed back by locking lower, measured over the tradable universe's range
+        setups
+      closes_when: >-
+        the trade-off curve names the lock level against measured behaviour instead of the current
+        round 1R. DELETE OUTCOME: if the lock level cannot be set strictly above the level the
+        breakeven ratchet already established, the second rung moves no stop and is deleted rather than
+        re-picked
     value: 1
     status: arbitrary
     site: src/risk/trailing.py
@@ -7300,6 +7582,19 @@ numbers:
       Unit default for a quantity (src/risk/metrics.py:110); every caller
       passes the real quantity.
   - id: src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        each session's correlation clusters as the distance tree cuts them, with every cluster's share
+        of gross notional and whether this advisory cap was exceeded, recorded alongside what the desk
+        then did with the names in that cluster
+      closes_when: >-
+        a run of sessions shows the cluster shares the book actually reaches, so the cap is set against
+        observed crowding. SEPARATE AND FIRST: the code calls this cap advisory, so the recording must
+        also show whether anything acts on the violation; if nothing does, the honest route is to say
+        so and either wire it up or delete it, not to tune an advisory number
     value: 50
     status: arbitrary
     site: src/risk/rules.py
