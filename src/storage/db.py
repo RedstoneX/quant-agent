@@ -4032,26 +4032,49 @@ class Database:
     TARGET_REVISION_KIND = "target_revision"
 
     def save_target_level_break(
-        self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+        self, *, run_id: str, symbol: str, raw_broken: bool | None,
+        bar_date: str, raw_reach: bool | None = None,
+        raw_wall: bool | None = None,
     ) -> int:
-        """Record whether the close dated `bar_date` had cleared this
-        position's target level, so a LATER, DIFFERENT bar_date's read can
-        require it to still be cleared before treating the break as
-        confirmed."""
+        """Record the close dated `bar_date`'s RAW trigger state, so a
+        LATER, DIFFERENT bar_date's read can require the same condition to
+        still hold before treating it as confirmed.
+
+        THREE FLAGS, ONE ROW, ONE MECHANISM (item 194). `raw_broken` is the
+        original: the level the target was measured against was closed
+        through. `raw_reach` and `raw_wall` are the other two triggers' raw
+        state, carried in the SAME row under the same `bar_date` key so all
+        three are confirmed by one definition of "the prior trading day
+        agreed" rather than three. A flag omitted or passed None is written
+        as absent and read back as False — a question that could not be
+        asked can never be half of a confirmation.
+        """
+        payload: dict = {"bar_date": str(bar_date)}
+        for key, val in (
+            ("raw_broken", raw_broken),
+            ("raw_reach", raw_reach),
+            ("raw_wall", raw_wall),
+        ):
+            if val is not None:
+                payload[key] = bool(val)
         return self.insert_specialist_evidence(
             run_id=run_id, agent_name="risk_manager",
             kind=self.TARGET_LEVEL_BREAK_KIND, scope="symbol",
             symbol=symbol.upper(),
-            evidence_json=json.dumps({
-                "raw_broken": bool(raw_broken), "bar_date": str(bar_date),
-            }),
+            evidence_json=json.dumps(payload),
         )
 
     def get_prior_target_level_break(
         self, symbols, *, today_bar_date: str, exclude_run_id: str | None = None,
+        flag: str = "raw_broken",
     ) -> dict[str, bool]:
-        """The most recent target-level break flag per symbol from a close
-        dated STRICTLY BEFORE `today_bar_date`.
+        """The most recent target-revision trigger flag per symbol from a
+        close dated STRICTLY BEFORE `today_bar_date`.
+
+        `flag` picks which of the three raw states written by
+        `save_target_level_break` to read; the row selection, the
+        strictly-earlier bar_date rule and the missing-row rule are
+        identical for all three.
 
         A symbol absent from the result has no qualifying prior-day read, and
         callers must read that as False — a missing row can never manufacture
@@ -4060,13 +4083,14 @@ class Database:
         return self._prior_break_flags(
             symbols, kind=self.TARGET_LEVEL_BREAK_KIND,
             today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
+            flag=flag,
         )
 
     def _prior_break_flags(
         self, symbols, *, kind: str, today_bar_date: str,
-        exclude_run_id: str | None = None,
+        exclude_run_id: str | None = None, flag: str = "raw_broken",
     ) -> dict[str, bool]:
-        """Shared body of the two prior-close break reads."""
+        """Shared body of the prior-close break reads."""
         wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
         if not wanted:
             return {}
@@ -4095,7 +4119,7 @@ class Database:
                 continue
             if not bar_date or bar_date >= today_bar_date:
                 continue
-            latest[sym] = bool(payload.get("raw_broken"))
+            latest[sym] = bool(payload.get(flag))
         return latest
 
     def record_target_revision(

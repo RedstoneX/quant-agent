@@ -10951,8 +10951,8 @@ class TradingPipeline:
             SEAT_STRUCTURAL_SWEEP,
             SWEEP_EVIDENCE,
             assess_target_revision,
+            raw_trigger_flags,
             level_backing_target,
-            target_level_broken,
         )
         from src.trading_calendar import et_today
 
@@ -11152,17 +11152,37 @@ class TradingPipeline:
                 # several intraday cycles re-reading one close are never
                 # miscounted as two confirming days.
                 effective_bar_date = bar_date or str(et_today())
+                #
+                # ALL THREE triggers are confirmed the same way (item 194):
+                # the reach and wall triggers used to fire on one session's
+                # reading, so a target near a bound flipped session to
+                # session, and because a target moving down used to cross a
+                # range trade into a tighter trailing regime the flip was a
+                # one-way ratchet. The regime boundary now reads the pinned
+                # entry target, and this is the second brake.
                 break_seen_prior_close = False
+                reach_seen_prior_close = False
+                wall_seen_prior_close = False
                 try:
-                    prior = self.db.get_prior_target_level_break(
-                        [sym], today_bar_date=effective_bar_date,
-                        exclude_run_id=run_id,
-                    )
-                    break_seen_prior_close = bool(prior.get(sym, False))
+                    for _flag, _name in (
+                        ("raw_broken", "break_seen_prior_close"),
+                        ("raw_reach", "reach_seen_prior_close"),
+                        ("raw_wall", "wall_seen_prior_close"),
+                    ):
+                        _prior = self.db.get_prior_target_level_break(
+                            [sym], today_bar_date=effective_bar_date,
+                            exclude_run_id=run_id, flag=_flag,
+                        )
+                        if _name == "break_seen_prior_close":
+                            break_seen_prior_close = bool(_prior.get(sym, False))
+                        elif _name == "reach_seen_prior_close":
+                            reach_seen_prior_close = bool(_prior.get(sym, False))
+                        else:
+                            wall_seen_prior_close = bool(_prior.get(sym, False))
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "target revision: prior-close read failed for %s (%s) — "
-                        "today's break, if any, starts unconfirmed", sym, exc,
+                        "today's triggers, if any, start unconfirmed", sym, exc,
                     )
 
                 # Sessions this position has already spent out of its pinned
@@ -11202,6 +11222,8 @@ class TradingPipeline:
                     close_price=close_price,
                     levels_coverage=coverage or COVERAGE_UNKNOWN,
                     break_seen_prior_close=break_seen_prior_close,
+                    reach_seen_prior_close=reach_seen_prior_close,
+                    wall_seen_prior_close=wall_seen_prior_close,
                     sessions_held=sessions_held,
                     # The same ratified derivation bars the constructor passes at
                     # entry, read off `risk_engine.config` (what
@@ -11218,15 +11240,28 @@ class TradingPipeline:
                 # `_structural_protection_for_holding`. A `None` from the break
                 # test means the question could not be asked; nothing is filed,
                 # so a missing input can never become half of a confirmation.
-                raw_broken = target_level_broken(
-                    target_level=target_level, close_price=close_price,
-                    atr=atr, is_short=is_short,
+                raw_flags = raw_trigger_flags(
+                    entry_price=float(
+                        getattr(position, "avg_entry", 0) or 0
+                    ) or None,
+                    stored_target=stored_target, target_level=target_level,
+                    atr=atr, close_price=close_price,
+                    horizon_sessions=buy.get("expected_horizon_sessions"),
+                    levels=levels, is_short=is_short,
+                    # Every bar `raw_trigger_flags` reads EXCEPT the
+                    # breakout projection, which is a derivation input and
+                    # not a trigger test.
+                    **{k: v for k, v in target_cfg.items()
+                       if k != "breakout_projection_atr_multiple"},
                 )
-                if raw_broken is not None and bar_date:
+                raw_broken = raw_flags["raw_broken"]
+                if bar_date and any(v is not None for v in raw_flags.values()):
                     try:
                         self.db.save_target_level_break(
-                            run_id=run_id, symbol=sym,
-                            raw_broken=bool(raw_broken), bar_date=bar_date,
+                            run_id=run_id, symbol=sym, bar_date=bar_date,
+                            raw_broken=raw_broken,
+                            raw_reach=raw_flags["raw_reach"],
+                            raw_wall=raw_flags["raw_wall"],
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(

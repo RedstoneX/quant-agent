@@ -212,6 +212,9 @@ __all__ = [
     "TRIGGER_WALL_IN_FRONT_OF_TARGET",
     "REVISION_NO_TRIGGER",
     "REVISION_BREAK_PENDING_CONFIRMATION",
+    "REVISION_REACH_PENDING_CONFIRMATION",
+    "REVISION_WALL_PENDING_CONFIRMATION",
+    "raw_trigger_flags",
     "REVISION_NO_PINNED_HORIZON",
     "REVISION_NO_STORED_TARGET",
     "REVISION_UNMEASURABLE_INPUTS",
@@ -282,6 +285,15 @@ REVISION_NO_TRIGGER = "REFUSAL_NO_STRUCTURAL_EVENT"
 #: The target's level was closed through TODAY but not on the prior trading
 #: day's close. Same one-day-spring guard as `check_structural_protection`.
 REVISION_BREAK_PENDING_CONFIRMATION = "REFUSAL_BREAK_PENDING_CONFIRMATION"
+
+#: Today's ATR puts the stored target outside the derivation's reach, but
+#: the PRIOR trading day's close did not. Same gate, same mechanism and the
+#: same stored state as the break above — see `raw_trigger_flags`.
+REVISION_REACH_PENDING_CONFIRMATION = "REFUSAL_REACH_PENDING_CONFIRMATION"
+
+#: A wall stands between entry and target on today's close but did not on
+#: the prior trading day's. Same gate as the two above.
+REVISION_WALL_PENDING_CONFIRMATION = "REFUSAL_WALL_PENDING_CONFIRMATION"
 
 #: No `expected_horizon_sessions` on the trade row. Legacy rows predate the
 #: pin; the horizon is never recomputed, so these can never be revised.
@@ -620,6 +632,75 @@ def stale_reach_trigger(
     return ""
 
 
+def raw_trigger_flags(
+    *,
+    entry_price: float | None,
+    stored_target: float | None,
+    target_level: float | None,
+    atr: float | None,
+    close_price: float | None,
+    horizon_sessions: int | None,
+    levels: list[float] | tuple[float, ...] | None,
+    is_short: bool,
+    min_target_atr_multiple: float = MIN_TARGET_ATR_MULTIPLE,
+    max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
+    max_horizon_sessions: int = MAX_HORIZON_SESSIONS,
+    break_margin_atr_multiple: float = BREAK_CONFIRMATION_ATR_MULTIPLE,
+) -> dict[str, bool | None]:
+    """TODAY'S RAW state of all three triggers, before any confirmation.
+
+    ONE DEFINITION, THREE TRIGGERS. The level-broken trigger has always
+    required the same condition on two consecutive completed daily closes:
+    today's raw state is persisted, and the next trading day's read asks
+    whether the PRIOR close agreed. That is the only confirmation mechanism
+    the desk has, and this function exists so the reach and wall triggers
+    can be put through the identical one rather than growing a second and
+    third idea of "confirmed". No count of closes and no margin is chosen
+    here — the count is the existing two, and the only margin involved is
+    `BREAK_CONFIRMATION_ATR_MULTIPLE`, which the break test already owned.
+
+    Each value is True, False, or None when the question cannot be asked at
+    all on today's inputs. A None is never persisted and never confirms
+    anything, so a missing input can never become half of a confirmation —
+    the same rule the break state has always followed.
+    """
+    entry = _finite(entry_price)
+    target = _finite(stored_target)
+    vol = _finite(atr)
+    close = _finite(close_price)
+    broken = target_level_broken(
+        target_level=target_level, close_price=close, atr=vol,
+        is_short=is_short, break_margin_atr_multiple=break_margin_atr_multiple,
+    )
+    reach: bool | None = None
+    wall: bool | None = None
+    if entry is not None and target is not None and vol is not None and vol > 0:
+        horizon = None
+        try:
+            horizon = int(horizon_sessions) if horizon_sessions else None
+        except (TypeError, ValueError):
+            horizon = None
+        if horizon and horizon > 0:
+            reach = bool(stale_reach_trigger(
+                entry_price=entry, stored_target=target, atr=vol,
+                horizon_sessions=horizon,
+                min_target_atr_multiple=min_target_atr_multiple,
+                max_reach_atr_multiple=max_reach_atr_multiple,
+                max_horizon_sessions=max_horizon_sessions,
+            ))
+        if close is not None:
+            wall = bool(walls_between(
+                stored_target=target, reference_price=entry,
+                surviving_levels=levels_still_in_the_way(
+                    computed_levels=levels, close_price=close, atr=vol,
+                    is_short=is_short,
+                    break_margin_atr_multiple=break_margin_atr_multiple,
+                ),
+                is_short=is_short,
+            ))
+    return {"raw_broken": broken, "raw_reach": reach, "raw_wall": wall}
+
+
 def assess_target_revision(
     *,
     symbol: str,
@@ -634,6 +715,8 @@ def assess_target_revision(
     close_price: float | None,
     levels_coverage: str = COVERAGE_UNKNOWN,
     break_seen_prior_close: bool = False,
+    reach_seen_prior_close: bool = False,
+    wall_seen_prior_close: bool = False,
     sessions_held: int | None = None,
     min_target_atr_multiple: float = MIN_TARGET_ATR_MULTIPLE,
     breakout_projection_atr_multiple: float = BREAKOUT_PROJECTION_ATR_MULTIPLE,
@@ -725,13 +808,32 @@ def assess_target_revision(
     # --- Trigger 2: today's ATR puts the stored target outside the
     # derivation's own acceptance bounds.
     if not trigger:
-        trigger = stale_reach_trigger(
+        reach_trigger = stale_reach_trigger(
             entry_price=entry, stored_target=target, atr=vol,
             horizon_sessions=horizon,
             min_target_atr_multiple=min_target_atr_multiple,
             max_reach_atr_multiple=max_reach_atr_multiple,
             max_horizon_sessions=max_horizon_sessions,
         )
+        if reach_trigger and not reach_seen_prior_close:
+            # SAME CONFIRMATION GATE as the break above, not a new one: a
+            # target sitting just outside today's reach is back inside it
+            # on tomorrow's ATR, and a target re-derived off one session's
+            # reading would have to be re-derived back again. One day's
+            # agreement is not a structural change.
+            return TargetRevisionOutcome(
+                symbol=sym, code=REVISION_REACH_PENDING_CONFIRMATION,
+                refusal=REVISION_REACH_PENDING_CONFIRMATION,
+                prior_price=target, level_used=_finite(target_level),
+                detail=(
+                    "today's ATR puts the stored target outside the reach "
+                    "the derivation accepted it under, but the prior "
+                    "trading day's close did not — one session's ATR "
+                    "reading is not a structural change, so the target "
+                    "stands"
+                ),
+            )
+        trigger = reach_trigger
 
     # --- Trigger 3: a level still in the way now stands between the entry
     # and the stored target. The mirror of trigger 1 — see the module
@@ -750,6 +852,23 @@ def assess_target_revision(
             ),
             is_short=is_short,
         )
+        if walls and not wall_seen_prior_close:
+            # SAME CONFIRMATION GATE again. A level only becomes a wall
+            # once it has survived `levels_still_in_the_way` on a completed
+            # close, and one close can put a level in the way that the next
+            # close clears — which is exactly the session-to-session flip
+            # this brake exists to stop.
+            return TargetRevisionOutcome(
+                symbol=sym, code=REVISION_WALL_PENDING_CONFIRMATION,
+                refusal=REVISION_WALL_PENDING_CONFIRMATION,
+                prior_price=target, level_used=_finite(target_level),
+                detail=(
+                    f"a structural level (${walls[0]:,.2f}) stands between "
+                    f"the entry and the target on today's close but did "
+                    f"not on the prior trading day's — the wall is not yet "
+                    f"confirmed, so the target stands"
+                ),
+            )
         if walls:
             trigger = TRIGGER_WALL_IN_FRONT_OF_TARGET
 
