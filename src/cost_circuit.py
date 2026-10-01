@@ -2733,8 +2733,53 @@ class LLMCostCircuitBreaker:
             return False
         return 0.0 <= float(elapsed) < self._self_clear_window_minutes()
 
+    def _episode_already_paged_locked(
+        self, conn: sqlite3.Connection, state: dict[str, Any],
+        *, before: str | None = None,
+    ) -> bool:
+        """True when the owner has ALREADY been paged for this episode.
+
+        Item 211. The first coalescing attempt keyed suppression to the
+        self-clear window, which is a DURATION and the wrong quantity: on
+        production data every one of the 22 suspension episodes between 26
+        and 30 Sep outlasted that window, so none of the 44 messages was
+        held [measured, production `llm_circuit_events`].
+
+        The quantity that must be coalesced is the EPISODE: one underlying
+        fault latching and clearing over and over. No new duration is
+        invented here. The boundary is read off what the record already
+        carries -- the identity of the triggering fault (`trigger_code`)
+        and the ET budget day, which is exactly the boundary
+        `_episode_facts_locked` reports on and the unit the auto-clear
+        allowance is already counted against. A re-latch of the same
+        trigger inside the same budget day is the SAME unresolved fault,
+        so the owner is told once when it starts, not once per flap.
+        """
+        code = str(state.get("trigger_code") or "")
+        if not code:
+            return False
+        _, utc_start, utc_end = _et_day_and_utc_bounds()
+        # `suspension_alert_state` is captured on the AUTO_RESET row, at the
+        # last moment the answer to "did the SUSPENDED note actually reach
+        # him" is still knowable (see `_auto_clear_transient_latch_locked`).
+        # So an earlier latch of this fault that the owner really received
+        # is exactly: an auto_reset today, same trigger, state 1. The latch
+        # live right now has not cleared, so it cannot match its own row.
+        sql = (
+            "SELECT 1 FROM llm_circuit_events WHERE event_type='auto_reset' "
+            "AND trigger_code=? AND suspension_alert_state=1 "
+            "AND created_at BETWEEN ? AND ?"
+        )
+        params: list[Any] = [code, utc_start, utc_end]
+        if before:
+            sql += " AND created_at < ?"
+            params.append(before)
+        row = conn.execute(sql + " LIMIT 1", params).fetchone()
+        return row is not None
+
     def _record_suspension_deferral_locked(
         self, conn: sqlite3.Connection, state: dict[str, Any],
+        *, episode_paged: bool = False,
     ) -> None:
         """Write the deferral down once per latch, so it is never invisible.
 
@@ -2743,14 +2788,30 @@ class LLMCostCircuitBreaker:
         the same noise moved into the database.
         """
         suspended_at = state.get("suspended_at")
+        window = self._self_clear_window_minutes()
+        detail = (
+            "owner alert held: the same trigger already paged him in "
+            "this ET budget day and that episode is not yet resolved; "
+            "a re-latch of one unresolved fault is not a second "
+            "incident. Suspension is in force and recorded either way"
+            if episode_paged else
+            f"owner alert held: latch is inside its own {window:.0f}-minute "
+            "self-clear window and may expire without a human; it pages "
+            "if it is still suspended after that. Suspension is in force "
+            "and recorded either way"
+        )
+        # Once per latch per REASON. A latch can be held first because it
+        # is still inside its own window and then because the episode it
+        # belongs to has already paged; those are different statements
+        # about the desk and the record must carry both. Repeats of the
+        # SAME statement are the noise this dedupe exists to stop.
         existing = conn.execute(
             "SELECT 1 FROM llm_circuit_events WHERE event_type='suspend_alert_deferred' "
-            "AND created_at >= ? LIMIT 1",
-            (suspended_at,),
+            "AND created_at >= ? AND detail = ? LIMIT 1",
+            (suspended_at, detail),
         ).fetchone()
         if existing is not None:
             return
-        window = self._self_clear_window_minutes()
         conn.execute(
             "INSERT INTO llm_circuit_events "
             "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "
@@ -2758,12 +2819,7 @@ class LLMCostCircuitBreaker:
             "('suspend_alert_deferred', ?, ?, ?, ?, 'episode_coalescing', ?, ?, ?)",
             (
                 state.get("trigger_code"),
-                (
-                    f"owner alert held: latch is inside its own {window:.0f}-minute "
-                    "self-clear window and may expire without a human; it pages "
-                    "if it is still suspended after that. Suspension is in force "
-                    "and recorded either way"
-                ),
+                detail,
                 state.get("run_id"), state.get("mode"),
                 int(state.get("session_attempts") or 0),
                 float(state.get("session_cost_usd") or 0.0),
@@ -2861,8 +2917,11 @@ class LLMCostCircuitBreaker:
             self._refresh_latched_snapshot_locked(conn)
             state = self._state_row(conn)
             if int(state.get("suspended") or 0):
-                if self._suspension_still_inside_self_clear_window_locked(
-                    conn, state
+                episode_paged = self._episode_already_paged_locked(conn, state)
+                if episode_paged or (
+                    self._suspension_still_inside_self_clear_window_locked(
+                        conn, state
+                    )
                 ):
                     # === docs/WORK.md item 208 ===
                     # Do not page yet. A latch of a self-clearing code that
@@ -2883,7 +2942,9 @@ class LLMCostCircuitBreaker:
                     # messages, not two. Nothing is dropped: the trip event,
                     # the deferral event below and the CRITICAL log line all
                     # remain.
-                    self._record_suspension_deferral_locked(conn, state)
+                    self._record_suspension_deferral_locked(
+                        conn, state, episode_paged=episode_paged,
+                    )
                 else:
                     cur = conn.execute(
                         "UPDATE llm_circuit_state SET alert_state=-1, updated_at=datetime('now') "
@@ -3053,7 +3114,40 @@ class LLMCostCircuitBreaker:
             # neither note. Resolve the row as unpaired (2) so it is not
             # retried forever, and keep the DB event and the log line, which
             # is where an operator reads the full history.
-            if int(event.get("suspension_alert_state") or 0) == 0:
+            with self._connect() as conn:
+                episode_paged = (
+                    int(event.get("suspension_alert_state") or 0) == 1
+                    or self._episode_already_paged_locked(
+                        conn, event, before=str(event.get("created_at") or ""),
+                    )
+                )
+                live = self._state_row(conn)
+            # Item 211. A clear in the MIDDLE of a live episode is not the
+            # end of it: the same trigger is latched again right now, so
+            # "RESUMED" would be a false statement about the desk's state.
+            # Resolve it unpaired (2) so it is not retried forever; the
+            # clear that genuinely ends the episode still pages.
+            if (
+                int(live.get("suspended") or 0)
+                and str(live.get("trigger_code") or "")
+                == str(event.get("trigger_code") or "")
+            ):
+                logger.info(
+                    "cost-circuit auto-reset %s: holding the owner resume "
+                    "alert because the same trigger is latched again — the "
+                    "episode is still running, not over",
+                    event.get("id"),
+                )
+                with self._connect() as conn:
+                    conn.execute(
+                        "UPDATE llm_circuit_events SET recovery_alert_state=2, "
+                        "recovery_alert_updated_at=datetime('now') "
+                        "WHERE id=? AND recovery_alert_state=-1",
+                        (event["id"],),
+                    )
+                    conn.commit()
+                continue
+            if not episode_paged:
                 logger.info(
                     "cost-circuit auto-reset %s: suppressing the owner resume "
                     "alert because the matching suspension alert never "

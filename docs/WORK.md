@@ -90,6 +90,24 @@ DONE WHEN:
   - [ ] until one of those exists a sale stays NEUTRALISED at 0 and no agent picks the boundary number — the standing no-arbitrary-numbers and no-fitting rules settle that, this is not an appetite dial
 detail: docs/BOARD_NOTES.md (item 63)
 
+**70. One underived `1.0` is doing two different jobs in the exit path, and neither is read off anything — OPEN, filed 2026-09-14.** The noise-band ATR multiple sets when an adverse move stops being noise and is reused as the margin in the structural-protection check; a separate absolute minimum stop multiple, also 1.0, sets how tight a stop may be.
+
+DONE WHEN:
+  - [ ] the noise-band ATR multiple carries a published measurement of the quantity it actually bounds — the adverse move at which a move stops being ordinary daily wobble — or a named derivation, recorded in `config/number_ledger.yaml` with that source
+  - [ ] the absolute minimum stop multiple carries its OWN independent source or derivation, as a separate ledger entry: the two may not be collapsed into one shared constant just because the digits both read 1.0
+  - [ ] the measured over-refusal is re-measured after whichever change lands, against the same recorded exits (today: 7 of 8 discretionary exits the reviewer approved were blocked as "too small a move")
+  - [ ] neither value is retuned to make sales easier or harder in the same pass — how readily the desk should block a sale at all is the owner's appetite and is NOT this item
+  - [ ] 2026-09-26, PARTIAL: the SPLIT is built and the research is recorded (docs/INCIDENT_HISTORY.md, 2026-09-26). The single `1.0` is now two named constants — `NOISE_BAND_ATR_MULTIPLE` (adverse move from entry) and `BREAK_CONFIRMATION_ATR_MULTIPLE` (how far a close must clear a level) — at the same value, with no behaviour change, each with its own ledger entry, research and open question. The exit-guard band was also found mislabelled `derived` from the 1.25 trailing band while holding 1.0, and is now honestly `arbitrary`. STILL UNMET: neither value is sourced. The noise band's only published analogue is ~3 ATR (Wilder, Chandelier, Kaufman), which is a large LOOSENING of how readily the desk may sell and therefore owner appetite this item may not decide; the break margin has no ATR basis in the literature at all (Edwards & Magee answer in percent, Bulkowski in "a decisive close"), so it is unidentifiable in its own units. The absolute minimum stop multiple still carries no source of its own.
+  - [ ] 2026-09-30: the owner ruling that risk tolerance is read PER NAME from the instrument's own behaviour and the seats' conviction, never as a global dial, closes the owner-appetite route both remaining values were routed to. Neither may now be settled by the owner picking a global number. The noise band settles with a per-name read of how far THAT instrument ordinarily travels against a holding; the break margin has NO ATR basis at all and settles only by re-expressing it as a per-name percentage of price scaled by level importance (Edwards & Magee ~3% major / ~1% short-term). Both change live selling behaviour and neither was built in this pass; no replacement number was invented for either.
+  - [ ] 2026-09-30, CLOSED ROUTE: a per-name statistical band (each name's own median historical adverse move) was built, reviewed and REJECTED — the justifying example was arithmetically a counter-example, the bar depth was a second chosen constant, the windows overlapped, a 29-session hold returned ONE observation as a "median", the second call site was unpatched, and a bars-fetch failure reverted silently to the wider band. Do NOT re-attempt it: any summary statistic of a distribution is a choice of percentile, so "read the band off the instrument" can never be satisfied by summarising history.
+  - [ ] 2026-09-30, REDUNDANCY QUESTION ANSWERED (code, not prose): the band is NOT redundant with the alignment test, and it has two homes doing different jobs. Home 1 (pipeline midday review, ahead of every non-external SELL/REDUCE/COVER) measures the move from AVERAGE ENTRY before any structure is consulted — nothing else in the exit path is anchored to entry, and being anchored to entry is precisely what the alignment ruling forbids; deleting it and letting structure+trend decide is the honest fix and removes the number by removing the mechanism, but it IS an exit-behaviour change and is not made under this item's record-truth pass. Home 2 (`check_structural_protection` fallback) is the last resort when a holding has neither a `thesis_invalid_if` nor a qualifying level — alignment has nothing to read there, so deleting it strips protection outright; it needs its own answer first.
+  - [x] 2026-09-30, DONE (record truth, no behaviour change): the refusal log asserted the move was inside the band without disclosing that the band width came from a floored/defaulted session count; the durable `exit_blocked_inside_atr_noise_band` row and the exit-refusal row carried only the model's reason. Both now carry a machine-readable `rule=atr_noise_band ...` payload (side, adverse, entry, price, atr14, band multiple, band width, sessions_held, sessions_measured) ahead of the reason. Two `StructuralProtectionCheck` outcomes that reported `noise_band_intact` WITHOUT ever evaluating the band now report `no_adverse_move_from_entry` and `noise_band_unevaluable_no_data`.
+  - [x] 2026-10-01, BOTH DERIVATION ATTEMPTS ON THE BREAK MARGIN ARE SPENT AND BOTH FAILURE REASONS ARE WRITTEN DOWN (`config/number_ledger.yaml`, `derivation_attempts` on `src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE`). Attempt 1, adopt the literature's own units (Edwards & Magee ~3% major / ~1% short-term): FAILED because choosing which of the two applies needs a major/short-term classifier the desk does not have — its only level-importance signal is the touch count, so a cut on it imports a SECOND chosen number into a fix meant to remove one — and because 3%/1% are themselves round picks from a 1948 text quoted in eighths, so adopting them swaps an unsourced ATR multiple for an unsourced percentage. Attempt 2, read the margin live off the instrument as the smallest increment at which a close is distinguishable from the level: FAILED to produce 1.0, but it DID derive a real structural bound, now ratified with its reason — the margin must be strictly POSITIVE, because at zero a close exactly AT a level counts as a break and every ordinary retest of the support under the stop would lift protection. Positivity is ratified; the magnitude 1.0 is NOT, and stays `arbitrary`. No third attempt: a percentile of the desk's own past breaks is barred outright (choosing where to stand in a distribution IS the appetite figure this item removes).
+  - [x] 2026-10-01, THE SETTLEMENT RECORDING IS BUILT for the break margin (`src/risk/exit_guard.py`, `check_structural_protection`). Every break evaluation — broken, pending-confirmation and intact alike — now emits a machine-readable `rule=break_confirmation_margin` payload carrying the margin as an ATR multiple AND as a percentage of the close, with the ATR, the level, its touch count, the touch minimum and the regime. The number was unidentifiable in its own units precisely because nothing recorded what 1.0 ATR amounted to in the units the only relevant literature uses; it now accrues per name and per level importance. RECORDING ONLY — `break_margin` is unchanged and nothing about when the desk sells moved in this pass.
+  - [ ] 2026-10-01, MEASURED against PRODUCTION (read-only, latest row 2026-09-30 18:15): the noise band's own settlement recording, added 2026-09-30, has produced ZERO observations — `intraday_evaluations` holds 334 rows, none with a noise-band status and NONE carrying any `rule=` payload at all. The noise band therefore still cannot be settled on evidence, its two attempts are also spent and recorded (published ~3 ATR measures distance from a running extreme, not from entry; the per-name historical statistic was built and rejected), and both remaining routes are exit-BEHAVIOUR changes not made under a record-truth pass. Separately noted: the board's headline "7 of 8 discretionary exits blocked" is NOT reproducible from that table.
+  - [ ] STILL OPEN and NOT this item's to close: the absolute minimum stop multiple named in the second criterion above is the same number item 90 owns (min-stop ATR re-derivation), which is in flight elsewhere; it was deliberately not touched here to avoid two agents moving one live-money constant.
+detail: docs/BOARD_NOTES.md (item 70)
+
 **75. Automatic profit-taking: the whole-position case is answered by the alignment exit; the residue is the PARTIAL (trim) case and the recorded target's one surviving live effect — OPEN, filed 2026-09-14 after an owner question on ORCL, rewritten 2026-10-01 against the "exit on ALIGNMENT, never on a target" ruling.**
 
 Why it was rewritten. Four of the six original criteria were written before the 2026-09-30 ruling and three of them ask for exactly what the ruling bars (sell all at target; sell half at target; target tightens the trail). They are VOID, not deferred — tracking a target-based rule is only useful if the desk might one day adopt it, and it may not. The third original criterion asked for a ruling on whether a target plus a confirmed breakdown may exit; the 2026-09-30 ruling IS that ruling, and the answer is no. The trail-tightness criterion was already pointed at items 90 and 185 and stays there.
@@ -259,15 +277,13 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 212)
 
 
-**213. Three separate ATR multiples, all reading 1.0, are still unsourced — filed 2026-09-30 when item 70 was retired. Item 70 was opened because ONE literal did two jobs; the split is built and verified in code, so that defect is gone. What remains is a different subject: each of the three now-separate numbers still has nothing behind it, and the route they were all parked on is closed. Detail: `docs/BOARD_NOTES.md` (item 213).** The three are the exit-path noise band, the break-confirmation margin, and the absolute minimum stop multiple; the ledger marks all three honestly as `arbitrary`, and the 2026-09-30 per-name risk ruling means none of them can be settled by the owner picking a global figure.
+**211. Alert coalescing was keyed to the wrong quantity, the unprotected-position alert was deduped per DAY not per symbol, and the mute dropped messages before recording them — re-opened 2026-10-01 after measurement.** The 2026-10-01 coalescing shipped and SAVES NOTHING on real data: all 22 suspension episodes of 26-30 Sep ran 24 to 253 minutes, none was inside the 15-minute self-clear window it keys on, so all 44 of 107 messages still paged [measured, production `llm_circuit_events` + `notifier_sends`, read-only]. Suppression now spans the EPISODE — same trigger code, same ET budget day, resolved or not — with no duration invented. detail: docs/BOARD_NOTES.md (item 211)
 
 DONE WHEN:
-  - [ ] (a) the exit-path noise band is either read off the instrument per name under the 2026-09-30 per-name ruling, or recorded as permanently unsourceable in its own units with the reason — the published ~3 ATR analogues measure a STOP's distance, not an adverse move from entry, so they are not a source for this quantity
-  - [ ] (b) the break-confirmation margin is re-expressed in the units the published work actually answers in (a percentage of price, or "a decisive close"), or recorded as unidentifiable in ATR units with that finding
-  - [ ] (c) the absolute minimum stop multiple carries its own independent source, or is recorded as unsourceable; its second definition site stays a checked mirror and is not counted as a separate arbitrary number
-  - [ ] (d) none of the three is retuned in the same pass that sources it, and they are never re-collapsed into one shared constant because the digits match — a test pins that they are three distinct names
-detail: docs/BOARD_NOTES.md (item 213)
-
+- [x] a re-latch of one unresolved fault inside its budget day pages the owner once, not once per flap, and the hold is written to the event record with its reason
+- [x] the "position is unprotected" owner alert is deduped per symbol per day like its two siblings, so a second name going naked the same day still pages
+- [x] every message the global mute drops is recorded with its type, symbols and timestamp; nothing is un-muted and no configuration is touched
+- [ ] the owner is shown what the mute has been swallowing since 30 September
 
 **217. Prompt claims that another part of the desk "handles" something — verify each against the code (filed 2026-10-01 after the risk seat was told a thin reward:risk had been "paid for in size by the constructor"; it had not, and that sentence is corrected).** The sweep was by text search only, so claims phrased differently may remain. Not yet verified: the portfolio-manager prompt's statements that "the constructor will deny it" (immaterial-payoff trades), "the constructor REJECTS the trade outright" (stop on the wrong side of entry), and "the constructor will NOT flip" a held short in one session.
 
@@ -378,21 +394,19 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
-- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 193
+- retired queue: 157
 - retired queue: 119
-- retired queue: 211
-- retired queue: 185
-- retired queue: 214
+- retired queue: 193
 - retired queue: 107
+- retired queue: 185
 - retired queue: 76
-- retired queue: 174
+- retired queue: 214
 - retired queue: 199
-- retired queue: 20
 - retired queue: 212
-- retired queue: 70
+- retired queue: 174
+- retired queue: 20
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
