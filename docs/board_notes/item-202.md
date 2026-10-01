@@ -127,3 +127,79 @@ metadata, which is a provenance stamp, not a trading date.
 It also fails on `origin/main` today, taking ~196 seconds of live fetching
 [measured 2026-09-30], so the defect predates the guard rather than being
 caused by it.
+
+### Item 202 update 4 — the settling run, and the first measured network list (2026-10-01)
+
+**The settling run was performed and it VOIDED.** One morning session, real
+production snapshot, replay pinned automatically, taken as the owning POSIX
+account read-only; the sandbox report records the production database as
+byte-identical afterwards, broker credentials as non-functional sentinels, and
+no order of any kind was submitted anywhere. The session ran END TO END — every
+stage, including the Portfolio Manager, which is new: the previous pass could
+not get past `MissingRecordedResponse`. It then ended on
+`HermeticBreach: 11 outbound connection attempt(s) were blocked`, which is the
+mandated outcome, not a new defect. **A voided run is not a pass**, so this
+settles that the harness runs a complete session offline and leaves production
+untouched, and settles NOTHING about the verdict the rig would give.
+
+The eleven blocked endpoints, measured from the breach journal and not from a
+grep: `api.stlouisfed.org` (FRED, 15 series), and ten news/reference hosts —
+`search.cnbc.com`, `feeds.marketwatch.com`, `finance.yahoo.com` (the RSS feed,
+not yfinance), `seekingalpha.com`, `www.investing.com`, `www.nasdaq.com`,
+`feeds.bbci.co.uk`, `feeds.npr.org`, `www.federalreserve.gov`, `www.sec.gov`
+(press releases AND the company-ticker map, which retried three times). The
+count matches the 11 predicted from the test harness, so nothing new leaks; what
+is needed is a recording for these, which remains a separate build.
+
+**Two things the settling run found that the test harness could not.** The
+pinned market recording holds bars for 33 symbols and sectors for ZERO, so
+every sector lookup in the session was reported as a missing recorded input —
+`market_recording.capture` learned to record sectors only after that recording
+was taken, and a fresh capture is required before a sector-clean run is
+possible. Separately the Alpaca asset directory is unavailable offline and
+eligibility fails closed for every candidate, which is correct behaviour but
+means a hermetic run can never clear the eligibility gate until that directory
+is recorded too. Neither is a regression; both are unrecorded inputs on the
+same list as FRED and the feeds.
+
+### Item 202 update 5 — criterion one is now MEASURED (2026-10-01)
+
+The outbound-HTTP guard in `tests/conftest.py` raised without recording, so a
+test that CAUGHT the error was indistinguishable from a test that never called
+out, and "no test reaches the network" could only ever be assumed. The guard now
+appends `nodeid<TAB>url` to the file named by `QAMC_NETWORK_JOURNAL` before it
+raises; unset — which is CI and every ordinary run — it costs one environment
+lookup and changes nothing. Verified against a deliberate probe test that
+swallows the error: the attempt still lands in the journal.
+
+**Measured over one full-suite run with the journal on: 9317 passed, 6 skipped,
+1 xfailed, and 1139 blocked outbound attempts from 247 tests across 45 files.**
+Every one was swallowed by the test rather than failing it, which is exactly the
+population the old guard could not see. By host: 1034 to Yahoo Finance
+(`query1`/`query2`, the sector and price lookups), 99 to
+`raw.githubusercontent.com` (the LiteLLM price table), 6 to `openrouter.ai`.
+None of them fail the suite, so none is a blocker; the list is the criterion's
+answer, and the Yahoo bulk is the same sector lookup the rehearsal needs
+recorded.
+
+
+### Board text moved here (2026-10-01, per-item byte budget)
+
+The item block below is the full prose that stood in `docs/WORK.md` before the
+budget forced it down to a title, short checkboxes and this pointer. Nothing is
+deleted; it is verbatim.
+
+```
+**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, and (2026-10-01) rebinding the market provider on the morning-research stage, which held its own reference and so kept the live one after the swap — tech_analyst now runs offline [measured 2026-10-01]. `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis` still XFAILs. 2026-10-01: the replay now covers the FOURTH transport (`_openai_wire_call`, which the failover and tertiary routes called directly) so the Portfolio Manager runs offline, and sector lookups no longer build their own yfinance client; the run now stops loudly on a missing recorded PM response instead of `APIConnectionError`, and FRED plus 20 news feeds are still not recorded.  2026-10-01: the settling run against the production snapshot was performed and VOIDED on the hermetic wall as expected — the full session now completes end to end including the Portfolio Manager, production was byte-identical afterwards and no order was placed, and the 11 blocked endpoints are FRED plus ten news/reference hosts; two further unrecorded inputs surfaced (the pinned recording holds zero sectors, and the asset directory fails closed offline). Criterion one is settled: the guard now journals each blocked attempt, and a full-suite run measured 1139 blocked attempts from 247 tests, all swallowed, none failing. detail: docs/board_notes/item-202.md
+
+DONE WHEN:
+  - [x] 2026-10-01 the run reaches the Portfolio Manager OFFLINE: `replay_provider_calls` patched only three primary-path transports, so `_try_failover` and `_try_tertiary` went straight to the live `_openai_wire_call`; that fourth transport is now replayed too and the run ends on a loud `MissingRecordedResponse` naming the agent and run instead of `APIConnectionError` [measured 2026-10-01]
+  - [x] 2026-10-01 no component builds its own live market-data client: `broker._get_sector` was calling `yf.Ticker(symbol).info` per symbol behind the wall; it is now served from the recording (sectors are captured too) or recorded as a missing input, and zero yfinance/curl_cffi attempts remain in the journal [measured 2026-10-01: 12 blocked attempts before, 11 after, all of them FRED or news feeds]
+  - [ ] STILL OPEN, not done in this pass: any OTHER test that still reaches the network is named, because the conftest guard now makes such a dependency fail loudly instead of silently
+  - [x] 2026-10-01, THE ENFORCEMENT IS BUILT AND IS NOW MECHANICAL, which is what made every earlier fix rot: `no_network` already journalled each blocked outbound attempt, but the journal was printed in the report as narrative while the run still returned a verdict, so a replay that reached a live provider could still read PASS. `ops/rehearsal/isolation.assert_hermetic` now turns a non-empty journal into a raised `HermeticBreach` with NO opt-out of any kind, `run_rehearsal` calls it after every session and re-raises carrying the report, and `ops/rehearsal/run.py` exits 2 (void, "the rig could not judge it") instead of 0. This matters because every HTTP client in this dependency set catches broadly and retries, so a blocked call used to end as an empty result and a green run.
+  - [x] 2026-10-01, A MISSING RECORDED INPUT NOW STOPS THE REPLAY instead of being filled in or quietly degraded: `assert_hermetic` raises `MissingRecordedInput` naming exactly what the recording could not supply. Nothing is invented — the only escape is the explicit operator flag `--allow-degraded`, which is stamped into the isolation checks as an accepted-degraded run and still cannot relax the network wall.
+  - [x] 2026-10-01, THE ROT GUARD: `tests/test_rehearsal_hermetic.py` exercises every HTTP transport installed in this environment against TEST-NET-1 (RFC 5737, a literal address so the attempt reaches the wall rather than failing at DNS) and fails unless the rehearsal wall JOURNALLED the attempt — the discriminator the curl_cffi hole needed, since that transport succeeded rather than erroring. A new dependency with its own C transport breaks this test the day it is added. 12 passed, 2 skipped (aiohttp and pycurl, neither installed/synchronous here) [measured 2026-10-01].
+  - [ ] STILL OPEN, and deliberately not claimed: the three criteria above this line all need a REAL rehearsal run against the production snapshot to settle, which was not performed in this pass. What is now true is that such a run can no longer pass while reaching a provider — it raises instead. Grepped on 2026-10-01: the only `MarketDataProvider()` constructions in the tree are `src/pipeline.py` (swapped and every holder rebound, with an existing assertion that no holder keeps the live one), `src/api/routes_live.py` and `src/backtest/data.py` (neither on a session path) and `ops/rehearsal/market_recording.capture` (the online recorder, never called from a rehearsal).
+
+
+```

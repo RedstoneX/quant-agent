@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -55,7 +56,7 @@ _check_interpreter_matches_ci()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_cwd(tmp_path, monkeypatch):
+def _isolate_cwd(tmp_path, monkeypatch, request):
     """Every test runs in its own tmp cwd so stores with relative data_dir defaults
     (NewsStore/MacroStore → 'data/news', 'data/macro') don't write to the real repo
     during the test suite.
@@ -77,6 +78,27 @@ def _isolate_cwd(tmp_path, monkeypatch):
     import requests
 
     def _no_network(*args, **kwargs):
+        # Journal the attempt BEFORE raising. Raising alone is invisible to a
+        # run: a test that CATCHES this error looks exactly like a test that
+        # never called out, so "no test reached the network" could never be
+        # measured, only assumed (board item 202, criterion one). Set
+        # QAMC_NETWORK_JOURNAL to a file path and every blocked attempt lands
+        # there with the test that made it, whether or not the test swallows
+        # the error. Unset (the default, and CI) this costs one env lookup.
+        _journal = os.environ.get("QAMC_NETWORK_JOURNAL")
+        if _journal:
+            _target = ""
+            for _arg in args:
+                if isinstance(_arg, str) and "//" in _arg:
+                    _target = _arg
+                    break
+            else:
+                _target = str(kwargs.get("url", ""))
+            try:
+                with open(_journal, "a", encoding="utf-8") as _fh:
+                    _fh.write(f"{request.node.nodeid}\t{_target}\n")
+            except OSError:
+                pass  # journalling must never change what the suite does
         raise requests.ConnectionError(
             "outbound HTTP disabled in tests (conftest autouse); "
             "patch requests.get in the test if you need it"
