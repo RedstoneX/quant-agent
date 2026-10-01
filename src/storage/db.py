@@ -1201,6 +1201,73 @@ class Database:
             "alignment_exit_readings", "not_evaluated_reason",
             "not_evaluated_reason TEXT",
         )
+        # --- Item 224 evidence: the REALISED sector mix of the orders the
+        # constructor actually built, one row per run.
+        # RECORDING ONLY (2026-10-01).
+        #
+        # Item 221 removed the pre-decision sector PROJECTION, because the
+        # size of each candidate depends on a portfolio-manager decision
+        # that does not exist when the preview is built, so no honest
+        # projection was possible. What CAN be stated honestly is what the
+        # mix turned out to be once the constructor had finished sizing.
+        # Nobody recorded that, so concentration could not be judged after
+        # the fact at all. These rows are that record.
+        #
+        # UNIT AND DENOMINATOR, stated explicitly because this desk has
+        # already been bitten by unstated units: every weight is PERCENT OF
+        # TOTAL ACCOUNT EQUITY, raw position notional, BEFORE the gross
+        # multiplier — the same unit and the same denominator item 222
+        # settled on for the single-name ceiling (see
+        # `SINGLE_NAME_BINDING_SENTENCE` in `src/portfolio_constructor.py`).
+        # No second convention was invented. `denominator` carries that
+        # statement on every row, and `total_value` carries the equity the
+        # weights are a share of at the moment the constructor sized, so a
+        # later reader never has to guess which account state produced them.
+        #
+        # WHAT THIS DATA MAY BE USED FOR: reading, after the fact, what the
+        # realised sector mix of a session's orders actually was.
+        #
+        # WHAT IT MAY NOT BE USED FOR: nothing may read it back into a
+        # sizing, ordering or refusal decision, and it may NEVER be swept
+        # for the sector cap that would have performed best on these rows.
+        # That is fitting a number to this desk's own trading record, which
+        # doctrine bars outright ("no fitting, only reading"). The bar holds
+        # however much data accumulates.
+        #
+        # ENTRY ORDERS ONLY in the weights. A BUY or a SHORT puts exposure
+        # ON, and its `allocation_pct` is that exposure in the unit above; a
+        # SELL or a COVER takes exposure OFF and its `allocation_pct` is a
+        # reduction, so adding the two would produce a number that is not a
+        # weight of anything. The reducing orders are COUNTED
+        # (`reducing_orders_built`) so the row never implies the session
+        # built only entries.
+        #
+        # UNKNOWN STAYS NULL. A session that built no entry orders writes
+        # `weights_json` NULL with `entry_orders_built` 0 — the fact that
+        # nothing was built, which is not the same fact as a book with zero
+        # concentration. A name whose sector the desk could not determine
+        # is recorded with `sector` null inside the JSON, never as "other".
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS realised_sector_weights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                run_id TEXT,
+                session_date TEXT,
+                weights_json TEXT,
+                denominator TEXT NOT NULL,
+                total_value REAL,
+                entry_orders_built INTEGER,
+                reducing_orders_built INTEGER,
+                unknown_sector_orders INTEGER,
+                UNIQUE (run_id)
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_realised_sector_weights_date "
+            "ON realised_sector_weights (session_date)"
+        )
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
@@ -3006,6 +3073,112 @@ class Database:
         except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
             logger.warning(
                 "alignment-exit reading for %s was not recorded (%s)", sym, e,
+            )
+            return False
+
+    #: The unit and denominator every `realised_sector_weights` row is
+    #: expressed in, stored on the row itself. Same unit and same
+    #: denominator as item 222's single-name ceiling; not a second
+    #: convention.
+    REALISED_SECTOR_WEIGHT_DENOMINATOR = (
+        "percent of total account equity, raw position notional, "
+        "before the gross multiplier"
+    )
+
+    def record_realised_sector_weights(
+        self, *, decisions, sectors, total_value, run_id: str | None = None,
+        session_date: str | None = None,
+    ) -> bool:
+        """Record the REALISED `(sector, side)` weights of one run's orders.
+
+        ITEM 224 RECORDING, RECORDING ONLY, and it decides nothing. Read the
+        `realised_sector_weights` note in `_migrate` for why it exists (the
+        pre-decision projection was removed as undeliverable) and for the
+        hard limit on its use: nothing may read it back into a sizing,
+        ordering or refusal decision, and it may NEVER be swept for the
+        sector cap that would have performed best.
+
+        `decisions` is the FINISHED order list the constructor returned, so
+        the figures are what was built and not what was hoped for; `sectors`
+        is the constructor's own `last_order_sectors`, the sector it already
+        resolved while sizing, so this write buys no market data and cannot
+        disagree with the sizing it describes.
+
+        Unknown stays NULL: a symbol with no determinable sector is grouped
+        under a null sector rather than an "other" bucket, and a run that
+        built no entry orders writes `weights_json` NULL with a zero count
+        rather than an empty mapping that reads as zero concentration.
+
+        Idempotent per run (UNIQUE on `run_id`).
+        """
+        sectors = sectors or {}
+        entries: list = []
+        reducing = 0
+        for d in (decisions or ()):
+            action = getattr(d, "action", None)
+            if action in ("BUY", "SHORT"):
+                entries.append(d)
+            elif action in ("SELL", "COVER"):
+                reducing += 1
+
+        def _num(x):
+            try:
+                v = float(x)
+            except (TypeError, ValueError):
+                return None
+            return v if math.isfinite(v) else None
+
+        buckets: dict[tuple[str | None, str], dict] = {}
+        unknown_orders = 0
+        for d in entries:
+            sym = getattr(d, "symbol", None)
+            sector = sectors.get(sym)
+            sector = (sector or None) if isinstance(sector, str) else None
+            if sector is None:
+                unknown_orders += 1
+            side = "short" if getattr(d, "action", None) == "SHORT" else "long"
+            key = (sector, side)
+            slot = buckets.setdefault(
+                key, {"sector": sector, "side": side, "weight_pct": 0.0,
+                      "orders": 0},
+            )
+            slot["orders"] += 1
+            w = _num(getattr(d, "allocation_pct", None))
+            if w is not None:
+                slot["weight_pct"] += w
+        rows = sorted(
+            buckets.values(),
+            key=lambda r: (r["sector"] or "", r["side"]),
+        )
+        for r in rows:
+            r["weight_pct"] = round(r["weight_pct"], 6)
+        payload = json.dumps(rows) if entries else None
+        try:
+            with self._lock:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO realised_sector_weights ("
+                    "  timestamp, run_id, session_date, weights_json,"
+                    "  denominator, total_value, entry_orders_built,"
+                    "  reducing_orders_built, unknown_sector_orders"
+                    ") VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        self._sqlite_utc_timestamp(datetime.now(UTC)),
+                        run_id or None,
+                        session_date or str(et_today()),
+                        payload,
+                        self.REALISED_SECTOR_WEIGHT_DENOMINATOR,
+                        _num(total_value),
+                        len(entries),
+                        reducing,
+                        unknown_orders,
+                    ),
+                )
+                self.conn.commit()
+            return True
+        except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
+            logger.warning(
+                "realised sector weights for run %s were not recorded (%s)",
+                run_id, e,
             )
             return False
 
