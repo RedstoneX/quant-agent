@@ -17639,3 +17639,80 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **Revisit only on a measurement:** the tie rate of the current four-key sort on real sessions is not measured here (the 9-of-12 figure predates the tiebreaks); if it is high, reopen with that number.
 
 **What would catch it next time.** `tests/test_ranking_composite_inputs.py` fails if reward:risk becomes a score input or stops being a tiebreak. Items 208(b) (provider-console spend cap) and 208(c) (paid benchmark) remain open.
+
+### 2026-10-01 — DECISION: the Type A take-profit gate on the structural trail is removed (item 212)
+
+A range (Type A) position's structural and chandelier trail used to be gated
+behind the recorded take-profit target. The target is an unsourced number, it
+never reaches the broker as an order, and a target rationale cannot authorise
+a sale — so gating this trail was the only live behaviour the target had, and
+between entry and the target the position was protected by its original entry
+stop alone.
+
+DECIDED: remove the gate. A Type A position now runs the same structural /
+chandelier trail as Type B from entry. The two owner-ratified R-multiple
+ratchets (+1R breakeven, +2R lock-at-+1R) are unchanged and still run first;
+whichever leg proposes the TIGHTER stop is placed. No multiple was widened,
+no replacement gate was built, and no new constant was introduced. What
+closes a range position remains the alignment exit — sell when structure, ATR
+and an SMA cross agree the trend is over — never the target.
+
+Why now: the alignment exit is merged and deployed, so the owner's ratified
+answer to "when do we sell" exists in code. PR #857's earlier attempt to move
+the gate to +2R was reverted as strictly worse on live data; this change does
+not move the gate, it deletes it.
+
+MEASURED, 2026-10-01: all 20 filled range BUYs in the production record were
+replayed day by day over daily bars from each entry date, gated against
+ungated; 18 replayed (two are for a symbol absent from the bar set). Zero
+positions stopped out earlier under the ungated trail and zero stopped out
+that did not before; three ended with a tighter stop and none of the three
+was stopped out as a result. Separately, by construction the trail cannot
+loosen a stop: every candidate must sit strictly between the live stop and
+current price, must clear the minimum-ratchet and noise-band invariants, and
+is re-checked after rounding.
+
+### 2026-10-01 addendum — four defects fixed before the change shipped (item 212)
+
+Review of the first patch found four defects, all fixed on the same branch.
+(1) MISSING DATA PRODUCED AN ACTION: with no bars the chandelier took its
+extreme from CURRENT PRICE, making the stop a pure price-follower on an
+entry-day position and on every bar-fetch failure; an empty bar set now
+refuses with `no_bars_since_entry`. (2) Four ratchet tests had been quieted by
+removing their ATR, which is what hid (1); all are restored to the ATR they
+had and the code satisfies them. (3) The structural leg's refusal reason had
+become unrecordable for any range name; it now travels on the evaluation as
+`structural_code` and is written as the detail of the trail-state row. (4)
+Preferring the tighter R-ratchet level over an ACCEPTED structural candidate
+could place a stop inside the noise band the structural leg honours, so that
+override must now clear the same minimum-ratchet and noise-band invariants;
+the ratchets' own unconditional path is untouched.
+
+The replay was re-run against the fixed code: same result, zero positions
+stopped out earlier and two ending with a tighter stop. The sample's power
+is stated in the board note — zero events in 18 positions bounds the harm
+rate at only about 15%, so this is the expected result, not proof of safety.
+
+### 2026-10-01 second addendum — three of the four fixes did not hold (item 212)
+
+(1) The missing-data refusal caught only a zero-length bar set; the caller
+filters bars to since-entry, so a position entered today still produced a
+chandelier read off one print. The minimum is now derived from the window the
+structure leg already needs (`PIVOT_WINDOW * 2 + 1`), both legs refuse below
+it, and the reason is recorded. (2) The noise-band and minimum-ratchet
+invariants bound only on the override branch, so a structural candidate
+refused as inside-the-band handed the decision to an unchecked ratchet level;
+they are now one function that every leg able to place a stop must clear.
+(3) The structural reason was dropped on the success branch and the recorder
+deduped on the primary code alone; it is now carried on both branches and is
+part of the dedupe identity. The four item-82 regime tests had also gone
+vacuous — every regime asserted the same structural answer — and are joined
+by one that discriminates on what still differs: with no usable structural
+candidate a range keeps its ratified R-ratchets and a breakout has none.
+
+This is also the answer to the gate's REAL rationale, which was never the
+target number but that trailing a range trade early stops it out inside its
+own range, permanently. A stop may no longer be placed inside the daily-noise
+band by any leg, so that tightening cannot happen. The replay cannot speak to
+it: it counts stop-outs over 18 positions in one market stretch, and the cost
+of a permanent tightening shows up on a later down-leg.

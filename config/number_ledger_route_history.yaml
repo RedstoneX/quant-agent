@@ -167,6 +167,40 @@ changes:
       the cap bound or the deadline cut the scan, and a boolean cannot
       distinguish a true demand of 1000 from one of 2000. Stopped at two:
       the recording of pre-cap demand IS the route.
+  - delta: -8
+    date: "2026-10-01"
+    why: |
+      Board item 90, half two, FOURTH tranche: the portfolio constructor's
+      `ConstructorConfig`. All 8 `arbitrary` rows in that dataclass that
+      carried a status and no route now carry one, so the routeless count
+      falls 96 -> 88 on this base. These are the numbers that decide how big
+      a position is and how wide its stop sits, so every one of them is
+      trade-governing and none could honestly be routed
+      `not-trade-governing`. Three are the mandate ceilings (single-name
+      notional 65, sector soft target 75, per-position risk envelope 5):
+      each routes to a measurement taken off public daily bars for the
+      eligible universe -- the gap distribution the no-stop-fill ceiling
+      guards against, and the common component of same-sector drawdown --
+      with the owner-appetite half left to board item 186, except the risk
+      envelope, which routes instead to a recording of whether the flat
+      constant ever binds a trade the per-name reading of 2026-09-30 would
+      not, since the ruling makes a global risk constant a defect rather
+      than a value to re-derive. Four are stop-width scalers (three macro
+      regime rungs and the range-setup rung): all four route to lag and
+      excursion measurements taken on the instrument over the universe the
+      desk could trade, never over the trades it made, because fitting a
+      stop width to this desk's own record is barred by docs/OUTCOME.md and
+      the previous maximum-adverse-excursion wording was deleted for exactly
+      that reason. The last is the no-ATR structural stop buffer, routed to
+      a recording of the level cluster's own half-width beside the flat
+      0.5%, so the buffer can become a reading rather than a percentage.
+      Every scaler route states the DELETE outcome as well as the set-it
+      outcome: if the measurement cannot distinguish the rung from 1.0 the
+      rung goes, rather than being re-picked. No VALUE changed in this pass,
+      no row changed status, and the arbitrary count is therefore unmoved.
+      The sort-key shape that explained eight rows in the first tranche was
+      checked for and is absent here: every one of these eight is multiplied
+      into a dollar size or a stop distance, so its magnitude is load-bearing.
   - date: 2026-10-01
     delta: -22
     why: >-
