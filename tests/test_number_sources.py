@@ -25,6 +25,8 @@ from pathlib import Path
 import pytest
 
 from src.number_sources import (
+    _is_falsifiable_source,
+    line_form_citations,
     ARBITRARY_REQUIRED_FIELDS,
     MAX_ARBITRARY_ENTRIES,
     MAX_UNSCOPED_NUMERIC_SITES,
@@ -321,17 +323,16 @@ def test_every_source_is_openable_by_a_non_author() -> None:
     false claims in this ledger's first flagship entry were prose, and all
     four were one grep from being disproved.
     """
-    import re
-
     ledger = load_ledger()
     for site_id, entry in ledger.items():
         if entry.get("status") not in ("sourced", "instrument"):
             continue
         source = str(entry.get("source") or "")
-        openable = re.search(r"https?://\S+", source) or re.search(
-            r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml):\d+", source
+        # Ask the gate itself rather than a second copy of its regex: the copy
+        # that used to live here went stale the moment the symbol form landed.
+        assert _is_falsifiable_source(source), (
+            f"{site_id} cites prose with nothing to open"
         )
-        assert openable, f"{site_id} cites prose with nothing to open"
 
 
 def test_the_deployed_value_is_checked_and_not_only_the_code_default() -> None:
@@ -1035,3 +1036,187 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
                     "2026-09-30 ruling on global risk dials bars."
                 )
                 start = hit + 1
+
+
+#: Rows whose prose still cites a `path:line` instead of a `path::Symbol`,
+#: with the number of such citations each carried when the symbol form landed
+#: [measured 2026-10-01: 178 citations across 138 rows, after the 55
+#: pipeline citations board item 225 moved]. A line number is a value that
+#: rots, so this is a RATCHET and not a budget: a grandfathered row may only
+#: ever cite FEWER lines, a row absent from this list -- every future one --
+#: may cite none at all, and an entry is deleted outright once its row has no
+#: line-form citation left. The test below fails if a dead entry is kept, so
+#: the list cannot rot.
+_LINE_FORM_CITATIONS_ON_ARRIVAL = {
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['actions']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['analyses']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['approved']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['daily_summary']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['decisions']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['findings']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['investment_implications']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['macro_narrative']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['portfolio_view']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['rating']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['reasoning_chain']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['regime']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['symbol']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['targets']": 2,
+    "src.agents.base.AgentResult._EXPECTED_AGENT_KEY_WEIGHTS['tomorrow_outlook']": 2,
+    "src.agents.base.AgentResult.provider_requests": 1,
+    "src.agents.base.BaseAgent.__init__(max_tokens)": 1,
+    "src.agents.base._INSUFFICIENT_CREDIT_STATUS": 1,
+    "src.agents.macro_analyst.MacroAnalystAgent.analyze(event_horizon_days)": 2,
+    "src.agents.portfolio_manager.PortfolioManagerAgent.candidate_eligibility(rr_floor)": 2,
+    "src.agents.portfolio_manager.PortfolioManagerAgent.decide(max_portfolio_risk_pct)": 2,
+    "src.agents.portfolio_manager.PortfolioManagerAgent.decide(rr_floor)": 2,
+    "src.agents.portfolio_manager.PortfolioManagerAgent.decide(starter_risk_pct)": 1,
+    "src.agents.portfolio_manager.PortfolioManagerAgent.rank_candidates(rr_floor)": 2,
+    "src.agents.smart_money_analyst._MAX_ACTOR_ROLES": 1,
+    "src.agents.smart_money_analyst._MAX_CONTEXT_TEXT_CHARS": 1,
+    "src.agents.smart_money_analyst._MAX_FINDING_TEXT_WORDS": 1,
+    "src.agents.smart_money_analyst._MAX_REASON_TEXT_CHARS": 1,
+    "src.agents.smart_money_analyst._MAX_REPRESENTATIVE_TRANSACTIONS": 1,
+    "src.agents.smart_money_analyst._ROLE_RANK['actionable']": 1,
+    "src.agents.tech_analyst._BARS_PER_SYMBOL": 1,
+    "src.agents.tech_analyst._CHUNK_SIZE": 1,
+    "src.agents.tech_analyst._DAYS_PER_WEEK": 1,
+    "src.agents.tech_analyst._MAX_MISSING_RETRIES": 1,
+    "src.agents.tech_analyst._MAX_SYMBOLS_PER_CALL": 1,
+    "src.agents.tech_analyst._WEEKDAYS_PER_WEEK": 2,
+    "src.config.ExecutionConfig.fractional_share_decimals": 2,
+    "src.config.INTRA_CHECK_TICK_MINUTES": 2,
+    "src.config.RiskConfig.SECTOR_HARD_MULTIPLE": 1,
+    "src.config.RiskConfig.absolute_min_stop_atr_multiple": 2,
+    "src.config.RiskConfig.breakout_projection_atr_multiple": 4,
+    "src.config.RiskConfig.maintenance_margin_pct": 1,
+    "src.config.RiskConfig.margin_interest_rate_pct": 2,
+    "src.config.RiskConfig.min_level_touches_for_stop_honor": 1,
+    "src.config.RiskConfig.min_position_risk_pct": 2,
+    "src.config.RiskConfig.min_stop_atr_multiple": 1,
+    "src.config.RiskConfig.min_target_atr_multiple": 2,
+    "src.config.SmartMoneyConfig.congress_assumed_max_disclosure_lag_days": 1,
+    "src.config.SmartMoneyConfig.insider_history_retention_days": 1,
+    "src.config.SmartMoneyConfig.watched_drain_deadline_s": 1,
+    "src.coverage_watchdog.MAX_WEEKDAYS_BACK": 1,
+    "src.coverage_watchdog._QTY_EPSILON": 1,
+    "src.data.levels.MAX_HORIZON_SESSIONS": 1,
+    "src.data.levels.MAX_LEVELS_PER_SIDE": 1,
+    "src.data.levels.MAX_REACH_ATR_MULTIPLE": 1,
+    "src.data.levels.MIN_TOUCHES": 1,
+    "src.data.levels.PIVOT_WINDOW": 1,
+    "src.data.levels._CLEAN_FACTOR": 1,
+    "src.data.levels._CLEAN_WINDOW": 1,
+    "src.data.technical.ADX_PERIOD": 1,
+    "src.data.technical.ATR_PERIOD": 1,
+    "src.data.technical.LONGEST_INDICATOR_WINDOW": 1,
+    "src.execution.broker.AlpacaBroker._MAX_REPLACEMENT_HOPS": 1,
+    "src.execution.broker.AlpacaBroker._wait_for_order_status_via_stream(poll_interval)": 1,
+    "src.execution.broker.AlpacaBroker._wait_for_order_terminal_via_stream(poll_interval)": 1,
+    "src.execution.broker.AlpacaBroker.await_replacement_confirmed(timeout_seconds)": 1,
+    "src.execution.broker.AlpacaBroker.get_all_account_activities(page_size)": 1,
+    "src.execution.broker.AlpacaBroker.get_bars(lookback_days)": 1,
+    "src.execution.broker.AlpacaBroker.get_recent_daily_closes(lookback_days)": 1,
+    "src.execution.broker.AlpacaBroker.get_top_movers(n)": 1,
+    "src.execution.broker.AlpacaBroker.wait_for_order_at_exchange(poll_interval)": 1,
+    "src.execution.broker.AlpacaBroker.wait_for_order_at_exchange(timeout_seconds)": 1,
+    "src.execution.broker.AlpacaBroker.wait_for_order_terminal(poll_interval)": 1,
+    "src.execution.broker.AlpacaBroker.wait_for_order_terminal(timeout_seconds)": 1,
+    "src.execution.broker._ENTRY_FILL_TIMEOUT_S": 1,
+    "src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS": 1,
+    "src.execution.broker._STREAM_ATTEMPT_CEILING_PER_DAY": 1,
+    "src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION": 2,
+    "src.execution.broker._STREAM_RATE_LIMIT_STAND_DOWN_S": 1,
+    "src.execution.broker._TradeUpdatesHub.wait(poll_interval)": 1,
+    "src.nominations._CONVICTION_RANK['low']": 1,
+    "src.pipeline.TradingPipeline.run_quarterly_meta_reflection(lookback_days)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(lookback_days)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(max_lines)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(min_proposals)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_calibration_note(lookback_days)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(top_movers_count)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_own_recent_decisions(limit)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_pm_recent_decisions(limit)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_post_exit_reality(max_symbols)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_post_exit_reality(min_age_days)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_recent_loss_pits(lookback_days)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_recent_missed_lessons(lookback_days)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_rm_recent_verdicts(limit)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_thesis_health_context(lookback_weeks)": 1,
+    "src.pipeline_prompt_facts.PromptFactsMixin._build_watchlist_candidates(lookback_days)": 1,
+    "src.portfolio_constructor.ConstructorConfig.min_risk_pct": 3,
+    "src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[0][1]": 2,
+    "src.risk.budget.allocate_risk_budget(ceiling_pct)": 3,
+    "src.risk.budget.allocate_risk_budget(cluster_share_pct)": 2,
+    "src.risk.budget.allocate_risk_budget(floor_pct)": 1,
+    "src.risk.constants.MARGIN_DEFICIT_FLOOR_USD": 1,
+    "src.risk.constants.REWARD_RISK_PARITY": 1,
+    "src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT": 1,
+    "src.risk.constants.STARTER_POSITION_RISK_PCT": 2,
+    "src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD": 1,
+    "src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE": 1,
+    "src.risk.exit_guard.TREND_CONFIRMING_CLOSES": 2,
+    "src.risk.metrics.r_multiple(qty)": 1,
+    "src.risk.rules.DESK_INVESTED_TARGET_PCT": 1,
+    "src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)": 1,
+    "src.risk.rules.SEAT_WEIGHT": 1,
+    "src.risk.rules.distance_to_forced_liquidation_pct(maintenance_margin_pct)": 1,
+    "src.risk.size_override._RANK['close']": 1,
+    "src.risk.target_revision.assess_target_revision(break_margin_atr_multiple)": 1,
+    "src.risk.target_revision.assess_target_revision(breakout_projection_atr_multiple)": 1,
+    "src.risk.target_revision.assess_target_revision(max_horizon_sessions)": 1,
+    "src.risk.target_revision.assess_target_revision(max_reach_atr_multiple)": 1,
+    "src.risk.target_revision.assess_target_revision(min_target_atr_multiple)": 1,
+    "src.risk.target_revision.levels_still_in_the_way(break_margin_atr_multiple)": 1,
+    "src.risk.target_revision.stale_reach_trigger(max_horizon_sessions)": 1,
+    "src.risk.target_revision.stale_reach_trigger(max_reach_atr_multiple)": 1,
+    "src.risk.target_revision.stale_reach_trigger(min_target_atr_multiple)": 1,
+    "src.risk.target_revision.target_level_broken(break_margin_atr_multiple)": 1,
+    "src.risk.trailing.CHANDELIER_ATR_MULTIPLE": 1,
+    "src.risk.trailing.MIN_RATCHET_PCT": 1,
+    "src.risk.trailing.RANGE_BREAKEVEN_R_MULTIPLE": 1,
+    "src.risk.trailing.compute_trailing_stop(qty)": 1,
+    "src.rotation.ROTATION_REASON_MAX_CHARS": 1,
+    "src.verdicts.CONVICTION_SCORE['high']": 1,
+    "src.verdicts.CONVICTION_SCORE['medium']": 2,
+    "src.verdicts.SEAT_WEIGHT['earnings']": 1,
+    "src.verdicts.SEAT_WEIGHT['macro']": 1,
+    "src.verdicts.SEAT_WEIGHT['news']": 1,
+    "src.verdicts.SEAT_WEIGHT['smart_money']": 1,
+    "src.verdicts.SEAT_WEIGHT['technical']": 1,
+    "src.verdicts._DEFAULT_SEAT_WEIGHT": 1,
+}
+
+
+def test_no_row_adds_a_line_form_citation() -> None:
+    """A line number is a value that rots; the symbol form is the only new one."""
+    counts: dict[str, int] = {}
+    for site_id, _cite in line_form_citations(load_ledger()):
+        counts[site_id] = counts.get(site_id, 0) + 1
+    regressions = sorted(
+        (site_id, n, _LINE_FORM_CITATIONS_ON_ARRIVAL.get(site_id, 0))
+        for site_id, n in counts.items()
+        if n > _LINE_FORM_CITATIONS_ON_ARRIVAL.get(site_id, 0)
+    )
+    assert not regressions, (
+        "these rows cite a repo line number the symbol-form ratchet does not "
+        f"allow (row, now, allowed): {regressions} -- write the citation as "
+        "`src/module.py::Class.method`, which is checked against the file's "
+        "syntax tree and survives a move."
+    )
+
+
+def test_the_line_form_ratchet_releases_rows_that_no_longer_need_it() -> None:
+    """A ratchet that never releases is just a permanent exemption."""
+    counts: dict[str, int] = {}
+    for site_id, _cite in line_form_citations(load_ledger()):
+        counts[site_id] = counts.get(site_id, 0) + 1
+    stale = sorted(
+        site_id for site_id in _LINE_FORM_CITATIONS_ON_ARRIVAL
+        if counts.get(site_id, 0) == 0
+    )
+    assert not stale, (
+        f"row(s) {stale} no longer cite a line number -- delete them from "
+        "_LINE_FORM_CITATIONS_ON_ARRIVAL so the exemption cannot be reused."
+    )

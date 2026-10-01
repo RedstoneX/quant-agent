@@ -165,7 +165,13 @@ as if it covered more:
     not exist and a line past the end of a file; it cannot tell that line 930
     of a file that is still 2000 lines long stopped being the line meant. Three
     of this ledger's own citations drifted by 20-30 lines inside one day of
-    merges and were re-checked by hand. Prefer a URL where one exists.
+    merges and were re-checked by hand. Board item 225 answers this
+    STRUCTURALLY rather than with a better line check: write the citation as
+    `path::Symbol` and rule 7 resolves the symbol against the file's syntax
+    tree, so a moved symbol is still found and a deleted or renamed one FAILS.
+    The line form still parses, but it only ever warns, and the ratchet in
+    `tests/test_number_sources.py` lets its count fall and never rise. Prefer
+    a symbol, or a URL where one exists.
   * A number computed at run time from live inputs, or a `default_factory`
     whose number lives in a function body.
   * Inline literals OUTSIDE rule (e)'s band or shape. Measured 2026-09-19:
@@ -187,6 +193,7 @@ from __future__ import annotations
 
 import ast
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1119,12 +1126,15 @@ def deployed_values(root: Path | None = None) -> dict[str, float]:
     return out
 
 
-#: A `source` a non-author can open in under a minute: a URL, or a repo path
-#: with a line number. Prose is not falsifiable — the four false claims in the
+#: A `source` a non-author can open in under a minute: a URL, a repo path with
+#: a SYMBOL (`src/module.py::Class.method`, the form board item 225 made the
+#: default because it survives a move), or a repo path with a line number. Prose is not falsifiable — the four false claims in the
 #: entry this gate was built around were all prose, and all were one grep from
 #: being disproved.
 def _is_falsifiable_source(text: str) -> bool:
     if re.search(r"https?://\S+", text):
+        return True
+    if _SYMBOL_CITATION_RE.search(text):
         return True
     return bool(re.search(r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml):\d+", text))
 
@@ -1135,6 +1145,72 @@ _CITATION_RE = re.compile(
     r"\b((?:docs|src|config|tests|scripts)/[\w./-]+\.(?:md|py|yaml|yml|json|toml))"
     r"(?::(\d+)(?:-(\d+))?)?"
 )
+
+
+#: A citation that names a SYMBOL instead of a line number, e.g.
+#: `src/pipeline.py::TradingPipeline._midday_execute_llm_actions`. A line
+#: number is a value that rots -- splitting the two largest files moved
+#: thousands of lines in a single day -- and the desk's standing rule bars a
+#: number that cannot be read off something durable. A symbol is read off the
+#: file's own syntax tree, so moving it keeps the citation true and deleting
+#: or renaming it breaks the build.
+_SYMBOL_CITATION_RE = re.compile(
+    r"\b((?:docs|src|config|tests|scripts)/[\w./-]+\.py)::"
+    r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)"
+)
+
+
+def _module_symbols(path: Path) -> set[str] | None:
+    """Dotted names a symbol citation may point at; `None` if it will not parse.
+
+    Classes and functions at any depth (so a nested helper is citable as
+    `Class.method.helper`), plus assignment targets at module and class level
+    (so a constant and a class attribute are citable). Names bound inside a
+    function body are deliberately NOT collected: a local would otherwise
+    shadow a method that had been deleted.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return None
+    names: set[str] = set()
+
+    def visit(node: ast.AST, prefix: list[str], collect: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                qual = prefix + [child.name]
+                names.add(".".join(qual))
+                visit(child, qual, isinstance(child, ast.ClassDef))
+                continue
+            if collect:
+                targets: list[ast.Name] = []
+                if isinstance(child, ast.Assign):
+                    targets = [t for t in child.targets if isinstance(t, ast.Name)]
+                elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+                    targets = [child.target]
+                for target in targets:
+                    names.add(".".join(prefix + [target.id]))
+            visit(child, prefix, collect)
+
+    visit(tree, [], True)
+    return names
+
+
+def line_form_citations(
+    ledger: dict[str, dict[str, Any]]
+) -> list[tuple[str, str]]:
+    """`(site_id, cite)` for every citation still written as `path:line`.
+
+    Not a failure on its own -- the form is grandfathered while the ledger
+    migrates -- but the count is ratcheted by a test so it can only fall.
+    """
+    out: list[tuple[str, str]] = []
+    for site_id, entry in ledger.items():
+        text = f"{entry.get('note') or ''} {entry.get('source') or ''}"
+        for match in _CITATION_RE.finditer(text):
+            if match.group(2):
+                out.append((site_id, match.group(0)))
+    return out
 
 
 def broken_citations(
@@ -1151,6 +1227,7 @@ def broken_citations(
     """
     out: list[tuple[str, str, str]] = []
     line_counts: dict[str, int | None] = {}
+    symbol_sets: dict[str, set[str] | None] = {}
     for site_id, entry in ledger.items():
         text = f"{entry.get('note') or ''} {entry.get('source') or ''}"
         for match in _CITATION_RE.finditer(text):
@@ -1171,6 +1248,16 @@ def broken_citations(
                     out.append(
                         (site_id, f"line past end of file ({count} lines)", match.group(0))
                     )
+        for match in _SYMBOL_CITATION_RE.finditer(text):
+            rel, symbol = match.group(1), match.group(2)
+            if rel not in symbol_sets:
+                target = root / rel
+                symbol_sets[rel] = _module_symbols(target) if target.is_file() else None
+            names = symbol_sets[rel]
+            if names is None:
+                out.append((site_id, "no such file, or it will not parse", match.group(0)))
+            elif symbol not in names:
+                out.append((site_id, "no such symbol in that module", match.group(0)))
     return out
 
 
@@ -1449,6 +1536,15 @@ def audit(
 
     # 7. CITATIONS RESOLVE. Cheap, and aimed squarely at the failure that
     #    made this gate's own flagship entry false in four places.
+    stale_form = line_form_citations(ledger)
+    if stale_form:
+        warnings.warn(
+            f"{len(stale_form)} ledger citation(s) still give a LINE NUMBER "
+            "instead of a `path::Symbol`; a drifted line passes this gate "
+            "unnoticed. The ratchet in tests/test_number_sources.py holds the "
+            "count down. New rows may not use the line form at all.",
+            stacklevel=2,
+        )
     for site_id, why, cite in broken_citations(ledger, root):
         problems.append(
             LedgerProblem(

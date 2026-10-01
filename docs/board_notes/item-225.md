@@ -1,4 +1,4 @@
-## item 225
+## item 225 — RETIRED 2026-10-01, citations now name an AST-verified symbol instead of a line number
 
 Measurement, 2026-10-01, against origin/main. Method is a throwaway script, not committed.
 

@@ -258,14 +258,6 @@ DONE WHEN:
 
 detail: docs/board_notes/item-224.md
 
-**225. The ledger's file-and-line citations are only checked for existing, so they rot silently and read as verified -- OPEN, filed 2026-10-01.** The guard confirms the line exists, not that it still holds what the row says it holds; 247 rows' worth of citations are exposed, 55 into the pipeline files, and at least three are already wrong by hand-check -- and the coming split of the two largest files will move thousands of lines.
-
-DONE WHEN:
-- [ ] a test that fails on today's guard proves it now REJECTS a citation whose cited text has changed or moved
-- [ ] every citation either carries the text it points at in a form the guard can compare, or is stated as a symbol the guard resolves, so no citation is unverifiable by construction
-- [ ] the three citations named in the note are corrected and the guard passes with no exemption list
-detail: docs/board_notes/item-225.md
-
 **210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards) and 1 (the prompt-facts mixin, 3,432 lines moved verbatim, no behaviour change) have landed and ten moving steps remain.
 
 DONE WHEN:
@@ -332,6 +324,7 @@ detail: docs/board_notes/item-219.md
 - retired queue: 220
 - retired queue: 190
 - retired queue: 211
+- retired queue: 225
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
