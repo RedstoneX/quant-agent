@@ -614,6 +614,20 @@ function renderRunDetail(runId, detail, candidates) {
   }
   wrap.appendChild(summary);
 
+  // Board item 219. The pruning pass, in the same words the session
+  // message uses. Rendered whenever the run recorded one, so a pass that
+  // kept everything is visibly a pass that ran.
+  if ((detail.rotation_lines || []).length) {
+    wrap.appendChild(
+      evidenceSection(
+        "Pruning pass",
+        detail.rotation_lines.map((line) =>
+          el("div", { className: "rotation-line", text: line })
+        )
+      )
+    );
+  }
+
   wrap.appendChild(
     evidenceSection("Candidates considered", [
       candidates.candidates.length

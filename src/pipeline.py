@@ -39,6 +39,7 @@ from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.congressional_trading import CombinedSmartMoneyProvider, CongressionalTradingProvider
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
+from src.risk.metrics import drift_flag as _drift_flag_check
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     GROSS_LADDER,
@@ -1498,6 +1499,9 @@ class TradingPipeline:
         # ceiling is the one `verify_commissioning.py` can see.
         self.portfolio_constructor = PortfolioConstructor(
             build_constructor_config(config, self.risk_engine.config),
+            # Board item 218: the parity refusal is a TRIAL and must leave a
+            # durable, numeric, per-symbol record or it cannot be judged.
+            db=self.db,
         )
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.
@@ -10245,7 +10249,7 @@ class TradingPipeline:
             if total_value > 0:
                 weight = position_weight_pct(p, total_value)
                 pnl_pct = unrealized_pnl_pct(p)
-                if weight > 12 and pnl_pct is not None and pnl_pct > 10:
+                if _drift_flag_check(weight, pnl_pct):
                     f.positions_drift_flagged += 1
 
         # Signal freshness
@@ -11764,7 +11768,10 @@ class TradingPipeline:
 
         try:
             self.db.insert_agent_log(
-                **seat_acceptance_kwargs("position_review_parse_error" if not reasked else None),
+                **seat_acceptance_kwargs(
+                    "position_review_parse_error" if not reasked else None,
+                    result=reask_result,
+                ),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=f"exit-trigger re-ask | {', '.join(sorted(pending))}",
                 input_message=reask_result.user_message,
@@ -16787,9 +16794,7 @@ class TradingPipeline:
                 pnl_pct is not None and pnl_pct >= 15
                 and days_held is not None and days_held < 3
             )
-            drift_flag = (
-                weight_pct > 12 and pnl_pct is not None and pnl_pct > 10
-            )
+            drift_flag = _drift_flag_check(weight_pct, pnl_pct)
             target_breach_flag = progress_pct is not None and progress_pct > 150
 
             # Vol-unit context so the reviewer reasons about stop distance
@@ -17530,7 +17535,10 @@ class TradingPipeline:
             if review is None:
                 review_log_kwargs["status"] = "position_review_parse_error"
             self.db.insert_agent_log(
-                **seat_acceptance_kwargs("position_review_parse_error" if review is None else None),
+                **seat_acceptance_kwargs(
+                    "position_review_parse_error" if review is None else None,
+                    result=md_result,
+                ),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=(
                     f"{session_type} | {len(review_positions)} positions, ${total_value:.0f} total"
