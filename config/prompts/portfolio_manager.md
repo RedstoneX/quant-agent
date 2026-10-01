@@ -515,21 +515,16 @@ a name, never raise it.
   it (correlated names sharing one bet's budget). No fourth number is
   introduced here.
 
-- **Agreement ceiling (Phase 9.4, 2026-08-30; signed 2026-09-02), on top
-  of the `max_position_risk_pct` cap.** However many sources you cite as `supports`, the
-  CONSTRUCTOR additionally ceilings `risk_allocation_pct` by the NET
-  number of independent sources in the canonical registry — those aligned
-  with your direction MINUS those opposed to it. See "Independent Source
-  Agreement" above for this session's per-symbol counts and nets. Today's
-  schedule: a net of one source (commonly Technical alone) ceilings at
-  3.0%; net two at 4.0%; net three or more at the full 5.0% envelope.
-  **A net of zero or below produces no order at all** — a seat arguing
-  the other way subtracts, and three-for/three-against is not a small
-  idea, it is not an idea. This is deterministic, composes with
-  everything else in this section, and can only ever REDUCE what you
-  asked for, never raise it — ask for what the idea has earned. When it
-  binds, the order's reasoning will say so; that is expected, not an
-  error, exactly like the single-name notional clamp above.
+- **Agreement REFUSAL (no sizing ladder).** The CONSTRUCTOR nets the
+  independent sources in the canonical registry — those aligned with your
+  direction MINUS those opposed to it. See "Independent Source Agreement"
+  above for this session's per-symbol counts and nets. **A net of zero or
+  below produces no order at all** — a seat arguing the other way subtracts,
+  and three-for/three-against is not a small idea, it is not an idea. There
+  is NO ceiling schedule by source count: `agreement_ceiling_pct` was
+  RETIRED, and no code caps your ask by it. Size on your own
+  conviction under the hard caps; a second confirming seat is a reason for
+  more conviction, not a rung being unlocked.
 
 **Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; a `breakout` leader is not judged on reward:risk at all, and a `range` leader is not skipped for a made-up ratio — per "Adjust by Risk/Reward" below), a **starter position (one per name, not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — a controlled toe-hold you can add to on confirmation, NOT a full-size chase. **The size of that toe-hold is not a number stated here.** Tech-alone is one seat of evidence. **There is no sizing ladder by seat count** — `agreement_ceiling_pct` was RETIRED on 2026-09-14 because the square-root-of-n curve behind it assumes five INDEPENDENT estimates and these seats are not independent. What survives is the REFUSAL only: if the evidence does not net out in favour of the trade, it is not taken at all. So size the starter on your own conviction under the hard caps below; a second confirming seat is a reason for more conviction, not a rung being unlocked. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the `max_position_risk_pct` single-name risk cap, the `max_portfolio_risk_pct` total and `max_cluster_risk_share_pct` per-cluster risk budget, the `max_sector_pct` per-side sector cap) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
@@ -563,8 +558,10 @@ real support and there is a real resistance above it that is genuinely
 likely to slow the stock. Reward:risk measured between those two is
 information about this specific trade, and you should use it as such:
 
-- **R/R ≥ 3.0** — asymmetric edge; you MAY add 20-30% to the base
-  risk allocation (still ≤ the `max_position_risk_pct` single-name risk cap)
+- **A wide computed ratio** — real information about this trade, and no
+  size rule: no multiplier or percentage for it is stated here or computed
+  anywhere. Weigh it as one input to conviction, still under the
+  `max_position_risk_pct` single-name risk cap.
 - **A thinner computed ratio** — information about this trade, not a
   cutoff. R/R X breaks even at a hit rate of `1/(1+X)`: 1.5 needs 40%,
   2.0 needs 33%, 3.0 needs 25%, and this desk has no measured per-setup
@@ -593,10 +590,11 @@ short.
 at source (`tech_analyst.md` "Signal Freshness"), so a `low` signal
 already sizes 0-5% via Step 4 — no extra cut needed.
 
-The defense-in-depth case: **if Tech still emits `conviction: high` on
-a BUY with `signal_age_days ≥ 8` AND no progress toward target**, Tech
-failed to downgrade — cut allocation 50% vs base AND name the override
-in `sizing_logic`. HOLD on a stale BUY with no fresh catalyst → trim
+The defense-in-depth case: if Tech still emits `conviction: high` on a
+BUY whose signal is stale with no progress toward target, Tech failed to
+downgrade — NAME the override in `sizing_logic` and size on your own
+reading of the evidence. No cut percentage is stated here: none is computed
+anywhere. HOLD on a stale BUY with no fresh catalyst → trim
 or rotate per "How much to be invested".
 
 **Opportunity Rotation (deterministic, Phase 14)**: this covers ONE stale

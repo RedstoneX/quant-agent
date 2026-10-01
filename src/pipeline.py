@@ -39,6 +39,7 @@ from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.congressional_trading import CombinedSmartMoneyProvider, CongressionalTradingProvider
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
+from src.risk.metrics import drift_flag as _drift_flag_check
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     GROSS_LADDER,
@@ -9555,7 +9556,7 @@ class TradingPipeline:
             if total_value > 0:
                 weight = position_weight_pct(p, total_value)
                 pnl_pct = unrealized_pnl_pct(p)
-                if weight > 12 and pnl_pct is not None and pnl_pct > 10:
+                if _drift_flag_check(weight, pnl_pct):
                     f.positions_drift_flagged += 1
 
         # Signal freshness
@@ -15335,9 +15336,7 @@ class TradingPipeline:
                 pnl_pct is not None and pnl_pct >= 15
                 and days_held is not None and days_held < 3
             )
-            drift_flag = (
-                weight_pct > 12 and pnl_pct is not None and pnl_pct > 10
-            )
+            drift_flag = _drift_flag_check(weight_pct, pnl_pct)
             target_breach_flag = progress_pct is not None and progress_pct > 150
 
             # Vol-unit context so the reviewer reasons about stop distance
