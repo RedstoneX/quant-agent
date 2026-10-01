@@ -574,7 +574,42 @@ The trigger sets how many movers *qualify*; the cap decides how many of those ar
 2. **Every intra-preamble job on its own schedule.** Not attempted. Splitting fill reconcile, stop-out reconcile, protection-restore drain and repeg drain out of `run_intra_check` onto their own timers is a real infrastructure change across `src/pipeline.py`, `scripts/run_if_et_window.sh` and four new unit pairs, and it is the *precondition* for ever cutting the paid cadence — today the free safety work and the paid scan are welded to one 13-tick schedule.
 3. **A correction the ledger needs and this change could not make** (`config/number_ledger.yaml` is held by another change): the `source:` on `src.config.INTRA_CHECK_TICK_MINUTES` names `src/scheduler.py:56` as "the authority for how often the intraday control actually fires". That is **false in production** — `src/scheduler.py` is the `--mode live` path and the box runs the systemd timer. The row's status can stay `sourced`; the source text should name `scripts/systemd/quant-agent-intra_check.timer` crossed with `run_if_et_window.sh`'s window, with `src/scheduler.py` as the live-mode mirror, and cite `tests/test_systemd_units.py` for the pin that now holds all three sites together.
 
-## item 193
+## item 193 — RETIRED 2026-10-01, the id-ceiling gap is explained: the WAL id sequence is SHARED with the protected-sell exit path, all 15 production cancels carry their own wal_row_id and all pair, and every id handed out is now recorded durably at the single insert choke point
+
+**2026-10-01 — the row-id gap is explained, and the pair count is NOT a floor.**
+Measured against the production database (`/home/qamc/quant-agent/data/quant_agent.db`,
+read-only). Every `scale_in` / `protective_sell_cancelled` event carries its OWN
+`wal_row_id` in its payload, so the cancels do not have to be counted against the
+sequence at all: there are 15 of them (2026-09-17..2026-09-30), holding ids 5, 6, 7,
+9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20 and 23, and all 15 pair with a later
+same-run same-symbol `protection` / `placed` event. `sqlite_sequence` stands at 23 and
+`pending_protection_restores` is empty. The eight ids the scale-in path never held are
+1, 2, 3, 4, 8, 17, 21 and 22, and the reason the ceiling outruns the cancel count is
+structural rather than missing: `pending_protection_restores` is a SHARED autoincrement
+and the protected-sell exit path (`TradingPipeline`'s `_WAL_SELL_SENTINEL` write-ahead,
+plus the orphan-persist branch) draws ids from the same sequence, as do the scale-in
+rollback branches that insert the row and discharge it when the cancel fails or will
+not confirm. Six of the eight line up with closing trades: ids 1-4 all predate the
+first scale-in cancel entirely and seven sell-side trades precede it, and ids 8 and 17
+each fall in a window containing exactly one sell-side trade. Ids 21 and 22 could not
+be attributed, and the two honest attempts are written down rather than papered over:
+(1) no path except a SUCCESSFUL scale-in cancel files its row id anywhere durable — a
+sweep of all 5,836 production `pipeline_event` rows found `wal_row_id` in exactly the
+15 scale-in cancel payloads and nowhere else; (2) the production log has rotated past
+them — it now reaches back only far enough to show row 23. So the deriving stopped and
+the RECORDING was built instead: `protection_restore_wal_audit` takes one never-deleted
+row per id, written inside `Database.insert_pending_protection_restore` itself, which is
+the single choke point every writer passes through. It carries the writing sentinel, the
+symbol, the side and the held quantity, it survives the discharge that deletes the WAL
+row, and `get_protection_restore_wal_audit` reads it back, so the next time the ceiling
+outruns the cancels the missing ids are named instead of argued about. Bookkeeping only:
+nothing rules on it, and a failure to write it never blocks the protective WAL row it
+describes (proved by `tests/test_protection_restore_wal_audit.py`). AMENDING IS STILL
+NOT THE REMEDY HERE and nothing above reopens it — the 2026-09-30 finding stands: the
+cancel exists because the resting protective SELL collides with the BUY add, a price
+amend leaves that SELL open, and the quantity amend that would cover an enlarged
+position is refused by this broker on a fractional order (42210000).
+
 
 Measurement only. No production code was written or changed for it; both events already exist.
 
@@ -921,7 +956,7 @@ The 187-reference estimate is low: ~550 mentions across 88 files, including four
 CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured 3.12.3, and nothing anywhere pinned or checked the two against each other. The drift already cost real time once: a prompt-drift check hashed `ast.dump()` of a parsed function, and Python 3.12 added a `type_params` field to `FunctionDef`/`AsyncFunctionDef`/`ClassDef` that 3.11 doesn't have, so the same unchanged source hashed differently under the two interpreters — CI went red, local ran green, and two agents produced confident but wrong diagnoses before the version skew itself was found.
 
 
-## item 193 — detail moved from the board 2026-09-30
+## item 193 — RETIRED 2026-10-01, the id-ceiling gap is explained: the WAL id sequence is SHARED with the protected-sell exit path, all 15 production cancels carry their own wal_row_id and all pair, and every id handed out is now recorded durably at the single insert choke point (detail moved from the board 2026-09-30)
 
 `src/execution/scale_in.py` states the property itself: an add to a held name cancels the resting protective sell, confirms the cancel, submits the BUY, then rearms protection covering the full position. Nothing is protected in between, and the window's length does not depend on the size of the add, so a small nudge exposes the entire holding. Item 183 removed the minimum-trade-size floor that used to turn tiny adjustments into do-nothing holds, so small adds can now reach the broker and open this window. MEASURED against the live production database (`/home/qamc/quant-agent/data/quant_agent.db`, the only non-empty one; the two other `.db` files on that box are 0 bytes): 14 `scale_in|protective_sell_cancelled` events exist over 2026-09-17..2026-09-24, and ALL 14 pair with a later same-run, same-symbol `protection|placed` event — ZERO unpaired cancels, corroborated independently by `pending_protection_restores` holding zero rows, so no position in the record was left naked and never re-armed. Window length median 1 s, worst 4 s, three pairs at 0 s (the event timestamps are whole seconds, so 0 s means under the resolution floor, not instantaneous). Exposure while naked: median $1,209, worst $2,733, $17,855 summed across all 14 — every one of them the FULL holding, not the add. Expected adverse move over a window of that length, using each name's own 20-session close-to-close log-return standard deviation from daily bars and square-root-of-time scaling across a 6.5-hour session: median $0.24, worst $0.73, $3.67 summed over all 14 — sub-dollar at the sizes this book has traded. The property is therefore DOCUMENTED AND REAL but NOT CURRENTLY COSTLY, and the module's own docstring estimate of a "~15 s" window OVERSTATES the measured record by roughly four times. WHAT THIS CANNOT ESTABLISH, and why no remedy is proposed here: the timestamps are DB-write times at second resolution, not broker cancel-ack and rearm-ack times, so they bound the window rather than measure it; 14 pairs over 8 calendar days is too thin to call a tail, and the worst case scales with position size and with any broker slowness this sample never saw; the write-ahead-log row ids reached 20 while only 14 cancel events exist, so up to six preparations may have cancelled without filing an event, which would make even the pair COUNT a floor; the volatility figure is a diffusion estimate over a few seconds, not a measurement of what those seconds actually did, and it prices an ordinary move rather than a gap or a halt, which is the case a protective stop exists for. Someone else decides the remedy.
 

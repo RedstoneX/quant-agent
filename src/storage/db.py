@@ -856,6 +856,29 @@ class Database:
                 run_id TEXT
             );
 
+            -- Board item 193. `pending_protection_restores.id` is a SHARED
+            -- AUTOINCREMENT: the scale-in cancel path and the protected-sell
+            -- exit path both draw ids from it, and every row is DELETED once
+            -- discharged. The id ceiling is therefore not a count of anything,
+            -- and an id spent by the other writer used to be indistinguishable
+            -- from a scale-in cancel that filed no event. This table is the
+            -- attribution: one never-deleted row per id handed out, written at
+            -- the single insert choke point, so a future gap between the id
+            -- ceiling and the scale-in cancel events is read off the record
+            -- instead of argued about. Bookkeeping only - nothing reads it to
+            -- decide anything, and failing to write it never blocks the
+            -- protective WAL row it describes.
+            CREATE TABLE IF NOT EXISTS protection_restore_wal_audit (
+                row_id INTEGER PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                sell_order_id TEXT NOT NULL,
+                position_qty_before_sell REAL,
+                side TEXT,
+                run_id TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+
             -- Bounded entry re-peg write-ahead queue. An Alpaca order
             -- replacement MINTS A NEW ORDER ID: the moment the PATCH is
             -- accepted, `trades.broker_order_id` is stale and points at a
@@ -2257,9 +2280,44 @@ class Database:
                 (symbol, sell_order_id, position_qty_before_sell, specs_json,
                  run_id, side),
             )
+            row_id = cur.lastrowid or 0
+            # Item 193: attribute the id before it can be forgotten. Best
+            # effort on purpose - an audit failure must never stop a
+            # protective-restore intent from being persisted.
+            try:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO protection_restore_wal_audit "
+                    "(row_id, symbol, sell_order_id, "
+                    "position_qty_before_sell, side, run_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (row_id, symbol, sell_order_id,
+                     position_qty_before_sell, side, run_id),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "protection-restore WAL audit row %s not written: %s",
+                    row_id, exc,
+                )
             self.conn.commit()
-            return cur.lastrowid or 0
+            return row_id
         return self._locked_write(_do, label="insert_pending_protection_restore")
+
+    def get_protection_restore_wal_audit(self) -> list[dict]:
+        """Every protection-restore WAL id ever handed out, oldest first.
+
+        Item 193's completeness check: join these against the
+        `scale_in|protective_sell_cancelled` events' own `wal_row_id`, and
+        an id present here but absent there was spent by the protected-sell
+        exit path or by a rolled-back preparation, not by an unrecorded
+        cancel.
+        """
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT row_id, symbol, sell_order_id, "
+                "position_qty_before_sell, side, run_id, created_at "
+                "FROM protection_restore_wal_audit ORDER BY row_id"
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_pending_protection_restores(self) -> list[dict]:
         """All currently-pending protection-restore rows, oldest first."""

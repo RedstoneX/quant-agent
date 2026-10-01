@@ -282,15 +282,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 194)
 
-**193. The scale-in cancel-to-rearm window leaves the WHOLE held position unprotected, and it is now measured — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 193").**
-
-DONE WHEN:
-  - [x] the window is measured from the broker's own cancel and rearm acknowledgements rather than from database write times, so the figure bounds real exposure instead of event bookkeeping — every scale-in now emits its own measured window (2026-09-30)
-  - [ ] the gap between write-ahead-log row ids and filed cancel events is explained, so the pair count is known to be complete rather than a floor
-  - [x] the desk can answer "is any position naked right now, and for how long" without a one-off query, whether by an alert, a dashboard line or a periodic check — every coverage sweep now names each symbol it deliberately skipped for a live scale-in, with its held quantity and roughly how long its protection has been down, in the run record and in the one greppable log line; a window longer than the longest the desk has ever measured pages the owner once per symbol per day, and with no measured history nothing is called overdue (2026-09-30)
-
-detail: docs/BOARD_NOTES.md (item 193)
-
 **196. A trail candidate that lands inside the noise band is refused with nothing placed, and for the chandelier leg there is still no lower level to fall back to — filed 2026-09-30, NARROWED 2026-09-30.** Half of this is now fixed in `src/risk/trailing.py::evaluate_trailing_stop`: the module used to build the chandelier only when the structural pivot produced nothing, so it committed to ONE candidate before testing it and a pivot the noise band then rejected silently suppressed a chandelier level that would have passed. Both legs are now built and each is carried through the same invariants, first survivor wins; preference order, arithmetic and every constant are unchanged, and `tests/test_trailing_candidate_set.py` pins it. This changes NOTHING in the production record, which is the honest measure of its size: the structural leg has never produced a candidate (item 195), so the chandelier was already the sole candidate in all 21 recorded refusals. WHAT REMAINS OPEN is the original headline and it is a DOCTRINE question, not an engineering one: when the chandelier is itself inside the band there is no other already-derived level, and the only obvious fallback — the band's own edge, `current_price - NOISE_BAND_ATR_MULTIPLE * ATR` — is read off TODAY'S PRICE, which this module's own `_swing_lows` docstring rejects in terms ("trailing under today's price is how a stop ends up inside the noise band") and which conflicts with the ratified rule to exit on ALIGNMENT, never on a level. Deliberately NOT implemented, and `tests/test_trailing_candidate_set.py` pins the refusal so a later patch cannot slip it in unargued. WHAT THIS CANNOT ESTABLISH: zero of the 21 recorded refusals carried `TRAIL_CODE_INSIDE_NOISE_BAND`, so the frequency of the remaining half is still UNMEASURED and the case for it rests on the code path, not a production count. CARRIES FORWARD from retired item 195 (2026-09-30): criterion 195/2, that the pivot window cannot confirm a swing low inside this desk's typical holding periods, now sits here — it is the same question of what the trail should do when no leg can produce a usable level, and it is barred from a quiet fix because the only lever, `PIVOT_WINDOW`, is documented as unsourceable.
 
 DONE WHEN:
@@ -351,6 +342,7 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 182
 - retired queue: 192
 - retired queue: 195
+- retired queue: 193
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
