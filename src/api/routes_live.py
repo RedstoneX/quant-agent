@@ -63,6 +63,7 @@ from src.api.schemas import (
     DailyPnlPoint,
     ExposureBreakdown,
     HealthResponse,
+    SuppressedAlertsResponse,
     LiquidityBreakdown,
     LiveQuote,
     LiveQuotesResponse,
@@ -181,6 +182,24 @@ def _deploy_drift_state() -> dict:
         return record
     except Exception:
         return {"status": "unknown", "reason": "drift state read failed"}
+
+
+@router.get("/alerts/suppressed", response_model=SuppressedAlertsResponse)
+def get_suppressed_alerts(limit: int = 50) -> SuppressedAlertsResponse:
+    """Item 211 — everything the desk decided not to say twice.
+
+    Alerts can be muted; the board cannot. A suppressed alert that is
+    readable nowhere is a lost alert, so this endpoint exists to make the
+    suppression record visible without a Telegram channel.
+    """
+
+    from src.api.db_reads import get_suppressed_alerts as _read
+
+    try:
+        payload = _read(limit=limit)
+    except Exception:
+        return SuppressedAlertsResponse()
+    return SuppressedAlertsResponse(**payload)
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -374,8 +393,19 @@ def _compute_liquidity(
     # BUY phase liquidates on demand. Unknown until BOTH halves are known —
     # a positions-read failure must not print raw cash as if it were the
     # whole deployable figure.
+    #
+    # The parked vehicle only counts when the sweep is ENABLED. With
+    # `cash_sweep.enabled: false` the engine's `_compute_deployable_cash`
+    # takes the `_sweeper() is None` branch and adds 0.0, because
+    # `CashSweeper.fund_buys` returns 0.0 on the first line and nothing
+    # else converts the vehicle to cash for the BUY phase. This view used
+    # to add it unconditionally, so a vehicle held under a retired sweep
+    # would have made the operator's "Deployable" tile read above the
+    # figure the PM actually sizes against — exactly the drift the test
+    # beside it guards. Latent, not an incident: no cash-equivalent
+    # position is held (production DB, read-only, 2026-10-01).
     deployable = (
-        deployable_cash(cash, sweep_parked_value)
+        deployable_cash(cash, sweep_parked_value if sweep_enabled else 0.0)
         if cash is not None and sweep_parked_value is not None
         else None
     )

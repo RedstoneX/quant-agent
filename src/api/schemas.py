@@ -669,6 +669,12 @@ class RunDetailResponse(BaseModel):
     # MISSION_CONTROL_API.md). Computed from `agent_logs`, never fabricated —
     # a run with no such row (the ordinary case) reports False.
     hard_risk_block_recorded: bool = False
+    # Board item 219. The pruning/rotation pass, in the SAME sentences the
+    # Telegram session message uses (`src.rotation.owner_precheck_lines` +
+    # `pruning_pass_lines`), read off the same durable `rotation`/`precheck`
+    # row. Empty only when no such row exists for this run. There is no
+    # second reporting path: both surfaces render this one list.
+    rotation_lines: list[str] = []
 
 
 class DecisionDetailResponse(BaseModel):
@@ -1299,8 +1305,13 @@ class HoldingTakeProfit(BaseModel):
     plain: str
     #: ALWAYS False today. The automatic take-profit trim was deleted on
     #: 2026-09-12 and no caller passes `take_profit_price` to the broker,
-    #: so no order exists at this price. Kept as an explicit field rather
-    #: than a comment so a future change has to flip it deliberately.
+    #: so no ORDER exists at this price. It is not the same as "the number
+    #: has no effect": on a range trade `src/risk/trailing.py` reads
+    #: whether price has exceeded the target to decide whether the +1R
+    #: ratchet floor constrains the structural trail, which moves a live
+    #: stop. `note` states that effect in the owner's words; this flag
+    #: stays about ORDERS only. Kept as an explicit field rather than a
+    #: comment so a future change has to flip it deliberately.
     acted_on: bool = False
     note: str
     #: The target PINNED AT ENTRY (`trades.initial_take_profit`). `price`
@@ -1354,3 +1365,39 @@ class HoldingWhyResponse(BaseModel):
     #: Accession numbers, internal flags, broker-eligibility JSON, run
     #: identifiers — everything deliberately kept out of `readable`.
     raw_evidence: dict = {}
+
+
+class DeferredSuspension(BaseModel):
+    """One owner page the cost circuit held back (item 211)."""
+
+    trigger_code: str | None = None
+    detail: str | None = None
+    run_id: str | None = None
+    created_at: str | None = None
+
+
+class SuppressedRepeatEvent(BaseModel):
+    key: str | None = None
+    day: str | None = None
+
+
+class SuppressedRepeat(BaseModel):
+    """Repeat alerts of ONE type the watchdog declined to resend today."""
+
+    day: str | None = None
+    count: int = 0
+    events: list[SuppressedRepeatEvent] = []
+
+
+class SuppressedAlertsResponse(BaseModel):
+    """Item 211 — the suppression record, readable without Telegram.
+
+    `*_available` is False when the underlying record could not be read at
+    all, which is a different fact from "nothing was suppressed" and is
+    reported as such rather than as an empty list.
+    """
+
+    deferred_available: bool = False
+    deferred_suspensions: list[DeferredSuspension] = []
+    suppression_state_available: bool = False
+    suppressed_repeats: dict[str, SuppressedRepeat] = {}

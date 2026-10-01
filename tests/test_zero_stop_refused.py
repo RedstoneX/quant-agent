@@ -174,7 +174,7 @@ def test_reprotect_still_places_the_most_protective_usable_stop():
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.broker = MagicMock()
     pipeline.broker._list_open_sell_stop_orders.return_value = []
-    pipeline.broker._submit_stop_limit_order.return_value = {"id": "s1"}
+    pipeline.broker._submit_protective_stop_retrying.return_value = {"id": "s1"}
     pipeline.db = None
     assert pipeline._reprotect_residual_after_partial_sell(
         "X", 4.0,
@@ -182,6 +182,6 @@ def test_reprotect_still_places_the_most_protective_usable_stop():
          {"id": "b", "stop_price": 90.0},
          {"id": "c", "stop_price": 95.0}],
     ) is True
-    kwargs = pipeline.broker._submit_stop_limit_order.call_args.kwargs
+    kwargs = pipeline.broker._submit_protective_stop_retrying.call_args.kwargs
     assert kwargs["stop_price"] == 95.0
     assert math.isfinite(kwargs["stop_price"])

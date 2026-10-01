@@ -331,6 +331,26 @@ SEAT_REFUSAL_REASONS = frozenset({
     "risk_manager_unparseable_output", # pipeline_event risk|failed
     "position_review_parse_error",     # review_log_kwargs status literal
     "evening_parse_error",             # _ev_log_kwargs status literal
+    # Board item 188, second criterion. The three DECISION seats each have
+    # several distinct ways their own acceptance gate can reject an answer,
+    # and the per-seat word above collapses them all into "it failed". These
+    # are the gates' OWN machine-readable reasons, carried on
+    # `AgentResult.gate_reason` by the seat that refused, so a per-model
+    # usable-answer rate can also say WHAT the small free model gets wrong.
+    # Recording vocabulary only — nothing branches on these words.
+    "pm_parse_error",                  # PM: body was not a decision object
+    "pm_schema_error",                 # PM: object failed PortfolioDecision
+    "pm_grounding_error",              # PM: targets not grounded in evidence
+    "pm_repair_changed_decision",      # PM: repair re-decided, failed closed
+    "risk_non_json",                   # RM: body was not JSON
+    "risk_decision_field_validation_failure",  # RM: bad decision-bearing field
+    "risk_repair_changed_decision",    # RM: repair re-decided, failed closed
+    "risk_repair_not_object",          # RM: repair returned a non-object
+    "risk_repair_schema_error",        # RM: repaired body failed the schema
+    "risk_parse_exception",            # RM: parse raised
+    "review_non_json",                 # PR: body was not JSON
+    "review_not_object",               # PR: body was JSON but not an object
+    "review_schema_validation_failure",  # PR: failed PositionReview schema
 })
 
 

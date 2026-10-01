@@ -36,10 +36,24 @@ logger = logging.getLogger(__name__)
 #: Why a position's stop did or did not trail, recorded on a CHANGE of
 #: reason only — see `record_trail_state_changes`.
 TRAIL_STATE_KIND = "trail_state"
+#: One row per run holding the COUNT of every trail outcome that run
+#: produced. `record_trail_state_if_changed` deliberately writes nothing
+#: when a stock refuses for the same reason two runs running, so it can
+#: say WHY a stop has not moved but never HOW OFTEN — which is why the
+#: frequency of `inside_noise_band` was unmeasurable (item 196). The
+#: census is bounded the other way: one row per run regardless of book
+#: size, and no per-stock detail.
+TRAIL_CENSUS_KIND = "trail_code_census"
+#: `_insert` needs a non-empty symbol; the census is portfolio-scoped.
+CENSUS_SYMBOL = "PORTFOLIO"
 #: One row per stop repair that did not fully close its gap.
 STOP_REPAIR_REFUSAL_KIND = "stop_repair_refusal"
 #: One row per protective stop the desk's own kill switch refused to send.
 PROTECTIVE_STOP_BLOCKED_KIND = "protective_stop_blocked"
+#: One row per ex-dividend stop shift, carrying the PER-LEG outcome. Item 201:
+#: a log line is not a record, and the shift is the one path that moves several
+#: protective stops at once, so "which legs actually moved" has to survive.
+STOP_SHIFT_KIND = "stop_shift_legs"
 
 #: `agent_name` on every row here. The deterministic desk, not a model seat.
 RECORD_AGENT = "pipeline"
@@ -110,6 +124,24 @@ def record_trail_state(
     }
     return _insert(db, run_id=run_id, kind=TRAIL_STATE_KIND, symbol=symbol,
                    payload=payload)
+
+
+def record_trail_code_census(
+    db: Any, *, run_id: str, counts: dict[str, int],
+) -> bool:
+    """Write one row counting every trail outcome this run produced.
+
+    Recording only — nothing reads it back to decide anything. Written
+    even when a count is zero-length is pointless, so an empty census
+    writes nothing.
+    """
+    tally = {str(k): int(v) for k, v in (counts or {}).items() if int(v) > 0}
+    if not tally:
+        return False
+    return _insert(
+        db, run_id=run_id, kind=TRAIL_CENSUS_KIND, symbol=CENSUS_SYMBOL,
+        payload={"counts": tally, "evaluations": sum(tally.values())},
+    )
 
 
 def record_trail_state_if_changed(
@@ -197,3 +229,56 @@ def record_protective_stop_blocked(
     }
     return _insert(db, run_id=run_id, kind=PROTECTIVE_STOP_BLOCKED_KIND,
                    symbol=symbol, payload=payload)
+
+
+# ---------------------------------------------------------------------------
+# 4. the ex-dividend stop shift, leg by leg
+# ---------------------------------------------------------------------------
+
+def record_stop_shift_legs(
+    db: Any, *, symbol: str, amount: float, mode: str, status: str,
+    shifted: int, total: int, legs: list | None = None,
+    run_id: str | None = None,
+) -> bool:
+    """One row per ex-dividend stop shift, naming every leg's own outcome.
+
+    `legs` carries, per resting stop, its id, quantity, old level, new level,
+    the replacement id and whether the broker confirmed it, refused it, or
+    never answered. That is the evidence that settles whether a fractional
+    position's two hybrid legs both amend in place — a question no log line
+    can answer later, because logs rotate.
+    """
+    payload = {
+        "code": f"stop_shift_{str(status or 'unknown')}",
+        "amount": amount,
+        "mode": str(mode or ""),
+        "status": str(status or ""),
+        "shifted": int(shifted),
+        "total": int(total),
+        "legs": list(legs or []),
+    }
+    return _insert(db, run_id=run_id, kind=STOP_SHIFT_KIND,
+                   symbol=symbol, payload=payload)
+
+
+def stop_shift_incomplete_text(symbol: str, status: str, shifted: int, total: int) -> str:
+    """The plain sentence the owner reads when a shift did not fully land."""
+    sym = str(symbol or "").upper()
+    if status == "naked":
+        return (
+            f"a protective stop on {sym} is GONE: the broker was re-read after "
+            f"a dead order replacement and shows no resting stop for it, so "
+            f"the position is UNPROTECTED until coverage repair places one"
+        )
+    if status == "unknown":
+        return (
+            f"the ex-dividend stop shift on {sym} got no answer from the broker "
+            f"for at least one of its {total} protective stop(s), so the desk "
+            f"does not know which price they are resting at — nothing was "
+            f"cancelled and nothing was written down as moved"
+        )
+    return (
+        f"only {shifted} of {total} protective stop(s) on {sym} moved down by "
+        f"the dividend; the rest are still at the pre-dividend level, which the "
+        f"ex-dividend opening gap can trigger on its own — nothing was cancelled"
+    )

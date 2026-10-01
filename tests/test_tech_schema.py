@@ -464,3 +464,116 @@ def test_a_clean_answer_records_no_hygiene_violations(mock_cls):
     agent.analyze_batch(_symbols_data(["SPY"]))
 
     assert pt.total_hygiene_violations() == 0
+
+
+# --- item 157 closing evidence: the schema is SENT on BOTH wire routes ------
+#
+# The board item's wording is "no enforced answer format on EITHER route".
+# The two routes are the two OpenAI-wire providers this seat is ever given a
+# response_format on — OpenRouter and Google's OpenAI-compat endpoint (see
+# `_openai_wire_call` in src/agents/base.py). The morning batch and the
+# intraday scan share ONE `TechAnalystAgent` instance (src/pipeline.py), so
+# covering both providers covers both callers. These tests pin the send on
+# each route, and pin that a malformed row arriving over each route is
+# refused as a row (recorded, not salvaged into a verdict) while its
+# well-formed neighbours survive.
+
+def _fake_wire_client(captured: dict, text: str):
+    """Minimal OpenAI-wire double: captures the create() kwargs and streams
+    `text` back as one content chunk plus a terminal finish_reason."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    def _create(**kwargs):
+        captured.update(kwargs)
+        return iter([
+            SimpleNamespace(
+                id="gen-test", error=None, model_extra={}, usage=None,
+                choices=[SimpleNamespace(
+                    delta=SimpleNamespace(content=text), finish_reason=None)],
+            ),
+            SimpleNamespace(
+                id="gen-test", error=None, model_extra={}, usage=None,
+                choices=[SimpleNamespace(
+                    delta=SimpleNamespace(content=None), finish_reason="stop")],
+            ),
+        ])
+
+    client = MagicMock()
+    client.chat.completions.create.side_effect = _create
+    return client
+
+
+@pytest.mark.parametrize("route", ["openrouter", "google"])
+def test_the_schema_is_sent_on_both_wire_routes(route):
+    from src.agents.base import _response_format_for
+    from src.models import TechAnalystAnswer
+
+    agent = TechAnalystAgent(api_key="test", model="test-model")
+    captured: dict = {}
+    client = _fake_wire_client(captured, _wrapped_response_for("SPY"))
+
+    agent._openai_wire_call(client, "test-model", route, "hello")
+
+    sent = captured["extra_body"]["response_format"]
+    assert sent == _response_format_for(TechAnalystAnswer)
+    assert sent["type"] == "json_schema"
+    assert sent["json_schema"]["strict"] is True
+    # The root must be an object: a bare-array root cannot be sent strict.
+    assert sent["json_schema"]["schema"]["type"] == "object"
+
+
+@pytest.mark.parametrize("route", ["openrouter", "google"])
+def test_a_malformed_row_over_each_route_is_refused_not_salvaged_into_a_verdict(route):
+    """A row that does not conform is REFUSED at the boundary: it yields no
+    verdict for its symbol. The neighbouring good row is unaffected, and the
+    refusal is recorded rather than silently dropped."""
+    from src.agents.base import AgentResult
+
+    good = dict(_VALID_ITEM, symbol="AAA")
+    bad = dict(_VALID_ITEM, symbol="BBB", rating="not-a-rating")
+    payload = json.dumps({"results": [good, bad]})
+
+    agent = TechAnalystAgent(api_key="test", model="test-model")
+    captured: dict = {}
+    client = _fake_wire_client(captured, payload)
+
+    content, _, _, _, _ = agent._openai_wire_call(
+        client, "test-model", route, "hello")
+
+    result = AgentResult(raw_text=content, model="test-model", tokens_used=0)
+    salvage = result.parse_json_rows(key_field="symbol", list_field="results")
+    parsed_symbols = {
+        row.get("symbol") for row in salvage.rows if isinstance(row, dict)}
+
+    assert "AAA" in parsed_symbols
+    # The bad row survives JSON parsing but must not become a usable verdict.
+    from src.models import TechAnalystAnswerItem
+    import pydantic
+    bad_rows = [r for r in salvage.rows
+                if isinstance(r, dict) and r.get("symbol") == "BBB"]
+    for row in bad_rows:
+        with pytest.raises(pydantic.ValidationError):
+            TechAnalystAnswerItem(**row)
+
+
+@patch("anthropic.Anthropic")
+def test_a_refused_row_leaves_the_symbol_with_NO_verdict_not_an_approval(mock_cls):
+    """The safety property: refusing more answers must never read as the
+    seat approving. An unusable row resolves to `None` for that symbol —
+    the desk's "no answer" state — never to a rating."""
+    good = dict(_VALID_ITEM, symbol="AAA")
+    bad = dict(_VALID_ITEM, symbol="BBB", rating="not-a-rating")
+    resp = MagicMock()
+    resp.content = [MagicMock(text=json.dumps({"results": [good, bad]}))]
+    resp.usage.input_tokens = 1
+    resp.usage.output_tokens = 1
+    mock_cls.return_value.messages.create.return_value = resp
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(_symbols_data(["AAA", "BBB"]))
+
+    assert results["AAA"] is not None
+    assert results["AAA"].rating == "buy"
+    assert "BBB" in results
+    assert results["BBB"] is None

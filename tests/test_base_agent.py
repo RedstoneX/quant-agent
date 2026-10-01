@@ -1946,3 +1946,54 @@ def test_strict_schema_fallback_logs_once_and_still_sends_response_format(caplog
     fmt2 = base_mod._response_format_for(_FakeResult)
     assert fmt2 == fmt1
     assert not caplog.records
+
+
+# --- 402 shrink-retry (insufficient credit names a servable allowance) -------
+#
+# Message text is the MEASURED production wording, 2026-09-30.
+
+class _Credit402(Exception):
+    status_code = 402
+
+
+_REAL_402_MESSAGE = (
+    "Error code: 402 - {'error': {'message': 'This request requires more "
+    "credits, or fewer max_tokens. You requested up to 16000 tokens, but "
+    "can only afford 775. To increase, visit "
+    "https://openrouter.ai/settings/credits and upgrade your balance', "
+    "'code': 402}}"
+)
+
+
+def test_affordable_max_tokens_reads_the_providers_own_figure():
+    from src.agents.base import _affordable_max_tokens
+    assert _affordable_max_tokens(_Credit402(_REAL_402_MESSAGE)) == 775
+
+
+def test_affordable_max_tokens_never_guesses_when_no_figure_is_named():
+    from src.agents.base import _affordable_max_tokens
+    exc = _Credit402("Error code: 402 - insufficient credit")
+    assert _affordable_max_tokens(exc) is None
+
+
+def test_affordable_max_tokens_ignores_non_credit_errors():
+    from src.agents.base import _affordable_max_tokens
+
+    class _RateLimited(Exception):
+        status_code = 429
+
+    assert _affordable_max_tokens(
+        _RateLimited("you can only afford 775")) is None
+
+
+def test_402_stays_non_retryable_so_the_shrink_retry_is_the_only_re_ask():
+    from src.agents.base import _is_retryable
+    assert _is_retryable(_Credit402(_REAL_402_MESSAGE)) is False
+
+
+def test_truncated_finish_reason_is_still_unusable():
+    """A shrunken allowance may cut the answer off; that answer must still be
+    discarded, never salvaged into a decision."""
+    from src.agents.base import _TRUNCATION_FINISH_REASONS
+    assert "max_tokens" in _TRUNCATION_FINISH_REASONS
+    assert "length" in _TRUNCATION_FINISH_REASONS
