@@ -2512,11 +2512,11 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
         # positions are refused ONCE THE BOOK REACHES the cap, not
         # unconditionally; a book already below it may still trade.
         #
-        # 2026-09-18: `alert_owner` is no longer only the -20% rung. It is
+        # 2026-09-18: `alert_owner` is not only the deepest rung. It is
         # also set when the drawdown could not be MEASURED at all (an
         # unreadable equity read, rung "bad_read", which has set it since
         # 2026-09-02; and an absent equity curve, rung "unknown"). Printing
-        # "DRAWDOWN PAST -20%" for those said something specific and false
+        # a measured-drawdown message for those said something false
         # about the book — the owner would read a measured -20% where
         # nothing had been measured. The message is chosen from the RUNG,
         # so a state that was never measured never reports a number.
@@ -2538,11 +2538,44 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
                 f"({ceiling_x:.2f}x equity) until a valid reading arrives."
             )
         else:
-            lines.append(
-                f"🛑 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
-                f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
-                f"new positions are refused once the book reaches it."
-            )
+            # 2026-09-30 (board item 182): the owner-alert level moved from
+            # -20% to the sourced -10% depreciation-notification threshold,
+            # and this sentence was left behind saying "-20%" and "lowest
+            # rung". Both were then FALSE for any book between -10% and
+            # -20%, where the ladder is on its 1.5x or 1.0x rung and may
+            # not have cut at all. Nothing here is a literal any more: the
+            # drawdown, the alert level and the rung are all READ from the
+            # resolved ceiling, so moving either table cannot desynchronise
+            # the words from the book again.
+            measured = leverage.get("drawdown_pct")
+            alert_at = leverage.get("alert_pct")
+            head = "🛑 DRAWDOWN"
+            if isinstance(measured, (int, float)):
+                head += f" {abs(float(measured)):.1f}%"
+            if isinstance(alert_at, (int, float)):
+                head += f", past the {abs(float(alert_at)):.0f}% level at which you are told"
+            if rung == "none":
+                lines.append(
+                    f"{head}: the de-levering ladder has NOT cut anything yet "
+                    f"— gross exposure is still at the standing "
+                    f"{ceiling_x:.2f}x cap."
+                )
+            elif rung in (None, ""):
+                # No rung reported. Say only what is known — the cap — and
+                # claim nothing about whether the ladder cut, because with
+                # no rung neither claim can be checked.
+                lines.append(
+                    f"{head}: gross exposure is capped at {ceiling_x:.2f}x "
+                    f"equity and new positions are refused once the book "
+                    f"reaches it."
+                )
+            else:
+                lines.append(
+                    f"{head}: the de-levering ladder has the book on its "
+                    f"{rung} rung. Gross exposure is capped at "
+                    f"{ceiling_x:.2f}x equity and new positions are refused "
+                    f"once the book reaches it."
+                )
     if leverage.get("delever_incomplete"):
         # §11.2 reporting gap: a de-lever was attempted but the account is
         # still over its limit afterward. Plain words for a non-developer
