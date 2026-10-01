@@ -40,6 +40,8 @@ sb = _load()
 # --------------------------------------------------------------------------
 # a bent ruler is not a broken system
 # --------------------------------------------------------------------------
+import re as _re_mod
+
 
 def test_prose_where_a_test_name_belongs_is_unknown_not_failure():
     """The bug the first real run found.
@@ -924,6 +926,239 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
         "the file is over the cap, so the prune that fixes this can always "
         "merge."
     )
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# PER-ITEM budget on docs/WORK.md
+# ---------------------------------------------------------------------------
+#: The board has always been policed by a WHOLE-FILE cap
+#: (`test_work_md_stays_under_a_hundred_thousand_bytes`) plus a shrinking
+#: growth budget. Owner finding, 2026-09-30: that pair punishes the wrong
+#: author. A whole-file cap binds on whoever files the NEXT item, never on
+#: whoever wrote an 8,294-byte one, and the only way past it is deleting
+#: items -- which is exactly how filed work comes to feel dropped. The
+#: design the owner wrote for this file is a one-line item plus a pointer,
+#: with the detail in `docs/board_notes/item-NNN.md`. Nothing held the item
+#: itself short, so items grew fat anyway. These checks enforce that half.
+#:
+#: THE DIVISOR BELOW IS A CHOSEN WORKING FIGURE, NOT A MEASURED ONE. It is
+#: not derived from anything and nothing measures it; 25 items were open
+#: when this landed [measured 2026-10-01], and 40 is a round allowance for
+#: growth picked by hand. That is acceptable here only because this number
+#: governs the length of a documentation file and no trade, position, stop
+#: or order whatsoever. Do not copy this pattern into anything that spends.
+_WORK_MD_MAX_OPEN_ITEMS = 40
+
+#: Same shape as `_QUEUE_ITEM_RE`/`_ITEM_OPEN_RE` in scripts/status_board.py:
+#: an item block starts at its bold `**N. ` heading and runs to the next
+#: heading, or to the retired-numbers paragraph that closes the list.
+_WORK_ITEM_HEADING_RE = _re_mod.compile(r"^\*\*(?:~~)?(\d+)\.\s", _re_mod.M)
+_RETIRED_PARA = "**Retired item numbers"
+
+#: Items already over budget when this check landed, with their measured
+#: size on 2026-10-01. Their prose belongs to the authors who filed it and
+#: this PR does not touch a word of it. The check is a RATCHET instead: a
+#: grandfathered item may only ever get SMALLER, and any item not listed
+#: here -- every future one -- must come in under budget from the start.
+#: An entry is deleted outright once its item fits the budget; the test
+#: below fails if one is kept alive after that, so the list cannot rot.
+_WORK_MD_OVERSIZE_ON_ARRIVAL = {
+    "63": 3431, "70": 8294, "75": 3708, "78": 2656, "90": 7548,
+    "177": 5572, "186": 4065, "190": 6372, "201": 5526, "202": 4380,
+    "218": 4005, "220": 3461,
+}
+
+#: Items on the board when this check landed that do not resolve to a note
+#: file of their own [measured 2026-10-01: 9 of 25]. Same ratchet: writing
+#: another author's note is not this check's job, but no NEW item may arrive
+#: without one, and an entry here is deleted the moment its note exists.
+_WORK_MD_POINTERLESS_ON_ARRIVAL = {
+    "186", "188", "210", "211", "218", "220", "221", "222",
+}
+
+
+def _work_md_item_blocks(text):
+    """`[(number, block_text)]` for every numbered item block in `text`."""
+    stop = text.find(_RETIRED_PARA)
+    if stop == -1:
+        stop = len(text)
+    heads = [m for m in _WORK_ITEM_HEADING_RE.finditer(text) if m.start() < stop]
+    blocks = []
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else stop
+        blocks.append((m.group(1), text[m.start():end].rstrip() + "\n"))
+    return blocks
+
+
+def _work_md_item_budget_bytes():
+    from scripts.check_board_hygiene import read_cap_bytes
+
+    repo = Path(__file__).resolve().parents[1]
+    cap, error = read_cap_bytes(repo)
+    assert error is None, error
+    return cap // _WORK_MD_MAX_OPEN_ITEMS
+
+
+def _over_budget_items(text, budget, allowed=None):
+    """Items over `budget`, minus the grandfathered ones that have not grown."""
+    allowed = _WORK_MD_OVERSIZE_ON_ARRIVAL if allowed is None else allowed
+    out = []
+    for n, b in _work_md_item_blocks(text):
+        if len(b) <= budget:
+            continue
+        if n in allowed and len(b) <= allowed[n]:
+            continue
+        out.append((n, len(b)))
+    return out
+
+
+#: How `docs/WORK.md` spells a pointer since the notes became one file per
+#: item: `detail: docs/board_notes/item-177.md`. Zero-padded to three digits,
+#: which is why the number is compared as an int and not as text.
+_NOTE_POINTER_RE = _re_mod.compile(r"docs/board_notes/item-(\d+)\.md")
+
+
+def _notes_present():
+    """The note files `docs/board_notes/` actually holds, by item number.
+
+    The directory listing is the resolution `scripts.status_board.
+    load_board_notes` already uses to turn that directory into notes, and
+    the filename is what `docs/board_notes/README.md` makes authoritative —
+    so a pointer resolves here exactly as it resolves there. Deliberately
+    not a second, stricter rule of my own: two different answers to "does
+    this item have a note" is how a pointer comes to point at nothing while
+    every check stays green.
+    """
+    directory = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
+    if not directory.is_dir():
+        return set()
+    out = set()
+    for path in sorted(directory.glob("item-*.md")):
+        m = _re_mod.fullmatch(r"item-(\d+)\.md", path.name)
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
+def _items_missing_their_note(text, present, allowed=None):
+    """Items whose block carries no pointer, or whose pointer names a note
+    that is not this item's own, or one that is not there at all."""
+    allowed = _WORK_MD_POINTERLESS_ON_ARRIVAL if allowed is None else allowed
+    missing = []
+    for n, b in _work_md_item_blocks(text):
+        if n in allowed:
+            continue
+        targets = {int(x) for x in _NOTE_POINTER_RE.findall(b)}
+        if int(n) not in targets or int(n) not in present:
+            missing.append(n)
+    return missing
+
+
+def _per_item_failure_message(offenders, budget):
+    worst = ", ".join(f"item {n} ({size:,} bytes)" for n, size in offenders)
+    return (
+        f"docs/WORK.md item block(s) over the {budget:,}-byte per-item budget: "
+        f"{worst}. The budget is the file's own 100,000-byte cap divided by "
+        f"{_WORK_MD_MAX_OPEN_ITEMS}, a CHOSEN allowance for open items, not a "
+        "measured one -- it bounds a documentation file and nothing that "
+        "trades. TO FIX, and do NOT delete anything: move the item's prose "
+        "into `docs/board_notes/item-NNN.md` under its `## item N` heading -- "
+        "create that file if it is not there -- and leave behind only the bold "
+        "title line, the DONE WHEN checkboxes in short form, and the "
+        "`detail: docs/board_notes/item-NNN.md` pointer. Never raise this "
+        "number to make room, never shorten somebody else's item to make room "
+        "for yours, and never retire a live item to get under it."
+    )
+
+
+def test_every_work_md_item_stays_within_its_per_item_budget():
+    """The real docs/WORK.md, every item block, against the chosen budget."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    budget = _work_md_item_budget_bytes()
+    offenders = _over_budget_items(work_md.read_text(), budget)
+    assert not offenders, _per_item_failure_message(offenders, budget)
+
+
+def test_the_grandfathered_list_cannot_outlive_the_items_on_it():
+    """A ratchet that never releases is just a permanent exemption."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    budget = _work_md_item_budget_bytes()
+    sizes = {n: len(b) for n, b in _work_md_item_blocks(work_md.read_text())}
+    stale = sorted(n for n, _ in _WORK_MD_OVERSIZE_ON_ARRIVAL.items()
+                   if sizes.get(n, 0) <= budget)
+    assert not stale, (
+        f"item(s) {stale} now fit the {budget:,}-byte per-item budget — delete "
+        "them from _WORK_MD_OVERSIZE_ON_ARRIVAL so the budget binds on them "
+        "from now on."
+    )
+    # Released on exactly the condition the pointer check itself applies,
+    # so the two can never disagree about whether an item is still exempt.
+    still_missing = set(_items_missing_their_note(
+        work_md.read_text(), _notes_present(), allowed=set()))
+    gone = sorted(n for n in _WORK_MD_POINTERLESS_ON_ARRIVAL
+                  if n not in sizes or n not in still_missing)
+    assert not gone, (
+        f"item(s) {gone} now have a note of their own, or have left the "
+        "board — drop them from _WORK_MD_POINTERLESS_ON_ARRIVAL so the "
+        "pointer check binds on them from now on."
+    )
+
+
+def test_every_work_md_item_points_at_its_own_board_note_file():
+    """An item may be short only because its detail lives somewhere; the
+    pointer is what makes that true, so it is resolved, not assumed."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    missing = _items_missing_their_note(work_md.read_text(), _notes_present())
+    assert not missing, (
+        f"docs/WORK.md item(s) {missing} do not resolve to a note of their "
+        "own. Add a `detail: docs/board_notes/item-NNN.md` line to the block "
+        "and put the prose in that file under a `## item N` heading."
+    )
+
+
+def test_the_per_item_check_catches_a_fat_item_and_a_pointerless_one():
+    """Verifies the checker itself against a SIMULATED over-budget item, so
+    it is not merely passing because today's file happens to be tidy."""
+    budget = _work_md_item_budget_bytes()
+    assert budget > 0
+    tidy = (
+        "**5. A short title.**\n\n"
+        "DONE WHEN:\n  - [ ] the thing is measured\n\n"
+        "detail: docs/board_notes/item-005.md\n\n"
+    )
+    fat = (
+        "**6. A fat title.**\n\n" + ("  - [ ] " + "x" * 200 + "\n") * 40 +
+        "\ndetail: docs/board_notes/item-006.md\n\n"
+    )
+    pointerless = "**7. No pointer anywhere.**\n\nDONE WHEN:\n  - [ ] something\n\n"
+    text = tidy + fat + pointerless + _RETIRED_PARA + "** never reuse.\n"
+    present = {5, 6}
+
+    assert [n for n, _ in _work_md_item_blocks(text)] == ["5", "6", "7"]
+    assert [n for n, _ in _over_budget_items(text, budget, allowed={})] == ["6"]
+    assert _items_missing_their_note(text, present, allowed=set()) == ["7"]
+    # A pointer that resolves to no note file is as bad as no pointer at all.
+    assert _items_missing_their_note(text, {5}, allowed=set()) == ["6", "7"]
+    # The ratchet exempts a grandfathered item, and ONLY while it has not grown.
+    assert _over_budget_items(text, budget, allowed={"6": 10_000}) == []
+    assert [n for n, _ in _over_budget_items(text, budget, allowed={"6": 10})] == ["6"]
+    assert _items_missing_their_note(text, present, allowed={"7"}) == []
+    assert _over_budget_items(tidy + _RETIRED_PARA, budget, allowed={}) == []
+    message = _per_item_failure_message(
+        _over_budget_items(text, budget, allowed={}), budget)
+    assert "docs/board_notes/" in message and "move the item's prose" in message
+    assert "CHOSEN" in message
+    # The retired-numbers paragraph is not an item and is never measured.
+    assert all(not b.startswith(_RETIRED_PARA) for _, b in _work_md_item_blocks(text))
+
+
 
 
 def test_finished_work_has_somewhere_to_go_that_is_not_deletion():

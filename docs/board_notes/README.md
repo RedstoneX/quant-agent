@@ -26,3 +26,5 @@ resolver, so a genuine same-file collision still merges block by block.
 the `## item N` heading *inside that item's own file* to
 `## item N — RETIRED <date>, <reason>`. Not "CLOSED", not left untouched. Keep
 the file; a retired item's prose is still the record of why it existed.
+
+**Per-item budget.** `docs/WORK.md` has a whole-file cap AND a per-item byte budget (the cap divided by a chosen allowance for open items — see `tests/test_status_board.py::test_every_work_md_item_stays_within_its_per_item_budget`); an item over it moves its prose into its file here and leaves a title plus a `detail: docs/board_notes/item-NNN.md` pointer behind.

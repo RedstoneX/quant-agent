@@ -51,6 +51,7 @@ from src.risk.constants import (
     REWARD_RISK_PARITY,
     gap_adjusted_risk_per_share,
     reward_risk_floor_applies,
+    risk_budget_allocation_pct,
     reward_risk_parity_refuses,
 )
 
@@ -4146,17 +4147,22 @@ class PortfolioConstructor:
         # short (whose stop sits above entry), which would corrupt this cap
         # instead of tightening it.
         risk_per_share = abs(entry_price - stop_loss)
-        risk_dollars_allowed = total_value * self.cfg.risk_budget_pct / 100
         # qty_by_risk = risk_dollars_allowed / risk_per_share
         # position_$ = qty_by_risk * entry_price
         # allocation_by_risk_pct = position_$ / total_value * 100
         #                        = (risk_dollars_allowed / risk_per_share) * entry_price / total_value * 100
         cap_note = ""
         if risk_per_share > 0:
-            alloc_cap_by_risk = (
-                risk_dollars_allowed * entry_price / risk_per_share / total_value * 100
+            # ONE definition of stop-derived size (board item 221): the
+            # PM-facing projected-portfolio preview calls this same helper,
+            # so the sector mix the PM self-corrects against is the mix this
+            # constructor would actually build. The arithmetic is unchanged.
+            alloc_cap_by_risk = risk_budget_allocation_pct(
+                entry_price=entry_price, stop_price=stop_loss,
+                total_value=total_value,
+                risk_budget_pct=self.cfg.risk_budget_pct,
             )
-            if allocation_pct > alloc_cap_by_risk:
+            if alloc_cap_by_risk is not None and allocation_pct > alloc_cap_by_risk:
                 logger.info(
                     "Constructor: %s alloc capped by risk budget "
                     "(delta %.2f%% → %.2f%% at %.1f%% risk budget)",
@@ -4391,13 +4397,18 @@ class PortfolioConstructor:
             risk_per_share, is_short=True,
             multiple=self.cfg.short_gap_risk_multiple,
         )
-        risk_dollars_allowed = total_value * self.cfg.risk_budget_pct / 100
         cap_note = ""
         if risk_per_share > 0:
-            alloc_cap_by_risk = (
-                risk_dollars_allowed * entry_price / risk_per_share / total_value * 100
+            # Same ONE definition the long leg and the preview call (item
+            # 221). The gap haircut is applied inside it, exactly once.
+            alloc_cap_by_risk = risk_budget_allocation_pct(
+                entry_price=entry_price, stop_price=stop_loss,
+                total_value=total_value,
+                risk_budget_pct=self.cfg.risk_budget_pct,
+                is_short=True,
+                short_gap_risk_multiple=self.cfg.short_gap_risk_multiple,
             )
-            if allocation_pct > alloc_cap_by_risk:
+            if alloc_cap_by_risk is not None and allocation_pct > alloc_cap_by_risk:
                 logger.info(
                     "Constructor: SHORT %s alloc capped by risk budget "
                     "(delta %.2f%% → %.2f%% at %.1f%% risk budget, %.1fx "
