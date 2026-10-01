@@ -2701,7 +2701,11 @@ numbers:
     status: sourced
     site: src/risk/constants.py
     source: >-
-      Owner ruling 2026-10-01, verbatim: "For now, let's refuse a bad risk
+      docs/BOARD_NOTES.md:1198 (section "## item 218 — Arithmetically losing
+      geometry is refused (owner ruling 2026-10-01)") records the ruling
+      verbatim, and src/portfolio_constructor.py:517 carries it beside the
+      constant that applies it. Owner ruling 2026-10-01, verbatim: "For now,
+      let's refuse a bad risk
       reward ratio. See if that improves the desk purchases." He was shown
       the worked case (buy 100, stop 94, nearest structural level above 104
       — risking 6 to make 4) and chose refusal over both leaving it alone
