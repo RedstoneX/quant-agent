@@ -18,6 +18,8 @@ from src.agents.base import (
     LLMStreamErrorChunk,
     LLMStreamInterruptedError,
 )
+import src.cost_circuit
+from tests.desk_clock import freeze_desk_day
 from src.cost_circuit import (
     LLMCostCircuitBreaker,
     OptionalPaidAnalysisRetrySkipped,
@@ -2041,11 +2043,17 @@ def _age_latch(path: str, minutes: float) -> None:
     same clock that wrote the stamp, so moving the stamp is the honest way
     to simulate waiting.
     """
+    # Against the circuit's own clock, not the OS clock. When a test has
+    # frozen the desk's day the two are the same instant; when it has not,
+    # this is `datetime.now(timezone.utc)` and the stamp is what SQLite
+    # would have written anyway.
+    stamp = (
+        src.cost_circuit._now_utc() - timedelta(minutes=minutes)
+    ).strftime("%Y-%m-%d %H:%M:%S")
     with sqlite3.connect(path) as conn:
         conn.execute(
-            "UPDATE llm_circuit_state SET suspended_at="
-            "datetime('now', ?) WHERE singleton=1",
-            (f"-{minutes} minutes",),
+            "UPDATE llm_circuit_state SET suspended_at=? WHERE singleton=1",
+            (stamp,),
         )
 
 
@@ -2065,14 +2073,7 @@ def _freeze_et_day(monkeypatch) -> None:
     real clock on purpose: the cooldown check measures elapsed wall time
     against that same clock, so only the ET-day bucketing needs pinning.
     """
-    real_today = datetime.now(timezone.utc).astimezone(_ET).date()
-    safe_instant = datetime(
-        real_today.year, real_today.month, real_today.day, 12, 0, tzinfo=_ET,
-    )
-    frozen = _et_day_and_utc_bounds(safe_instant.astimezone(timezone.utc))
-    monkeypatch.setattr(
-        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: frozen,
-    )
+    freeze_desk_day(monkeypatch, src.cost_circuit)
 
 
 def _utc_stamp_on_et_day(et_day: str) -> str:
