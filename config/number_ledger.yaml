@@ -8129,8 +8129,8 @@ numbers:
     note: >-
       Default maintenance margin (src/risk/rules.py:1468); the one caller
       passes risk.maintenance_margin_pct
-      (src/pipeline.py::TradingPipeline._resolve_gross_ceiling and
-      src/pipeline.py::TradingPipeline._is_margin_floor_breach).
+      (src/pipeline_delever.py::DeleverMixin._resolve_gross_ceiling and
+      src/pipeline_delever.py::DeleverMixin._is_margin_floor_breach).
   - id: src.risk.target_revision.assess_target_revision(breakout_projection_atr_multiple)
     value: 1
     status: derived
