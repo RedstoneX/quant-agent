@@ -94,6 +94,13 @@ against `origin/main`'s old shape conflicted in `src/number_sources.py` and
 **No behaviour changed.** The computed count is 137, equal to the live count
 of arbitrary rows on the day of the change, and no number was picked, moved
 or added.
+### 2026-09-30 — the coverage sweep repaired a naked position and its own summary concealed it
+
+`COVERAGE SWEEP ... repaired — positions checked 11, gaps 0, repairs attempted 1 / succeeded 1 / failed 0, alert none sent`. The repair itself was correct: it named AAPL, saw all 7.33 shares uncovered, replaced the stop at the recorded $323.74, and used the right hybrid shape with the DAY sub-share leg placed first. Its reporting was wrong twice.
+
+**`gaps 0` while `repairs attempted 1` is a display defect, NOT two code paths disagreeing.** Detection and the repair trigger read the same list. After a successful placement `check_coverage` RE-READS the broker and rebinds the same `gaps` variable to what is STILL uncovered - so the name silently changes meaning from "found" to "left" mid-function, and the summary counted the second. One variable doing two jobs. The gap count is the number an operator scans for, so the line actively concealed the event it was reporting. `gaps_detected` is now captured before the repair block can rebind anything, and the log line prints both: `gaps 1 found / 0 still open`.
+
+**`alert none sent` on a repair.** The last line of defence put a stop back on a position that had been unprotected for 13 minutes 22 seconds and told nobody. A COVERAGE REPAIRED event is never routine - for the sweep to find a gap at all, something earlier (an entry, a trailing ratchet, a re-protect after a partial exit) failed without saying so. It now pages on the same owner channel every other message from this unit uses; no second channel was invented. A sweep that repairs nothing stays silent exactly as before, and a repair already covered by the existing all-clear does not page twice.
 ### 2026-09-30 — ROOT CAUSE of the protective-stop failures: the desk cancels when it only needs to amend
 Owner ruling that produced this entry (Rex, 2026-09-30): "whatever the desk
 wants, there is substantial reason that we've spent a lot of time and resources
