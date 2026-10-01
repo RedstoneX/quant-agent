@@ -68,13 +68,6 @@ DONE WHEN:
   - [ ] when he does: the record-keeping circuit-breaker trip is shown reaching him on the second channel while Telegram delivery is failing, which is the exact live pairing that went unnoticed
 detail: docs/BOARD_NOTES.md (item 17)
 
-**20. GATE THE DECISION ON EVIDENCE COVERAGE — owner's design, 2026-09-02; the counting half is BUILT as a per-name RECORD (2026-10-01) and what is left is one unrelated owner call. Do not trade on partial evidence. Detail: `docs/BOARD_NOTES.md` ("item 20").** His ruling is that a decision on incomplete evidence is fabricated, not degraded.
-
-DONE WHEN:
-  - [x] The counting half, closed as a RECORDING rather than a bar (2026-10-01). Two honest attempts at deriving a coverage threshold both failed — nothing published states one, and the production evidence table cannot supply one because per-name coverage is unrecorded for the news seat in every run and partial for macro [measured read-only against the production DB, 228 runs with symbol-scoped evidence]. Both failure reasons are written down in `src/evidence_gate.py` beside `name_coverage`. Per the owner's standing ruling that risk is read per name and never set as a global dial, the question collapses to the categorical one the seat half already answers, asked once per name: did this seat answer ABOUT this name. `evidence_gate.name_coverage` records that per candidate, `pipeline._record_name_coverage` persists it on every decision, and no ratio, minimum or verdict ships with it — a test asserts the record carries no numeric field at all.
-  - [ ] OWNER'S CALL — whether the intraday scan's hard-coded technical `data_status` (`src/pipeline.py`) should be able to report LOST at all. Today the only blocking seat can never be lost there; that follows from his own `evidence_gate.BLOCKING_SEATS` mandate, so an agent may not widen the gate or add a second blocking seat to work around it.
-detail: docs/BOARD_NOTES.md (item 20)
-
 **55. What IS a structural level — how many bars make a swing point, and how wide is a level's zone? OPEN, filed 2026-09-13.** Touch count is settled and pinned by a test: two touches, sourced (Tsinaslanidis 2012) — do not tighten it.
 
 DONE WHEN:
@@ -299,6 +292,15 @@ DONE WHEN:
   - [ ] (b) any other seat-prompt sentence of the form "X already handles Y" found by reading the rendered prompts is confirmed or corrected
 detail: docs/BOARD_NOTES.md (item 217)
 
+**215. A stop can be reported STILL PROTECTED by a level whose zone is a fifth of the price wide, so the price area the stop actually sits at may already have failed. Surfaced 2026-09-30 while measuring item 55 on the live book. `_level_backing_stop` in `src/portfolio_constructor.py` honours a stop as structurally backed when the stop is anywhere INSIDE a level's zone, and since item 55 that zone is the measured span of the bars that drew the level — min 0.53%, median 3.47%, max 22.11% of price across the 101-name universe [measured 2026-09-30, 704 levels, complete-linkage clustering]. Inside a wide zone "the level is intact" and "the price where the stop rests is intact" are different statements, and the desk reports the first while the owner reads the second. MEASURED on the live book the same day: ETN's stop at 405.43 is honoured by a level at 388.55 whose zone runs 381.06-413.77 — the stop is 16.88 away from the level it is said to rest on, 3.90% of the 432.56 entry; RKLB's stop at 65.14 is honoured by a level at 67.31 with a 13.27% half-width, 2.17 away, 3.11% of entry; NOK's stop at 9.39 is honoured by a level at 9.78, 0.39 away, 3.79% of entry. In all three the stop can be hit with the level still unbroken, and nothing in the report says so. This item is the REPORTING defect only — the honouring rule itself is item 46/55 territory and is not reopened here.
+
+DONE WHEN:
+  - [ ] (a) any message or dashboard field that says a position is level-backed / still protected also carries the level's measured zone span, so the owner can see whether his stop sits at the level or merely inside its band
+  - [ ] (b) a recorded decision, in `docs/INCIDENT_HISTORY.md`, on whether "stop inside a wide zone" should read as backed at all, or whether the claim must be narrowed to stops within some measured distance of the level price — no number is introduced by this item; it is a measurement plus an owner-doctrine question
+detail: docs/BOARD_NOTES.md (item 215)
+  - [ ] (c) the backtest engine carries each level's pivot-bar ranges, so it runs the same stop rule live runs instead of failing closed on every level (done 2026-10-01).
+
+
 **216. The short-side gap haircut is applied in TWO places and the constructor's copy is not the one that binds — filed 2026-09-30.**
 
 Execution sizes a position as min(qty_by_alloc, qty_by_risk). The constructor
@@ -404,6 +406,7 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 199
 - retired queue: 212
 - retired queue: 174
+- retired queue: 20
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

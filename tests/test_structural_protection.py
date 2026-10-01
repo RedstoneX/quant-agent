@@ -192,6 +192,11 @@ def test_structural_level_broken_two_consecutive_closes_lifts_protection():
         is_short=False,
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
+        # Item 215: backing is "the stop rests on a bar that DREW the level",
+        # so the fixture states the bar. 90.3 was turned at by a session that
+        # traded 90.0-90.6, and the 90.00 stop sits inside that session's own
+        # range — the level cannot be taken out without the stop being hit.
+        computed_level_bars={90.3: [(90.0, 90.6)]},
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=True,
@@ -211,6 +216,11 @@ def test_structural_level_broken_single_close_stays_protected():
         is_short=False,
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
+        # Item 215: backing is "the stop rests on a bar that DREW the level",
+        # so the fixture states the bar. 90.3 was turned at by a session that
+        # traded 90.0-90.6, and the 90.00 stop sits inside that session's own
+        # range — the level cannot be taken out without the stop being hit.
+        computed_level_bars={90.3: [(90.0, 90.6)]},
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=False,
@@ -238,6 +248,11 @@ def test_small_close_below_level_within_break_margin_is_not_a_break():
         is_short=False,
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
+        # Item 215: backing is "the stop rests on a bar that DREW the level",
+        # so the fixture states the bar. 90.3 was turned at by a session that
+        # traded 90.0-90.6, and the 90.00 stop sits inside that session's own
+        # range — the level cannot be taken out without the stop being hit.
+        computed_level_bars={90.3: [(90.0, 90.6)]},
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=True,   # even a stale prior break can't matter — not broken now
@@ -259,6 +274,11 @@ def test_structural_level_intact_stays_protected_at_30_days_equivalent():
         is_short=False,
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
+        # Item 215: backing is "the stop rests on a bar that DREW the level",
+        # so the fixture states the bar. 90.3 was turned at by a session that
+        # traded 90.0-90.6, and the 90.00 stop sits inside that session's own
+        # range — the level cannot be taken out without the stop being hit.
+        computed_level_bars={90.3: [(90.0, 90.6)]},
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=False,
@@ -280,6 +300,7 @@ def test_structural_level_broken_short_side_mirrors_long():
         is_short=True,
         computed_levels=[109.8],
         computed_level_touches={109.8: 6},
+        computed_level_bars={109.8: [(109.4, 110.0)]},
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=True,
@@ -300,6 +321,11 @@ def test_unparseable_thesis_falls_back_to_structural_level():
         atr=2.0,
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
+        # Item 215: backing is "the stop rests on a bar that DREW the level",
+        # so the fixture states the bar. 90.3 was turned at by a session that
+        # traded 90.0-90.6, and the 90.00 stop sits inside that session's own
+        # range — the level cannot be taken out without the stop being hit.
+        computed_level_bars={90.3: [(90.0, 90.6)]},
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=True,
@@ -403,6 +429,7 @@ def test_low_touch_level_does_not_qualify_falls_back_to_noise_band():
         atr=2.0,
         computed_levels=[90.3],
         computed_level_touches={90.3: 2},   # below the 5-touch bar
+        computed_level_bars={90.3: [(90.0, 90.6)]},  # bar is fine; touches are not
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=ZONE_PCT,
     )

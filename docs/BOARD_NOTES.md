@@ -151,7 +151,7 @@ this line, one heading per item.
 
 **Update 2026-10-01 —** (a) is decided: neither extra signal joins the ranking score, because reward-to-risk rests on a target (a made-up number by your ruling) and net evidence already gates and sizes. (b) needs someone to look at the provider console; the repo cannot see it. (c) stays blocked on the forbidden paid benchmark. The item stays open for (b) and (c).
 
-## item 20
+## item 20 — RETIRED 2026-10-01, both halves closed: the counting half as a per-name record, and the intraday chart seat RULED able to report a lost answer
 
 **Plain language —** Your rule from 2 September: if the research behind a
 decision isn't really there, don't decide — skip the round loudly and try
@@ -279,6 +279,63 @@ agent has widened the rule to work around it.
 
 **Re-verified against live code, 2026-09-30 — nothing here has rotted, and no agent may close either box.** Both halves were checked on `origin/main`, not from the note above. The CATEGORICAL half is live and firing: `TradingPipeline._evidence_gate_skip` calls `evidence_gate.evaluate` before the paid decision step on morning and on the intraday scan, and the production log line "EVIDENCE GATE — decision skipped: N blocking seat(s) were asked and their answers were unusable" is that call and no other mechanism. The COUNTING half exists as DATA and as REPORTING only: per-seat freshness (`evidence_gate.freshness`, read-this-tick vs carried vs absent) is computed, attached to every decision and named to the owner through the feed and the alerts, and per-symbol coverage is counted in `RunContext.tech_bars_coverage` and `TechAnalysisResult.levels_coverage`. NOTHING COMPARES ANY OF THOSE COUNTS AGAINST A BAR, deliberately — `partial` classifies as an answer that ARRIVED, so partial coverage cannot refuse a decision today. So the state is "the counting exists, nothing acts on it", which is exactly what the two open boxes say. The unsourceable number, named precisely so it is not re-derived a third time: the minimum fraction of a seat's own intended scope that must come back usable before that seat's answer may be leaned on (the "40 of 65 companies" case). Nothing published gives it, the desk's own history cannot supply it without fitting, and it is a risk-appetite dial. Deliberately NOT done in this pass: no threshold invented, no seat added to `BLOCKING_SEATS`, and the existing refusal left exactly as strong as it was.
 
+**RULING 2026-10-01 — yes, the intraday scan's technical `data_status` must
+be able to report LOST, and it now does.** This was carried as OWNER'S CALL
+and is ruled here because it follows from doctrine already ratified rather
+than from any appetite still to be set.
+
+The reasons, for the record:
+
+- The standing rule is that the desk reports the TRUE state. A hard-coded
+  status that can never say "lost" asserts the chart read is present even
+  when it is not; that is an untrue statement in the desk's own record, and
+  an untrue statement is a lie.
+- The entry bar ALREADY refuses on a missing technical read — `src/risk/rules.py`
+  emits the own-bar refusal "no technical read this review" — so the same
+  missing data refused at one gate and was silently treated as present at
+  another. That inconsistency, not the gate's width, was the defect.
+- It does NOT widen the gate and does NOT add a blocking seat.
+  `evidence_gate.BLOCKING_SEATS` is untouched and still holds `tech` alone;
+  the blocking seat is only allowed to be honest about whether it has a
+  reading.
+
+**No number was invented.** "Lost" here means the reading is absent or
+unreadable — `analyses` empty after a `symbols_data` that was confirmed
+non-empty, or the batch call raising. No threshold, no coverage percentage,
+no staleness cut-off; the code can already tell without one. A PARTIAL batch
+stays REPORTED exactly as before, so one bad symbol still cannot stop
+intraday trading.
+
+**The behaviour on a lost read is the existing ratified one, matched, not
+redesigned:** `data_status["tech"]="failed"` classifies as `CATEGORY_LOST`,
+the standing heal order runs first (mechanical repair, then at most one paid
+retry), and if the seat is still lost the shared `_evidence_gate_skip` path
+refuses before the Portfolio Manager and the unsuppressible data-quality
+alert speaks — the same path morning uses.
+
+**The recording, checked rather than claimed.** The write is reached from
+executable product code: `Pipeline._evidence_gate_skip` is called from
+`_intraday_opportunity_scan_body` right after `ctx.data_status` is set, and
+it writes a run-level `evidence_gate` row plus, per symbol that did reach a
+read, a `not_decided / evidence_gate_skip` row carrying `lost_seats`,
+`blocking_lost_seats` and the full `data_status`; the per-symbol
+`technical_analysis_unresolved_after_retry` row distinguishes "asked and the
+answer was lost" from "asked and answered"
+(`technical_analysis_validated`) and from "never asked" (no row at all).
+Classification: **POPULATING** — the production evidence store holds 5,546
+`pipeline_event` rows, of which 241 are `evidence_gate` rows (newest
+2026-09-29 19:46:45) and 21 carry the tech-unresolved reason [measured
+read-only against the production DB backup of 2026-09-30]. Not measured, and
+not claimed: whether a FULLY lost intraday tech seat has yet occurred in
+production — the channel populates, that particular shape has not been
+confirmed to have fired.
+
+**Superseded above:** the paragraphs headed "What that leaves for you" and
+"One thing you may want to look at" state that the thirty-minute scan's
+chart seat can never be recorded as lost. That was true when written and is
+no longer true; the classification shipped with the intraday LOST change and
+is pinned by tests. They are kept only so the history reads straight.
+
 ## item 55
 
 **Plain language —** A "level" is a price the stock has bounced off before, and the desk uses them for almost everything — where to put a stop, whether a trade is worth taking, how big it can be. Three things define one. On 13 September the popular trading-software documentation was read and answered none of them. Later the same day the ACADEMIC work was found, and it changes the picture in three ways. First, it settles one of the three: a level needs at least two bounces, and a study of 733 US stocks over twenty years measured that demanding three or more makes no difference to how often price actually turns there. That number is now sourced rather than assumed, and locked so nobody quietly raises it. Second, it confirms that the desk's whole method — find the bounces, group the ones at similar prices, treat the group as a band — is the same method the academic work uses, so the design is not home-made. Third, on the two numbers still open, it does not give an answer but it does say where the desk is standing: the same study checked band widths from 2% up to 5% and found the results did not change, and the desk's band is 2% — the very tightest they looked at. Nobody has measured anything narrower.
@@ -300,6 +357,92 @@ agent has widened the rule to work around it.
 **Measured cost, new and belonging here:** a confirmed pivot on the trailing path needs 7 bars (`src/risk/trailing.py::PIVOT_WINDOW` = 3, so 3 either side plus the pivot), and the structural leg of the trailing stop has NEVER ONCE produced a candidate on a real position — partly because holds have run 4-9 sessions, which cannot reliably contain a 7-bar confirmation plus room to trail from it. So the bar count is not merely unsourced; on the trailing path it is currently switched off by arithmetic. This is the strongest argument yet that the window is the half of this item worth settling first, and it is an argument for MEASURING it, not for lowering it.
 
 **RULED and BUILT 2026-10-01 — this closes on the desk's own record, not on another argument.** The rework offered for this item (PR 880: complete-linkage clustering plus a redefinition of what makes a stop "level-backed") is HELD and will NOT be merged: measured against the eleven real open positions it was a net LOOSENING, 0 of 11 level-backed today against 2 of 11 with both changes, which is the opposite of the intent — and worse, three separate measurements of the SAME baseline returned 0, 1 and 4. A number that unstable cannot govern money, and a fourth measurement would not fix it. What shipped instead changes NO behaviour at all: the desk now RECORDS, for every position it opens, what the stop was actually based on. The pinned half is a JSON `stop_level_basis` on the `trades` row — whether a computed structural level stood behind the stop, and if so its price and side, how many separate times price turned there, how many bars either side confirm a swing point and the whole confirmation span, the zone's edges and width as the live definition drew them, and the signed distances from the stop and from the entry to the level. It is written for stops with NOTHING behind them too, with `level_backed: false`, because that is the control group without which "levels hold" cannot be falsified. The running half is two raw distances widened from each session's position snapshot: how far price travelled beyond the FAR edge of the zone, and the closest it ever came to the NEAR edge. NO VERDICT IS STORED — "respected", "pierced and recovered" and "broken outright" each need a cutoff nobody can source today, so only raw distances in price units are kept and a later reader states and defends its own cutoff against numbers that were never rounded to it. Anything genuinely unknown at write time is NULL, never substituted. The record EXTENDS the per-closed-trade stop-basis and excursion store built 2026-09-30 rather than standing up a second parallel one — same table, same rows, same joins to the realised outcome, which is the honest fit because the question is about the same trades. HARD LIMIT, written into the code beside the recording and pinned by a test: this may show that the CURRENT definition of a level is WRONG, and it may NEVER be swept for a better bar count or zone width. Fitting a number to this desk's own trading history is barred outright. The item stays OPEN; nothing has been read yet, because nothing has been recorded yet.
+
+
+### 2026-10-01 — the adversary pass on PR 880, and what it changed
+
+THE REFUTED CLAIM. PR 880 argued that item 55 (clustering on bar overlap) and
+item 215 (a stop must rest on a forming bar) cancel out, one widening the zone
+and the other narrowing what counts as resting on it. They do not. Item 215
+only punches holes in the zone's INTERIOR; it cannot narrow the outward reach
+by one cent, because the zone's edges ARE bar extremes and an extreme always
+lies inside some bar. The furthest a stop could sit from the level price and
+still be called backed was therefore the zone halfwidth exactly, with NO bound
+anywhere, against a hard 1.00% of price on main. Measured on the desk's own
+400-bar, 101-symbol set, 704 levels under the new clustering: median halfwidth
+3.33% of price, p90 9.41%, max 36.07%; restricted to the 154 levels with at
+least 5 touches, median 4.31% and 38% of them above 5%. Since the break check
+evaluates the matched LEVEL price and not the stop, the desk could report
+"structure intact" with the stop a fifth of the price away.
+
+THE BOUND THAT WAS RESTORED, AND IT IS NOT A NUMBER. The level must be more
+precise than the thing it is backing: its measured zone (min low to max high
+over the bars that drew it) must be STRICTLY NARROWER than the trade's own
+stop distance, `abs(entry - stop)`, which is already decided before this
+question is asked. Because the stop-to-level gap can never exceed that span,
+this makes `abs(stop - level) < abs(entry - stop)` a guarantee: the level a
+stop claims to rest on is never further from the stop than the stop is from
+the entry. Nothing is chosen, so there is nothing to sweep and nothing to
+ratify. It is enforced in `src/data/levels.py::stop_rests_on_level` and
+mirrored in `src/risk/exit_guard.py`, and `tests/test_level_match_zone.py`
+now pins it.
+
+WHAT IT ADMITS AND REFUSES [measured 2026-10-01, same 704 levels, using the
+desk's two EXISTING stop floors as the stop distance so the measurement
+introduces no number either]: at a 1.0-ATR stop it admits 33/704 levels (5%)
+and 1/154 of the 5-touch-plus levels; at a 2.5-ATR stop it admits 465/704
+(66%) and 63/154 (41%). The levels it refuses at 2.5 ATR have median halfwidth
+5.64% of price and reach 36.07%; the widest it admits has halfwidth 13.41%,
+still inside the trade's own risk by construction. The tight-stop exemption
+therefore becomes RARE, and that is the honest consequence of refusing to pick
+a width rather than a flaw in the bound: a level too vague to be more precise
+than the stop has not earned that stop the right to be tighter than the noise
+floor.
+
+THE DIRECTION OF FAILING CLOSED, STATED PLAINLY BOTH WAYS. The adversary's
+one-way-tightening worry does NOT apply here, and saying otherwise would be
+wrong: not-backed routes a stop to the 2.5-ATR floor while backed floors it at
+1.0 ATR, so failing closed WIDENS the stop rather than tightening it, and
+every fail-closed branch in this diff moves protection outward. The flip side
+is equally plain: the shipped effect is that two live stops become eligible to
+sit at 1.0 ATR where they sit at 2.5 ATR today. With n=11 positions and 2
+affected, this book cannot see harm either way — that is a sample too small to
+measure, not evidence of safety. The live stop prices quoted in item 215 were
+never re-verified against the broker and should not be treated as current.
+
+THE CLUSTERING CLAIM WAS CORRECTED, NOT DEFENDED. `_cluster`'s docstring
+claimed complete linkage. The ACCEPTANCE TEST is all-members (a pivot joins
+only if its bar overlaps every member's, which is what buys the anti-chaining
+property), but the PARTITION is greedy first-fit over price-sorted pivots: a
+pivot overlapping two levels joins the lower-priced one and the result depends
+on sweep order. True complete linkage merges the globally closest pair at each
+step and is order-independent. The docstring now says exactly that. An untrue
+description of an algorithm is the same class of defect as an untrue alert.
+
+THE TOUCH COUNT COULD NOT BE RE-DERIVED, AND BOTH FAILURES ARE RECORDED.
+`min_level_touches_for_stop_honor` = 5 was `sourced` on a real-versus-shuffled
+bounce table over 101 symbols — built on the 1% clustering this item deletes,
+so docs/OUTCOME.md requires it re-checked. Two attempts, both failed.
+(1) DATA. The panel this repo holds is 276 bars per symbol, not the original's
+five years; half is spent discovering levels, leaving n=27 real observations
+at 5 touches with a 95% interval of [0.407, 0.778] — roughly four times the
+original's width, so no separation at ANY touch count could be detected even
+if it were there. (2) METHOD. The original's bounce procedure is reported in
+docs/RESEARCH_FINDINGS.md section 7 as a table, not as reproducible steps, so
+the reconstruction is not the same test — and it fails its own sanity check:
+the SHUFFLED control scored HIGHER than real at every touch count (shuffled
+0.688/0.725/0.717 at 2/3/4 touches against real 0.641/0.646/0.679), which
+means the reconstruction is measuring something other than structure. The
+value stays at 5, because moving it would be inventing a number; its ledger
+status is downgraded from `sourced` to `arbitrary`, with both ratchets
+appended.
+
+THE RECORDING THAT WOULD SETTLE IT: the original 101-symbol panel at five
+years of daily bars, levels rebuilt under the overlap clustering, the section
+7 bounce procedure restated in code in the repo rather than described, real
+against a returns-shuffled control, 95% intervals by touch count; the
+threshold is the lowest touch count whose interval clears the control's. Until
+that exists the 5 is an unsourced bar deciding how tight a live stop may be.
 
 ## item 63
 
@@ -1718,6 +1861,40 @@ The pruning pass's owner-facing report. `src/rotation.py::pruning_pass_lines` is
 ## item 217
 
 Found 2026-10-01: the risk seat's tech-signals block said a thin range ratio "has already been paid for in size by the constructor". Measured in the code: the constructor computes the ratio, logs it and returns the stop unchanged; nothing resizes on it. The sentence was corrected and a test pins the new wording. The sweep for the same class of claim was a text search, so the portfolio-manager statements listed on the board item are unverified, not known false.
+## item 215
+
+Filed 2026-09-30 out of the item 55 measurement pass, as a SEPARATE defect that
+item 55 surfaced and deliberately did not fix.
+
+What the code does: `_level_backing_stop` (`src/portfolio_constructor.py`) walks
+the computed structural levels on the protective side of entry, keeps those with
+at least `risk.min_level_touches_for_stop_honor` touches, and honours the stop as
+level-backed when `abs(stop - level) <= level_zone_halfwidth(...)`. Since item 55
+that half-width is the MEASURED span of the bars that drew the level rather than a
+flat 1% of price. That is the right bound for "is this stop resting on this level".
+It is not a bound on how far the stop is from the level, and the two are reported
+as the same thing.
+
+Measured 2026-09-30, complete-linkage clustering, 400-day bars, 101-name universe:
+704 levels, zone half-width min 0.53%, median 3.47%, max 22.11% of price.
+
+Measured the same day against the 11 live positions and their live stops as the
+production desk database holds them:
+
+| symbol | entry | live stop | honouring level | level touches | zone | half-width | stop-to-level gap |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ETN | 432.56 | 405.43 | 388.55 | 6 | 381.06-413.77 | 6.49% of level | 16.88 = 3.90% of entry |
+| RKLB | 69.72 | 65.14 | 67.31 | 6 | 62.99-76.24 | 13.27% of level | 2.17 = 3.11% of entry |
+| NOK | 10.30 | 9.39 | 9.78 | 5 | 9.54-10.33 | 5.62% of level | 0.39 = 3.79% of entry |
+
+In each of the three the stop can be taken out with the level itself never broken,
+and every owner-facing statement about the position still reads "protected by
+structure". The other eight live positions are not level-backed either way, so
+this defect is live on 3 of 11 names today.
+
+Scope: this item is about what the desk SAYS, not about whether the exemption
+should fire. Whether a stop inside a wide zone should count as backed at all is
+the decision in DONE WHEN (b). No number is introduced by this item.
 ## item 201
 
 The naked window is real and ordinary: every place the desk cancels a protective stop and submits a replacement, the position is unprotected for the width of that round trip, on paths that run on normal days against real open positions.
