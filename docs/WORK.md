@@ -321,7 +321,7 @@ DONE WHEN:
 - [ ] no retry, no JSON repair and no new refusal is added by this change, and the entry and stay refusals keep the behaviour the 2026-09-25 ruling gave them
 
 
-**222. A portfolio-manager target below `min_position_risk_pct` is sized and shipped, not denied — found 2026-10-01 while verifying item 217's prompt claims.** The prompt told the PM the constructor would deny a sub-floor target anyway; it does not. `allocate_risk_budget` grants a request in full whenever it fits the remaining headroom, and its floor only denies a grant the budget had to CUT; the allocator is skipped entirely when book risk is unreadable. The prompt sentence is corrected under item 217, so the floor now rests on the seat alone — whether the desk wants a deterministic sub-floor refusal is an owner/route call, not fixed here. Detail in `docs/BOARD_NOTES.md` item 222.
+**223. A portfolio-manager target below `min_position_risk_pct` is sized and shipped, not denied — found 2026-10-01 while verifying item 217's prompt claims.** The prompt told the PM the constructor would deny a sub-floor target anyway; it does not. `allocate_risk_budget` grants a request in full whenever it fits the remaining headroom, and its floor only denies a grant the budget had to CUT; the allocator is skipped entirely when book risk is unreadable. The prompt sentence is corrected under item 217, so the floor now rests on the seat alone — whether the desk wants a deterministic sub-floor refusal is an owner/route call, not fixed here. Detail in `docs/BOARD_NOTES.md` item 223.
 
 DONE WHEN:
   - [ ] the owner (or the risk route) rules whether a sub-floor target is refused deterministically or left to the seat
