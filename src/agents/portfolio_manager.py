@@ -2500,10 +2500,26 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             lines.append(
                 f"{opportunity.held_symbol} is currently held but would "
                 f"NOT be bought today — it fails this desk's own entry "
-                f"rules ({reasons}). {opportunity.new_symbol} ranks "
-                f"{opportunity.new_score:.2f} and clears every rule, but "
-                "there is no room to buy it without freeing capital first."
+                f"rules ({reasons})."
             )
+            # OWNER RULING 2026-10-01: this tier is now reached with NO
+            # replacement candidate, so `new_symbol`/`new_score` are None on
+            # exactly the case this feature exists to create. Never format
+            # them unguarded — that crashed `build_user_message` before the
+            # decision stage was reached.
+            if opportunity.new_symbol and opportunity.new_score is not None:
+                lines.append(
+                    f"{opportunity.new_symbol} ranks "
+                    f"{opportunity.new_score:.2f} and clears every rule, but "
+                    "there is no room to buy it without freeing capital "
+                    "first."
+                )
+            else:
+                lines.append(
+                    "Nothing un-held ranked well enough to buy this session, "
+                    "so there is no replacement candidate. This holding is "
+                    "weighed on its own merits, not against anything else."
+                )
         else:
             # `docs/INCIDENT_HISTORY.md` 2026-09-14: the composite score
             # is a weighted sum
@@ -2565,13 +2581,26 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "still needs the same substantive justification any other "
                 "exit does — this note is not one."
             )
-        else:
+        elif opportunity.new_symbol:
             lines.append(
                 "This is a comparison, not an instruction: it names the "
                 "weakest thing currently using the room and the strongest "
                 "thing there is no room for. Trimming or exiting "
                 f"{opportunity.held_symbol} to fund "
                 f"{opportunity.new_symbol} is one reasonable call; doing "
+                "nothing is another. Either way, an edit to a held "
+                "position needs the same substantive justification any "
+                "other exit does — this note is not one."
+            )
+        else:
+            # OWNER RULING 2026-10-01: the categorical tier is reached with
+            # no replacement, so there is nothing to "fund" and no second
+            # name to compare against.
+            lines.append(
+                "This is an observation, not an instruction: it names a "
+                "holding the desk would not buy today, with no replacement "
+                "to fund. Exiting "
+                f"{opportunity.held_symbol} is one reasonable call; doing "
                 "nothing is another. Either way, an edit to a held "
                 "position needs the same substantive justification any "
                 "other exit does — this note is not one."
@@ -2615,16 +2644,31 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # Phase 14b. Wording only — the act itself is decided in
             # `DecisionStage._apply_rotation_execution` from the desk's own
             # data, after this prompt returns.
+            # OWNER RULING 2026-10-01. This paragraph describes the code in
+            # `DecisionStage._apply_rotation_execution` and nothing beyond
+            # it. Two conditions this text used to state were REMOVED by
+            # that ruling: the close no longer requires that the holding's
+            # structural protection has broken, and it no longer requires a
+            # replacement BUY. Do not reinstate either in prose.
+            replacement_clause = (
+                f"If you include a BUY target for {opportunity.new_symbol}, "
+                "size it for the room this close would free"
+                if opportunity.new_symbol else
+                "Nothing un-held ranked well enough to buy this session, so "
+                "there is no replacement to size for and the freed room "
+                "simply stays in the book"
+            )
             lines.append(
                 "AUTOMATIC ROTATION IS ENABLED for this categorical case: "
-                f"if you include a BUY target for {opportunity.new_symbol} "
-                f"and do not yourself close {opportunity.held_symbol}, the "
-                f"desk will propose a full close of {opportunity.held_symbol} "
-                "on its own — but ONLY if its structural protection has "
-                "already broken under the holding-discipline check, it was "
-                "not bought today and nothing is in flight on it. That "
-                "proposal then goes through the Risk Manager like any other "
-                "exit. Size your plan for the room it would free; do not "
+                f"if you do not yourself close {opportunity.held_symbol}, "
+                "the desk will propose a full close of it on its own, "
+                "because a holding that would not be bought today has "
+                "stopped earning its place. That is so whether or not its "
+                "structural protection is still intact, and whether or not "
+                "a replacement is bought. The only remaining conditions are "
+                "that the name was not bought today and that nothing is in "
+                f"flight on it. {replacement_clause}. That proposal then "
+                "goes through the Risk Manager like any other exit; do not "
                 "assume it will happen."
             )
         return "\n".join(lines)

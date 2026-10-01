@@ -123,11 +123,17 @@ def test_recording_is_reachable_from_executable_product_code():
         isinstance(n, ast.Attribute) and n.attr == "record_realised_sector_weights"
         for n in ast.walk(helper)
     )
-    callers = [
-        n for n in ast.walk(tree)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-        and n.func.id == "_record_realised_sector_weights"
-    ]
+    # item 210 step 10 moved DecisionStage (the one call site) into
+    # src/stage_decision.py; the helper itself still lives in
+    # pipeline_stages.py. Scan both so the reachability claim survives
+    # the split instead of being weakened by it.
+    callers = []
+    for module in ("pipeline_stages.py", "stage_decision.py"):
+        callers += [
+            n for n in ast.walk(ast.parse((SRC / module).read_text()))
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            and n.func.id == "_record_realised_sector_weights"
+        ]
     assert len(callers) == 1, "exactly one product call site"
 
 

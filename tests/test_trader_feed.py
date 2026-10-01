@@ -2861,7 +2861,13 @@ def test_full_book_is_reported_as_a_normal_state_not_an_error(
     tmp_path, monkeypatch,
 ):
     db = _make_db(tmp_path, monkeypatch)
-    _rotation_row(db, "run-full", "full_nothing_outranked_a_holding")
+    # The book really is full here, so the binding limit is recorded —
+    # the message now asserts fullness from THAT, not from the outcome name,
+    # because an outcome can also be reached on an unconstrained book.
+    _rotation_row(
+        db, "run-full", "full_nothing_outranked_a_holding",
+        binding="risk_headroom",
+    )
     msg = _morning(db, "run-full", monkeypatch)
     assert "the book is FULL" in msg
     assert "This is a normal state, not a fault." in msg

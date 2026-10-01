@@ -37,6 +37,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     _repeg_entry_order,
     _risk_budget_pct,
     _rotation_ranked_margin_sell_reason,
+    _drop_buys_sold_today_below_bar,
     _rotation_sell_gate,
     _rotation_sell_last,
     _single_name_execution_cap,
@@ -499,6 +500,14 @@ class ExecutionStage:
         # uses, so the funnel and the evening review see it.
         buy_decisions = _drop_rotation_buy_if_room_not_freed(
             pipeline, ctx, buy_decisions, sell_status_by_id,
+        )
+
+        # Anti-churn, the BUY-side mirror of the SELL-side
+        # `held_symbol_bought_today` guard: a name this desk closed earlier
+        # TODAY for failing its own entry bar is not bought back in the
+        # same session. No new number — same exchange-day window.
+        buy_decisions = _drop_buys_sold_today_below_bar(
+            pipeline, ctx, buy_decisions,
         )
 
         # Run the cheap deterministic entry-viability checks BEFORE selling
