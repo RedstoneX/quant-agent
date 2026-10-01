@@ -587,6 +587,15 @@ The band's SECOND home is genuinely not redundant and must not be deleted with t
 
 *Still open on this item:* 83 routeless rows. The largest remaining groups are the pipeline (18), the portfolio constructor (8), the risk rules (8), `RiskConfig` (7), the exit guard (6) and the trailing stop (6).
 
+**Routing pass 2026-10-01, tranche five -- the live risk subsystem, 22 rows.** Everything routeless under `src/risk/` now carries a settlement route: the reward-to-risk reference point, the alignment give-back band, the exit guard's noise band and break-confirmation margin, its four per-metric noise floors, the earnings-stance age cap, all six cells of the gross de-levering ladder, the six trailing-stop constants, and the advisory correlated-cluster cap. Routeless rows 65 -> 43. No value moved, no status changed, nothing was routed to the owner as an appetite question.
+
+How each number is CONSUMED was read rather than inferred from its shape. The four noise floors look like one family of round numbers, but each is applied on its own to its own metric in its own unit and they are never summed or compared, so their spacing carries nothing. The ladder is the opposite: the engine takes the smaller of the configured cap and every rung whose drawdown threshold the book has cleared, so each threshold is a real boundary and each rung a real multiplier of equity.
+
+No route points at this desk's own trades. The reward-to-risk reference, the give-back band, the trailing noise band, the pivot window and the three range R-multiples all route to measurements over the universe the desk could trade -- doctrine bars fitting to its own record, and the previous tranche had to re-route four scalers for exactly this mistake.
+
+Delete outcomes are written alongside the set-it outcomes. The minimum ratchet percentage is the likeliest deletion: the broker charges nothing to amend a resting stop, so if the recording shows it only suppressing moves the noise band would also refuse, it goes. The ladder's middle 1.0x rung is the one that could become indistinguishable from no de-levering at all -- it only bites because the configured gross cap is 2.0x today -- and it is to be deleted if that cap is ever lowered to 1.0x, never re-picked at another multiple. The exit guard's noise-band route is recorded as UNPROVEN rather than collecting: its refusal payload has produced zero observations so far, and its first closing condition is that the payload be shown to populate at all.
+
+
 ## item 99 — RETIRED 2026-10-01, both remaining criteria closed: the technical seat's prompt now names every data block the code sends it (the market-context bullet was missing the consolidation state, liquidity, up/down volume and unfilled-gap lines) and is pinned by `tests/test_tech_prompt_input_contract.py`; the deletion-site check shipped 2026-09-26 as `described_gaps()` and now registers the technical seat's two renderers
 
 **Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces. The desk already bans numbers that were invented rather than read off real data; a number that lives only in a brief is exactly that, and it was invisible because nobody had looked in the briefs. (Filed twice, as items 99 and 105; diffed and collapsed into this one 2026-09-18.)
@@ -1240,6 +1249,61 @@ That test is marked `xfail(strict=False)` with the reason above — NOT as a
 flake. It flips to XPASS the moment this item serves recorded market data,
 which is the signal that item 202 is done.
 
+### Item 202 update 3 — the fourth transport, and the sector lookup (2026-10-01)
+
+**The Portfolio Manager now runs offline.** `replay_provider_calls` replaced
+three transports — `_anthropic_call`, `_call_openai`, `_call_deepseek` — all of
+them PRIMARY-path entry points. `_try_failover` and `_try_tertiary` do not go
+through any of them: both build their own client and call
+`_openai_wire_call` directly. So the moment a replayed primary raised, the
+Portfolio Manager failed over to a REAL provider and the session ended on
+`openai.APIConnectionError: Connection error.` [measured 2026-10-01]. The
+shared wire call is now replayed as well, which closes both failover routes at
+once and leaves the retry, failover, cost-accounting and circuit logic above it
+untouched and real.
+
+What the run ends on now is `MissingRecordedResponse: no recorded response for
+agent 'portfolio_manager' (run run-574fda72): all 1 recorded response(s) were
+already replayed` [measured 2026-10-01]. That is the mandated behaviour, not a
+new defect: the session asks the PM more than once and the pinned recorded run
+holds one PM answer, so the replay stops and names exactly what the recording
+could not supply rather than inventing an answer or going out to buy one.
+
+**Nothing in the rehearsal builds a live market-data client any more.**
+`broker._get_sector` reads `yf.Ticker(symbol).info`, which is a second live
+fetch the `pipeline.market` swap never touched, and behind the wall yfinance
+retried its cookie/crumb handshake once per symbol. `recorded_sector_lookup`
+replaces the `yf` name inside `src.execution.broker` for the duration of the
+session — the single place that client is built, so no importer of
+`_get_sector` (`src.pipeline` binds it at import time) can route around it —
+and serves the sector from the recording when it is there, or records a missing
+recorded input when it is not. Nothing is substituted: an unrecorded symbol
+takes the same path a yfinance outage takes, which the sector gate already
+surfaces to the owner as "Unknown". `market_recording.capture` now records
+sectors alongside the bars so a freshly captured recording can serve them.
+
+**Measured:** blocked outbound attempts fell from 12 to 11, and the single
+`curl_cffi` entry — the yfinance one — is gone. Every attempt that remains is
+either FRED (`api.stlouisfed.org`, 15 series) or one of the 20 news feeds
+(CNBC, MarketWatch, Yahoo, Seeking Alpha, Investing.com, Nasdaq, BBC, NPR, Fed,
+SEC). Those have no recording of any kind yet, so the run is still correctly
+voided as non-hermetic. Recording them is a separate build and was not
+attempted here.
+
+**Not done in this pass, and deliberately not claimed:** the third criterion —
+naming every OTHER test that still reaches the network — needs a full-suite run
+that was not performed, so it stays open with no list attached. A grep produces
+candidates, not a measurement, and a candidate list posted as a finding is the
+kind of thing this item exists to stop.
+
+**The settling run is still outstanding.** No real rehearsal against the
+production snapshot was performed here, and none should be read into these
+numbers: everything above was measured through
+`tests/test_rehearsal_reproduces_cost_ceiling.py`. What a settling run would
+prove, and nothing else can, is that a full session over the production
+snapshot completes with an EMPTY breach journal and a verdict the rig is
+entitled to give.
+
 ### Item 202 update 2 — the swap missed the stage that owns the provider (2026-10-01)
 
 Serving recorded bars was not enough on its own. `TradingPipeline.__init__`
@@ -1362,6 +1426,18 @@ Five assumptions that are NOT established, each named at the code that rests on 
 
 Open. No production evidence yet shows both hybrid legs amending. It cannot be produced by a desk session (placing a broker order is forbidden) and no amend outcome was ever recorded before this change. Waiting on an ex-dividend was an unbounded wait — 0 of the 80 production trades between 2026-09-02 and 2026-09-30 were ex-dividend shifts — so the trailing path records the same per-leg row on every re-price, and the closing condition is a `stop_shift_legs` row with one whole-share and one sub-share leg, both amended, with distinct replacement ids.
 
+
+## item 222
+
+**Plain language --** Three different limits each claim to bound how much of one name the desk may hold, and nobody has reconciled them: a 65% single-name ceiling, a 5% per-position risk envelope, and a separate notional cap that looks like the one actually stopping real orders. They are expressed in different units against different denominators, so reading the config cannot tell you which one governs. Until that is settled, nobody can answer the simplest live-money question there is -- how much of one stock can this desk own.
+
+**Why it is filed separately --** Surfaced by board item 90's tranche-four routing pass over the portfolio constructor's sizing object and deliberately not fixed there, because routing a number's provenance is not the same job as deciding which limit binds.
+
+**DONE WHEN, all falsifiable:**
+- The binding constraint is identified FROM REAL ORDERS -- the recorded order and refusal stream showing, for each order, which of the three limits was the first to bind -- and NOT from reading the config or the prose.
+- A single written statement says, in one sentence, what the maximum holding in one name is and in which unit, with the other two limits shown to be slack or shown to bind first in named circumstances.
+- Each of the three limits is reconciled into the same unit against the same denominator, or one of them is deleted, and the ledger rows for all three state the same answer as that statement.
+- A test fails if the three limits are ever changed into a combination where which one binds is again unreadable.
 
 ## item 223
 

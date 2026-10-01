@@ -247,3 +247,36 @@ changes:
       answers the desk holds today, 5 in the level scan and 3 in the trailing
       stop, so one measurement retires the disagreement rather than
       documenting it again.
+  - date: 2026-10-01
+    delta: -22
+    why: >-
+      Board item 90, routing tranche five: the LIVE RISK SUBSYSTEM
+      (`src/risk/`) -- the reward-to-risk reference point, the alignment
+      give-back band, the exit guard's two ATR bands and its four noise
+      floors, the earnings-stance age cap, all six gross de-levering ladder
+      cells, the six trailing-stop constants and the advisory correlated-
+      cluster cap -- gains settlement routes. 22 rows. No value moved, no
+      status changed, and no appetite question was routed to the owner.
+
+      CONSUMPTION WAS READ, NOT ASSUMED. The four `_NOISE_FLOOR` entries
+      look like one family of round numbers but are applied independently,
+      each to its own metric in its own unit, and are never summed or
+      compared with one another -- so their spacing carries nothing and
+      only each magnitude matters. The six ladder cells are the opposite:
+      `check` takes `min(base, rung)` at every threshold the drawdown
+      clears, so each threshold is a real boundary and each rung a real
+      multiplier of equity, and the spacing is load-bearing.
+
+      NO ROUTE POINTS AT THIS DESK'S OWN TRADES. The reward-to-risk floor,
+      the alignment give-back band, the trailing noise band, the pivot
+      window and the three range R-multiples all route to measurements over
+      the UNIVERSE the desk could trade, never over its own fills, because
+      doctrine bars fitting to its own record.
+
+      DELETE OUTCOMES ARE STATED, not just set-it outcomes. The minimum
+      ratchet percentage is the likeliest deletion -- the broker charges
+      nothing to amend a resting stop and the noise band already refuses
+      the unsafe moves. The 1.0x middle ladder rung is the rung that could
+      become indistinguishable from no de-levering at all if the configured
+      gross cap is ever lowered to 1.0x, and it is to be deleted in that
+      case rather than re-picked at some other multiple.
