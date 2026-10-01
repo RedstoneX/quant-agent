@@ -237,6 +237,8 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/stage_decision.py",
     "src/stage_risk.py",
     "src/stage_execution.py",
+    "src/pipeline_sizing.py",
+    "src/pipeline_earnings_quality.py",
     # 2026-10-01, board item 210 step 12: the rotation-EXECUTION block and
     # the entry order-placement/re-peg block moved out of
     # `src/pipeline_stages.py` verbatim. Same code, same scope.
@@ -270,7 +272,15 @@ SCOPED_PATHS: tuple[str, ...] = (
     # The intra-check session and the intraday opportunity scan -- moved here
     # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
     "src/pipeline_intraday.py",
+    # 2026-10-01, board item 210 step 6: the universe-admission cluster --
+    # the external-nomination gates, the screen and its admission -- moved
+    # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
+    # scoped.
+    "src/pipeline_admission.py",
     "src/pipeline_prompt_facts.py",
+    # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
+    # application moved here out of `src/pipeline.py`.
+    "src/pipeline_risk_gate.py",
     # 2026-10-01, board item 210 step 2: the protection cluster -- stop
     # coverage, repair, protected sells, write-ahead restore, the fill and
     # stop-out reconcilers -- moved here out of `src/pipeline.py`. Scoped at

@@ -283,12 +283,14 @@ def test_the_screen_ceiling_and_the_midday_clamp_read_the_same_multiple():
     # own config object, so this cannot be satisfied by coincidence.
     import re
     from pathlib import Path
-    src = Path(us.__file__).resolve().parent / "pipeline.py"
+    # Moved to `src/pipeline_admission.py` by step 6 of
+    # docs/PIPELINE_SPLIT_PLAN.md (board item 210).
+    src = Path(us.__file__).resolve().parent / "pipeline_admission.py"
     calls = re.findall(
         r"ScreenThresholds\.from_config\(\s*([^)]*?)\)",
         src.read_text(encoding="utf-8"),
     )
-    assert calls, "no ScreenThresholds.from_config call found in pipeline.py"
+    assert calls, "no ScreenThresholds.from_config call found in pipeline_admission.py"
     for call in calls:
         assert "_constructor_cfg_or_none" in call, call
 
@@ -619,7 +621,7 @@ def _pipeline(tmp_path, *, enabled=True):
 
 def test_side_door_runs_the_screen_when_on(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path)
-    monkeypatch.setattr("src.pipeline._get_sector", lambda s: "Industrials")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     pipeline.sec_form4_provider.recent_filings.return_value = [("DEFM14A", "2026-09-01", "")]
     ok, reason, details = pipeline._evaluate_external_admission_gates("ACME")
     assert (ok, reason) == (False, "pending_takeover")
@@ -628,7 +630,7 @@ def test_side_door_runs_the_screen_when_on(tmp_path, monkeypatch):
 
 def test_side_door_keeps_its_old_gate_when_off(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path, enabled=False)
-    monkeypatch.setattr("src.pipeline._get_sector", lambda s: "Industrials")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     pipeline.market.get_ohlcv.return_value = _bars(30, price=50, rng=0.0005)
     ok, reason, _ = pipeline._evaluate_external_admission_gates("ACME")
     assert ok is True  # 30 bars would fail the screen's one-year history
@@ -638,7 +640,7 @@ def test_side_door_keeps_its_old_gate_when_off(tmp_path, monkeypatch):
 
 def test_nomination_door_uses_the_screen(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path)
-    monkeypatch.setattr("src.pipeline._get_sector", lambda s: "Industrials")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     pipeline.broker.get_asset_record.return_value = {**GOOD_ASSET, "shortable": False}
     admitted, details = pipeline._admit_nominated_external_symbols(["acme"])
     assert admitted == set()
@@ -660,7 +662,7 @@ def _purchase(days_ago):
 
 def test_form4_door_runs_the_screen_and_its_age_gate(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path)
-    monkeypatch.setattr("src.pipeline._get_sector", lambda s: "Industrials")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     admitted, details = pipeline._admit_transient_smart_money_symbols([_purchase(10)])
     assert admitted == {"ACME"}
     assert details["ACME"]["screen"] == "universe_screen"
@@ -670,7 +672,7 @@ def test_form4_door_runs_the_screen_and_its_age_gate(tmp_path, monkeypatch):
 
 def test_form4_age_gate_is_off_with_the_screen(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path, enabled=False)
-    monkeypatch.setattr("src.pipeline._get_sector", lambda s: "Industrials")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     pipeline.market.get_ohlcv.return_value = _bars(30, price=50, rng=0.0005)
     assert pipeline._admit_transient_smart_money_symbols([_purchase(364)])[0] == {"ACME"}
 
@@ -706,7 +708,7 @@ def test_evening_pass_records_changes_and_morning_shows_them_once(tmp_path, monk
     pipeline.market.get_ohlcv_batch.side_effect = lambda chunk, days: {
         s: _good_bars() for s in chunk}
     pipeline.sec_form4_provider.listed_map.return_value = {}
-    monkeypatch.setattr("src.pipeline._get_sector", lambda s: "Industrials")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     summary = pipeline._run_universe_screen("evening-x")
     assert summary["passed"] == 1
     kinds = [c.kwargs["kind"] for c in pipeline.db.insert_specialist_evidence.call_args_list]

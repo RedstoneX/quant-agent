@@ -172,7 +172,7 @@ def test_advisory_never_scales_down_for_being_above_target():
     # AAPL is put in a different sector than the held NVDA (Technology) so
     # the unrelated sector-crowding gate doesn't hard-block the BUY and mask
     # what this test is actually about — the deployment-gap advisory.
-    with patch("src.pipeline._get_sector", return_value="Other"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Other"), patch(
         "src.execution.broker._get_sector", return_value="Other"
     ):
         for target in (DESK_INVESTED_TARGET_PCT, 50.0):

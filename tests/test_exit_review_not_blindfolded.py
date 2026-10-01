@@ -562,9 +562,7 @@ def test_only_the_morning_stage_applies_modifications():
         if "_apply_risk_modifications(" in p.read_text()
     )
     # Definition site + the single caller. Nothing else.
-    # `MorningResearchStage` moved to `src/stage_morning_research.py`
-    # verbatim (item 210, step 10); the single caller travelled with it.
-    assert callers == ["pipeline.py", "stage_risk.py"], callers
+    assert callers == ["pipeline_risk_gate.py", "stage_risk.py"], callers
 
 
 def test_exit_chain_does_not_demand_the_steps_its_prompt_stands_down():
