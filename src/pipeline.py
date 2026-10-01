@@ -7094,9 +7094,43 @@ class TradingPipeline:
                 logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
                 continue
             from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
+            if isinstance(order, dict):
+                # Item 201: the per-leg outcome is a ROW, not a log line, and it
+                # is written whatever the outcome — a shift that refused is the
+                # case that most needs to survive the session.
+                from src.execution.exit_path_records import (
+                    record_stop_shift_legs, stop_shift_incomplete_text,
+                )
+                shift_status = str(order.get("status") or "")
+                record_stop_shift_legs(
+                    self.db, symbol=p.symbol, amount=amount,
+                    mode=str(order.get("mode") or ""), status=shift_status,
+                    shifted=int(order.get("shifted") or 0),
+                    total=int(order.get("total") or 0),
+                    legs=order.get("legs"), run_id=run_id,
+                )
+                if shift_status in ("partial", "refused", "unknown", "naked"):
+                    # An un-shifted stop across an ex-dividend open is wrong by
+                    # exactly the dividend IN THE DIRECTION THAT TRIGGERS IT, so
+                    # this is an owner-visible change in protection, not a nit.
+                    try:
+                        from src.notifier import send_owner_alert
+                        send_owner_alert(
+                            stop_shift_incomplete_text(
+                                p.symbol, shift_status,
+                                int(order.get("shifted") or 0),
+                                int(order.get("total") or 0),
+                            ),
+                            symbols=[p.symbol],
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("ex-div: owner alert failed for %s: %s", p.symbol, e)
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
+                # A partial, a refusal or an unknown carries no order id, so no
+                # stop level is written back and no TRAIL_STOP row is filed —
+                # the desk must not record a stop it did not confirm moving.
                 continue
             try:
                 write_back_stop_loss(self.db, p.symbol, new_stop, is_short=False)
@@ -11581,12 +11615,62 @@ class TradingPipeline:
                     proposed_stop=proposal.new_stop, current_stop=current_stop,
                 )
                 continue
+            if isinstance(order, dict) and order.get("legs"):
+                # Item 201: the trailing path now amends every resting leg in
+                # place, so the per-leg outcome is recorded here too. This is
+                # the evidence that settles whether a fractional position's two
+                # hybrid legs both amend — the ex-dividend shift alone would
+                # never produce it (0 of 80 production trades between
+                # 2026-09-02 and 2026-09-30 were ex-dividend shifts).
+                from src.execution.exit_path_records import record_stop_shift_legs
+                _legs = order.get("legs") or []
+                _ok = [l for l in _legs if l.get("outcome") == "amended"]
+                # `amend_status` is the AMEND's own verdict. The broker status
+                # on a live replacement is "new"/"accepted"/..., so reading
+                # that would call an ordinary success a failure.
+                _astatus = str(order.get("amend_status") or (
+                    "accepted" if len(_ok) == len(_legs) else "partial"))
+                record_stop_shift_legs(
+                    self.db, symbol=symbol, amount=0.0, mode="trail_amend",
+                    status=_astatus, shifted=len(_ok), total=len(_legs),
+                    legs=_legs, run_id=run_id,
+                )
+                if _astatus in ("partial", "refused", "unknown", "naked"):
+                    # Telegram is muted, so this row and this alert are the
+                    # whole evidence that a leg did not move.
+                    try:
+                        from src.notifier import send_owner_alert
+                        from src.execution.exit_path_records import (
+                            stop_shift_incomplete_text,
+                        )
+                        send_owner_alert(
+                            stop_shift_incomplete_text(
+                                symbol, _astatus, len(_ok), len(_legs)),
+                            symbols=[symbol],
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("trail: owner alert failed for %s: %s", symbol, e)
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
+                _detail = str((order or {}).get("status") or "") if isinstance(order, dict) else ""
+                if isinstance(order, dict) and order.get("legs"):
+                    # `record_trail_state_if_changed` writes nothing when the
+                    # code repeats, and a bare status names no leg, no level
+                    # and no order id. Spell the outcome out here as well.
+                    _detail = "; ".join(
+                        [_detail or "amend did not fully land"]
+                        + [
+                            f"leg {l.get('id')} qty {l.get('qty')} "
+                            f"{l.get('old_stop')}->{l.get('new_stop')} "
+                            f"{l.get('outcome')}"
+                            + (f" (new id {l.get('new_id')})" if l.get("new_id") else "")
+                            + (f": {l.get('detail')}" if l.get("detail") else "")
+                            for l in (order.get("legs") or [])
+                        ]
+                    )
                 _note(
-                    symbol, "replace_not_accepted",
-                    str((order or {}).get("status") or "") if isinstance(order, dict) else "",
+                    symbol, "replace_not_accepted", _detail,
                     proposed_stop=proposal.new_stop, current_stop=current_stop,
                 )
                 continue
