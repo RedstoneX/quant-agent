@@ -252,6 +252,17 @@ DONE WHEN:
 
 detail: docs/board_notes/item-224.md
 
+**227. A seat's read carried no record of WHEN or in WHICH run it was taken, so "is this evidence fresh?" could only be inferred -- filed 2026-10-01.** The evidence gate has classified every seat as fresh / carried / absent since 2026-09-18, but the classification was stamped with nothing: no run id, no timestamp, and no age for a carried answer. That was tolerable while the disclosure only printed a line to the owner. It stopped being tolerable on 2026-10-01, when the owner ruled that any holding failing the desk's own fresh-entry bar is SOLD and that the test is re-run several times a day -- the half-hourly `intra_check` re-reads the technical seat and carries the rest, so a sell could be taken against a reading made before the market opened and nothing in the record would say so. Measured read-only against the production database 2026-10-01: `intra_check` is 63% of lifetime model spend and produced 37 of the desk's 80 trades, so this is where most decisions are taken. This item is the RECORDING, not a rule: no freshness threshold, no expiry window, no decision gated on any of it. A cutoff would be an invented number and is the owner's call, not this item's.
+
+DONE WHEN:
+- [x] every seat read carries the run id, the session mode and the timestamp of the run that produced it, written into the same `evidence_freshness` record the session and intra-check reports already persist -- no second store
+- [x] one predicate answers per seat and distinguishes three states that are never collapsed: refreshed in this run, carried forward (with how old, or an honest "age unknown"), and absent -- absent is not staleness and carried is not fresh
+- [x] a stamp read back under a DIFFERENT run id reports carried forward rather than fresh, because an hour later that is what it is
+- [x] the storage layer can answer "when was this seat last actually read?" from the rows it already holds, so a carried seat can state its age instead of guessing it
+- [x] proven by a round trip through the real storage methods and a real database file, not by a declared field
+- [ ] one production session observed where a carried seat reports a real age and a refreshed seat reports this run's id -- cannot be ticked from a test
+detail: docs/board_notes/item-227.md
+
 **226. A payment refusal was retried like an outage and reported as an unbounded-cost mystery -- filed 2026-10-01.** Measured on the production database 2026-10-01: the paid research account ran out of credit, the provider answered HTTP 402 with a falling affordable allowance (13290, 7311, 843, 811, 775), the desk spent 12 provider attempts on `portfolio_manager` and 9 on `tech_analyst` against an account no retry could revive, and then suspended paid analysis saying "the real cost is unknown and cannot be bounded safely" when the truth was that the account was empty.
 
 DONE WHEN:
