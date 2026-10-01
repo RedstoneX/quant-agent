@@ -1135,6 +1135,8 @@ The order matters and is the completion criteria:
 
 **Recommendation —** Do not retune any of them while sourcing them, and do not merge them back into one number because they happen to read the same. A test now pins that they stay three separate names.
 
+**2026-10-01, the noise band's evidence route is now this item's to read.** Item 70's last open criterion measured the noise band's own settlement recording against the production database, read-only, and found it has produced ZERO observations since it deployed on 2026-09-30: the recording is built but UNPROVEN, not dead, and nothing on the retirement branch could conjure the rows it is waiting for. Reading that recording once it carries observations is criterion (a) of this item, which already owns settling the exit-path noise band per name or recording it as permanently unsourceable, so no separate item was filed for it. Item 70's other leftover, the absolute minimum stop multiple, stays with item 90 as that criterion itself says.
+
 
 
 **Duplicate stale note removed 2026-09-30.** A SECOND `## item 182` heading survived the retirement further up this file, still titled "detail moved from the board" and still asserting "the item STAYS OPEN" and that `GROSS_LADDER_ALERT_PCT` was unsourced. Both were false once the MiFID threshold landed, and a reader hitting the first heading would have read a retired item as open. It is deleted; this block is the only item-182 note.
