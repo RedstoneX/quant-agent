@@ -1140,6 +1140,62 @@ The order matters and is the completion criteria:
 
 The measured finding stands and is preserved in the retired item's own text: the structural pivot has never produced a candidate, because a confirmed pivot needs `2 * PIVOT_WINDOW + 1` = 7 bars and a scale-in additionally reset the caller's bar window to zero. That second half was the defect in how the candidate is FOUND and it is fixed on main (`Database.get_position_open_timestamp`, `tests/test_position_open_timestamp.py`); re-running all 21 recorded refusals through the new window flipped none. The first half is arithmetic reach, and the only way to shorten it is to move `PIVOT_WINDOW`, which the module documents as unsourceable in the literature — moving it to obtain a result the data would like is picking a number, which doctrine bars. The leg is NOT deleted: item 196's change means it now competes with the chandelier on equal terms instead of pre-empting it, and `tests/test_trailing_candidate_set.py` pins that it is still preferred where it does produce a usable pivot.
 
+## item 218 — RECORD ONLY: two measurements, no behaviour change; the parity refusal was built and then REMOVED before merge
+
+**Nothing in this item changes what the desk does.** A refusal of a range buy
+whose reward:risk is below 1.0 ("parity") was written, reviewed adversarially
+and deleted. Two measurements survive, as evidence for this board item only,
+with no behaviour attached to either.
+
+**Measurement 1 — the production reward:risk distribution.** Measured
+2026-10-01 against the production database, read-only, over the 33 recorded
+BUY trades that carry an entry, a stop and a target: median reward:risk 1.44,
+minimum 0.68, and SIX below parity — RSG 0.76, RSG 0.90 and NUE 0.82 (range
+entries) and COP 0.68, OXY 0.87 and RKLB 0.82 (breakout entries). Recorded
+target distance over the same set is a median 3.25 ATR. This is the state of
+the book's geometry on that date and nothing more; it is not a threshold, not
+a ranking input and not a size input.
+
+**Measurement 2 — the realised-advance study behind the reach cap.** Measured
+2026-10-01 on the desk's own stored 400-bar daily set, 101 symbols, ATR(14),
+rolling windows: over a 15-session hold the MEDIAN per-name realised
+favourable excursion is 1.93 ATR and the per-name MAXIMUM is 8.78 ATR, against
+`MAX_REACH_ATR_MULTIPLE`'s 1.5 * sqrt(15) = 5.81 ATR. `MAX_REACH_ATR_MULTIPLE`
+is KEPT and unchanged; the note now sits beside it in `src/data/levels.py`.
+
+**Correction to the record.** The reach cap was investigated and it is NOT
+what holds the desk's targets close. An earlier diagnosis written down in this
+repo treats the reach multiple as the thing clipping targets in; the
+measurement above contradicts it — at a typical hold the cap sits at ~5.8 ATR
+while the instrument's own typical advance is ~1.9 ATR and the recorded target
+distance is a median 3.25 ATR, so the cap binds only in the tail and not on
+the ordinary trade. Whatever keeps targets near entry, it is not this number.
+A measured replacement for the multiple would also still need a QUANTILE — the
+median (1.93) and the maximum (8.78) differ by 4.5x and straddle today's value
+— so reading the instrument does not avoid picking a number.
+
+**Why the refusal was removed.** It keyed off the WIDENED stop inside the
+stop-widening path, so it fired as a function of stop width — the deleted
+stop-width gate under a new name — and the owner's standing ruling is that a
+wide stop ships and is answered by SMALLER SIZE, never by refusing the trade.
+Seven existing guard tests fail against it, four of them the owner's own
+worked examples of that ruling, and they are left untouched. The "parity is
+arithmetic" argument does not survive either: the break-even identity assumes
+the position is SOLD AT THE TARGET, and this desk never does that — profit
+taking is trailing-stop driven (owner 2026-09-30, exits on alignment), so the
+reward side is a FLOOR on the payoff, not the payoff, and 1.0 is not the
+structural bound the change claimed. A size-based variant is barred too: the
+reward:risk helper's own docstring records the owner ruling that the figure is
+for RANKING, never a cutoff and never a size cap. The breakout exemption was
+also backwards in effect — it spared the three worst measured ratios (COP
+0.68, RKLB 0.82, OXY 0.87) and refused three better ones.
+
+**What is left open, and it is an owner question.** The desk can presently
+neither refuse arithmetically losing geometry nor resize for it, because the
+ruling set forbids both. Only the owner can say whether such a trade may ship
+at all. That question is recorded here and deliberately not routed, not
+answered and not pre-empted by this branch.
+
 ## item 196 — RETIRED 2026-10-01, both criteria met: refusing was MEASURED to be the better policy and the frequency it left unmeasured is now counted in production
 
 The open half was a doctrine question — when the chandelier candidate itself
