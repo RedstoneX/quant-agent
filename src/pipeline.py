@@ -11596,9 +11596,9 @@ class TradingPipeline:
                     symbol, evaluation.code,
                     # Item 212 follow-up: on a range name the R-ratchet leg
                     # supplies the code, so the STRUCTURAL leg's own refusal
-                    # reason would otherwise never be recorded again. It
-                    # travels here as the detail.
-                    getattr(evaluation, "structural_code", None) or "",
+                    # reason would otherwise never be recorded again. It is
+                    # both a recorded field and part of the dedupe identity.
+                    structural_code=evaluation.structural_code,
                     current_stop=current_stop,
                     current_price=position.current_price,
                     entry=position.avg_entry,
@@ -11683,6 +11683,10 @@ class TradingPipeline:
                 continue
             _note(
                 symbol, TRAIL_CODE_TRAILED, proposal.reason,
+                # Carried on the SUCCESS branch too: the case this field
+                # exists for is the R-ratchet leg winning, which is a
+                # trailed row, not a refusal row.
+                structural_code=evaluation.structural_code,
                 proposed_stop=proposal.new_stop, current_stop=current_stop,
             )
             if isinstance(order, dict):

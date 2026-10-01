@@ -120,20 +120,20 @@ def test_a_chandelier_inside_the_band_still_refuses_and_invents_nothing():
     assert result.code == TRAIL_CODE_INSIDE_NOISE_BAND
 
 
-def test_no_legs_at_all_reports_that_no_bar_arrived():
-    """With no bars at all the refusal now names the MISSING DATA rather than
-    an empty candidate set: `no_structure_and_no_usable_chandelier` reads as
-    "we looked and found nothing", which is wrong when nothing was there to
-    look at. The distinction matters because the caller leaves `bars` empty on
-    every bar-fetch failure."""
-    from src.risk.trailing import TRAIL_CODE_NO_BARS
-    result = evaluate_trailing_stop(
-        symbol="AAA", setup_type="breakout", entry=100.0,
-        current_price=PRICE, current_stop=STOP, reference_target=None,
-        bars=[], atr=None,
-    )
-    assert result.proposal is None
-    assert result.code == TRAIL_CODE_NO_BARS
+def test_too_few_bars_reports_the_missing_data_not_an_empty_search():
+    """`no_structure_and_no_usable_chandelier` reads as "we looked and found
+    nothing", which is wrong when there was not enough to look at. The caller
+    filters bars to since-entry and leaves them empty on any fetch failure,
+    so this is the common case, not the exotic one."""
+    from src.risk.trailing import MIN_BARS_FOR_A_READING, TRAIL_CODE_TOO_FEW_BARS
+    for n in (0, 1, MIN_BARS_FOR_A_READING - 1):
+        result = evaluate_trailing_stop(
+            symbol="AAA", setup_type="breakout", entry=100.0,
+            current_price=PRICE, current_stop=STOP, reference_target=None,
+            bars=_bars([101.0] * n, peak=102.0) if n else [], atr=None,
+        )
+        assert result.proposal is None, n
+        assert result.code == TRAIL_CODE_TOO_FEW_BARS, n
 
 
 def test_bars_present_but_no_usable_leg_still_reports_no_candidate():

@@ -1224,8 +1224,10 @@ cannot be proposed at all. And by replay: all 20 filled range BUYs in the
 production record were replayed day by day over daily bars from each entry
 date, gated against ungated. 18 of the 20 replayed (two are for a symbol
 absent from the bar set). MEASURED: zero positions stopped out earlier under
-the ungated trail and zero stopped out that did not before; three positions
-ended with a tighter stop and none of the three was stopped out as a result.
+the ungated trail and zero stopped out that did not before; two positions
+ended with a tighter stop and neither was stopped out as a result (three
+before the noise-band invariant was made to bind on every leg; the invariant
+removed one of them).
 
 The two positions that could NOT be replayed are both RSG, absent from the
 101-symbol daily-bar set. Named here rather than described, so a reader can
@@ -1254,6 +1256,36 @@ R-ratchet level over an ACCEPTED structural candidate could place a stop
 inside the noise band the structural leg honours, so that override now has to
 clear the same minimum-ratchet and noise-band invariants. The ratchets' own
 unconditional path, where no structural candidate exists, is untouched.
+
+Second review pass, 2026-10-01: three of those four fixes did not hold and
+are now redone. (1) The refusal only caught a ZERO-length bar set, while the
+caller filters bars to since-entry, so a position entered today handed the
+module one bar and the chandelier still read `today's high - 3 x ATR`. The
+minimum is now the window the STRUCTURE leg already needs before it can
+confirm a pivot — three bars either side of it, seven in all — and it is
+derived from that window in code, not chosen. Below it both legs refuse and
+the reason is recorded as `too_few_bars_since_entry`. (2) The noise-band and
+minimum-ratchet invariants bound only on the override branch, so a structural
+candidate refused as `inside_noise_band` still handed the decision to an
+unchecked ratchet level. They are now one function that every leg able to
+place a stop must clear. (3) The structural reason was dropped on the success
+branch and the recorder deduped on the primary code alone, so a changed
+structural reason wrote nothing; it is now carried on both branches and is
+part of the dedupe identity.
+
+THE ARGUMENT THE GATE WAS REALLY MAKING, answered here rather than in code.
+The gate's rationale was never the target number: it was that trailing a
+range trade early is how it gets stopped out inside the very range it was
+bought to traverse, and because every tightening is permanent, a stop
+ratcheted to the top of a range is still there on the next down-leg. Removing
+the gate because the TARGET is unsourced would discard that rationale along
+with it. What replaces it is defect 2 fixed properly: no leg may place a stop
+inside the daily-noise band, so a stop cannot be ratcheted into the range's
+own noise in the first place, and the band is measured from ATR rather than
+from a number anybody picked. The replay cannot speak to this at all — it
+counts stop-outs over 18 positions in a single market stretch, and the
+failure being argued about is a permanent tightening whose cost shows up on a
+later down-leg that may not be in the window.
 ## item 211
 
 Why the threshold is not a new number. The circuit already answers "how long

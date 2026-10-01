@@ -79,32 +79,54 @@ def test_range_trail_never_moves_a_stop_away_from_price():
     ) is None
 
 
-def test_range_trail_refuses_outright_when_there_are_no_bars():
-    """Missing data must not produce an action. With no bars the chandelier
-    used to read its extreme off CURRENT PRICE, which tightens a stop off
-    nothing on an entry-day position and on every bar-fetch failure. Below
-    +1R the ratchet has nothing either, so the answer is a recorded refusal."""
-    from src.risk.trailing import TRAIL_CODE_NO_BARS, evaluate_trailing_stop
-    ev = evaluate_trailing_stop(
-        symbol="AAA", setup_type="range", entry=100.0, current_price=105.0,
-        current_stop=90.0, reference_target=130.0,
-        bars=[], atr=2.0, initial_stop=90.0,
+def test_range_trail_refuses_until_enough_bars_to_read():
+    """Missing data must not produce an action, and "missing" is not only the
+    empty set. The caller filters bars to SINCE ENTRY, so a position entered
+    today hands this module ONE bar, from which the chandelier would read
+    `today's high - 3 x ATR` — a price-follower off a single print. The
+    minimum is the window the structure leg already needs."""
+    from src.risk.trailing import (
+        MIN_BARS_FOR_A_READING, TRAIL_CODE_TOO_FEW_BARS, evaluate_trailing_stop,
     )
-    assert ev.proposal is None
-    assert ev.structural_code == TRAIL_CODE_NO_BARS
+    rising = _rising_with_higher_lows()
+    assert len(rising) >= MIN_BARS_FOR_A_READING, "fixture sanity"
+    for n in (0, 1, MIN_BARS_FOR_A_READING - 1):
+        ev = evaluate_trailing_stop(
+            symbol="AAA", setup_type="range", entry=100.0, current_price=105.0,
+            current_stop=90.0, reference_target=130.0,
+            bars=rising[:n], atr=2.0, initial_stop=90.0,
+        )
+        assert ev.proposal is None, n
+        assert ev.structural_code == TRAIL_CODE_TOO_FEW_BARS, n
 
 
 def test_range_trail_keeps_the_structural_refusal_on_the_record():
     """The ratchet leg answers, and the structural leg's own reason survives
     on the evaluation instead of being overwritten by the ratchet's code."""
-    from src.risk.trailing import TRAIL_CODE_NO_BARS, evaluate_trailing_stop
+    from src.risk.trailing import TRAIL_CODE_TOO_FEW_BARS, evaluate_trailing_stop
     ev = evaluate_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
         current_stop=90.0, reference_target=130.0,
         bars=[], atr=2.0, initial_stop=90.0,
     )
     assert ev.proposal is not None and ev.proposal.new_stop == 100.0
-    assert ev.structural_code == TRAIL_CODE_NO_BARS
+    assert ev.structural_code == TRAIL_CODE_TOO_FEW_BARS
+
+
+def test_a_ratchet_level_inside_the_noise_band_is_not_placed():
+    """Every leg that can place a stop clears the same invariants. Entry 100,
+    initial stop 90, price 101: the +1R step is not reached, but at price
+    100.5 with a wide ATR the breakeven level would sit inside the daily-noise
+    band, and a stop inside the band is how a range trade is stopped out
+    inside the very range it was bought to traverse."""
+    from src.risk.trailing import TRAIL_CODE_INSIDE_NOISE_BAND, evaluate_trailing_stop
+    ev = evaluate_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=90.0, reference_target=130.0,
+        bars=[], atr=20.0, initial_stop=90.0,
+    )
+    assert ev.proposal is None
+    assert ev.code == TRAIL_CODE_INSIDE_NOISE_BAND
 
 
 def test_range_trail_takes_the_tighter_of_ratchet_and_structure():
@@ -697,6 +719,35 @@ def _regime_fixture(setup_type, structural_ceiling):
         reference_target=130.0, bars=_rising_with_higher_lows(),
         atr=2.0, initial_stop=90.0,
     )
+
+
+def _regime_fixture_no_structure(setup_type, structural_ceiling):
+    """The SAME call, on bars whose confirmed pivot is already below the live
+    stop, so the structural leg has nothing to offer and the two regimes can
+    be told apart again: Type A falls back to its +1R ratchet, Type B has no
+    fallback at all."""
+    return compute_trailing_stop(
+        symbol="AAA", setup_type=setup_type,
+        structural_ceiling=structural_ceiling,
+        entry=100.0, current_price=150.0, current_stop=111.0,
+        reference_target=130.0, bars=_rising_with_higher_lows(),
+        atr=20.0, initial_stop=80.0,
+    )
+
+
+def test_item82_regimes_are_still_told_apart_without_a_structural_candidate():
+    """Item 212 made both regimes trail on structure from entry, so the
+    structural answer alone no longer discriminates. The discrimination that
+    REMAINS, and that item 82 exists to protect, is the Type A fallback: with
+    no usable structural candidate a range keeps its ratified R-ratchets and a
+    breakout has nothing to fall back on."""
+    for ceiling in (None, True):
+        type_a = _regime_fixture_no_structure("range", ceiling)
+        assert type_a is not None, ceiling
+        assert type_a.source == "second_ratchet", ceiling
+    # Type B: the label, and the mislabelled-range case item 82 fixed.
+    assert _regime_fixture_no_structure("breakout", None) is None
+    assert _regime_fixture_no_structure("range", False) is None
 
 
 def test_item82_correct_range_is_unchanged_legacy_null_ceiling():

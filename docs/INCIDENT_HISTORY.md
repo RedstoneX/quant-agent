@@ -17682,6 +17682,30 @@ override must now clear the same minimum-ratchet and noise-band invariants;
 the ratchets' own unconditional path is untouched.
 
 The replay was re-run against the fixed code: same result, zero positions
-stopped out earlier and three ending with a tighter stop. The sample's power
+stopped out earlier and two ending with a tighter stop. The sample's power
 is stated in the board note — zero events in 18 positions bounds the harm
 rate at only about 15%, so this is the expected result, not proof of safety.
+
+### 2026-10-01 second addendum — three of the four fixes did not hold (item 212)
+
+(1) The missing-data refusal caught only a zero-length bar set; the caller
+filters bars to since-entry, so a position entered today still produced a
+chandelier read off one print. The minimum is now derived from the window the
+structure leg already needs (`PIVOT_WINDOW * 2 + 1`), both legs refuse below
+it, and the reason is recorded. (2) The noise-band and minimum-ratchet
+invariants bound only on the override branch, so a structural candidate
+refused as inside-the-band handed the decision to an unchecked ratchet level;
+they are now one function that every leg able to place a stop must clear.
+(3) The structural reason was dropped on the success branch and the recorder
+deduped on the primary code alone; it is now carried on both branches and is
+part of the dedupe identity. The four item-82 regime tests had also gone
+vacuous — every regime asserted the same structural answer — and are joined
+by one that discriminates on what still differs: with no usable structural
+candidate a range keeps its ratified R-ratchets and a breakout has none.
+
+This is also the answer to the gate's REAL rationale, which was never the
+target number but that trailing a range trade early stops it out inside its
+own range, permanently. A stop may no longer be placed inside the daily-noise
+band by any leg, so that tightening cannot happen. The replay cannot speak to
+it: it counts stop-outs over 18 positions in one market stretch, and the cost
+of a permanent tightening shows up on a later down-leg.
