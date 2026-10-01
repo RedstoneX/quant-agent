@@ -718,3 +718,51 @@ def test_the_intraday_tick_message_shows_the_disclosure_too():
     empty: list[str] = []
     _append_intraday_evidence_freshness(empty, {}, None)
     assert empty == []
+
+
+# --- the counting half: per-name coverage is RECORDED, never scored --------
+
+
+def test_name_coverage_records_which_seats_answered_about_each_name():
+    record = evidence_gate.name_coverage(
+        {"AAA", "BBB"},
+        {"tech": {"AAA", "BBB"}, "earnings": {"AAA"}, "smart_money": set()},
+    )
+    assert set(record) == {"AAA", "BBB"}
+    assert record["AAA"].covered == ["earnings", "tech"]
+    assert record["BBB"].covered == ["tech"]
+    assert "earnings" in record["BBB"].uncovered
+
+
+def test_a_seat_that_records_no_per_name_coverage_is_never_assumed_complete():
+    """News writes no symbol-scoped row in production; absence of a record
+    must read as 'no answer about this name', never as full coverage."""
+    record = evidence_gate.name_coverage({"AAA"}, {"tech": {"AAA"}})
+    assert "news" in record["AAA"].uncovered
+    assert "news" not in record["AAA"].covered
+
+
+def test_a_market_wide_seat_is_never_booked_as_a_per_name_gap():
+    record = evidence_gate.name_coverage({"AAA"}, {"tech": {"AAA"}})
+    assert record["AAA"].run_scoped == ["macro"]
+    assert "macro" not in record["AAA"].uncovered
+    assert "macro" not in record["AAA"].covered
+
+
+def test_name_coverage_holds_no_threshold_ratio_or_verdict():
+    """Item 20's counting half ships as a record. If a bar ever appears in
+    this module it was invented, which the owner's ruling forbids."""
+    record = evidence_gate.name_coverage({"AAA"}, {"tech": {"AAA"}})
+    payload = record["AAA"].to_evidence()
+    assert set(payload) == {
+        "symbol", "covered_seats", "uncovered_seats", "run_scoped_seats",
+        "summary",
+    }
+    for value in payload.values():
+        assert not isinstance(value, (int, float, bool)), payload
+
+
+def test_name_coverage_never_raises_on_junk():
+    assert evidence_gate.name_coverage(None, None) == {}
+    assert evidence_gate.name_coverage({"AAA"}, {"tech": None})["AAA"].covered == []
+    assert evidence_gate.name_coverage(["aaa ", ""], {"tech": [" aaa"]})["AAA"].covered == ["tech"]

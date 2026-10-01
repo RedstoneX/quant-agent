@@ -1127,3 +1127,36 @@ def test_item193_unreadable_write_time_is_never_treated_as_overdue(tmp_path, mon
     db = _item193_db(tmp_path, created_at="not-a-timestamp", windows=[9.0])
     now = datetime(2026, 9, 30, 18, 0, 0, tzinfo=timezone.utc)
     assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+# ============================================================================
+# Item 211 (2026-09-30): the generic per-TYPE alert claim still SPEAKS UP
+# ============================================================================
+
+
+def test_typed_alert_claim_is_per_type_and_records_what_it_held_back(tmp_path):
+    """The owner-alert path must not get quieter than it already is.
+
+    A first finding of any type still returns its keys, so the caller still
+    pages. Only an exact repeat of the SAME finding on the SAME ET day is
+    held, and a different alert type is never silenced by a noisy one --
+    that is the failure a global throttle would introduce. What was held
+    back is written down rather than dropped.
+    """
+    from src.coverage_watchdog import claim_typed_alert, load_state
+
+    path = tmp_path / "state.json"
+
+    # It fires.
+    assert claim_typed_alert("deploy_drift", ["MAIN@ABC"], path=path) == ["MAIN@ABC"]
+    # The same finding again is one finding, not two pages.
+    assert claim_typed_alert("deploy_drift", ["MAIN@ABC"], path=path) == []
+    # A different deployed SHA is a different finding, and it fires.
+    assert claim_typed_alert("deploy_drift", ["MAIN@DEF"], path=path) == ["MAIN@DEF"]
+    # A DIFFERENT alert type is never silenced by a noisy one.
+    assert claim_typed_alert("pricing_cache", ["MAIN@ABC"], path=path) == ["MAIN@ABC"]
+
+    # Nothing was silently dropped.
+    suppressed = load_state(path)["suppressed_alerts"]["deploy_drift"]
+    assert suppressed["count"] == 1
+    assert suppressed["events"][-1]["key"] == "MAIN@ABC"
