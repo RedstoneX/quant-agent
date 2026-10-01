@@ -267,15 +267,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 194)
 
-**193. The scale-in cancel-to-rearm window leaves the WHOLE held position unprotected, and it is now measured — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 193").**
-
-DONE WHEN:
-  - [x] the window is measured from the broker's own cancel and rearm acknowledgements rather than from database write times, so the figure bounds real exposure instead of event bookkeeping — every scale-in now emits its own measured window (2026-09-30)
-  - [ ] the gap between write-ahead-log row ids and filed cancel events is explained, so the pair count is known to be complete rather than a floor
-  - [x] the desk can answer "is any position naked right now, and for how long" without a one-off query, whether by an alert, a dashboard line or a periodic check — every coverage sweep now names each symbol it deliberately skipped for a live scale-in, with its held quantity and roughly how long its protection has been down, in the run record and in the one greppable log line; a window longer than the longest the desk has ever measured pages the owner once per symbol per day, and with no measured history nothing is called overdue (2026-09-30)
-
-detail: docs/BOARD_NOTES.md (item 193)
-
 **201. The rest of the cancel+resubmit stop path — filed 2026-09-30 alongside the in-place amend fix. Detail: `docs/BOARD_NOTES.md` ("item 201"). OPEN: the conversions are in and the failure branch is honest, but no production evidence yet shows a two-leg amend landing.** The ex-dividend shift and the trailing re-price now share BOTH the measured-safe shape test and the failure classification, amend every resting leg in place, confirm each replacement id, and record the per-leg outcome as a durable row; a partial or an unanswered amend carries no order id, so nothing is written back and the owner is told. What still cancels then resubmits: a coverage-repairing FRACTIONAL quantity change (measured refused 2026-09-30), the stop-LIMIT fallback leg, a bracket/OTO child (UNMEASURED, not known-unamendable), and the lot-consolidating fallback, which is a design choice about per-lot levels rather than a broker limit.
 
 DONE WHEN:
@@ -320,6 +311,13 @@ DONE WHEN:
   - [ ] (b) the OpenRouter key carries a provider-side spend cap, or its absence is recorded as accepted — the account is outside this repo, so it closes on an observation in the provider console, never on a test
   - [ ] (c) BLOCKED and cannot close by building — the BUY-eligibility section reorder needs a paid benchmark run the owner has forbidden unless he asks for it (same blocker as items 76 and 77); it stays open and untouched until he raises it
 detail: docs/BOARD_NOTES.md (item 208)
+
+
+**218. Arithmetically losing geometry has no owner ruling: the desk may neither refuse it nor resize for it — OPEN, filed 2026-10-01.** On the real book [measured 2026-10-01 against the production database, read-only, 33 BUY trades carrying an entry, a stop and a target] reward:risk runs median 1.44, minimum 0.68, with SIX below parity (RSG 0.76, RSG 0.90, NUE 0.82 range; COP 0.68, OXY 0.87, RKLB 0.82 breakout). A refusal at parity was built in `_widen_stop_past_noise` and REMOVED before merge: placed in the stop-widening path and keyed off the widened stop it fires as a function of stop width, which is the deleted stop-width gate under another name, and the standing ruling is that a wide stop ships and is answered by SMALLER SIZE, never by refusal (seven existing guard tests fail against it, four of them the owner's own worked examples). The "parity is arithmetic" argument fails with it: the break-even identity assumes the position is sold AT THE TARGET and this desk never sells at a target (exits are on alignment, owner 2026-09-30), so the reward side is a floor on the payoff, not the payoff. A size-based variant is barred by the reward:risk helper's own recorded ruling that the figure is for ranking, never a cutoff and never a size cap. `MAX_REACH_ATR_MULTIPLE` was investigated and KEPT, and it is NOT what holds targets close [measured 2026-10-01, the desk's own stored 400-bar daily set, 101 symbols, ATR(14), rolling windows: median per-name realised favourable excursion 1.93 ATR over a 15-session hold, per-name maximum 8.78 ATR, against the cap's 1.5*sqrt(15) = 5.81 ATR] — that measurement corrects an earlier diagnosis in this repo which treated the cap as the thing clipping targets in.
+
+DONE WHEN:
+  - [ ] the OWNER rules on whether an arithmetically losing entry — reward smaller than risk against the stop that will actually ship — may ship at all, because the current ruling set forbids BOTH available responses: refusing it is barred (a wide stop is answered by smaller size, never by refusal) and resizing for it is barred (the reward:risk figure is for ranking, never a cutoff and never a size cap), which leaves the desk with no mechanism of any kind; the question is recorded and deliberately NOT routed by the branch that filed it, and no answer is invented here
+detail: docs/BOARD_NOTES.md (item 218)
 
 
 **212. A range (Type A) position's structural trail is gated behind the recorded take-profit target, a number nobody sourced, so from entry until price passes that target the position is protected by its original entry stop alone and by nothing that follows price up. Measured on 33 real production BUY trades: the target's reward-to-risk is median 1.33 and at most 1.72, so the target IS reached in practice while +2R never has been — which is why PR #857's attempt to move the gate to +2R was reverted as strictly worse on live data. Separately verified: the target has no power to close or cap a position, since no take-profit order ever reaches the broker and a target rationale cannot authorise a sale, so gating this trail is its ONLY live behaviour. The owner's ratified answer is exit-on-alignment — sell when structure, ATR and an SMA cross agree the trend is over, never on a made-up level — and the alignment exit on open PR #853 is the candidate replacement for this gate; do NOT build a replacement, re-derive the gate, or widen any multiple under this item. Detail: `docs/BOARD_NOTES.md` (item 212).** The defect is the unprotected stretch between entry and the gate, not the choice of multiple.
@@ -376,22 +374,23 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
+- retired queue: 77
 - retired queue: 152
+- retired queue: 183
 - retired queue: 197
 - retired queue: 18
-- retired queue: 147
-- retired queue: 77
-- retired queue: 183
-- retired queue: 182
 - retired queue: 192
+- retired queue: 147
+- retired queue: 182
 - retired queue: 195
-- retired queue: 196
 - retired queue: 109
 - retired queue: 19
+- retired queue: 196
 - retired queue: 99
-- retired queue: 199
 - retired queue: 157
 - retired queue: 119
+- retired queue: 199
+- retired queue: 193
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
