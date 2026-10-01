@@ -970,7 +970,13 @@ def test_the_deepest_rung_raises_a_separate_owner_alert():
 
     assert len(lines) == 2, "the -20% rung gets its own line, not a footnote"
     alert = lines[1]
-    assert "DRAWDOWN PAST -20%" in alert
+    # 2026-09-30: the literal "-20%" and the "lowest rung" claim are GONE
+    # from this line. The owner alert now fires at the sourced -10% MiFID
+    # depreciation threshold, so a hardcoded -20% was false for any book
+    # between the two. The line is assembled from the measured drawdown,
+    # the alert level and the resolved rung instead.
+    assert "DRAWDOWN" in alert and "24.0%" in alert
+    assert "-20%" not in alert
     # The cap must be READ from the resolved ceiling, never hardcoded — a
     # literal would go stale the day the ratified ladder changes.
     assert "0.50x equity" in alert
