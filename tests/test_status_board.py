@@ -965,8 +965,7 @@ _RETIRED_PARA = "**Retired item numbers"
 #: below fails if one is kept alive after that, so the list cannot rot.
 _WORK_MD_OVERSIZE_ON_ARRIVAL = {
     "63": 3431, "70": 8294, "75": 3708, "78": 2656, "90": 7548,
-    "177": 5572, "186": 4065, "201": 5526, "202": 4380,
-    "218": 4005, "220": 3461,
+    "177": 5572, "186": 4065, "201": 5526, "202": 4380, "218": 4005,
 }
 
 #: Items on the board when this check landed that do not resolve to a note
@@ -974,7 +973,7 @@ _WORK_MD_OVERSIZE_ON_ARRIVAL = {
 #: another author's note is not this check's job, but no NEW item may arrive
 #: without one, and an entry here is deleted the moment its note exists.
 _WORK_MD_POINTERLESS_ON_ARRIVAL = {
-    "186", "188", "210", "211", "218", "220",
+    "186", "188", "210", "211", "218",
 }
 
 
