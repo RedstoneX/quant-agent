@@ -17871,3 +17871,51 @@ number, no threshold and no behaviour changed. A comment at the
 crossing a range trade between the ratchets and the structural trail; that
 reasoning is now moot because the target is not read. It predates this task
 and was left alone.
+
+## Shared-file contention measured, 2026-10-01 — the README and the number ledger
+
+A change-frequency count over the last 300 commits on `main` made
+`README.md` (35%) and `config/number_ledger.yaml` (32%) look like forced
+contention: files every change must edit, so unrelated changes collide over
+the paperwork. Both were replayed against real history before anything was
+built, and the frequency did not survive the replay.
+
+The replay takes every pair of real commits touching one file within a
+four-commit window, puts both changes on the older one's parent as a common
+base — the second change rebased block by block, so it is the change that
+actually landed, not a constructed one — and three-way merges them.
+`README.md`: 110 replayable pairs, 23 conflicts, and **zero** of the 23 lay
+entirely inside the repository-layout block. The layout block is the thing a
+new module must edit, so the module-tree hypothesis was the obvious one; it
+is wrong. Every real conflict was two changes rewriting the same prose
+section. `config/number_ledger.yaml`: 110 pairs, 20 conflicts, of which 17
+were two changes editing the SAME ledger entry and 3 were different entries.
+Splitting the ledger into one file per entry therefore removes at most 3 of
+20 real collisions, and the 17 are genuine disagreement that must keep
+conflicting. The split was measured and NOT shipped on that evidence.
+
+`merge=union` via `.gitattributes` was rejected outright: 57 of the last 97
+commits touching the ledger remove lines, so entries are rewritten routinely
+and union merge would silently duplicate them rather than conflict.
+
+Deriving the ledger from the code — the justification living at each
+number's definition site, with the file generated — was assessed and is not
+reachable as one change here. Of 336 entries, 79 have an id that is not a
+named definition at all (a multiplier literal inside an expression, or a
+function-parameter default) and has nothing to attach an annotation to; 18
+sit in `src/pipeline.py` and `src/pipeline_stages.py`, which the item-210
+split is rewriting; and 102 cite a path other than their own site, so
+attaching the entry to its own definition does not stop the citation going
+stale, because what rots is the cited target. The one part of the ledger
+that genuinely is a copy of the code — the `value` field — is already
+checked against the live literal by `src/number_sources.py` (its check 2,
+VALUE), so that duplication is mechanically pinned today.
+
+What did ship is the one derivation the evidence supports:
+`scripts/readme_tree.py` derives the layout block's paths from the tree and
+`tests/test_readme_module_tree.py` fails if the README names a path that
+does not exist. It is one-directional by design — the block is a curated
+tour with a hand-written description per module, and no generator can invent
+those — so a module on disk the block does not mention is not a defect,
+while a renamed or deleted one named in the README is. It is a rot guard,
+not a contention fix, and is reported as such.
