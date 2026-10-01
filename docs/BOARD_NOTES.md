@@ -949,6 +949,18 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
         raised 25 to 40 in 2026-08 for exactly that drift); (b) re-measure the untruncated fill rate, newly
         possible because the deleted 2% ask-skip lets a too-tight entry rest and be recorded. Both belong to
         item 90's half-two re-derivation, not to a gate inventory.
+
+
+## item 210 — A properly structured codebase, built in the right order (owner-ratified 2026-09-30)
+
+The owner asked whether to run the big file split in parallel with everything else, or shut the desk down and rebuild it properly. He ratified the answer on 2026-09-30: neither.
+
+The reasoning he accepted: the desk's behaviour is not what is broken. Two oversized files and too little recorded evidence are. A full rebuild would spend his remaining time and money to arrive at behaviour he already has. A parallel split would collide with every open pull request, because nearly all of them edit the two files being moved.
+
+The order matters and is the completion criteria:
+1. Drain the open pull-request queue to zero first.
+2. Then do the split as the only work in flight, from `docs/PIPELINE_SPLIT_PLAN.md` (copied here from a scratchpad so it cannot be lost). The plan's line numbers go stale the moment any pull request merges, so rerun its measurement before step 1 of the split; the plan names an AST script that lived in the scratchpad and is not in the repo, so regenerate it.
+3. Rebuild the test suite in the same pass. The silent risk is measured: 42 tests patch `pipeline.compute_indicators` and 20 patch `pipeline._get_sector` on the module, so when that code moves they stop patching anything, run the real code, and still pass. Every such patch must be re-pointed at the new home, and a check added so a patch on a name that does not exist fails loudly.
 ## item 182 — RETIRED 2026-09-30, both criteria met: the cash-deficit cushion was reformulated away (sized off the order's own live limit floor) and GROSS_LADDER_ALERT_PCT is now SOURCED from the MiFID Article 62(1) / COBS 16A.4.3UK 10% depreciation-notification threshold, moving the owner alert from -20% to -10%
 
 ## item 195 — RETIRED 2026-09-30, the window-start inconsistency it named is fixed and merged, and the only remaining lever on the structural leg is barred

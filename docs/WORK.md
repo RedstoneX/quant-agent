@@ -332,6 +332,15 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 208)
 
 
+**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/BOARD_NOTES.md` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are.
+
+DONE WHEN:
+  - [ ] 1. the open pull-request queue is at zero, because the split moves `src/pipeline.py` and `src/pipeline_stages.py`, which nearly every open pull request touches, so splitting sooner collides with all of them
+  - [ ] 2. the split is executed as the ONLY work in flight, following `docs/PIPELINE_SPLIT_PLAN.md` (9 modules out of `src/pipeline.py`, 8 out of `src/pipeline_stages.py`, 12 ordered steps), each step landing on its own so the tree is never half-moved
+  - [ ] 3. the test suite is rebuilt in the same pass, and no test is left patching a name on the pipeline module that has moved: 42 tests patch `pipeline.compute_indicators` and 20 patch `pipeline._get_sector`, and once that code moves they patch nothing, quietly run the real implementation and still pass [measured 2026-09-30, grep of the tests]
+detail: docs/BOARD_NOTES.md (item 210)
+
+
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in the matching scheme, and never edits an existing line; the running lists used to live on this one physical line, and even the merge driver's own union rule (`scripts/resolve_doc_conflict.py::merge_retired`) could not save it, because GitHub's own squash-merge — what actually runs when a pull request merges on GitHub.com — never invokes a local git merge driver at all. Two closures now append two different lines and merge with no conflict, by construction; no driver needed for this part. **This still takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry the same way. `tests/test_status_board.py` fails a change that adds a reason to any line below, or that edits an existing line instead of appending a new one. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays; the ladder's own unmeasurable-drawdown behaviour is a separate live question. Run `scripts/next_board_number.py` for the next free number — it reads every line below, the live board, and open pull requests; never eyeball this list. It FAILS CLOSED as of 2026-09-30: if the open-pull-request read fails for any reason it exits non-zero and prints no number at all, because it used to print a warning and a number anyway and two pull requests both claimed item 192 that way. Treat a non-zero exit as a hard stop, not a prompt to guess; `--accept-unchecked-number` is the deliberate offline opt-out and labels its answer UNCHECKED.
 
 - retired queue: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 65, 66, 68, 69, 71, 72, 73, 74, 79, 80, 81, 82, 83, 84, 85, 87, 88, 89, 91, 92, 93, 94, 95, 96, 97, 98, 100, 101, 102, 103, 104, 105, 106, 108, 110, 111, 113, 114, 115, 116, 117, 118, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 148, 149, 150, 151, 153, 154, 155, 156, 158, 159, 160, 161, 162, 164, 165, 166, 167, 168, 169, 170, 171, 172, 175, 176, 178, 179, 180, 181, 184, 189
@@ -342,14 +351,14 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
+- retired queue: 77
 - retired queue: 152
+- retired queue: 183
 - retired queue: 197
 - retired queue: 18
-- retired queue: 147
-- retired queue: 77
-- retired queue: 183
-- retired queue: 182
 - retired queue: 192
+- retired queue: 147
+- retired queue: 182
 - retired queue: 195
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
