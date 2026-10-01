@@ -22,7 +22,42 @@ import pytest
 
 from src.api.server import _freshness_banner
 
-_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "status_board.py"
+_REPO = Path(__file__).resolve().parents[1]
+
+
+def _find_status_board_script() -> Path:
+    """Locate the generator by NAME, not by a hard-coded directory.
+
+    Moving the script into a package (or out of `scripts/`) used to break
+    every test in this file with an unrelated-looking import error. The
+    search is repo-wide but excludes the test tree and virtualenvs, and the
+    canary below fails loudly if it ever matches nothing or more than one.
+    """
+    skip = {".git", ".venv", "venv", "node_modules", "tests", "__pycache__"}
+    hits = [
+        path
+        for path in sorted(_REPO.rglob("status_board.py"))
+        if not (set(path.relative_to(_REPO).parts) & skip)
+    ]
+    assert hits, (
+        "no status_board.py anywhere in the repo: the board generator these "
+        "tests guard has been renamed or deleted, and every test here would "
+        "otherwise fail with a misleading missing-file error"
+    )
+    assert len(hits) == 1, f"ambiguous status_board.py candidates: {hits}"
+    return hits[0]
+
+
+_SCRIPT = _find_status_board_script()
+
+
+def test_the_status_board_script_was_found_and_is_the_real_generator():
+    """Canary: a resolution that silently found the wrong file is worse than none."""
+    assert _SCRIPT.is_file()
+    text = _SCRIPT.read_text()
+    assert "def check_rule" in text, (
+        f"resolved {_SCRIPT} as the board generator but it has no check_rule()"
+    )
 
 
 def _load():

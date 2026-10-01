@@ -430,19 +430,86 @@ REGISTRY: dict[str, Quantity] = {
 }
 
 
+def _source_modules() -> list[Path]:
+    """Every module in the package, derived — never a hard-coded file list."""
+    return sorted(SRC.rglob("*.py"))
+
+
+def test_the_package_scan_is_not_silently_empty():
+    """A scan that matches nothing is worse than a missing test: it is green.
+
+    If `src/` is ever restructured so the glob stops seeing the package, this
+    fails by name instead of every quantity guard quietly passing on zero
+    files.
+    """
+    modules = _source_modules()
+    assert len(modules) >= 25, (
+        f"the src/ scan found almost nothing ({len(modules)} modules); every "
+        "one-definition guard would be passing vacuously"
+    )
+    parsed = sum(1 for p in modules if _safe_parse(p) is not None)
+    assert parsed >= len(modules) - 1, (
+        f"only {parsed} of {len(modules)} src/ modules parsed; the guards are "
+        "skipping real code"
+    )
+
+
+def _safe_parse(path: Path):
+    try:
+        return ast.parse(path.read_text(), filename=str(path))
+    except SyntaxError:  # pragma: no cover - a parse error is another test's job
+        return None
+
+
+def _definition_sites() -> dict[str, set[str]]:
+    """Function name -> every repo-relative file that defines it, derived.
+
+    This is what makes the registry move-proof. The allowlists below name a
+    FILE and a FUNCTION; when a sanctioned function is moved to a different
+    module, the pair stops matching even though nothing about the quantity
+    changed. Looking the function up by name lets the allowlist follow the
+    move — but only while the name resolves to exactly ONE file, which is
+    precisely the invariant this whole file exists to enforce.
+    """
+    sites: dict[str, set[str]] = {}
+    repo = REPO.resolve()
+    for path in _source_modules():
+        tree = _safe_parse(path)
+        if tree is None:
+            continue
+        rel = str(path.resolve().relative_to(repo))
+        for func in _functions(tree):
+            sites.setdefault(func.name, set()).add(rel)
+    return sites
+
+
+_DEFINITION_SITES = _definition_sites()
+
+
+def _resolve_site(file: str, func: str) -> str:
+    """The file `func` actually lives in now, if the named one no longer has it."""
+    where = _DEFINITION_SITES.get(func, set())
+    if file in where or len(where) != 1:
+        return file
+    return next(iter(where))
+
+
+def _resolved_pairs(pairs) -> set[tuple[str, str]]:
+    return {(_resolve_site(file, func), func) for file, func in pairs}
+
+
 def _scan(matcher) -> list[Finding]:
     out: list[Finding] = []
-    for path in sorted(SRC.rglob("*.py")):
-        try:
-            tree = ast.parse(path.read_text(), filename=str(path))
-        except SyntaxError:  # pragma: no cover - a parse error is another test's job
+    for path in _source_modules():
+        tree = _safe_parse(path)
+        if tree is None:
             continue
         out.extend(matcher(tree, path))
     return out
 
 
 def _violations(quantity: Quantity, findings: list[Finding]) -> list[Finding]:
-    allowed = {(f, fn) for f, fn in quantity.allow}
+    allowed = _resolved_pairs(quantity.allow)
     return [f for f in findings if (f.file, f.func) not in allowed]
 
 
@@ -600,7 +667,7 @@ def test_the_guard_stays_silent_on_code_that_is_already_sound():
         f
         for matcher in MATCHERS.values()
         for f in _scan(matcher)
-        if (f.file, f.func) in KNOWN_GOOD
+        if (f.file, f.func) in _resolved_pairs(KNOWN_GOOD)
     ]
     assert not flagged, (
         "the guard flagged code the survey found SOUND — reward-to-risk is "
@@ -613,7 +680,7 @@ def test_the_guard_stays_silent_on_code_that_is_already_sound():
 def test_the_known_good_sites_still_exist():
     """A false-positive check pointed at deleted functions proves nothing."""
     missing = []
-    for file, func in sorted(KNOWN_GOOD):
+    for file, func in sorted(_resolved_pairs(KNOWN_GOOD)):
         path = REPO / file
         if not path.exists():
             missing.append(f"{file} does not exist")
@@ -637,6 +704,8 @@ def test_every_registry_entry_names_a_real_owner():
         head, _, rest = q.owner.partition("::")
         head = head.strip()
         owner_func = rest.split("—")[0].strip()
+        if owner_func:
+            head = _resolve_site(head, owner_func)
         owner_path = REPO / head
         if not owner_path.exists():
             missing.append(f"{q.name}: owner file {head} does not exist")
@@ -646,7 +715,7 @@ def test_every_registry_entry_names_a_real_owner():
                 missing.append(
                     f"{q.name}: owner {head}::{owner_func}() does not exist"
                 )
-        for file, func in q.allow:
+        for file, func in sorted(_resolved_pairs(q.allow)):
             path = REPO / file
             if not path.exists():
                 missing.append(f"{q.name}: allowlisted {file} does not exist")
