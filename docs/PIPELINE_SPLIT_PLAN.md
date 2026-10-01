@@ -254,7 +254,7 @@ is independently landable and leaves main deployable.
 | 9 | `pipeline_evening.py` (X+Y) | ~1,100 | Last of the class moves; `pipeline.py` lands at ~3,700. | test_evening_replay, test_daily_report |
 | 10 **LANDED 2026-10-01** | `pipeline_stages.py` → four `stage_*.py` files, re-exported from `pipeline_stages` | 5,790 moved | PR 844 merged before this ran. Pure class moves; ranges re-derived from the AST (the plan offsets were dead). | test_pipeline_stages, test_silent_gates_recorded, test_event_risk_calendar, test_shorts_stage3 |
 | 11 | `pipeline_sizing.py`, `pipeline_earnings_quality.py` | ~670 | 22 ledger site ids renamed (§5). `ps._entry_deployment_budget`/`_size_shares`/`_min_order_usd`/`_live_fill_price` patched by tests → re-point. | test_scale_in, test_subfloor_catalyst_gate, test_earnings_analyst, test_risk_based_sizing |
-| 12 | `pipeline_entry_orders.py`, `pipeline_rotation_exec.py` | ~2,640 | Last; the rotation question (fold into `src/rotation.py` or not) must be answered first (§6). | test_rotation_execute, test_desk_sees_today |
+| 12 **LANDED 2026-10-01** | `pipeline_entry_orders.py` (28 names, 1,146 lines), `pipeline_rotation_exec.py` (21 names, 1,637 lines) | 2,783 moved | Last; the rotation question (fold into `src/rotation.py` or not) must be answered first (§6). | test_rotation_execute, test_desk_sees_today |
 
 **Status 2026-10-01 (measured, not recalled):** steps 0, 1, 2, 3, 4, 10 and 7 have landed on `main` or are landing; steps 5 and 6 are open pull requests; steps 8, 9, 11 and 12 remain. `src/pipeline.py` is 7,687 lines after step 7 (9,008 before it).
 
@@ -334,8 +334,13 @@ PR 844 → `pipeline_stages` 5001–5065 (MorningResearchStage). Steps 1, 3, 5�
 - The §1/§2 cluster line ranges and the §2 "~Lines" column were not re-derived in this pass; the two file totals
   grew by 1,829 and 138 lines, so the per-module size estimates are low by an unmeasured amount.
 
-- Whether the rotation-execution block in `pipeline_stages` (290–1710) duplicates or extends `src/rotation.py`
-  (1,594 lines, unread). Step 12 needs that read.
+- ANSWERED 2026-10-01 at step 12 execution: it does NEITHER. `src/rotation.py` is a pure decision/wording
+  module — dataclasses plus functions whose only imports are `dataclasses` and `src.verdicts`; it takes no
+  `pipeline`, no `ctx`, no broker and no db, and it is imported BY `pipeline_stages`, by
+  `src/agents/portfolio_manager.py` and by the API. The execution block takes `pipeline`/`ctx`, places and
+  cancels orders, writes the WAL and alerts the owner. Folding execution into `rotation.py` would create a
+  `rotation` → `pipeline_stages` → `rotation` import cycle and pull broker/db state into a module three other
+  packages import for pure text. Decision: its own module, `src/pipeline_rotation_exec.py`.
 - What `tests/test_shorts_emergency_close.py:420` actually asserts on the class source — I saw the call, not the
   assertion.
 - The exact `compute_indicators`/`_get_sector` reference set per cluster at execution time; the counts above are

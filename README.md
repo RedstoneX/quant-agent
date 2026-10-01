@@ -581,6 +581,8 @@ quant-agent/
 │   ├── pipeline_intraday.py       # IntradayMixin — intra-check session, scan locks, paid-scan slot, intraday opportunity scan
 │   ├── pipeline_research_continuity.py  # ResearchContinuityMixin — change detectors, carry-forward, Form-4 backlog, seat healing
 │   ├── pipeline_stages.py         # shared stage helpers; re-exports the four stage classes below
+│   ├── pipeline_rotation_exec.py  # rotation EXECUTION — sell/buy legs, gates, projections (moved verbatim, item 210 step 12)
+│   ├── pipeline_entry_orders.py   # entry order placement, re-peg, constructor-drop recording (moved verbatim, item 210 step 12)
 │   ├── stage_morning_research.py # MorningResearchStage (moved verbatim, item 210 step 10)
 │   ├── stage_decision.py         # DecisionStage (moved verbatim, item 210 step 10)
 │   ├── stage_risk.py             # RiskStage + its 5 private helpers (moved verbatim)

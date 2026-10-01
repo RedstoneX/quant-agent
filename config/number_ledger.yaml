@@ -7045,7 +7045,7 @@ numbers:
     base_value: 10
     note: >-
       Default macro-event horizon (src/agents/macro_analyst.py:211);
-      production passes event_risk.horizon_days (src/pipeline_stages.py:3819).
+      production passes event_risk.horizon_days (src/stage_risk.py:412).
       A further inline `or 10` fallback sits at
       src/agents/macro_analyst.py:37, which no rule sees.
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.candidate_eligibility(rr_floor)
@@ -7974,10 +7974,10 @@ numbers:
       the one naming what the sale was cleared on, or that the close is
       contingent on the replacement buy. Read from the truncation it has to
       survive; if that column width changes, this changes with it.
-  - id: src.pipeline_stages._projected_post_sale_cash:factor[0]
+  - id: src.pipeline_rotation_exec._projected_post_sale_cash:factor[0]
     value: 1.005
     status: derived
-    site: src/pipeline_stages.py
+    site: src/pipeline_rotation_exec.py
     derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
@@ -7986,20 +7986,20 @@ numbers:
       than to the equity: a COVER buys the borrowed shares back at
       price x 1.005 and spends that cash. Read from the loop it mirrors;
       not a second number.
-  - id: src.pipeline_stages._projected_post_sale_cash:factor[1]
+  - id: src.pipeline_rotation_exec._projected_post_sale_cash:factor[1]
     value: 0.995
     status: derived
-    site: src/pipeline_stages.py
+    site: src/pipeline_rotation_exec.py
     derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The SELL side of the same mirrored offset:
       a sale credits price x 0.995, the limit the SELL loop actually
       places, rather than the mark.
-  - id: src.pipeline_stages._projected_post_sale_book:factor[0]
+  - id: src.pipeline_rotation_exec._projected_post_sale_book:factor[0]
     value: 1.005
     status: derived
-    site: src/pipeline_stages.py
+    site: src/pipeline_rotation_exec.py
     derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
@@ -8009,10 +8009,10 @@ numbers:
       one below sat on each other's entry - the 1.005 row carried the SELL
       text and the 0.995 row the COVER text - from the day they were filed
       until 2026-09-23.
-  - id: src.pipeline_stages._projected_post_sale_book:factor[1]
+  - id: src.pipeline_rotation_exec._projected_post_sale_book:factor[1]
     value: 0.995
     status: derived
-    site: src/pipeline_stages.py
+    site: src/pipeline_rotation_exec.py
     derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-

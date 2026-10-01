@@ -198,7 +198,13 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 25
     # 2026-10-01, item 210 step 10: the 2 `ExecutionStage._run_session` ids moved
     # with the class into `src.stage_execution`, so 22 -> 20 + 2.
-    assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 20
+    # 2026-10-01, step 12: four `_projected_post_sale_*` ids left
+    # `src.pipeline_stages` for `src.pipeline_rotation_exec` with the
+    # rotation-execution block, so 20 became 16 + 4. Both halves are
+    # asserted so the total cannot quietly shrink.
+    assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 16
+    assert len(ledger_ids_for_module("src.pipeline_rotation_exec", ledger)) == 4
+    assert len(ledger_ids_for_module("src.pipeline_entry_orders", ledger)) == 0
     assert len(ledger_ids_for_module("src.stage_execution", ledger)) == 2
 
 
