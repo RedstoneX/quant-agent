@@ -55,7 +55,7 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 - **Tier 1, can cost money or hide risk:** 89 (its residue), 80, 90, 111, 112, 127, 199. (87 and 88 closed 2026-09-18; 130 retired 2026-09-25.)
 - **Tier 2, wastes money or opportunity:** 91, 82, 81, 92.
 - **Tier 3, clarity and hygiene:** 89 (its thirteen clarity defects), 94. (93 retired 2026-09-25.)
-- **To be decided by the orchestrator after an adversary run, not parked on the owner (ruling 2026-09-18 — his words: "I don't want you waiting on me on anything. You have the adversary in my place. Just make sure it gets documented." The adversary argues, it never rules; the orchestrator decides and records the decision and its reason before anything is built on it):** 86. (109(a) closed 2026-09-26 — the OWNER ruled it himself on 2026-09-25, so it never took the delegated route; item 109 stays on the board for its part (c) only. 96 retired 2026-09-25 — the delegated question is stale, the veto it asked about is built and wired. 95 retired 2026-09-26 — decided yes, under the already-ratified cap and ladder, with the cost of the debit now shown to the seat.)
+- **To be decided by the orchestrator after an adversary run, not parked on the owner (ruling 2026-09-18 — his words: "I don't want you waiting on me on anything. You have the adversary in my place. Just make sure it gets documented." The adversary argues, it never rules; the orchestrator decides and records the decision and its reason before anything is built on it):** 86. (109(a) closed 2026-09-26 — the OWNER ruled it himself on 2026-09-25, so it never took the delegated route; item 109(c) retired 2026-10-01. 96 retired 2026-09-25 — the delegated question is stale, the veto it asked about is built and wired. 95 retired 2026-09-26 — decided yes, under the already-ratified cap and ladder, with the cost of the debit now shown to the seat.)
 
 ## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
 
@@ -174,14 +174,6 @@ DONE WHEN:
   - [ ] (b) the trade-picking sheet's prompt-only sizing arithmetic (bases 3.0/1.75/0.75 and their ranges, the 0.25 reward:risk bonus, the 0.5 stale halving at age >=8d, the +/-0.5pp shade) and the technical sheet's prompt-only levels ("3+ aligned signals", the 1-3/4-7/8+ freshness tiers, forward-PE 40/60 and P/S 15/25) are each sourced or taken OUT of the path — verified 2026-09-26 that no code computes any of them and none is in the number ledger. The +/-0.20/+/-0.10 evening tilt this item listed was already gone from the formula (2026-09-17); its dangling mention was removed 2026-09-26
   - [ ] the 12/10 drift pair and the two prompt-only sets above carry a `config/number_ledger.yaml` entry with a source, or the open question and what the desk pays meanwhile
 detail: docs/BOARD_NOTES.md (item 107)
-
-**109. (a) RULED AND BUILT 2026-09-26; (c) still open — the dead-weight prose the prompt-truth pass surfaced. Filed 2026-09-17.**
-
-DONE WHEN:
-  - [x] (a) a decision is recorded on whether macro counts as a per-name seat in the agreement gate, then ONE of `count_aligned_sources` and the PM's sheet is changed to match the other — owner ruling 2026-09-25; BOTH were changed to match it on 2026-09-26, and the sheet states the rule rather than flagging a dispute
-  - [x] whichever side wins is justified from the PM prompt's own provenance rule, NOT from `docs/OUTCOME.md` — that rule ("macro is the regime the book is built in, not evidence about one name") is exactly what separates a broadcast stance from a sector-specific one, and it is left unchanged
-  - [ ] (c) the dead-weight recitation (~35% of the PM's sheet, ~26% of the risk manager's, ~24% of the reviewer's) is deleted, with load-bearing recitation kept — SHARED with item 99(c), which is the same prose; do not strip it twice
-detail: docs/BOARD_NOTES.md (item 109)
 
 **119. The economics feed can leave required series un-attempted at the open, and the re-derived fix is only measured mid-morning — OPEN, filed 2026-09-18.** Re-filed out of PR #435 (closed unmerged).
 
@@ -361,6 +353,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 147
 - retired queue: 182
 - retired queue: 195
+- retired queue: 109
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
