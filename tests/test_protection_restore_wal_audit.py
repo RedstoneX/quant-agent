@@ -22,7 +22,7 @@ This file proves the attribution now survives the row:
 import json
 
 from src.execution.scale_in import WAL_SCALE_IN_SENTINEL
-from src.pipeline import _WAL_SELL_SENTINEL
+from src.pipeline_protection import _WAL_SELL_SENTINEL
 from src.storage.db import Database
 
 
