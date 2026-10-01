@@ -710,7 +710,7 @@ and no recorded outcomes to measure against.
 The hazard to watch is ordering: the flag being turned on before the side fix
 lands would put the defect straight into production on the short book.
 
-## item 199 — read the unbacked-stop floor off the chart
+## item 199 — RETIRED 2026-10-01, measured and decided against: the chart-level floor is not adopted and the ledger records the outcome
 
 Moved out of `docs/WORK.md` on 2026-09-30 to keep that file under the
 100,000-byte cap `tests/test_status_board.py` enforces. Nothing is

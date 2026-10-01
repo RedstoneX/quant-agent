@@ -270,14 +270,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 193)
 
-**199. Read the unbacked-stop floor off the chart instead of off an ATR multiple — filed 2026-09-30, carried out of item 90's `min_stop_atr_multiple` pass. TIER 1.** Detail: `docs/BOARD_NOTES.md` ("item 199").
-DONE WHEN:
-  - [x] 2026-09-30, the RECORDING exists, and it — not another re-derivation — is what this item now turns on: every position the desk opens pins its entry price, entry ATR, the stop placed at entry and that stop's basis (the constructor's own `stop_rule`, which already separates a stop sitting on a COMPUTED structural level from one set by the ATR band), and every position accumulates its worst AND best excursion while open, joining the realised outcome and the `broker_stop_fill` category already on the exit row. The stop's distance in ATR multiples is RECOMPUTED from entry price, entry stop and entry ATR rather than stored a second time, per "never store what code can recompute". Anything genuinely unavailable at that moment is stored NULL, never substituted. Two hard caveats any reader must carry: the excursions are accumulated from session snapshots, so each is a FLOOR on the true figure (a reading that says the floor WAS violated is trustworthy; one that says it was not is only "not observed"), and legacy rows predating the columns are NULL. FALSIFICATION ONLY — this record may show whether the ratified floor was ever violated in practice and may NOT be swept for a better multiplier; doctrine bars fitting a number to this desk's history.
-  - [x] the share of real candidates that have a computed level below entry at any touch count is measured from production data, so the size of the population this actually removes from the ATR multiple is known rather than assumed — MEASURED 2026-09-30 on 867 production technical-seat candidates: 97.2% at any touch count, 31.7% at the current 5-touch bar, but the nearest level below entry is TIGHTER than the flat floor for 71.8% of them, so the population the reformulation actually removes from the ATR multiple is 28.2%, not the coverage figure
-  - [x] the far-anchor case is decided and written down: what the floor does when the nearest level below entry is distant enough to shrink the position materially, including whether the flat multiple remains as a ceiling on the widening — DECIDED 2026-09-30: no widening anchor ships, because capping at the flat multiple makes the rule arithmetically inert and any other cap is a newly invented money number; the far anchor reaches 10.1 ATRs measured
-  - [x] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs — the note now states it governs the WHOLE unbacked-stop population, not a residue
-detail: docs/BOARD_NOTES.md (item 199) — item 90's ledger entry carries the retracted arguments so they are not re-proposed
-
 **201. The rest of the cancel+resubmit stop path — filed 2026-09-30 alongside the in-place amend fix. Detail: `docs/BOARD_NOTES.md` ("item 201").** `replace_stop_loss` now amends one plain resting protective stop's price atomically, but every other stop-moving path (the fractional hybrid pair, `shift_stops_down`, multi-stop positions, bracket/OTO legs) still cancels then resubmits and still opens an unprotected window.
 
 DONE WHEN:
@@ -346,6 +338,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 19
 - retired queue: 196
 - retired queue: 99
+- retired queue: 199
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
