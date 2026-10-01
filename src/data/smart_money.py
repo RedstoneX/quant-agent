@@ -346,6 +346,54 @@ def edgar_coverage(stats: object) -> dict:
     }
 
 
+# Board item 63: how many sale rows the census carries forward. The census
+# is a recording, not a gate: it governs no buy, no sell and no size, so
+# this bound only limits how much JSON one run writes.
+MAX_SALE_CENSUS_ROWS = 200
+
+
+def _sale_census(parsed: list["SmartMoneyObservation"]) -> dict:
+    """Count and sample the SALE rows a fetch parsed, by holdings band.
+
+    The forward return is NOT computed here and cannot be: it is forward.
+    Each sampled row carries the reference price and transaction date a
+    later pass needs to join one on. Until that join exists the recording
+    answers only "how many sales, in which band" -- which is already more
+    than the desk has ever held.
+    """
+    sales = [item for item in parsed if item.direction == "sell"]
+    bands: dict[str, int] = {}
+    for item in sales:
+        key = str(item.holdings_fraction_band or "unknown")
+        bands[key] = bands.get(key, 0) + 1
+    ordered = sorted(
+        sales,
+        key=lambda item: (
+            item.accepted_at.timestamp() if item.accepted_at else 0.0,
+        ),
+        reverse=True,
+    )[:MAX_SALE_CENSUS_ROWS]
+    return {
+        "parsed_rows": len(parsed),
+        "sale_rows": len(sales),
+        "buy_rows": sum(1 for item in parsed if item.direction == "buy"),
+        "band_counts": bands,
+        "forward_return_joined": False,
+        "rows": [
+            {
+                "symbol": item.symbol,
+                "transaction_date": item.transaction_date.isoformat(),
+                "holdings_fraction": item.holdings_fraction,
+                "holdings_fraction_band": item.holdings_fraction_band,
+                "reference_price": item.price_per_share,
+                "actor_cik": item.actor_cik,
+                "accession_number": item.accession_number,
+            }
+            for item in ordered
+        ],
+    }
+
+
 class SECForm4Provider:
     """Credentialless SEC Form 4 discovery with bounded, resumable caching."""
 
@@ -415,6 +463,18 @@ class SECForm4Provider:
         self.cluster_window_days = max(1, int(cluster_window_days))
         self.min_cluster_owners = max(2, int(min_cluster_owners))
         self.max_observations = max(1, int(max_observations))
+        # Board item 63. Every parsed SALE row is counted and sampled here
+        # BEFORE `max_observations` truncates, because the truncation sort
+        # below puts `not transient_admission_eligible` FIRST and admission
+        # requires `direction == "buy"`, so with more admission-eligible
+        # buys than slots no sale can ever reach the analyst or the
+        # evidence store. Measured 2026-10-01: the production observations
+        # cache held 16,019 sale rows and 2,384 buy rows while the stored
+        # evidence held 828 observation rows, every one of them a buy. This
+        # census governs NOTHING -- it is read by no gate, no rank and no
+        # size -- it exists only so the sale side of
+        # `holdings_fraction_band` becomes readable at all.
+        self.last_sale_census: dict | None = None
         self.refresh_deadline_s = max(1.0, float(refresh_deadline_s))
         self.watched_drain_deadline_s = max(1.0, float(watched_drain_deadline_s))
         self.max_filings_per_refresh = max(1, int(max_filings_per_refresh))
@@ -1913,5 +1973,6 @@ class SECForm4Provider:
             max_observations=self.max_observations,
             max_reserved_slots=MAX_CLUSTER_RESERVED_SLOTS,
         )
+        self.last_sale_census = _sale_census(parsed)
         error = f"cache_partial_error:{invalid}_invalid_rows" if invalid else None
         return final, error

@@ -4821,6 +4821,25 @@ def _record_scale_advisory(decisions, verdict) -> tuple[list, float, list]:
     return list(decisions), scale, advised
 
 
+
+def _probe_sale_census(provider: object) -> dict | None:
+    """Board item 63: find the SEC provider's last sale census, however the
+    provider happens to be wrapped. Duck-typed on purpose -- the combined
+    provider delegates by attribute, exactly as `form4_coverage` is probed
+    a few lines below. Returns None when nothing recorded one."""
+    candidates: list[object] = [provider]
+    nested = getattr(provider, "providers", None)
+    if isinstance(nested, (list, tuple)):
+        candidates.extend(nested)
+    if hasattr(provider, "__dict__"):
+        candidates.extend(vars(provider).values())
+    for candidate in candidates:
+        census = getattr(candidate, "last_sale_census", None)
+        if isinstance(census, dict) and census.get("sale_rows"):
+            return census
+    return None
+
+
 class MorningResearchStage:
     """Parallel data + LLM fan-out at morning open.
 
@@ -5374,6 +5393,21 @@ class MorningResearchStage:
             ctx.smart_money_findings = findings
             ctx.smart_money_provider_error = provider_error or analysis_error
             import json as _sm_json
+            # Board item 63. The sale side of the insider signal, recorded
+            # because nothing else records it: the fetch truncation puts
+            # admission-eligible buys first and admission requires a buy,
+            # so no sale has ever reached `finding`/`admission` evidence.
+            # This row governs nothing -- no gate, no rank, no size reads
+            # it -- it exists so the magnitude->sign question can one day
+            # be answered from the desk's own data instead of guessed.
+            _sale_census = _probe_sale_census(self.smart_money_provider)
+            if _sale_census:
+                _persist_evidence(
+                    self.db, run_id=ctx.run_id,
+                    agent_name="smart_money_analyst",
+                    kind="insider_sale_census", scope="run",
+                    evidence_json=_sm_json.dumps(_sale_census),
+                )
             _persist_evidence(
                 self.db, run_id=ctx.run_id, agent_name="smart_money_analyst",
                 kind="scan_summary", scope="run",
