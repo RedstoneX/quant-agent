@@ -3777,6 +3777,30 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_rotation_sell_symbols_today(self) -> set[str]:
+        """Every symbol the rotation CLOSED on today's exchange day.
+
+        Read side of the `rotation` / `sell_submitted` pipeline event the
+        execution stage writes the moment a rotation SELL is broker-
+        accepted. The desk's BUY-side anti-churn guard reads this so a name
+        sold at 10:00 for failing the entry bar is not bought back at
+        11:00. Exchange-day bounds, the same ones `get_trades(today_only=
+        True)` uses — no new window, no cooldown.
+        """
+        start_utc, end_utc = self._et_day_utc_bounds()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT DISTINCT symbol FROM specialist_evidence "
+                "WHERE kind = ? AND agent_name = 'pipeline' "
+                "AND symbol IS NOT NULL "
+                "AND json_extract(evidence_json, '$.stage') = 'rotation' "
+                "AND json_extract(evidence_json, '$.outcome') = "
+                "'sell_submitted' "
+                "AND timestamp >= ? AND timestamp < ?",
+                (self.NOMINATION_KIND, start_utc, end_utc),
+            ).fetchall()
+        return {str(r[0]).strip().upper() for r in rows if r[0]}
+
     def record_seat_stances(
         self, *, run_id: str, decision_id: str, stances,
     ) -> int:
@@ -5144,6 +5168,64 @@ class Database:
                 (date, mode, run_id, payload_json, positions_json),
             )
             self.conn.commit()
+
+    def last_fresh_seat_reads(self, seats=None) -> dict:
+        """When was each research seat LAST actually read, and by which run?
+
+        Reads back the stamps the runs already persisted inside
+        `session_reports.payload_json` and `intra_check_reports.payload_json`
+        — the store `evidence_freshness` has always used. No new table and no
+        second mechanism: this is the read side of a recording that already
+        exists.
+
+        Returns `{seat: {"run_id", "mode", "at"}}` for the most recent run in
+        which that seat was `refreshed_this_session`. A seat that has never
+        been recorded fresh is simply absent from the result, which is what
+        lets a carried seat report "age unknown" honestly instead of
+        guessing one.
+
+        Walks rows newest-first and stops as soon as every requested seat has
+        an answer, so the common case touches a handful of rows. No time
+        window and no cutoff: a window would be an invented number.
+        """
+        import json
+
+        wanted = {str(x) for x in seats} if seats else None
+        found: dict[str, dict] = {}
+        rows_sql = (
+            "SELECT payload_json, timestamp FROM ("
+            "  SELECT payload_json, timestamp FROM session_reports"
+            "  UNION ALL"
+            "  SELECT payload_json, timestamp FROM intra_check_reports"
+            ") ORDER BY timestamp DESC"
+        )
+        with self._lock:
+            cursor = self.conn.execute(rows_sql)
+            for row in cursor:
+                try:
+                    payload = json.loads(row[0] or "{}")
+                except (TypeError, ValueError):
+                    continue
+                record = (payload or {}).get("evidence_freshness")
+                if not isinstance(record, dict):
+                    continue
+                stamps = record.get("seat_stamps")
+                if not isinstance(stamps, dict):
+                    continue
+                for seat, entry in stamps.items():
+                    name = str(seat)
+                    if name in found or not isinstance(entry, dict):
+                        continue
+                    if entry.get("state") != "refreshed_this_session":
+                        continue
+                    found[name] = {
+                        "run_id": entry.get("run_id"),
+                        "mode": entry.get("mode"),
+                        "at": entry.get("at") or row[1],
+                    }
+                if wanted and wanted <= set(found):
+                    break
+        return found
 
     def get_session_report(self, mode: str, date: str | None = None) -> dict | None:
         """One stored morning/midday/close report for `mode` — `date`, or

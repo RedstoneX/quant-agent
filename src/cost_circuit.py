@@ -146,6 +146,12 @@ _SESSION_QUOTA_TRIGGERS = frozenset({
 # failed calls a day may forgive.
 _SELF_CLEARING_HARD_TRIGGERS = frozenset({
     "failed_call_unknown_cost",
+    # Same latch, named honestly when the cause is known (see
+    # OUT_OF_CREDIT_TRIGGER_CODE): a payment refusal is still a failed call
+    # of unproven cost, so it self-clears on exactly the same terms. Renaming
+    # the cause must not quietly turn a self-clearing latch into a permanent
+    # one.
+    "provider_out_of_credit",
     "legacy_unknown_cost",
 })
 
@@ -358,6 +364,67 @@ def _is_mid_stream_failure(error: BaseException) -> bool:
         type(node).__name__ in _MID_STREAM_EXC_NAMES
         for node in _cause_chain(error)
     )
+
+
+# === PAYMENT REFUSAL (2026-10-01) ========================================
+# Measured against the production database on 2026-10-01: the paid research
+# account ran out of credit and the provider answered HTTP 402 with "This
+# request requires more credits, or fewer max_tokens. You requested up to
+# 16000 tokens, but can only afford 843." The affordable figure fell across
+# successive calls (13290, 7311, 843, 811, 775) -- an emptying balance, not a
+# transient refusal. A refusal of this shape cannot succeed on a retry: only
+# a human topping the account up changes it.
+#
+# The test is the STATUS CODE, never the English. A provider can reword its
+# message at any time, and the desk has already been burned once by matching
+# on text (the case-sensitive health matching that raised a daily false
+# alarm). Text may only ever REFINE a status-code match, never stand in for
+# one.
+#
+# NOT included: a 429 that says credits could not be verified. That one is
+# genuinely transient -- the provider is saying it could not check the
+# balance right now, not that the balance is gone -- so it keeps its retries.
+_PAYMENT_REFUSAL_STATUS_CODES = frozenset({402})
+
+#: Plain-English cause, reused by the circuit's trigger detail and by every
+#: owner-facing message, so the desk never reports "cost unknown" for a
+#: failure whose cause it actually knows.
+OUT_OF_CREDIT_DETAIL = (
+    "the paid research account is out of credit: the provider refused the "
+    "call outright, so nothing was spent on it. Top the account up to turn "
+    "paid analysis back on"
+)
+
+#: `trigger_code` written instead of `failed_call_unknown_cost` when the
+#: cause is a payment refusal.
+OUT_OF_CREDIT_TRIGGER_CODE = "provider_out_of_credit"
+
+
+def is_payment_refusal(error: BaseException | None) -> bool:
+    """True when the provider refused the call for lack of credit.
+
+    Keyed on the HTTP status code carried by the exception (or by anything
+    in its cause chain), so a reworded provider message cannot change the
+    answer.
+    """
+    if error is None:
+        return False
+    for node in _cause_chain(error):
+        status = getattr(node, "status_code", None)
+        if (isinstance(status, int) and not isinstance(status, bool)
+                and status in _PAYMENT_REFUSAL_STATUS_CODES):
+            return True
+    return False
+
+
+def any_payment_refusal(
+    error: BaseException | None,
+    attempt_errors: "list[BaseException] | None" = None,
+) -> bool:
+    """True when the call failed, at any attempt, on a payment refusal."""
+    if is_payment_refusal(error):
+        return True
+    return any(is_payment_refusal(exc) for exc in (attempt_errors or []))
 
 
 def _is_known_zero_cost_failure(error: BaseException) -> bool:
@@ -3881,14 +3948,30 @@ class LLMCostCircuitBreaker:
                 ),
             )
             if ambiguous:
-                self._trip_locked(
-                    conn,
-                    code="failed_call_unknown_cost",
-                    detail=(
+                # Name the cause when the desk KNOWS it. A payment refusal
+                # is not an unbounded-cost mystery -- the provider refused
+                # before generating anything -- and reporting it as one sent
+                # the owner looking for a broken desk on 2026-10-01. The call
+                # is still booked as unproven cost (the circuit is not
+                # weakened); only the explanation changes.
+                out_of_credit = any_payment_refusal(error, attempt_errors)
+                if out_of_credit:
+                    trip_code = OUT_OF_CREDIT_TRIGGER_CODE
+                    trip_detail = (
+                        f"paid analysis is off for {reservation.agent_name} because "
+                        f"{OUT_OF_CREDIT_DETAIL}."
+                    )
+                else:
+                    trip_code = "failed_call_unknown_cost"
+                    trip_detail = (
                         f"{reservation.agent_name} failed after {attempts} provider "
                         "attempt(s) with no provable-zero-cost telemetry; the real "
                         "cost is unknown and cannot be bounded safely"
-                    ),
+                    )
+                self._trip_locked(
+                    conn,
+                    code=trip_code,
+                    detail=trip_detail,
                     run_id=reservation.run_id,
                     mode=reservation.mode,
                     agent_name=reservation.agent_name,

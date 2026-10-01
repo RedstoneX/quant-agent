@@ -279,7 +279,15 @@ _BRIDGE_FUNCTION_NAMES = {
 
 
 def _derive_known_pipeline_statuses() -> set[str]:
-    pipeline_tree = ast.parse((REPO_ROOT / "src" / "pipeline.py").read_text())
+    # The split moved run_intra_check into src/pipeline_intraday.py; scan both.
+    pipeline_tree = ast.Module(
+        body=[
+            stmt
+            for mod in ("pipeline.py", "pipeline_intraday.py")
+            for stmt in ast.parse((REPO_ROOT / "src" / mod).read_text()).body
+        ],
+        type_ignores=[],
+    )
     stages_tree = ast.parse((REPO_ROOT / "src" / "pipeline_stages.py").read_text())
     pm_tree = ast.parse((REPO_ROOT / "src" / "agents" / "portfolio_manager.py").read_text())
 

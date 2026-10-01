@@ -7284,12 +7284,12 @@ numbers:
       MARKET order (src.pipeline.TradingPipeline._live_delever_price, branch
       delever-live-fill). Recorded so this dead cushion cannot come back into
       use without a reviewer seeing it.
-  - id: src.pipeline.TradingPipeline._another_session_recently_active(within_minutes)
+  - id: src.pipeline_intraday.IntradayMixin._another_session_recently_active(within_minutes)
     value: 15
     status: not-trade-governing
-    site: src/pipeline.py
+    site: src/pipeline_intraday.py
     note: >-
-      No caller in src/, and the docstring (src/pipeline.py::TradingPipeline._another_session_recently_active)
+      No caller in src/, and the docstring (src/pipeline_intraday.py::IntradayMixin._another_session_recently_active)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(lookback_days)
@@ -7872,43 +7872,43 @@ numbers:
         the recorded spreads show the point beyond which dropped names stop differing from admitted names in
         subsequent realised RANGE -- a property of the instrument. Explicitly never the spread that would have
         produced the best trades: that is fitting, and it is barred
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
+  - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[0]
     value: 1.25
     status: derived
-    site: src/pipeline.py
+    site: src/pipeline_exits.py
     derived_from: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
     base_value: 1.25
     note: >-
       Midday noise-band clamp: a new stop inside 1.25 x ATR14 of price is
-      refused (src/pipeline.py::TradingPipeline._midday_execute_llm_actions). The same 1.25 as the trailing-
+      refused (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). The same 1.25 as the trailing-
       stop noise band, which carries the open question.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]
+  - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]
     value: 1.005
     status: derived
-    site: src/pipeline.py
+    site: src/pipeline_exits.py
     derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the midday COVER limit, price x 1.005
-      (src/pipeline.py::TradingPipeline._midday_execute_llm_actions). Its comment ties it to the ExecutionStage
+      (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Its comment ties it to the ExecutionStage
       COVER loop. One number, mirrored.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]
+  - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]
     value: 0.995
     status: derived
-    site: src/pipeline.py
+    site: src/pipeline_exits.py
     derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
-      (src/pipeline.py::TradingPipeline._midday_execute_llm_actions). Same number as the ExecutionStage SELL offset.
-  - id: src.pipeline.TradingPipeline._trail_tightened_recently(calendar_days)
+      (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Same number as the ExecutionStage SELL offset.
+  - id: src.pipeline_exits.ExitEngineMixin._trail_tightened_recently(calendar_days)
     value: 4
     status: arbitrary
-    site: src/pipeline.py
+    site: src/pipeline_exits.py
     note: >-
       Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
-      the last 4 calendar days (src/pipeline.py::TradingPipeline._trail_tightened_recently, caller
-      src/pipeline.py::TradingPipeline._midday_execute_llm_actions passes nothing). The docstring's reason is a
+      the last 4 calendar days (src/pipeline_exits.py::ExitEngineMixin._trail_tightened_recently, caller
+      src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions passes nothing). The docstring's reason is a
       forensic observation, not a measured cooldown length. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive the 4 calendar days from the ratified swing mandate. FAILED -- the mandate names no number, by design. Attempt (2): derive it from the reviewer's >=1.02x min-bump rule, i.e. the sessions needed for 2% of range to accumulate. FAILED -- that rule bounds the SIZE of one tighten and says nothing about spacing, and the 1.02 is itself unsourced. The measurement below is the route. Value unchanged.
     open_question: >-
       Over how many sessions does a tightened trail on this desk's names stay
