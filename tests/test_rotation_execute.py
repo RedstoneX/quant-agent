@@ -1120,3 +1120,153 @@ def test_the_sale_reason_names_the_limit_that_actually_bound():
     assert "under the 0.50% minimum" not in reason
     assert "deployable" not in reason
     assert "stopped earning its place" in reason
+
+
+# ---------------------------------------------------------------------------
+# OWNER RULING 2026-10-01 — a below-bar holding with NO replacement candidate.
+# `evaluate_rotation` now reaches the categorical tier BEFORE the "nothing
+# better was found" refusal, so `new_symbol` is None on exactly this case.
+# Every reader on the execution path has to tolerate it; the first one used
+# to crash with AttributeError before the sale was even proposed.
+# ---------------------------------------------------------------------------
+
+def _opportunity_no_replacement() -> RotationOpportunity:
+    return RotationOpportunity(
+        new_symbol=None, new_score=None, held_symbol="OLD", held_score=None,
+        tier="ineligible_hold", reasons=HELD_REASONS,
+    )
+
+
+def test_below_bar_holding_with_no_replacement_candidate_is_sold(tmp_path):
+    pipeline, db, probe = _pipeline(
+        tmp_path, precheck=_precheck(_opportunity_no_replacement()),
+    )
+    ctx = _ctx()
+    decision = _decision()
+    _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
+
+    assert [t.symbol for t in decision.targets] == ["OLD"]
+    close = decision.targets[0]
+    assert close.is_close and close.risk_allocation_pct == 0.0
+    assert ctx.rotation["held_symbol"] == "OLD"
+    assert ctx.rotation["new_symbol"] is None
+    assert ctx.rotation["new_score"] is None
+
+    (symbol, payload), = _rotation_events(db)
+    assert symbol == "OLD"
+    assert payload["outcome"] == "proposed"
+    assert payload["new_symbol"] is None
+
+
+def test_the_owner_alert_for_a_replacementless_cull_is_true_and_renders(
+    tmp_path, monkeypatch,
+):
+    """The sale must reach the owner WITH its real reason, and must not
+    claim it freed room for a replacement that does not exist."""
+    from src import notifier as _notifier
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(
+        tmp_path, precheck=_precheck(_opportunity_no_replacement()),
+    )
+    ctx = _ctx()
+    decision = _decision()
+    _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
+
+    sent: list = []
+    monkeypatch.setattr(
+        _notifier, "send_owner_alert",
+        lambda text, symbols=None: sent.append((text, symbols)) or True,
+    )
+    _ps._alert_rotation_executed(
+        rotation=ctx.rotation, qty=10.0, limit_price=95.0, order_id="o-1",
+    )
+    (text, symbols), = sent
+    assert symbols == ["OLD"]
+    assert "None" not in text
+    assert "free room for" not in text
+    assert "NO replacement" in text
+    assert HELD_REASONS[0] in text
+
+
+def test_no_replacement_leg_is_recorded_and_never_paged_as_a_missing_buy(
+    tmp_path, monkeypatch,
+):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(
+        tmp_path, precheck=_precheck(_opportunity_no_replacement()),
+    )
+    ctx = _ctx()
+    _apply_rotation_execution(pipeline, ctx, _decision(), [_pos()], HISTORY)
+    ctx.rotation["sell_order_id"] = "o-1"
+
+    paged: list = []
+    monkeypatch.setattr(
+        _ps, "_alert_rotation_buy_leg_missing",
+        lambda **kw: paged.append(kw),
+    )
+    _ps._record_rotation_buy_leg_outcome(pipeline, ctx, [])
+    assert paged == []
+    outcomes = [p["outcome"] for _, p in _rotation_events(db)]
+    assert "no_replacement_leg" in outcomes
+    assert "buy_not_submitted" not in outcomes
+
+
+# ---------------------------------------------------------------------------
+# BUY-side anti-churn: the mirror of `held_symbol_bought_today`.
+# ---------------------------------------------------------------------------
+
+def test_a_name_sold_today_below_the_bar_is_not_bought_back_the_same_day(
+    tmp_path,
+):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+    _ps._record_pipeline_event(
+        pipeline, ctx, "OLD", "rotation", "sell_submitted", "because",
+    )
+    buys = [
+        TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="back in"),
+        TargetPosition(symbol="NEW", risk_allocation_pct=2.0, thesis="fine"),
+    ]
+    kept = _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys)
+    assert [d.symbol for d in kept] == ["NEW"]
+    assert [s["reason"] for s in ctx.execution_skips] == [
+        "sold_today_below_entry_bar",
+    ]
+
+
+def test_the_rebuy_guard_fails_open_when_it_cannot_read_its_own_record(
+    tmp_path,
+):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+
+    def _boom():
+        raise RuntimeError("db gone")
+
+    pipeline.db = SimpleNamespace(get_rotation_sell_symbols_today=_boom)
+    buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
+    assert _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys) == buys
+
+
+def test_a_rotation_sale_from_another_day_does_not_block_the_buy(tmp_path):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+    _ps._record_pipeline_event(
+        pipeline, ctx, "OLD", "rotation", "sell_submitted", "because",
+    )
+    db.conn.execute(
+        "UPDATE specialist_evidence SET timestamp = '2020-01-02T15:00:00+00:00'",
+    )
+    db.conn.commit()
+    buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
+    assert [d.symbol
+            for d in _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys)
+            ] == ["OLD"]

@@ -432,7 +432,12 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
         return  # nothing was surfaced this session — nothing to act on
     opportunity = precheck.opportunity
     held_symbol = opportunity.held_symbol.strip().upper()
-    new_symbol = opportunity.new_symbol.strip().upper()
+    # OWNER RULING 2026-10-01. The categorical tier surfaces a below-bar
+    # holding with NO replacement candidate, so `new_symbol` is None on
+    # exactly the case that ruling created. Normalised to "" here: the
+    # only reader below is the RANKED-MARGIN buy-leg precondition, which
+    # matches it against target symbols, and "" matches none of them.
+    new_symbol = (opportunity.new_symbol or "").strip().upper()
 
     if opportunity.tier == "ranked_margin":
         # Board item 39. Executable only behind its own second switch, and
@@ -1382,8 +1387,12 @@ def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
 
     Scope: the RANKED-MARGIN tier only. The categorical tier
     (`ineligible_hold`, already live) sells a holding that fails the desk's
-    own entry rules today and whose structural protection has already
-    broken — a sale this desk's doctrine independently supports, so it
+    own entry rules today — on that ground alone. OWNER RULING 2026-10-01
+    removed the broken-protection conjunct: a name may now be cut with its
+    structural protection still intact, because a position that would not
+    be bought today has to earn its place regardless of where its stop is.
+    The protection state is still measured, still carried in the sale's
+    reason and still said to the owner; it no longer vetoes. That sale
     stands on its own and nothing here touches it.
     """
     rotation = getattr(ctx, "rotation", None)
@@ -1612,32 +1621,101 @@ def _alert_rotation_executed(*, rotation: dict, qty: float, limit_price: float,
     """
     try:
         held = rotation["held_symbol"]
-        new = rotation["new_symbol"]
+        new = rotation.get("new_symbol") or None
         rules = "; ".join(rotation.get("held_reasons") or []) or "entry rules"
+        protection = str(rotation.get("protection_basis") or "not measured")
+        room_for = f" to free room for {new}" if new else ""
         body = (
             "POSITION CLOSED AUTOMATICALLY — OPPORTUNITY ROTATION\n"
             f"{held}: the desk submitted a SELL of {qty:g} share(s) at limit "
-            f"${limit_price:,.2f} (broker order {order_id}) to free room for "
-            f"{new}.\n"
-            f"Why {held}: it fails the desk's own entry rules today ({rules}), "
-            f"and its structural protection had already broken "
-            f"({rotation.get('protection_basis')}).\n"
-            f"Why {new}: best-ranked eligible new candidate (score "
-            f"{rotation.get('new_score', 0.0):.2f}) that the Portfolio Manager "
-            "asked to buy, with "
-            f"{rotation.get('headroom_pct', 0.0):.2f}% risk headroom left "
-            f"against the {rotation.get('ceiling_pct', 0.0):.2f}% ceiling.\n"
+            f"${limit_price:,.2f} (broker order {order_id}){room_for}.\n"
+            f"Why {held}: it fails the desk's own entry rules today ({rules}) "
+            "— it would not be bought now, so it has not earned its place. "
+            f"Its structural protection reads: {protection}.\n"
+        )
+        if new:
+            body += (
+                f"Why {new}: best-ranked eligible new candidate (score "
+                f"{rotation.get('new_score') or 0.0:.2f}) that the Portfolio "
+                "Manager asked to buy, with "
+                f"{rotation.get('headroom_pct', 0.0):.2f}% risk headroom left "
+                f"against the {rotation.get('ceiling_pct', 0.0):.2f}% "
+                "ceiling.\n"
+            )
+        else:
+            body += (
+                "There is NO replacement: nothing un-held ranked well enough "
+                "to buy this session. The cash stays in the book. This sale "
+                "is not funding anything — the position was closed purely "
+                "because it no longer clears the bar it was bought on "
+                "(owner ruling, 2026-10-01).\n"
+            )
+        body += (
             "This sale went through the normal Risk Manager review and the "
             "protected-sell discipline (stops cancelled write-ahead, restored "
-            f"if the sale does not fill). The BUY of {new} follows in this "
-            "session only if the sale fills; a second alert follows if it "
-            "does not happen."
+            "if the sale does not fill)."
         )
+        if new:
+            body += (
+                f" The BUY of {new} follows in this session only if the sale "
+                "fills; a second alert follows if it does not happen."
+            )
         from src import notifier as _notifier
 
-        _notifier.send_owner_alert(body, symbols=[str(held), str(new)])
+        _notifier.send_owner_alert(
+            body, symbols=[str(held)] + ([str(new)] if new else []),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error("rotation owner alert failed: %s", exc)
+
+
+def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
+    """The BUY-side mirror of the `held_symbol_bought_today` anti-churn rule.
+
+    The SELL side already caps oscillation at one round trip per name per
+    day: `_apply_rotation_execution` refuses to rotate OUT of a name that
+    was bought today. Nothing stopped the other half — sell at 10:00 on an
+    entry-bar failure and buy the same name back at 11:00 — which
+    crystallises the loss and pays two spreads for a position the desk has
+    already said, this same day, it would not open.
+
+    NO new number. The window is exactly the EXCHANGE day the sale happened
+    on, read off the desk's own durable `rotation` / `sell_submitted`
+    record — the identical day boundary the SELL-side guard uses. There is
+    no cooldown and no holding period here, and none is implied: tomorrow
+    the name is an ordinary candidate again.
+
+    Fails OPEN. A bookkeeping read that cannot answer must never be the
+    thing that stops a trade; the buy then proceeds through its ordinary
+    gates.
+    """
+    if not buy_decisions:
+        return buy_decisions
+    try:
+        sold_today = pipeline.db.get_rotation_sell_symbols_today()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "rotation re-buy guard could not read its own record (%s) — "
+            "buys proceed through their ordinary gates", exc,
+        )
+        return buy_decisions
+    if not sold_today:
+        return buy_decisions
+    kept: list = []
+    for d in buy_decisions:
+        sym = str(getattr(d, "symbol", "") or "").strip().upper()
+        if sym and sym in sold_today:
+            _record_execution_skip(
+                pipeline, ctx, d.symbol, "sold_today_below_entry_bar",
+                "the desk closed this name earlier today because it no "
+                "longer cleared the desk's own entry bar; buying it back in "
+                "the same session would crystallise that loss and pay two "
+                "spreads for a position the desk has already declined to "
+                "open today",
+            )
+            continue
+        kept.append(d)
+    return kept
 
 
 def _drop_rotation_buy_if_room_not_freed(pipeline, ctx, buy_decisions: list,
@@ -1695,6 +1773,18 @@ def _record_rotation_buy_leg_outcome(pipeline, ctx, orders: list) -> None:
     if not isinstance(rotation, dict) or not rotation.get("sell_order_id"):
         return
     new_symbol = rotation.get("new_symbol")
+    if not new_symbol:
+        # OWNER RULING 2026-10-01: a categorical cull with no replacement.
+        # There is no buy leg to miss, so paging "SOLD BUT THE REPLACEMENT
+        # WAS NOT BOUGHT" would be a false alarm about a trade that was
+        # never planned. Recorded, not paged.
+        _record_pipeline_event(
+            pipeline, ctx, rotation.get("held_symbol"), "rotation",
+            "no_replacement_leg",
+            "the holding was closed on its own merits; nothing un-held "
+            "ranked well enough to buy, so there was no replacement leg",
+        )
+        return
     buy_submitted = any(
         str(o.get("symbol") or "").upper() == new_symbol
         and str(o.get("action") or "").upper() in ("BUY", "SHORT")
@@ -1748,7 +1838,9 @@ def _alert_rotation_buy_leg_missing(*, rotation: dict, detail: str) -> None:
         )
         from src import notifier as _notifier
 
-        _notifier.send_owner_alert(body, symbols=[str(held), str(new)])
+        _notifier.send_owner_alert(
+            body, symbols=[str(held)] + ([str(new)] if new else []),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error("rotation buy-leg owner alert failed: %s", exc)
 
@@ -9100,6 +9192,14 @@ class ExecutionStage:
         # uses, so the funnel and the evening review see it.
         buy_decisions = _drop_rotation_buy_if_room_not_freed(
             pipeline, ctx, buy_decisions, sell_status_by_id,
+        )
+
+        # Anti-churn, the BUY-side mirror of the SELL-side
+        # `held_symbol_bought_today` guard: a name this desk closed earlier
+        # TODAY for failing its own entry bar is not bought back in the
+        # same session. No new number — same exchange-day window.
+        buy_decisions = _drop_buys_sold_today_below_bar(
+            pipeline, ctx, buy_decisions,
         )
 
         # Run the cheap deterministic entry-viability checks BEFORE selling
