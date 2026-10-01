@@ -309,6 +309,31 @@
         ]
       }
     },
+    "src/pipeline_sizing.py": {
+      "module_functions": [
+        "_entry_deployment_budget",
+        "_execution_payoff_skip_reason",
+        "_fmt_shares",
+        "_fractional_sizing_allowed",
+        "_min_order_usd",
+        "_qty_by_risk_budget",
+        "_risk_budget_pct",
+        "_single_name_execution_cap",
+        "_size_shares"
+      ],
+      "classes": {}
+    },
+    "src/pipeline_earnings_quality.py": {
+      "module_functions": [
+        "_classify_earnings_status",
+        "_earnings_analysis_has_real_figures",
+        "_earnings_data_quality_flags_problem",
+        "_earnings_field_disclosed",
+        "_earnings_xbrl_mismatch_fields",
+        "_parse_reported_figure"
+      ],
+      "classes": {}
+    },
     "src/pipeline_stages.py": {
       "module_functions": [
         "_account_for_pm_candidates",
@@ -324,22 +349,13 @@
         "_apply_sector_unresolved_alert",
         "_book_risk_inputs",
         "_check_levels_coverage",
-        "_classify_earnings_status",
         "_collect_seat_nominations",
         "_delete_repeg_wal",
         "_drop_rotation_buy_if_room_not_freed",
         "_dropped_since_proposal",
-        "_earnings_analysis_has_real_figures",
-        "_earnings_data_quality_flags_problem",
-        "_earnings_field_disclosed",
-        "_earnings_xbrl_mismatch_fields",
         "_encode_entry_submit_window",
-        "_entry_deployment_budget",
         "_entry_slippage_bps",
-        "_execution_payoff_skip_reason",
         "_fill_stream_enabled",
-        "_fmt_shares",
-        "_fractional_sizing_allowed",
         "_isolate_empty_soft_exit_entries",
         "_known_entry_submit_budget_s",
         "_link_nominations_to_decision",
@@ -347,9 +363,7 @@
         "_live_stops_from_heat",
         "_macro_analysis_as_dict",
         "_macro_regime",
-        "_min_order_usd",
         "_parse_loss_advisories",
-        "_parse_reported_figure",
         "_pending_cover_symbols",
         "_persist_dropped_reasons",
         "_persist_evidence",
@@ -359,7 +373,6 @@
         "_projected_post_sale_book",
         "_projected_post_sale_cash",
         "_projected_sale_qty",
-        "_qty_by_risk_budget",
         "_reconcile_parse_loss",
         "_record_accounted_candidate",
         "_record_constructor_drops",
@@ -380,7 +393,6 @@
         "_repeg_entry_order",
         "_repeg_settings",
         "_repoint_trade",
-        "_risk_budget_pct",
         "_risk_edit_snapshot",
         "_risk_event_for",
         "_rotation_buy_leg_projected_refusal",
@@ -393,8 +405,6 @@
         "_scaled_position",
         "_session_candidate_ranking",
         "_session_gross_ceiling",
-        "_single_name_execution_cap",
-        "_size_shares",
         "_soft_exit_heal_detail",
         "_start_trade_updates_early",
         "_stash_macro_parse_failure",

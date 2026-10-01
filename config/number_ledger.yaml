@@ -3161,7 +3161,7 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.pipeline_stages._DEFAULT_RISK_BUDGET_PCT
+  - id: src.pipeline_sizing._DEFAULT_RISK_BUDGET_PCT
     value: 5
     status: derived
     site: src/pipeline_stages.py
@@ -3175,7 +3175,7 @@ numbers:
       invented one. Recorded as derived so it cannot drift from the
       constructor's own value, which is the exact failure it was introduced to
       fix.
-  - id: src.pipeline_stages._EARNINGS_XBRL_DOLLAR_FLOOR
+  - id: src.pipeline_earnings_quality._EARNINGS_XBRL_DOLLAR_FLOOR
     value: 10000000
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3184,7 +3184,7 @@ numbers:
       exploding on a near-zero true value (src/pipeline_stages.py:2030-2040).
       Same boundary as the tolerance above: a data-quality record, not a trade
       decision.
-  - id: src.pipeline_stages._EARNINGS_XBRL_EPS_FLOOR
+  - id: src.pipeline_earnings_quality._EARNINGS_XBRL_EPS_FLOOR
     value: 0.02
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3192,7 +3192,7 @@ numbers:
       The same floor for EPS - one cent above ordinary EPS reporting precision
       (src/pipeline_stages.py:2041). Same boundary: it grades a stored
       analysis, it does not gate a trade.
-  - id: src.pipeline_stages._EARNINGS_XBRL_TOLERANCE_PCT
+  - id: src.pipeline_earnings_quality._EARNINGS_XBRL_TOLERANCE_PCT
     value: 0.05
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3204,7 +3204,7 @@ numbers:
       exit path reads the result. The 5% itself mirrors the accounting
       materiality rule of thumb discussed in SEC Staff Accounting Bulletin No.
       99.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['b']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['b']
     value: 1000000000
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3213,7 +3213,7 @@ numbers:
       analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['billion']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['billion']
     value: 1000000000
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3222,7 +3222,7 @@ numbers:
       analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['bn']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['bn']
     value: 1000000000
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3231,7 +3231,7 @@ numbers:
       analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['k']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['k']
     value: 1000
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3240,7 +3240,7 @@ numbers:
       analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['m']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['m']
     value: 1000000
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3249,7 +3249,7 @@ numbers:
       analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['million']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['million']
     value: 1000000
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3258,7 +3258,7 @@ numbers:
       analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['mm']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['mm']
     value: 1000000
     status: not-trade-governing
     site: src/pipeline_stages.py
@@ -3267,7 +3267,7 @@ numbers:
       analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['thousand']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['thousand']
     value: 1000
     status: not-trade-governing
     site: src/pipeline_stages.py
