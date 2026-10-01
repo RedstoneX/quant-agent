@@ -1386,6 +1386,14 @@ _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
 _FRACTIONAL_QTY_EPSILON = 1e-9
 
 
+# Sentinel returned by `_amend_resting_stop_price` to mean "the in-place
+# amend was NOT attempted (or its outcome is unknown), so the caller must run
+# the legacy cancel+resubmit path". It is deliberately distinct from `None`,
+# which means "the broker REFUSED the amend, the original stop is still
+# resting, and cancelling it now would open a naked window for nothing".
+_AMEND_NOT_ATTEMPTED = object()
+
+
 def _is_held_for_orders_error(exc: BaseException) -> bool:
     """True when the broker refused because shares are reserved by an open order.
 
@@ -6228,6 +6236,139 @@ class AlpacaBroker:
         return {"id": f"shift-{symbol}", "status": "accepted", "symbol": symbol,
                 "shifted": restored, "total": len(specs)}
 
+    def _amend_resting_stop_price(
+        self,
+        *,
+        symbol: str,
+        live_orders: list,
+        stop_specs: list[dict],
+        new_stop_price: float,
+        position_qty: float,
+    ):
+        """Amend ONE resting protective stop's price in place.
+
+        Returns a {id, status, symbol} dict on success, `None` when the broker
+        REFUSED the amend (the original stop is still resting, protection is
+        intact, and the caller must NOT cancel it), or `_AMEND_NOT_ATTEMPTED`
+        when this path does not apply and the caller should run the legacy
+        cancel+resubmit fallback.
+
+        Measured against the broker on rehearsal account <redacted-rehearsal-account> on
+        2026-09-30: `replace_order_by_id(id, ReplaceOrderRequest(stop_price=X))`
+        moves a resting protective stop atomically (old order -> REPLACED, new
+        id issued, exactly one open stop on the symbol at every instant), and a
+        refused amend leaves the original `new` at its old price. Only the
+        shapes that measurement covered take this path; everything else falls
+        back.
+        """
+        if len(stop_specs) != 1 or len(live_orders) != 1:
+            return _AMEND_NOT_ATTEMPTED
+        order = live_orders[0]
+        spec = stop_specs[0]
+        # A bracket/OTO/OCO leg is the one shape the original comment was right
+        # about and the measurement did NOT cover — leave it to the fallback.
+        order_class = getattr(order, "order_class", None)
+        order_class = str(getattr(order_class, "value", order_class) or "").lower()
+        # This allowlist is belt-and-braces, not the real guard: the classes
+        # named here are simply the ones with no parent and no legs, and
+        # `parent_id` below is what actually establishes that. Alpaca's own
+        # order_class values are not cited here because nothing load-bearing
+        # rests on the set being complete — an unrecognised class falls to the
+        # measured-safe fallback, which is the correct outcome either way.
+        if order_class not in ("", "simple") or getattr(order, "legs", None):
+            return _AMEND_NOT_ATTEMPTED
+        # `order_class` and `legs` sit on the PARENT on Alpaca, so a child leg
+        # can present as class "" with no legs and slip past the test above.
+        # `parent_id` is the field that is populated ON the child. Its absence
+        # is what the guard above was claiming to test and did not.
+        if getattr(order, "parent_id", None):
+            return _AMEND_NOT_ATTEMPTED
+        # A stop-LIMIT carries a limit price too, and ReplaceOrderRequest here
+        # amends stop_price ONLY -- the limit would keep its old level and the
+        # buffer between them would widen on every trail. `_submit_stop_limit_order`
+        # produces exactly this shape. Leave it to the fallback, which rebuilds
+        # both legs together.
+        otype = getattr(order, "order_type", None) or getattr(order, "type", None)
+        otype = str(getattr(otype, "value", otype) or "").lower()
+        if otype != "stop":
+            return _AMEND_NOT_ATTEMPTED
+        # A price-only amend cannot fix a coverage gap: if the resting stop
+        # does not already cover exactly the position, the fallback (which
+        # resubmits at the position's qty) is the path that repairs it.
+        # Exact float equality on a fractional quantity drops to the fallback
+        # on a representation difference alone, silently and often. Compare at
+        # the broker's own fractional resolution (1e-9 of a share is far below
+        # any tradeable size) and SAY why when it does not match, so a
+        # persistently-skipped atomic path is visible instead of invisible.
+        try:
+            spec_qty = abs(float(spec["qty"]))
+        except (TypeError, ValueError):
+            return _AMEND_NOT_ATTEMPTED
+        if abs(spec_qty - position_qty) > 1e-9:
+            logger.info(
+                "replace_stop_loss: %s's resting stop covers %s of %s held "
+                "shares, so the in-place amend is skipped and the "
+                "cancel+resubmit path runs to repair coverage.",
+                symbol, spec_qty, position_qty,
+            )
+            return _AMEND_NOT_ATTEMPTED
+        price = _quantize_price(new_stop_price)
+        if price is None or price <= 0:
+            return _AMEND_NOT_ATTEMPTED
+
+        try:
+            replaced = self.client.replace_order_by_id(
+                spec["id"], ReplaceOrderRequest(stop_price=price),
+            )
+        except Exception as exc:  # noqa: BLE001
+            # MEASURED 2026-09-30 (rehearsal <redacted-rehearsal-account>): a genuine refusal
+            # is APIError with status_code 422. `status_code is not None` also
+            # catches 429/500/502/504 -- a transport-layer failure that may have
+            # been applied at the broker BEFORE the answer was lost. Treating
+            # that as "refused" would leave the desk recording the OLD stop
+            # level while the broker holds the NEW one. Use the file's existing
+            # terminal-rejection classifier (400/404/422) instead.
+            if _is_terminal_broker_rejection(exc):
+                # The broker ANSWERED and said no. The original order is still
+                # resting at its old price (measured), so protection is intact
+                # — falling back to cancel+resubmit here would re-open exactly
+                # the naked window this path exists to close.
+                logger.warning(
+                    "replace_stop_loss: broker REFUSED the in-place amend of "
+                    "%s stop %s to $%.4f (%s) — the ORIGINAL stop is still "
+                    "resting at $%.4f, so protection is intact and nothing is "
+                    "cancelled", symbol, spec["id"], price, exc,
+                    spec["stop_price"],
+                )
+                return None
+            # No broker status on the exception: the call may never have
+            # reached Alpaca, so the outcome is UNKNOWN. The fallback re-reads
+            # the book and carries its own rollback, which is the safe way to
+            # resolve an unknown.
+            logger.warning(
+                "replace_stop_loss: in-place amend of %s stop %s to $%.4f "
+                "failed with no broker status (%s) — outcome unknown, falling "
+                "back to cancel+resubmit", symbol, spec["id"], price, exc,
+            )
+            return _AMEND_NOT_ATTEMPTED
+
+        new_id = str(getattr(replaced, "id", "") or "")
+        if not new_id:
+            logger.error(
+                "replace_stop_loss: broker accepted the in-place amend of %s "
+                "stop %s but returned no id — NOT cancelling anything; re-read "
+                "the book before trailing again", symbol, spec["id"],
+            )
+            return None
+        status_attr = getattr(replaced, "status", None)
+        status = str(getattr(status_attr, "value", status_attr) or "accepted").lower()
+        logger.info(
+            "Trailing stop AMENDED IN PLACE for %s: stop %s moved $%.4f -> "
+            "$%.4f, new id %s (no cancel, no unprotected window)",
+            symbol, spec["id"], spec["stop_price"], price, new_id,
+        )
+        return {"id": new_id, "status": status, "symbol": symbol}
+
     def replace_stop_loss(
         self,
         symbol: str,
@@ -6237,9 +6378,19 @@ class AlpacaBroker:
     ) -> dict | None:
         """Replace an existing protective stop with rollback so protection is preserved on failure.
 
-        Used by the midday trailing-stop logic. Alpaca's OTO stop-loss leg cannot be edited
-        in place, so we cancel + resubmit. Because that sequence is not atomic, this method
-        snapshots existing stops and best-effort restores them if the replacement submit fails.
+        Used by the midday trailing-stop logic. PREFERRED PATH: when exactly one
+        plain (non-bracket/OTO) protective stop covers the whole position, the stop's
+        price is amended ATOMICALLY via Alpaca's replace endpoint — measured against
+        the broker on rehearsal account <redacted-rehearsal-account> on 2026-09-30: the old order goes
+        to REPLACED, a new id is issued, and exactly ONE open stop covers the symbol at
+        every instant. A refused amend leaves the ORIGINAL order resting untouched.
+
+        FALLBACK PATH: the older cancel + resubmit sequence, kept for the shapes that
+        measurement did not cover (more than one resting stop, a bracket/OTO leg, a stop
+        whose qty does not match the position, or an amend whose outcome is unknown).
+        That sequence is not atomic — it is the origin of the naked-position window this
+        method now avoids — so it still snapshots existing stops and best-effort restores
+        them if the replacement submit fails.
         Returns {id, status, symbol} on successful replacement, else None.
 
         A short's protective stop is a BUY stop above the market, and
@@ -6273,8 +6424,9 @@ class AlpacaBroker:
         # that case (see the qty_side cross-check).
         side = "buy" if buy_orders else "sell"
 
+        live_orders = list(buy_orders or sell_orders)
         stop_specs: list[dict] = []
-        for order in (buy_orders or sell_orders):
+        for order in live_orders:
             spec = self._snapshot_stop_order(order)
             if spec is None:
                 logger.warning(
@@ -6288,11 +6440,17 @@ class AlpacaBroker:
         # — UP for a long, DOWN for a short — never the other way. If the
         # LLM hallucinates a stop on the wrong side (or the caller passes the
         # wrong value), accepting it would weaken existing protection. Ex-
-        # dividend adjustments intentionally lower a LONG's stop to absorb
-        # tomorrow's mechanical dividend gap, so that caller opts in via
-        # allow_lowering=True — ex-div's own position loop never reaches a
-        # short (see pipeline.py's `_handle_ex_dividends`), so this flag is
-        # not something a short's trail can accidentally trip.
+        # dividend adjustments would intentionally lower a LONG's stop to
+        # absorb tomorrow's mechanical dividend gap, and that is what the
+        # allow_lowering=True opt-in is for.
+        #
+        # VERIFIED 2026-09-30: NO caller anywhere in src/ passes
+        # allow_lowering=True — grep finds the name only in this file's own
+        # signature and comments. The ex-dividend caller this comment
+        # described does not exist, so every call today takes the
+        # never-loosen branch below. Stated rather than removed because the
+        # parameter is still reachable from tests and from a future caller,
+        # but do not cite the ex-div caller as if it were live.
         if stop_specs and not allow_lowering:
             if side == "buy":
                 tightest_existing = min(spec["stop_price"] for spec in stop_specs)
@@ -6332,6 +6490,41 @@ class AlpacaBroker:
             )
             return None
         side = qty_side  # authoritative now that a position confirms direction
+
+        # PREFERRED: amend the resting stop's price in place. The sentinel
+        # means "not attempted / outcome unknown" and drops through to the
+        # legacy cancel+resubmit below; None means the broker REFUSED and the
+        # original stop is still resting, so we must NOT cancel anything.
+        # Re-read the position IMMEDIATELY before the amend. The fallback
+        # already does this right before it submits, with a comment naming the
+        # sub-second window; the amend path was comparing against a qty read
+        # further up, so a fill landing in between could leave the stop
+        # covering more than is held. A read failure is not a reason to amend
+        # on stale data -- drop to the fallback, which repairs coverage.
+        try:
+            fresh = [
+                p for p in self.get_positions()
+                if getattr(p, "symbol", None) == symbol
+            ]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "replace_stop_loss: could not re-read %s's position before "
+                "the in-place amend (%s) — using the cancel+resubmit path, "
+                "which re-reads and repairs coverage itself.", symbol, exc,
+            )
+            fresh = []
+        amended = (
+            _AMEND_NOT_ATTEMPTED if not fresh
+            else self._amend_resting_stop_price(
+                symbol=symbol,
+                live_orders=live_orders,
+                stop_specs=stop_specs,
+                new_stop_price=new_stop_price,
+                position_qty=abs(float(fresh[0].qty)),
+            )
+        )
+        if amended is not _AMEND_NOT_ATTEMPTED:
+            return amended
 
         cancelled_specs: list[dict] = []
         for spec in stop_specs:
