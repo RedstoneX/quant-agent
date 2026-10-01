@@ -1126,6 +1126,75 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_trade_refusals_symbol_ts "
             "ON trade_refusals (symbol, timestamp)"
         )
+        # --- Item 75 evidence: the alignment-exit reading for EVERY open
+        # position EVERY session, INCLUDING the sessions it does not fire.
+        # RECORDING ONLY (2026-10-01).
+        #
+        # Board item 75 (automatic PARTIAL profit-taking — trimming part of
+        # a position rather than selling all of it) is blocked because
+        # nobody can say what fraction to trim without inventing it. Two
+        # derivations were attempted on 2026-10-01 and both failed; the
+        # reasons are in `docs/BOARD_NOTES.md` (item 75) and the item bars a
+        # third. The question that has to be answered first is empirical:
+        # do positions pass through a DURABLE intermediate band of
+        # weakening before their trend ends, or do they fall straight
+        # through? Today only a FIRING alignment exit leaves any trace, so
+        # the population that would answer it — positions that weakened and
+        # recovered — is invisible. These rows are that population.
+        #
+        # One row per open position per run. The reading is the one
+        # `src.risk.alignment_exit.check_alignment_exit` ALREADY computes;
+        # nothing here recomputes it a second way, and nothing here changes
+        # when the exit fires or what it does.
+        #
+        # WHAT THIS DATA MAY BE USED FOR: reading, once, whether a durable
+        # intermediate band of weakening exists at all.
+        #
+        # WHAT IT MAY NOT BE USED FOR: nothing may read it back into a
+        # sizing, stop or exit decision, and it may NEVER be swept for the
+        # trim fraction that would have performed best on these rows. That
+        # is fitting a number to this desk's own trading record, which
+        # doctrine bars outright ("no fitting, only reading") and which
+        # item 75's own last criterion bars by name. The bar holds however
+        # much data accumulates.
+        #
+        # NO CLASSIFICATION AND NO BAND EDGE IS STORED. "Weakening",
+        # "durable" and "recovered" each need a cutoff and a horizon nobody
+        # can source today, so only the RAW distance is kept, in the name's
+        # own ATR, alongside which of the exit's conditions were satisfied.
+        # A later reader states its own cutoff and applies it to these
+        # numbers, which were never rounded to one. Unknown is NULL — never
+        # a computed or assumed substitute, which is why an UNPARSEABLE
+        # read still writes a row (with `breach_atrs` NULL) rather than
+        # being dropped: "could not read the chart" and "the chart was
+        # intact" are different facts.
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alignment_exit_readings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                run_id TEXT,
+                session_date TEXT,
+                symbol TEXT NOT NULL,
+                is_short INTEGER,
+                status TEXT,
+                code TEXT,
+                breach_atrs REAL,
+                band_atrs REAL,
+                sessions_since_mark_lost INTEGER,
+                last_mark_price REAL,
+                last_mark_source TEXT,
+                marks_count INTEGER,
+                thesis_ma_period INTEGER,
+                thesis_ma_kind TEXT,
+                UNIQUE (run_id, symbol)
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_alignment_exit_readings_symbol_ts "
+            "ON alignment_exit_readings (symbol, session_date)"
+        )
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
@@ -2817,6 +2886,94 @@ class Database:
                 "  AND position_id IS NOT NULL ORDER BY id DESC LIMIT 1)",
                 (excursion, position.symbol, excursion, position.symbol),
             )
+
+    def record_alignment_exit_reading(
+        self, *, symbol: str, verdict, run_id: str | None = None,
+        is_short: bool | None = None, session_date: str | None = None,
+    ) -> bool:
+        """Record one open position's alignment-exit reading for this run.
+
+        ITEM 75 RECORDING, RECORDING ONLY, and it decides nothing. Read the
+        `alignment_exit_readings` note in `_migrate` for why it exists (a
+        trim fraction cannot be derived from a population the desk never
+        kept) and for the hard limit on its use: nothing may read it back
+        into a sizing, stop or exit decision, and it may NEVER be swept for
+        the trim fraction that would have performed best.
+
+        `verdict` is the `AlignmentExitCheck` the exit ALREADY produced for
+        this symbol this run — passed in rather than recomputed, so this
+        write cannot disagree with the decision the desk acted on. EVERY
+        open position is written EVERY run, fired or not: the whole point
+        is the sessions the exit does NOT fire, which leave no trace today.
+
+        Unknown stays NULL. A HOLD with nothing given up carries no
+        distance, and an UNPARSEABLE read carries no distance and no band;
+        neither is filled with a zero or an assumed value, because "price
+        is exactly at the mark", "the chart was intact" and "the chart
+        could not be read" are three different facts.
+
+        Idempotent per run per symbol (UNIQUE on `run_id, symbol`): a
+        second write for the same pair replaces the first rather than
+        double-counting a position.
+        """
+        sym = (symbol or "").strip().upper()
+        if not sym or verdict is None:
+            return False
+
+        def _num(x):
+            try:
+                v = float(x)
+            except (TypeError, ValueError):
+                return None
+            return v if math.isfinite(v) else None
+
+        last_mark = getattr(verdict, "last_mark", None)
+        marks = getattr(verdict, "marks", None) or ()
+        sessions = getattr(verdict, "sessions_since_mark_lost", None)
+        try:
+            sessions = int(sessions) if sessions is not None else None
+        except (TypeError, ValueError):
+            sessions = None
+        period = getattr(verdict, "thesis_ma_period", None)
+        try:
+            period = int(period) if period is not None else None
+        except (TypeError, ValueError):
+            period = None
+        try:
+            with self._lock:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO alignment_exit_readings ("
+                    "  timestamp, run_id, session_date, symbol, is_short,"
+                    "  status, code, breach_atrs, band_atrs,"
+                    "  sessions_since_mark_lost, last_mark_price,"
+                    "  last_mark_source, marks_count, thesis_ma_period,"
+                    "  thesis_ma_kind"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        self._sqlite_utc_timestamp(datetime.now(UTC)),
+                        run_id or None,
+                        session_date or str(et_today()),
+                        sym,
+                        None if is_short is None else int(bool(is_short)),
+                        getattr(verdict, "status", None),
+                        getattr(verdict, "code", None),
+                        _num(getattr(verdict, "breach_atrs", None)),
+                        _num(getattr(verdict, "band_atrs", None)),
+                        sessions,
+                        _num(getattr(last_mark, "price", None)),
+                        getattr(last_mark, "source", None),
+                        len(marks),
+                        period,
+                        (getattr(verdict, "thesis_ma_kind", "") or "") or None,
+                    ),
+                )
+                self.conn.commit()
+            return True
+        except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
+            logger.warning(
+                "alignment-exit reading for %s was not recorded (%s)", sym, e,
+            )
+            return False
 
     def record_overnight_gap(
         self, symbol: str, prev_close: float, open_price: float,

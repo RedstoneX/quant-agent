@@ -12671,10 +12671,6 @@ class TradingPipeline:
                 # (the executor's qty-sign gate rejects a SELL on one).
                 act = "COVER" if is_short else "SELL"
                 existing = best_by_symbol.get(symbol)
-                if existing is not None and priority.get(
-                    existing.get("action"), 99,
-                ) <= priority.get(act, 99):
-                    continue
                 facts = (position_facts or {}).get(symbol, {}) or {}
                 verdict = self._alignment_exit_cached(
                     symbol=symbol,
@@ -12686,6 +12682,30 @@ class TradingPipeline:
                     or facts.get("stop_loss"),
                     run_id=run_id,
                 )
+                # ITEM 75 RECORDING, and it changes no decision. The reading
+                # is written for EVERY open position EVERY run, including
+                # the ones this scan is about to skip and the ones that
+                # HOLD — the sessions the exit does not fire are the whole
+                # point, because they are the only population a partial
+                # (trim) could ever be read off and the desk keeps no trace
+                # of them today. The verdict is the one the scan itself
+                # uses, memoised, so nothing is computed a second way.
+                # Nothing reads these rows back into any decision; see
+                # `db.record_alignment_exit_reading`.
+                try:
+                    self.db.record_alignment_exit_reading(
+                        symbol=symbol, verdict=verdict, run_id=run_id,
+                        is_short=is_short,
+                    )
+                except Exception as e:  # noqa: BLE001 — a recording never blocks
+                    logger.warning(
+                        "alignment-exit reading for %s was not recorded (%s)",
+                        symbol, e,
+                    )
+                if existing is not None and priority.get(
+                    existing.get("action"), 99,
+                ) <= priority.get(act, 99):
+                    continue
                 if not verdict.exit_cleared:
                     continue
                 if self._position_opened_today(symbol):
