@@ -433,3 +433,114 @@ def test_earnings_batch_isolates_one_bad_filing():
                        side_effect=[RuntimeError("boom"), [{"symbol": "AAPL"}]]):
         out = agent.analyze_reports([bad, good])
     assert out == [{"symbol": "AAPL"}], "the good filing must survive the bad one"
+
+
+# ---------- item 201: the ex-dividend shift amends in place ----------
+
+def _plain_stop(oid, stop, qty=10):
+    """A resting stop-MARKET order of the shape the 2026-09-30 amend
+    measurement covered: simple, parentless, no legs, order_type 'stop'."""
+    o = MagicMock()
+    o.id = oid
+    o.order_type = "stop"
+    o.order_class = "simple"
+    o.legs = None
+    o.parent_id = None
+    o.side = "sell"
+    o.stop_price = stop
+    o.qty = qty
+    o.limit_price = None
+    return o
+
+
+@patch("src.execution.broker.TradingClient")
+def test_shift_stops_down_amends_in_place_and_never_cancels(mock_tc_cls):
+    """The protective stop must never be absent. A price-only shift is exactly
+    the operation the broker amends atomically, so this path must not cancel."""
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[
+        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
+    ])
+    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b._restore_stop_orders = MagicMock(return_value=(2, []))
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out is not None and out["shifted"] == 2 and out["mode"] == "amend"
+    b.cancel_snapshotted_stops.assert_not_called()
+    client.cancel_order_by_id.assert_not_called()
+    b._restore_stop_orders.assert_not_called()
+    amended = {c[0][0]: c[0][1].stop_price
+               for c in client.replace_order_by_id.call_args_list}
+    assert amended == {"s1": 339.49, "s2": 349.49}
+
+
+@patch("src.execution.broker.TradingClient")
+def test_shift_stops_down_keeps_the_fractional_hybrid_pair_as_two_stops(mock_tc_cls):
+    """The §11.1 hybrid pair is a durable GTC whole-share leg plus a DAY sliver
+    leg. Amending each leg's price in place cannot collapse them into one stop:
+    each keeps its own id and its own qty, and no leg is re-submitted."""
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[
+        _plain_stop("gtc-whole", 100.0, qty=12),
+        _plain_stop("day-sliver", 100.0, qty=0.3456),
+    ])
+    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b._restore_stop_orders = MagicMock(return_value=(2, []))
+
+    out = b.shift_stops_down("ZZZ", 0.25)
+
+    assert out["shifted"] == 2 and out["total"] == 2
+    ids = [c[0][0] for c in client.replace_order_by_id.call_args_list]
+    assert ids == ["gtc-whole", "day-sliver"]
+    client.submit_order.assert_not_called()
+    client.cancel_order_by_id.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_shift_stops_down_leaves_the_stop_resting_when_the_amend_is_refused(mock_tc_cls):
+    """A refused amend must NOT fall through to cancel+resubmit — that would
+    re-open the very unprotected window this path exists to close."""
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[
+        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
+    ])
+    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b._restore_stop_orders = MagicMock(return_value=(2, []))
+    client.replace_order_by_id.side_effect = [RuntimeError("422 refused"), MagicMock(id="s2b")]
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["shifted"] == 1 and out["total"] == 2
+    client.cancel_order_by_id.assert_not_called()
+    b.cancel_snapshotted_stops.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_shift_stops_down_falls_back_for_an_unmeasured_shape(mock_tc_cls):
+    """A stop-LIMIT leg carries a limit price the stop_price-only amend would
+    leave behind, so the whole symbol takes the legacy path — never half one
+    way and half the other."""
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[
+        _plain_stop("s1", 340.0, qty=10), _stop_order("s2", 350.0, qty=16),
+    ])
+    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b._restore_stop_orders = MagicMock(return_value=(2, []))
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["mode"] == "cancel_resubmit" and out["shifted"] == 2
+    client.replace_order_by_id.assert_not_called()
+    b.cancel_snapshotted_stops.assert_called_once()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_shift_stops_down_refuses_to_push_a_stop_to_zero(mock_tc_cls):
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 0.40, qty=10)])
+    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+
+    assert b.shift_stops_down("GE", 0.51) is None
+    client.replace_order_by_id.assert_not_called()
+    b.cancel_snapshotted_stops.assert_not_called()

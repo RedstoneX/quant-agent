@@ -6181,10 +6181,18 @@ class AlpacaBroker:
         wide lot's stop to the tightest lot's level. Shifting each spec
         keeps the per-lot geometry and just absorbs the mechanical gap.
 
-        Returns {"id", "status", "symbol", "shifted", "total"} (id of the
-        first re-placed stop) or None when nothing was shifted. Best-effort
-        with rollback: cancel failures roll back already-cancelled stops;
-        re-place failures restore the ORIGINAL spec for that stop.
+        Item 201: a shift moves PRICE only, so when every resting stop is the
+        measured-safe shape each one is AMENDED IN PLACE and nothing is ever
+        cancelled — the position is protected before, during and after. The
+        cancel+resubmit below is now the fallback for shapes the measurement
+        did not cover, and `mode` in the return says which path ran.
+
+        Returns {"id", "status", "symbol", "shifted", "total", "mode"} or None
+        when nothing was shifted. Best-effort with rollback: on the fallback,
+        cancel failures roll back already-cancelled stops and re-place failures
+        restore the ORIGINAL spec for that stop; on the amend path a failure
+        leaves that stop resting at its old level, which is tighter than
+        intended but never absent.
 
         SELL-stops only, deliberately not generalised to a short's BUY-stop
         (shorts-safe, Stage 2): the caller (`pipeline._handle_ex_dividends`)
@@ -6199,6 +6207,7 @@ class AlpacaBroker:
         if amount <= 0:
             return None
         specs: list[dict] = []
+        orders: list = []
         for order in self._list_open_sell_stop_orders(symbol):
             spec = self._snapshot_stop_order(order)
             if spec is None:
@@ -6208,16 +6217,78 @@ class AlpacaBroker:
                 )
                 return None
             specs.append(spec)
+            orders.append(order)
         if not specs:
             return None
-        if not self.cancel_snapshotted_stops(symbol, specs):
-            return None   # rollback already handled inside
         shifted = [{
             **spec,
             "stop_price": _quantize_price(spec["stop_price"] - amount),
             "limit_price": (_quantize_price(spec["limit_price"] - amount)
                             if spec.get("limit_price") else None),
         } for spec in specs]
+        if any(not s.get("stop_price") or s["stop_price"] <= 0 for s in shifted):
+            logger.error(
+                "shift_stops_down: shifting %s's stop(s) by %s would put a stop "
+                "at or below zero — aborting, the existing stops stay resting",
+                symbol, amount,
+            )
+            return None
+
+        # IN-PLACE AMEND FIRST (item 201). A shift changes each stop's PRICE and
+        # nothing else, which is exactly the operation the 2026-09-30 rehearsal
+        # measurement established `replace_order_by_id(stop_price=...)` performs
+        # atomically. Cancelling every stop and re-placing them left the whole
+        # position naked for the width of that round trip, on a path that runs
+        # on ordinary ex-dividend days against real open positions.
+        #
+        # All-or-nothing on the DECISION, per spec on the EXECUTION: if any one
+        # resting order is not the measured-safe shape (a stop-limit fallback
+        # leg, a bracket child), the legacy cancel+resubmit runs for the symbol
+        # exactly as before rather than half the stops moving one way and half
+        # the other.
+        if all(self._stop_order_amendable_in_place(o) for o in orders):
+            amended = 0
+            for spec, target in zip(specs, shifted):
+                try:
+                    self.client.replace_order_by_id(
+                        spec["id"], ReplaceOrderRequest(stop_price=target["stop_price"]),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # Refused or unknown, the answer is the same here and it is
+                    # NOT "cancel and retry": the original stop is still resting
+                    # (measured), so the lot simply keeps its pre-dividend level.
+                    # An un-absorbed dividend gap is a tighter stop than intended;
+                    # a cancel+resubmit would be no stop at all for a moment.
+                    logger.warning(
+                        "shift_stops_down: in-place amend of %s stop %s to $%.4f "
+                        "failed (%s) — that stop is LEFT RESTING at $%.4f, "
+                        "nothing cancelled",
+                        symbol, spec["id"], target["stop_price"], exc,
+                        spec["stop_price"],
+                    )
+                    continue
+                amended += 1
+                logger.info(
+                    "shift_stops_down: %s stop %s AMENDED IN PLACE $%.4f -> "
+                    "$%.4f, qty %s unchanged (no cancel, no unprotected window)",
+                    symbol, spec["id"], spec["stop_price"],
+                    target["stop_price"], spec["qty"],
+                )
+            # Recorded per leg and per attempt so the next real ex-dividend
+            # settles, from production, whether a fractional position's GTC
+            # whole-share leg and DAY sliver leg both amend — the question this
+            # desk cannot answer by placing an order of its own.
+            logger.info(
+                "shift_stops_down: %s — %d/%d stop(s) amended in place, 0 cancelled",
+                symbol, amended, len(specs),
+            )
+            if amended <= 0:
+                return None
+            return {"id": f"shift-{symbol}", "status": "accepted", "symbol": symbol,
+                    "shifted": amended, "total": len(specs), "mode": "amend"}
+
+        if not self.cancel_snapshotted_stops(symbol, specs):
+            return None   # rollback already handled inside
         restored, failed = self._restore_stop_orders(symbol, shifted)
         if failed:
             # Put the ORIGINAL levels back for whatever couldn't be shifted —
@@ -6234,7 +6305,37 @@ class AlpacaBroker:
         if restored <= 0:
             return None
         return {"id": f"shift-{symbol}", "status": "accepted", "symbol": symbol,
-                "shifted": restored, "total": len(specs)}
+                "shifted": restored, "total": len(specs), "mode": "cancel_resubmit"}
+
+    @staticmethod
+    def _stop_order_amendable_in_place(order) -> bool:
+        """True when `order` is the SHAPE the 2026-09-30 rehearsal measurement
+        covered for `replace_order_by_id(stop_price=...)`: one plain, parentless
+        stop-MARKET order with no legs.
+
+        Shared by `_amend_resting_stop_price` (trailing) and `shift_stops_down`
+        (ex-dividend) so the two paths cannot drift on what "measured-safe"
+        means. Every rejection here routes to a cancel+resubmit fallback, which
+        is the measured-safe outcome for an unrecognised shape.
+        """
+        # A bracket/OTO/OCO leg is the one shape the original comment was right
+        # about and the measurement did NOT cover.
+        order_class = getattr(order, "order_class", None)
+        order_class = str(getattr(order_class, "value", order_class) or "").lower()
+        if order_class not in ("", "simple") or getattr(order, "legs", None):
+            return False
+        # `order_class` and `legs` sit on the PARENT on Alpaca, so a child leg
+        # can present as class "" with no legs. `parent_id` is populated ON the
+        # child and is what actually establishes parentlessness.
+        if getattr(order, "parent_id", None):
+            return False
+        # A stop-LIMIT carries a limit price too, and the ReplaceOrderRequest
+        # used by both callers amends stop_price ONLY -- the limit would keep
+        # its old level and the buffer between them would drift on every move.
+        # `_submit_stop_limit_order`'s fallback leg produces exactly this shape.
+        otype = getattr(order, "order_type", None) or getattr(order, "type", None)
+        otype = str(getattr(otype, "value", otype) or "").lower()
+        return otype == "stop"
 
     def _amend_resting_stop_price(
         self,
@@ -6265,32 +6366,7 @@ class AlpacaBroker:
             return _AMEND_NOT_ATTEMPTED
         order = live_orders[0]
         spec = stop_specs[0]
-        # A bracket/OTO/OCO leg is the one shape the original comment was right
-        # about and the measurement did NOT cover — leave it to the fallback.
-        order_class = getattr(order, "order_class", None)
-        order_class = str(getattr(order_class, "value", order_class) or "").lower()
-        # This allowlist is belt-and-braces, not the real guard: the classes
-        # named here are simply the ones with no parent and no legs, and
-        # `parent_id` below is what actually establishes that. Alpaca's own
-        # order_class values are not cited here because nothing load-bearing
-        # rests on the set being complete — an unrecognised class falls to the
-        # measured-safe fallback, which is the correct outcome either way.
-        if order_class not in ("", "simple") or getattr(order, "legs", None):
-            return _AMEND_NOT_ATTEMPTED
-        # `order_class` and `legs` sit on the PARENT on Alpaca, so a child leg
-        # can present as class "" with no legs and slip past the test above.
-        # `parent_id` is the field that is populated ON the child. Its absence
-        # is what the guard above was claiming to test and did not.
-        if getattr(order, "parent_id", None):
-            return _AMEND_NOT_ATTEMPTED
-        # A stop-LIMIT carries a limit price too, and ReplaceOrderRequest here
-        # amends stop_price ONLY -- the limit would keep its old level and the
-        # buffer between them would widen on every trail. `_submit_stop_limit_order`
-        # produces exactly this shape. Leave it to the fallback, which rebuilds
-        # both legs together.
-        otype = getattr(order, "order_type", None) or getattr(order, "type", None)
-        otype = str(getattr(otype, "value", otype) or "").lower()
-        if otype != "stop":
+        if not self._stop_order_amendable_in_place(order):
             return _AMEND_NOT_ATTEMPTED
         # A price-only amend cannot fix a coverage gap: if the resting stop
         # does not already cover exactly the position, the fallback (which
