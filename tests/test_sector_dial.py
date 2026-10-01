@@ -28,7 +28,7 @@ from src.models import (
     Position, TargetPosition, TechAnalysisResult, TechReasoningChain,
     TradeDecision,
 )
-from src.pipeline import HARD_BLOCK_RULES
+from src.risk.rules import HARD_BLOCK_RULES
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 from src.risk.rules import (
     RiskRuleEngine, sector_allowance_pct, sector_side_gross,
@@ -813,7 +813,7 @@ def test_gate_pm_facts_and_projection_report_the_same_sector_exposure():
     fails here rather than in production.
     """
     from types import SimpleNamespace
-    from src.pipeline import TradingPipeline
+    from src.pipeline_prompt_facts import PromptFactsMixin
 
     positions = [
         _held("AAPL", EQUITY * 0.30, sector="Technology"),
@@ -842,7 +842,7 @@ def test_gate_pm_facts_and_projection_report_the_same_sector_exposure():
     ) == pytest.approx(expected)
 
     # (c) PMFacts — what the Portfolio Manager reads.
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = SimpleNamespace(
         compute_trade_calibration=lambda *a, **k: {},
         get_recent_agent_outputs=lambda *a, **k: [],

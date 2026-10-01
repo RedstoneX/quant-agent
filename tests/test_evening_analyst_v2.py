@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from src.models import (
     BuyGrade, EveningReasoningChain, EveningReport, SellGrade,
 )
-from src.pipeline import TradingPipeline
+from src.pipeline_prompt_facts import PromptFactsMixin
 
 
 def _valid_rc() -> EveningReasoningChain:
@@ -126,8 +126,8 @@ def test_full_evening_report_with_grades_roundtrip():
 # _build_recent_buys_for_grading math
 # ---------------------------------------------------------------------------
 
-def _pipeline_with_broker_price(price: float) -> TradingPipeline:
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+def _pipeline_with_broker_price(price: float) -> PromptFactsMixin:
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = MagicMock()
     pipeline.broker = MagicMock()
     pipeline.broker.get_latest_price.return_value = price
@@ -193,7 +193,7 @@ def test_recent_buys_dedupes_multiple_buys_on_same_symbol():
 # ---------------------------------------------------------------------------
 
 def test_outlook_calibration_matches_bullish_with_positive_day():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = MagicMock()
     pipeline.db.get_recent_insights.return_value = [
         {"date": "2026-04-14", "tomorrow_bias": "bullish", "tomorrow_conviction": "high"},
@@ -208,7 +208,7 @@ def test_outlook_calibration_matches_bullish_with_positive_day():
 
 
 def test_outlook_calibration_marks_wrong_bias_as_miss():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = MagicMock()
     pipeline.db.get_recent_insights.return_value = [
         {"date": "2026-04-14", "tomorrow_bias": "bullish", "tomorrow_conviction": "high"},
@@ -228,7 +228,7 @@ def test_outlook_calibration_marks_wrong_bias_as_miss():
 
 def test_outlook_calibration_neutral_band():
     """neutral bias matches when actual is within ±0.3%."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = MagicMock()
     pipeline.db.get_recent_insights.return_value = [
         {"date": "2026-04-14", "tomorrow_bias": "neutral", "tomorrow_conviction": "low"},
@@ -244,7 +244,7 @@ def test_outlook_calibration_neutral_band():
 
 
 def test_outlook_calibration_empty_when_no_history():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = MagicMock()
     pipeline.db.get_recent_insights.return_value = []
     pipeline.db.get_daily_pnl.return_value = []
@@ -258,7 +258,7 @@ def test_outlook_calibration_bullish_below_neutral_band_is_a_miss():
     inside the ±0.3% neutral band) must NOT count as matched — bullish
     means clearly up, not "barely positive". Without this guard, the
     bullish hit-rate would be inflated by flat-day flukes."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = MagicMock()
     pipeline.db.get_recent_insights.return_value = [
         {"date": "2026-04-14", "tomorrow_bias": "bullish", "tomorrow_conviction": "medium"},
@@ -276,7 +276,7 @@ def test_outlook_calibration_pairs_friday_prediction_with_monday_actual():
     """Friday evening's tomorrow_bias predicts Monday's session (weekend
     intervenes). Pairing logic must walk forward up to +4 days to find
     the next daily_pnl row, not silently drop the sample."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = MagicMock()
     pipeline.db.get_recent_insights.return_value = [
         # Friday evening
@@ -297,7 +297,7 @@ def test_outlook_calibration_pairs_friday_prediction_with_monday_actual():
 def test_outlook_calibration_respects_lookback_limit():
     """With 12 insights and lookback=5, only 5 samples land in the output —
     the rolling window must NOT silently grow when more insights exist."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = MagicMock()
     insights = [
         {"date": f"2026-04-{day:02d}", "tomorrow_bias": "bullish",
@@ -316,7 +316,7 @@ def test_outlook_calibration_respects_lookback_limit():
 
 
 def test_outlook_calibration_stratifies_by_conviction():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
     pipeline.db = MagicMock()
     pipeline.db.get_recent_insights.return_value = [
         {"date": "2026-04-10", "tomorrow_bias": "bullish", "tomorrow_conviction": "high"},
