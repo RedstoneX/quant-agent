@@ -147,19 +147,6 @@ DONE WHEN:
   - [ ] half one is already DONE (2026-09-18): the ledger gate exists and the build fails on an unsourced trade-governing number. Its honest limit stands recorded — it proves a reason was WRITTEN, never that the reason is TRUE — and that limit is not something this item can close.
 detail: docs/BOARD_NOTES.md (item 90)
 
-**99. The analyst seats' falsifier: only one of five states one — TIER 2, filed 2026-09-18, re-scoped and MEASURED 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 99").** Measured read-only on the production database 2026-09-30: `tech_analyst` states a falsifier on 195 of 195 actionable ratings since 2026-09-25 and on 1,664 of 1,665 before — the "blank on about 6 in 10" figure is entirely NEUTRAL ratings, where prompt and schema both REQUIRE it empty, and is not a defect. `news_analyst`, `earnings_analyst`, `macro_analyst` and `smart_money_analyst` state none at all: no prompt asks, no answer schema carries the field, and 0 of 103 recorded nominations have one. Their invalidation is SYNTHESISED downstream, so a name whose only backer is one of those seats clears the conviction bar on a templated falsifier. Pinned by `tests/test_analyst_seat_falsifier_contract.py`.
-
-DONE WHEN:
-  - [x] the analyst seats' real falsifier coverage is measured from recorded production output rather than inferred from prompt text, and pinned by a test that fails when the contract changes — 2026-09-30
-  - [x] the four uncovered seats state their OWN falsifier at the moment they make the call, stored with that call and readable by the existing exit checker in the same shape the technical seat's is — News/Earnings/Macro on `Nomination.thesis_invalid_if`, Smart Money on `SmartMoneyFinding.thesis_invalid_if`; a seat that names none leaves it empty and the nomination event records `falsifier_missing`, with no template substituted anywhere — 2026-09-30
-  - [ ] KNOWN LIMIT, not a gap to paper over: `exit_guard.check_thesis_invalid_if` evaluates only a numeric price level or MA20/MA50/MA200, so a news, earnings, macro or Form 4 condition stated in words returns UNPARSEABLE with a reason and is never treated as passed; whether the desk builds an evaluator for any non-price falsifier class is a separate, unfiled decision
-  - [ ] (b) the technical seat's prompt names the five data blocks it actually receives and does not claim ones it does not
-  - [ ] (d) the deletion-site check exists: removing a mechanism greps its symbol name across every prompt and every Python-assembled agent string at that moment
-  - [ ] no blanket prompt-text number scanner is built (rejected: ~1,825 numbers in the prompt files, mostly dates and list numbering)
-  - [ ] the mandate/horizon half is NOT re-opened — resolved 2026-09-25 as SWING, days to weeks
-  - [ ] SPLIT OUT 2026-09-30, do not re-file here: the ~55 prompt-only numbers and ~20 unsourced market claims (was 99(a)), the render-or-pin-every-code-controlled-sentence requirement (was 99(g)) and the (f) residue are item 107(b)/(c), which already carries them; the PM/RM/reviewer dead-weight prose (was 99(c)) is item 109(c). Item 99 is now the ANALYST seats' own prompts and their enforcement only.
-detail: docs/BOARD_NOTES.md (item 99)
-
 **107. Prompt drift the new check cannot see, and prompt-only numbers. Filed 2026-09-17; parts (a) and (c) SHIPPED 2026-09-26, (b) still open.** Reasoning and what was ruled out: `docs/INCIDENT_HISTORY.md`, 2026-09-17 and 2026-09-26. **Do not re-propose the three designs rejected on 2026-09-17, and do not build a second deletion-site grep — that one exists.**
 
 DONE WHEN:
@@ -230,6 +217,7 @@ DONE WHEN:
   - [ ] `short_gap_risk_multiple` (1.5) becomes a read off that stock's own overnight-gap behaviour instead of one constant for every short — BLOCKED on stored daily bars, which the desk does not keep (the constructor is handed `analysis.atr_14` and no bar history, verified 2026-09-30). No value picked, no appetite asked
   - [ ] the queued-earnings BUY clamp (5% of the book) stops being a global share — the structural alternative identified 2026-09-30 is that an unread filing IS an unconvicted seat, which under standing doctrine (all five seats right to enter) bars the BUY rather than sizing it; it changes live sizing behaviour, so it needs an adversary pass before it ships and was NOT applied in this pass
 
+  - [x] the portfolio and cluster ceilings (25 total at-risk, 90 terminal sector and its constructor mirror, 40 cluster share) each end in a definite state rather than as an open appetite question — 2026-10-01: values unchanged and still owner-ratified, every appetite question WITHDRAWN under the 2026-09-30 ruling, both failed derivations written down per ceiling (two of them algebraic cancellations: 25 is five full-size names and 40% of 25% is two, at the ratified 5% per-trade envelope), and each row now names the recording that would settle it with the route ratchet moved to match. Do not re-derive these three
 detail: docs/BOARD_NOTES.md (item 186)
 
 **187. FRED fetch reliability — the chronic `fetch_deadline_exceeded` failure and required series left un-fetched — filed 2026-09-25, carried out of item 175's retirement. Item 175's weekend/holiday overdue-date roll shipped and was retired; this is the separate, still-open half. Detail: `docs/BOARD_NOTES.md` ("item 187").** Every FRED failure in the retained log is `fetch_deadline_exceeded`; 4 of 12 runs reached full coverage, worst 5 of 15 [measured 09-17..23]. Owned by the approved fetch redesign.
@@ -238,7 +226,7 @@ DONE WHEN:
   - [ ] the `fetch_deadline_exceeded` rate is understood and either brought down or shown to recover cleanly inside the existing time ceiling, measured against real runs rather than a healthy mid-morning batch
   - [x] the FRED SERIES half is fixed and live: fair-share reserves plus the pre-open series cache; the deployed box ran 2026-09-30 with no series skipped.
   - [x] the EVENT-CALENDAR half is fixed here: the seven `/fred/release/dates` calls move off the trading path onto the existing pre-open prefetch timer and are served from `data/macro/release_schedule_cache.json` at the open; a release in neither cache nor wire stays a named failure and is never defaulted.
-  - [ ] one clean morning open observed with 7/7 release schedules from cache before this item retires — the fix is deployed-and-unobserved until then.
+  - [ ] ONE morning open (N = 1, the number this item already stated) recorded in the production table `fred_fetch_coverage_runs` with `full_coverage = 1`: all configured series returned, `series_not_attempted` empty, and every configured release returned with `releases_from_cache` equal to `releases_configured`. Check: `SELECT * FROM fred_fetch_coverage_runs ORDER BY id DESC`. Rows exist only from the first open after this deploys; a row with `full_coverage = 0` does not count, and a missing row is not a pass.
 detail: docs/BOARD_NOTES.md (item 187)
 
 **188. The decision seats' last-resort route is now a small free model, and nobody has measured it at those seats — filed 2026-09-30.**
@@ -259,6 +247,8 @@ DONE WHEN:
   - [ ] MEASURED 2026-09-30, `cash_sweep.min_order_usd` is vestigial as a trade gate but NOT as prose: `src.pipeline_stages._min_order_usd` records (2026-09-24) that none of the three paths that used to reject a small trade still do, and `apply_gross_ceiling` accepts it only as an ignored parameter — but `src.agents.portfolio_manager` still SPEAKS it to the owner in the funding narrative ("under the $N minimum order worth placing"). It dies with the feature, and those owner-facing strings must be rewritten rather than merely dropped
   - [ ] MEASURED 2026-09-30, the 187-reference estimate is LOW. A live count over the checkout is ~550 mentions of `cash_sweep` / `CashSweeper` / `cash_sweeper` / `_sweep_symbol` / `SGOV` / `reserve_pct` across 88 files, including four frontend components (`LiquidityPanel`, `HoldingsStrip`, `DecisionStateBanner`, `funnelShared`), the Mission Control API schema and routes, `ops/preview/branch_preview.py`, and ~30 test modules rather than the nine item 183 named. The `sweep-vehicle liquidation before a BUY` entry already in `config/retired_mechanisms.yaml` is the registry hook the deletion must extend
   - [x] STEP 1 DONE 2026-09-30 (PR item190-step1): the `deployment_gap` advisory band now reads `deployment_gap.band_pct` (1.0, value unchanged) instead of `cash_sweep.reserve_pct`; the band stays as owner-appetite, ledgered `arbitrary`. Remaining: steps 2-4 below. `reserve_pct` itself is still read by the sweeper and the /account `reserve_usd` display until step 3/4.
+  - [x] STEP 4 PART DONE 2026-10-01: the `/account` liquidity view no longer counts the parked sweep vehicle as deployable cash when the sweep is disabled. MEASURED against the live checkout: the engine's `TradingPipeline._compute_deployable_cash` adds 0.0 when `_sweeper()` returns None (which it does on `enabled: false`), and `CashSweeper.fund_buys` returns 0.0 on its first line, so nothing converts the vehicle back to cash for the BUY phase; `src.api.routes_live._compute_liquidity` added it unconditionally and so would have read ABOVE the figure the PM sizes against. LATENT, never an incident: the production DB (`/home/qamc/quant-agent/data/quant_agent.db`, read-only, 2026-10-01) holds 0 SGOV position rows (14 historical SGOV trades). Guarded by `tests/test_single_definition_quantities.py::test_disabled_sweep_does_not_inflate_the_dashboard_deployable`
+  - [ ] STEPS 2 AND 3 ARE NOT MERGED ON `origin/main` — verified 2026-10-01 at `bf1a7a83`: `src/execution/cash_sweep.py` still exists, `TradingPipeline.__init__` still constructs `CashSweeper`, `src/pipeline_stages.py` still calls `sweeper.fund_buys`, and `src.agents.portfolio_manager` still speaks `min_order_usd`. The REST of step 4 is therefore blocked, not skipped: deleting the `config/number_ledger.yaml` rows for `_BUY_LIMIT_PAD`, `_FUND_BUFFER_FRAC`, `_FUND_BUFFER_MIN_USD`, `_FUND_CASH_SETTLE_*`, `_FUND_TERMINAL_TIMEOUT_S`, `_SELL_LIMIT_PAD`, `CashSweepConfig.reserve_pct` and `CashSweepConfig.min_order_usd` would leave live constants unledgered, and dropping `reserve_usd` / `cash_above_reserve` / `sweep_parked_value` from `/account` and the frontend would remove the only surface that shows a vehicle still held under a retired sweep. Remaining criteria for this item: steps 2 and 3 land, THEN the ledger rows and the API/frontend sweep fields go in one pass with the `config/retired_mechanisms.yaml` entry extended
   - [ ] the retirement is sequenced so no step leaves a half-wired feature: (1) settle the `reserve_pct` band and the `deployment_gap` advisory, (2) rewrite the portfolio-manager funding prose off `min_order_usd`, (3) delete `CashSweeper`, its pipeline/stage wiring and its tests-of-the-dead-path, (4) drop the ledger rows and the frontend/API surface
 
 detail: docs/BOARD_NOTES.md (item 190)
@@ -280,12 +270,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 193)
 
-**196. A trail candidate that lands inside the noise band is refused with nothing placed, and for the chandelier leg there is still no lower level to fall back to — filed 2026-09-30, NARROWED 2026-09-30.** Half of this is now fixed in `src/risk/trailing.py::evaluate_trailing_stop`: the module used to build the chandelier only when the structural pivot produced nothing, so it committed to ONE candidate before testing it and a pivot the noise band then rejected silently suppressed a chandelier level that would have passed. Both legs are now built and each is carried through the same invariants, first survivor wins; preference order, arithmetic and every constant are unchanged, and `tests/test_trailing_candidate_set.py` pins it. This changes NOTHING in the production record, which is the honest measure of its size: the structural leg has never produced a candidate (item 195), so the chandelier was already the sole candidate in all 21 recorded refusals. WHAT REMAINS OPEN is the original headline and it is a DOCTRINE question, not an engineering one: when the chandelier is itself inside the band there is no other already-derived level, and the only obvious fallback — the band's own edge, `current_price - NOISE_BAND_ATR_MULTIPLE * ATR` — is read off TODAY'S PRICE, which this module's own `_swing_lows` docstring rejects in terms ("trailing under today's price is how a stop ends up inside the noise band") and which conflicts with the ratified rule to exit on ALIGNMENT, never on a level. Deliberately NOT implemented, and `tests/test_trailing_candidate_set.py` pins the refusal so a later patch cannot slip it in unargued. WHAT THIS CANNOT ESTABLISH: zero of the 21 recorded refusals carried `TRAIL_CODE_INSIDE_NOISE_BAND`, so the frequency of the remaining half is still UNMEASURED and the case for it rests on the code path, not a production count. CARRIES FORWARD from retired item 195 (2026-09-30): criterion 195/2, that the pivot window cannot confirm a swing low inside this desk's typical holding periods, now sits here — it is the same question of what the trail should do when no leg can produce a usable level, and it is barred from a quiet fix because the only lever, `PIVOT_WINDOW`, is documented as unsourceable.
-
-DONE WHEN:
-  - [ ] the desk decides, with the adversary arguing the doctrine conflict above, whether a candidate refused by the noise band should fall back to the band edge or keep refusing outright
-  - [ ] whichever way it goes, the refusal is counted in production so the frequency stops being unmeasured
-
 **199. Read the unbacked-stop floor off the chart instead of off an ATR multiple — filed 2026-09-30, carried out of item 90's `min_stop_atr_multiple` pass. TIER 1.** Detail: `docs/BOARD_NOTES.md` ("item 199").
 DONE WHEN:
   - [x] 2026-09-30, the RECORDING exists, and it — not another re-derivation — is what this item now turns on: every position the desk opens pins its entry price, entry ATR, the stop placed at entry and that stop's basis (the constructor's own `stop_rule`, which already separates a stop sitting on a COMPUTED structural level from one set by the ATR band), and every position accumulates its worst AND best excursion while open, joining the realised outcome and the `broker_stop_fill` category already on the exit row. The stop's distance in ATR multiples is RECOMPUTED from entry price, entry stop and entry ATR rather than stored a second time, per "never store what code can recompute". Anything genuinely unavailable at that moment is stored NULL, never substituted. Two hard caveats any reader must carry: the excursions are accumulated from session snapshots, so each is a FLOOR on the true figure (a reading that says the floor WAS violated is trustworthy; one that says it was not is only "not observed"), and legacy rows predating the columns are NULL. FALSIFICATION ONLY — this record may show whether the ratified floor was ever violated in practice and may NOT be swept for a better multiplier; doctrine bars fitting a number to this desk's history.
@@ -293,6 +277,15 @@ DONE WHEN:
   - [ ] the far-anchor case is decided and written down: what the floor does when the nearest level below entry is distant enough to shrink the position materially, including whether the flat multiple remains as a ceiling on the widening
   - [ ] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs
 detail: docs/BOARD_NOTES.md (item 199) — item 90's ledger entry carries the retracted arguments so they are not re-proposed
+
+**201. The rest of the cancel+resubmit stop path — filed 2026-09-30 alongside the in-place amend fix. Detail: `docs/BOARD_NOTES.md` ("item 201").** `replace_stop_loss` now amends one plain resting protective stop's price atomically, but every other stop-moving path (the fractional hybrid pair, `shift_stops_down`, multi-stop positions, bracket/OTO legs) still cancels then resubmits and still opens an unprotected window.
+
+DONE WHEN:
+  - [ ] each remaining cancel+resubmit stop path is either measured against the broker and converted to an in-place amend, or documented as genuinely unable to amend
+  - [ ] the fractional hybrid pair's two legs are measured for whether both can be amended in place without collapsing to one stop
+  - [ ] a test fails if any converted path cancels before its amend is refused
+
+detail: docs/BOARD_NOTES.md (item 201)
 
 **200. The status board's own file was one change away from blocking every other change — filed 2026-09-30. OPEN: the move is made, the guard against it recurring is not.**
 
@@ -351,17 +344,19 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 86, 173
 - retired queue: 198
 - retired queue: 112
+- retired queue: 77
 - retired queue: 152
+- retired queue: 183
 - retired queue: 197
 - retired queue: 18
-- retired queue: 147
-- retired queue: 77
-- retired queue: 183
-- retired queue: 182
 - retired queue: 192
+- retired queue: 147
+- retired queue: 182
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
+- retired queue: 196
+- retired queue: 99
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
