@@ -7418,7 +7418,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:13074-13077). The LIVE number is the keyword literal at
+      (src/pipeline.py:11847-11850). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
@@ -7458,7 +7458,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:13074-13077). The LIVE number is the keyword literal at
+      (src/pipeline.py:11847-11850). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
@@ -7500,7 +7500,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:13074-13077). The LIVE number is the keyword literal at
+      (src/pipeline.py:11847-11850). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_own_recent_decisions(limit)
@@ -7509,7 +7509,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many previous position-reviewer sessions the reviewer is shown
-      (anti-flip-flop memory) (src/pipeline.py:13266-13270). Its only caller
+      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:3573-3577). Its only caller
       passes nothing, so this default is live. Same class as the smart-money
       prompt-truncation caps classified arbitrary on 2026-09-19: it decides
       what evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7806,10 +7806,10 @@ numbers:
       caller in the trading path, and the only caller
       (scripts/watchlist_candidates.py:127) passes it explicitly. It proposes
       names for a human to add; it never adds one.
-  - id: src.pipeline.TradingPipeline._force_delever:factor[0]
+  - id: src.pipeline_delever.DeleverMixin._force_delever:factor[0]
     value: 0.97
     status: derived
-    site: src/pipeline.py
+    site: src/pipeline_delever.py
     derived_from: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     base_value: 0.03
     note: >-
@@ -7933,7 +7933,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       Window of the quarterly meta-reflection digest
-      (src/pipeline.py:13669-13683). Its output reaches a prompt only as a
+      (src/pipeline.py:12433-12447). Its output reaches a prompt only as a
       STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]
