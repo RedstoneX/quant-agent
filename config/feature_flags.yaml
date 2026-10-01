@@ -310,3 +310,17 @@ flags:
       chose.
     decided: null
     source: "docs/OUTCOME.md:94"
+
+  - id: src.config.NotificationsConfig.risk_only
+    effective_value: false
+    code_default: false
+    intentional: true
+    reason: >-
+      Per-category Telegram mute. Declared off: the live switch is the
+      TELEGRAM_RISK_ONLY env var on the box, and this registry row exists so
+      a switch that decides whether a money-at-risk alarm reaches the owner
+      cannot sit in a state nobody chose. TELEGRAM_DISABLED, the older
+      global mute, is still env-only and NOT registered here -- an
+      inconsistency recorded rather than copied.
+    decided: "2026-10-01"
+    source: "PR #978; src/notifier.py TelegramNotifier.__init__"

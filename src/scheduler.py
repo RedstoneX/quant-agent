@@ -206,6 +206,23 @@ class TradingScheduler:
                         logger.warning(
                             "[%s] data-quality alert failed in _run_safe: %s", name, exc,
                         )
+                    # Defect 1 (PR #978). The naked-position banner lives
+                    # inside the session summary, which is operational and
+                    # therefore filtered; its other carrier claims the
+                    # symbol for the whole trading day. Raise it here, on
+                    # its own, every session in which it is true.
+                    try:
+                        from src.trader_feed import send_naked_position_alert
+
+                        send_naked_position_alert(
+                            self.notifier,
+                            result if isinstance(result, dict) else None,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[%s] naked-position alert failed in _run_safe: %s",
+                            name, exc,
+                        )
                     if message:
                         symbols = None
                         try:

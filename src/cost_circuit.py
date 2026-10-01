@@ -1255,11 +1255,16 @@ class UnavailableLLMCostCircuit:
         logger.critical("\n%s", message)
         sent = False
         try:
-            from src.notifier import CATEGORY_OPERATIONAL
+            from src.notifier import CATEGORY_OPERATIONAL, was_suppressed
 
-            sent = bool(self.notifier.send(
+            outcome = self.notifier.send(
                 message, category=CATEGORY_OPERATIONAL,
-            ))
+            )
+            # A mute or a category filter is a SETTLED outcome, not a
+            # delivery failure: retrying every ~120s "until it succeeds"
+            # never succeeds and writes a fresh suppression row each time.
+            # The drop is already durably recorded in `notifier_sends`.
+            sent = bool(outcome) or was_suppressed(outcome)
         except Exception:
             logger.exception("cost-circuit unavailable Telegram alert failed")
         # item 17(b): fold this outcome into the SAME durable marker the
@@ -3013,11 +3018,14 @@ class LLMCostCircuitBreaker:
             logger.critical("\n%s", message)
             sent = False
             try:
-                from src.notifier import CATEGORY_OPERATIONAL
+                from src.notifier import CATEGORY_OPERATIONAL, was_suppressed
 
-                sent = bool(self.notifier.send(
+                outcome = self.notifier.send(
                     message, category=CATEGORY_OPERATIONAL,
-                ))
+                )
+                # Settled, not failed — see `_alert`. Abandoning the
+                # remaining holds here left them unalerted forever.
+                sent = bool(outcome) or was_suppressed(outcome)
             except Exception:
                 logger.exception("cost quota Telegram alert failed")
             with self._connect() as conn:

@@ -2905,7 +2905,13 @@ def test_the_global_mute_records_every_message_it_drops(tmp_path, monkeypatch):
     assert n.muted is True
     assert n.enabled is False
 
-    assert n.send("AAA has no protective stop", kind="owner_alert", symbols=["AAA"]) is False
+    from src.notifier import was_suppressed
+
+    # A mute is a settled outcome, not a delivery failure -- see
+    # `SuppressedSend`. Still falsy, so no caller's truthiness check moved.
+    outcome = n.send("AAA has no protective stop", kind="owner_alert", symbols=["AAA"])
+    assert was_suppressed(outcome)
+    assert bool(outcome) is False
 
     conn = sqlite3.connect(str(db_path))
     try:

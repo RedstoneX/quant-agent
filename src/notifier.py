@@ -745,6 +745,59 @@ def _close_open_markup(body: str) -> str:
 CATEGORY_RISK = "risk"
 CATEGORY_OPERATIONAL = "operational"
 
+
+class SuppressedSend:
+    """A deliberate suppression — NOT a delivery failure.
+
+    `send()` historically returned a bool, and every caller reads False as
+    "Telegram did not take the message, try again". A mute or a category
+    filter is a settled outcome: retrying cannot change it, and a caller
+    that loops "until it succeeds" loops forever. This sentinel stays falsy
+    (so no existing truthiness check changes meaning) while letting a caller
+    that cares ask `was_suppressed(outcome)` and stop.
+    """
+
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return "SUPPRESSED"
+
+
+#: Singleton returned by `send()` when the desk dropped the message on
+#: purpose (TELEGRAM_DISABLED, or TELEGRAM_RISK_ONLY + operational).
+SUPPRESSED = SuppressedSend()
+
+
+def was_suppressed(outcome: object) -> bool:
+    """True when a send outcome is a deliberate drop, not a failed send."""
+    return outcome is SUPPRESSED
+
+
+def _risk_only_declared_default() -> bool:
+    """`notifications.risk_only` from config — the DECLARED state of the
+    per-category mute.
+
+    The env var alone would leave a switch that decides whether a
+    money-at-risk alarm reaches a live-money owner outside
+    `config/settings.yaml` and outside the feature registry
+    (`config/feature_flags.yaml`, enforced by `tests/test_feature_flags.py`),
+    where nothing mechanically checks that its state is the state anyone
+    chose. The env var still wins when set — an operator must be able to
+    flip the channel without a deploy — but the default is declared, and
+    the registry fails the build if the declaration drifts.
+
+    Never raises: a notifier that cannot load config must still send.
+    """
+    try:
+        from src.config import load_config
+
+        return bool(load_config().notifications.risk_only)
+    except Exception:  # noqa: BLE001
+        return False
+
 #: `kind` -> category, for the kinds that are routine BY CONSTRUCTION (a
 #: scheduled session summary, the P&L document, the hourly intraday check).
 #: `generic` and `owner_alert` are absent on purpose: both carry a mix of
@@ -757,7 +810,6 @@ _KIND_CATEGORY: dict[str, str] = {
     "close": CATEGORY_OPERATIONAL,
     "evening": CATEGORY_OPERATIONAL,
     "intra_check": CATEGORY_OPERATIONAL,
-    "document": CATEGORY_OPERATIONAL,
     "earnings_preprocess": CATEGORY_OPERATIONAL,
 }
 
@@ -834,7 +886,9 @@ class TelegramNotifier:
         # closing it: money-at-risk alarms still land, operational noise is
         # dropped (and still recorded). When both are set the hard mute wins,
         # because `enabled` is already False by the time the filter runs.
-        self.risk_only = os.getenv("TELEGRAM_RISK_ONLY", "").strip().lower() in (
+        self.risk_only = _risk_only_declared_default() or os.getenv(
+            "TELEGRAM_RISK_ONLY", "",
+        ).strip().lower() in (
             "1", "true", "yes",
         )
         self.enabled = bool(self.token and self.chat_id) and not kill_switch
@@ -899,6 +953,7 @@ class TelegramNotifier:
         text: str,
         detail: str | None = None,
         run_id: str | None = None,
+        strict: bool = False,
     ) -> None:
         """Durably record one outgoing-message attempt (sent/failed/
         suppressed) so "what did the desk try to tell the owner, and did
@@ -973,6 +1028,12 @@ class TelegramNotifier:
             # Never let a recording failure look like — or cause — a send
             # failure. See docstring above.
             logger.warning("notifier: failed to record send (%s/%s): %s", kind, status, exc)
+            if strict:
+                # One caller DOES need to know: `_filtered_by_category`
+                # drops the message, so if the drop cannot be written down
+                # the message would be both unsent and unrecorded. It
+                # re-raises here and delivers instead.
+                raise
 
     def _safe_record_send(self, **kwargs) -> None:
         """Call `_record_send`, wrapped in its own try/except.
@@ -1008,16 +1069,29 @@ class TelegramNotifier:
         if resolve_category(category, kind) != CATEGORY_OPERATIONAL:
             return False
         joined = ", ".join(_dedupe_symbols(symbols or []))
-        self._safe_record_send(
-            kind=kind,
-            status="filtered",
-            run_id=run_id,
-            text=text,
-            detail=(
-                "dropped by TELEGRAM_RISK_ONLY (operational category)"
-                + (f"; symbols: {joined}" if joined else "")
-            ),
-        )
+        try:
+            self._record_send(
+                kind=kind,
+                status="filtered",
+                run_id=run_id,
+                text=text,
+                detail=(
+                    "dropped by TELEGRAM_RISK_ONLY (operational category)"
+                    + (f"; symbols: {joined}" if joined else "")
+                ),
+                strict=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Fail closed, the principle this whole switch rests on. An
+            # unrecordable drop is a message that exists nowhere: not in
+            # Telegram, not in `notifier_sends`, so not on the dashboard
+            # either. Deliver it instead — noise the owner can mute beats
+            # an alarm nobody can find.
+            logger.warning(
+                "notifier: could not record a category drop (%s); delivering "
+                "the message instead: %s", kind, exc,
+            )
+            return False
         return True
 
     def send(
@@ -1088,13 +1162,18 @@ class TelegramNotifier:
                         "suppressed by TELEGRAM_DISABLED; not sent"
                     ),
                 )
+                # Deliberate, settled, unretryable — see `SuppressedSend`.
+                # Only the MUTE is deliberate: a notifier that is disabled
+                # because it has no token is unconfigured, not muted, and
+                # keeps returning plain False.
+                return SUPPRESSED
             return False
         if not text:
             return False
         if self._filtered_by_category(
             kind=kind, category=category, text=text, run_id=run_id, symbols=symbols,
         ):
-            return False
+            return SUPPRESSED
         # Single chokepoint for every owner-facing message this notifier
         # sends, regardless of which of the ~20 upstream formatters (PM
         # rationale, risk-manager reasoning, evening outlook, key thesis,

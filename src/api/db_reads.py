@@ -1535,6 +1535,13 @@ def get_muted_backlog() -> dict:
     answers "did I miss anything that mattered" and is a LIST, never folded
     into either total, because one unprotected position is not one message.
 
+    TWO REASONS, ONE BACKLOG (PR #978). A row is here because the global
+    mute swallowed it (`muted`) or because the per-category mute dropped it
+    as operational (`filtered`). Both are messages the owner did not get,
+    so both belong on the one surface he reads; `reason`, `muted_total` and
+    `filtered_total` keep "deliberately filtered" distinguishable from
+    "muted" rather than folding them together.
+
     `coverage_complete` is False whenever the record begins after the mute
     did, which it does; the gap is stated in the payload so no caller can
     present a partial list as the whole story.
@@ -1561,6 +1568,8 @@ def get_muted_backlog() -> dict:
             "down and cannot be shown here."
         ),
         "total": 0,
+        "muted_total": 0,
+        "filtered_total": 0,
         "live_risk_total": 0,
         "by_kind": [],
         "by_day": [],
@@ -1578,8 +1587,13 @@ def get_muted_backlog() -> dict:
             return out
         out["record_available"] = True
         rows = conn.execute(
-            "SELECT kind, text, detail, timestamp FROM notifier_sends "
-            "WHERE status = 'muted' ORDER BY timestamp DESC"
+            # Defect 2 (PR #978): the per-category mute records its drops
+            # with status 'filtered', and nothing read them — so a message
+            # the desk deliberately dropped was invisible on the only
+            # surface the owner has. Same backlog, two reasons, kept
+            # distinguishable rather than merged.
+            "SELECT kind, text, detail, timestamp, status FROM notifier_sends "
+            "WHERE status IN ('muted', 'filtered') ORDER BY timestamp DESC"
         ).fetchall()
     except Exception:
         return out
@@ -1597,24 +1611,32 @@ def get_muted_backlog() -> dict:
     by_kind: dict[str, dict[str, int]] = {}
     by_day: dict[str, dict[str, int]] = {}
     stamps: list[str] = []
-    for kind, text, detail, stamp in rows:
+    for kind, text, detail, stamp, status in rows:
         kind = str(kind or "unknown")
         stamp = str(stamp or "")
+        status = str(status or "muted")
+        reason = "filtered" if status == "filtered" else "muted"
         stamps.append(stamp)
         live = is_live_risk_message(text)
         day = _et_day(stamp)
         for bucket, key in ((by_kind, kind), (by_day, day)):
-            slot = bucket.setdefault(key, {"count": 0, "live_risk_count": 0})
+            slot = bucket.setdefault(key, {
+                "count": 0, "live_risk_count": 0,
+                "muted_count": 0, "filtered_count": 0,
+            })
             slot["count"] += 1
+            slot[f"{reason}_count"] += 1
             if live:
                 slot["live_risk_count"] += 1
         out["total"] += 1
+        out[f"{reason}_total"] += 1
         if live:
             out["live_risk_total"] += 1
             out["live_risk"].append({
                 "timestamp": stamp,
                 "day": day,
                 "kind": kind,
+                "reason": reason,
                 "symbols": _muted_symbols(detail),
                 "headline": _headline(text),
             })

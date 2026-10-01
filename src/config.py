@@ -1993,6 +1993,15 @@ class NotificationsConfig(BaseModel):
     non-critical to trading" posture.
     """
 
+    risk_only: bool = False
+    """Per-category Telegram mute (2026-10-01): when true, only money-at-risk
+    messages are delivered and operational ones are dropped and recorded for
+    the dashboard. Declared here — rather than living only in the
+    `TELEGRAM_RISK_ONLY` env var — so the feature registry
+    (`config/feature_flags.yaml`) can fail the build if a switch governing
+    whether an alarm reaches the owner is silently in an unchosen state. The
+    env var overrides this at runtime; see `src/notifier.py`."""
+
     mission_control_url: str = "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
     """Base URL Telegram alerts link to. Empty string = no link. Must be
     http(s) when non-empty — the value lands inside an href="..." attribute,

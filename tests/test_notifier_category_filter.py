@@ -18,6 +18,7 @@ from src.notifier import (
     CATEGORY_RISK,
     TelegramNotifier,
     resolve_category,
+    was_suppressed,
 )
 
 
@@ -92,7 +93,7 @@ def test_operational_messages_suppressed_and_recorded(creds, monkeypatch, label,
     monkeypatch.setenv("TELEGRAM_RISK_ONLY", "1")
     category = CATEGORY_OPERATIONAL if kind in ("generic", "owner_alert") else None
     ok, post = _send(text, kind=kind, category=category)
-    assert ok is False
+    assert was_suppressed(ok)  # a deliberate drop, never a failed send
     assert post.call_count == 0
     rows = _rows(creds)
     assert [r[1] for r in rows] == ["filtered"], "a dropped alarm must never be invisible"
@@ -141,7 +142,7 @@ def test_resolve_category_fails_closed():
 def test_hard_mute_still_silences_everything(creds, monkeypatch):
     monkeypatch.setenv("TELEGRAM_DISABLED", "1")
     ok, post = _send("🔴 NO STOP AT ALL", kind="owner_alert", category=CATEGORY_RISK)
-    assert ok is False
+    assert was_suppressed(ok)  # a deliberate drop, never a failed send
     assert post.call_count == 0
     assert [r[1] for r in _rows(creds)] == ["muted"]
 
@@ -153,7 +154,7 @@ def test_hard_mute_wins_over_risk_only(creds, monkeypatch):
     assert n.enabled is False
     assert n.muted is True
     ok, post = _send("🔴 NO STOP AT ALL", kind="owner_alert", category=CATEGORY_RISK)
-    assert ok is False
+    assert was_suppressed(ok)  # a deliberate drop, never a failed send
     assert post.call_count == 0
     assert [r[1] for r in _rows(creds)] == ["muted"]
 
@@ -175,12 +176,16 @@ def test_risk_only_default_is_off(creds):
     assert TelegramNotifier().risk_only is False
 
 
-def test_send_document_respects_the_filter(creds, monkeypatch):
+def test_send_document_is_not_filtered_because_it_carries_money(creds, monkeypatch):
+    """`document` was in the suppressed table. Its only caller is the P&L
+    history export (`TradingPipeline.run_daily`), which is money-bearing,
+    so it is classified `risk` and delivered — fail closed."""
     monkeypatch.setenv("TELEGRAM_RISK_ONLY", "1")
+    assert resolve_category(None, "document") == CATEGORY_RISK
     with patch("src.notifier.requests.post") as post:
         post.return_value = MagicMock(status_code=200, json=lambda: {"ok": True})
         post.return_value.raise_for_status = MagicMock()
         ok = TelegramNotifier().send_document(b"a,b\n1,2\n", "pnl.csv", "daily P&L")
-    assert ok is False
-    assert post.call_count == 0
-    assert [r[1] for r in _rows(creds)] == ["filtered"]
+    assert ok is True
+    assert post.call_count == 1
+    assert [r[1] for r in _rows(creds)] == ["sent"]

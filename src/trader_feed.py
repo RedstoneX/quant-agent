@@ -2528,7 +2528,7 @@ def _append_evening_banners(lines: list[str], result: dict) -> None:
         g for g in gaps
         if not _gap_is_expected_fractional(g) and not _gap_is_unreadable(g)
     ]
-    uncovered = [g for g in faults if _gap_is_uncovered(g)]
+    uncovered = uncovered_stop_gaps(result)
     partial = [g for g in faults if not _gap_is_uncovered(g)]
     if unreadable:
         names = ", ".join(str(g.get("symbol", "?")) for g in unreadable[:6])
@@ -4185,3 +4185,85 @@ def render_stored_intra_check(record: dict, elapsed_seconds: float = 0.0) -> str
             f"silence above as an all-clear.",
         ]
     return "\n".join(lines)
+
+
+def uncovered_stop_gaps(result: dict | None) -> list[dict]:
+    """The positions in a session result with NOTHING protecting them.
+
+    The same partition `format_session_result` applies to
+    `stop_coverage_gaps`: an expected fractional lapse is not a fault, and
+    an UNREADABLE row asserts nothing about coverage (board item 172) so it
+    must not be counted as naked.
+    """
+    from src.notifier import (
+        _gap_is_expected_fractional,
+        _gap_is_uncovered,
+        _gap_is_unreadable,
+    )
+
+    if not isinstance(result, dict):
+        return []
+    gaps = [g for g in (result.get("stop_coverage_gaps") or []) if isinstance(g, dict)]
+    return [
+        g for g in gaps
+        if not _gap_is_expected_fractional(g)
+        and not _gap_is_unreadable(g)
+        and _gap_is_uncovered(g)
+    ]
+
+
+def naked_position_alert(result: dict | None) -> str | None:
+    """The NO-STOP-AT-ALL page, as its own message. None when nothing is naked.
+
+    WHY THIS EXISTS (PR #978, adversary defect 1). This banner's only
+    unconditional carrier was the session summary, and the per-category
+    mute classifies that summary as operational. Its other carrier,
+    `TradingPipeline._alert_owner_no_stop`, claims the symbol for the
+    trading DAY, so the second and third session in which a position is
+    still naked raise nothing at all — the loudest alarm the desk has,
+    structurally silent from midday onwards.
+
+    So: no daily claim and no category. No claim because a position still
+    naked at 16:00 is a NEW true statement about money at risk, not a
+    repeat of the morning's; no category because an unclassified kind
+    resolves to `risk` and therefore survives the filter, which is the
+    fail-closed default this design rests on.
+    """
+    uncovered = uncovered_stop_gaps(result)
+    if not uncovered:
+        return None
+    names = ", ".join(str(g.get("symbol", "?")) for g in uncovered[:8])
+    return (
+        f"🛑🛑🛑 NO STOP AT ALL: {len(uncovered)} position(s) with nothing "
+        f"protecting them — {names}\n"
+        "There is nothing standing watch on these. Place a protective stop "
+        "by hand or close the position."
+    )
+
+
+def send_naked_position_alert(notifier, result: dict | None) -> bool:
+    """Raise `naked_position_alert` on `notifier`. Never raises. True if sent.
+
+    Called once per session, by every entry point that sends a session
+    summary (main.py, src/scheduler.py), BEFORE the summary itself.
+    """
+    try:
+        text = naked_position_alert(result)
+        if not text:
+            return False
+        symbols = [
+            str(g.get("symbol")) for g in uncovered_stop_gaps(result)
+            if g.get("symbol")
+        ]
+        run_id = result.get("run_id") if isinstance(result, dict) else None
+        return bool(notifier.send(
+            text, symbols=symbols, kind="no_stop_at_all", run_id=run_id,
+        ))
+    except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "naked-position alert failed: %s", exc,
+        )
+        return False
+

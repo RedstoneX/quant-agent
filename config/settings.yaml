@@ -1399,6 +1399,7 @@ reconciliation:
 # the API on 127.0.0.1:8800), which mounts /cockpit (src/api/server.py).
 # Tailscale-only — matches Mission Control's private, read-only posture.
 notifications:
+  risk_only: false
   mission_control_url: "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
 
 # Mandatory paid-analysis circuit.  It is persisted in the same SQLite DB and

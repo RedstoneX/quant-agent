@@ -1409,6 +1409,10 @@ class MutedKindCount(BaseModel):
     kind: str
     count: int = 0
     live_risk_count: int = 0
+    muted_count: int = 0
+    """Of `count`, how many the global mute swallowed."""
+    filtered_count: int = 0
+    """Of `count`, how many TELEGRAM_RISK_ONLY dropped as operational."""
 
 
 class MutedDayCount(BaseModel):
@@ -1417,10 +1421,17 @@ class MutedDayCount(BaseModel):
     day: str
     count: int = 0
     live_risk_count: int = 0
+    muted_count: int = 0
+    """Of `count`, how many the global mute swallowed."""
+    filtered_count: int = 0
+    """Of `count`, how many TELEGRAM_RISK_ONLY dropped as operational."""
 
 
 class MutedLiveRiskMessage(BaseModel):
-    """One muted message about a position whose protection was gone."""
+    """One undelivered message about a position whose protection was gone."""
+
+    reason: str = "muted"
+    """"muted" (the global mute) or "filtered" (dropped as operational)."""
 
     timestamp: str
     day: str
@@ -1443,6 +1454,10 @@ class MutedBacklogResponse(BaseModel):
     coverage_complete: bool = False
     coverage_gap: str = ""
     total: int = 0
+    muted_total: int = 0
+    """Of `total`, how many the global mute swallowed."""
+    filtered_total: int = 0
+    """Of `total`, how many the per-category mute dropped as operational."""
     live_risk_total: int = 0
     by_kind: list[MutedKindCount] = []
     by_day: list[MutedDayCount] = []
