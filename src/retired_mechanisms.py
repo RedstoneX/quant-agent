@@ -229,7 +229,9 @@ def scan(
         prose: list[tuple[int, str]] | None = None
         source: list[str] | None = None
         for entry in entries:
-            if rel in entry.allowed_in:
+            if rel in entry.allowed_in or any(
+                    a.endswith("/") and rel.startswith(a)
+                    for a in entry.allowed_in):
                 continue
             if prose is None:
                 prose = _prose_lines(path)
