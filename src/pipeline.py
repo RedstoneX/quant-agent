@@ -846,7 +846,7 @@ class TradingPipeline(
         self.broker = AlpacaBroker(
             api_key=config.api_keys.alpaca_key,
             secret_key=config.api_keys.alpaca_secret,
-            paper=config.alpaca.paper,
+            paper=config.alpaca.paper, max_position_pct=config.risk.max_position_pct,
             kill_switch_path=str(self._kill_switch_path),
             trade_updates_lease_path=str(trade_updates_lease_path),
             # ON since 2026-09-18. The only site that threads this

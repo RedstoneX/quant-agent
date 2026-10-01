@@ -157,6 +157,7 @@ def test_duplicate_whose_lookup_fails_raises_not_rejects(_d):
 def test_every_other_request_field_is_unchanged(_d):
     client = MagicMock()
     client.submit_order.return_value = SimpleNamespace(id="o", status="accepted", symbol="BRK.B")
+    client.get_all_positions.return_value = [SimpleNamespace(symbol="AAPL", qty="3")]
     with patch("src.execution.broker.TradingClient", return_value=client):
         b = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     b.submit_order(symbol="BRK-B", qty=2, side="buy", limit_price=500.0)

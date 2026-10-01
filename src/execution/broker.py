@@ -30,6 +30,14 @@ from src.models import Position, _ALLOWED_SECTORS, _SECTOR_ALIASES
 # THE stop-value judgement (docs/WORK.md item 88). `src.execution.stop_records`
 # imports nothing from this module, so this is a leaf dependency.
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
+# Quantity rules + the order-boundary gates (src/execution/order_gates.py).
+# Names re-exported here are patched/imported from this module by callers.
+from src.execution.order_gates import (  # noqa: F401 — re-export mirror
+    _FRACTIONAL_QTY_EPSILON, _PLAIN_PRICE_LABELS, _outlier_refusal_detail,
+    _split_protective_qty, _derive_stop_tif, _quantize_price,
+    check_order_quantity,
+    BadOrderQuantity, QTY_REJECTED,
+)
 from src.execution.order_idempotency import (
     _client_order_id, _is_duplicate_client_order_id_rejection,
     _session_date_key, _existing_order_for_client_id, _is_dead_stop_result,
@@ -37,52 +45,6 @@ from src.execution.order_idempotency import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Plain-English names for the fat-finger guard's owner-facing "detail"
-# text below — never the raw field name a log/audit trail would use.
-_PLAIN_PRICE_LABELS = {
-    "limit_price": "limit price",
-    "stop_loss_price": "stop",
-    "take_profit_price": "target price",
-}
-
-
-def _outlier_refusal_detail(
-    label: str,
-    candidate: float,
-    reference_price: float,
-    *,
-    symbol: str,
-    atr: float | None,
-) -> str:
-    """The owner-facing sentence for a fat-finger refusal.
-
-    A bare deviation percentage is not something a trader can judge: 24% is
-    absurd on a utility and an ordinary couple of sessions on a $7 name. So
-    the sentence puts the stock's OWN normal daily range next to it.
-
-    `atr` is the desk's already-measured ATR(14) for this symbol, handed
-    down by the caller (`src/pipeline_stages.py` reads it off the same
-    analysis the constructor sized from). Nothing is fetched and nothing is
-    estimated here: if the caller has no ATR, the range clause is simply
-    omitted rather than filled with an invented number.
-
-    Plain words only — no field names, no jargon, no "ATR". The owner is
-    not a developer and reads these in a Telegram alert.
-    """
-    deviation_pct = abs(candidate - reference_price) / reference_price * 100
-    sentence = (
-        f"{_PLAIN_PRICE_LABELS.get(label, label)} "
-        f"${candidate:,.2f} is {deviation_pct:.0f}% "
-        f"from price ${reference_price:,.2f}"
-    )
-    if atr is not None and math.isfinite(atr) and atr > 0:
-        atr_pct = atr / reference_price * 100
-        sentence += (
-            f" — {symbol} normally moves about ${atr:,.2f} "
-            f"({atr_pct:.0f}%) in a day"
-        )
-    return sentence
 
 # Alpaca allows one `trade_updates` websocket per account. Each fill wait
 # used to construct its own TradingStream; a second handshake while the
@@ -1363,34 +1325,6 @@ _ENTRY_FILL_TIMEOUT_S = 90.0
 _STOP_PLACEMENT_MAX_ATTEMPTS = 3
 _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
 
-# Spec §11.1 HYBRID FRACTIONAL STOPS. Measured 2026-09-01 against the live
-# paper account — treat as broker capability, not account state:
-#
-#   * a fractional-quantity order MUST be time_in_force=DAY. A fractional
-#     GTC order is refused outright: "fractional orders must be DAY orders"
-#     (code 42210000).
-#   * a fractional order must be market, limit, stop or stop_limit. A
-#     fractional TRAILING stop is refused at EVERY tif.
-#   * ACCEPTED fractional: STOP/DAY, STOP_LIMIT/DAY, LIMIT/DAY.
-#   * whole-share GTC stops are unaffected (control probe accepted).
-#
-# So a position of N.f shares cannot be covered by one durable order. It is
-# covered by TWO: a GTC stop over floor(N.f) — which survives the close —
-# and a DAY stop over the sub-share remainder, which lapses at 16:00 ET by
-# design and is re-placed at the start of the next session. The remainder is
-# a deliberate overnight exposure the owner accepted in exchange for being
-# able to hold expensive names at all on a ~$10k account. NOT bounded under
-# one share — a position that is itself sub-one-share lapses in full (see
-# config/settings.yaml), and "the next session" only exists while the desk
-# is running: `src/coverage_watchdog.py` is what says so when it is not.
-#
-# `_derive_stop_tif` is where that rule is MECHANICALLY enforced: every stop
-# this class submits goes through `_submit_stop_limit_order`, and the tif is
-# derived from the quantity there rather than chosen by each caller. A path
-# that forgets the rule cannot exist, because no path gets to state it.
-_FRACTIONAL_QTY_EPSILON = 1e-9
-
-
 # Sentinel returned by `_amend_resting_stop_price` to mean "the in-place
 # amend was NOT attempted (or its outcome is unknown), so the caller must run
 # the legacy cancel+resubmit path". It is deliberately distinct from `None`,
@@ -1517,49 +1451,6 @@ def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
     return any(term in text for term in type_terms)
 
 
-def _split_protective_qty(qty) -> tuple[float, float]:
-    """Split a protective-stop quantity into (whole_shares, sub_share_remainder).
-
-    The whole part is what a durable GTC stop can cover; the remainder is what
-    only a DAY stop can. Both are returned as non-negative magnitudes — a
-    short's signed qty is normalised by its callers long before this.
-
-    The remainder is rounded to 9dp before the epsilon test so that float
-    representation error (10.5 - 10.0 landing at 0.5000000000000007, or a qty
-    of 7.000000000000001 arriving from a fill) cannot mint a phantom
-    sub-share leg for a position that is really whole.
-    """
-    try:
-        value = abs(float(qty))
-    except (TypeError, ValueError):
-        return 0.0, 0.0
-    if not math.isfinite(value) or value <= 0:
-        return 0.0, 0.0
-    whole = float(math.floor(value))
-    frac = round(value - whole, 9)
-    if frac <= _FRACTIONAL_QTY_EPSILON:
-        return whole, 0.0
-    if frac >= 1.0:  # only reachable via the round() above on a near-integer
-        return whole + 1.0, 0.0
-    return whole, frac
-
-
-def _derive_stop_tif(qty) -> TimeInForce:
-    """The ONLY place a protective stop's time_in_force is decided.
-
-    Whole share count → GTC, the durable order that survives 16:00 ET and is
-    what every pre-fractional path already got. Fractional → DAY, because the
-    broker refuses any other tif for a fractional quantity (see the block
-    comment above). This is derived from the quantity rather than passed in
-    by the caller on purpose: a caller that could ask for a fractional GTC
-    would just be asking for a rejection, and the one thing this desk cannot
-    afford is a protective order that was refused while the code believed it
-    was placed.
-    """
-    _whole, frac = _split_protective_qty(qty)
-    return TimeInForce.DAY if frac > 0 else TimeInForce.GTC
-
-
 def _alpaca_symbol(symbol: str) -> str:
     """Translate the universe's yfinance class-share spelling at Alpaca's edge.
 
@@ -1575,32 +1466,6 @@ def _internal_symbol(symbol: str) -> str:
     """Map Alpaca class-share spelling back to QAMC/yfinance canonical form."""
     value = str(symbol).strip().upper()
     return re.sub(r"^([A-Z]+)\.([A-Z])$", r"\1-\2", value)
-
-
-def _quantize_price(price: float | None) -> float | None:
-    """Round to Alpaca's minimum tick size: $0.01 for stocks ≥ $1, $0.0001 below.
-
-    The quote-midpoint in `get_latest_price` can produce sub-penny values like
-    $106.515; submitting that raw triggers Alpaca error 42210000 and the order
-    is rejected. Observed 2026-04-17 morning: UPS BUY @ $106.515 rejected.
-
-    NaN/Inf handling: NaN comparisons all return False, so the original
-    `price <= 0` guard fell through to `round(nan, ...)` = nan. The NaN
-    then propagated all the way to Alpaca's submit_order, which silently
-    broker-rejects the order and corrupts audit logs. Treat NaN/Inf as
-    None (no quotable price) — callers' existing
-    `price is not None and price > 0` checks then skip the order or
-    fall back to market. Zero/negative values are preserved unchanged
-    (pre-existing semantics: caller decides what to do with them).
-    """
-    if price is None:
-        return None
-    import math as _math
-    if not _math.isfinite(price):
-        return None
-    if price <= 0:
-        return price
-    return round(price, 2 if price >= 1.0 else 4)
 
 
 def _install_http_timeout(client, timeout: float = _BROKER_HTTP_TIMEOUT) -> None:
@@ -1891,8 +1756,12 @@ class AlpacaBroker:
     def __init__(self, api_key: str, secret_key: str, paper: bool = True,
                  kill_switch_path: str | None = None,
                  trade_updates_lease_path: str | None = None,
-                 fill_stream_enabled: bool = False):
+                 fill_stream_enabled: bool = False,
+                 max_position_pct: float | None = None):
         self.api_key = api_key
+        # `RiskConfig.max_position_pct` via src/pipeline.py; None = no
+        # notional check (read-only and notifier constructions).
+        self._max_position_pct = max_position_pct
         self.secret_key = secret_key
         self._paper = paper
         self.client = TradingClient(api_key, secret_key, paper=paper)
@@ -4616,6 +4485,38 @@ class AlpacaBroker:
 
         return last_status
 
+    def _quantity_refusal(self, symbol: str, alpaca_symbol: str, qty,
+                          side: str, *, price: float | None) -> str | None:
+        """Live inputs for the pure quantity gate, each read only when
+        that check applies. Equity: a failed read refuses an entry (gate
+        fails closed). Held qty: a failed read is logged and the sell
+        goes on — an exit must not be blocked by a read outage."""
+        s, fractionable, equity, held = side.lower(), None, None, None
+        if s in ("buy", "sell_short"):
+            if _split_protective_qty(qty)[1] > 0:
+                fractionable = self.get_fractionability(symbol)["fractionable"]
+            if self._max_position_pct is not None:
+                try:
+                    equity = self.get_account()["portfolio_value"]
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Quantity gate: equity read failed for %s: %s",
+                                 symbol, exc)
+        elif s == "sell":
+            try:
+                held = 0.0
+                for pos in (self.client.get_all_positions() or []):
+                    if str(pos.symbol).upper() == alpaca_symbol.upper():
+                        held = max(0.0, float(pos.qty))
+            except Exception as exc:  # noqa: BLE001
+                held = None
+                logger.error("Quantity gate: positions read failed for %s: %s "
+                             "— sell proceeds unchecked.", symbol, exc)
+        return check_order_quantity(
+            qty, side=side, fractionable=fractionable, price=price,
+            equity=equity, max_position_pct=self._max_position_pct,
+            held_qty=held,
+        )
+
     def submit_order(self, symbol: str, qty: float, side: str,
                      limit_price: float | None = None,
                      stop_loss_price: float | None = None,
@@ -4649,6 +4550,19 @@ class AlpacaBroker:
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         internal_symbol = _internal_symbol(symbol)
         alpaca_symbol = _alpaca_symbol(internal_symbol)
+
+        # Quantity gate (src/execution/order_gates.py) — the stop PRICE
+        # was refused here, the quantity never was (2026-10-01 audit).
+        qty_refusal = self._quantity_refusal(
+            internal_symbol, alpaca_symbol, qty, side,
+            price=limit_price if (limit_price and limit_price > 0)
+            else reference_price,
+        )
+        if qty_refusal is not None:
+            logger.error("Quantity gate: %s %s %s — %s. Order REJECTED.",
+                         side.upper(), qty, symbol, qty_refusal)
+            return {"id": None, "status": QTY_REJECTED,
+                    "symbol": internal_symbol, "detail": qty_refusal}
 
         # Captured BEFORE `_quantize_price`, which maps NaN/Inf to None (see
         # its docstring). A non-finite STOP would therefore vanish silently
@@ -6009,6 +5923,9 @@ class AlpacaBroker:
                 f"trigger {stop_price!r} is not a usable stop price "
                 f"(must be finite and positive)"
             )
+        qty_refusal = check_order_quantity(qty, side=side)
+        if qty_refusal is not None:  # same contract: refused = raised
+            raise BadOrderQuantity(f"{symbol}: {qty_refusal}")
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         time_in_force = _derive_stop_tif(qty)
         if time_in_force is TimeInForce.DAY:
