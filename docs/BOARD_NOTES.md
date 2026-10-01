@@ -967,53 +967,6 @@ Full heading text, moved for the same reason:
 **2026-09-30, third pass — the recording is COMPLETED and is now the completion criterion of items 90 and 199, replacing any further re-derivation.** The pinned-at-entry half (`entry_atr`, `initial_stop_loss`, the entry `price`, and `stop_basis` carrying the constructor's own `stop_rule`) and the resolved half (`realized_pnl`, `exit_reason_category` = `broker_stop_fill` when the broker's stop filled) were already on the `trades` row. The gap closed here is the FAVOURABLE excursion: `max_favourable_excursion`, the exact mirror of `max_adverse_excursion`, widened by the same `Database._accumulate_excursions` call inside the same `sync_positions` transaction as the snapshot it is derived from. Without it a stop-out recorded beside a wide adverse excursion cannot be told apart from one that first ran a long way in the desk's favour and gave it all back, which is the question the floor actually turns on. Nothing reads any of these columns back into a decision — no threshold, no gate, no surface — so this cannot change what the desk trades; the accumulation is swallowed on error so a recording fault can never fail a position sync. The stop's distance in ATR multiples is deliberately NOT a column: it is recomputed from entry price, entry stop and entry ATR, per the standing rule against storing what code can recompute. Both excursions are snapshot-frequency FLOORS on the true figures and legacy rows are NULL; a reader who drops either caveat is reading them wrong. Proved by `tests/test_stop_evidence_excursions.py`, including a position that opens, runs against the desk, recovers and then closes still carrying the worst excursion it reached.
 
 **2026-09-30, second pass — the EVIDENCE the floor would need is now being recorded, and the fallback divergence is closed at its source rather than pinned by a test.** Two changes, no change to any traded number. (1) `src/pipeline.py`'s hand-copied fallback literals are now overridden by the default `RiskConfig` itself declares, so the 1.5-vs-2.5 divergence note (e) describes cannot recur for this or any other risk ceiling; an audit of every `_risk_setting` literal in the file found `min_stop_atr_multiple` to be the only mismatch, and `max_position_pct` to be the only name with no declared default (required field), so its literal stays as the genuine last resort. (2) Every closed trade now carries the four facts the desk has never recorded and therefore could never check its floor against: `trades.entry_atr` (ATR14 pinned at entry), `trades.stop_basis` (the constructor's own STOP_RULE_* string, which already separates a stop honoured at a computed level from one set by the ATR band), `trades.max_adverse_excursion` (worst against-entry price accumulated monotonically from each session's position snapshot), alongside the `realized_pnl` and `exit_reason_category` already on the row. **This does NOT reopen the doctrine-barred MAE study of note (b).** The permitted use is falsification only: showing whether the ratified floor was ever VIOLATED in practice — whether trades that went on to resolve well were stopped out by a floor sitting inside their ordinary excursion. Sweeping this record for the multiplier that would have maximised past outcomes is fitting and stays barred; the floor is still read from published doctrine and from the instrument. One caveat any reader must carry: the excursion is sampled at snapshot frequency, so it is a floor on the true MAE — a reading that says the floor WAS violated is trustworthy, one that says it was not means only "not observed". Nothing reads any of it back into a trading decision. **The next pass on this item should ask what the record now shows, not re-derive the multiple.**
-## Item 202 — the rehearsal harness reaches the network
-
-Found 2026-09-30 while closing a hole in the test suite's outbound-HTTP guard.
-
-`tests/conftest.py` blocked `requests.get` only. A `requests.Session` bypassed
-it, and yfinance does not use `requests` at all — it ships its own transport on
-curl_cffi [measured: `yfinance.data` references `curl_cffi` and `session.get`,
-and `requests.Session` zero times]. So the guard never applied to the one
-library that actually reached the internet.
-
-Closing both holes exposed five tests that silently depended on a live Yahoo
-Finance response. Four were not about market data and now state their own
-sectors. The fifth is this item: a test whose premise is replaying a RECORDED
-session downloads SPY and per-symbol price history on every run, reports
-`TECH DATA BLIND SPOT`, and never reaches the Portfolio Manager.
-
-It **fails on `origin/main` today** with the network reachable, taking 196
-seconds [measured 2026-09-30], so it is pre-existing rot rather than a
-regression from the guard.
-
-Do NOT fix it by loosening the guard, skipping the test, or marking it flaky.
-That is the same error as raising a safety sweep's frequency instead of fixing
-what the sweep is covering for.
-
-
-### Item 202 update — the isolation was never real (2026-09-30)
-
-`ops/rehearsal/broker.py::blocked_market_data` replaces the market-data
-provider with one that fetches nothing, and `ops/rehearsal/isolation.py`
-describes a socket wall covering "Anthropic, OpenAI, OpenRouter, Alpaca,
-yfinance, FRED and RSS". Neither held: price data still reached the rehearsal
-through **curl_cffi**, which is yfinance's own transport and which the test
-suite's outbound-HTTP guard did not cover.
-
-So the rehearsal has been validating against LIVE market data while claiming
-to be offline, deterministic and free. With the hole closed, the session
-degrades honestly to `status='no_data'` and never reaches the Portfolio
-Manager, which is why `test_the_settled_cost_ceiling_still_suspends_paid_analysis`
-cannot build its 'before' case.
-
-That test is marked `xfail(strict=False)` with the reason above — NOT as a
-flake. It flips to XPASS the moment this item serves recorded market data,
-which is the signal that item 202 is done.
-
-It also fails on `origin/main` today, taking ~196 seconds of live fetching
-[measured 2026-09-30], so the defect predates the guard rather than being
-caused by it.
 ## items 182 / 183 / 185 / 186 — consolidation check against item 90 (2026-09-30)
 **Verdict: all four KEPT, none retired.** Each opens with "item 90's half two, surfaced for visibility", but each carries its own DONE WHEN criteria that item 90 does not own: 182 the ladder alert and cash-deficit cushion, 183 the order gates and the dead cash-sweep config removal, 185 the ATR-eligibility question and its two inherited rows, 186 three open owner-appetite answers. Retiring any would lose those criteria. The defect found was in item 90 itself: it claimed the four carry one word-for-word shared criterion, which was false (checked against each block). Item 90's line now names the four tranches and what each covers. No constant, threshold or value was chosen or changed.
 ## Item 192 (RETIRED 2026-09-30) — local interpreter pinned to CI's
