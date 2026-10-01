@@ -1058,6 +1058,22 @@ numbers:
       ships disabled today (`universe_screen.enabled: false`), which
       bounds the live cost to sizing alone; it does not bound the cost if
       the screen is ever switched on.
+      ITEM 199 OUTCOME 2026-09-30: the chart cannot replace this number, and
+      the population it governs is stated here rather than assumed. Measured
+      over 867 production technical-seat candidates carrying entry price,
+      ATR14 and computed levels: 97.2% have a computed level at or below entry
+      at any touch count, but the NEAREST such level sits closer to entry than
+      this flat floor for 71.8% of them (gap distribution in ATRs: p10 0.15,
+      p50 1.41, p75 2.65, p90 5.14, max 10.1). A structural level used as a
+      WIDENING anchor therefore changes nothing for roughly seven candidates
+      in ten, and on the 28.2% where it does bind it runs out to 10.1 ATRs,
+      which is a four-fold position-size cut. Capping that widening at this
+      multiple makes the rule arithmetically inert; any other cap is a new
+      invented money number. So this value governs the WHOLE unbacked-stop
+      population, not a residue, and its status stays arbitrary. The only
+      thing that can change that is an owner-appetite dial: the maximum stop
+      widening, in ATRs, the desk will accept in order to sit behind real
+      structure. It is deliberately not picked here.
   - id: src.config.RiskConfig.min_target_atr_multiple
     value: 1
     status: sourced
@@ -5249,7 +5265,7 @@ numbers:
       (src/pipeline.py:7431-7445). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5258,6 +5274,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_blocked_proposals(max_lines)
     value: 5
     status: arbitrary
@@ -5267,7 +5295,7 @@ numbers:
       (src/pipeline.py:7431-7445). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5276,6 +5304,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_blocked_proposals(min_proposals)
     value: 3
     status: arbitrary
@@ -5285,7 +5325,7 @@ numbers:
       (src/pipeline.py:7431-7445). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5294,6 +5334,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_calibration_note(lookback_days)
     value: 45
     status: arbitrary
@@ -5303,7 +5355,7 @@ numbers:
       (src/pipeline.py:8588-8593). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5312,6 +5364,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(lookback_days)
     value: 5
     status: not-trade-governing
@@ -5331,7 +5395,7 @@ numbers:
       (src/pipeline.py:7716-7730). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5340,6 +5404,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(move_threshold_pct)
     value: 8
     status: not-trade-governing
@@ -5361,7 +5437,7 @@ numbers:
       review (src/pipeline.py:7716-7730). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
-      trading seat's verdict is built from.
+      trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5370,6 +5446,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_missed_opportunities_digest(top_n)
     value: 15
     status: not-trade-governing
@@ -5388,7 +5476,7 @@ numbers:
       (anti-flip-flop memory) (src/pipeline.py:13266-13270). Its only caller
       passes nothing, so this default is live. Same class as the smart-money
       prompt-truncation caps classified arbitrary on 2026-09-19: it decides
-      what evidence a trading seat's verdict is built from.
+      what evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5397,6 +5485,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_pm_recent_decisions(limit)
     value: 3
     status: arbitrary
@@ -5406,7 +5506,7 @@ numbers:
       flop memory) (src/pipeline.py:6075-6080). Its only caller passes
       nothing, so this default is live. Same class as the smart-money prompt-
       truncation caps classified arbitrary on 2026-09-19: it decides what
-      evidence a trading seat's verdict is built from.
+      evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5415,6 +5515,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_post_exit_reality(lookback_days)
     value: 14
     status: not-trade-governing
@@ -5433,7 +5545,7 @@ numbers:
       (src/pipeline.py:6780-6788). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5442,6 +5554,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_post_exit_reality(min_age_days)
     value: 2
     status: arbitrary
@@ -5451,7 +5575,7 @@ numbers:
       position reviewer (src/pipeline.py:6780-6788). Its only caller passes
       nothing, so this default is live. Same class as the smart-money prompt-
       truncation caps classified arbitrary on 2026-09-19: it decides what
-      evidence a trading seat's verdict is built from.
+      evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5460,6 +5584,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_projected_portfolio(default_buy_pct)
     value: 5
     status: arbitrary
@@ -5467,7 +5603,7 @@ numbers:
     note: >-
       Size assumed for every BUY-rated candidate in the sector-concentration
       preview the PM reads before deciding (src/pipeline.py:6150-6160); the
-      one caller (src/pipeline_stages.py:4942) passes nothing.
+      one caller (src/pipeline_stages.py:4942) passes nothing. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): take the size from `_clamp_queued_earnings_buys(max_pct)`, the other 5.0 in this file. FAILED -- same digits, different quantity (a cap on resulting weight versus an assumed fresh buy), and tying them would invent a relationship the code does not have. Attempt (2): derive it from the constructor's own sizing. FAILED as a derivation but SURVIVES as the measurement below, because the constructor sizes off a stop distance this preview has not computed yet, so there is no arithmetic -- only a side-by-side read. Value unchanged.
     open_question: >-
       Should the preview size each candidate at the size the constructor would
       actually give it (its risk budget over its stop distance) rather than a
@@ -5475,6 +5611,18 @@ numbers:
     cost_while_unanswered: >-
       The PM is shown a projected sector mix computed at a size no candidate
       is actually given, and self-corrects against it.
+    settles_by:
+      kind: "measurement"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        the pre-decision sector-concentration preview computed twice each session: once at this flat assumed size and
+        once at the size the constructor would actually give each candidate (its risk budget over its stop distance),
+        the two projected sector mixes stored side by side
+      closes_when: >-
+        the paired previews show whether the flat figure ever moves a sector past a ceiling the constructor-sized
+        preview would not. If it does, the flat number is replaced by the constructor's own sizing and this row
+        becomes `derived`; if it never does, the row becomes not-trade-governing
   - id: src.pipeline.TradingPipeline._build_recent_buys_for_grading(lookback_days)
     value: 5
     status: not-trade-governing
@@ -5493,7 +5641,7 @@ numbers:
       Its only caller passes nothing, so this default is live. Same class as
       the smart-money prompt-truncation caps classified arbitrary on
       2026-09-19: it decides what evidence a trading seat's verdict is built
-      from.
+      from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5502,6 +5650,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_recent_missed_lessons(lookback_days)
     value: 14
     status: arbitrary
@@ -5511,7 +5671,7 @@ numbers:
       (src/pipeline.py:6870-6880). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5520,6 +5680,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_recent_outlook_calibration(lookback)
     value: 10
     status: not-trade-governing
@@ -5556,7 +5728,7 @@ numbers:
       size (src/pipeline.py:6008-6013). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
-      trading seat's verdict is built from.
+      trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5565,6 +5737,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_thesis_health_context(lookback_weeks)
     value: 8
     status: arbitrary
@@ -5574,7 +5758,7 @@ numbers:
       position (src/pipeline.py:7094-7108). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
-      trading seat's verdict is built from.
+      trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -5583,6 +5767,18 @@ numbers:
       The seat's feedback memory is cut at a round number: too short and it
       cannot see a repeating pattern, too long and stale rows steer today's
       decision.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every build of this prompt block, with the count of candidate rows available BEFORE this cut, the count that
+        survived it, the age of the oldest surviving row and the seat's verdict, so the bite of the cut is a recorded
+        series instead of an assumption nobody can inspect
+      closes_when: >-
+        a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
+        cap is then set at that point, read off the recording, instead of at a round number. Never set from which
+        window would have traded best
   - id: src.pipeline.TradingPipeline._build_trade_grade_summary(lookback_days)
     value: 14
     status: not-trade-governing
@@ -5634,7 +5830,7 @@ numbers:
       overnight exposure on a name nobody has read — about HALF
       `min_position_risk_pct` (0.5%), the smallest risk this desk will open a
       position for at all. So the cap is conservative on the desk's own
-      scale. That is a cross-check, not a source. NO VALUE PICKED.
+      scale. That is a cross-check, not a source. NO VALUE PICKED. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. The item-186 pass above is derivation attempt (1) and it failed (5.07% is the size of a MOVE, not a share of the BOOK). Attempt (2): derive the cap from a ledgered per-name weight bound. FAILED -- the sector and position bounds in this ledger are themselves owner-ratified appetite with no measurement behind them, so the arithmetic would inherit an unsourced parent. Two attempts is the limit; the gap measurement below is the route. Value unchanged.
     open_question: >-
       NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that a global
       constant governing risk is a defect to be replaced by a per-name read,
@@ -5659,6 +5855,18 @@ numbers:
       A name with an unread filing is capped at 5% of the book whatever its
       stop distance, so the cap is either looser or tighter than the risk
       envelope for that name, unknowably.
+    settles_by:
+      kind: "measurement"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        the overnight gap each queued-but-unanalysed filing actually produced on this desk's own universe, read from
+        the price record rather than from any trade of ours, paired with the resulting weight this cap refused on that
+        name and the weight it allowed
+      closes_when: >-
+        the recorded gap distribution shows the resulting weight at which an unread filing's worst plausible overnight
+        move stays inside the per-name risk the desk already accepts; the cap is then read off those gaps instead of
+        being the PM prompt's own prose restated back at it
   - id: src.pipeline.TradingPipeline._force_delever:factor[0]
     value: 0.97
     status: derived
@@ -5706,13 +5914,25 @@ numbers:
       ATR14 counts as having an actionable signal and is sent to the technical
       seat (src/pipeline.py:2973-2976). The same function has further inline
       thresholds (50% volume change, 2% MA spread) that no rule sees because
-      they are comparisons, not multipliers.
+      they are comparisons, not multipliers. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive 0.5 from the ledgered noise-band multiple of 1.25 ATR as a half-band. FAILED -- the noise band bounds a STOP against daily range, this bounds a moving-average SPREAD; they share a unit and nothing else. Attempt (2): treat it as a sort-key position with no magnitude, the shape that explained eight rows in tranche 1. FAILED -- checked at the definition site and it is a genuine magnitude: it is compared against a computed spread and decides inclusion, it is not a position in any ordering. Value unchanged.
     open_question: >-
       What MA20/MA50 spread, in ATRs, precedes a tradeable move on this desk's
       names more often than chance?
     cost_while_unanswered: >-
       Decides which names the technical seat ever looks at; a name filtered
       out here cannot be traded that session.
+    settles_by:
+      kind: "recording"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        every symbol this pre-filter DROPS each session together with its MA20/MA50 spread in ATR14s at the moment of
+        the drop, alongside the same spread for every symbol it admits, so the cut point is visible against the whole
+        universe and not only against the survivors
+      closes_when: >-
+        the recorded spreads show the point beyond which dropped names stop differing from admitted names in
+        subsequent realised RANGE -- a property of the instrument. Explicitly never the spread that would have
+        produced the best trades: that is fitting, and it is barred
   - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
     value: 1.25
     status: derived
@@ -5750,13 +5970,24 @@ numbers:
       Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
       the last 4 calendar days (src/pipeline.py:10248-10256, caller
       src/pipeline.py:11306 passes nothing). The docstring's reason is a
-      forensic observation, not a measured cooldown length.
+      forensic observation, not a measured cooldown length. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive the 4 calendar days from the ratified swing mandate. FAILED -- the mandate names no number, by design. Attempt (2): derive it from the reviewer's >=1.02x min-bump rule, i.e. the sessions needed for 2% of range to accumulate. FAILED -- that rule bounds the SIZE of one tighten and says nothing about spacing, and the 1.02 is itself unsourced. The measurement below is the route. Value unchanged.
     open_question: >-
       Over how many sessions does a tightened trail on this desk's names stay
       outside the daily-noise band, measured from its own trail history?
     cost_while_unanswered: >-
       A justified tightening is refused for up to four days, or a repeated one
       is allowed too soon and marches the stop into noise.
+    settles_by:
+      kind: "measurement"
+      state: "specified"
+      where: "docs/BOARD_NOTES.md (item 90, the 2026-10-01 pipeline tranche)"
+      records: >-
+        for every ACCEPTED trail tighten on this desk, the number of sessions that passed before that stop next sat
+        inside the 1.25 ATR14 noise band, read from the recorded trail history and the daily ranges of the name itself
+      closes_when: >-
+        that session count has a stable distribution across names, so the cooldown is set from how long a tightened
+        stop actually stays clear of noise on the instrument, instead of from the single 2026-07-16 forensic anecdote
+        the docstring currently offers as its reason
   - id: src.pipeline.TradingPipeline.run_quarterly_meta_reflection(lookback_days)
     value: 90
     status: not-trade-governing
