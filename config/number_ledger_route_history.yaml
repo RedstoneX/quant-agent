@@ -115,3 +115,55 @@ changes:
       has actually carried -- failed, because nothing anywhere records a
       pre-truncation size, so there is no record to read. Stopped at two:
       the recording that would settle them IS the route.
+  - delta: -18
+    date: "2026-10-01"
+    why: |
+      Board item 90, half two, SECOND tranche: the pipeline cluster. All 18
+      `arbitrary` rows under `src.pipeline.TradingPipeline` that carried a
+      status and no route now carry one, so the routeless count falls 130 ->
+      112. Fourteen of them are the prompt-evidence windows and caps that
+      decide what a trading seat's verdict is built from; they fail the same
+      two derivations the smart-money truncation caps failed on 2026-09-19 --
+      the ratified swing mandate names no number by design, and every sibling
+      window in this ledger is itself arbitrary, so the arithmetic would only
+      relabel one unsourced number as another's child. Nothing records how
+      much evidence existed BEFORE the cut, so the recording is the route.
+      The remaining four are routed individually: the sector-preview buy size
+      against a constructor-sized preview run beside it, the queued-earnings
+      weight cap against the overnight gaps unread filings actually produce,
+      the research pre-filter's 0.5 ATR moving-average spread against the
+      spreads of the names it drops as well as those it admits, and the trail
+      cooldown against how long a tightened stop actually stays clear of the
+      noise band. No VALUE changed in this pass and no appetite was routed to
+      the owner. The 0.5 ATR spread was checked for the sort-key shape that
+      explained eight rows in the first tranche and is a genuine magnitude.
+  - delta: -31
+    date: "2026-10-01"
+    why: |
+      Item 90, tranche three: the 16 routeless rows of the smart-money
+      admission screen in `SmartMoneyConfig` and the 15 agent-result
+      scoring-field rows in `src/agents/base.py` gain settlement routes.
+      No value moved and no appetite was routed to the owner.
+
+      The 15 scoring weights were checked for the sort-key shape the
+      previous tranche found and DO NOT have it. `AgentResult._shape_score`
+      sums the weight of every expected key present in a candidate and
+      compares those sums across candidates, and a top-level list scores
+      the SUM of its elements, so the spacing is load-bearing rather than
+      cancelling -- the 2026-08-17/20 collapse of 10 of 13 decision runs
+      was exactly a spacing collision, a PortfolioDecision scoring 40
+      losing to its own eight-element `targets` array at 5 apiece. Their
+      route is a measurement of real multi-candidate contests.
+
+      The ten filings-window rows and the three admission-screen floors
+      route to measurements off the filings record and market prices --
+      never off this desk's own fills.
+
+      The three affordability caps (external nominations, filings per
+      refresh, refresh deadline) record BOTH failed derivation attempts.
+      First: derive each from the per-run time and cost budget it serves --
+      failed, that budget is itself unledgered. Second: derive each from
+      demand actually seen -- failed, the scan logs only BOOLEANS saying
+      the cap bound or the deadline cut the scan, and a boolean cannot
+      distinguish a true demand of 1000 from one of 2000. Stopped at two:
+      the recording of pre-cap demand IS the route.
