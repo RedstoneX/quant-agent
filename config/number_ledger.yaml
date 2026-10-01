@@ -684,6 +684,24 @@ numbers:
     value: 2.5
     status: arbitrary
     site: src/config.py
+    settles_by:
+      kind: recording
+      state: built
+      where: src/storage/db.py
+      records: >-
+        Per CLOSED trade: entry price, entry ATR, the entry stop and the basis
+        it was computed from, and the maximum ADVERSE and FAVOURABLE excursions
+        (`trades.max_adverse_excursion` and its favourable mirror, written by
+        `src/storage/db.py`), alongside the realised outcome and stop-hit
+        category already stored. The realised ATR multiple is RECOMPUTED from
+        those columns and is deliberately not stored again.
+      closes_when: >-
+        Enough closed trades carry the excursion columns to answer the only
+        question doctrine allows of them -- was the floor ever VIOLATED in
+        practice -- which falsifies the floor or leaves it standing. It may
+        NOT be optimised against: fitting a number to this desk's own trading
+        record is barred outright (docs/OUTCOME.md), and that is how the 1.5
+        was produced in the first place.
     note: >-
       Minimum stop distance in ATRs where no real level backs the stop, a
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
@@ -2343,9 +2361,37 @@ numbers:
       it replaces one arbitrary literal with a live dependency on this row
       and on `min_stop_atr_multiple`, both still arbitrary and both still
       carrying open questions. Board item 185 stays open.
+      ITEM 185, 2026-10-01 — this row's open question is now INHERITED BY
+      ITEM 185 as well as item 90, because item 185's own ceiling (1 / 3.00)
+      cannot be resolved while this factor is unresolved. Measured the same
+      day off the desk's own stored daily bars (101 symbols, 276 sessions to
+      2026-09-30, ATR(14)/price with `src.data.technical.atr_series`): median
+      2.53%, p90 5.50%, max 8.33%, and NOT ONE name reaches even 10%. The
+      ceiling this row's 1.20 helps set is therefore four times beyond the
+      most volatile instrument the desk looks at, so moving this scaler does
+      not move the screen in practice - it moves every live stop.
     open_question: >-
-      By how much should stop width scale with volatility regime, measured on
-      this desk's own maximum adverse excursion by regime?
+      REPLACED 2026-10-01 (item 185). The previous wording asked for a
+      measurement over this desk's own maximum adverse excursion by regime;
+      that is FITTING to this desk's own trade record, which `docs/OUTCOME.md`
+      bars outright, and it is the same barred question already deleted from
+      `min_stop_atr_multiple` on 2026-09-30. It is replaced by a question that
+      can be read off the instrument: ATR(14) is itself a trailing volatility
+      measurement that re-reads every session, so a regime scaler on top of it
+      is only defensible as a LAG correction - how far does ATR(14) understate
+      a name's current daily range in the first sessions after the tape turns
+      risk-off? That is answerable per name from daily bars alone (ATR(14)
+      against a short-window range over the turn), with no reference to what
+      this desk traded or earned. If the lag gap is small, the honest fix is
+      to DELETE the scaler as double-counting rather than to re-pick it; if it
+      is large, the scaler should be a per-name read of that gap and not a
+      global 1.2, per the owner's 2026-09-30 ruling that risk is per name.
+      THE RECORDING THAT WOULD SETTLE IT, which does not exist today: persist,
+      per name and per session, the regime label this desk assigned alongside
+      that name's own ATR(14) and realised daily range, so the lag gap can be
+      measured against the desk's own live regime calls from instrument data
+      only. Nothing in `data/quant_agent.db` stores the regime label next to a
+      per-name volatility reading today, which is why this stays open.
     cost_while_unanswered: >-
       Every stop in a high-volatility regime is widened by a scaler no
       measurement supports (src/portfolio_constructor.py:636-646 says exactly
@@ -2363,7 +2409,10 @@ numbers:
       sourced: no measured regime/MAE breakdown exists in this repo. These
       multiply into every stop distance.
     open_question: >-
-      Same question, the elevated-regime rung.
+      Same question as the risk-off rung above, as replaced on 2026-10-01 by
+      item 185 (the lag-correction reading off the instrument, never a
+      maximum-adverse-excursion study over this desk's own trades), the
+      elevated-regime rung.
     cost_while_unanswered: >-
       As above.
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]
@@ -2379,8 +2428,9 @@ numbers:
       sourced: no measured regime/MAE breakdown exists in this repo. These
       multiply into every stop distance.
     open_question: >-
-      Same question, the calm-regime rung - and whether tightening in calm
-      regimes is right at all.
+      Same question as the risk-off rung above, as replaced on 2026-10-01 by
+      item 185, the calm-regime rung - and whether tightening in calm regimes
+      is right at all.
     cost_while_unanswered: >-
       As above, and this rung TIGHTENS stops, so an error here moves exits
       inside noise.
