@@ -886,11 +886,20 @@ class TelegramNotifier:
         # closing it: money-at-risk alarms still land, operational noise is
         # dropped (and still recorded). When both are set the hard mute wins,
         # because `enabled` is already False by the time the filter runs.
-        self.risk_only = _risk_only_declared_default() or os.getenv(
-            "TELEGRAM_RISK_ONLY", "",
-        ).strip().lower() in (
-            "1", "true", "yes",
-        )
+        # The env var WINS when it is set to a value this understands --
+        # including an explicit off. `declared_default or env` could not be
+        # turned off from the environment once config declared it on, which
+        # contradicted `_risk_only_declared_default`'s own docstring ("an
+        # operator must be able to flip the channel without a deploy"). The
+        # docstring is the intent, so the CODE was changed to match it. An
+        # unset or unrecognised value falls back to the declared default.
+        _risk_only_env = os.getenv("TELEGRAM_RISK_ONLY", "").strip().lower()
+        if _risk_only_env in ("1", "true", "yes"):
+            self.risk_only = True
+        elif _risk_only_env in ("0", "false", "no"):
+            self.risk_only = False
+        else:
+            self.risk_only = _risk_only_declared_default()
         self.enabled = bool(self.token and self.chat_id) and not kill_switch
         # Tap-through link target for send(). Unlike token/chat_id this is
         # NOT read from the environment — src/config.py::NotificationsConfig

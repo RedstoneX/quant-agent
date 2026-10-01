@@ -983,27 +983,71 @@ def _file_lock(lock_path: Path | None):
             os.close(fd)
 
 
-def _read_alert_outcome(latch_path: Path | None) -> tuple[bool, int]:
-    """Best-effort read of (alert_delivered, alert_attempts) from the latch.
+#: `alert_state` / `recovery_alert_state` / `suspension_alert_state` value for
+#: "the desk deliberately DROPPED this alert" -- TELEGRAM_RISK_ONLY filtered an
+#: operational message, or TELEGRAM_DISABLED muted everything. A THIRD state,
+#: never folded into 1 (delivered): a dropped message was not delivered, and
+#: saying it was is a false statement on the owner's own surface. 0 is "not
+#: sent, still retryable", -1 is "in flight", and 2 is already taken on
+#: `recovery_alert_state` for "unpaired", so suppression is 3.
+ALERT_STATE_SUPPRESSED = 3
+
+
+def _send_alert_outcome(
+    notifier: Any, message: str, log_label: str,
+) -> tuple[bool, bool]:
+    """Send one OPERATIONAL cost-circuit alert. Returns (delivered, suppressed).
+
+    Both False means a real, RETRYABLE failure. A deliberate drop is
+    SETTLED -- never retried (retrying a filter never succeeds and writes a
+    fresh suppression row each time) and never recorded as delivered. The
+    drop itself is already durably recorded in `notifier_sends`.
+
+    Never raises: a notifier fault must not affect trading or safety.
+    """
+
+    try:
+        from src.notifier import CATEGORY_OPERATIONAL, was_suppressed
+
+        outcome = notifier.send(message, category=CATEGORY_OPERATIONAL)
+        return bool(outcome), was_suppressed(outcome)
+    except Exception:
+        logger.exception(log_label)
+        return False, False
+
+
+def _alert_state_value(delivered: bool, suppressed: bool) -> int:
+    """The three-way `alert_state` for one send outcome."""
+
+    if delivered:
+        return 1
+    if suppressed:
+        return ALERT_STATE_SUPPRESSED
+    return 0
+
+
+def _read_alert_outcome(latch_path: Path | None) -> tuple[bool, int, bool]:
+    """Best-effort read of (alert_delivered, alert_attempts, alert_suppressed).
 
     Never raises: an unreadable/missing/corrupt marker reads as "not yet
-    delivered, zero attempts" rather than blocking anything.
+    delivered, zero attempts, not suppressed" rather than blocking anything.
     """
 
     if latch_path is None or not latch_path.exists():
-        return False, 0
+        return False, 0, False
     try:
         payload = json.loads(latch_path.read_text(encoding="utf-8"))
     except Exception:
-        return False, 0
+        return False, 0, False
     if not isinstance(payload, dict):
-        return False, 0
+        return False, 0, False
     delivered = payload.get("alert_delivered") is True
+    suppressed = payload.get("alert_suppressed") is True
     try:
         attempts = int(payload.get("alert_attempts") or 0)
     except (TypeError, ValueError):
         attempts = 0
-    return delivered, max(0, attempts)
+    return delivered, max(0, attempts), suppressed
 
 
 def _record_alert_attempt(
@@ -1011,6 +1055,7 @@ def _record_alert_attempt(
     lock_path: Path | None,
     *,
     delivered: bool,
+    suppressed: bool = False,
     now: datetime | None = None,
 ) -> int:
     """Durably fold one alert-send outcome into the emergency latch file.
@@ -1060,6 +1105,12 @@ def _record_alert_attempt(
             payload["alert_delivered"] = bool(payload.get("alert_delivered")) or bool(
                 delivered
             )
+            # The third state, kept separate from `alert_delivered` on
+            # purpose: a message the desk deliberately dropped must never
+            # read back as one the owner was told.
+            payload["alert_suppressed"] = bool(
+                payload.get("alert_suppressed")
+            ) or bool(suppressed)
             payload["last_alert_attempt_at"] = (
                 now or _now_utc()
             ).isoformat()
@@ -1163,10 +1214,11 @@ class UnavailableLLMCostCircuit:
             default=(run_id, mode),
         )
         self._alert_lock = threading.Lock()
-        durably_delivered, durable_attempts = _read_alert_outcome(
-            self._emergency_latch_path
+        durably_delivered, durable_attempts, durably_suppressed = (
+            _read_alert_outcome(self._emergency_latch_path)
         )
         self._alert_delivered = durably_delivered
+        self._alert_suppressed = durably_suppressed
         self._alert_attempts = durable_attempts
         self._last_alert_attempt = 0.0
 
@@ -1202,13 +1254,17 @@ class UnavailableLLMCostCircuit:
             # consumes `status()` (Mission Control, session summaries), not
             # just this process's own logs.
             "alert_delivered": self._alert_delivered,
+            # The THIRD state. A message dropped by the risk-only filter or
+            # the hard mute is settled, so it is never retried -- but it was
+            # NOT delivered, and this surface must not say it was.
+            "alert_suppressed": self._alert_suppressed,
             "alert_attempts": self._alert_attempts,
         }
 
     def _alert(self) -> None:
         now = time.monotonic()
         with self._alert_lock:
-            if self._alert_delivered:
+            if self._alert_delivered or self._alert_suppressed:
                 return
             # Telegram/network outages are retryable, but do not hammer the
             # endpoint on every agent boundary in a parallel fan-out.
@@ -1253,29 +1309,28 @@ class UnavailableLLMCostCircuit:
             "restart any long-lived worker that observed this emergency latch."
         )
         logger.critical("\n%s", message)
-        sent = False
-        try:
-            from src.notifier import CATEGORY_OPERATIONAL, was_suppressed
-
-            outcome = self.notifier.send(
-                message, category=CATEGORY_OPERATIONAL,
-            )
-            # A mute or a category filter is a SETTLED outcome, not a
-            # delivery failure: retrying every ~120s "until it succeeds"
-            # never succeeds and writes a fresh suppression row each time.
-            # The drop is already durably recorded in `notifier_sends`.
-            sent = bool(outcome) or was_suppressed(outcome)
-        except Exception:
-            logger.exception("cost-circuit unavailable Telegram alert failed")
+        # Three outcomes, never two: delivered / deliberately suppressed /
+        # failed. Suppression is settled (so `sent` stops the retry), but it
+        # is tracked apart from delivery all the way to `status()`.
+        delivered, suppressed = _send_alert_outcome(
+            self.notifier, message,
+            "cost-circuit unavailable Telegram alert failed",
+        )
+        sent = delivered or suppressed
         # item 17(b): fold this outcome into the SAME durable marker the
         # latch itself lives in, so it survives this process exiting before
         # a retry succeeds -- see `_record_alert_attempt`'s docstring.
         durable_attempts = _record_alert_attempt(
-            self._emergency_latch_path, self._emergency_lock_path, delivered=sent,
+            self._emergency_latch_path,
+            self._emergency_lock_path,
+            delivered=delivered,
+            suppressed=suppressed,
         )
         with self._alert_lock:
-            if sent:
+            if delivered:
                 self._alert_delivered = True
+            if suppressed:
+                self._alert_suppressed = True
             if durable_attempts >= 0:
                 self._alert_attempts = durable_attempts
             else:
@@ -1644,6 +1699,7 @@ class LLMCostCircuitBreaker:
                     # undelivered/zero -- nothing has attempted to notify
                     # the operator about THIS incident yet.
                     "alert_delivered": False,
+                    "alert_suppressed": False,
                     "alert_attempts": 0,
                     "last_alert_attempt_at": None,
                 },
@@ -2970,21 +3026,17 @@ class LLMCostCircuitBreaker:
             # A Telegram outage must not hide the shutdown from local operators.
             # The DB lease remains retryable when send() returns false.
             logger.critical("\n%s", text)
-            sent = False
-            try:
-                from src.notifier import CATEGORY_OPERATIONAL
-
-                sent = bool(self.notifier.send(
-                    text, category=CATEGORY_OPERATIONAL,
-                ))
-            except Exception:  # notifier must never affect trading/safety
-                logger.exception("cost circuit Telegram alert failed")
+            # notifier faults must never affect trading/safety; a filtered
+            # send is settled, not failed, and not delivered either.
+            delivered, suppressed = _send_alert_outcome(
+                self.notifier, text, "cost circuit Telegram alert failed",
+            )
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE llm_circuit_state SET alert_state=?, "
                     "updated_at=datetime('now') "
                     "WHERE singleton=1 AND alert_state=-1",
-                    (1 if sent else 0,),
+                    (_alert_state_value(delivered, suppressed),),
                 )
                 conn.commit()
         self._notify_quota_holds_if_needed()
@@ -3016,24 +3068,21 @@ class LLMCostCircuitBreaker:
                 return
             message = self.format_quota_alert(hold)
             logger.critical("\n%s", message)
-            sent = False
-            try:
-                from src.notifier import CATEGORY_OPERATIONAL, was_suppressed
-
-                outcome = self.notifier.send(
-                    message, category=CATEGORY_OPERATIONAL,
-                )
-                # Settled, not failed — see `_alert`. Abandoning the
-                # remaining holds here left them unalerted forever.
-                sent = bool(outcome) or was_suppressed(outcome)
-            except Exception:
-                logger.exception("cost quota Telegram alert failed")
+            # Settled, not failed — see `_alert`. Abandoning the remaining
+            # holds here left them unalerted forever. A suppressed hold is
+            # recorded as suppressed, so it does NOT arm the recovery alert
+            # (which selects `alert_state=1`): the owner cannot be told a
+            # hold cleared when he was never told it existed.
+            delivered, suppressed = _send_alert_outcome(
+                self.notifier, message, "cost quota Telegram alert failed",
+            )
+            sent = delivered or suppressed
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE llm_quota_holds SET alert_state=?, "
                     "alert_updated_at=datetime('now') "
                     "WHERE id=? AND alert_state=-1",
-                    (1 if sent else 0, hold["id"]),
+                    (_alert_state_value(delivered, suppressed), hold["id"]),
                 )
                 conn.commit()
             if not sent:
@@ -3066,21 +3115,20 @@ class LLMCostCircuitBreaker:
                 return
             message = self.format_recovery_alert(hold)
             logger.info("\n%s", message)
-            sent = False
-            try:
-                from src.notifier import CATEGORY_OPERATIONAL
-
-                sent = bool(self.notifier.send(
-                    message, category=CATEGORY_OPERATIONAL,
-                ))
-            except Exception:
-                logger.exception("cost quota recovery Telegram alert failed")
+            # Same three-way outcome as the hold alert: a filtered send is
+            # settled, so the loop keeps draining the queue instead of
+            # abandoning every remaining recovery and retrying forever.
+            delivered, suppressed = _send_alert_outcome(
+                self.notifier, message,
+                "cost quota recovery Telegram alert failed",
+            )
+            sent = delivered or suppressed
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE llm_quota_holds SET recovery_alert_state=?, "
                     "recovery_alert_updated_at=datetime('now') "
                     "WHERE id=? AND recovery_alert_state=-1",
-                    (1 if sent else 0, hold["id"]),
+                    (_alert_state_value(delivered, suppressed), hold["id"]),
                 )
                 conn.commit()
             if not sent:
@@ -3195,21 +3243,18 @@ class LLMCostCircuitBreaker:
                 event.update(self._episode_facts_locked(conn, event))
             message = self.format_auto_reset_alert(event)
             logger.info("\n%s", message)
-            sent = False
-            try:
-                from src.notifier import CATEGORY_OPERATIONAL
-
-                sent = bool(self.notifier.send(
-                    message, category=CATEGORY_OPERATIONAL,
-                ))
-            except Exception:
-                logger.exception("cost-circuit auto-reset Telegram alert failed")
+            # Fifth and last of the identical sites (PR #978 defect B).
+            delivered, suppressed = _send_alert_outcome(
+                self.notifier, message,
+                "cost-circuit auto-reset Telegram alert failed",
+            )
+            sent = delivered or suppressed
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE llm_circuit_events SET recovery_alert_state=?, "
                     "recovery_alert_updated_at=datetime('now') "
                     "WHERE id=? AND recovery_alert_state=-1",
-                    (1 if sent else 0, event["id"]),
+                    (_alert_state_value(delivered, suppressed), event["id"]),
                 )
                 conn.commit()
             if not sent:

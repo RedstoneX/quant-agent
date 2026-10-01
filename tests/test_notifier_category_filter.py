@@ -189,3 +189,48 @@ def test_send_document_is_not_filtered_because_it_carries_money(creds, monkeypat
     assert ok is True
     assert post.call_count == 1
     assert [r[1] for r in _rows(creds)] == ["sent"]
+
+
+def test_a_suppressed_cost_alert_is_not_reported_as_delivered(tmp_path):
+    """PR #978 defect A: settled is not failed, but settled is not DELIVERED.
+
+    `status()` publishes `alert_delivered` to Mission Control and the
+    session summaries as durable proof the operator was actually told. A
+    message the desk deliberately dropped must read back as suppressed, in
+    its own state, not as delivered.
+    """
+    from unittest.mock import MagicMock
+
+    from src.cost_circuit import UnavailableLLMCostCircuit
+    from src.notifier import SUPPRESSED
+
+    notifier = MagicMock()
+    notifier.send.return_value = SUPPRESSED
+    circuit = UnavailableLLMCostCircuit(
+        RuntimeError("breaker unavailable"), notifier=notifier,
+    )
+    circuit._alert()
+
+    state = circuit.status()
+    assert state["alert_delivered"] is False, state
+    assert state["alert_suppressed"] is True, state
+    # Settled: never retried, so exactly one send for this incident.
+    circuit._last_alert_attempt = 0.0
+    circuit._alert()
+    assert notifier.send.call_count == 1
+
+
+def test_a_delivered_cost_alert_is_still_reported_as_delivered(tmp_path):
+    from unittest.mock import MagicMock
+
+    from src.cost_circuit import UnavailableLLMCostCircuit
+
+    notifier = MagicMock()
+    notifier.send.return_value = True
+    circuit = UnavailableLLMCostCircuit(
+        RuntimeError("breaker unavailable"), notifier=notifier,
+    )
+    circuit._alert()
+    state = circuit.status()
+    assert state["alert_delivered"] is True
+    assert state["alert_suppressed"] is False

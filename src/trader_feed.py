@@ -4212,6 +4212,47 @@ def uncovered_stop_gaps(result: dict | None) -> list[dict]:
     ]
 
 
+def stop_coverage_was_audited(result: dict | None) -> bool:
+    """Did this session actually answer "is anything unprotected right now"?
+
+    `stop_coverage_gaps` is written by the broker-truth stop audit. A
+    session that died (`_run_safe`'s except leaves `result=None`) or
+    returned early (`evidence_gate_skip`, `broker_error`, `no_data` in
+    src/pipeline.py) never ran that audit and the key is simply absent --
+    which is NOT the same fact as "the audit ran and found nothing".
+    """
+
+    return isinstance(result, dict) and "stop_coverage_gaps" in result
+
+
+def protection_undetermined_alert(result: dict | None) -> str | None:
+    """The page for a session that cannot say whether anything is naked.
+
+    PR #978 defect D. The session that DIED is exactly the session where
+    protection is doubtful, so the one thing that must never come out of it
+    is silence -- and the one thing that must never be invented is a
+    default of "everything is fine". This states the true thing: the
+    question was not answered, go and look.
+    """
+
+    if stop_coverage_was_audited(result):
+        return None
+    # Plain words only: no status token, no run id. A raw state string is
+    # not something the owner can read, and the machine reason is unchanged
+    # in the result dict, the event rows and the log line.
+    reason = (
+        " (it ended early)" if isinstance(result, dict)
+        else " (it failed before it finished)"
+    )
+    return (
+        "⚠️ PROTECTION UNDETERMINED: this session ended without auditing "
+        f"stops at the broker{reason}, so the desk CANNOT say whether any "
+        "position is currently unprotected.\n"
+        "This is not an all-clear. Check open positions and their stops by "
+        "hand at the broker."
+    )
+
+
 def naked_position_alert(result: dict | None) -> str | None:
     """The NO-STOP-AT-ALL page, as its own message. None when nothing is naked.
 
@@ -4229,6 +4270,8 @@ def naked_position_alert(result: dict | None) -> str | None:
     resolves to `risk` and therefore survives the filter, which is the
     fail-closed default this design rests on.
     """
+    if not stop_coverage_was_audited(result):
+        return None
     uncovered = uncovered_stop_gaps(result)
     if not uncovered:
         return None
@@ -4246,9 +4289,15 @@ def send_naked_position_alert(notifier, result: dict | None) -> bool:
 
     Called once per session, by every entry point that sends a session
     summary (main.py, src/scheduler.py), BEFORE the summary itself.
+
+    Silence is never the output: a session that never ran the stop audit
+    (died, or returned early) raises `protection_undetermined_alert`
+    instead -- see PR #978 defect D.
     """
     try:
-        text = naked_position_alert(result)
+        text = naked_position_alert(result) or protection_undetermined_alert(
+            result
+        )
         if not text:
             return False
         symbols = [

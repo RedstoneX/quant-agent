@@ -104,3 +104,33 @@ def test_a_broken_notifier_cannot_break_the_session(creds):
     boom = MagicMock()
     boom.send.side_effect = RuntimeError("telegram exploded")
     assert send_naked_position_alert(boom, NAKED) is False
+
+
+def test_a_session_that_died_still_tells_the_owner_something(creds):
+    """PR #978 defect D: silence must never be the output of a dead session.
+
+    `_run_safe`'s except leaves `result=None`, and the early returns in
+    src/pipeline.py (`evidence_gate_skip`, `broker_error`, `no_data`) omit
+    `stop_coverage_gaps` entirely. Those are exactly the sessions in which
+    protection is doubtful, so they must say so rather than say nothing --
+    and must NOT invent a default of "everything is fine".
+    """
+    from src.trader_feed import protection_undetermined_alert
+
+    for result in (None, {"status": "broker_error"}, {"status": "no_data"},
+                   {"status": "evidence_gate_skip"}):
+        text = protection_undetermined_alert(result)
+        assert text is not None, result
+        assert "UNDETERMINED" in text
+        assert "not an all-clear" in text
+        sender = MagicMock()
+        sender.send.return_value = True
+        assert send_naked_position_alert(sender, result) is True
+        (sent_text,), _kwargs = sender.send.call_args
+        assert "UNDETERMINED" in sent_text
+
+
+def test_an_audited_session_with_no_gaps_is_not_called_undetermined(creds):
+    from src.trader_feed import protection_undetermined_alert
+
+    assert protection_undetermined_alert({"stop_coverage_gaps": []}) is None
