@@ -1435,6 +1435,12 @@ class AgentResult:
     # post-hoc.
     input_tokens: int = 0
     output_tokens: int = 0
+    # Board item 188 (RECORDING ONLY): the machine-readable reason this
+    # seat's OWN acceptance gate refused the answer, set by the seat on its
+    # rejection path and persisted to `agent_logs.acceptance_reason`. None
+    # means the answer was used, or that this seat does not yet name its
+    # reasons — never "accepted".
+    gate_reason: str | None = None
     cost_usd: float | None = None
     # Provider stop/finish reason + a derived flag. `truncated` is True when
     # the model hit the token ceiling mid-output (Anthropic stop_reason
@@ -1894,7 +1900,7 @@ def agent_log_kwargs(result: AgentResult) -> dict:
     )
 
 
-def seat_acceptance_kwargs(refusal_reason: str | None) -> dict:
+def seat_acceptance_kwargs(refusal_reason: str | None, result=None) -> dict:
     """Did the SEAT accept its own model's answer? — the fact `status` never held.
 
     `status` says the provider call returned. It says nothing about whether
@@ -1904,15 +1910,30 @@ def seat_acceptance_kwargs(refusal_reason: str | None) -> dict:
     for any model today. Pass the refusal reason the call site ALREADY has on
     its rejection path, or None when the answer was used.
 
+    Board item 188: pass the seat's `AgentResult` too and, when the gate
+    that refused set its own machine-readable `gate_reason`, THAT word is
+    stored instead of the call site's one-word-per-seat summary. The three
+    decision seats reject for several different causes and most of those
+    causes previously survived only as prose in a log line; the column must
+    carry the reason the gate itself produced, not a restatement of "it
+    failed". An absent or non-string `gate_reason` falls back to the call
+    site's word — never to a guess.
+
     Recording only. This decides nothing and changes nothing: a seat that
-    refuses an unusable answer behaves exactly as it did before.
+    refuses an unusable answer behaves exactly as it did before. Nothing
+    reads these two columns back into a sizing, stop, exit or routing
+    decision, and they must never be swept for a threshold.
     """
     from src.refusal_signature import (
         SEAT_ACCEPTED, SEAT_REFUSED, SEAT_REFUSAL_REASONS,
     )
     if not refusal_reason:
         return {"acceptance": SEAT_ACCEPTED, "acceptance_reason": None}
-    reason = str(refusal_reason)
+    gate_reason = getattr(result, "gate_reason", None)
+    reason = (
+        gate_reason if isinstance(gate_reason, str) and gate_reason
+        else str(refusal_reason)
+    )
     if reason not in SEAT_REFUSAL_REASONS:
         # An unregistered word must not silently enter the column: record the
         # refusal (true, and the load-bearing half) and flag the reason rather

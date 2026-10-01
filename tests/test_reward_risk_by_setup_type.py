@@ -124,17 +124,25 @@ def _build(analysis: TechAnalysisResult, *, risk: float = 3.0):
 # Type B / trend — no reward:risk computation may block or size it
 # ==========================================================================
 
-def test_a_breakout_with_an_awful_traditional_ratio_is_still_built():
-    """THE case. Reward $2 against risk $5 is R/R 0.40 — under every floor
-    this desk has ever had, and under the execution belt too. It trades,
-    because the $102 "reward" is a level nothing says this trade stops at:
-    a breakout is exited by a trailing stop, not at a target."""
+def test_a_breakout_with_an_awful_traditional_ratio_is_now_refused():
+    """AMENDED 2026-10-01 — owner ruling, board item 218. This test used to
+    assert the opposite: that reward $2 against risk $5 (R/R 0.40) TRADED,
+    because a breakout is exited by a trailing stop rather than at a target.
+    The owner was shown that exact arithmetic (buy 100, stop 94, nearest
+    level above 104) and ruled: "For now, let's refuse a bad risk reward
+    ratio. See if that improves the desk purchases." Refusal, not a resize.
+
+    The breakout LABEL no longer buys an exemption here. The exemption's own
+    stated reason is that a trend trade's reward number is INVENTED; this
+    fixture has a real computed level at $102, so the number is measured and
+    the ruling applies. Production agrees: five of the eleven sub-parity
+    buys on the real book are labelled breakout, including the two worst
+    ratios in the whole book [measured 2026-10-01, read-only].
+
+    What is NOT asserted here: any change to the stop, the target or the
+    trailing behaviour. The refusal is the whole change."""
     orders = _build(_analysis("AAA", setup_type="breakout"))
-    assert len(orders) == 1
-    assert orders[0].action == "BUY"
-    assert orders[0].reward_risk is not None and orders[0].reward_risk < 1.0
-    # And the RISK side is untouched: the level-backed stop ships as placed.
-    assert orders[0].stop_loss == STOP
+    assert orders == []
 
 
 def test_a_breakout_is_never_resized_by_any_reward_risk_computation():
@@ -142,11 +150,20 @@ def test_a_breakout_is_never_resized_by_any_reward_risk_computation():
     Risk Manager halved allocations "per R/R enforcement policy" on names it
     did not outright refuse. Two identical breakouts whose ONLY difference is
     how far the overhead level sits must size identically."""
+    # AMENDED 2026-10-01 (owner ruling, board item 218): a sub-parity thin
+    # payoff is now REFUSED rather than shipped. The no-resize half of this
+    # test is untouched and is what the two surviving fixtures assert — two
+    # trades that both clear parity must size identically however far the
+    # overhead level sits, because reward:risk is still never a size cap.
     thin = _build(_analysis("AAA", setup_type="breakout", upper_level=THIN_LEVEL))
+    assert thin == [], "sub-parity geometry is refused outright, not shrunk"
     fat = _build(_analysis("AAA", setup_type="breakout", upper_level=FAT_LEVEL))
-    assert len(thin) == len(fat) == 1
-    assert thin[0].allocation_pct == fat[0].allocation_pct
-    assert thin[0].stop_loss == fat[0].stop_loss == STOP
+    fatter = _build(
+        _analysis("AAA", setup_type="breakout", upper_level=FAT_LEVEL + 20.0)
+    )
+    assert len(fat) == len(fatter) == 1
+    assert fat[0].allocation_pct == fatter[0].allocation_pct
+    assert fat[0].stop_loss == fatter[0].stop_loss == STOP
 
 
 def test_a_breakout_is_exempt_from_the_pm_subfloor_gate_entirely():
@@ -185,7 +202,11 @@ def test_the_built_breakout_order_carries_its_setup_type_to_execution():
     """The execution stage cannot re-derive the setup type without building a
     second copy of the classification, so the constructor pins it onto the
     order — the same mechanism `stop_rule` already uses."""
-    orders = _build(_analysis("AAA", setup_type="breakout"))
+    # Fixture only: the default THIN level is refused outright from
+    # 2026-10-01 (owner ruling, board item 218), and this test is about the
+    # setup_type travelling to execution, not about geometry — so it is
+    # given a level that clears parity rather than being changed in substance.
+    orders = _build(_analysis("AAA", setup_type="breakout", upper_level=FAT_LEVEL))
     assert orders[0].setup_type == "breakout"
     orders = _build(_analysis("AAA", setup_type="range", upper_level=FAT_LEVEL))
     assert orders[0].setup_type == "range"
@@ -306,12 +327,13 @@ def test_a_weak_range_ratio_is_not_rejected_and_ranks_below_a_strong_one():
     assert ranked[1].components["risk_reward_tiebreak"] == 0.4
 
 
-def test_the_weak_range_trade_still_ships_an_order():
-    """Not a hard rejection: a thin-but-real range payoff actually trades
-    at the size asked, not at a starter-size cap."""
+def test_the_weak_range_trade_is_now_refused_not_resized():
+    """AMENDED 2026-10-01 — owner ruling, board item 218. This asserted that
+    a thin-but-real range payoff (R/R 0.40) traded at the size asked. The
+    owner has now ruled that arithmetically losing geometry is REFUSED. The
+    distinction the old test drew — refuse versus shrink — still holds, and
+    the answer flipped to "refuse": nothing here is resized."""
     orders = _build(
         _analysis("AAA", setup_type="range"), risk=3.0,
     )
-    assert len(orders) == 1
-    assert orders[0].stop_loss == STOP
-    assert orders[0].reward_risk == 0.4
+    assert orders == []

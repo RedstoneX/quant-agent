@@ -4101,7 +4101,10 @@ def _account_for_pm_candidates(
 
     try:
         pipeline.db.insert_agent_log(
-            **seat_acceptance_kwargs("no_valid_grounded_decision" if not reasked else None),
+            **seat_acceptance_kwargs(
+                "no_valid_grounded_decision" if not reasked else None,
+                result=reask_result,
+            ),
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=(
                 f"candidate-accounting re-ask | {', '.join(pending)}"
@@ -6102,6 +6105,19 @@ class MorningResearchStage:
                 parse_telemetry.total_null_coercions(),
                 parse_telemetry.describe_null_coercions(),
             )
+        if parse_telemetry.total_hygiene_observations() and not (
+            parse_telemetry.total_hygiene_violations()
+        ):
+            # Item 214 (2026-10-01): a silent clean run used to look
+            # identical to the check never running, which is why nobody
+            # could read these counters off production. State the
+            # denominator so "0 of N, by provider" is a readable fact.
+            logger.info(
+                "Tech-seat answer hygiene CLEAN this run: 0 violations in %d "
+                "checked answer(s), by provider: %s — see docs/WORK.md item 214",
+                parse_telemetry.total_hygiene_observations(),
+                parse_telemetry.describe_hygiene_observations(),
+            )
         if parse_telemetry.total_hygiene_violations():
             # Item 157's runtime check (2026-09-23): whether a schema-
             # enforced route is actually being honoured, surfaced where a
@@ -6125,7 +6141,9 @@ class MorningResearchStage:
                 "being sent at all, not a schema failing to suppress): "
                 "%s — see docs/WORK.md item 157",
                 parse_telemetry.total_hygiene_violations(),
-                parse_telemetry.describe_hygiene_violations(),
+                parse_telemetry.describe_hygiene_violations()
+                + f" (out of {parse_telemetry.total_hygiene_observations()} "
+                + f"checked answer(s): {parse_telemetry.describe_hygiene_observations()})",
             )
         return ctx
 
@@ -6757,7 +6775,10 @@ class DecisionStage:
                 pm_result.semantic_error or "no valid PM decision"
             )
         pipeline.db.insert_agent_log(
-            **seat_acceptance_kwargs("no_valid_grounded_decision" if not portfolio_decision else None),
+            **seat_acceptance_kwargs(
+                "no_valid_grounded_decision" if not portfolio_decision else None,
+                result=pm_result,
+            ),
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=f"{len(analyses)} analyses, ${total_value:.0f} total",
             input_message=pm_result.user_message,
@@ -7978,7 +7999,10 @@ class RiskStage:
         if verdict is None:
             rm_log_kwargs["status"] = "agent_failure"
         pipeline.db.insert_agent_log(
-            **seat_acceptance_kwargs("risk_manager_unparseable_output" if verdict is None else None),
+            **seat_acceptance_kwargs(
+                "risk_manager_unparseable_output" if verdict is None else None,
+                result=rm_result,
+            ),
             agent_name="risk_manager", run_id=run_id,
             # "violations" was wrong AND owner-facing: this string is what
             # `CandidateDetailModal` shows on the dashboard, and by this point

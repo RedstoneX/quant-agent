@@ -1006,6 +1006,13 @@ class RotationPrecheck:
     #: natural selection has anything to act on. A categorical membership,
     #: never a score — no arbitrary number.
     held_below_entry_bar: tuple[str, ...] = field(default_factory=tuple)
+    #: Board item 219. Every holding the pass actually looked at this
+    #: session, upper-cased and sorted. A raw membership, not a score: it
+    #: is simply `held_symbols` as the pre-check received it, kept so the
+    #: owner's report can say the pass RAN and over what, instead of
+    #: leaving a session that examined the whole book indistinguishable
+    #: from one that never ran.
+    held_examined: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -1423,12 +1430,22 @@ def precheck_record(
         "held_below_entry_bar_count": len(
             getattr(precheck, "held_below_entry_bar", ()) or ()
         ),
+        # Board item 219. The pass ran, and this is what it ran over.
+        "held_examined": ",".join(getattr(precheck, "held_examined", ()) or ()),
+        "held_examined_count": len(getattr(precheck, "held_examined", ()) or ()),
     }
     if opportunity is not None:
         record.update({
             "tier": str(getattr(opportunity, "tier", "") or ""),
             "held_symbol": str(getattr(opportunity, "held_symbol", "") or ""),
             "new_symbol": str(getattr(opportunity, "new_symbol", "") or ""),
+            # Board item 219. The conviction reasons the held name failed
+            # the desk's own entry bar on — the ONLY grounds the
+            # categorical tier cuts on, and therefore the reason the
+            # owner's report must give. Never a P&L figure.
+            "held_reasons": ",".join(
+                str(r) for r in (getattr(opportunity, "reasons", ()) or ())
+            ),
         })
         return record
     # 2026-09-23 — the near-miss half. `evaluate_rotation` declined at one of
@@ -1592,3 +1609,93 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
             "— it was never put to the desk to act on at all."
         )
     return lines
+
+
+def pruning_pass_lines(record: dict | None) -> list[str]:
+    """Board item 219 — the pruning pass said out loud, every session.
+
+    The defect this closes: the pass ran every session and reported
+    nowhere, so a session that examined the whole book and kept all of it
+    looked exactly like a session in which the pass never ran. Everything
+    below is read straight off the durable row `precheck_record` wrote; no
+    number here is derived, and none is invented.
+    """
+    if not isinstance(record, dict) or not record:
+        return []
+    outcome = str(record.get("outcome") or "")
+    if outcome == ROTATION_TELEMETRY_UNAVAILABLE:
+        # The pass genuinely did not run. Saying how many holdings it
+        # "examined" would be the untrue line this item exists to remove.
+        return []
+    examined = [s for s in str(record.get("held_examined") or "").split(",") if s]
+    count = int(record.get("held_examined_count") or 0)
+    below = [
+        s for s in str(record.get("held_below_entry_bar") or "").split(",") if s
+    ]
+    reasons = [s for s in str(record.get("held_reasons") or "").split(",") if s]
+    cut = str(record.get("held_symbol") or "").upper()
+    tier = str(record.get("tier") or "")
+
+    if count == 0:
+        lines = [
+            "\u2702\ufe0f Pruning pass: ran, and there were no holdings to "
+            "examine \u2014 the book is empty, so nothing could be cut."
+        ]
+        return lines + _tier_two_line(record)
+
+    noun = "holding" if count == 1 else "holdings"
+    lines = [
+        f"\u2702\ufe0f Pruning pass: ran, and examined all {count} {noun} "
+        f"the desk holds ({', '.join(examined)})."
+    ]
+    # (b) Anything cut, and the CONVICTION reason it was cut on. The
+    # categorical tier cuts a name because it no longer clears the desk's
+    # own entry bar — never because it is down.
+    if cut and tier == "ineligible_hold":
+        why = "; ".join(reasons) if reasons else (
+            "it no longer clears the desk's own entry bar"
+        )
+        lines.append(
+            f"   Put up to be cut: {cut} \u2014 {why}. That is a conviction "
+            "reason, not a profit-or-loss one: the case for holding it is "
+            "the thing that has gone."
+        )
+    # (c) The names it considered and KEPT. A silent pass is
+    # indistinguishable from a pass that never ran.
+    kept = [s for s in examined if s != cut]
+    if kept:
+        lines.append(
+            f"   Considered and kept: {', '.join(kept)} \u2014 each still "
+            "clears the bar it was bought on, so the case for holding it "
+            "stands."
+        )
+    if below:
+        lines.append(
+            f"   Below the desk's own entry bar today, and would not be "
+            f"bought now: {', '.join(below)}."
+        )
+    else:
+        lines.append(
+            "   None of them has fallen below the desk's own entry bar, so "
+            "the pass had nothing it was permitted to cut."
+        )
+    return lines + _tier_two_line(record)
+
+
+def _tier_two_line(record: dict) -> list[str]:
+    """(d) Never let the owner believe the desk pruned more thoroughly than
+    it did. Reads the switch as recorded, so it tells the truth either way.
+    """
+    if record.get("ranked_margin_enabled"):
+        return [
+            "   Both kinds of pruning are switched on: the entry-bar kind, "
+            "and the score-margin kind that compares a holding against a "
+            "better-ranked new idea."
+        ]
+    return [
+        "   Only the entry-bar kind of pruning is switched on. The "
+        "score-margin kind \u2014 cutting a holding merely because a new "
+        "idea ranks higher by some margin \u2014 is OFF, because the "
+        "margin it would need has no source. So the desk pruned less "
+        "thoroughly than it could, on purpose."
+    ]

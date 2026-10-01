@@ -219,3 +219,54 @@ def _isolate_cwd(tmp_path, monkeypatch):
     llm_route_journal._reset_schema_cache_for_tests()
     monkeypatch.setenv("QUANT_AGENT_DB_PATH", str(tmp_path / "route" / "quant_agent.db"))
     (tmp_path / "route").mkdir(parents=True, exist_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_alerting_state(tmp_path, monkeypatch):
+    """Point the alerting state files at this test's tmp dir.
+
+    `src/coverage_watchdog.py` keeps per-symbol, per-trading-day alert claims
+    in `data/alerting/coverage_heartbeat.json` under ABSOLUTE paths computed
+    from `__file__`, so `_isolate_cwd` above does not cover them. Once
+    `TradingPipeline._alert_owner_no_stop` started claiming on that file,
+    the first test to escalate a naked position burned the claim for the
+    symbol for the whole trading day and every later test -- and every later
+    RUN that same day -- got silence instead of the alert it asserted. Four
+    tests in tests/test_fractional_sizing.py failed that way, with the
+    CRITICAL "NO STOP AT ALL" log present and `send_owner_alert` never
+    called: real suppression logic, fed by state the suite never meant to
+    share.
+
+    This is a hermeticity fix, not a relaxation: the production dedup is
+    unchanged and still suppresses a same-day repeat for the same symbol.
+    An autouse fixture rather than another per-test monkeypatch because the
+    per-test pattern is exactly what was forgotten here; tests that patch
+    these paths themselves still win inside their own body.
+
+    It also stops the suite writing into THIS checkout's `data/alerting/`.
+    That is a development-checkout concern only: `STATE_PATH` is built from
+    `Path(__file__).resolve().parent.parent`, so it is relative to whichever
+    checkout the module is imported from. Production runs from its own
+    checkout with its own `data/alerting/`, and no live desk alert claim was
+    ever reachable from running this suite.
+    """
+    alerting = tmp_path / "alerting"
+    alerting.mkdir(exist_ok=True)
+    import src.coverage_watchdog as _cw
+
+    heartbeat = alerting / "coverage_heartbeat.json"
+    drift = alerting / "deploy_drift.json"
+    monkeypatch.setattr(_cw, "STATE_PATH", heartbeat)
+    monkeypatch.setattr(_cw, "DEPLOY_DRIFT_STATE_PATH", drift)
+
+    # The reading side moves with the writing side, or the isolation itself
+    # would break the invariant that pins them together
+    # (tests/test_alert_suppression_api.py). `src.api.db_reads` spells the
+    # paths as literals because it may not import trading modules, so
+    # redirecting only the watchdog would leave the endpoint reading this
+    # checkout's real files while the writer wrote to tmp — the exact drift
+    # that pin exists to catch, introduced by the fixture meant to prevent
+    # pollution.
+    import src.api.db_reads as _db_reads
+
+    monkeypatch.setattr(_db_reads, "SUPPRESSION_STATE_PATHS", (heartbeat, drift))
