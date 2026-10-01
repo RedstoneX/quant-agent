@@ -258,7 +258,7 @@ def get_health() -> HealthResponse:
         # teaches the operator to ignore red.
         alert_channel_degraded = str(
             (alert_channel or {}).get("status") or "unknown"
-        ) in ("broken", "stale")
+        ) in ("broken", "stale", "muted")
         # A box running code that was never merged-then-deployed is degraded:
         # every fix believed to be live is not. `unknown` (never checked) is
         # shown in the payload but does not flip the board, for the same
@@ -267,6 +267,23 @@ def get_health() -> HealthResponse:
         deploy_drift_degraded = str(
             (deploy_drift or {}).get("status") or "unknown"
         ) in ("behind", "stale")
+        degraded_causes: list[str] = []
+        if not db_reachable:
+            degraded_causes.append("database unreachable")
+        if broker_reachable is False:
+            degraded_causes.append("broker unreachable")
+        if decision_path_status != "ok":
+            degraded_causes.append(f"decision path: {decision_path_status}")
+        if alert_channel_degraded:
+            degraded_causes.append(
+                "alert channel "
+                + str((alert_channel or {}).get("status") or "unknown")
+            )
+        if deploy_drift_degraded:
+            degraded_causes.append(
+                "deploy drift "
+                + str((deploy_drift or {}).get("status") or "unknown")
+            )
         overall_status = (
             "degraded"
             if (not db_reachable or broker_reachable is False
@@ -278,6 +295,7 @@ def get_health() -> HealthResponse:
 
         return HealthResponse(
             status=overall_status,
+            reason="; ".join(degraded_causes) or None,
             db_reachable=db_reachable,
             broker_reachable=broker_reachable,
             paper=get_alpaca_paper(),
@@ -296,6 +314,7 @@ def get_health() -> HealthResponse:
         # unknown, rather than leaking a stack trace.
         return HealthResponse(
             status="degraded",
+            reason="the health read itself failed",
             db_reachable=False,
             broker_reachable=None,
             paper=None,
