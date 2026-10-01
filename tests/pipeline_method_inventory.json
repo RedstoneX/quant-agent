@@ -343,6 +343,7 @@
     },
     "src/pipeline_stages.py": {
       "module_functions": [
+        "__getattr__",
         "_account_for_pm_candidates",
         "_adopt_stream_stall",
         "_alert_holding_discipline_block",
@@ -447,6 +448,9 @@
           "_build_event_risk_block",
           "_run_review",
           "run"
+        ],
+        "_MirroringModule": [
+          "__setattr__"
         ]
       }
     }

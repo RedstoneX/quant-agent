@@ -187,14 +187,18 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     leaving 9; step 3 (the de-levering ladder) moved `_force_delever`'s one id to
     `src.pipeline_delever.*` and then `src.pipeline_exits.*`, leaving 4; step 8
     (the intraday mixin) moved `_another_session_recently_active`'s one id to
-    `src.pipeline_intraday.*`, leaving 3. The point of this assertion is that a
+    `src.pipeline_intraday.*`, leaving 3; step 11 (sizing + earnings quality) moved 12 of `src.pipeline_stages.*`'s
+    22 ids out, 1 to `src.pipeline_sizing.*` and 11 to
+    `src.pipeline_earnings_quality.*`, leaving 10. The point of this assertion is that a
     later step cannot move ids without the count moving."""
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
     assert len(ledger_ids_for_module("src.pipeline", ledger)) == 3
     assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 25
-    assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 22
+    assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 10
+    assert len(ledger_ids_for_module("src.pipeline_sizing", ledger)) == 1
+    assert len(ledger_ids_for_module("src.pipeline_earnings_quality", ledger)) == 11
 
 
 def test_module_prefix_does_not_swallow_the_sibling_module() -> None:

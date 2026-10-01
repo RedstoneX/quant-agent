@@ -87,6 +87,44 @@ from src.pipeline_sizing import (  # noqa: F401
     _min_order_usd, _qty_by_risk_budget, _risk_budget_pct, _single_name_execution_cap,
     _size_shares,
 )
+
+# A test that patches a moved name on THIS module must reach the object the
+# moved code actually calls, which lives in the owning module. Without the
+# write-through below the patch would rebind only this module's copy and
+# silently no-op (e.g. `_size_shares`, called from `_qty_by_risk_budget`).
+import sys as _sys  # noqa: E402
+import types as _types  # noqa: E402
+
+from src import pipeline_earnings_quality as _pipeline_earnings_quality  # noqa: E402
+from src import pipeline_sizing as _pipeline_sizing  # noqa: E402
+
+_MOVED_NAME_OWNERS = {
+    **{n: _pipeline_earnings_quality for n in vars(_pipeline_earnings_quality)
+       if not n.startswith("__")},
+    **{n: _pipeline_sizing for n in vars(_pipeline_sizing)
+       if not n.startswith("__")},
+}
+for _n in ("logging", "math", "re", "annotations", "logger",
+           "gap_adjusted_risk_per_share"):
+    _MOVED_NAME_OWNERS.pop(_n, None)
+
+
+def __getattr__(name):
+    owner = _MOVED_NAME_OWNERS.get(name)
+    if owner is not None:
+        return getattr(owner, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+class _MirroringModule(_types.ModuleType):
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        owner = _MOVED_NAME_OWNERS.get(name)
+        if owner is not None:
+            setattr(owner, name, value)
+
+
+_sys.modules[__name__].__class__ = _MirroringModule
 from src.risk.constants import (
     REWARD_RISK_FLOOR,
     STARTER_POSITION_RISK_PCT,
