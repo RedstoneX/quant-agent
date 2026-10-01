@@ -1647,9 +1647,6 @@ claim helper always releases the FIRST occurrence for a symbol on an ET day,
 holding only a byte-identical repeat of the same fault for the same symbol on
 the same day — and recording even that. Both halves are proved in
 `tests/test_alert_suppression_api.py` and `tests/test_cost_circuit.py`.
-## item 214
-
-**Filed 2026-09-30 out of item 157's retirement.** Item 157 built the enforced answer format and both OpenAI-wire routes now send a strict `json_schema` response format for `TechAnalystAnswer`. Its first DONE WHEN — a live call confirming the Google route enforces what was sent — is structurally unreachable, not merely undone: the rehearsal identity is not granted the Google credential and production is the only identity that could make the call, so the confirming pytest would spend real money on the shared account. The replacement shipped on 2026-09-23: `_record_answer_hygiene` tags every real answer with the provider that served it and records fenced-markdown and extra-key violations to `parse_telemetry`. That evidence is being collected and has never been read. This item carries the unanswered question, not the build.
 ## item 201
 
 The naked window is real and ordinary: every place the desk cancels a protective stop and submits a replacement, the position is unprotected for the width of that round trip, on paths that run on normal days against real open positions.
