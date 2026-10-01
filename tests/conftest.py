@@ -243,8 +243,12 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     per-test pattern is exactly what was forgotten here; tests that patch
     these paths themselves still win inside their own body.
 
-    It also stops the suite writing into the repo's real `data/alerting/`,
-    which on the box is the same directory the live desk reads.
+    It also stops the suite writing into THIS checkout's `data/alerting/`.
+    That is a development-checkout concern only: `STATE_PATH` is built from
+    `Path(__file__).resolve().parent.parent`, so it is relative to whichever
+    checkout the module is imported from. Production runs from its own
+    checkout with its own `data/alerting/`, and no live desk alert claim was
+    ever reachable from running this suite.
     """
     alerting = tmp_path / "alerting"
     alerting.mkdir(exist_ok=True)
