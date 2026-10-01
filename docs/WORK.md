@@ -132,7 +132,7 @@ DONE WHEN:
   - [ ] MEASURED AGAIN 2026-10-01 against the live database (specialist_evidence, 13,815 rows total; Detail in the note.
 detail: docs/board_notes/item-078.md
 
-**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, half shipped 2026-09-18, item stays OPEN.** Detail in the note.
+**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, PARTIALLY built 2026-09-18, item stays OPEN.** Detail in the note. Half one (the gate) landed 2026-09-18; half two is untouched and NONE of the DONE WHEN boxes below is ticked.
 
 **2026-09-30 — `risk.min_stop_atr_multiple` (2.5): the value is UNCHANGED, the claim that it was SOURCED is withdrawn, and the reformulation is filed as item 199 rather than refused.** Detail: `docs/board_notes/` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
   - [ ] 2026-09-30, second pass: the floor's VALUE is untouched and the evidence to judge it is now recorded per closed trade (entry price, entry ATR, the entry stop and its basis, and the maximum ADVERSE and FAVOURABLE excursions, alongside the realised outcome and stop-hit category already stored; the ATR multiple is recomputed from those, not stored again), and the pipeline's stale 1.5 fallback is closed at source by reading the declared default instead of a copied literal; the record is for FALSIFICATION only (was the floor ever violated in practice) and may NOT be optimised against, so the next pass reads it rather than re-deriving a multiple. Detail: `docs/board_notes/` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
@@ -179,7 +179,7 @@ DONE WHEN:
   - [x] the portfolio and cluster ceilings (25 total at-risk, 90 terminal sector and its constructor mirror, 40 cluster share) each end in a definite state rather than as an open appetite question — 2026-10-01: values unchanged and still owner-ratified, every appetite question WITHDRAWN under the 2026-09-30 ruling, both failed derivations written down per ceiling (two of them algebraic cancellations: 25 is five full-size names and 40% of 25% is two, at the ratified 5% per-trade envelope), and each row now names the recording that would settle it with the route ratchet moved to match. Do not re-derive these three
 detail: docs/board_notes/
 
-**187. FRED fetch reliability — the chronic `fetch_deadline_exceeded` failure and required series left un-fetched — filed 2026-09-25, carried out of item 175's retirement. Item 175's weekend/holiday overdue-date roll shipped and was retired; this is the separate, still-open half. Detail: `docs/board_notes/` ("item 187").** Every FRED failure in the retained log is `fetch_deadline_exceeded`; 4 of 12 runs reached full coverage, worst 5 of 15 [measured 09-17..23]. Owned by the approved fetch redesign.
+**187. FRED fetch reliability — the chronic `fetch_deadline_exceeded` failure and required series left un-fetched — OPEN, filed 2026-09-25, carried out of item 175. Item 175 covered the weekend/holiday overdue-date roll; this is the separate, still-open half. Detail: `docs/board_notes/` ("item 187").** Every FRED failure in the retained log is `fetch_deadline_exceeded`; 4 of 12 runs reached full coverage, worst 5 of 15 [measured 09-17..23]. Owned by the approved fetch redesign.
 
 DONE WHEN:
   - [ ] the `fetch_deadline_exceeded` rate is understood and either brought down or shown to recover cleanly inside the existing time ceiling, measured against real runs rather than a healthy mid-morning batch
