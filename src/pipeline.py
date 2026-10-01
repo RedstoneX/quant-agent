@@ -10536,8 +10536,45 @@ class TradingPipeline:
                 else self.broker.get_positions()
             )
             self.db.sync_positions(snapshot)
+            self._record_short_overnight_gaps(snapshot)
         except Exception as exc:  # noqa: BLE001
             logger.error("local positions table refresh failed: %s", exc)
+
+    def _record_short_overnight_gaps(self, positions) -> None:
+        """Store the adverse overnight gap suffered by each held SHORT.
+
+        SHORT-SIDE GAP EVIDENCE, RECORDING ONLY — item 186. The short-side
+        sizing haircut is unsourced and two attempts to read it off the
+        instrument have failed; both failed because this desk has never
+        kept a record of what a short actually suffers overnight. Bars are
+        fetched live and discarded and there is no OHLCV table, so the
+        evidence has to be captured beside the trade while the trade is
+        open. Nothing reads this back: no threshold, no gate, no sizing
+        change. See `TradeStore.record_overnight_gap` for the hard limit on
+        its use.
+
+        Shorts only, because only a short's loss above its stop is
+        unbounded and only the short-side multiple is the open question.
+        Held shorts are a handful at most, so the two-bar fetch per name is
+        cheap. Fail-soft per symbol and as a whole: a recording problem
+        must never disturb a trading session.
+        """
+        for p in positions or []:
+            try:
+                if float(getattr(p, "qty", 0) or 0) >= 0:
+                    continue
+                bars = self.market.get_ohlcv(p.symbol, 7) or []
+                if len(bars) < 2:
+                    continue
+                prev_bar, today = bars[-2], bars[-1]
+                self.db.record_overnight_gap(
+                    p.symbol, prev_bar.close, today.open, str(today.date),
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "overnight-gap recording skipped for %s",
+                    getattr(p, "symbol", "?"), exc_info=True,
+                )
 
     def _run_news_update(
         self, run_id: str, session: str = "morning",
