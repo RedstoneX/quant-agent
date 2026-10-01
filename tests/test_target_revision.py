@@ -28,6 +28,7 @@
 
 import ast
 import inspect
+import textwrap
 import pathlib
 import re
 
@@ -802,3 +803,300 @@ def test_the_new_trigger_cannot_substitute_a_number_when_it_refuses():
     assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
     assert out.new_price is None
     assert out.code == tr.REVISION_BEHIND_PRICE
+
+
+# ---------------------------------------------------------------------------
+# item 194 — THE WAY IN. The re-derivation used to run only on a symbol a
+# seat had raised a flag for, so a position that quietly grew a wall between
+# its entry and its stored target was never re-measured. These tests pin the
+# unconditional sweep: EVERY open position is adjudicated every session, and
+# a seat flag now only supplies the seat label and the prose evidence.
+# ---------------------------------------------------------------------------
+
+class _SweepPos:
+    def __init__(self, symbol, qty, avg_entry):
+        self.symbol = symbol
+        self.qty = qty
+        self.avg_entry = avg_entry
+
+
+class _SweepDB:
+    def __init__(self):
+        self.recorded = []
+        self.take_profit_writes = []
+
+    def get_symbol_last_buy(self, symbol, action=None):
+        return {"take_profit": 100.0, "expected_horizon_sessions": 20,
+                "setup_type": "range", "timestamp": "2026-09-01T00:00:00"}
+
+    def get_prior_target_level_break(self, symbols, **kwargs):
+        return {}
+
+    def save_target_level_break(self, **kwargs):
+        return None
+
+    def update_open_take_profit(self, symbol, price, action=None):
+        self.take_profit_writes.append((symbol, price))
+        return True
+
+    def record_target_revision(self, **kwargs):
+        self.recorded.append(kwargs)
+        return len(self.recorded)
+
+
+class _SweepMarket:
+    def get_ohlcv_batch(self, symbols, lookback_days):
+        # Batches fine, carries nothing — the normal, non-degraded shape
+        # for these tests, so the serial-fallback record stays off.
+        return {}
+
+    def get_ohlcv(self, symbol, lookback_days):
+        # A dead feed. The point of these tests is the WAY IN, not the
+        # derivation arithmetic, which `assess_target_revision`'s own tests
+        # above already pin; an unreadable chart must still produce a
+        # durable, named outcome rather than a blank.
+        return []
+
+
+class _SweepBroker:
+    def trading_sessions_held(self, start, end):
+        return 10
+
+
+def _sweep_pipeline():
+    from src.pipeline import TradingPipeline
+    import types
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = _SweepDB()
+    p.market = _SweepMarket()
+    p.broker = _SweepBroker()
+    p.config = types.SimpleNamespace(
+        trading=types.SimpleNamespace(lookback_days=400))
+    p.risk_engine = None
+    return p
+
+
+class _SweepReview:
+    def __init__(self, flags=()):
+        self.target_revision_flags = list(flags)
+
+
+def test_every_open_position_is_adjudicated_with_no_seat_flag():
+    """The residue of item 194: no flag, two open positions, two durable
+    outcomes — both attributed to the unconditional sweep, not to a seat."""
+    p = _sweep_pipeline()
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0)]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert [o["symbol"] for o in out] == ["AAA", "BBB"]
+    assert {o["seat"] for o in out} == {tr.SEAT_STRUCTURAL_SWEEP}
+    # Every outcome is persisted: the sweep can never produce a blank.
+    assert len(p.db.recorded) == 2
+    assert all(o["code"] for o in out)
+
+
+def test_seat_flag_is_not_duplicated_by_the_sweep():
+    """A symbol a seat did raise keeps the seat's label and its evidence,
+    and is adjudicated exactly once."""
+    p = _sweep_pipeline()
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0)]
+    flag = TargetRevisionFlag(symbol="aaa", evidence="the seat's words")
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview([flag]), positions, run_id="r1", seat="position_reviewer")
+    by_sym = {o["symbol"]: o for o in out}
+    assert sorted(by_sym) == ["AAA", "BBB"]
+    assert by_sym["AAA"]["seat"] == "position_reviewer"
+    assert by_sym["AAA"]["evidence"] == "the seat's words"
+    assert by_sym["BBB"]["seat"] == tr.SEAT_STRUCTURAL_SWEEP
+
+
+def test_flag_on_an_unheld_symbol_still_files_not_held():
+    """Widening the way in must not lose the existing finding that a seat
+    flagged something the broker does not show as held."""
+    p = _sweep_pipeline()
+    flag = TargetRevisionFlag(symbol="ZZZ", evidence="not in the book")
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview([flag]), [], run_id="r1", seat="position_reviewer")
+    assert len(out) == 1
+    assert out[0]["code"] == "REFUSAL_NOT_HELD"
+    assert out[0]["seat"] == "position_reviewer"
+
+
+def test_no_open_positions_and_no_flags_is_still_a_no_op():
+    p = _sweep_pipeline()
+    assert p._adjudicate_target_revision_flags(
+        _SweepReview(), [], run_id="r1", seat="position_reviewer") == []
+    assert p.db.recorded == []
+
+
+# ---------------------------------------------------------------------------
+# item 194 round 2 — the money fault. A wall-triggered revision can move a
+# target DOWN toward entry, which used to cross a range trade from the
+# below-target ratchets into the structural trail. The trail only ratchets
+# toward price, so restoring the target next session does NOT give the stop
+# back: oscillation accumulated tightening instead of cancelling, and the
+# sweep widened that from the flagged few to the whole book. The trailing
+# regime now reads the PINNED entry target, so a revision cannot ratchet a
+# stop the desk would not otherwise have moved.
+# ---------------------------------------------------------------------------
+
+def test_trailing_regime_reads_the_pinned_entry_target_not_the_live_one():
+    import ast
+    import inspect
+    from src.pipeline import TradingPipeline
+
+    src = inspect.getsource(TradingPipeline._apply_deterministic_trails)
+    tree = ast.parse(textwrap.dedent(src))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "reference_target":
+                found.append(ast.unparse(kw.value))
+    assert found, "the trail no longer passes a reference_target at all"
+    for expr in found:
+        assert "initial_take_profit" in expr, (
+            "the trailing regime boundary must read the PINNED entry target; "
+            f"it reads {expr!r}, which a target revision can move"
+        )
+
+
+def test_update_open_take_profit_is_not_the_trail_reference():
+    """The sibling half: the revision path writes `take_profit`, and the
+    column the trail now reads is explicitly not that one."""
+    import inspect
+    from src.storage.db import Database
+
+    src = inspect.getsource(Database.update_open_take_profit)
+    assert "initial_take_profit" not in src.split("UPDATE")[-1].split(")")[0], (
+        "the revision write must never touch the pinned column"
+    )
+
+
+# --- round 2 faults 3, 4 and 6 --------------------------------------------
+
+class _BatchMarket(_SweepMarket):
+    def __init__(self):
+        self.batch_calls = []
+        self.single_calls = []
+
+    def get_ohlcv_batch(self, symbols, lookback_days):
+        self.batch_calls.append(list(symbols))
+        return {}
+
+    def get_ohlcv(self, symbol, lookback_days):
+        self.single_calls.append(symbol)
+        return []
+
+
+def test_the_sweep_reads_bars_in_one_batch():
+    """The seat flag was rationing a serial per-name fetch. Removing the
+    gate without batching would have turned one or two round trips into one
+    per held name."""
+    p = _sweep_pipeline()
+    p.market = _BatchMarket()
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0),
+                 _SweepPos("CCC", 7, 20.0)]
+    p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert p.market.batch_calls == [["AAA", "BBB", "CCC"]]
+
+
+def test_one_bad_name_does_not_truncate_the_rest_of_the_book():
+    """A mid-sweep failure must leave the remaining names explicitly
+    unmeasured, never invisibly skipped — the work list is sorted, so the
+    same tail of the book was dropped every single session, and each
+    dropped name kept a stored target the record did not mark unverified."""
+    p = _sweep_pipeline()
+    positions = [
+        _SweepPos("AAA", 10, 90.0),
+        # An unreadable side: `float(qty)` sits outside every inner guard,
+        # which is exactly the shape of the unexpected exception that used
+        # to unwind the whole sweep to the call site's bare `return []`.
+        _SweepPos("BBB", "not-a-number", 40.0),
+        _SweepPos("CCC", 7, 20.0),
+    ]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert [o["symbol"] for o in out] == ["AAA", "BBB", "CCC"], (
+        "every held name must get a row, fault or not"
+    )
+    bad = [o for o in out if o["symbol"] == "BBB"][0]
+    assert bad["code"] == "FAULT_POSITION_NOT_MEASURED"
+    assert bad["applied"] is False
+    # And it is durable: an unmeasured position is a recorded finding.
+    assert any(r["code"] == "FAULT_POSITION_NOT_MEASURED"
+               for r in p.db.recorded)
+
+
+def test_an_unchanged_refusal_is_not_refiled_every_session():
+    """Eleven names filing an identical recomputable refusal daily is
+    storage of recomputable state; the trail's own writer dedupes the same
+    way."""
+    p = _sweep_pipeline()
+    positions = [_SweepPos("AAA", 10, 90.0)]
+    first = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    code = first[0]["code"]
+    p.db.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
+    before = len(p.db.recorded)
+    second = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r2", seat="position_reviewer")
+    assert second[0]["code"] == code
+    assert second[0].get("unchanged_since_last_session") is True
+    assert len(p.db.recorded) == before, "the identical refusal was re-filed"
+
+
+# --- round 3 faults 4 and 5 ------------------------------------------------
+
+def test_a_failure_to_file_the_fault_row_still_does_not_truncate_the_book():
+    """The per-name guard was right, but the call that files the
+    not-measured row sat INSIDE the except block unguarded, so a failure
+    there unwound the remaining names after all — the same sorted-tail
+    truncation, one layer deeper."""
+    p = _sweep_pipeline()
+    real_file = p._file_target_revision
+
+    def _file(*, code, **kw):
+        if code == "FAULT_POSITION_NOT_MEASURED":
+            raise RuntimeError("synthetic filing failure")
+        return real_file(code=code, **kw)
+
+    p._file_target_revision = _file
+    positions = [_SweepPos("AAA", 10, 90.0),
+                 _SweepPos("BBB", "not-a-number", 40.0),
+                 _SweepPos("CCC", 7, 20.0)]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert [o["symbol"] for o in out] == ["AAA", "CCC"], (
+        "the tail of the book was truncated by the fault-filing failure"
+    )
+
+
+class _NoBatchMarket(_SweepMarket):
+    def get_ohlcv_batch(self, symbols, lookback_days):
+        raise RuntimeError("provider cannot batch today")
+
+
+def test_a_serial_bar_read_is_recorded_not_merely_logged():
+    """The batch fallback degraded to exactly the old serial path with only
+    a log line; somebody measuring a slow session later could not tell why.
+    A degraded session is also never deduped away."""
+    p = _sweep_pipeline()
+    p.market = _NoBatchMarket()
+    positions = [_SweepPos("AAA", 10, 90.0)]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert "one name at a time" in out[0]["detail"]
+    assert p.db.recorded and "one name at a time" in p.db.recorded[0]["detail"]
+    # Same outcome next session, but still written, because the session was
+    # degraded and that is the fact being preserved.
+    code = out[0]["code"]
+    p.db.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
+    before = len(p.db.recorded)
+    again = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r2", seat="position_reviewer")
+    assert again[0].get("unchanged_since_last_session") is not True
+    assert len(p.db.recorded) == before + 1

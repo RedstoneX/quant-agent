@@ -459,3 +459,30 @@ def _python_sources() -> list[Path]:
             if "__pycache__" not in p.parts
         )
     return out
+
+
+def test_disabled_sweep_does_not_inflate_the_dashboard_deployable(monkeypatch):
+    """Board item 190: with the sweep RETIRED, the parked vehicle is not
+    deployable — `CashSweeper.fund_buys` returns 0.0 on its first line and
+    nothing else converts it to cash for the BUY phase, so the engine's
+    `_compute_deployable_cash` adds 0.0. The /account view used to add it
+    anyway, which would have read above the figure the PM sizes against.
+    Latent only: no cash-equivalent position is held today."""
+    from src.api import routes_live
+
+    monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: False)
+    monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: SWEEP_SYMBOL)
+    monkeypatch.setattr(routes_live, "get_cash_sweep_reserve_pct", lambda: RESERVE_PCT)
+    monkeypatch.setattr(routes_live, "read_positions", _book_as_api_payload)
+
+    pipeline = _pipeline()
+    pipeline.config.cash_sweep.enabled = False
+    engine = pipeline._compute_deployable_cash(CASH, BOOK)
+
+    liq = routes_live._compute_liquidity(CASH, EQUITY)
+
+    assert engine == pytest.approx(CASH)
+    assert liq.sweep_parked_value > 0, "the vehicle is still reported as held"
+    assert liq.deployable_cash == pytest.approx(engine), (
+        "a retired sweep's parked vehicle must not be counted as deployable"
+    )
