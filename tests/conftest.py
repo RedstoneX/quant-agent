@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.network_guard import _no_sockets_leave_the_box, offline_calendars  # noqa: F401,E501
+
 # Add src to path so tests can import from src.*
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -176,6 +178,10 @@ def _isolate_cwd(tmp_path, monkeypatch, request):
     # assertions. Tests that exercise relay routing set them via monkeypatch.
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENAI_CA_BUNDLE", raising=False)
+    # Same reason, one line down the stack: with a key present the morning
+    # message goes to openrouter.ai for the balance line (measured 2026-10-01,
+    # two tests in test_universe_screen.py). Tests about that line set it.
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
     # Most unit tests exercise an agent in isolation with a fully mocked SDK
     # and no real provider request. Production defaults fail closed when an
