@@ -108,10 +108,6 @@ detail: docs/BOARD_NOTES.md (item 70)
 
 **75. Automatic profit-taking: the whole-position case is answered by the alignment exit; the residue is the PARTIAL (trim) case and the recorded target's one surviving live effect — OPEN, filed 2026-09-14 after an owner question on ORCL, rewritten 2026-10-01 against the "exit on ALIGNMENT, never on a target" ruling.**
 
-Why it was rewritten. Four of the six original criteria were written before the 2026-09-30 ruling and three of them ask for exactly what the ruling bars (sell all at target; sell half at target; target tightens the trail). They are VOID, not deferred — tracking a target-based rule is only useful if the desk might one day adopt it, and it may not. The third original criterion asked for a ruling on whether a target plus a confirmed breakdown may exit; the 2026-09-30 ruling IS that ruling, and the answer is no. The trail-tightness criterion was already pointed at items 90 and 185 and stays there.
-
-What was checked against live code on 2026-10-01, because the filing's own claims had rotted. The target still reaches no broker (`src/api/holding_why.py` records this and it is still true: no caller passes `take_profit_price` to Alpaca). But the claim that the target gates whether the structural trail runs is now FALSE — `src/risk/trailing.py` removed that gate under item 142 and the structural trail runs for a range trade once it is past the owner-ratified +2R ratchet trigger, target or no target. One live effect survives: whether price has exceeded the target decides whether the +1R lock floor constrains that trail, so a number the desk calls made-up still moves a live stop. That is now said in the owner-facing note rather than contradicted by it.
-
 DONE WHEN:
   - [x] the target's one remaining live effect (gating the +1R trail floor on a range trade) is stated wherever the target is shown to the owner, and pinned by a test — done 2026-10-01, `src/api/holding_why.py` + `tests/test_holding_why.py`
   - [ ] the desk records, for every open position every session, the alignment-exit reading it already computes (how far below the last mark price has closed, in that name's own ATR) EVEN WHEN it does not trigger an exit — the desk today keeps no trace of a position that weakened and recovered, which is the only population a partial could ever be read off
@@ -300,7 +296,6 @@ DONE WHEN:
   - [ ] no component builds its own live MarketDataProvider during a rehearsal: blocked yfinance crumb fetches still retry per symbol and cost ~188s [measured 2026-10-01]
   - [ ] any OTHER test that still reaches the network is named, because the conftest guard now makes such a dependency fail loudly instead of silently
 
-
 **208. Item 18's three residuals, carried forward — filed 2026-09-30 when item 18 was retired. The prompt-bulk defect that item 18 was opened for no longer applies and was re-measured under that item; these three leftovers remain OPEN, share no subject with it and were blocking item 19 for no reason. Detail: `docs/BOARD_NOTES.md` (item 208).** One changes what the ranking seat decides, one is an account setting outside this repo, and one cannot be closed by building at all.
 
 DONE WHEN:
@@ -309,8 +304,7 @@ DONE WHEN:
   - [ ] (c) BLOCKED and cannot close by building — the BUY-eligibility section reorder needs a paid benchmark run the owner has forbidden unless he asks for it (same blocker as items 76 and 77); it stays open and untouched until he raises it
 detail: docs/BOARD_NOTES.md (item 208)
 
-
-**211. Alarm flapping — the desk paged the owner on BOTH edges of a self-clearing fault, and he muted every alert — filed 2026-09-30.** 107 Telegram messages went out between 26 and 29 Sep, 46 on the 28th and 42 on the 29th [measured, production `notifier_sends`]. 22 "PAID ANALYSIS SUSPENDED" and 22 "PAID ANALYSIS RESUMED" of those are ONE underlying fault — paid provider calls failing — latching and self-clearing all weekend, announced twice per cycle, plus 5 identical deploy-drift repeats from a timer-run unit that had no per-type suppression at all. The owner turned every desk alert off, including live-risk ones, so this defect is currently suppressing the alerts that protect money. FIXED HERE: `LLMCostCircuitBreaker._notify_if_needed` defers the owner page for a `_SELF_CLEARING_HARD_TRIGGERS` latch until it has outlived `transient_latch_cooldown_minutes` — the circuit's OWN self-clear timing, read from the same config field `_auto_clear_transient_latch_locked` gates on, not a threshold picked here. A latch that expires inside that window leaves `alert_state` at 0, which the existing item-174 pairing already reads to suppress the matching "RESUMED" note, so a blip is one recorded episode and zero messages. Both owner-facing messages now carry the episode's duration and how many times the same trigger self-cleared today. Nothing is dropped: the trip event, a once-per-latch `suspend_alert_deferred` event and the CRITICAL log line all still land in `llm_circuit_events`, and `scripts/check_deploy_drift.py` now claims through a new GENERIC per-type, per-key, ET-day marker (`coverage_watchdog.claim_typed_alert`) that writes every refused claim to `suppressed_alerts` in the watchdog state file.
+**211. Alarm flapping — the desk paged the owner on BOTH edges of a self-clearing fault, and he muted every alert — filed 2026-09-30.**
 
 detail: docs/BOARD_NOTES.md (item 211)
 
@@ -328,7 +322,6 @@ DONE WHEN:
   - [ ] a conclusion is written down on whether the Google route enforces the sent schema, or the counts are shown to be too sparse to conclude
 detail: docs/BOARD_NOTES.md (item 214)
 
-
 **210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/BOARD_NOTES.md` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are.
 
 DONE WHEN:
@@ -336,7 +329,6 @@ DONE WHEN:
   - [ ] 2. the split is executed as the ONLY work in flight, following `docs/PIPELINE_SPLIT_PLAN.md` (9 modules out of `src/pipeline.py`, 8 out of `src/pipeline_stages.py`, 12 ordered steps), each step landing on its own so the tree is never half-moved
   - [ ] 3. the test suite is rebuilt in the same pass, and no test is left patching a name on the pipeline module that has moved: 42 tests patch `pipeline.compute_indicators` and 20 patch `pipeline._get_sector`, and once that code moves they patch nothing, quietly run the real implementation and still pass [measured 2026-09-30, grep of the tests]
 detail: docs/BOARD_NOTES.md (item 210)
-
 
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in t … (full text: docs/BOARD_NOTES.md item 210)
 
