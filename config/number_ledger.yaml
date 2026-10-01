@@ -1058,6 +1058,22 @@ numbers:
       ships disabled today (`universe_screen.enabled: false`), which
       bounds the live cost to sizing alone; it does not bound the cost if
       the screen is ever switched on.
+      ITEM 199 OUTCOME 2026-09-30: the chart cannot replace this number, and
+      the population it governs is stated here rather than assumed. Measured
+      over 867 production technical-seat candidates carrying entry price,
+      ATR14 and computed levels: 97.2% have a computed level at or below entry
+      at any touch count, but the NEAREST such level sits closer to entry than
+      this flat floor for 71.8% of them (gap distribution in ATRs: p10 0.15,
+      p50 1.41, p75 2.65, p90 5.14, max 10.1). A structural level used as a
+      WIDENING anchor therefore changes nothing for roughly seven candidates
+      in ten, and on the 28.2% where it does bind it runs out to 10.1 ATRs,
+      which is a four-fold position-size cut. Capping that widening at this
+      multiple makes the rule arithmetically inert; any other cap is a new
+      invented money number. So this value governs the WHOLE unbacked-stop
+      population, not a residue, and its status stays arbitrary. The only
+      thing that can change that is an owner-appetite dial: the maximum stop
+      widening, in ATRs, the desk will accept in order to sit behind real
+      structure. It is deliberately not picked here.
   - id: src.config.RiskConfig.min_target_atr_multiple
     value: 1
     status: sourced
