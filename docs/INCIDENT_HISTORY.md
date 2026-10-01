@@ -32,7 +32,7 @@ the whole mechanism of stops. That's root cause. Your proposing a patch or a
 half-assed solution."
 He was right. The work to that point had been compensation for a broken
 mechanism. Two findings, both measured against the broker on the REHEARSAL
-account PA30V8QHEW1C — never production.
+account <redacted-rehearsal-account> — never production.
 ### Finding 1 — the desk does not confirm a cancel before acting on it
 It DOES pace placement: `_STOP_PLACEMENT_MAX_ATTEMPTS = 3` with
 `_STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)` (`src/execution/broker.py:1358-1359`),
