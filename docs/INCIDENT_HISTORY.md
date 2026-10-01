@@ -17871,3 +17871,40 @@ number, no threshold and no behaviour changed. A comment at the
 crossing a range trade between the ratchets and the structural trail; that
 reasoning is now moot because the target is not read. It predates this task
 and was left alone.
+
+### 2026-10-01 — Every order now carries a deterministic `client_order_id` (idempotent submission)
+
+**Defect [measured on main]:** `client_order_id` appeared zero times in
+`src/`. Every order was a fresh request with no deduplication key, so an HTTP
+timeout AFTER Alpaca accepted the order was indistinguishable from a
+rejection, and a resubmission in that window was a second real position. The
+orphan-pending-submit reconcile is recovery after the fact, not prevention.
+
+**Fix.** All three submission sites (entry/exit order, protective stop-MARKET,
+stop-LIMIT fallback) derive a `client_order_id` from the intent only —
+purpose, Alpaca symbol, side, ET session date, quantity, limit/trigger price.
+No timestamp, random value or counter: the same intent retried reuses the key
+and the broker refuses it; a new side, day, size, trigger or purpose is a new
+key. Length honours the stricter of Alpaca's two published limits (48, Broker
+API orders reference; the Trading API reference says 128); a longer natural key
+keeps its readable prefix and fills the rest of the budget with its SHA-256
+hex. Sources are cited beside the constant in `src/execution/broker.py`.
+
+**A duplicate reply is the guard working, not a failure.** Alpaca answers a
+duplicate with HTTP 422 "client_order_id must be unique" (its own
+troubleshooting guide). That reply is classified by code AND text, the
+existing order is read back by client id and returned as the placed order;
+if the read-back fails the call raises "treat as PLACED", never a quiet
+rejection. Any other failure propagates exactly as before.
+
+**Proof run (tests/test_idempotent_client_order_id.py):** same intent twice
+gives one key and each changed fact gives another; a stub broker that accepts
+then times out leaves ONE order after the retry for both the entry and the
+stop path; every other request field is byte-identical to the pre-change
+request. 2,019 tests across the order-submission files pass.
+
+**What this does not cover.** Two genuinely distinct same-day intents with
+identical symbol, side, quantity and price (for example an identical second
+scale-in tranche at the identical limit) would be read as a retry and return
+the first order; the probability is low because the limit is derived from the
+live quote, but it is a known edge and is stated here rather than hidden.

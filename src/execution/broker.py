@@ -1471,6 +1471,94 @@ def _is_terminal_submission_rejection(exc: BaseException) -> bool:
     return getattr(exc, "status_code", None) == 422
 
 
+# ---------------------------------------------------------------------------
+# Idempotent order submission — one deterministic `client_order_id` per INTENT.
+#
+# WHY. Before this, every order was a fresh request with no deduplication key
+# (`client_order_id` appeared nowhere in src/). Alpaca treats
+# `client_order_id` as the order's idempotency key: a second POST carrying an
+# id that an ACTIVE order already holds is refused with HTTP 422
+# "client_order_id must be unique" (Alpaca's own troubleshooting guide,
+# https://alpaca.markets/learn/how-to-fix-common-trading-api-errors-at-alpaca).
+# Without a key, an HTTP timeout AFTER the broker accepted the order is
+# indistinguishable from a rejection, and a resubmission in that window is a
+# SECOND real position. The orphan sweep in src/pipeline_stages.py is
+# after-the-fact recovery; this is prevention.
+#
+# THE KEY IS DERIVED, NEVER GENERATED. It is built only from stable facts of
+# the intent — purpose, symbol, side, ET session date, quantity, price — so
+# the SAME intent retried produces the SAME key (the broker refuses the
+# duplicate) while a genuinely NEW intent (other side, other day, other size,
+# a ratcheted stop trigger, a stop instead of an entry) produces a different
+# one. No timestamp, random value or counter: any of those would make every
+# retry look new and defeat the whole purpose.
+#
+# LENGTH LIMIT — cited, not chosen. Alpaca publishes two figures for this
+# field: the Trading API reference for POST /v2/orders
+# (https://docs.alpaca.markets/reference/postorder) says "<= 128 characters";
+# the Broker API orders reference in Alpaca's own docs repository
+# (https://github.com/alpacahq/alpaca-docs/blob/master/content/api-references/broker-api/trading/orders.md)
+# says "<= 48 characters". The stricter of the two published limits is
+# honoured so the key is valid under BOTH documents. Neither page specifies
+# an allowed character set, so the key uses only characters Alpaca already
+# accepts in this request's other fields: the symbol's own letters, digits
+# and '.', plus '-' and hex digits.
+#
+# HASH WIDTH — derived, not chosen. When the natural key is longer than the
+# limit, the readable prefix (purpose-symbol-date-) is kept and the remainder
+# of the budget is filled with the SHA-256 hex digest of the full natural key;
+# the digest width is simply whatever the limit leaves after the prefix.
+# ---------------------------------------------------------------------------
+_CLIENT_ORDER_ID_MAX_LEN = 48
+# Verbatim error text from the Alpaca guide cited above.
+_CLIENT_ORDER_ID_DUPLICATE_TEXT = "client_order_id must be unique"
+
+
+def _session_date_key() -> str:
+    """ET trading-day key 'YYYY-MM-DD' — the desk's shared per-day key."""
+    from src.trading_calendar import session_date_key
+    return session_date_key()
+
+
+def _client_order_id(
+    *, purpose: str, symbol: str, side: str, session_date: str,
+    qty: float, price: float | None,
+) -> str:
+    """Deterministic idempotency key for ONE order intent (see block above).
+
+    `purpose` discriminates the intent class: 'ENT' entry/exit order,
+    'STP' protective stop-MARKET, 'STL' the stop-LIMIT safety fallback.
+    `price` is the limit (entry) or trigger (stop); None for a market order.
+    """
+    import hashlib
+    side_token = side.lower().replace("_", "")
+    price_token = "mkt" if price is None else repr(float(price))
+    natural = (
+        f"{purpose}-{symbol}-{side_token}-{session_date}-"
+        f"{repr(float(qty))}-{price_token}"
+    )
+    if len(natural) <= _CLIENT_ORDER_ID_MAX_LEN:
+        return natural
+    prefix = f"{purpose}-{symbol}-{session_date}-"
+    digest = hashlib.sha256(natural.encode("ascii", "replace")).hexdigest()
+    return (prefix + digest)[:_CLIENT_ORDER_ID_MAX_LEN]
+
+
+def _is_duplicate_client_order_id_rejection(exc: BaseException) -> bool:
+    """True when the broker refused because THIS intent's order already exists.
+
+    That reply is the idempotency guard WORKING, not a submission failure:
+    Alpaca answers a duplicate `client_order_id` with HTTP 422 and the
+    message "client_order_id must be unique" (source cited in the block
+    above). Both the code and the text are required so a different 422
+    (bad parameters) is never mistaken for "already exists".
+    """
+    return (
+        getattr(exc, "status_code", None) == 422
+        and _CLIENT_ORDER_ID_DUPLICATE_TEXT in str(exc).lower()
+    )
+
+
 def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
     """True when the broker refused a stop-MARKET specifically because the
     order TYPE / TIME-IN-FORCE combination is not supported — the one
@@ -4855,20 +4943,46 @@ class AlpacaBroker:
         use_stop = (stop_loss_price is not None and stop_loss_price > 0
                     and side.lower() in ("buy", "sell_short"))
 
+        # Idempotency key derived from the intent (see `_client_order_id`):
+        # a timed-out-then-retried submission reuses it and the broker
+        # refuses the duplicate instead of opening a second position.
+        client_order_id = _client_order_id(
+            purpose="ENT", symbol=alpaca_symbol, side=side,
+            session_date=_session_date_key(), qty=qty, price=limit_price,
+        )
         if limit_price is not None:
             request = LimitOrderRequest(
                 symbol=alpaca_symbol, qty=qty, side=order_side,
                 time_in_force=TimeInForce.DAY, limit_price=limit_price,
+                client_order_id=client_order_id,
             )
         else:
             request = MarketOrderRequest(
                 symbol=alpaca_symbol, qty=qty, side=order_side,
                 time_in_force=TimeInForce.DAY,
+                client_order_id=client_order_id,
             )
 
+        exc: BaseException | None = None
         try:
             order = self.client.submit_order(request)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as submit_exc:  # noqa: BLE001
+            exc = submit_exc
+            if _is_duplicate_client_order_id_rejection(exc):
+                # The guard working: this exact intent already reached the
+                # broker (typically a retry after a timed-out POST). Hand
+                # back the EXISTING order rather than a rejection.
+                order = self._existing_order_for_client_id(
+                    client_order_id, exc,
+                )
+                logger.info(
+                    "Order already exists at broker for %s %s %s "
+                    "(client_order_id=%s) — returning the existing order "
+                    "%s instead of submitting a duplicate.",
+                    side, qty, symbol, client_order_id, order.id,
+                )
+                exc = None
+        if exc is not None:
             # Owner ruling 2026-09-30 (board item 183): the constructor's
             # flat `min_trade_weight_delta` churn floor is gone, so a
             # genuinely tiny, desk-requested nudge now reaches THIS call for
@@ -4899,7 +5013,7 @@ class AlpacaBroker:
                     "id": None, "status": "rejected_by_broker",
                     "symbol": internal_symbol, "detail": str(exc),
                 }
-            raise
+            raise exc
         bracket_info = f" [SL=${stop_loss_price} to be placed on fill]" if use_stop else ""
         logger.info("Order submitted: %s %s %s @ %s%s — status: %s",
                      side, qty, symbol, limit_price or "market", bracket_info,
@@ -5863,6 +5977,25 @@ class AlpacaBroker:
             "limit_price": limit_price or None,
         }
 
+    def _existing_order_for_client_id(self, client_order_id: str,
+                                      duplicate_exc: BaseException):
+        """Fetch the order the broker says already holds `client_order_id`.
+
+        Called only after `_is_duplicate_client_order_id_rejection` — the
+        broker has just asserted the order EXISTS, so the only honest
+        outcomes are "here it is" or an exception that says it exists but
+        could not be read back (never a quiet None, which a caller would
+        read as "nothing was placed" — the exact mistake the key prevents).
+        """
+        try:
+            return self.client.get_order_by_client_id(client_order_id)
+        except Exception as lookup_exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"broker reports an order already exists for "
+                f"client_order_id={client_order_id!r} but it could not be "
+                f"read back ({lookup_exc}); treat as PLACED, not rejected"
+            ) from duplicate_exc
+
     def _submit_stop_limit_order(
         self,
         symbol: str,
@@ -5982,16 +6115,34 @@ class AlpacaBroker:
             )
             limit_price_q = _quantize_price(stop_price * buffer_mult)
         # PRIMARY: stop-MARKET (guaranteed exit) — owner ratified 2026-09-25.
+        # Idempotency keys derived from the intent (see `_client_order_id`).
+        # The trigger price is part of the key, so a ratcheted trail is a NEW
+        # intent while a retried placement of the same stop is a duplicate.
+        session_date = _session_date_key()
         market_req = StopOrderRequest(
             symbol=_alpaca_symbol(symbol),
             qty=qty,
             side=order_side,
             time_in_force=time_in_force,
             stop_price=stop_price_q,
+            client_order_id=_client_order_id(
+                purpose="STP", symbol=_alpaca_symbol(symbol), side=side,
+                session_date=session_date, qty=qty, price=stop_price_q,
+            ),
         )
         try:
             order = self.client.submit_order(market_req)
         except Exception as exc:  # noqa: BLE001
+            if _is_duplicate_client_order_id_rejection(exc):
+                # The guard working: this exact stop already rests at the
+                # broker (a retry after a timed-out POST). Report it as the
+                # placed stop it is — never as a failed placement.
+                order = self._existing_order_for_client_id(
+                    market_req.client_order_id, exc,
+                )
+                return {"id": str(order.id),
+                        "status": str(getattr(order.status, "value", order.status)),
+                        "symbol": _internal_symbol(symbol)}
             if not _is_unsupported_stop_market_rejection(exc):
                 # NOT a type/tif refusal — held_for_orders, buying-power,
                 # symbol, rate-limit, 5xx, etc. must propagate unchanged so
@@ -6017,8 +6168,19 @@ class AlpacaBroker:
                 time_in_force=time_in_force,
                 stop_price=stop_price_q,
                 limit_price=limit_price_q,
+                client_order_id=_client_order_id(
+                    purpose="STL", symbol=_alpaca_symbol(symbol), side=side,
+                    session_date=session_date, qty=qty, price=stop_price_q,
+                ),
             )
-            order = self.client.submit_order(limit_req)
+            try:
+                order = self.client.submit_order(limit_req)
+            except Exception as limit_exc:  # noqa: BLE001
+                if not _is_duplicate_client_order_id_rejection(limit_exc):
+                    raise
+                order = self._existing_order_for_client_id(
+                    limit_req.client_order_id, limit_exc,
+                )
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),
