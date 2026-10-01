@@ -11186,7 +11186,10 @@ class TradingPipeline:
 
         try:
             self.db.insert_agent_log(
-                **seat_acceptance_kwargs("position_review_parse_error" if not reasked else None),
+                **seat_acceptance_kwargs(
+                    "position_review_parse_error" if not reasked else None,
+                    result=reask_result,
+                ),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=f"exit-trigger re-ask | {', '.join(sorted(pending))}",
                 input_message=reask_result.user_message,
@@ -16952,7 +16955,10 @@ class TradingPipeline:
             if review is None:
                 review_log_kwargs["status"] = "position_review_parse_error"
             self.db.insert_agent_log(
-                **seat_acceptance_kwargs("position_review_parse_error" if review is None else None),
+                **seat_acceptance_kwargs(
+                    "position_review_parse_error" if review is None else None,
+                    result=md_result,
+                ),
                 agent_name="position_reviewer", run_id=run_id,
                 input_summary=(
                     f"{session_type} | {len(review_positions)} positions, ${total_value:.0f} total"

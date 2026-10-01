@@ -2627,6 +2627,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     @staticmethod
     def _semantic_failure(result, status: str, error: object):
         result.semantic_status = status
+        # Board item 188 (recording only): the gate's own word, so the
+        # agent_logs row says WHICH way the answer was unusable rather than
+        # only that the seat produced no decision.
+        result.gate_reason = status
         result.semantic_error = str(error)
         return None, result
 

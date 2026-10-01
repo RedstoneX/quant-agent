@@ -1160,7 +1160,14 @@ class Database:
         # Did the SEAT accept this answer, and if not why — the fact `status`
         # never carried (`status` only ever meant "the call returned"). NULL
         # on every legacy row and on any site not yet instrumented; readers
-        # must treat NULL as unknown, never as accepted.
+        # must treat NULL as unknown, never as accepted. Board item 188:
+        # for the three DECISION seats `acceptance_reason` now carries the
+        # gate's OWN machine-readable word (pm_/risk_/review_ prefixed) when
+        # the gate named one, so the refusal says which way the answer was
+        # unusable. RECORDING ONLY: nothing may read either column back into
+        # a sizing, stop, exit or routing decision, and neither may be swept
+        # for an optimal threshold — they exist to make a model's
+        # usable-answer rate computable from the desk's own rows.
         _ensure_column("agent_logs", "acceptance", "acceptance TEXT")
         _ensure_column("agent_logs", "acceptance_reason", "acceptance_reason TEXT")
         # Whether the provider's answer carried usage information:
