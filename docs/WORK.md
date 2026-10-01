@@ -330,14 +330,6 @@ DONE WHEN:
   - [ ] a real session's stored report is read back and shown carrying the block, on both surfaces, against a run the desk actually made — until then this is rendering proven only by test
 detail: docs/board_notes/item-219.md
 
-**222. Three limits each claim to bound how much of one name the desk may hold -- a 65% single-name ceiling, a 5% per-position risk envelope and a separate notional cap -- and which of them actually governs a real order is unreadable today. TIER 1 money defect, surfaced by item 90's tranche-four routing pass and left open there on purpose. See docs/board_notes/ item 222.**
-
-DONE WHEN:
-- [ ] the binding constraint is identified FROM REAL ORDERS -- the recorded order and refusal stream showing, per order, which limit bound first -- and not from reading the config or the prose
-- [ ] one written sentence states the maximum holding in one name and its unit, with the other two limits shown to be slack or shown to bind first in named circumstances
-- [ ] the three limits are reconciled into one unit against one denominator, or one of them is deleted, and their ledger rows state the same answer as that sentence
-- [ ] a test fails if the three are ever changed into a combination where which one binds is again unreadable
-
 
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in the matching scheme, and never edits an existing line; the running lists used to live on this one physical line, and even the merge driver's own union rule (`scripts/resolve_doc_conflict.py::merge_retired`) could not save it, because GitHub's own squash-merge — what actually runs when a pull request merges on GitHub.com — never invokes a local git merge driver at all. Two closures now append two different lines and merge with no conflict, by construction; no driver needed for this part. **This still takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry the same way. `tests/test_status_board.py` fails a change that adds a reason to any line below, or that edits an existing line instead of appending a new one. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays; the ladder's own unmeasurable-drawdown behaviour is a separate live question. Run `scripts/next_board_number.py` for the next free number — it reads every line below, the live board, and open pull requests; never eyeball this list. It FAILS CLOSED as of 2026-09-30: if the open-pull-request read fails for any reason it exits non-zero and prints no number at all, because it used to print a warning and a number anyway and two pull requests both claimed item 192 that way. Treat a non-zero exit as a hard stop, not a prompt to guess; `--accept-unchecked-number` is the deliberate offline opt-out and labels its answer UNCHECKED.
 
@@ -377,6 +369,7 @@ DONE WHEN:
 - retired queue: 217
 - retired queue: 194
 - retired queue: 200
+- retired queue: 222
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

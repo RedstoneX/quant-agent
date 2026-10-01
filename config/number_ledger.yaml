@@ -761,9 +761,16 @@ numbers:
     site: src/config.py
     note: >-
       The 5% single-position risk envelope, owner-ratified 2026-08-27.
-      Ratified and unsourced -- and see docs/WORK.md for the separate finding
-      that a 20%-notional cap has been limiting real trades to ~1% rather than
-      this.
+      Ratified and unsourced. ITEM 222, reconciled 2026-10-01: the most the
+      desk may hold in one name is 65% of total account equity in notional
+      terms; this 5% envelope and the constructor's `alloc_cap_by_risk` are
+      ONE limit in two units (notional% = 5 x entry / |entry - stop|), not
+      two, and it binds before the 65% ceiling only when the stop sits
+      further than 7.69% of entry price away. Measured over the production
+      order record 2026-09-02..2026-09-30 it bound 0 of 38 attributable
+      entry orders -- no order requested more than 3.0% risk. The stale
+      claim once carried here, that a 20%-notional cap was limiting real
+      trades to ~1%, described the retired 20 and is removed.
     open_question: >-
       What single-name risk does the mandate actually permit? The 5 is
       owner-ratified but no measurement of this account's gap or stop-slippage
@@ -2826,8 +2833,13 @@ numbers:
       What single-name NOTIONAL share does the mandate permit, given
       risk-based sizing already caps risk separately?
     cost_while_unanswered: >-
-      This is the cap that actually binds most real trades; it is a round 65
-      with no derivation.
+      A round 65 with no derivation. ITEM 222, measured 2026-10-01 against
+      the production order record 2026-09-02..2026-09-30: this ceiling is the
+      binding single-name constraint and the only one observed to bind -- 4
+      of 38 attributable entry orders, every one at a stop tighter than the
+      7.69%-of-entry crossover with the 5% risk envelope. The earlier wording
+      here, "binds most real trades", was never measured and is wrong: it
+      bound 4 of 38, not most.
     settles_by:
       kind: measurement
       state: specified
@@ -3074,9 +3086,16 @@ numbers:
     site: src/portfolio_constructor.py
     note: >-
       The 5% single-position risk envelope, owner-ratified 2026-08-27.
-      Ratified and unsourced -- and see docs/WORK.md for the separate finding
-      that a 20%-notional cap has been limiting real trades to ~1% rather than
-      this.
+      Ratified and unsourced. ITEM 222, reconciled 2026-10-01: the most the
+      desk may hold in one name is 65% of total account equity in notional
+      terms; this 5% envelope and the constructor's `alloc_cap_by_risk` are
+      ONE limit in two units (notional% = 5 x entry / |entry - stop|), not
+      two, and it binds before the 65% ceiling only when the stop sits
+      further than 7.69% of entry price away. Measured over the production
+      order record 2026-09-02..2026-09-30 it bound 0 of 38 attributable
+      entry orders -- no order requested more than 3.0% risk. The stale
+      claim once carried here, that a 20%-notional cap was limiting real
+      trades to ~1%, described the retired 20 and is removed.
     open_question: >-
       Same question as max_position_risk_pct - what single-name risk does the
       mandate permit, and on what measurement?
