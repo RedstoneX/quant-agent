@@ -101,6 +101,17 @@ EXITS_ONLY  RESTORE_PROTECTION  EMERGENCY_FLATTEN
 
 **Owner-facing dashboard, read-only and off the money host.** A small front page — profit and loss, holdings, trades, charting — for people interested in how the desk is doing, with no journal, no controls and no internals. It is NOT served from the QAMC host and NOT from the Sentinel host. Not QAMC, because the money machine must keep no inbound path; not the Sentinel, because the Sentinel holds the authority to cancel and flatten, and a public web surface on that machine hands an attacker a route to the one service that can touch the book. It needs no VPS of its own either: it has no database, no credentials and no running logic, so the snapshot is rendered as a static page on ordinary static hosting, behind credentials (owner ruling 2026-10-01: not fully public, since live holdings are disclosure beyond the already-public historical data). It is a one-way sink: a breach of that host reaches a copy of yesterday's and today's numbers and nothing else. Credentials for it are provisioned by the owner and never held in the repository.
 
+**Where the owner-facing page actually lives (owner, 2026-10-01).** On the owner's existing shared hosting — the managed account that already serves his mail and WordPress sites — behind an ordinary site password. No new VPS is bought and none is needed.
+
+Shared hosting is the least trustworthy machine in the picture: other tenants, someone else's patching, and a WordPress install next door, which is one of the most routinely compromised things on the internet. It is nonetheless the correct host, precisely BECAUSE the page is worth nothing to an attacker. It holds no broker credentials, no QAMC credentials, no database and no logic — only a rendered snapshot. Whoever takes that host gets a copy of some numbers and no path to anything. That is the entire design: put the weakest host where a breach buys the least.
+
+Three rules make that true, and the build must honour all three:
+- **The snapshot is scrubbed before it leaves.** No account identifier, no key or token, no internal hostname or filesystem path, no provider credentials. It carries profit and loss, holdings, trades and chart data, and nothing else. A committed test should assert this, because a scrubber nobody checks is a scrubber that rots.
+- **The push is outbound only, and the credential is one-way.** QAMC uploads to one directory on the shared host. That upload credential is scoped to that directory, is useless for reaching QAMC, and is not the owner's main hosting login. A compromise of the shared host must not yield anything that can be turned around and pointed at the money machine.
+- **The page is static.** No database connection, no API, no server-side code reaching anywhere. If rendering needs logic, the logic runs on QAMC before the push, not on the shared host.
+
+The owner's mail living on the same host is a pre-existing consideration and unrelated to the desk, but it is a reason to keep the upload credential separate from the main hosting account rather than reusing it.
+
 **What the rebuild must leave behind for all of this.** Three seams, and all three are needed by QAMC for its own reasons:
 - a queryable record of what the desk decided and did, not log lines;
 - a published state snapshot it can produce honestly, which requires the desk to know what it believes;
