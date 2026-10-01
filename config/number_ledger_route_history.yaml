@@ -88,3 +88,30 @@ changes:
       cancel to a constant fraction of equity, so it is not a disguised global
       dial but a bound whose effective weight drifts inversely with account
       size.
+  - delta: -16
+    date: "2026-10-01"
+    why: |
+      Item 90, the smart-money reading tranche: all 14 routeless rows in
+      `src/agents/smart_money_analyst.py` and both in
+      `src/data/smart_money_cluster.py` gain settlement routes. No value
+      moved and no appetite was routed to the owner.
+
+      The eight ranking-table rows (`_ROLE_RANK`, `_FRESHNESS_RANK`,
+      `_SIGNAL_CLASS_RANK`) are a number that only LOOKS numeric: the
+      integers enter the code solely as elements of a lexicographic tuple
+      sort key (smart_money_analyst.py:153-155 and 174-176), never summed,
+      scaled or compared across tables, so the spacing algebraically
+      cancels and any order-preserving relabelling ranks identically. Their
+      route is therefore a ratified-bound on the ORDER plus the deliberate
+      unset/`indeterminate` tie, closing on post-filing behaviour measured
+      by role, freshness and signal class off the filings record and market
+      prices -- never off this desk's own fills.
+
+      The six truncation caps record BOTH failed derivation attempts.
+      First: derive each cap from the synthesis prompt's token budget --
+      failed, because that budget is itself unledgered and every cap here
+      is small enough relative to it that the budget constrains none of
+      them. Second: derive each cap from the largest evidence the stream
+      has actually carried -- failed, because nothing anywhere records a
+      pre-truncation size, so there is no record to read. Stopped at two:
+      the recording that would settle them IS the route.
