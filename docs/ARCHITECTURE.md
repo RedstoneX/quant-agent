@@ -430,6 +430,11 @@ collaborator attributes (`broker`, `config`, `db`, `earnings_provider`,
 two: first move it behind a constructor taking all ten unchanged, then split it
 along the fact families it already serves. Do not attempt both at once.
 *Proof:* the rendered prompt facts for a replayed session are byte-identical.
+*Done (2026-10-01, both halves):* `PromptFacts` is a composite over six families in
+`src/prompt_facts_*.py` — book (7 builders, 7 ports), projection (2, 5), seat
+memory (4, 2), grading (11, 5), market context (3, 2), candidates (12, 8); every
+body moved byte for byte, one boundary test per family, 629 recorded builder
+calls across 40 test files diffed identical before and after.
 That is a strong, cheap proof and it is the reason this step is safe despite its
 size.
 

@@ -278,6 +278,12 @@ SCOPED_PATHS: tuple[str, ...] = (
     # scoped.
     "src/pipeline_admission.py",
     "src/pipeline_prompt_facts.py",
+    "src/prompt_facts_book.py",
+    "src/prompt_facts_projection.py",
+    "src/prompt_facts_seat_memory.py",
+    "src/prompt_facts_grading.py",
+    "src/prompt_facts_market_context.py",
+    "src/prompt_facts_candidates.py",
     # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
     # application moved here out of `src/pipeline.py`.
     "src/pipeline_risk_gate.py",
