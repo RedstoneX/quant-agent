@@ -46,16 +46,7 @@ import logging
 import math
 import time
 
-from src.quantities import sweep_reserve_usd
-
 logger = logging.getLogger(__name__)
-
-# Raw-cash cushion added on top of planned BUY notional when deciding how
-# much of the vehicle to liquidate — covers limit-price drift between
-# sizing and fill. Generous is fine: leftover cash is re-parked at the
-# session bookend.
-_FUND_BUFFER_FRAC = 0.01
-_FUND_BUFFER_MIN_USD = 50.0
 
 # Funding-sell confirmation budgets. The funding sale is the one order the
 # session's entire purpose depends on: if its proceeds are not confirmed
@@ -71,9 +62,9 @@ _FUND_TERMINAL_TIMEOUT_S = 180.0
 _FUND_CASH_SETTLE_TIMEOUT_S = 30.0
 _FUND_CASH_SETTLE_POLL_S = 2.0
 
-# Limit-price paddings. The vehicle trades at ~1bp spreads; ±0.1% crosses
-# the book immediately while still capping a pathological fill.
-_BUY_LIMIT_PAD = 1.001
+# Limit-price padding on the release sell. The vehicle trades at ~1bp
+# spreads; -0.1% crosses the book immediately while still capping a
+# pathological fill. The BUY-side pad died with the parking buy (item 190).
 _SELL_LIMIT_PAD = 0.999
 
 
@@ -126,17 +117,6 @@ class CashSweeper:
         except (TypeError, ValueError):
             return 0.0
         return mv if math.isfinite(mv) and mv > 0 else 0.0
-
-    def reserve_usd(self, total_value: float) -> float:
-        """The reserve floor in dollars. Arithmetic in
-        `src.quantities.sweep_reserve_usd` — the same function the API's
-        `/account` liquidity breakdown and the branch-preview shim call, so
-        the percent-of-book arithmetic is written once instead of three
-        times."""
-        cfg = self._cfg
-        if cfg is None:
-            return 0.0
-        return sweep_reserve_usd(total_value, getattr(cfg, "reserve_pct", 0.0))
 
     # ---------- funding (un-park before BUYs) ----------
 

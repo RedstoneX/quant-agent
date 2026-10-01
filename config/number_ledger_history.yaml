@@ -934,6 +934,21 @@ changes:
       moving it would be inventing a number; only the honesty of the label
       changes.
 
+  - delta: -3
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 190: -3 for the three cash-sweep constants that
+      became unreachable when the parking buy and the funding sell were
+      deleted — `_BUY_LIMIT_PAD` (1.001), `_FUND_BUFFER_FRAC` (0.01) and
+      `_FUND_BUFFER_MIN_USD` (50). Each was grepped across the whole tree
+      before deletion and had exactly one definition site and no reader in
+      src/, scripts/, ops/ or tests/. Their ledger rows went with the code,
+      rather than being left describing constants that no longer exist. No
+      surviving number changed value: `_SELL_LIMIT_PAD` still prices the
+      release sell, the three `_FUND_*` timeout constants are still read by
+      the session kill budget in src/pipeline_stages.py, and the reserve band
+      only changed its home (`CashSweepConfig.reserve_pct` ->
+      `CashReserveConfig.pct`), which is a rename, not a count move.
 
   - delta: -1
     date: "2026-10-01"
@@ -952,3 +967,26 @@ changes:
       answer — is what made reformulation the required move rather than a
       third derivation attempt. The two failed derivations stay recorded in
       docs/BOARD_NOTES.md (item 186) so neither is tried again.
+  - delta: 2
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 223: +2 for the minimum-risk-per-trade floor
+      (0.5), which this ledger carries as two rows for one number --
+      `src.risk.constants.STARTER_POSITION_RISK_PCT` and
+      `src.portfolio_constructor.ConstructorConfig.min_risk_pct`. Both moved
+      from `sourced` to `arbitrary`. Neither VALUE changes and no behaviour
+      changes. Their stated source was the owner's own ratification of
+      2026-08-27 plus the deployed key in config/settings.yaml, and this
+      desk's own rule is that a ratified point is not a sourced point -- so
+      `sourced` overstated what is known. Both now carry the open question,
+      what it costs unanswered, and a BUILT settlement route: the sub-floor
+      recording added in the same change writes every positive below-floor
+      portfolio-manager request to `trade_refusals.requested_risk_pct` with
+      the floor in force beside it. They move together because one number
+      cannot hold two statuses. Measured over 142 portfolio-manager logs
+      (2026-08-17 to 2026-09-30), 115 targets carried a risk allocation and
+      ZERO were positive-but-below the floor -- which is also why a deterministic
+      sub-floor refusal was ruled out on the risk route 2026-10-01, on the
+      adversary's measurement: it would have fired
+      zero times. The citation `config/settings.yaml:751` was stale in four
+      places and is corrected to 685 in the same commit.

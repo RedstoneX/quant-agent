@@ -524,6 +524,25 @@ STOP_REFUSAL_GEOMETRY_UNMEASURABLE = "reward_risk_not_measurable"
 #: measured at the point where the trade as a whole is accepted or declined,
 #: so the refusal is not a function of stop width wearing a new name.
 STOP_REFUSAL_REWARD_BELOW_RISK = "reward_below_risk_at_parity"
+#: NOT a refusal and NOT a resize — a recording, and the only thing board
+#: item 223 changed. Ruled on the RISK ROUTE 2026-10-01 on the adversary's
+#: measurement -- NOT an owner ruling, which the item itself permits ("the
+#: owner OR the risk route"); a reader must stay free to re-open this on new
+#: evidence. A portfolio-manager target
+#: whose `risk_allocation_pct` is positive but below
+#: `RiskConfig.min_position_risk_pct` is sized and shipped exactly as asked,
+#: because measured over 142 portfolio-manager logs (2026-08-17 to
+#: 2026-09-30) 115 targets carried a risk allocation and ZERO were
+#: positive-but-below-floor — a deterministic refusal would have fired zero
+#: times. The floor is the seat's instruction; this code only makes a breach
+#: of it VISIBLE, with the symbol, the risk asked for, the floor in force and
+#: what the desk then did. The desk already had a hard sub-floor refusal and
+#: retired it on 2026-09-11 for being the wrong shape; this is deliberately
+#: not that. Rows carry stage `_SUBFLOOR_RISK_STAGE`, never a refusal stage.
+SUBFLOOR_RISK_OBSERVED = "pm_target_below_min_risk_floor_observed"
+#: The outcome column for the row above, in one greppable token: the target
+#: was accepted unchanged and continued down the normal path.
+_SUBFLOOR_RISK_STAGE = "observed_not_refused"
 #: Not a refusal — the one PERMIT code in this block. A below-floor ratio let
 #: through because the PM's sub-floor catalyst gate verified the citation and
 #: capped the size (docs/WORK.md item 1, parts (b)+(c)). Greppable so "how
@@ -1179,6 +1198,38 @@ class PortfolioConstructor:
                 symbol, e,
             )
 
+    def _record_subfloor_risk_target(
+        self, symbol: str, direction: str | None, requested_pct: float,
+    ) -> None:
+        """Record a positive sub-floor PM risk request. Never raises.
+
+        Board item 223, ruled on the risk route 2026-10-01 on the
+        adversary's measurement (NOT an owner ruling): NO deterministic
+        refusal.
+        Nothing here refuses, resizes or reroutes the target — the caller
+        continues with the request untouched. The row exists because the
+        floor is an INSTRUCTION to the portfolio manager (the prompt says
+        so, and measured compliance is 115 of 115 targets carrying a risk
+        allocation), and an instruction with no evidence trail cannot tell
+        us whether it is ever broken.
+        """
+        db = getattr(self, "db", None)
+        if db is None:
+            return
+        try:
+            db.insert_trade_refusal(
+                symbol=symbol, direction=direction,
+                refusal=SUBFLOOR_RISK_OBSERVED,
+                stage=_SUBFLOOR_RISK_STAGE,
+                requested_risk_pct=float(requested_pct),
+                threshold=float(self.cfg.min_risk_pct),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Constructor: sub-floor risk observation write failed "
+                "for %s: %s", symbol, e,
+            )
+
     def _note_refusal(
         self, symbol: str, direction: str, refusal: str, detail: str,
         *, only_if_unrecorded: bool = False, action: str | None = None,
@@ -1747,6 +1798,16 @@ class PortfolioConstructor:
                 # drop-reason: NOT a drop. This is PM asking to CLOSE the
                 # name; it goes to the exit builder, not to nowhere.
                 continue
+            if 0.0 < target.risk_allocation_pct < self.cfg.min_risk_pct:
+                # Board item 223 — RECORDING ONLY. The target is not
+                # refused, not resized and not reordered; it falls through
+                # to exactly the path it would have taken had this block
+                # not existed. A zero request never reaches here (it is the
+                # CLOSE branch above), which is why the comparison is
+                # strictly positive.
+                self._record_subfloor_risk_target(
+                    sym, target.direction, target.risk_allocation_pct,
+                )
             analysis = analyses_by_sym.get(sym)
             held_pct = current_weights.get(sym, 0.0)
             held_same_side = (

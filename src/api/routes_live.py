@@ -53,7 +53,7 @@ from src.quantities import (
 from src.api.deps import (
     get_alpaca_paper,
     get_cash_sweep_enabled,
-    get_cash_sweep_reserve_pct,
+    get_cash_reserve_pct,
     get_cash_sweep_symbol,
     get_risk_limits,
 )
@@ -369,7 +369,7 @@ def _compute_liquidity(
     try:
         sweep_enabled = get_cash_sweep_enabled()
         sweep_symbol = get_cash_sweep_symbol()
-        reserve_pct = get_cash_sweep_reserve_pct()
+        reserve_pct = get_cash_reserve_pct()
     except Exception as exc:
         logger.warning("routes_live._compute_liquidity: could not read cash_sweep config: %s", exc)
         return LiquidityBreakdown()

@@ -680,8 +680,14 @@ floor the idea is not worth trading: it pays full commission and full
 attention for an immaterial payoff. Do not rely on the constructor to
 catch it — the risk-budget floor there only denies a grant the budget
 had to CUT below the floor, so a sub-floor request that fits the
-remaining headroom is granted in full and sized as asked. This floor
-is yours.
+remaining headroom is granted in full and sized as asked. Nothing
+downstream refuses, resizes or reroutes a sub-floor target: this floor
+is an instruction to you and to nobody else. Board item 223 (ruled on the
+risk route 2026-10-01, on the adversary's measurement, which the item
+itself permits) decided it stays that way, and added a recording —
+if a sub-floor target ever does arrive, the symbol, the risk asked for
+and this floor are written down, and the target is then shipped
+unchanged. This floor is yours.
 
 **Nothing in this formula refers to the stop distance, the share price
 or the position's weight.** That is deliberate. Those belong to the
@@ -1014,7 +1020,8 @@ Semantics of `risk_allocation_pct`:
   ({{risk.min_position_risk_pct}}) — under the floor the idea is not
   worth trading, and the constructor will NOT catch it for you: its
   floor only denies a grant the risk budget had to cut, so a sub-floor
-  request that fits the headroom is sized as asked
+  request that fits the headroom is sized as asked; a breach is
+  RECORDED (board item 223) but never refused
 - **All weights are GROSS-leverage weights.** The `Weight:` tag on each
   position (and the current weight the constructor diffs your target
   against) multiplies a leveraged/inverse ETF's market value by

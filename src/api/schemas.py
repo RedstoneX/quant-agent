@@ -106,7 +106,7 @@ class LiquidityBreakdown(BaseModel):
     sweep_symbol: str | None = None
     raw_cash: float | None = None            # broker cash, includes the reserve
     sweep_parked_value: float | None = None  # market value of the held sweep vehicle, 0 if none
-    reserve_usd: float | None = None         # sweep MECHANIC: reserve_pct% of portfolio_value
+    reserve_usd: float | None = None         # cash_reserve.pct% of portfolio_value
     # raw_cash + sweep_parked_value — what the engine can actually deploy
     # without borrowing, because fund_buys sells the sweep vehicle on demand.
     deployable_cash: float | None = None

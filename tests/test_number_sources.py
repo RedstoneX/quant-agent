@@ -115,7 +115,7 @@ def test_one_atr_is_not_treated_as_an_identity() -> None:
     ids = {site.site_id for site in collect_sites()}
     assert "src.config.RiskConfig.absolute_min_stop_atr_multiple" in ids
     assert "src.portfolio_constructor.ConstructorConfig.absolute_min_stop_atr_multiple" in ids
-    assert "src.config.CashSweepConfig.reserve_pct" in ids
+    assert "src.config.CashReserveConfig.pct" in ids
     assert "src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE" in ids
 
 
