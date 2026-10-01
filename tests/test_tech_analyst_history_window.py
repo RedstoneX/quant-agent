@@ -513,7 +513,7 @@ _EXPLAINED_BLOCKS = (
 #: the block the sheet promises to explain. Same shape as board item 98's first
 #: draft, which passed against a slice taking the OLDEST bars.
 _BLOCK_KWARGS = ("intraday_context=", "prior_macro_regime=", "prior_macro_outlook=")
-_ASSEMBLY_SITES = ("src/pipeline.py", "src/pipeline_stages.py")
+_ASSEMBLY_SITES = ("src/pipeline.py", "src/pipeline_stages.py", "src/pipeline_intraday.py")
 
 
 def _analyze_batch_calls() -> list[str]:
