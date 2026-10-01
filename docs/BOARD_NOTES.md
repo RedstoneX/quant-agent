@@ -1325,6 +1325,16 @@ metadata, which is a provenance stamp, not a trading date.
 It also fails on `origin/main` today, taking ~196 seconds of live fetching
 [measured 2026-09-30], so the defect predates the guard rather than being
 caused by it.
+
+**Third criterion, measured 2026-10-01: the full suite was run once with the conftest guard on.** Result as pytest printed it: `9211 passed, 6 skipped, 1 xfailed, 10 warnings in 488.84s (0:08:08)`, exit 0 [measured, one run].
+
+- Tests that FAIL because of the guard (a hard dependency on the network): NONE. Zero failures, zero errors.
+- Tests that attempt an outbound call and are allowed to recover: exactly one is visible, `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis`, the one XFAIL; it is the rehearsal replay and is item 202's own subject, not a separate finding.
+- What the run cannot show: the conftest guard raises a ConnectionError but does not journal it, and a passing test that catches that error and carries on looks identical to one that never called out. Naming those needs the rehearsal-style journal on the plain suite, which this inventory was told not to build [not measured].
+- The guard covers `requests.get`, `requests.Session.request` and `curl_cffi`; urllib, httpx and raw sockets are not closed by it [read from the conftest, not exercised].
+- The 6 skips were not individually classified as network-related [not measured].
+- This board file holds two `## Item 202` sections, an exact-looking duplicate; this note is in the later one only.
+
 ## items 182 / 183 / 185 / 186 — consolidation check against item 90 (2026-09-30)
 **Verdict: all four KEPT, none retired.** Each opens with "item 90's half two, surfaced for visibility", but each carries its own DONE WHEN criteria that item 90 does not own: 182 the ladder alert and cash-deficit cushion, 183 the order gates and the dead cash-sweep config removal, 185 the ATR-eligibility question and its two inherited rows, 186 three open owner-appetite answers. Retiring any would lose those criteria. The defect found was in item 90 itself: it claimed the four carry one word-for-word shared criterion, which was false (checked against each block). Item 90's line now names the four tranches and what each covers. No constant, threshold or value was chosen or changed.
 ## Item 192 (RETIRED 2026-09-30) — local interpreter pinned to CI's
