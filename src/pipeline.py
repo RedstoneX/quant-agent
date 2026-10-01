@@ -11488,29 +11488,6 @@ class TradingPipeline:
             _sc_raw = (buy or {}).get("structural_ceiling")
             structural_ceiling = None if _sc_raw is None else bool(_sc_raw)
 
-            # Items 201 fault 4/6: a partly-applied amend leaves the legs at
-            # different levels, and nothing else looks for that — the
-            # per-symbol live-stop reconcile reads ONE price, so a straddle is
-            # invisible to it. This runs before the proposal gate on purpose:
-            # a stalled price produces no proposal, and the pair would
-            # otherwise stay mismatched indefinitely.
-            try:
-                _healed = self.broker.normalise_stop_leg_levels(
-                    symbol, is_short=(float(position.qty) < 0),
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.warning("trail: stop-leg heal failed for %s: %s", symbol, e)
-                _healed = None
-            if isinstance(_healed, dict) and _healed.get("legs"):
-                from src.execution.exit_path_records import record_stop_shift_legs
-                _hlegs = _healed.get("legs") or []
-                record_stop_shift_legs(
-                    self.db, symbol=symbol, amount=0.0, mode="heal_amend",
-                    status=str(_healed.get("status") or ""),
-                    shifted=int(_healed.get("shifted") or 0),
-                    total=len(_hlegs), legs=_hlegs, run_id=run_id,
-                )
-
             evaluation = evaluate_trailing_stop(
                 symbol=symbol,
                 setup_type=(buy or {}).get("setup_type"),
@@ -11581,7 +11558,7 @@ class TradingPipeline:
                     status=_astatus, shifted=len(_ok), total=len(_legs),
                     legs=_legs, run_id=run_id,
                 )
-                if _astatus != "accepted":
+                if _astatus in ("partial", "refused", "unknown", "naked"):
                     # Telegram is muted, so this row and this alert are the
                     # whole evidence that a leg did not move.
                     try:

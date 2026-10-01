@@ -6271,12 +6271,19 @@ class AlpacaBroker:
                         "nothing cancelled", symbol, leg["id"], leg["new_stop"],
                         leg["detail"], leg["old_stop"],
                     )
+                elif leg["outcome"] == "flat":
+                    logger.info(
+                        "shift_stops_down: %s stop %s could not be shifted and "
+                        "the position is FLAT (%s) — nothing left to protect",
+                        symbol, leg["id"], leg["detail"],
+                    )
                 elif leg["outcome"] == "naked":
                     logger.error(
                         "shift_stops_down: %s stop %s is GONE after a dead "
                         "replacement (%s) — the broker shows NO protective "
-                        "stop for this symbol; the position is UNPROTECTED and "
-                        "coverage repair must place one",
+                        "stop for this symbol; the position is UNPROTECTED, "
+                        "and this session's coverage repair has already run, "
+                        "so the gap persists until the NEXT intra sweep",
                         symbol, leg["id"], leg["detail"],
                     )
                 else:
@@ -6293,6 +6300,8 @@ class AlpacaBroker:
                 status = "naked"
             elif unknown:
                 status = "unknown"
+            elif legs and all(l["outcome"] == "flat" for l in legs):
+                status = "flat"
             elif len(amended) == len(legs):
                 status = "accepted"
             elif amended:
@@ -6355,66 +6364,13 @@ class AlpacaBroker:
             status = "unknown"
         elif amended:
             status = "partial"
+        elif legs and all(l.get("outcome") == "flat" for l in legs):
+            status = "flat"
         else:
             status = "refused"
         return {"id": None, "status": status, "amend_status": status,
                 "symbol": symbol, "legs": legs,
                 "shifted": len(amended), "total": len(legs)}
-
-    def normalise_stop_leg_levels(
-        self, symbol: str, *, is_short: bool = False,
-    ) -> dict | None:
-        """Heal a symbol whose protective stop legs rest at DIFFERENT levels.
-
-        A partly-applied amend leaves a straddle: one leg moved, the others
-        did not. Returning early on the failure preserved protection but
-        preserved the inconsistency with it, and the trailing path only
-        re-prices when a NEW proposal arrives, so a stalled price would leave
-        the legs mismatched indefinitely rather than until the next session.
-
-        Never loosens: every leg is amended to the MOST protective level
-        already resting (the highest for a long's sell-stops, the lowest for
-        a short's buy-stops), which is a level the broker is already holding.
-        Returns None when there is nothing to heal.
-        """
-        side = "buy" if is_short else "sell"
-        try:
-            orders = list(self._list_open_protective_stop_orders(symbol, side=side) or [])
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("stop-leg heal: could not list %s's stops: %s", symbol, exc)
-            return None
-        if len(orders) < 2:
-            return None
-        specs = [sp for sp in (self._snapshot_stop_order(o) for o in orders) if sp]
-        if len(specs) != len(orders):
-            return None
-        levels = {sp["stop_price"] for sp in specs}
-        if len(levels) < 2:
-            return None
-        if not all(self._stop_order_amendable_in_place(o) for o in orders):
-            logger.warning(
-                "stop-leg heal: %s's %d stop legs rest at %d DIFFERENT levels "
-                "but at least one is not an in-place-amendable shape — leaving "
-                "them alone rather than cancelling anything", symbol,
-                len(specs), len(levels),
-            )
-            return None
-        target = min(levels) if is_short else max(levels)
-        legs = [self._amend_one_stop_price(symbol=symbol, spec=sp, new_price=target)
-                for sp in specs if sp["stop_price"] != target]
-        payload = self._failed_amend_payload(symbol, legs)
-        healed = payload["shifted"]
-        logger.warning(
-            "stop-leg heal: %s's stop legs rested at %d different levels; "
-            "%d/%d off-level leg(s) amended up to the most protective resting "
-            "level $%.4f (nothing cancelled, nothing loosened)",
-            symbol, len(levels), healed, len(legs), target,
-        )
-        payload["mode"] = "heal_amend"
-        payload["target"] = target
-        if healed == len(legs):
-            payload["status"] = payload["amend_status"] = "accepted"
-        return payload
 
     def _classify_after_dead_replacement(
         self, *, symbol: str, spec: dict, new_price: float, leg: dict,
@@ -6447,9 +6403,38 @@ class AlpacaBroker:
         live = [spec_ for spec_ in (self._snapshot_stop_order(o) for o in live_orders)
                 if spec_ is not None]
         if not live:
+            # A replacement is also rejected when the ORIGINAL already
+            # triggered: the book is then empty because the position is gone,
+            # and calling that UNPROTECTED would alert about a flat symbol.
+            try:
+                held = [
+                    abs(float(getattr(pos, "qty", 0) or 0))
+                    for pos in (self.client.get_all_positions() or [])
+                    if getattr(pos, "symbol", None) == symbol
+                ]
+            except Exception as exc:  # noqa: BLE001
+                leg["detail"] += (
+                    f"; the book is empty and the position could not be "
+                    f"re-read ({exc}) — treating it as UNPROTECTED"
+                )
+                return "naked"
+            if not held or sum(held) <= 0:
+                leg["detail"] += (
+                    "; the book is empty because the position is FLAT — the "
+                    "original stop most likely filled, so there is nothing "
+                    "left to protect"
+                )
+                return "flat"
+            # HONEST LIMIT, no settle window: a replace that is still pending
+            # at the broker can also present as an empty book for a moment.
+            # The two are indistinguishable from one read, so this reports the
+            # LOUD direction — a false UNPROTECTED alert costs attention, a
+            # missed one costs the position. What would settle it: a rehearsal
+            # that lists open orders during a pending replace.
             leg["detail"] += (
-                "; the broker shows NO resting protective stop for this symbol "
-                "— the position is UNPROTECTED"
+                "; the broker shows NO resting protective stop while the "
+                "position is still open — UNPROTECTED (a replace still "
+                "pending at the broker can look the same from one read)"
             )
             return "naked"
         if any(str(s["id"]) == str(spec.get("id")) for s in live):
@@ -6585,9 +6570,11 @@ class AlpacaBroker:
         if not all(self._stop_order_amendable_in_place(o) for o in live_orders):
             return _AMEND_NOT_ATTEMPTED
         # MULTI-LEG (item 201). 9 of the 11 open positions are fractional
-        # [measured 2026-10-01, production quant_agent.db, read-only], and every
+        # [measured 2026-10-01, production quant_agent.db, read-only]. That a
         # fractional position carries the spec 11.1 hybrid PAIR — a durable GTC
-        # whole-share leg plus a DAY sliver leg. Restricting the atomic path to
+        # whole-share leg plus a DAY sliver leg — is ASSUMED, not measured: the
+        # production database holds positions, not an order book. What would
+        # settle it: one read of the open orders for a fractional holding. Restricting the atomic path to
         # exactly ONE resting order therefore left the trailing stop cancelling
         # and resubmitting on most of the book while the ex-dividend shift no
         # longer did, which is protection moving in two directions at once.
@@ -6624,10 +6611,15 @@ class AlpacaBroker:
             # Read off the broker, not inferred: the symbol has no resting
             # protective stop. Say UNPROTECTED and let coverage repair place
             # one; cancelling or resubmitting from here would race it.
+            # Coverage repair has ALREADY run this session — `_reconcile_stop_
+            # coverage` executes earlier in the same position review than the
+            # trails — so the gap is NOT closed by this session. It is closed
+            # by the next intra sweep, which is why the owner is alerted.
             logger.error(
                 "replace_stop_loss: after a dead replacement %s has NO resting "
                 "protective stop — the position is UNPROTECTED, nothing was "
-                "cancelled, and coverage repair must place a stop",
+                "cancelled, and this session's coverage repair has already "
+                "run, so the gap persists until the NEXT intra sweep",
                 symbol,
             )
             return self._failed_amend_payload(symbol, legs)
@@ -6653,11 +6645,55 @@ class AlpacaBroker:
             )
             return self._failed_amend_payload(symbol, legs)
         if amended:
+            # NARROW HEAL (item 201, adversary round 3). Only the legs THIS
+            # amend failed to move, and only to THIS proposal's intended
+            # level. Deliberately NOT "the most protective level already
+            # resting": per-lot stop levels are a design choice the desk
+            # maintains (see `shift_stops_down`'s docstring on the audit-round-2
+            # fix), so collapsing them would tighten a lot the desk chose to
+            # keep wide — a worse failure than the straddle. A leg whose
+            # outcome is unknown or naked is never retried, because the desk
+            # does not know where it is.
+            #
+            # Exactly ONE retry, inside the trailing proposal's own gates
+            # (ratchet floor, tightening cooldown, no-proposal-on-a-stalled-
+            # price): nothing here re-attempts an unchanged outcome on a later
+            # pass, so a leg the broker keeps refusing cannot spin.
+            laggards = [l for l in legs if l["outcome"] == "refused"]
+            if laggards:
+                retried = {}
+                for lag in laggards:
+                    again = self._amend_one_stop_price(
+                        symbol=symbol,
+                        spec={"id": lag["id"], "qty": lag["qty"],
+                              "stop_price": lag["old_stop"]},
+                        new_price=price,
+                    )
+                    again["retry_of"] = lag["id"]
+                    retried[lag["id"]] = again
+                legs = [retried.get(l["id"], l) for l in legs]
+                amended = [l for l in legs if l["outcome"] == "amended"]
+                unknown = [l for l in legs if l["outcome"] == "unknown"]
+                if len(amended) == len(legs):
+                    logger.info(
+                        "replace_stop_loss: %s's lagging stop leg(s) came up to "
+                        "$%.4f on one retry — all %d leg(s) now at the intended "
+                        "level, nothing cancelled", symbol, price, len(legs),
+                    )
+                    return {"id": amended[0]["new_id"],
+                            "status": amended[0].get("status", "accepted"),
+                            "amend_status": "accepted", "symbol": symbol,
+                            "legs": legs}
+            if not amended:
+                return self._failed_amend_payload(symbol, legs)
             logger.error(
                 "replace_stop_loss: only %d of %d stop legs for %s moved to "
                 "$%.4f; the rest were REFUSED and are still resting at their "
-                "old levels. Coverage is intact and nothing was cancelled, but "
-                "the legs sit at MIXED levels until the next trail.",
+                "old levels even after one retry. Coverage is intact and "
+                "nothing was cancelled, and the straddle is LEFT IN PLACE: "
+                "pulling the laggards to another resting level would collapse "
+                "per-lot geometry the desk maintains on purpose. The next "
+                "accepted proposal moves them all together.",
                 len(amended), len(legs), symbol, price,
             )
             return self._failed_amend_payload(symbol, legs)
