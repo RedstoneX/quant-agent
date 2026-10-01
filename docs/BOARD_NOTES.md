@@ -1809,3 +1809,65 @@ Filed 2026-10-01 from item 90's second routing tranche, which found the defect a
 **Why it governs money —** The manager uses the preview to decide it is too heavy in a sector and to trim, drop or reorder names. It is therefore correcting a portfolio that will never exist, and the correction lands on the real one. Both directions are live: a sector the preview shows as crowded may be light once the real sizes are applied, so a good name is dropped for nothing; a sector the preview shows as comfortable may be heavy, so the crowding the manager was asked to watch for goes through unflagged.
 
 **Not fixed here, deliberately —** The routing pass changes no values and no behaviour. The fix is a real behavioural change to what the manager sees, and it needs its own test evidence; the DONE WHEN criteria in `docs/WORK.md` item 221 are written to be falsifiable, including a test that fails if the preview's size for a candidate is independent of that candidate's stop distance.
+
+## item 90 — the 2026-10-01 sixth routing tranche (execution plumbing and the level scan)
+
+Twelve `arbitrary` rows in `config/number_ledger.yaml` gained a `settles_by`
+route. No VALUE changed and no row changed status, so the arbitrary count is
+unmoved at 136; the routeless residue falls from 57 to 45 and
+`MAX_ROUTELESS_ARBITRARY` moves with its own delta line.
+
+The rows, grouped as they were routed:
+
+- **Cash sweep (4).** `_BUY_LIMIT_PAD`, `_SELL_LIMIT_PAD`, `_FUND_BUFFER_FRAC`,
+  `_FUND_BUFFER_MIN_USD`. The two pads route to a measurement of the parking
+  vehicle's own quoted bid-ask spread, so a round ten basis points becomes a
+  multiple of a measured spread. The two buffer rows route to a recording of
+  assumed-versus-consumed cash, broker fees and sizing-to-fill drift on every
+  funded buy. That is the one route in this tranche that reads the desk's own
+  orders, and it is deliberately cash arithmetic rather than a study of
+  returns: fitting a number to this desk's own trading record is barred by
+  `docs/OUTCOME.md`, and a fee-and-drift shortfall is not a return.
+- **Broker stop placement (4).** `AlpacaBroker.STOP_LIMIT_BUFFER_PCT`,
+  `_STOP_PLACEMENT_MAX_ATTEMPTS` and both `_STOP_PLACEMENT_BACKOFF_S` rungs.
+  The buffer routes to gap-distance and fast-session range measurements over
+  the universe the desk could trade, NOT to this desk's own stop fills, which
+  was the obvious and barred shape. The retry ceiling and the two delays share
+  one recording: per-attempt error class, delay waited and whether the next
+  attempt succeeded, which is what `docs/WORK.md` item 129 said the falsified
+  "must be a rejection after three attempts" reasoning never had.
+- **Level scan (3).** `PIVOT_WINDOW`, `CLUSTER_TOLERANCE_PCT`,
+  `LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT`. All three route to bounce-behaviour
+  measurements on daily bars over the tradable universe. The pivot-window
+  route is written to cover BOTH answers the desk holds today — 5 here and 3
+  in the trailing-stop scan — so one measurement retires the disagreement
+  instead of documenting it for a third time.
+- **Technical seat (1).** `_BARS_PER_SYMBOL`. Routes to a feature-stability
+  measurement across lookbacks of 20, 40, 60 and 120 bars.
+
+**Every route states the DELETE outcome beside the set-it outcome**, because
+a constant the measurement cannot distinguish from "no constant at all" should
+go rather than be re-picked at another round number. In this tranche that
+means: the bar cap goes if the feature set never changes with lookback; the
+sweep pads go, and the leg becomes a plain marketable order, if the measured
+spread never approaches them; each backoff rung goes if success on the next
+attempt is independent of the delay waited; the whole retry ladder goes, with
+placement failure escalating at once, if no failure class ever clears on a
+retry; the stop-limit buffer and its leg go together if the fallback leg is
+never taken now that primary protective stops are stop-MARKET; the clustering
+step goes if bounce rate is flat in pivot separation; and the distance term
+leaves the level-strength formula entirely, leaving touch count alone, if
+bounce rate does not fall with distance once touch count is held fixed.
+
+No derivation was attempted for any of the twelve, so the two-attempts limit
+was not reached. Nothing here was classified `not-trade-governing`: each of
+the twelve reaches a real order — the sweep constants decide how much cash is
+available to fund a buy and at what price the sweep legs fill, the broker
+constants decide whether and how a protective stop gets placed, and the level
+and bar-cap constants decide where structure is found, which is where stops
+are read from.
+
+**Still open on item 90 after this tranche:** 45 routeless `arbitrary` rows
+remain, concentrated in `src.config.RiskConfig` (7), `src.risk.rules` (7),
+`src.risk.exit_guard` (6), `src.risk.trailing` (6) and `src.verdicts` (4).
+The item stays OPEN.
