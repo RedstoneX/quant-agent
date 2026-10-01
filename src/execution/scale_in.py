@@ -59,6 +59,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,12 @@ class LongAddPrep:
     #: `restore_after_failed_add` / `restore_cancelled_stops` re-place on
     #: this side so a short's stop is never restored as a sell.
     side: str = "sell"
+    #: `time.monotonic()` at the instant the BROKER acknowledged the cancel
+    #: as terminal (board item 193). The unprotected window is measured from
+    #: here to the broker's acknowledgement of the rearm, so the figure bounds
+    #: real exposure rather than database write times. None when nothing was
+    #: cancelled, which is exactly the case with no window to measure.
+    cancel_confirmed_at: float | None = None
 
     @classmethod
     def not_scale_in(cls) -> "LongAddPrep":
@@ -116,11 +123,6 @@ def held_signed_qty(positions: list | None, symbol: str) -> float:
         except (TypeError, ValueError):
             return 0.0
     return 0.0
-
-
-def short_add_is_blocked(positions: list | None, symbol: str) -> bool:
-    """True when SHORT would add to an existing short. Item 73 must land first."""
-    return held_signed_qty(positions, symbol) < 0
 
 
 def most_protective_long_stop(prices: list[float]) -> float:
@@ -424,6 +426,7 @@ def prepare_long_add(
         return prep
 
     prep.cancelled = True
+    prep.cancel_confirmed_at = time.monotonic()
     logger.info(
         "scale-in: cancelled and confirmed %d protective sell(s) for %s "
         "so a BUY add can submit; WAL row %s covers the unprotected window",
@@ -661,12 +664,25 @@ def prepare_short_add(
         return prep
 
     prep.cancelled = True
+    prep.cancel_confirmed_at = time.monotonic()
     logger.info(
         "short scale-in: cancelled and confirmed %d protective buy-stop(s) "
         "for %s so a SELL add can submit; WAL row %s covers the unprotected "
         "window", len(live), symbol, prep.wal_row_id,
     )
     return prep
+
+
+def unprotected_window_seconds(cancel_confirmed_at: float | None) -> float | None:
+    """Seconds since the broker acknowledged the cancel, or None.
+
+    Board item 193. Both ends are `time.monotonic()` readings taken in the
+    session that did the cancelling, so the figure is immune to clock changes
+    and does not depend on when any row was written.
+    """
+    if cancel_confirmed_at is None:
+        return None
+    return round(max(0.0, time.monotonic() - cancel_confirmed_at), 3)
 
 
 def restore_after_failed_add(
@@ -684,6 +700,21 @@ def restore_after_failed_add(
         "could not be restored — WAL row %s remains so drain/watchdog can "
         "rearm; OWNER must be alerted",
         symbol, prep.wal_row_id,
+    )
+    alert_rearm_failed(
+        symbol=symbol,
+        qty=abs(float(prep.held_qty_before or 0)),
+        stop_price=(
+            most_protective_short_stop if prep.side == "buy"
+            else most_protective_long_stop
+        )([float(spec.get("stop_price") or 0) for spec in (prep.specs or [])]),
+        order_id=None,
+        detail=(
+            "The add itself never landed, so the position is the size it "
+            "already was — but the protective sell that was cancelled to "
+            "make room for it could not be put back."
+        ),
+        db=db,
     )
 
 
@@ -775,20 +806,6 @@ def pending_protection_symbols(db: Any) -> set[str]:
     except Exception:  # noqa: BLE001
         return set()
     return {str(r["symbol"]) for r in (rows or []) if r.get("symbol")}
-
-
-def scale_in_symbols_to_skip(broker: Any, db: Any) -> set[str]:
-    """Scale-in symbols the watchdog/repair must not touch right now."""
-    symbols = pending_scale_in_symbols(db)
-    if not symbols:
-        return set()
-    if trading_session_lock_held():
-        return set(symbols)
-    skip: set[str] = set()
-    for symbol in symbols:
-        if list_open_entry_ids(broker, symbol):
-            skip.add(symbol)
-    return skip
 
 
 def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
@@ -897,6 +914,16 @@ def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
             "scale-in drain: rearm FAILED for %s qty=%.4f stop=$%.2f",
             symbol, held, stop_price,
         )
+        alert_rearm_failed(
+            symbol=symbol, qty=held, stop_price=stop_price,
+            order_id=(entry_ids[0] if entry_ids else None),
+            detail=(
+                "Crash-recovery drain could not place the protective "
+                f"{stop_side} over the held {held:.4f}. The WAL row is kept "
+                "so the next drain and the coverage sweep retry."
+            ),
+            db=db,
+        )
         return False
     uncovered = 0.0
     if isinstance(placed, dict):
@@ -907,9 +934,78 @@ def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
     return uncovered <= 0
 
 
+#: Agent name on the durable `specialist_evidence` row this alert writes.
+#: The API/dashboard evidence surface already reads that table, so the
+#: record survives Telegram being muted (it is, as of 2026-09-30).
+REARM_FAILURE_AGENT_NAME = "scale_in_rearm_failure"
+
+#: Claim key for the once-per-symbol-per-trading-day page. One naked
+#: position must not page 44 times, which is what muted the channel.
+REARM_FAILURE_ALERT_KIND = "scale_in_rearm_failed"
+
+
+def record_rearm_failure(
+    db: Any, *, symbol: str, qty: float, stop_price: float,
+    order_id: str | None, detail: str = "", run_id: str | None = None,
+) -> bool:
+    """Durable record that a post-add protective stop did not go back on.
+
+    Written on EVERY occurrence (a record is not a page), into the existing
+    `specialist_evidence` table the health/journal surface already reads, so
+    the fault is visible with the alert channel muted. Never raises: a
+    record is never trading authority.
+    """
+    if db is None:
+        return False
+    try:
+        db.insert_specialist_evidence(
+            run_id=str(run_id or ""),
+            agent_name=REARM_FAILURE_AGENT_NAME,
+            kind="pipeline_event",
+            scope="symbol",
+            symbol=str(symbol).upper() or None,
+            evidence_json=json.dumps(
+                {
+                    "event": "scale_in_rearm_failed",
+                    "symbol": str(symbol).upper(),
+                    "qty": qty,
+                    "stop_price": stop_price,
+                    "entry_order_id": order_id,
+                    "detail": detail,
+                    "position_protected": False,
+                },
+                sort_keys=True, default=str,
+            ),
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "scale-in rearm-failure record for %s could not be written: %s",
+            symbol, exc,
+        )
+        return False
+
+
 def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
-                       order_id: str | None, detail: str = "") -> None:
-    """Fail-closed owner page when the post-add protective sell did not land."""
+                       order_id: str | None, detail: str = "",
+                       db: Any = None, run_id: str | None = None) -> None:
+    """Fail-closed owner page when the post-add protective sell did not land.
+
+    Two channels, deliberately different cadences: the durable record goes
+    down every time, the Telegram page at most once per symbol per trading
+    day.
+    """
+    record_rearm_failure(
+        db, symbol=symbol, qty=qty, stop_price=stop_price,
+        order_id=order_id, detail=detail, run_id=run_id,
+    )
+    try:
+        from src.coverage_watchdog import claim_typed_alert
+        if not claim_typed_alert(REARM_FAILURE_ALERT_KIND, [symbol]):
+            return
+    except Exception as exc:  # noqa: BLE001 — never swallow the page on a
+        # state-file fault; err towards telling the owner twice.
+        logger.warning("rearm-failure alert claim failed (%s); sending anyway", exc)
     body = (
         "STOP NOT REARMED AFTER A SCALE-IN\n"
         f"{symbol}: the desk cancelled the resting protective sell so it "
@@ -924,6 +1020,42 @@ def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
         _notifier.send_owner_alert(body, symbols=[str(symbol)])
     except Exception as exc:  # noqa: BLE001
         logger.error("scale-in rearm-failure owner alert failed: %s", exc)
+
+
+def pending_scale_in_rows_from_path(
+    db_path: str | os.PathLike | None,
+) -> list[dict]:
+    """Read-only lookup of the LIVE scale-in write-ahead rows, with the row's
+    own `created_at` and the quantity the cancel exposed.
+
+    Board item 193. `pending_scale_in_symbols_from_path` answers only "which
+    symbols is the watchdog to stay away from". That is the question the skip
+    needs and the wrong question for the owner, who has to be told WHICH
+    position is deliberately unguarded and for HOW LONG. `created_at` is the
+    row's write time, not the broker's cancel acknowledgement, so a duration
+    derived from it is an approximation of the window and is labelled as one
+    everywhere it is shown; the exact figure is the `unprotected_window_closed`
+    event the session itself emits when the rearm returns. Empty on any
+    failure: this is observability and must never break the sweep.
+    """
+    if not db_path:
+        return []
+    try:
+        import sqlite3
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT id, symbol, created_at, position_qty_before_sell "
+                "FROM pending_protection_restores WHERE sell_order_id = ? "
+                "ORDER BY created_at ASC",
+                (WAL_SCALE_IN_SENTINEL,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return []
+    return [dict(r) for r in rows if r["symbol"]]
 
 
 def pending_scale_in_symbols_from_path(db_path: str | os.PathLike | None) -> set[str]:

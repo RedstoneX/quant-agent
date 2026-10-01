@@ -1871,7 +1871,8 @@ class LLMCostCircuitConfig(BaseModel):
         if self.require_telegram_alerts is not True:
             raise ValueError(
                 "llm_cost_circuit.require_telegram_alerts must remain true; "
-                "shutdown notification is mandatory"
+                "a durably recorded, operator-visible shutdown notification is "
+                "mandatory (a muted transport alone no longer suspends the desk)"
             )
         if self.daily_cost_limit_usd < self.session_cost_limit_usd:
             raise ValueError("daily_cost_limit_usd must be >= session_cost_limit_usd")
@@ -2172,6 +2173,15 @@ class MacroConfig(BaseModel):
         return self
 
 
+class DeploymentGapConfig(BaseModel):
+    """Settings for the `deployment_gap` advisory (PM facts + pre-trade)."""
+    band_pct: float = Field(default=1.0, ge=0, le=20)
+    """Tolerance band, percentage points under 100% invested. Moved here
+    from `cash_sweep.reserve_pct` (board item 190 step 1) so the advisory no
+    longer depends on the retiring sweep feature. VALUE UNCHANGED (1.0).
+    Owner-appetite, not measured: see the ledger row."""
+
+
 class EventRiskConfig(BaseModel):
     """Scheduled-event lookups that ground the Risk Manager's mandatory
     `event_risk` check (`src/data/event_calendar.py`).
@@ -2275,6 +2285,7 @@ class AppConfig(BaseModel):
     # Optional section — a settings.yaml without it gets a disabled sweeper
     # (enabled=False default), so older configs keep working unchanged.
     cash_sweep: CashSweepConfig = Field(default_factory=CashSweepConfig)
+    deployment_gap: DeploymentGapConfig = Field(default_factory=DeploymentGapConfig)
     # Optional section — a settings.yaml without it gets the scan disabled
     # (enabled=False default), so intra_check's existing behavior is
     # unchanged unless explicitly opted in.

@@ -927,3 +927,203 @@ def test_the_sweep_process_writes_to_the_desk_log_file(tmp_path):
         root.setLevel(before_level)
     text = (tmp_path / "quant_agent.log").read_text()
     assert "[INFO] src.coverage_watchdog: COVERAGE SWEEP coverage_sweep-test" in text
+
+
+# ---------------------------------------------------------------------------
+# board item 193 — a deliberately unguarded position is REPORTED, not hidden
+# ---------------------------------------------------------------------------
+
+def _item193_db(tmp_path, *, created_at, windows=()):
+    import json as _json
+    import sqlite3 as _sq
+    path = tmp_path / "item193.db"
+    conn = _sq.connect(path)
+    conn.execute(
+        "CREATE TABLE pending_protection_restores ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, sell_order_id TEXT,"
+        " position_qty_before_sell REAL, specs_json TEXT, created_at TEXT,"
+        " run_id TEXT, side TEXT)"
+    )
+    from src.execution.scale_in import WAL_SCALE_IN_SENTINEL
+    conn.execute(
+        "INSERT INTO pending_protection_restores "
+        "(symbol, sell_order_id, position_qty_before_sell, specs_json, created_at) "
+        "VALUES (?,?,?,?,?)",
+        ("AAPL", WAL_SCALE_IN_SENTINEL, 12.0, "[]", created_at),
+    )
+    conn.execute(
+        "CREATE TABLE specialist_evidence (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " kind TEXT, evidence_json TEXT)"
+    )
+    for secs in windows:
+        conn.execute(
+            "INSERT INTO specialist_evidence (kind, evidence_json) VALUES (?,?)",
+            ("pipeline_event", _json.dumps({
+                "stage": "scale_in", "outcome": "unprotected_window_closed",
+                "window_seconds": secs,
+            })),
+        )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_item193_skipped_symbol_is_reported_with_its_age(tmp_path):
+    """The skip stays; the symbol is no longer silently absent."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
+    now = datetime(2026, 9, 30, 14, 1, 0, tzinfo=timezone.utc)
+    rows = cw.deliberately_unguarded(
+        object(), db, skip_symbols={"AAPL"}, now=now,
+    )
+    assert [r.symbol for r in rows] == ["AAPL"]
+    row = rows[0]
+    assert row.held_qty == 12.0 and row.is_short is False
+    assert row.seconds_open == 60.0
+    # the bound is MEASURED (the longest window the desk ever closed), not chosen
+    assert row.bound_seconds == 9.0 and row.bound_observations == 2
+    assert row.over_bound is True
+
+
+def test_item193_no_measured_history_means_nothing_is_called_overdue(tmp_path):
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00")
+    rows = cw.deliberately_unguarded(
+        object(), db, skip_symbols={"AAPL"},
+        now=datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc),
+    )
+    assert rows and rows[0].bound_seconds is None
+    assert rows[0].over_bound is False
+    status = cw.CoverageStatus(trading_day="2026-09-30", session_ran=True,
+                               unguarded=rows)
+    assert status.unguarded_over_bound == []
+    assert status.should_alert_unguarded is False
+
+
+def test_item193_only_actually_skipped_symbols_are_reported(tmp_path):
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00")
+    assert cw.deliberately_unguarded(
+        object(), db, skip_symbols=set(),
+        now=datetime(2026, 9, 30, 14, 5, tzinfo=timezone.utc),
+    ) == []
+
+
+def test_item193_summary_and_log_line_name_the_unguarded_position():
+    import src.coverage_watchdog as cw
+
+    row = cw.UnguardedWindow(
+        symbol="AAPL", held_qty=12.0, is_short=False,
+        since_utc="2026-09-30 14:00:00", seconds_open=60.0,
+        bound_seconds=9.0, bound_observations=2,
+    )
+    status = cw.CoverageStatus(
+        trading_day="2026-09-30", session_ran=True,
+        unguarded=[row], unguarded_fresh=[row],
+    )
+    summary = cw.sweep_summary(status, entry="unit", run_id="r1")
+    assert summary["unguarded_count"] == 1
+    assert summary["unguarded_over_bound"] == ["AAPL"]
+    assert summary["unguarded"][0]["measured_bound_seconds"] == 9.0
+    line = cw.sweep_log_line(summary)
+    assert "DELIBERATELY UNGUARDED" in line and "AAPL ~60s" in line
+    assert "OVER LONGEST MEASURED" in line
+    text = cw.unguarded_text([row])
+    assert "AAPL" in text and "9.0s" in text
+    assert status.should_alert_unguarded is True
+
+
+# ---------------------------------------------------------------------------
+# board item 193 — the session-lock skip is BOUNDED by measured history
+# ---------------------------------------------------------------------------
+
+class _EntryBroker:
+    """Broker double whose only job is to say what entry orders are working."""
+
+    def __init__(self, working):
+        self.working = list(working)
+
+    def get_orders(self, *a, **k):  # pragma: no cover - shape varies
+        return list(self.working)
+
+
+def _lock_held(monkeypatch, held):
+    import src.execution.scale_in as si
+    monkeypatch.setattr(si, "trading_session_lock_held", lambda: held)
+
+
+def test_item193_lock_held_within_measured_bound_still_skips(tmp_path, monkeypatch):
+    """A normal live window is untouched: the skip is the correct behaviour."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    _lock_held(monkeypatch, True)
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
+    now = datetime(2026, 9, 30, 14, 0, 5, tzinfo=timezone.utc)  # 5s < 9s measured
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+def test_item193_lock_held_past_measured_bound_hands_symbol_to_the_sweep(
+    tmp_path, monkeypatch,
+):
+    """Past every window ever measured, the lock is no longer reason to look
+    away: with no entry order working there is nothing to collide with, so the
+    position becomes repairable instead of staying naked indefinitely."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    _lock_held(monkeypatch, True)
+    import src.execution.scale_in as si
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
+    now = datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc)  # 300s > 9s
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == set()
+
+
+def test_item193_past_bound_but_entry_still_working_keeps_the_skip(
+    tmp_path, monkeypatch,
+):
+    """The collision is real — a stop would be blocked — so the skip stands."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: ["entry-1"])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[9.0])
+    now = datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker(["entry-1"]), db, now=now) == {"AAPL"}
+
+
+def test_item193_no_measured_history_leaves_the_old_behaviour_exactly(
+    tmp_path, monkeypatch,
+):
+    """With nothing measured there is no bound, so nothing is called overdue
+    and the lock-held skip behaves exactly as it did before."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00")  # no windows
+    now = datetime(2026, 9, 30, 18, 0, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+def test_item193_unreadable_write_time_is_never_treated_as_overdue(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="not-a-timestamp", windows=[9.0])
+    now = datetime(2026, 9, 30, 18, 0, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}

@@ -44,7 +44,7 @@ from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
-from src.agents.base import agent_log_kwargs
+from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.macro import MacroCoverage
@@ -2197,17 +2197,30 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         spec["repeg_outcome"] = "unpriced"
         return order_id, 0.0
 
-    ceiling = reference * (1 + slippage_bps / 10_000.0)
+    # SIDE (board item 197). The slippage bound is the worst price this entry
+    # was approved to pay, so it sits ABOVE the reference for a buy and BELOW
+    # it for a `sell_short`. Everything downstream — the room test, which side
+    # of the quote is read, and the direction the limit walks — flips with it.
+    # Written before `repeg_enabled` was ever turned on, so no short entry has
+    # been through this path.
+    is_short = str(spec.get("side", "buy")).lower() != "buy"
+    if is_short:
+        ceiling = reference * (1 - slippage_bps / 10_000.0)
+    else:
+        ceiling = reference * (1 + slippage_bps / 10_000.0)
     ceiling = round(ceiling, 2 if ceiling >= 1 else 4)
     spec["ceiling"] = ceiling
-    if limit_price >= ceiling - 1e-9:
+    no_room = (limit_price <= ceiling + 1e-9) if is_short \
+        else (limit_price >= ceiling - 1e-9)
+    if no_room:
         # Expected for most entries: since PR #111 the submitted limit IS the
         # ceiling, so there is nothing to reprice toward. Room exists only
-        # when the limit was set below the ceiling — e.g. the quote was
+        # when the limit was set inside the ceiling — e.g. the quote was
         # unavailable at submission and the analyst's entry price was used.
         logger.debug(
-            "re-peg %s: limit $%.4f is already at the %.0fbp ceiling $%.4f — "
-            "nothing to chase", symbol, limit_price, slippage_bps, ceiling,
+            "re-peg %s: limit $%.4f is already at the %.0fbp %s $%.4f — "
+            "nothing to chase", symbol, limit_price, slippage_bps,
+            "floor" if is_short else "ceiling", ceiling,
         )
         spec["repeg_outcome"] = "no_room"
         return order_id, 0.0
@@ -2306,11 +2319,15 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         logger.warning("re-peg %s: quote failed (%s)", symbol, exc)
         spec["repeg_outcome"] = "quote_unavailable"
         return order_id, 0.0
-    ask = quote.get("ask_price") if isinstance(quote, dict) else None
+    # A buy fills against the ask; a short sale fills against the bid.
+    ask = quote.get("bid_price" if is_short else "ask_price") \
+        if isinstance(quote, dict) else None
     if not isinstance(ask, (int, float)) or ask <= 0:
         spec["repeg_outcome"] = "quote_unavailable"
         return order_id, 0.0
-    if float(ask) <= limit_price + 1e-9:
+    marketable = (float(ask) >= limit_price - 1e-9) if is_short \
+        else (float(ask) <= limit_price + 1e-9)
+    if marketable:
         # The market is at or inside our limit: the order is marketable as
         # it stands and a replace would only re-queue it. Leave it working.
         logger.info(
@@ -2331,8 +2348,9 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
     #    still the best legal price and is sent once, not chased.
     target = ceiling
     target = round(target, 2 if target >= 1 else 4)
-    assert target <= ceiling + 1e-9
-    crosses = float(ask) <= target + 1e-9
+    assert target >= ceiling - 1e-9 if is_short else target <= ceiling + 1e-9
+    crosses = (float(ask) >= target - 1e-9) if is_short \
+        else (float(ask) <= target + 1e-9)
     if not crosses:
         logger.info(
             "re-peg %s: ask $%.4f is ABOVE the ceiling $%.4f — the single "
@@ -3916,6 +3934,42 @@ def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
     )
 
 
+def _record_scale_in_window_closed(pipeline, ctx, spec: dict, *, covered: bool) -> None:
+    """Close the scale-in unprotected window with a measured duration.
+
+    Board item 193. A scale-in cancels the resting protective stop so the add
+    can reach the broker, which leaves the WHOLE held position — not just the
+    add — with no stop until the rearm lands. This emits one event per cancel
+    at the moment the rearm attempt returns, carrying:
+
+      * `window_seconds` — broker cancel acknowledgement to broker rearm
+        acknowledgement, both `time.monotonic()` inside the one run, so it
+        bounds real exposure and never reflects a row's write time;
+      * `held_qty_before` and `exposed_notional` — the size of what was naked;
+      * `covered` — False when the rearm did NOT land, which means the window
+        is still open when the event is written and the fail-closed owner
+        alert below it is the thing that matters.
+
+    Nothing is emitted when no cancel happened: a naked add has no window.
+    """
+    from src.execution.scale_in import unprotected_window_seconds
+    seconds = unprotected_window_seconds(spec.get("cancel_confirmed_at"))
+    if seconds is None:
+        return
+    held = abs(float(spec.get("held_qty_before") or 0.0))
+    price = float(spec.get("reference_price") or 0.0)
+    _record_pipeline_event(
+        pipeline, ctx, spec.get("symbol"), "scale_in",
+        "unprotected_window_closed" if covered else "unprotected_window_still_open",
+        "rearm_acknowledged" if covered else "rearm_did_not_land",
+        window_seconds=seconds,
+        held_qty_before=held,
+        exposed_notional=round(held * price, 2) if price > 0 else None,
+        wal_row_id=spec.get("wal_row_id"),
+        stop_price=spec.get("stop_price"),
+    )
+
+
 def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
                            outcome: str, reason: str = "", **details) -> None:
     """Append one typed lifecycle fact to the existing evidence stream."""
@@ -4047,6 +4101,7 @@ def _account_for_pm_candidates(
 
     try:
         pipeline.db.insert_agent_log(
+            **seat_acceptance_kwargs("no_valid_grounded_decision" if not reasked else None),
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=(
                 f"candidate-accounting re-ask | {', '.join(pending)}"
@@ -5343,6 +5398,7 @@ class MorningResearchStage:
                 if analysis_error:
                     sm_log_kwargs["status"] = "agent_failure"
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("agent_failure" if analysis_error else None),
                     agent_name="smart_money_analyst", run_id=ctx.run_id,
                     input_summary=f"{len(findings)} material findings",
                     input_message=sm_result.user_message,
@@ -5827,6 +5883,7 @@ class MorningResearchStage:
                 )
             if ta_result:
                 self.db.insert_agent_log(
+                    **seat_acceptance_kwargs("failed" if not analyses else None),
                     agent_name="tech_analyst", run_id=ctx.run_id,
                     input_summary=(
                         f"Batch: {len(analyses)}/{len(analyses_map)} symbols "
@@ -6051,6 +6108,16 @@ class MorningResearchStage:
                     "research_seat_nomination", seat=seat,
                     conviction=nomination.conviction,
                     observation=nomination.observation,
+                    # Item 99: the nominating seat's own falsifier, kept
+                    # verbatim, plus an explicit flag when it gave none.
+                    # A missing condition is recorded AS missing — never
+                    # replaced with a template, because a synthesised
+                    # falsifier reads like exit protection the desk does
+                    # not actually have.
+                    thesis_invalid_if=nomination.thesis_invalid_if,
+                    falsifier_missing=missing_stated_falsifier(
+                        nomination.thesis_invalid_if
+                    ),
                 )
                 # §9.5: keep what the seat DECLARED so DecisionStage can
                 # RECORD it on the stance. It is a label, not a multiplier —
@@ -6226,6 +6293,7 @@ class MorningResearchStage:
 
         if ta_result:
             self.db.insert_agent_log(
+                **seat_acceptance_kwargs("failed" if not resolved else None),
                 agent_name="tech_analyst", run_id=ctx.run_id,
                 input_summary=(
                     f"Nomination responder batch: {len(resolved)}/{len(analyses_map)} symbols"
@@ -6634,6 +6702,7 @@ class DecisionStage:
                 pm_result.semantic_error or "no valid PM decision"
             )
         pipeline.db.insert_agent_log(
+            **seat_acceptance_kwargs("no_valid_grounded_decision" if not portfolio_decision else None),
             agent_name="portfolio_manager", run_id=run_id,
             input_summary=f"{len(analyses)} analyses, ${total_value:.0f} total",
             input_message=pm_result.user_message,
@@ -7854,6 +7923,7 @@ class RiskStage:
         if verdict is None:
             rm_log_kwargs["status"] = "agent_failure"
         pipeline.db.insert_agent_log(
+            **seat_acceptance_kwargs("risk_manager_unparseable_output" if verdict is None else None),
             agent_name="risk_manager", run_id=run_id,
             # "violations" was wrong AND owner-facing: this string is what
             # `CandidateDetailModal` shows on the dashboard, and by this point
@@ -9942,6 +10012,30 @@ class ExecutionStage:
                     # breakout verdict construction reached, not a label-only
                     # approximation. See TradeDecision.structural_ceiling.
                     structural_ceiling=pinned_structural_ceiling,
+                    # Stop-floor evidence, pinned at ENTRY because neither
+                    # fact can be recovered afterwards: the ATR the stop was
+                    # measured in has moved by the time the trade resolves,
+                    # and the constructor's stop rule is not stored anywhere
+                    # else. Together with the adverse excursion accumulated
+                    # while the position is open and the realised outcome
+                    # already on the row, these let a future pass ask whether
+                    # the ratified minimum stop width was ever VIOLATED in
+                    # practice. They may NOT be swept for a better
+                    # multiplier — doctrine bars fitting a number to this
+                    # desk's history. See the `entry_atr` migration note in
+                    # src/storage/db.py.
+                    # Read off the ENTRY ANALYSIS, not off `decision`:
+                    # `TradeDecision` has no `atr_14` field at all (ATR(14)
+                    # lives on `TechnicalIndicators`/the analysis object), so
+                    # the original `getattr(decision, "atr_14", None)` was a
+                    # silent typo that resolved to its default on every
+                    # single trade and left the column empty for the whole
+                    # life of the feature. Same accessor the fat-finger
+                    # refusal below already uses. None on the resume/sweep
+                    # lanes that carry no analysis — the row then records no
+                    # ATR rather than a reconstructed one.
+                    entry_atr=getattr(entry_analysis, "atr_14", None),
+                    stop_basis=getattr(decision, "stop_rule", None),
                     # Conviction ledger (spec §7.2) — pinned at entry from
                     # the constructor's TradeDecision (see portfolio_
                     # constructor._build_buy/_build_short) and from this
@@ -10167,6 +10261,14 @@ class ExecutionStage:
                         "intended_stop": (
                             add_prep.intended_stop if add_prep else 0.0
                         ),
+                        # Board item 193: the monotonic instant the BROKER
+                        # acknowledged the protective cancel. Carried to the
+                        # rearm so the unprotected window is measured end to
+                        # end inside one run, from broker acknowledgement to
+                        # broker acknowledgement, not from row write times.
+                        "cancel_confirmed_at": (
+                            add_prep.cancel_confirmed_at if add_prep else None
+                        ),
                     })
             except Exception as e:
                 if (
@@ -10239,6 +10341,16 @@ class ExecutionStage:
                     "protective_stop_result",
                     entry_order_id=entry_order_id, stop_price=spec["stop_price"],
                     protective_order_id=(protection or {}).get("id") if isinstance(protection, dict) else None,
+                )
+                # Board item 193 — close the measured unprotected window.
+                # Every scale-in cancel that reached the broker emits exactly
+                # one of these, carrying the same `wal_row_id` as its
+                # `protective_sell_cancelled` event, so an unpaired cancel is
+                # visible as a missing partner rather than inferred from row
+                # ids. `held_qty_before` is the WHOLE position the cancel
+                # exposed, not the size of the add.
+                _record_scale_in_window_closed(
+                    pipeline, ctx, spec, covered=bool(protection),
                 )
                 # Spec §11.1 guard 2. The broker has already retried hard and
                 # immediately (guard 1) by the time this is reached, so a
@@ -10435,6 +10547,9 @@ class ExecutionStage:
                     pipeline, ctx, spec["symbol"], "protection", "failed",
                     "protective_stop_exception", detail=str(e),
                     entry_order_id=spec["order_id"],
+                )
+                _record_scale_in_window_closed(
+                    pipeline, ctx, spec, covered=False,
                 )
 
         # Phase 14b — the rotation's outcome, both legs, recorded durably.

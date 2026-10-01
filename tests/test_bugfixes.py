@@ -1356,7 +1356,7 @@ def test_macro_position_guidance_no_longer_carries_an_invested_number():
 
 def test_deployment_gap_emits_advisory_violation():
     """When projected invested is UNDER the fully-invested mandate by more
-    than the cash-reserve band (`cash_sweep.reserve_pct`), a non-blocking
+    than the advisory band (`deployment_gap.band_pct`), a non-blocking
     violation is emitted."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
@@ -1382,7 +1382,7 @@ def test_deployment_gap_emits_advisory_violation():
 
 def test_deployment_gap_skipped_when_within_tolerance():
     """`pipeline.config` is unset (bare `__new__`), so the band falls back
-    to `CashSweepConfig`'s own declared `reserve_pct` default (1.0)."""
+    to `DeploymentGapConfig`'s own declared `band_pct` default (1.0)."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40, max_total_position_pct=90,

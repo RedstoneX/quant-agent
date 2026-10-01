@@ -164,14 +164,3 @@ class SizeOverride:
         # idempotent — there is no magnitude to reconcile.
         return self
 
-
-def combine_overrides(*overrides: SizeOverride) -> SizeOverride:
-    """Combine any number of overrides left-to-right via `SizeOverride.combine`.
-
-    With zero arguments there is nothing to restrict, so this returns the
-    least restrictive override (an unbounded multiplier) — combining it with
-    anything else just yields that other thing, per the algebra above.
-    """
-    if not overrides:
-        return SizeOverride.sized(float("inf"))
-    return reduce(SizeOverride.combine, overrides)
