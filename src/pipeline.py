@@ -78,11 +78,8 @@ from src.pipeline_exits import (  # noqa: F401
     _reason_cites_hard_trigger,
 )
 from src.pipeline_admission_shell import AdmissionMixin
-from src.pipeline_delever import (  # noqa: F401
-    DeleverMixin,
-    _optional_risk_number,
-    _risk_number,
-)
+from src.pipeline_delever import DeleverService, _optional_risk_number, _risk_number  # noqa: F401
+from src.pipeline_delever_mixin import DeleverMixin  # noqa: F401
 from src.pipeline_risk_gate import RiskGate
 from src.pipeline_risk_gate_mixin import RiskGateMixin  # noqa: F401
 # Step 7 of docs/PIPELINE_SPLIT_PLAN.md: the research-continuity cluster
@@ -968,6 +965,7 @@ class TradingPipeline(
         from src.execution.cash_sweep import CashSweeper
         self.cash_sweeper = CashSweeper(pipeline=self)
         self.risk_gate = RiskGate(risk_engine=self.risk_engine, db=self.db, sweeper=self._sweeper, config=self.config)
+        self.delever = DeleverService(config=self.config, broker=self.broker, db=self.db, protection=self, sweeper=self._sweeper, sweep_symbol=self._sweep_symbol, full_sell_qty=self._full_sell_qty, format_qty=self._format_qty, compute_deployable_cash=self._compute_deployable_cash)
         # Exit orders still working at the broker — see the attribute's own
         # comment above `_register_exit_settlement`.
         self._unsettled_exit_orders = {}

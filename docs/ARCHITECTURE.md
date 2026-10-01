@@ -442,9 +442,21 @@ size.
 **Step 11. `DeleverMixin` → `DeleverService`.** **MONEY** — places sell orders.
 *Measured:* 1,282 lines, 20 distinct `self.` names, 8 foreign calls (including
 `_submit_protected_sell`, `_full_sell_qty`, `_sweep_symbol`), 3 collaborators.
-*Constructor:* `DeleverService(config, orders: OrderPort, journal, protection:
-ProtectionService, sweeper)`. The 8 foreign calls split: the order-shaped ones
-become the protection collaborator, the rest become injected helpers.
+*Constructor (as built, 2026-10-01):* `DeleverService(*, config, broker, db,
+protection, sweeper, sweep_symbol, full_sell_qty, format_qty,
+compute_deployable_cash)`. Measured before the move: 12 methods, 20 distinct
+`self.` names, 8 foreign calls, 3 collaborators (`broker`, `config`, `db`) —
+the plan's numbers held; the 5 dynamic `getattr(self, "config")` reads all
+resolve to the `config` parameter. The journal port could NOT replace `self.db`:
+of the five `db` methods the bodies call only `insert_specialist_evidence` is on
+`EventJournal`, and re-routing it is a body change left for its own reviewed
+step. The three order-shaped calls (`_submit_protected_sell`, `_open_exit_relief`,
+`_finalize_pending_protections`) are read off the `protection` collaborator;
+the other five are injected callables. `TradingPipeline` keeps a thin delegating
+`DeleverMixin` (`src/pipeline_delever_mixin.py`) that re-resolves the service
+per call and forwards instance overrides of delever names: removing it was
+tried and failed 94 tests in 8 files that build the pipeline via `__new__` and
+call `_force_delever` on it.
 *Proof:* standard, plus a replayed delever session must emit the identical order
 intents — symbol, side, quantity, type, limit, time-in-force — with placement
 suppressed. Second reviewer and a rehearsal-account dry run required.

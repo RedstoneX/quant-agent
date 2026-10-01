@@ -26,6 +26,7 @@ TRACKED_MODULES: tuple[str, ...] = (
     "src/pipeline_admission.py",
     "src/pipeline_admission_shell.py",
     "src/pipeline_delever.py",
+    "src/pipeline_delever_mixin.py",
     "src/pipeline_exits.py",
     "src/pipeline_intraday.py",
     "src/pipeline_prompt_facts.py",

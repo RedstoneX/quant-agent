@@ -131,10 +131,31 @@
         "_risk_number"
       ],
       "classes": {
+        "DeleverService": [
+          "__init__",
+          "_alert_owner_delever_incomplete",
+          "_alert_owner_force_delever_incomplete",
+          "_conviction_cut_order",
+          "_discharge_deferred_gross_ceiling",
+          "_enforce_gross_ceiling",
+          "_enforce_gross_ceiling_by_conviction",
+          "_force_delever",
+          "_is_margin_floor_breach",
+          "_live_delever_price",
+          "_record_delever_shortfall",
+          "_resolve_gross_ceiling",
+          "_submit_gross_ceiling_trims"
+        ]
+      }
+    },
+    "src/pipeline_delever_mixin.py": {
+      "module_functions": [],
+      "classes": {
         "DeleverMixin": [
           "_alert_owner_delever_incomplete",
           "_alert_owner_force_delever_incomplete",
           "_conviction_cut_order",
+          "_delever",
           "_discharge_deferred_gross_ceiling",
           "_enforce_gross_ceiling",
           "_enforce_gross_ceiling_by_conviction",

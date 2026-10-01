@@ -1,32 +1,15 @@
-"""The Spec §11.2 gross-exposure ceiling and the de-levering ladder.
+"""DeleverService — the Spec §11.2 gross-exposure ceiling and ladder. MONEY.
 
-Step 3 of `docs/PIPELINE_SPLIT_PLAN.md` (board item 210). Moved verbatim out of
-`src/pipeline.py` as a mixin, so `TradingPipeline` keeps every one of these as
-its own attribute and every test that patches or calls them is untouched.
-
-This code SELLS HELD POSITIONS when the book is over-exposed: the forced
-de-lever against a margin deficit, the ladder that resolves the ceiling from
-the drawdown, the ceiling enforcement and its weakest-conviction variant, the
-deferred-ceiling discharge, the trim submission, and the shortfall record and
-owner alerts.
-
-Two module-level names travel with it because the moved bodies read them and
-this module may not import `src.pipeline`: the risk-number coercion helpers
-`_optional_risk_number` and `_risk_number`. Both are re-exported from
-`src.pipeline`, which still uses them in `build_risk_config`, so
-`from src.pipeline import ...` keeps working -- but a test that PATCHES one of
-them on `src.pipeline` no longer reaches this module's code and must patch it
-here instead (plan S5, silent-behaviour risk 1). The same applies to the names
-imported below: `apply_gross_ceiling`, `resolve_gross_ceiling`, `GROSS_LADDER`
-and the rest are now resolved against `src.pipeline_delever`.
-
-`_install_sigterm_unwind` and `_restore_sigterm` were listed in the plan's
-cluster M but did NOT move: they raise `SessionTerminated`, which the plan
-keeps in `src/pipeline.py`, and moving the exception class to make them fit
-would have made this module the home of the desk's session-control exception.
-They stay with the session bodies that install them.
-
-Nothing here may import `src.pipeline`: this module is one of its bases.
+Conversion step 11 (docs/ARCHITECTURE.md §4). This code SELLS HELD POSITIONS
+when the book is over-exposed: the forced de-lever against a margin deficit,
+the ladder that resolves the ceiling from the drawdown, the ceiling enforcement
+and its weakest-conviction variant, the deferred-ceiling discharge, the trim
+submission, and the shortfall record and owner alerts. Every body is the former
+`DeleverMixin` body, byte for byte; only the collaborators became constructor
+parameters. `TradingPipeline` reaches it through `src/pipeline_delever_mixin.py`.
+`apply_gross_ceiling`, `resolve_gross_ceiling`, `GROSS_LADDER` and the other
+imported names resolve against THIS module (patch them here). Nothing here may
+import `src.pipeline` (boundary clause 3).
 """
 
 import logging
@@ -69,8 +52,6 @@ def _optional_risk_number(value) -> float | None:
     return float(value) if value > 0 else None
 
 
-
-
 def _risk_number(value, default: float) -> float:
     """`_optional_risk_number` with a documented fallback, for settings that
     always need a concrete number (§10.3's minimum order size)."""
@@ -78,8 +59,27 @@ def _risk_number(value, default: float) -> float:
     return default if resolved is None else resolved
 
 
-class DeleverMixin:
-    """The gross-exposure ceiling and the de-levering ladder (Spec §11.2)."""
+class DeleverService:
+    """The gross-exposure ceiling and the de-levering ladder, built alone."""
+
+    def __init__(
+        self, *, config, broker, db, protection, sweeper, sweep_symbol,
+        full_sell_qty, format_qty, compute_deployable_cash,
+    ) -> None:
+        # db is residual coupling (five methods called by name; only
+        # insert_specialist_evidence is on the EventJournal port).
+        self.config = config
+        self.broker = broker
+        self.db = db
+        # protection carries the three order-shaped calls (ProtectionMixin).
+        self._submit_protected_sell = protection._submit_protected_sell
+        self._open_exit_relief = protection._open_exit_relief
+        self._finalize_pending_protections = protection._finalize_pending_protections
+        self._sweeper = sweeper                  # TradingPipeline._sweeper
+        self._sweep_symbol = sweep_symbol        # TradingPipeline._sweep_symbol
+        self._full_sell_qty = full_sell_qty      # TradingPipeline._full_sell_qty
+        self._format_qty = format_qty            # TradingPipeline._format_qty
+        self._compute_deployable_cash = compute_deployable_cash
 
     def _live_delever_price(
         self, symbol: str, side: str,
