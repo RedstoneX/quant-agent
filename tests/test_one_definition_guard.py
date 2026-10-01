@@ -329,8 +329,8 @@ def find_deployable_cash_definitions(tree: ast.AST, path: Path) -> list[Finding]
             if not any("deployable" in (_name(t) or "") for t in targets):
                 continue
             value = node.value
-            if isinstance(value, ast.Constant):
-                continue  # a default, not a definition
+            if isinstance(value, (ast.Constant, ast.Name)):
+                continue  # a default or a bare binding, not a definition
             # A CALL to the sanctioned function is the fix, not the defect.
             # Both the old engine-private owner and the shared one count.
             calls = _calls(value)

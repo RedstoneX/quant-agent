@@ -34,7 +34,7 @@
    "src.config"
   ],
   [
-   "src.models",
+   "src.models.base",
    "src.seat_heal"
   ],
   [
@@ -47,7 +47,7 @@
   ],
   [
    "src.seat_heal",
-   "src.models"
+   "src.models.base"
   ]
  ]
 }
