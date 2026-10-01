@@ -34,8 +34,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from src import alert_watchdog, coverage_watchdog
-from src.pipeline import TradingPipeline
 from src.trading_calendar import ET
+from tests.pipeline_factory import build_pipeline
 
 _FRI_1005 = datetime(2026, 9, 11, 10, 5, tzinfo=ET).astimezone(timezone.utc)
 
@@ -55,10 +55,8 @@ def _intra_pipeline_with_a_cancelled_stop(tmp_path):
         symbol="NVDA", sell_order_id="alpaca-sell-in-flight",
         position_qty_before_sell=100.0, specs_json=json.dumps(cancelled),
     )
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = db
+    p = build_pipeline(db=db, broker=MagicMock())
     p.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
-    p.broker = MagicMock()
     p.broker.is_trading_day.return_value = True
     p.broker.get_account.return_value = {
         "portfolio_value": 100_500.0, "last_equity": 100_000.0, "cash": 5000.0,
@@ -192,7 +190,7 @@ def test_sweep_does_not_repair_while_intra_check_holds_the_desk_lock(tmp_path, m
     monkeypatch.setattr(alert_watchdog, "DB_PATH", db_path)
     monkeypatch.setattr(coverage_watchdog, "DB_PATH", db_path)
     monkeypatch.setattr(scale_in, "_SESSION_LOCK_DIR", tmp_path / "no-session")
-    intra = TradingPipeline.__new__(TradingPipeline)
+    intra = build_pipeline()
     intra.config = SimpleNamespace(storage=SimpleNamespace(db_path=str(db_path)))
     broker = _gap_broker()
 
@@ -233,7 +231,7 @@ def test_the_sweep_and_intra_check_share_one_lock_file(tmp_path):
     """The two processes exclude each other only if they name the same
     file. Hold it through the sweep's helper; the pipeline's must refuse."""
     db_path = tmp_path / "quant_agent.db"
-    intra = TradingPipeline.__new__(TradingPipeline)
+    intra = build_pipeline()
     intra.config = SimpleNamespace(storage=SimpleNamespace(db_path=str(db_path)))
     with coverage_watchdog.repair_lock(db_path) as held:
         assert held

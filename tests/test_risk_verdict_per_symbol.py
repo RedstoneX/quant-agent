@@ -44,6 +44,7 @@ from src.pipeline_stages import RiskStage
 PROMPT_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "prompts" / "risk_manager.md"
 )
+from tests.pipeline_factory import build_pipeline
 
 # The two legs of run-64290730, with the geometry that produced each R/R.
 XLE_RR = "constructed R/R 1.18:1 is below the 1.5 floor and PM named no catalyst"
@@ -90,14 +91,7 @@ def _stage_pipeline(*, verdict, decisions):
     removed by the code under test, not by a mock."""
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
-    pipeline._sweeper = MagicMock(return_value=None)
-    pipeline._filter_supported_symbols = MagicMock(return_value=(decisions, []))
-    pipeline._refuse_queued_earnings_buys = MagicMock(return_value=decisions)
-    pipeline._filter_hard_risk_decisions = MagicMock(
-        side_effect=lambda d, *a, **kw: (list(d), [], []),
-    )
+    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( side_effect=lambda d, *a, **kw: (list(d), [], []), ))
     rm_result = MagicMock()
     rm_result.used_fallback = False
     rm_result.raw_text = "{}"
@@ -636,9 +630,7 @@ def _exit_pipeline(verdict):
     so the Phase 10.1 behaviour reads in one file."""
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
-    p.broker = MagicMock()
+    p = build_pipeline(db=MagicMock(), broker=MagicMock())
     p.broker.get_current_stop_price.return_value = None
     p._atr_for_symbol = MagicMock(return_value=2.0)
     p._build_portfolio_heat = MagicMock(return_value=None)

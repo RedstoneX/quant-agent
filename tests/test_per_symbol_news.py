@@ -22,6 +22,7 @@ import pytest
 
 import src.data.news as news_mod
 from src.data.news import NewsDataProvider, NewsItem
+from tests.pipeline_factory import build_pipeline
 
 
 @pytest.fixture(autouse=True)
@@ -123,9 +124,8 @@ def test_run_news_update_orders_held_positions_before_candidates_deterministical
     """TradingPipeline._run_news_update builds the per-symbol list as held
     positions first, then the run's admitted candidates, deduped while
     preserving that order — never raw set iteration."""
-    from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"]),
         news=SimpleNamespace(max_prompt_items=50),

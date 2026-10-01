@@ -19,8 +19,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _pipeline(
@@ -32,8 +32,7 @@ def _pipeline(
     symbol="VST",
     last_buy=None,
 ):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.get_positions.return_value = [
         MagicMock(symbol=symbol, qty=held_qty),
     ]
@@ -306,8 +305,7 @@ def test_naked_short_repair_through_a_real_short_row(tmp_path):
         reasoning="opened short", run_id="r1", stop_loss=220.0,
         fill_status="filled",
     )
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.get_positions.return_value = [MagicMock(symbol="TSLA", qty=-40.0)]
     p.broker.snapshot_protective_stops.return_value = (True, [])
     p.broker.get_latest_price.return_value = 200.0
@@ -743,8 +741,7 @@ def test_the_worst_elected_trigger_is_the_one_reported(shared_marker):
 
 
 def _evening_pipeline(qty, price, stop, atr=2.0):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.get_current_stop_price.return_value = stop
     p._sweep_symbol = lambda: None
     p._atr_for_symbol = lambda _sym: atr

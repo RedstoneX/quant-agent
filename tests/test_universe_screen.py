@@ -19,7 +19,7 @@ import pytest
 from src import universe_screen as us
 from src.config import UniverseScreenConfig
 from src.models import OHLCV
-from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 TODAY = date(2026, 9, 18)  # a Friday
 
@@ -586,7 +586,7 @@ def test_select_for_run_rotates_least_recently_offered_first():
 # ------------------------------------------------------- pipeline wiring ----
 
 def _pipeline(tmp_path, *, enabled=True):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(

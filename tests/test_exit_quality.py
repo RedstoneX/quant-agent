@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 from src.models import Position, PositionAction, PositionReview, PositionReasoningChain
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _review_rc() -> PositionReasoningChain:
@@ -34,8 +35,7 @@ def _review_rc() -> PositionReasoningChain:
 
 
 def _mk_pipeline(position: Position) -> TradingPipeline:
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker.replace_stop_loss.return_value = {"id": "stop-1", "status": "accepted"}
     # Realistic live stop below the noise-floor tests' new stops, so the
     # min-ratchet floor (new_stop >= old_stop × 1.02) is satisfied by the
@@ -241,8 +241,7 @@ def test_trail_missing_old_stop_establishes_protection():
 def test_position_facts_prefer_live_broker_stop():
     """After a trail to $350, the BUY row still says $300 — the reviewer
     must see the live $350 (distance 2.8%), not a stale-wide 16.7%."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker.get_current_stop_price.return_value = 350.0
     pipeline.db = MagicMock()
     pipeline.db.get_symbol_last_buy.return_value = {
@@ -261,8 +260,7 @@ def test_position_facts_prefer_live_broker_stop():
 
 
 def test_position_facts_fall_back_to_buy_row_stop():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline.db = MagicMock()
     pipeline.db.get_symbol_last_buy.return_value = {
@@ -293,8 +291,7 @@ def test_distance_to_stop_pct_is_side_aware_for_shorts():
         market_value=-900.0, unrealized_pnl=100.0,
         unrealized_intraday_pnl=0.0, sector="Technology",
     )
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline.db = MagicMock()
     pipeline.db.get_symbol_last_buy.return_value = {

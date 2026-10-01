@@ -18,6 +18,7 @@ from src.pipeline_stages import (
     MorningResearchStage,
     RiskStage,
 )
+from tests.pipeline_factory import build_pipeline
 
 
 def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
@@ -673,8 +674,7 @@ def test_execution_stage_delegation_runs_pipeline_path():
     """Pipeline's `_execution_stage` thunks into `execution_stage.run(ctx)`."""
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.execution_stage = MagicMock()
+    pipeline = build_pipeline(execution_stage=MagicMock())
     pipeline.execution_stage.run.return_value = ["order-1"]
     ctx = RunContext.start("morning")
 
@@ -687,8 +687,7 @@ def test_execution_stage_delegation_runs_pipeline_path():
 def test_risk_stage_delegation_returns_early_exit_dict():
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_stage = MagicMock()
+    pipeline = build_pipeline(risk_stage=MagicMock())
     pipeline.risk_stage.run.return_value = {"status": "rejected", "orders": []}
     ctx = RunContext.start("morning")
 
@@ -716,8 +715,7 @@ def test_persist_hard_risk_block_writes_risk_gate_agent_log():
     from src.pipeline import TradingPipeline
     from src.pipeline_context import RunContext as _RunContext
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
     ctx = _RunContext.start("morning")
     ctx.decision_id = f"{ctx.run_id}-dec-000099"
 
@@ -745,8 +743,7 @@ def test_persist_hard_risk_block_never_raises_on_db_failure():
     from src.pipeline import TradingPipeline
     from src.pipeline_context import RunContext as _RunContext
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
     pipeline.db.insert_agent_log.side_effect = RuntimeError("disk full")
     ctx = _RunContext.start("morning")
 
@@ -762,11 +759,7 @@ def _risk_stage_pipeline(decisions):
     is exercised, not just the helper."""
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
-    pipeline._sweeper = MagicMock(return_value=None)
-    pipeline._filter_supported_symbols = MagicMock(return_value=(decisions, []))
-    pipeline._refuse_queued_earnings_buys = MagicMock(return_value=decisions)
+    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions))
     return pipeline
 
 
@@ -1297,8 +1290,7 @@ def test_decision_stage_delegation_returns_none():
     """Method contract preserved: _decision_stage mutates ctx, returns None."""
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.decision_stage = MagicMock()
+    pipeline = build_pipeline(decision_stage=MagicMock())
     ctx = RunContext.start("morning")
 
     out = TradingPipeline._decision_stage(pipeline, ctx)
@@ -1316,8 +1308,7 @@ def test_decision_stage_passes_valid_carried_macro_dict_after_coerce():
     from src.models import MacroAnalysis
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_latest_insights.return_value = None
     p._sweeper = MagicMock(return_value=None)
     p._compute_recent_performance = MagicMock(return_value={})
@@ -1371,8 +1362,7 @@ def test_decision_stage_does_not_pass_chainless_trim_into_pm():
     from src.agents.portfolio_manager import PortfolioManagerAgent
 
     PortfolioManagerAgent._macro_parse_failures = []
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_latest_insights.return_value = None
     p._sweeper = MagicMock(return_value=None)
     p._compute_recent_performance = MagicMock(return_value={})
@@ -1427,8 +1417,7 @@ def test_decision_stage_still_model_dumps_a_fresh_macro_model():
         MacroAnalysis, MacroPositionGuidance, MacroReasoningChain,
     )
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_latest_insights.return_value = None
     p._sweeper = MagicMock(return_value=None)
     p._compute_recent_performance = MagicMock(return_value={})
@@ -1494,8 +1483,7 @@ def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
     from src.pipeline import TradingPipeline
     from src.risk.constants import REWARD_RISK_FLOOR
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_latest_insights.return_value = None
     p._sweeper = MagicMock(return_value=None)
     p._compute_recent_performance = MagicMock(return_value={})
@@ -3865,7 +3853,7 @@ def _run_mods(decisions, modifications):
     used to follow it is deleted, its SHORT coverage folded into guard 1b."""
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     updated, rejected = pipeline._apply_risk_modifications(decisions, modifications)
     return updated, list(rejected)
 
@@ -4043,8 +4031,7 @@ def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
         ),
     )
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.market = MagicMock()
+    p = build_pipeline(market=MagicMock())
     p.market.get_ohlcv.return_value = []
     p._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
     p._refuse_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
@@ -4138,11 +4125,7 @@ def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
         ("SPY", 30.0), ("QQQ", 30.0)]
     assert sorted(advised) == [("QQQ", 30.0), ("SPY", 30.0)]
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=40, max_total_position_pct=50,
-        max_sector_pct=90, require_stop_loss=True,
-    ))
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=40, max_total_position_pct=50, max_sector_pct=90, require_stop_loss=True, )))
     with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):

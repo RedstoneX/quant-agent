@@ -63,6 +63,7 @@ BROKEN_DETAIL = (
     "structural level 100.0 backing the stop has closed beyond it on two "
     "consecutive trading days: close 95.0 vs level 100.0 (break margin 0.05)"
 )
+from tests.pipeline_factory import build_pipeline
 
 
 def _opportunity(tier: str = "ineligible_hold") -> RotationOpportunity:
@@ -127,8 +128,7 @@ class _ProtectionProbe:
 def _pipeline(tmp_path, *, enabled=True, precheck=None, protected=False):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
+    pipeline = build_pipeline(db=db)
     pipeline.config = SimpleNamespace(
         execution=SimpleNamespace(rotation_enabled=enabled),
     )
@@ -972,8 +972,7 @@ def _refusal_precheck(point="book_not_constrained", **over):
 def _refusal_pipeline(tmp_path, precheck, *, enabled=False):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
+    pipeline = build_pipeline(db=db)
     pipeline.config = SimpleNamespace(
         execution=SimpleNamespace(rotation_enabled=enabled),
     )

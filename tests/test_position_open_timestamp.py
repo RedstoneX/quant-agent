@@ -22,6 +22,7 @@ at zero across all 21 recorded refusals (see `src/risk/trailing.py::_swing_lows`
 import pytest
 
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 @pytest.fixture
@@ -182,9 +183,7 @@ def test_trailing_pass_reads_the_open_not_the_add(db):
                     take_profit=310.0, setup_type="range",
                     fill_status="filled")
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = db
-    p.broker = MagicMock()
+    p = build_pipeline(db=db, broker=MagicMock())
     p.broker.get_current_stop_price.return_value = 244.0
     p.market = MagicMock()
     p.market.get_ohlcv.return_value = []

@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 from datetime import date
 
 from src.pipeline import TradingPipeline, _missed_ops_quality_metrics
+from tests.pipeline_factory import build_pipeline
 
 
 def _mk_ohlcv(sym_close_pairs: list[tuple[str, float]], volume: float = 0):
@@ -53,7 +54,7 @@ def _pipeline_with(
     _build_missed_opportunities_digest touches. All other TradingPipeline
     attributes are absent — any accidental access will AttributeError the
     test, which is what we want."""
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
 
     # Config — only the universe is read.
     p.config = MagicMock()
@@ -625,8 +626,7 @@ def test_recent_buys_injects_spy_relative_move(tmp_path):
     from src.pipeline import TradingPipeline
     from src.storage.db import Database
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = Database(str(tmp_path / "t.db"))
+    p = build_pipeline(db=Database(str(tmp_path / "t.db")))
     p.db.initialize()
     # Insert one executed BUY from ~3 days ago with reasonable buy_date.
     from src.trading_calendar import et_today
@@ -682,8 +682,7 @@ def test_recent_buys_injects_spy_relative_move(tmp_path):
 
 def _pipeline_with_insights_rows(rows: list[dict]):
     from src.pipeline import TradingPipeline
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_recent_insights.return_value = rows
     return p
 
@@ -892,8 +891,7 @@ def test_recent_buys_relative_move_none_when_spy_fetch_fails():
     from src.trading_calendar import et_today
 
     with tempfile.TemporaryDirectory() as tmp:
-        p = TradingPipeline.__new__(TradingPipeline)
-        p.db = Database(f"{tmp}/t.db")
+        p = build_pipeline(db=Database(f"{tmp}/t.db"))
         p.db.initialize()
         buy_d = et_today() - timedelta(days=2)
         p.db.conn.execute(
@@ -1114,8 +1112,7 @@ def _pipeline_with_insights_rows_moj(rows: list[dict]):
     """Mirror of _pipeline_with_insights_rows tuned for
     `missed_opportunities_json` content."""
     from src.pipeline import TradingPipeline
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_recent_insights.return_value = rows
     return p
 
@@ -1460,7 +1457,7 @@ def test_digest_value_entry_false_on_up_moves(_sec):
 
 def test_build_thesis_health_context_empty_for_no_positions():
     from src.pipeline import TradingPipeline
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     out = p._build_thesis_health_context(positions=[], lookback_weeks=8)
     assert out == {}
 
@@ -1476,8 +1473,7 @@ def test_build_thesis_health_context_assembles_per_symbol(tmp_path):
     from src.storage.db import Database
     from src.trading_calendar import et_today
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = Database(str(tmp_path / "t.db"))
+    p = build_pipeline(db=Database(str(tmp_path / "t.db")))
     p.db.initialize()
     # Insert an executed BUY so entry context is populated
     entry_d = et_today() - timedelta(days=20)
@@ -1554,8 +1550,7 @@ def test_build_thesis_health_context_tolerates_missing_data(tmp_path):
     from src.pipeline import TradingPipeline
     from src.storage.db import Database
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = Database(str(tmp_path / "t.db"))
+    p = build_pipeline(db=Database(str(tmp_path / "t.db")))
     p.db.initialize()
     p.market = MagicMock()
     p.market.get_valuation_metrics.side_effect = RuntimeError("no yfinance")

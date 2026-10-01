@@ -56,10 +56,10 @@ from unittest.mock import MagicMock, patch
 
 from src import trader_feed
 from src.config import IntradayScanConfig
-from src.pipeline import TradingPipeline
 from tests.session_clock import todays_session_stamp
 from tests.test_intraday_scan import _ta_result, _todays_macro_state, _todays_news_dump
 from tests.test_trader_feed import _make_db, _pin_clock, _QUIET_TICK_TIME, _TOP_OF_HOUR_TIME
+from tests.pipeline_factory import build_pipeline
 
 
 def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
@@ -72,7 +72,7 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
     the early-return paths under test are the genuine production code
     paths, not a stubbed return value.
     """
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=list(universe), lookback_days=100),
         storage=SimpleNamespace(

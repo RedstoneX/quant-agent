@@ -22,8 +22,8 @@ from src import decision_checkpoint as dc
 from src.models import (
     PortfolioDecision, ReasoningChain, TradeDecision,
 )
-from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
+from tests.pipeline_factory import build_pipeline
 
 
 def _pm_rc():
@@ -126,14 +126,7 @@ def test_checkpoint_wrong_version_ignored(monkeypatch, tmp_path):
 
 def _resume_pipeline():
     """__new__-built pipeline with every preamble dependency stubbed."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p._is_trading_day = lambda: True
-    p._drain_pending_protection_restores = MagicMock()
-    p._reconcile_orphan_pending_submits = MagicMock()
-    p._reconcile_stop_coverage = MagicMock(return_value=[])
-    p._reconcile_fills = MagicMock()
-    p._force_delever = MagicMock(return_value=[])
-    p.broker = MagicMock()
+    p = build_pipeline(_is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock(), _reconcile_orphan_pending_submits=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]), _reconcile_fills=MagicMock(), _force_delever=MagicMock(return_value=[]), broker=MagicMock())
     p.broker.get_account.return_value = {
         "cash": 50_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
     }

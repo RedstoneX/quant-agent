@@ -25,6 +25,7 @@ from src.risk.rules import RiskRuleEngine
 from src.storage.db import Database
 from src.trading_calendar import ET, UTC
 from tests.session_clock import todays_session_stamp
+from tests.pipeline_factory import build_pipeline
 
 
 def _risk_config() -> RiskConfig:
@@ -58,8 +59,7 @@ def test_invariant_orders_cannot_breach_position_cap():
 def test_invariant_hard_risk_stage_drops_breaching_buy():
     """Full-stack: even if PM emits a breaching BUY, the stage strips it."""
     engine = RiskRuleEngine(_risk_config())
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = engine
+    pipeline = build_pipeline(risk_engine=engine)
     pipeline.config = MagicMock()
     pipeline.config.trading.universe = ["NVDA"]
 
@@ -97,8 +97,7 @@ def test_invariant_hard_risk_gate_unaffected_by_garbage_llm_config():
     `config.llm`/`config.provider` ANYWHERE, this would raise AttributeError
     instead of gating correctly."""
     engine = RiskRuleEngine(_risk_config())
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = engine
+    pipeline = build_pipeline(risk_engine=engine)
     pipeline.config = MagicMock()
     pipeline.config.trading.universe = ["NVDA"]
     # Deliberately not a MagicMock — any attribute access raises immediately,
@@ -209,8 +208,7 @@ def test_invariant_risk_rule_engine_never_reads_llm_or_provider_config():
     "run_earnings_preprocess", "run_intra_check",
 ])
 def test_invariant_non_trading_day_blocks_every_entry_point(method_name, tmp_path):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline = build_pipeline(db=Database(str(tmp_path / "t.db")))
     pipeline.db.initialize()
     pipeline.broker = MagicMock()
     pipeline.broker.is_trading_day.return_value = False  # market closed
@@ -472,7 +470,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     from types import SimpleNamespace
     from src.config import IntradayScanConfig
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
         storage=SimpleNamespace(

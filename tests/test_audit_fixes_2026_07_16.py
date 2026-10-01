@@ -13,7 +13,7 @@ from src.models import (
 )
 from src.portfolio_constructor import PortfolioConstructor
 from src.risk.rules import RiskRuleEngine
-from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _cfg(**kw):
@@ -189,8 +189,7 @@ def test_held_sector_etf_counts_toward_the_sector_cap():
 # ---------- ex-dividend: next TRADING day, not calendar tomorrow ----------
 
 def _exdiv_pipeline(div_date, today):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_trades.return_value = []
     p.market = MagicMock()
     p.market.get_upcoming_ex_dividend.return_value = {"date": div_date, "amount": 0.51}
@@ -261,8 +260,7 @@ def test_macro_sector_guidance_is_persisted_and_normalized(tmp_path):
         "Technology": "bullish", "Real Estate": "bearish", "Energy": "neutral",
     }
     # and the reader that was permanently empty now resolves
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.macro_store = store
+    p = build_pipeline(macro_store=store)
     assert p._missed_ops_macro_sector_map()["Technology"] == "bullish"
 
 
@@ -291,8 +289,7 @@ def test_finalize_persists_pre_sell_qty_so_the_drain_can_reprotect():
     `residual - fill` — a double subtraction that hit 0 for an exact fill,
     took the "full exit, nothing to protect" early return, reported success,
     and DELETED the row. The residual stayed naked forever."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.wait_for_order_terminal.return_value = "filled"
     p.broker.get_order_fill_info.return_value = {"status": "filled", "filled_qty": 50.0}
     p.db = MagicMock()
@@ -444,9 +441,7 @@ def test_grade_summary_counts_a_re_graded_sell_once():
     count as an independent sell — inflating the premature/wrong counts that
     drive the reviewer's patience tilt."""
     import json as _json
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
-    p.broker = MagicMock()
+    p = build_pipeline(db=MagicMock(), broker=MagicMock())
     p.db.get_trades.return_value = []
     grade = {"symbol": "LLY", "sell_date": "2026-07-14", "grade": "premature"}
     p.db.get_recent_insights.return_value = [
@@ -462,9 +457,7 @@ def test_grade_summary_counts_a_re_graded_sell_once():
 
 def test_grade_summary_still_counts_distinct_sells_of_one_symbol():
     import json as _json
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
-    p.broker = MagicMock()
+    p = build_pipeline(db=MagicMock(), broker=MagicMock())
     p.db.get_trades.return_value = []
     p.db.get_recent_insights.return_value = [
         {"date": "2026-07-16", "sell_grades_json": _json.dumps([
@@ -482,8 +475,7 @@ def test_grade_summary_still_counts_distinct_sells_of_one_symbol():
 def test_trim_guard_blocks_after_a_partially_filled_then_canceled_reduce():
     """The shares left the book — a second trim today is the double-trim this
     guard exists to prevent. Filtering on fill_status alone let it through."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_trades.return_value = [
         {"symbol": "AMZN", "action": "REDUCE", "fill_status": "canceled",
          "fill_qty": 8, "qty": 20},
@@ -492,8 +484,7 @@ def test_trim_guard_blocks_after_a_partially_filled_then_canceled_reduce():
 
 
 def test_trim_guard_still_allows_retry_after_a_zero_fill_rejection():
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_trades.return_value = [
         {"symbol": "NVDA", "action": "SELL", "fill_status": "rejected",
          "fill_qty": 0, "qty": 10},
@@ -520,21 +511,21 @@ def test_trim_guard_still_allows_retry_after_a_zero_fill_rejection():
 
 
 def test_queued_earnings_refuses_a_top_up_on_a_held_name():
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
     out = p._refuse_queued_earnings_buys([_buy("NKE", alloc=5.0)], queued)
     assert out == [], "the filing is unread — the seat is not convicted"
 
 
 def test_queued_earnings_refuses_a_fresh_entry_outright():
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
     out = p._refuse_queued_earnings_buys([_buy("NKE", alloc=12.0)], queued)
     assert out == [], "no bounded entry survives an unread filing any more"
 
 
 def test_queued_earnings_untouched_symbols_pass_through():
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
     out = p._refuse_queued_earnings_buys([_buy("AAPL", alloc=12.0)], queued)
     assert len(out) == 1 and out[0].allocation_pct == 12.0
