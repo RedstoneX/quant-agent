@@ -186,8 +186,17 @@ def test_the_honest_decline_never_passes_the_gate():
     assert _classify("stalling", trigger="cannot_substantiate") == "unnamed"
 
 
-def test_canonical_names_reached_the_phrase_tuple_and_nothing_else_did():
-    """The gate's vocabulary is the enum's, not a second hand-kept list."""
+#: THE SINGLE COPY OF THIS INVARIANT. It lived here AND, unsubtracted and
+#: therefore stale, in `tests/test_exit_trigger_substantiation.py`; the
+#: chart-verified carve-out was added to this copy only and the other copy
+#: failed the next branch that touched the vocabulary. Two hand-kept copies
+#: of one rule is how that happens, so there is now one function and the
+#: other file imports it. Do not inline it back.
+def assert_trigger_vocabulary_matches_executor_gate() -> None:
+    """`TRIGGER_PHRASES` is a REGROUPING of `pipeline._HARD_TRIGGER_KEYWORDS`,
+    never a second list -- except for the CHART-VERIFIED names, which are
+    namable in the phrase table but must never be hard-trigger keywords,
+    because a keyword is a bypass bought with prose alone."""
     from src.pipeline import _CHART_VERIFIED_TRIGGER_NAMES
 
     for name in CANONICAL_TRIGGER_NAMES:
@@ -201,6 +210,11 @@ def test_canonical_names_reached_the_phrase_tuple_and_nothing_else_did():
         p for phrases in TRIGGER_PHRASES.values() for p in phrases
     } - _CHART_VERIFIED_TRIGGER_NAMES
     assert grouped == set(_HARD_TRIGGER_KEYWORDS)
+
+
+def test_canonical_names_reached_the_phrase_tuple_and_nothing_else_did():
+    """The gate's vocabulary is the enum's, not a second hand-kept list."""
+    assert_trigger_vocabulary_matches_executor_gate()
 
 
 @pytest.mark.parametrize("trigger", list(ExitTrigger), ids=lambda t: t.value)
