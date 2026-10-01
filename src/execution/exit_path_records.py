@@ -50,6 +50,10 @@ CENSUS_SYMBOL = "PORTFOLIO"
 STOP_REPAIR_REFUSAL_KIND = "stop_repair_refusal"
 #: One row per protective stop the desk's own kill switch refused to send.
 PROTECTIVE_STOP_BLOCKED_KIND = "protective_stop_blocked"
+#: One row per ex-dividend stop shift, carrying the PER-LEG outcome. Item 201:
+#: a log line is not a record, and the shift is the one path that moves several
+#: protective stops at once, so "which legs actually moved" has to survive.
+STOP_SHIFT_KIND = "stop_shift_legs"
 
 #: `agent_name` on every row here. The deterministic desk, not a model seat.
 RECORD_AGENT = "pipeline"
@@ -225,3 +229,50 @@ def record_protective_stop_blocked(
     }
     return _insert(db, run_id=run_id, kind=PROTECTIVE_STOP_BLOCKED_KIND,
                    symbol=symbol, payload=payload)
+
+
+# ---------------------------------------------------------------------------
+# 4. the ex-dividend stop shift, leg by leg
+# ---------------------------------------------------------------------------
+
+def record_stop_shift_legs(
+    db: Any, *, symbol: str, amount: float, mode: str, status: str,
+    shifted: int, total: int, legs: list | None = None,
+    run_id: str | None = None,
+) -> bool:
+    """One row per ex-dividend stop shift, naming every leg's own outcome.
+
+    `legs` carries, per resting stop, its id, quantity, old level, new level,
+    the replacement id and whether the broker confirmed it, refused it, or
+    never answered. That is the evidence that settles whether a fractional
+    position's two hybrid legs both amend in place — a question no log line
+    can answer later, because logs rotate.
+    """
+    payload = {
+        "code": f"stop_shift_{str(status or 'unknown')}",
+        "amount": amount,
+        "mode": str(mode or ""),
+        "status": str(status or ""),
+        "shifted": int(shifted),
+        "total": int(total),
+        "legs": list(legs or []),
+    }
+    return _insert(db, run_id=run_id, kind=STOP_SHIFT_KIND,
+                   symbol=symbol, payload=payload)
+
+
+def stop_shift_incomplete_text(symbol: str, status: str, shifted: int, total: int) -> str:
+    """The plain sentence the owner reads when a shift did not fully land."""
+    sym = str(symbol or "").upper()
+    if status == "unknown":
+        return (
+            f"the ex-dividend stop shift on {sym} got no answer from the broker "
+            f"for at least one of its {total} protective stop(s), so the desk "
+            f"does not know which price they are resting at — nothing was "
+            f"cancelled and nothing was written down as moved"
+        )
+    return (
+        f"only {shifted} of {total} protective stop(s) on {sym} moved down by "
+        f"the dividend; the rest are still at the pre-dividend level, which the "
+        f"ex-dividend opening gap can trigger on its own — nothing was cancelled"
+    )

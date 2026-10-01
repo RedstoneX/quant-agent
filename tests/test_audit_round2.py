@@ -544,3 +544,158 @@ def test_shift_stops_down_refuses_to_push_a_stop_to_zero(mock_tc_cls):
     assert b.shift_stops_down("GE", 0.51) is None
     client.replace_order_by_id.assert_not_called()
     b.cancel_snapshotted_stops.assert_not_called()
+
+
+# ---------- item 201 round 2: the failure branch ----------
+
+def _replaced(oid, status="accepted"):
+    r = MagicMock()
+    r.id = oid
+    r.status = status
+    return r
+
+
+class _ApiErr(Exception):
+    def __init__(self, msg, status_code):
+        super().__init__(msg)
+        self.status_code = status_code
+
+
+@patch("src.execution.broker.TradingClient")
+def test_shift_amend_without_a_broker_answer_is_unknown_not_resting(mock_tc_cls):
+    """A 504 or a timeout may have been applied before the answer was lost.
+    Claiming the stop is 'still resting at the old price' would be a false
+    statement about live protection."""
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 340.0, qty=10)])
+    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    client.replace_order_by_id.side_effect = _ApiErr("gateway timeout", 504)
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["status"] == "unknown" and out["id"] is None
+    assert out["legs"][0]["outcome"] == "unknown"
+    client.cancel_order_by_id.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_shift_amend_refusal_is_classified_from_the_broker_status_code(mock_tc_cls):
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 340.0, qty=10)])
+    client.replace_order_by_id.side_effect = _ApiErr("unprocessable", 422)
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["status"] == "refused" and out["id"] is None
+    assert out["legs"][0]["outcome"] == "refused"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_a_partial_shift_carries_no_order_id_so_it_cannot_read_as_accepted(mock_tc_cls):
+    """1-of-2 must not pass `accepted_stop_order`, or the caller writes every
+    leg back at the shifted level and files a trade row for a stop that is
+    still at the pre-dividend price."""
+    from src.execution.stop_records import accepted_stop_order
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[
+        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
+    ])
+    client.replace_order_by_id.side_effect = [_replaced("s1b"), _ApiErr("no", 422)]
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["status"] == "partial" and out["shifted"] == 1 and out["total"] == 2
+    assert accepted_stop_order(out) is False
+    assert [l["outcome"] for l in out["legs"]] == ["amended", "refused"]
+
+
+@patch("src.execution.broker.TradingClient")
+def test_shift_requires_a_confirmed_id_and_a_live_status(mock_tc_cls):
+    """'No exception' is request accepted, not stop moved."""
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[
+        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
+    ])
+    client.replace_order_by_id.side_effect = [_replaced(None), _replaced("s2b", "rejected")]
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["shifted"] == 0
+    assert [l["outcome"] for l in out["legs"]] == ["unknown", "refused"]
+
+
+@patch("src.execution.broker.TradingClient")
+def test_a_full_shift_reports_the_new_broker_ids(mock_tc_cls):
+    b, client = _broker(mock_tc_cls)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[
+        _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
+    ])
+    client.replace_order_by_id.side_effect = [_replaced("s1b"), _replaced("s2b")]
+
+    out = b.shift_stops_down("GE", 0.51)
+
+    assert out["status"] == "accepted" and out["id"] == "s1b"
+    assert [l["new_id"] for l in out["legs"]] == ["s1b", "s2b"]
+
+
+@patch("src.execution.broker.TradingClient")
+def test_trailing_amends_both_hybrid_legs_in_place(mock_tc_cls):
+    """9 of 11 open positions are fractional and every one carries the two-leg
+    hybrid pair, so a one-order-only atomic path left the trailing stop
+    cancelling and resubmitting on most of the book."""
+    b, client = _broker(mock_tc_cls)
+    orders = [_plain_stop("gtc", 90.0, qty=12), _plain_stop("day", 90.0, qty=0.3456)]
+    specs = [{"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
+             {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None}]
+    client.replace_order_by_id.side_effect = [_replaced("gtc2"), _replaced("day2")]
+
+    out = b._amend_resting_stop_price(
+        symbol="ZZZ", live_orders=orders, stop_specs=specs,
+        new_stop_price=95.0, position_qty=12.3456,
+    )
+
+    assert out is not None and out["id"] == "gtc2"
+    assert [l["new_id"] for l in out["legs"]] == ["gtc2", "day2"]
+    client.cancel_order_by_id.assert_not_called()
+    client.submit_order.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_trailing_multi_leg_amend_with_no_answer_does_not_fall_back_to_cancel(mock_tc_cls):
+    """An unknown outcome must return the 'do not cancel' channel, never the
+    cancel+resubmit fallback — the amend may already have landed."""
+    b, client = _broker(mock_tc_cls)
+    orders = [_plain_stop("gtc", 90.0, qty=12), _plain_stop("day", 90.0, qty=0.3456)]
+    specs = [{"id": "gtc", "qty": 12, "stop_price": 90.0, "limit_price": None},
+             {"id": "day", "qty": 0.3456, "stop_price": 90.0, "limit_price": None}]
+    client.replace_order_by_id.side_effect = [_replaced("gtc2"), _ApiErr("timeout", 504)]
+
+    out = b._amend_resting_stop_price(
+        symbol="ZZZ", live_orders=orders, stop_specs=specs,
+        new_stop_price=95.0, position_qty=12.3456,
+    )
+
+    assert out is None
+    client.cancel_order_by_id.assert_not_called()
+
+
+def test_the_shift_leg_record_is_durable_and_names_each_leg(tmp_path):
+    from src.execution.exit_path_records import STOP_SHIFT_KIND, record_stop_shift_legs
+    from src.storage.db import Database
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    legs = [{"id": "a", "qty": 12, "old_stop": 90.0, "new_stop": 89.5,
+             "new_id": "a2", "outcome": "amended"},
+            {"id": "b", "qty": 0.3456, "old_stop": 90.0, "new_stop": 89.5,
+             "new_id": None, "outcome": "refused"}]
+    assert record_stop_shift_legs(
+        db, symbol="ZZZ", amount=0.5, mode="amend", status="partial",
+        shifted=1, total=2, legs=legs, run_id="r1") is True
+    rows = db.conn.execute(
+        "select evidence_json from specialist_evidence where kind=?",
+        (STOP_SHIFT_KIND,)).fetchall()
+    assert len(rows) == 1
+    import json
+    payload = json.loads(rows[0][0])
+    assert payload["status"] == "partial" and payload["shifted"] == 1
+    assert [l["outcome"] for l in payload["legs"]] == ["amended", "refused"]
