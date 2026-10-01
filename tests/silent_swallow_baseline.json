@@ -37,7 +37,6 @@
   "src/execution/broker.py::_fell_back_to_deprecated_auth#1",
   "src/execution/broker.py::_get_sector._fetch#1",
   "src/execution/broker.py::_note_stream_auth_deprecation#1",
-  "src/execution/cash_sweep.py::CashSweeper.release_retired_vehicle#1",
   "src/execution/exit_path_records.py::_insert#1",
   "src/execution/exit_path_records.py::last_trail_states#1",
   "src/execution/scale_in.py::broker_position_qty#1",
