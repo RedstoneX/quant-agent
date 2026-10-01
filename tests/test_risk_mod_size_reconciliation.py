@@ -256,7 +256,15 @@ def test_short_through_real_constructor_reconciles_within_budget():
     equity = 100_000.0
     constructor = PortfolioConstructor()
     budget_pct = constructor.cfg.risk_budget_pct   # 5.0
-    assert constructor.cfg.short_gap_risk_multiple > 1.0  # haircut is real
+    # The haircut is real. Read it from the ONE definition site (board item
+    # 216, 2026-10-01): `ConstructorConfig.short_gap_risk_multiple` no longer
+    # carries its own copy of the number — None there means "the deployed
+    # default", which `gap_adjusted_risk_per_share` resolves. The assertion is
+    # unchanged in substance: a short is sized smaller than an equal-risk long.
+    from src.risk.constants import gap_adjusted_risk_per_share
+    assert gap_adjusted_risk_per_share(
+        1.0, is_short=True, multiple=constructor.cfg.short_gap_risk_multiple,
+    ) > 1.0
 
     rc = TechReasoningChain(trend="x", momentum="x", volatility="x",
                             volume="x", support_resistance="x")

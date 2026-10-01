@@ -1620,7 +1620,35 @@ The order matters and is the completion criteria:
 The measured finding stands and is preserved in the retired item's own text: the structural pivot has never produced a candidate, because a confirmed pivot needs `2 * PIVOT_WINDOW + 1` = 7 bars and a scale-in additionally reset the caller's bar window to zero. That second half was the defect in how the candidate is FOUND and it is fixed on main (`Database.get_position_open_timestamp`, `tests/test_position_open_timestamp.py`); re-running all 21 recorded refusals through the new window flipped none. The first half is arithmetic reach, and the only way to shorten it is to move `PIVOT_WINDOW`, which the module documents as unsourceable in the literature — moving it to obtain a result the data would like is picking a number, which doctrine bars. The leg is NOT deleted: item 196's change means it now competes with the chandelier on equal terms instead of pre-empting it, and `tests/test_trailing_candidate_set.py` pins that it is still preferred where it does produce a usable pivot.
 
 
-## item 216 — the short-side gap haircut has two application sites
+## item 216 — RETIRED 2026-10-01, collapsed to one definition applied once, no sizing change
+
+RESOLUTION 2026-10-01. Which leg binds, established by reading the call path
+and not assumed: execution ships `min(qty_by_alloc, qty_by_risk)`, the
+constructor haircut the allocation leg at TWO points (the risk-plan weight and
+the `_build_short` allocation cap) and `_qty_by_risk_budget` in
+`src/pipeline_stages.py` haircut the risk leg with its own multiply and its
+own `1.5` fallback, so whenever the risk leg was tighter — the ordinary case —
+the execution-side copy was the number that sized the live short. The literal
+existed four times (`RiskConfig`, `ConstructorConfig`, the pipeline's config
+read, the execution read) and was APPLIED at three sites.
+
+All three applications now call one function,
+`src.risk.constants.gap_adjusted_risk_per_share`, which also owns the
+Mock-safe fallback that the execution site used to spell out separately. The
+only literal left is `SHORT_GAP_RISK_MULTIPLE_DEFAULT`;
+`ConstructorConfig.short_gap_risk_multiple` defaults to `None` ("whatever the
+one definition says") and its number-ledger row is deleted rather than kept in
+sync. `RiskConfig.short_gap_risk_multiple` stays as the operator-overridable
+setting, now `derived` from the constant with base-drift enforced.
+
+NO SIZING CHANGED. The value is untouched at 1.5 — whether 1.5 is the right
+magnitude is item 186's question, not this one's — the three sites held the
+same value before, and the same multiplier is applied at the same three points
+in the same two legs. The two live short positions are sized exactly as
+before. Pinned by `tests/test_one_definition_per_quantity.py`, which fails if
+a second application or a second literal reappears anywhere under `src/`.
+
+## item 216 (original filing) — the short-side gap haircut has two application sites
 
 Filed 2026-09-30 out of the item 186 pass. Execution sizes a position as
 min(qty_by_alloc, qty_by_risk). The constructor applies the short-side

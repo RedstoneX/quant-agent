@@ -294,28 +294,6 @@ detail: docs/BOARD_NOTES.md (item 215)
   - [ ] (c) the backtest engine carries each level's pivot-bar ranges, so it runs the same stop rule live runs instead of failing closed on every level (done 2026-10-01).
 
 
-**216. The short-side gap haircut is applied in TWO places and the constructor's copy is not the one that binds — filed 2026-09-30.**
-
-Execution sizes a position as min(qty_by_alloc, qty_by_risk). The constructor
-applies the short-side haircut on the allocation leg; the risk-budget leg in
-`src/pipeline_stages.py` reads `RiskConfig.short_gap_risk_multiple` and applies
-it again. Whenever the risk leg is the binding one, the number that actually
-sizes the live short is the execution-side read, not the constructor's. This
-was found 2026-09-30 when a proposed constructor-only change was about to ship
-a ledger line claiming the number no longer sized any short — which would have
-been untrue. Latent, not live-breaking: today both sites hold the same value,
-so the two agree by coincidence of configuration rather than by construction.
-The defect is that a future change to one is silently a no-op, or worse, a
-half-change.
-
-DONE WHEN:
-  - [ ] it is established by reading the code which leg binds in practice, and recorded, rather than assumed
-  - [ ] the short-side haircut has ONE definition site that both legs read, or the two sites are documented as deliberately distinct with the reason and a check that fails when they diverge
-  - [ ] no statement anywhere in docs or the number ledger claims a constructor-side change has retired this number unless the execution-side read changed with it
-
-detail: docs/BOARD_NOTES.md (item 216)
-
-
 **218. Arithmetically losing geometry is REFUSED — the owner ruled 2026-10-01; built, measurement corrected, still open on one half.** His words: "For now, let's refuse a bad risk reward ratio. See if that improves the desk purchases." Shown buy 100 / stop 94 / nearest level above 104 — risking 6 to make 4 — he chose refusal over both leaving it alone and shrinking the position, which SUPERSEDES the previous standing rule that a wide stop ships and is answered by smaller size. The threshold is PARITY and nothing above it, because parity is the only line needing no invented value; why that is so, and what it costs to compare a real price against an estimated one, is in the board note. MEASUREMENT CORRECTED (the earlier median 1.44 / minimum 0.68 / six-below read post-management trailed columns; see the note). Re-measured against the decision-time columns the gate actually sees [measured 2026-10-01 against the production database, read-only, `initial_stop_loss` / `initial_take_profit`, 33 BUY trades], median reward:risk is 1.24, minimum 0.42, and ELEVEN buys sit below parity (0.42, 0.44, 0.46, 0.68, 0.76, 0.79, 0.82, 0.87, 0.90, 0.95, 0.96 (symbols withheld: the repo is public). THIS NUMBER IS AN UPPER BOUND ON REFUSALS, NOT A PREDICTION: it is computed from `initial_take_profit`, the horizon-reach-CAPPED target, which is exactly the basis this item argues is the wrong numerator. The gate measures the UNCAPPED structural level, which is never stored, so the real refusal count can only be lower (a capped target understates reward) and the measured-versus-projected split cannot be recovered). The refusal is placed where the trade as a whole is accepted or declined, NOT inside `_widen_stop_past_noise` — keying it off the widened stop would make it a function of stop width, the deleted stop-width gate under another name. The breakout exemption was DROPPED at this gate and replaced by the measured test, because the honest question is whether the level computation found a level above entry, not whether an analyst typed "breakout" — and the label-keyed version would have spared the two WORST ratios on the real book (0.42 and 0.46, both labelled breakout [measured]) while refusing better trades.
 
 DONE WHEN:
@@ -336,6 +314,7 @@ DONE WHEN:
 - [ ] held names are inside the per-name coverage record's universe, so the staying decision has the same per-name seat record the entry decision has
 - [ ] the record tells the three causes apart from the FIELDS alone — asked and unreadable, asked and nothing usable came back, never asked about this name — because they share one consequence but have three different fixes
 - [ ] no retry, no JSON repair and no new refusal is added by this change, and the entry and stay refusals keep the behaviour the 2026-09-25 ruling gave them
+
 
 
 **223. A portfolio-manager target below `min_position_risk_pct` is sized and shipped, not denied — found 2026-10-01 while verifying item 217's prompt claims.** The prompt told the PM the constructor would deny a sub-floor target anyway; it does not. `allocate_risk_budget` grants a request in full whenever it fits the remaining headroom, and its floor only denies a grant the budget had to CUT; the allocator is skipped entirely when book risk is unreadable. The prompt sentence is corrected under item 217, so the floor now rests on the seat alone — whether the desk wants a deterministic sub-floor refusal is an owner/route call, not fixed here. Detail in `docs/BOARD_NOTES.md` item 223.
@@ -406,6 +385,7 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 212
 - retired queue: 174
 - retired queue: 20
+- retired queue: 216
 - retired queue: 217
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 

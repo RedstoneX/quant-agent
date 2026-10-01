@@ -72,6 +72,7 @@ from src.pipeline_context import RunContext
 from src.risk.constants import (
     REWARD_RISK_FLOOR,
     STARTER_POSITION_RISK_PCT,
+    gap_adjusted_risk_per_share,
 )
 
 if TYPE_CHECKING:
@@ -3531,21 +3532,21 @@ def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
         return None
     # D4: unsigned everywhere.
     risk_per_share = abs(sizing_price - stop_price)
-    if is_short:
-        # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement
-        # (the stop is untouched). A short gaps through its stop with no
-        # bound, so this execution-time vol-adjusted-sizing belt must be at
-        # least as conservative for a short as the constructor's own primary
-        # sizing already is.
-        _cfg = getattr(
+    # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement (the
+    # stop is untouched). This execution-time belt must be at least as
+    # conservative for a short as the constructor's own primary sizing, so
+    # both legs call the SAME application site (board item 216): execution
+    # ships `min(qty_by_alloc, qty_by_risk)`, and while these were two
+    # separate multiplies a change to one of them was silently a half-change
+    # to the quantity that actually reached the market.
+    risk_per_share = gap_adjusted_risk_per_share(
+        risk_per_share,
+        is_short=is_short,
+        multiple=getattr(
             getattr(pipeline.config, "risk", None),
             "short_gap_risk_multiple", None,
-        )
-        gap_multiple = (
-            float(_cfg) if isinstance(_cfg, (int, float)) and _cfg > 1.0
-            else 1.5
-        )
-        risk_per_share *= gap_multiple
+        ),
+    )
     if risk_per_share <= 0:
         return None
     risk_dollars = total_value * _risk_budget_pct(pipeline) / 100
