@@ -277,6 +277,17 @@ def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
     }
     if alerted:
         state["drift_alerted_for"] = {"day": day, "remote_sha": report.remote_sha}
+    elif report.is_behind and report.remote_sha:
+        # Item 211. This run found the SAME drift and deliberately said
+        # nothing. Silence that leaves no trace is indistinguishable from
+        # "nothing happened", so the refusal is recorded in the same state
+        # file, through the same helper the typed-alert claim uses, and is
+        # readable at /alerts/suppressed.
+        from src.coverage_watchdog import _record_suppressed_alert
+
+        _record_suppressed_alert(
+            state, "deploy_drift", day, [report.remote_sha],
+        )
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
     return save_state(state, target)
 

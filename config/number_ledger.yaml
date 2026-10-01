@@ -107,31 +107,89 @@ numbers:
     status: arbitrary
     site: src/config.py
     note: >-
-      Minimum order value for the spare-cash SWEEP -- its original, still-live
-      job. Not a broker minimum -- the broker accepts fractional notional
-      well below it. A round $500 with nothing behind it.
-      Fixed 2026-09-24 (real incident: a genuine ~$295 / 2.95%-of-equity MRVL
-      trade was refused as "under the $500 minimum order ... pays full
-      commission" -- false, Alpaca charges no stock commission), completed
-      the same day across every trade-sizing site that read this value:
-      (1) the sector-crowding check in
-      `PortfolioConstructor._apply_sector_crowding_scale`; (2) NEW-entry
-      blocking inside `apply_gross_ceiling` (src/risk/rules.py), via
-      `ConstructorConfig.min_order_usd`; (3) the rotation buy-leg
-      `below_min_notional` gate (retired outright from
-      `REQUIRED_BUY_LEG_GATES`, src/rotation.py -- no code path can produce
-      that refusal any more); (4) the execution-time cash re-size refusal
-      in src/pipeline_stages.py. All four now let a small, nonzero trade
-      through at whatever size is left; only a genuine ZERO still refuses.
-      This value's only remaining live job is gating the spare-cash SWEEP
-      (src/execution/cash_sweep.py) -- it is fully decoupled from trade
-      sizing everywhere else.
+      UNSOURCED AND TRADE-GOVERNING. A round $500 with nothing behind it.
+      CORRECTED 2026-10-01 (board item 190): the 2026-09-24 note below said
+      this value's only remaining live job was gating the spare-cash SWEEP and
+      that it was "fully decoupled from trade sizing everywhere else". That is
+      now exactly inverted and must not be repeated. The sweep funding step was
+      DELETED with the sweeper (item 190 step 3), so the sweep job is gone,
+      while two trade-governing consumers remain and were missed:
+      (1) `src/pipeline_stages.py` reads it through `_min_order_usd` and DROPS
+      a short scale-in add whose estimated notional falls under it, recording
+      `below_min_notional` as an execution skip and a refused `funding`
+      pipeline event -- a live refusal to trade;
+      (2) `src.rotation.rotation_binding_constraints` appends `funding` to the
+      binding-constraint tuple when the entry budget is under this value, and
+      `rotation_constraint_clause` renders that tuple into the rotation report
+      and the owner-facing funding wording, so the number also decides what the
+      desk SAYS is constraining it.
+      ALGEBRA CHECKED 2026-10-01, and the answer is no: the floor does NOT
+      cancel to a constant fraction of equity and is not a disguised global
+      dial. Both sizing paths make the order notional proportional to equity
+      (`qty_by_alloc` gives `allocation_pct/100 * total_value`; `qty_by_risk`
+      gives `total_value * risk_pct/100 * price / |price - stop|`), so the test
+      `estimated_cost < 500` reduces to `fraction_of_equity < 500 / total_value`.
+      The equity term survives on one side only. The effective weight threshold
+      therefore DRIFTS INVERSELY with account size -- the same floor refuses a
+      larger share of the book on a small account than on a large one, and
+      silently loosens as equity grows. That is its own defect, and it is the
+      reason this is a per-name read waiting to be built rather than a dial.
+      RULED 2026-10-01: not deleted, not ratified, value unchanged. A global
+      constant governing what the desk may trade is a defect to be replaced by
+      a per-name read, not a value for the owner to set.
+      DERIVATION ATTEMPT 1 (2026-09-24, FAILED): justify it as the notional
+      below which commission makes a trade uneconomic. Refuted by the broker
+      fact -- Alpaca charges no stock commission -- after a real incident in
+      which a genuine ~$295 trade was refused as "under the $500 minimum order
+      ... pays full commission", a false statement. The fix removed the floor
+      from all four trade-sizing sites then known: the sector-crowding scale in
+      `PortfolioConstructor._apply_sector_crowding_scale`, NEW-entry blocking
+      inside `apply_gross_ceiling` via `ConstructorConfig.min_order_usd`, the
+      rotation buy-leg gate (retired outright from `REQUIRED_BUY_LEG_GATES`),
+      and the execution-time cash re-size refusal. The two consumers above were
+      not in that sweep and survived it.
+      DERIVATION ATTEMPT 2 (2026-10-01, FAILED to settle): derive it from how
+      often it has actually refused an order. Measured read-only against the
+      production DB `/home/qamc/quant-agent/data/quant_agent.db`: across 13,823
+      `specialist_evidence` rows the entire retained record holds 18
+      `execution_skip` rows, of which exactly ONE is `below_min_notional` -- a
+      short add refused at a notional well under a fifth of the floor. One
+      observation cannot distinguish a floor at $100 from one at $500: every
+      candidate value in that range would have refused the same single order
+      and permitted everything else on record. The attempt is recorded as
+      failed rather than retried; the route below is what would settle it.
+    settles_by:
+      kind: recording
+      state: built
+      where: src/pipeline_stages.py `_record_execution_skip`, persisted via src/storage/db.py
+      writes:
+        - specialist_evidence.kind
+        - specialist_evidence.evidence_json
+      records: >-
+        every order this floor refuses, as an `execution_skip` evidence row
+        carrying the reason `below_min_notional`, the symbol, the refused
+        notional and the floor it was measured against, alongside the skip rows
+        for every OTHER refusal reason so the floor's share of all refusals is
+        readable rather than assumed. The recording already exists and is
+        already collecting; nothing new had to be built for it.
+      closes_when: >-
+        enough refusals accumulate to show the distribution of refused
+        notionals and what the desk did with each name afterwards, so the
+        smallest order worth placing is read off this account's own refused
+        orders and their outcomes instead of being a round number. On the
+        current rate -- one refusal in the whole retained record -- that is
+        the evidence this number is waiting on, and the honest reading is that
+        the floor is nearly never binding, which is an argument for the
+        per-name read rather than for any particular dollar figure.
     open_question: >-
-      What is the smallest sweep order whose expected slippage and commission
-      are a tolerable fraction of the interest it earns, on this account's
-      actual cash balances?
+      What is the smallest order this account should place, read off each
+      name's own spread, tick size and the refused-order record, rather than
+      one dollar figure applied to every name and every account size?
     cost_while_unanswered: >-
-      Cash under $500 is never swept and earns nothing.
+      A small, correct addition to a short position is refused outright, and
+      the rotation report calls funding binding, on a number nobody derived --
+      and the share of the book that number silently refuses changes as equity
+      changes.
   - id: src.config.CashSweepConfig.reserve_pct
     value: 1
     status: arbitrary
@@ -738,8 +796,18 @@ numbers:
       trades picks the magnitude. Interacts with board item 91, the
       calendar-vs-trading-day defect.
     open_question: >-
-      What is the longest hold over which this desk's own closed trades show a
-      target being reached?
+      BARRED AND REPLACED 2026-10-01 (found by board item 185's sweep; this was
+      the FOURTH copy of a question that can only be answered by a study over
+      this desk's own trade record, which docs/OUTCOME.md forbids). The honest
+      question is not how long a target takes but whether this horizon governs
+      anything at all: Rex's 2026-09-30 ruling is that the desk exits on
+      ALIGNMENT - structure, ATR and an SMA cross agreeing the trend is over -
+      and never on a target, so a ceiling on how far out a target may sit may
+      now be guarding a decision nothing makes. Settle it by reading the live
+      exit path for a surviving consumer, and delete the number if there is
+      none; that reading belongs to board items 75 and 91, which own the
+      target's status and the calendar-vs-trading-day defect. Do not re-derive
+      the magnitude, and do not route 60 to the owner as an appetite dial.
     cost_while_unanswered: >-
       A target 60 sessions out licenses a claim of roughly 8 ATRs of travel
       with nothing measured behind the horizon.
@@ -1041,6 +1109,35 @@ numbers:
       CORRECTION 2026-09-18: the
       first version quoted "until a separate pass re-examines it" as text at
       this site; that phrase is in docs/, not in src/config.py.
+      ITEM 186 PASS 2026-09-30 — TWO DERIVATIONS ATTEMPTED, BOTH WITHDRAWN,
+      NO VALUE CHANGED. The desk sizes shorts today exactly as it did
+      before this pass. Record of the two failures so nobody spends a third
+      attempt on either. (1) WORST HISTORICAL GAP over the fetch lookback:
+      dead because that lookback is a 5-year window chosen for CHART
+      STRUCTURE, and a maximum over a fixed window can only grow until the
+      bar ages out — one old gap would govern every short's size for years
+      and a regime change could not update it. (2) STOP DISTANCE PLUS ONE
+      ATR: dead on algebra, not on data. The entry stop is ITSELF placed at
+      2.5 ATR, so the multiple is (2.5 + 1) / 2.5 = exactly 1.40 for every
+      name — the per-name ATR cancels out. It is a flat haircut in a
+      per-name costume, and LOWER than the 1.5 it claimed to replace.
+      ALSO ESTABLISHED THIS PASS — WHERE THIS NUMBER ACTUALLY BINDS.
+      Execution takes min(qty_by_alloc, qty_by_risk), and the risk-budget
+      path in src/pipeline_stages.py multiplies by this number. So this
+      row, not the constructor's mirror of it, is the one that sizes a live
+      short whenever the risk path is the binding leg. Any future statement
+      that a constructor-side change has "retired" this number is false
+      unless the execution-side read changes with it. That construction /
+      execution split is a latent defect in its own right and is filed as
+      board item 215.
+      WHAT CHANGED INSTEAD: the desk now RECORDS the evidence. Every short
+      it holds accumulates the worst adverse overnight gap actually
+      suffered against it, beside the volatility read and the stop distance
+      already pinned at entry (`trades.max_adverse_overnight_gap`,
+      `overnight_gap_sessions`, joined to `entry_atr` and
+      `initial_stop_loss`). Recording only — no threshold, no gate, no
+      sizing change, and it may NOT be swept for the multiple that would
+      have been optimal, which would be fitting to this desk's history.
     open_question: >-
       NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that risk is
       never a global dial: it is read per name off that instrument's own
@@ -2638,6 +2735,34 @@ numbers:
       (src/risk/constants.py:10-14). It decides whether a cash-only-policy
       ACTION fires on what is arithmetically dust; it does not size, price,
       gate or exit a trade.
+  - id: src.risk.constants.REWARD_RISK_PARITY
+    value: 1.0
+    status: sourced
+    site: src/risk/constants.py
+    source: >-
+      docs/BOARD_NOTES.md:1198 (section "## item 218 — Arithmetically losing
+      geometry is refused (owner ruling 2026-10-01)") records the ruling
+      verbatim, and src/portfolio_constructor.py:517 carries it beside the
+      constant that applies it. Owner ruling 2026-10-01, verbatim: "For now,
+      let's refuse a bad risk
+      reward ratio. See if that improves the desk purchases." He was shown
+      the worked case (buy 100, stop 94, nearest structural level above 104
+      — risking 6 to make 4) and chose refusal over both leaving it alone
+      and shrinking the position. Parity is not a picked number: it is the
+      boundary between arithmetically losing and arithmetically winning
+      geometry, the only line on the scale statable without inventing a
+      value, and any higher figure would be barred as arbitrary. Board item
+      218. CAVEAT RECORDED WITH IT, and accepted by the owner: parity is
+      not mathematically DERIVED. The risk side is a real transactable
+      price; the reward side is the nearest structural level above entry,
+      which is a forecast the desk never actually sells at (it rides a
+      trailing stop out), so the ratio compares one real number against one
+      estimated one.
+    cost_while_unanswered: >-
+      None outstanding; measured effect is recorded instead. Against the
+      production book [measured 2026-10-01, read-only, decision-time
+      initial_stop_loss / initial_take_profit on 33 BUY trades] median
+      reward:risk is 1.24 and eleven buys sit below parity.
   - id: src.risk.constants.REWARD_RISK_FLOOR
     value: 1.5
     status: arbitrary
@@ -3405,9 +3530,23 @@ numbers:
       convention adopted is still a number this desk did not read off
       anything.
     open_question: >-
-      At what R of open profit does moving the stop to breakeven stop costing
-      more in premature exits than it saves in given-back gains, on this
-      desk's own closed trades?
+      BARRED AND REPLACED 2026-10-01 (board item 185). The old question asked
+      what this desk's own closed trades say about the breakeven ratchet; a
+      study over this desk's own trade record is forbidden by docs/OUTCOME.md
+      and item 90 had already deleted the identical shape of question from
+      min_stop_atr_multiple, so this is the third copy and the reason
+      tests/test_no_fitted_open_questions.py now also matches it. The question
+      that can be answered off the instrument instead: does this ratchet ever
+      BIND? The chandelier trail already reads giveback off the name's own
+      ATR(14) every session, so a fixed R ratchet changes an exit only on the
+      bars where it sits tighter than the instrument-read trail, and the
+      honest outcome may be DELETING it as double-counting rather than
+      re-picking it. THE RECORDING THAT SETTLES IT DOES NOT EXIST: verified
+      2026-10-01 against the production database, no table stores a trailing
+      decision's reason code or the candidate levels it chose between, so
+      nothing can say how often the range ratchet, rather than structure or
+      the chandelier, actually set a stop. Build that recording under item
+      142, which owns these three numbers; do not re-derive the multiple.
     cost_while_unanswered: >-
       Every range trade's stop moves on a borrowed convention; too early it
       exits winners at scratch, too late it gives back the bank.
@@ -3426,9 +3565,16 @@ numbers:
       sourced -- ratification records WHO chose the number, not a measurement
       behind it.
     open_question: >-
-      At what R of open profit does moving the stop up to lock gain stop costing
-      more in premature exits than it saves in given-back gains, on this desk's
-      own closed trades?
+      BARRED AND REPLACED 2026-10-01 (board item 185), same reason and same
+      replacement as RANGE_BREAKEVEN_R_MULTIPLE: the old wording promised a
+      study over this desk's own closed trades, which docs/OUTCOME.md forbids.
+      Answerable off the instrument instead: on how many bars does this
+      ratchet sit TIGHTER than the chandelier trail, which already reads
+      giveback off the name's own ATR(14)? If the answer is never, the ratchet
+      is inert and deleting it is the correct outcome. The recording that
+      settles it does not exist - no production table stores a trailing
+      decision's reason code or its rejected candidates (verified 2026-10-01)
+      - and building it belongs to item 142. Do not re-pick the multiple.
     cost_while_unanswered: >-
       The second ratchet fires on a chosen multiple; too early it exits winners
       at the lock for a scratch-plus, too late it gives back the bank on a
@@ -3449,9 +3595,16 @@ numbers:
       2026-09-25 for item 142; ratified is not sourced -- ratification records
       WHO chose the number, not a measurement behind it.
     open_question: >-
-      At what R of open profit does moving the stop up to lock gain stop costing
-      more in premature exits than it saves in given-back gains, on this desk's
-      own closed trades?
+      BARRED AND REPLACED 2026-10-01 (board item 185), same reason and same
+      replacement as RANGE_BREAKEVEN_R_MULTIPLE: the old wording promised a
+      study over this desk's own closed trades, which docs/OUTCOME.md forbids.
+      Answerable off the instrument instead: on how many bars does this
+      ratchet sit TIGHTER than the chandelier trail, which already reads
+      giveback off the name's own ATR(14)? If the answer is never, the ratchet
+      is inert and deleting it is the correct outcome. The recording that
+      settles it does not exist - no production table stores a trailing
+      decision's reason code or its rejected candidates (verified 2026-10-01)
+      - and building it belongs to item 142. Do not re-pick the multiple.
     cost_while_unanswered: >-
       The lock level is a chosen multiple; too high it rarely engages and gives
       back more, too low it caps the trade near scratch on a normal pullback.

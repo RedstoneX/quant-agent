@@ -83,3 +83,65 @@ def test_legacy_rows_stay_null_not_accepted(db):
         "SELECT acceptance, acceptance_reason FROM agent_logs"
     ).fetchone()
     assert tuple(row) == (None, None)
+
+
+# --- board item 188: the DECISION seats record the gate's own reason -------
+#
+# Recording only. These tests pin that the reason the gate itself produced
+# survives to the row, instead of being collapsed into one word per seat or
+# left behind as prose in a log line.
+
+def _result(gate_reason):
+    from src.agents.base import AgentResult
+    return AgentResult(
+        raw_text="", tokens_used=0, model="m", gate_reason=gate_reason,
+    )
+
+
+def test_gate_reason_beats_the_call_sites_one_word_summary():
+    out = seat_acceptance_kwargs(
+        "no_valid_grounded_decision", result=_result("pm_grounding_error"),
+    )
+    assert out == {
+        "acceptance": SEAT_REFUSED, "acceptance_reason": "pm_grounding_error",
+    }
+
+
+def test_gate_reason_is_ignored_on_an_accepted_answer():
+    assert seat_acceptance_kwargs(None, result=_result("pm_parse_error")) == {
+        "acceptance": SEAT_ACCEPTED, "acceptance_reason": None,
+    }
+
+
+def test_absent_gate_reason_falls_back_and_never_guesses():
+    for bad in (None, "", object()):
+        out = seat_acceptance_kwargs(
+            "risk_manager_unparseable_output", result=_result(None)
+            if bad is None else _result(bad) if isinstance(bad, str) else bad,
+        )
+        assert out["acceptance_reason"] == "risk_manager_unparseable_output"
+
+
+def test_each_decision_seat_names_its_own_refusals():
+    import inspect
+    from src.agents import portfolio_manager, position_reviewer, risk_manager
+    for module, prefix in (
+        (portfolio_manager, "pm_"),
+        (risk_manager, "risk_"),
+        (position_reviewer, "review_"),
+    ):
+        src = inspect.getsource(module)
+        assert "gate_reason" in src, module.__name__
+        assert any(
+            w.startswith(prefix) and w in src for w in SEAT_REFUSAL_REASONS
+        ), module.__name__
+
+
+@pytest.mark.parametrize("word", sorted(
+    w for w in SEAT_REFUSAL_REASONS
+    if w.startswith(("pm_", "risk_", "review_"))
+))
+def test_every_gate_word_is_registered_vocabulary(word):
+    assert seat_acceptance_kwargs("agent_failure", result=_result(word)) == {
+        "acceptance": SEAT_REFUSED, "acceptance_reason": word,
+    }

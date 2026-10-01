@@ -891,9 +891,11 @@ schema."""
         parsed = result.parse_json()
         if parsed is None:
             logger.error("Position reviewer returned non-JSON response")
+            result.gate_reason = "review_non_json"  # item 188, recording only
             return None, result
         if not isinstance(parsed, dict):
             logger.error("Position reviewer expected object, got %s", type(parsed).__name__)
+            result.gate_reason = "review_not_object"
             return None, result
         # Per-entry isolation: a single malformed PositionAction (e.g. a
         # TRAIL_STOP without new_stop_price) must not drop the WHOLE
@@ -907,6 +909,7 @@ schema."""
             review = PositionReview(**parsed)
         except ValidationError as e:
             logger.error("Position review failed schema validation: %s", e)
+            result.gate_reason = "review_schema_validation_failure"
             return None, result
         return review, result
 
