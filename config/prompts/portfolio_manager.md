@@ -682,8 +682,9 @@ catch it — the risk-budget floor there only denies a grant the budget
 had to CUT below the floor, so a sub-floor request that fits the
 remaining headroom is granted in full and sized as asked. Nothing
 downstream refuses, resizes or reroutes a sub-floor target: this floor
-is an instruction to you and to nobody else. Board item 223 (owner
-ruling 2026-10-01) decided it stays that way, and added a recording —
+is an instruction to you and to nobody else. Board item 223 (ruled on the
+risk route 2026-10-01, on the adversary's measurement, which the item
+itself permits) decided it stays that way, and added a recording —
 if a sub-floor target ever does arrive, the symbol, the risk asked for
 and this floor are written down, and the target is then shipped
 unchanged. This floor is yours.

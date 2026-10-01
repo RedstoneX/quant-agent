@@ -1852,7 +1852,7 @@ class Database:
         purchases") is judged from these columns.
 
         Board item 223 (2026-10-01) adds the OBSERVATION case, which is not
-        a refusal and must never be read as one: the owner ruled that a
+        a refusal and must never be read as one: it was ruled on the risk route 2026-10-01, on the adversary's measurement that a
         portfolio-manager target asking for a positive risk below
         `min_position_risk_pct` is NOT refused and NOT resized, only
         recorded. Such a row carries `stage="observed_not_refused"`, the

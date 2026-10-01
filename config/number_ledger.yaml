@@ -3163,8 +3163,8 @@ numbers:
         the risk asked for (`trade_refusals.requested_risk_pct`), the floor
         it sat under (`threshold`), and what the desk then did with it
         (`stage`, always `observed_not_refused` here -- the target is shipped
-        unchanged, because the owner ruled against a deterministic sub-floor
-        refusal). Written from `PortfolioConstructor._plan_risk_targets`.
+        unchanged, because a deterministic sub-floor refusal was ruled
+        out on the risk route 2026-10-01, on the adversary's measurement). Written from `PortfolioConstructor._plan_risk_targets`.
       closes_when: >-
         Rows accumulate and the trades they correspond to close: if sub-floor
         targets do occur and their realised net returns after costs are
@@ -3591,8 +3591,8 @@ numbers:
         the risk asked for (`trade_refusals.requested_risk_pct`), the floor
         it sat under (`threshold`), and what the desk then did with it
         (`stage`, always `observed_not_refused` here -- the target is shipped
-        unchanged, because the owner ruled against a deterministic sub-floor
-        refusal). Written from `PortfolioConstructor._plan_risk_targets`.
+        unchanged, because a deterministic sub-floor refusal was ruled
+        out on the risk route 2026-10-01, on the adversary's measurement). Written from `PortfolioConstructor._plan_risk_targets`.
       closes_when: >-
         Rows accumulate and the trades they correspond to close: if sub-floor
         targets do occur and their realised net returns after costs are

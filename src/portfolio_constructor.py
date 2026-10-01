@@ -525,7 +525,10 @@ STOP_REFUSAL_GEOMETRY_UNMEASURABLE = "reward_risk_not_measurable"
 #: so the refusal is not a function of stop width wearing a new name.
 STOP_REFUSAL_REWARD_BELOW_RISK = "reward_below_risk_at_parity"
 #: NOT a refusal and NOT a resize — a recording, and the only thing board
-#: item 223 changed. Owner ruling 2026-10-01: a portfolio-manager target
+#: item 223 changed. Ruled on the RISK ROUTE 2026-10-01 on the adversary's
+#: measurement -- NOT an owner ruling, which the item itself permits ("the
+#: owner OR the risk route"); a reader must stay free to re-open this on new
+#: evidence. A portfolio-manager target
 #: whose `risk_allocation_pct` is positive but below
 #: `RiskConfig.min_position_risk_pct` is sized and shipped exactly as asked,
 #: because measured over 142 portfolio-manager logs (2026-08-17 to
@@ -1200,7 +1203,9 @@ class PortfolioConstructor:
     ) -> None:
         """Record a positive sub-floor PM risk request. Never raises.
 
-        Board item 223, owner ruling 2026-10-01: NO deterministic refusal.
+        Board item 223, ruled on the risk route 2026-10-01 on the
+        adversary's measurement (NOT an owner ruling): NO deterministic
+        refusal.
         Nothing here refuses, resizes or reroutes the target — the caller
         continues with the request untouched. The row exists because the
         floor is an INSTRUCTION to the portfolio manager (the prompt says

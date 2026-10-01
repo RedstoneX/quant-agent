@@ -970,7 +970,8 @@ changes:
       the floor in force beside it. They move together because one number
       cannot hold two statuses. Measured over 142 portfolio-manager logs
       (2026-08-17 to 2026-09-30), 115 targets carried a risk allocation and
-      ZERO were positive-but-below the floor -- which is also why the owner
-      ruled against a deterministic sub-floor refusal: it would have fired
+      ZERO were positive-but-below the floor -- which is also why a deterministic
+      sub-floor refusal was ruled out on the risk route 2026-10-01, on the
+      adversary's measurement: it would have fired
       zero times. The citation `config/settings.yaml:751` was stale in four
       places and is corrected to 685 in the same commit.

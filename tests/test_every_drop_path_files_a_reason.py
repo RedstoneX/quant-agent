@@ -253,7 +253,8 @@ _CANNOT_END_A_CANDIDATE = {
     ),
     "_record_subfloor_risk_target": (
         "board item 223 recording only — a durable row for a positive "
-        "sub-floor PM risk request; the owner ruled 2026-10-01 that such a "
+        "sub-floor PM risk request; it was ruled on the risk route "
+        "2026-10-01 that such a "
         "target is NOT refused and NOT resized, so this writes a record and "
         "the candidate continues down the path it was already on"
     ),
