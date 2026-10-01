@@ -1037,6 +1037,70 @@ Item 90's half two, surfaced for visibility. Three numbers: the 3x-ATR chandelie
 
 ## item 186 — detail moved from the board 2026-09-30
 
+UPDATE 2026-09-30 (short-side haircut) — TWO DERIVATIONS ATTEMPTED, BOTH
+WITHDRAWN, NO SIZING CHANGE SHIPPED. The desk sizes shorts exactly as it did
+before this pass. `RiskConfig.short_gap_risk_multiple` (1.5) and the
+constructor's mirror of it are both untouched and both still
+`status: arbitrary`.
+
+Why each attempt died, recorded so nobody spends a third one on either:
+- WORST HISTORICAL GAP over the lookback the desk already fetches. The
+  lookback is a ~5-year window chosen for CHART STRUCTURE, not for a gap
+  distribution, and a maximum over a fixed window can only grow until the bar
+  ages out. One old gap would govern every short's size for years, and a
+  regime change could not update it. That is a number fitted to past
+  outcomes on a sizing path, which doctrine bars.
+- STOP DISTANCE PLUS ONE ATR. Dead on algebra, not on data. The entry stop is
+  ITSELF placed at 2.5 ATR, so the multiple is (2.5 + 1) / 2.5 = exactly 1.40
+  for every name — the per-name ATR cancels out of the ratio. It is a flat
+  haircut wearing a per-name costume, and it is LOWER than the 1.5 it claimed
+  to replace, so it would have quietly opened every short LARGER.
+
+ALSO ESTABLISHED, AND THE REASON A LEDGER LINE HAD TO BE PULLED. Execution
+sizes with min(qty_by_alloc, qty_by_risk), and the risk-budget leg in
+`src/pipeline_stages.py` multiplies by `RiskConfig.short_gap_risk_multiple`.
+A constructor-only change therefore does NOT retire that number: whenever the
+risk leg binds, the execution-side read is the one that sizes the live short.
+The withdrawn work carried a ledger line saying the number "NO LONGER SIZES
+ANY SHORT". That was untrue and is removed rather than softened. The
+construction / execution split is a latent defect in its own right and is
+filed as board item 216.
+
+WHAT SHIPPED INSTEAD — THE RECORDING. The reason this number cannot be read
+off the instrument is not that the reading is hard; it is that the desk has
+never kept the evidence. Bars are fetched live each session and discarded and
+there is no OHLCV table, so there has never been a record of what a short
+actually suffers overnight. That is now recorded, on the trade row, beside
+the facts already pinned at entry:
+- `trades.max_adverse_overnight_gap` — the worst adverse overnight gap
+  (session open minus prior session's close, in price units, positive =
+  against the short) observed on any session the short was held. Stored
+  SIGNED and unfiltered, so a short whose every gap ran in its favour records
+  a negative worst, which is a real and different fact from "never observed".
+- `trades.overnight_gap_sessions` — how many sessions a gap was actually
+  observed on, so absence of evidence stays distinguishable from evidence of
+  absence.
+- `trades.last_overnight_gap_date` — idempotence by date; a second position
+  sync in one session cannot count the same gap twice.
+These sit on the same opening row as `entry_atr` (the volatility read at
+entry) and `initial_stop_loss` (the stop distance), and join to
+`realized_pnl` / `exit_reason_category` when the position closes. Written by
+`PortfolioManager._record_short_overnight_gaps` off the existing position
+sync, shorts only, fail-soft per symbol.
+
+HARD LIMIT ON ITS USE, same as the stop-floor excursion evidence beside it:
+RECORDING ONLY. No threshold, no gate, no sizing change; nothing reads it
+back into a trading decision. It may NOT be swept for the multiple that would
+have been optimal — that is fitting a number to this desk's own history,
+which doctrine bars whatever the sample size. What it can eventually support
+is a statement about the DISTRIBUTION of adverse short gaps relative to the
+stop distance and the volatility read, which is a measurement, not a fit.
+
+The item's completion criterion is changed on the board to match: it closes
+on that recording plus enough closed shorts to read, never on another
+derivation.
+
+
 UPDATE 2026-09-30 (second pass, owner ruling on global risk dials). Live-code
 inventory of every portfolio- and cluster-level ceiling still standing, each
 verified in source this pass, not from the board:
@@ -1174,6 +1238,31 @@ The order matters and is the completion criteria:
 ## item 195 — RETIRED 2026-09-30, the window-start inconsistency it named is fixed and merged, and the only remaining lever on the structural leg is barred
 
 The measured finding stands and is preserved in the retired item's own text: the structural pivot has never produced a candidate, because a confirmed pivot needs `2 * PIVOT_WINDOW + 1` = 7 bars and a scale-in additionally reset the caller's bar window to zero. That second half was the defect in how the candidate is FOUND and it is fixed on main (`Database.get_position_open_timestamp`, `tests/test_position_open_timestamp.py`); re-running all 21 recorded refusals through the new window flipped none. The first half is arithmetic reach, and the only way to shorten it is to move `PIVOT_WINDOW`, which the module documents as unsourceable in the literature — moving it to obtain a result the data would like is picking a number, which doctrine bars. The leg is NOT deleted: item 196's change means it now competes with the chandelier on equal terms instead of pre-empting it, and `tests/test_trailing_candidate_set.py` pins that it is still preferred where it does produce a usable pivot.
+
+
+## item 216 — the short-side gap haircut has two application sites
+
+Filed 2026-09-30 out of the item 186 pass. Execution sizes a position as
+min(qty_by_alloc, qty_by_risk). The constructor applies the short-side
+haircut on the allocation leg; the risk-budget leg in
+`src/pipeline_stages.py` reads `RiskConfig.short_gap_risk_multiple` and
+applies it there too. Whenever the risk leg is the binding one — which is
+whenever risk is the tighter constraint, not an exotic case — the number
+that actually sizes the live short is the execution-side read.
+
+How it surfaced: a constructor-only rewrite of the haircut was about to ship
+a number-ledger line stating the value "NO LONGER SIZES ANY SHORT". Checked
+against the code, that was false. The rewrite stood down; this item records
+the split that made the false claim possible.
+
+Severity: LATENT, not live-breaking. Both sites hold the same value today,
+so they agree — by coincidence of configuration, not by construction. The
+defect is that a change to one site is silently a partial change, and that
+any claim about "the" short haircut is ambiguous about which site it means.
+
+Not to be conflated with item 186, which is about whether the VALUE is
+sourced. This item is about WHERE it is applied and would remain open even
+if the value were settled tomorrow.
 
 ## item 218 — RECORD ONLY: two measurements, no behaviour change; the parity refusal was built and then REMOVED before merge
 

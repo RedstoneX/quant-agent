@@ -1099,6 +1099,35 @@ numbers:
       CORRECTION 2026-09-18: the
       first version quoted "until a separate pass re-examines it" as text at
       this site; that phrase is in docs/, not in src/config.py.
+      ITEM 186 PASS 2026-09-30 — TWO DERIVATIONS ATTEMPTED, BOTH WITHDRAWN,
+      NO VALUE CHANGED. The desk sizes shorts today exactly as it did
+      before this pass. Record of the two failures so nobody spends a third
+      attempt on either. (1) WORST HISTORICAL GAP over the fetch lookback:
+      dead because that lookback is a 5-year window chosen for CHART
+      STRUCTURE, and a maximum over a fixed window can only grow until the
+      bar ages out — one old gap would govern every short's size for years
+      and a regime change could not update it. (2) STOP DISTANCE PLUS ONE
+      ATR: dead on algebra, not on data. The entry stop is ITSELF placed at
+      2.5 ATR, so the multiple is (2.5 + 1) / 2.5 = exactly 1.40 for every
+      name — the per-name ATR cancels out. It is a flat haircut in a
+      per-name costume, and LOWER than the 1.5 it claimed to replace.
+      ALSO ESTABLISHED THIS PASS — WHERE THIS NUMBER ACTUALLY BINDS.
+      Execution takes min(qty_by_alloc, qty_by_risk), and the risk-budget
+      path in src/pipeline_stages.py multiplies by this number. So this
+      row, not the constructor's mirror of it, is the one that sizes a live
+      short whenever the risk path is the binding leg. Any future statement
+      that a constructor-side change has "retired" this number is false
+      unless the execution-side read changes with it. That construction /
+      execution split is a latent defect in its own right and is filed as
+      board item 215.
+      WHAT CHANGED INSTEAD: the desk now RECORDS the evidence. Every short
+      it holds accumulates the worst adverse overnight gap actually
+      suffered against it, beside the volatility read and the stop distance
+      already pinned at entry (`trades.max_adverse_overnight_gap`,
+      `overnight_gap_sessions`, joined to `entry_atr` and
+      `initial_stop_loss`). Recording only — no threshold, no gate, no
+      sizing change, and it may NOT be swept for the multiple that would
+      have been optimal, which would be fitting to this desk's history.
     open_question: >-
       NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that risk is
       never a global dial: it is read per name off that instrument's own
