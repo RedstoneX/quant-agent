@@ -47,6 +47,7 @@ from src.risk.exit_guard import (
     BREAK_CONFIRMATION_ATR_MULTIPLE,
     NOISE_BAND_ATR_MULTIPLE,
     check_structural_protection,
+    level_zone_span_phrase,
     structural_protection_broken,
 )
 
@@ -435,3 +436,48 @@ def test_low_touch_level_does_not_qualify_falls_back_to_noise_band():
     )
     assert result.basis == "noise_band_intact"
     assert result.protected is True
+
+
+# --- item 215: every "still backed by a level" claim carries the span ----
+
+
+def _intact_check(**over):
+    kwargs = dict(
+        thesis_invalid_if=None,
+        current_price=99.0,
+        entry_price=100.0,
+        stop_loss=95.0,
+        atr=2.0,
+        computed_levels=[95.0],
+        computed_level_touches={95.0: 5},
+        computed_level_zones={95.0: [94.5, 95.5]},
+        computed_level_bars={95.0: [(94.5, 95.5)]},
+        min_level_touches=3,
+        level_cluster_tolerance_pct=1.0,
+    )
+    kwargs.update(over)
+    return check_structural_protection(**kwargs)
+
+
+def test_intact_level_claim_carries_measured_zone_span():
+    """docs/WORK.md item 215 (a). A position reported as still backed by a
+    level must say how wide that level's MEASURED zone is, so the owner can
+    see how precise the claim is."""
+    check = _intact_check()
+    assert check.protected is True
+    assert check.basis == "structural_level_intact"
+    assert "measured zone 94.5-95.5" in check.detail
+    assert "span 1" in check.detail
+    assert "% of the level price" in check.detail
+
+
+def test_intact_level_claim_says_span_unknown_rather_than_substituting():
+    """No zone and no bar ranges means the span is UNKNOWN; the claim says so
+    rather than computing a percentage-of-price stand-in. The level is still
+    only honoured where the code's own bound honours it, so the bars are kept
+    for the match and only the reporting zone map is emptied."""
+    check = _intact_check(computed_level_zones={})
+    assert "measured zone 94.5-95.5" in check.detail
+
+    no_span = level_zone_span_phrase(95.0, {}, {})
+    assert no_span == "measured zone span NOT RECORDED for this level"
