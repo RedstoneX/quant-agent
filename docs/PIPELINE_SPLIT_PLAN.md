@@ -7,6 +7,18 @@ test monkeypatch target, every source-text scanner, and the hunk headers of all 
 from names alone. The AST script is at `scratchpad/ast_map.py`; rerun it before executing any step — line numbers
 in this document are dead the moment a PR merges.
 
+**RE-MEASURED 2026-10-01 against current main — every figure in the original 2026-09-30 pass is now stale.**
+The original figures are left in place above and in the tables below so the drift is visible; where a number is
+restated here, THIS is the one to use. Measured 2026-10-01: `src/pipeline.py` 21,864 lines (was 20,035);
+`src/pipeline_stages.py` 10,674 lines (was 10,536); `TradingPipeline` holds 239 methods (was 227) and the class
+spans lines 1024–21864 (was 940–20035). 129 commits have merged since the plan was written, 34 of them touching
+these two files. Test exposure measured 2026-10-01: 255 monkeypatch/patch sites across 28 test files, with
+`compute_indicators` alone at 67 sites (the plan says 42 below — read 67); and 338 `TradingPipeline` construction
+sites across 128 importing test files (the plan says 327 call sites below — read 338 across 128 files).
+Consequence, stated plainly: **every line number and every cluster range in §1, §2 and §4 below is dead.** They
+describe the right clusters in the right order; they do not describe today's offsets. Re-run `scratchpad/ast_map.py`
+immediately before each step and take the ranges from it, never from this document.
+
 ---
 
 ## 1. What is actually in src/pipeline.py
@@ -23,6 +35,7 @@ in this document are dead the moment a PR merges.
 | 501–653 | broker-state predicates (`_market_is_open_now`, `_price_is_through_stop`, `_position_notional`, `_classify_coverage_gap`) | protection |
 | 654–896 | `build_risk_config`, `build_constructor_config` (deliberately lifted from `__init__`, see banner) | construction |
 | 897–939 | `_smart_money_refresh_sources_word`, `_reconciled_exit_action` | misc |
+| 968–1023 (measured 2026-10-01; new since the plan) | `_actions_with_scan_fallback`, `_reason_claims_alignment_exit` | exit execution; both are called ONLY from `_midday_execute_llm_actions` (cluster L) and both are pinned by name by `tests/test_alignment_exit_wiring.py` |
 
 ### Inside `TradingPipeline` (lines 940–20035), in file order
 
@@ -39,7 +52,19 @@ Clusters below are contiguous ranges whose methods call each other and share the
 | F | 3238–6006 | ~2,770 | **protection**: `_reconcile_stop_coverage` (603), elected-unfilled, 8 owner alerts, `_repair_stop_coverage`, `_submit_protected_sell` (207), exit settlement, `_finalize_pending_protections` + core (301), stray-stop cancel, write-ahead restore/cancel, `_drain_pending_repegs`, `_drain_pending_protection_restores` (206), `_reprotect_residual_after_partial_sell`, `_order_accepted` | every method touches broker orders + `src.execution.stop_records`/`stop_repair`/`scale_in`; reachable from ALL six session roots; 3 of the 5 open PRs on this file land here |
 | G | 6009–6092 | ~85 | `_refuse_queued_earnings_buys`, `_is_trading_day` | misc |
 | H | 6094–6758 | ~665 | broker reconciliation: `_reconcile_fills`, `_reconcile_orphan_pending_submits`, `_reconcile_stop_out_fills` (253), `_surface_reconcile_outcomes` | called as a block by 5 session roots |
-| I | 6760–9819 | ~3,060 | **prompt-facts builders**: 40 `_build_*`/`_missed_ops_*`/`_thesis_*` methods, `_build_pm_facts` (220), `_build_blocked_proposals` (288), `_ensure_correlation_matrix`, `_compute_recent_performance` | read DB/broker → return text/dicts for LLM prompts; place NO orders; 11 are roots called only from stages |
+| I | 6760–9819 | ~3,060 | **prompt-facts builders**: 40 `_build_*`/`_missed_ops_*`/`_thesis_*` methods, `_build_pm_facts` (220), `_build_blocked_proposals` (288), `_ensure_correlation_matrix`, `_compute_recent_performance` | read DB/broker → return text/dicts for LLM prompts; place no orders **with one measured exception, see below**; 11 are roots called only from stages |
+
+**Correction, measured 2026-10-01 — cluster I is NOT order-free.** `_handle_ex_dividends` sits inside cluster I's
+range and MODIFIES LIVE STOPS: it shifts each affected position's stop down by the dividend, files the stop-shift
+legs, refuses to record an unconfirmed move, and writes the new stop back to the desk's own records. It is called
+once per session from the intra-check path. The old "places NO orders" description of cluster I was therefore
+untrue of the file as it stands. **Reassignment: `_handle_ex_dividends` moves to `src/pipeline_protection.py`
+(`ProtectionMixin`), not to `PromptFactsMixin`** — the protection module's stated scope is "everything that places,
+cancels, restores or reconciles a protective stop", which is exactly what this method does, and keeping a
+stop-moving method in a module advertised as read-only is the boundary lying about touching money. It moves in
+step 2 with the rest of protection, not in step 1. Its tests (`tests/test_pm_memory.py`,
+`tests/test_audit_fixes_2026_07_16.py`) must be run by step 2 as well as by step 1.
+
 | J | 9822–10076 | ~255 | `_refresh_account_state`, `_sync_positions_from_broker`, `_run_news_update`, `_load_earnings_analyses`, `_earnings_preprocess_symbols` | account/news refresh |
 | K | 10078–11909 | ~1,830 | **held-position exit engine**: target-revision adjudication (286), structural protection (185+77), `_substantiate_exit_triggers` (222), `_holding_discipline_check_for_exit` (250), trails (170), event-risk block, `_risk_review_exits` (352), approvals | own banner at 10078; only reachable from `run_midday`/`run_close`; lazy-imports `src.risk.exit_guard/exit_refusal/exit_trigger/target_revision` |
 | L | 11911–12763 | 853 | `_midday_execute_llm_actions` (one method) | executes K's decisions; calls F (`_submit_protected_sell`, `_finalize_pending_protections`) and K |
@@ -102,7 +127,8 @@ class TradingPipeline(ProtectionMixin, ExitEngineMixin, DeleverMixin, PromptFact
 Why this and not the `pipeline_stages` free-function style:
 - Method bodies are copied byte-for-byte; the only edit is the enclosing `class` line and the import block. A move
   whose diff is "same text, different file" is reviewable as behaviour-preserving without reading the logic.
-- 327 test sites construct `TradingPipeline.__new__(TradingPipeline)` and call private methods on it; 60 distinct
+- 327 test sites construct `TradingPipeline.__new__(TradingPipeline)` and call private methods on it (re-measured
+  2026-10-01: **338 construction sites across 128 importing test files**); 60 distinct
   private methods are pinned by name on the class (§5). Mixins keep every `TradingPipeline._x` attribute intact.
   Free functions would break all of them and change every `self._x(` call site inside 20k lines.
 - `inspect.getsource(TradingPipeline._method)` (used by `tests/test_invariants.py`) follows the function object, so
@@ -114,18 +140,19 @@ decoupling (passing a protection object instead of `self`) is a later, behaviour
 scope for this plan.
 
 A mechanical guard ships with step 1 and stays forever: a test asserting that
-`{name for name, _ in inspect.getmembers(TradingPipeline, inspect.isfunction)}` equals a frozen list of the 227
-method names, and that each method's `__qualname__` module is the one this plan assigns. That makes "a method
+`{name for name, _ in inspect.getmembers(TradingPipeline, inspect.isfunction)}` equals a frozen list of the
+method names (227 when the plan was written; **239 measured 2026-10-01** — freeze the list the mapping run
+produces on the day step 0 lands, not either of these numbers), and that each method's `__qualname__` module is the one this plan assigns. That makes "a method
 silently vanished or was duplicated" a red build, not a review-time hope.
 
 ### Files from src/pipeline.py
 
 | New file | Clusters | ~Lines | Why it is one unit | What stays adjacent-by-accident and is NOT included |
 |---|---|---|---|---|
-| `src/pipeline_protection.py` — `ProtectionMixin` | F + H + module helpers 501–653 + `_WAL_SELL_SENTINEL` + `_reconciled_exit_action` | ~3,600 | Everything that places, cancels, restores or reconciles a protective stop or a sell against the broker. The live-money code the owner's stop-fix queue lives in. Changes together: 3 of 5 open PRs on this file are inside it. | The tiny qty formatters in A (used by 5 clusters) stay in the base class. `_refuse_queued_earnings_buys` (G) is next to it in the file but belongs with risk application (D). |
-| `src/pipeline_exits.py` — `ExitEngineMixin` | K + L + module helpers 258–424 (`_HARD_TRIGGER_KEYWORDS`, `_reason_cites_hard_trigger`) | ~2,850 | The "sell only on alignment" doctrine: target revision, structural protection, trigger substantiation, holding discipline, trails, AI risk review, and the one method that executes the resulting actions. Only reachable from `run_midday`/`run_close`. 2 of 5 open PRs land here. | `_build_position_facts` (P) feeds it but is a prompt builder → PromptFacts. |
+| `src/pipeline_protection.py` — `ProtectionMixin` | F + H + `_handle_ex_dividends` (reassigned out of I, 2026-10-01) + module helpers 501–653 + `_WAL_SELL_SENTINEL` + `_reconciled_exit_action` | ~3,600 | Everything that places, cancels, restores or reconciles a protective stop or a sell against the broker. The live-money code the owner's stop-fix queue lives in. Changes together: 3 of 5 open PRs on this file are inside it. | The tiny qty formatters in A (used by 5 clusters) stay in the base class. `_refuse_queued_earnings_buys` (G) is next to it in the file but belongs with risk application (D). |
+| `src/pipeline_exits.py` — `ExitEngineMixin` | K + L + module helpers 258–424 (`_HARD_TRIGGER_KEYWORDS`, `_reason_cites_hard_trigger`) + `_actions_with_scan_fallback` + `_reason_claims_alignment_exit` (assigned 2026-10-01) | ~2,850 | The "sell only on alignment" doctrine: target revision, structural protection, trigger substantiation, holding discipline, trails, AI risk review, and the one method that executes the resulting actions. Only reachable from `run_midday`/`run_close`. 2 of 5 open PRs land here. | `_build_position_facts` (P) feeds it but is a prompt builder → PromptFacts. `_actions_with_scan_fallback`: its only caller is `_midday_execute_llm_actions` (cluster L), which moves here. `_reason_claims_alignment_exit`: same single caller, and it encodes the "exit on alignment" doctrine this module owns. Both are imported by name from `src.pipeline` by `tests/test_alignment_exit_wiring.py`, so both must stay re-exported from `src.pipeline` (§5). |
 | `src/pipeline_delever.py` — `DeleverMixin` | M | ~1,235 | The Spec §11.2 gross-exposure ladder; has its own banner, its own test file, and an owner ruling. Sells through ProtectionMixin. | `_sweep_symbol` (3 callers) is listed inside M but is cash-sweep plumbing; keep in base. |
-| `src/pipeline_prompt_facts.py` — `PromptFactsMixin` | I + `_build_position_facts`/`_build_review_metric_deltas`/`_build_own_recent_decisions` from P + `_missed_ops_quality_metrics` + `_PM_PROFILE_SYMBOL_CAP` | ~3,550 | Read-only DB/broker → prompt context. Places no orders. Largest and safest move. | `_ensure_correlation_matrix` writes nothing and is a root; include. |
+| `src/pipeline_prompt_facts.py` — `PromptFactsMixin` | I + `_build_position_facts`/`_build_review_metric_deltas`/`_build_own_recent_decisions` from P + `_missed_ops_quality_metrics` + `_PM_PROFILE_SYMBOL_CAP` | ~3,550 | Read-only DB/broker → prompt context. Places no orders. Largest and safest move. | `_ensure_correlation_matrix` writes nothing and is a root; include. `_handle_ex_dividends` is inside cluster I's range but modifies live stops → ProtectionMixin (see §1 correction, 2026-10-01). |
 | `src/pipeline_risk_gate.py` — `RiskGateMixin` | D + G's `_refuse_queued_earnings_buys` | ~920 | The deterministic application of risk verdicts to sizes (`RiskStage`'s backend). Money-governing; 4 of the 36 ledger sites in this file are here. | — |
 | `src/pipeline_admission.py` — `AdmissionMixin` | C | ~510 | Who gets into the research universe. Only `MorningResearchStage` calls it. | — |
 | `src/pipeline_research_continuity.py` — `ResearchContinuityMixin` | S + T + U + V | ~1,300 | One question: "may yesterday's paid research be reused, and if a seat is lost can it be healed?" Change detectors, carry-forward, heal, Form-4 backlog all answer it. | — |
@@ -190,6 +217,22 @@ Cycles the split WOULD create, and the break for each:
 
 ---
 
+## WHEN TO RUN THIS
+
+**Measured 2026-10-01 against current main.** Over the last fourteen days, 125 commits touched `src/pipeline.py`.
+Twenty of them overlap step 1's range (prompt facts) and sixty-three overlap step 4's range (exits). A pure-move
+PR conflicts with ANY single touch inside its range, because the whole range is rewritten. Dividing those touch
+rates into fourteen days: **step 1's mapping survives roughly one day of normal desk activity; step 4's survives a
+few hours.** That is the measurement, not an opinion about it.
+
+**Ruling — risk route, 2026-10-01.** The split starts AFTER today's trading sessions have finished, not before,
+and the cluster mapping is re-run immediately before the first step is opened. Reason: the line numbers in this
+document die on every merge, and a step opened against a mapping taken hours earlier is a pure-move PR that no
+longer moves the text it claims to move — which is unreviewable rather than merely conflicted. This is a timing
+call made on the risk route; the owner ratified the milestone and its ordering (board item 210), not this timing.
+
+---
+
 ## 4. Ordered extraction sequence
 
 Rules for every step: one PR; method bodies copied verbatim (verify with `git diff --color-moved=dimmed-zebra` and a
@@ -204,7 +247,7 @@ is independently landable and leaves main deployable.
 | 2 | `pipeline_protection.py` (F + H + helpers) | ~3,600 | Biggest safety win: the stop code becomes one reviewable file. Wait for PR 803 (touches 5872–6220) to land first. Carries `_WAL_SELL_SENTINEL` → re-export from `src.pipeline` (7 test imports). `_market_is_open_now` moves here → tests patching `pipeline._market_is_open_now` must be repointed. | test_stop_coverage_repair, test_stop_writeback, test_stop_out_reconciliation, test_wal_protection_side, test_stray_stop_cleanup_after_full_exit, test_zero_stop_refused, test_unreadable_stop_alerting, test_shorts_emergency_close, test_fractional_sizing |
 | 3 | `pipeline_delever.py` (M) | ~1,235 | Self-contained, own tests, own banner. | test_gross_exposure_ladder, test_margin_policy, test_kill_switch |
 | 4 | `pipeline_exits.py` (K + L + trigger keywords) | ~2,850 | Wait for PRs 801, 841, 828 (all inside 10207–12287). `compute_indicators` is used at 2911 and 3067 — those are in D, not K; check again at execution time. `_HARD_TRIGGER_KEYWORDS` path pinned in `tests/test_prompts_contract.py:112` (prose) — update. | test_phase3_exit_rework, test_position_reviewer, test_target_revision, test_exit_quality, test_risk_verdict_per_symbol, test_seat_heal |
-| 5 | `pipeline_risk_gate.py` (D + `_refuse_queued_earnings_buys`) | ~920 | `compute_indicators` used at 2911/3067 → **must** be imported into the new module AND the 42 tests patching `pipeline.compute_indicators` re-pointed, or they silently test the wrong thing. | test_risk_mod_size_reconciliation, test_risk_based_sizing, test_sector_cap_unresolved*, test_sector_dial, test_phase2_risk_wiring |
+| 5 | `pipeline_risk_gate.py` (D + `_refuse_queued_earnings_buys`) | ~920 | `compute_indicators` used at 2911/3067 (offsets dead) → **must** be imported into the new module AND the 67 tests (measured 2026-10-01) patching `pipeline.compute_indicators` re-pointed, or they silently test the wrong thing. | test_risk_mod_size_reconciliation, test_risk_based_sizing, test_sector_cap_unresolved*, test_sector_dial, test_phase2_risk_wiring |
 | 6 | `pipeline_admission.py` (C) | ~510 | Uses `_get_sector` (1880, 1912) → same re-point as step 5 (20 test sites). | test_universe_screen, test_form4_edgar_coverage, test_form4_backlog_order |
 | 7 | `pipeline_research_continuity.py` (S+T+U+V) | ~1,300 | Only reachable from morning + intraday; `_heal_lost_research_seats` pinned by 3 tests via class attribute (fine under mixin). | test_seat_heal, test_seat_heal_wiring, test_form4_backlog_order, test_desk_sees_today |
 | 8 | `pipeline_intraday.py` (R+W) | ~1,200 | `tests/test_invariants.py` `getsource` on 4 methods — works through mixin; confirm. | test_invariants, test_intraday_scan |
@@ -236,8 +279,10 @@ _refuse_queued_earnings_buys, _apply_risk_modifications` and 12 `_build_*`. One 
 silently, not fail.
 
 **Silent behaviour changes (would NOT fail loudly):**
-1. **Monkeypatch targets on `src.pipeline` module globals** — `compute_indicators` (42 test sites),
-   `_get_sector` (20), `_market_is_open_now` (9), `et_today` (6), `et_now` (2), `_reason_cites_hard_trigger` (1).
+1. **Monkeypatch targets on `src.pipeline` module globals** — `compute_indicators` (42 test sites when the plan
+   was written; **67 measured 2026-10-01**), `_get_sector` (20), `_market_is_open_now` (9), `et_today` (6),
+   `et_now` (2), `_reason_cites_hard_trigger` (1). Total patch exposure measured 2026-10-01: **255 patch sites
+   across 28 test files.**
    A moved method resolves these in the new module; the old patch no longer reaches it, so a test that meant
    to stub the network/clock quietly exercises the real thing. Some would then hit Yahoo (CI is already red on
    two such tests). Mitigation per step: grep `monkeypatch.setattr(pipeline` and `patch("src.pipeline.` for every
@@ -253,11 +298,16 @@ silently, not fail.
 3. **`getattr(self, "...", None)` defaults** — 69 sites in `pipeline.py`. Under mixins they still resolve;
    under any free-function conversion they would silently take the default.
 4. **Mixin MRO** — if two mixins ever define the same method name, the first in the bases list wins silently.
-   The step-0 inventory guard must assert the 227 names are unique across all mixins.
+   The step-0 inventory guard must assert the names (239 measured 2026-10-01) are unique across all mixins.
 
 **Loud breakers (good, but plan for them):**
 - `tests/test_shorts_emergency_close.py:420` — `inspect.getsource(TradingPipeline)` returns only the class body in
-  `pipeline.py`; whatever it searches for will vanish once that text moves. Read the assertion before step 2.
+  `pipeline.py`; whatever it searches for will vanish once that text moves. **Re-pointed 2026-10-01: this is a
+  step 4 problem, not a step 2 one.** Measured today, the assertion pins the literal source line
+  `if not existing or existing[0].qty <= 0:`, which lives inside `_midday_execute_llm_actions` — cluster L, which
+  moves to `src/pipeline_exits.py` in step 4. Step 2 (protection) does not move that text. Read and re-point this
+  assertion before **step 4**; `getsource(TradingPipeline)` will no longer contain the line once L moves, so the
+  test must be re-pointed at `ExitEngineMixin` (or at the method object) in the step-4 PR.
 - `tests/test_definition_of_done.py:461,511,512` — expects rival sites at exactly `src/pipeline.py:_build_position_history`
   and `src/pipeline.py:_build_thesis_health_context`; step 1 changes both.
 - `tests/test_prompt_drift_item107.py:349` lists `"src/pipeline.py"` as a scanned site; `scripts/definition_of_done.py`
@@ -274,6 +324,13 @@ PR 844 → `pipeline_stages` 5001–5065 (MorningResearchStage). Steps 1, 3, 5�
 ---
 
 ## 6. What I could not determine
+
+**Recorded 2026-10-01, not fixed here (this pass amends the document only):**
+- The in-flight-PR table in §5 (PRs 803, 801, 841, 828, 844 with hunk line numbers) is from 2026-09-30 and 129
+  commits have merged since; its PR numbers and every hunk offset in it must be re-scanned before any step, and
+  the §4 "wait for PR N" instructions are therefore unverified as written.
+- The §1/§2 cluster line ranges and the §2 "~Lines" column were not re-derived in this pass; the two file totals
+  grew by 1,829 and 138 lines, so the per-module size estimates are low by an unmeasured amount.
 
 - Whether the rotation-execution block in `pipeline_stages` (290–1710) duplicates or extends `src/rotation.py`
   (1,594 lines, unread). Step 12 needs that read.
