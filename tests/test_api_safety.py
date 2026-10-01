@@ -28,7 +28,43 @@ def _parse(path: Path) -> ast.AST:
 
 
 def _api_source_files() -> list[Path]:
-    return sorted(API_DIR.glob("*.py"))
+    """Every Python module in the API package, however deeply nested.
+
+    `rglob`, not `glob`: a future `src/api/routes/` subpackage must not slip
+    out from under the structural guards simply by being one directory down.
+    """
+    return sorted(API_DIR.rglob("*.py"))
+
+
+def test_api_source_scan_is_not_silently_empty():
+    """A scan that matches almost nothing passes vacuously; fail loudly first.
+
+    Both halves matter: the glob must find files at all, and it must cover
+    every module the running app actually loaded, so moving a route module
+    somewhere the glob cannot see is a failure here and not a silent hole.
+    """
+    import sys
+
+    files = _api_source_files()
+    assert len(files) >= 5, f"the src/api scan found almost nothing: {files}"
+    names = {p.name for p in files}
+    assert "server.py" in names, f"src/api scan missed the app module: {sorted(names)}"
+
+    import src.api.server  # noqa: F401  (populates sys.modules)
+
+    scanned = {p.resolve() for p in files}
+    loaded = set()
+    for mod_name, module in list(sys.modules.items()):
+        if mod_name != "src.api" and not mod_name.startswith("src.api."):
+            continue
+        filename = getattr(module, "__file__", None)
+        if filename:
+            loaded.add(Path(filename).resolve())
+    missing = sorted(str(p) for p in loaded - scanned)
+    assert not missing, (
+        "the API package imports modules the structural scan never reads, so "
+        f"they are unguarded: {missing}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -147,12 +183,42 @@ def test_alpaca_broker_constructed_only_in_broker_reads():
 # `TradingPipeline` -- plain helper functions in a new namespace. Nothing
 # mechanical catches that; the reviewer of that step must add it here.
 
-_ALWAYS_TRADING_CRITICAL = (
-    "main.py",
-    "src/execution/broker.py",
-    "src/risk/rules.py",
-    "src/scheduler.py",
+# The trading-critical entry points, named as IMPORTABLE MODULES rather than
+# as file paths. Each is resolved to its file through the import system, so
+# moving a module's file on disk cannot turn this guard into a no-op pointing
+# at a path that no longer exists.
+_ALWAYS_TRADING_CRITICAL_MODULES = (
+    "main",
+    "src.execution.broker",
+    "src.risk.rules",
+    "src.scheduler",
 )
+
+
+def _resolve_module_paths(dotted_names) -> list[str]:
+    """Repo-relative paths of the given modules, resolved by importing them."""
+    import importlib
+
+    root = REPO_ROOT.resolve()
+    out: list[str] = []
+    for dotted in dotted_names:
+        module = importlib.import_module(dotted)
+        filename = getattr(module, "__file__", None)
+        assert filename, f"{dotted} has no __file__ to guard"
+        path = Path(filename).resolve()
+        assert root in path.parents, f"{dotted} resolved outside the repo: {path}"
+        out.append(str(path.relative_to(root)))
+    return out
+
+
+_ALWAYS_TRADING_CRITICAL = tuple(_resolve_module_paths(_ALWAYS_TRADING_CRITICAL_MODULES))
+
+
+def test_trading_critical_modules_all_resolve():
+    """Canary: every named entry point still imports and still lives in-repo."""
+    assert len(_ALWAYS_TRADING_CRITICAL) == len(_ALWAYS_TRADING_CRITICAL_MODULES)
+    for rel in _ALWAYS_TRADING_CRITICAL:
+        assert (REPO_ROOT / rel).is_file(), f"resolved path does not exist: {rel}"
 
 
 def _pipeline_split_modules() -> list[str]:
@@ -379,10 +445,44 @@ def test_no_db_write_calls_via_shared_database_class():
 # ---------------------------------------------------------------------------
 
 
-def test_read_only_sqlite_connection_uses_mode_ro():
-    text = (API_DIR / "db_reads.py").read_text()
-    assert "mode=ro" in text
-    assert "uri=True" in text
+def test_read_only_sqlite_connection_actually_refuses_writes(tmp_path, monkeypatch):
+    """Execute the helper instead of reading it: a write must RAISE.
+
+    Previously this grepped `db_reads.py` for the string `mode=ro`, which both
+    hard-coded the filename and proved nothing about the connection. Now the
+    real helper opens a real database and SQLite itself is asked to reject the
+    write, which is the property the API layer depends on.
+    """
+    import sqlite3
+
+    from src.api import db_reads
+
+    db_path = tmp_path / "ro_probe.sqlite3"
+    seed = sqlite3.connect(db_path)
+    seed.execute("CREATE TABLE probe (id INTEGER PRIMARY KEY, v TEXT)")
+    seed.execute("INSERT INTO probe (v) VALUES ('seeded')")
+    seed.commit()
+    seed.close()
+
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: db_path)
+    conn = db_reads._connect()
+    try:
+        assert conn.execute("SELECT v FROM probe").fetchone()[0] == "seeded", (
+            "the read-only connection could not even read the seeded row"
+        )
+        with pytest.raises(sqlite3.OperationalError) as excinfo:
+            conn.execute("INSERT INTO probe (v) VALUES ('written')")
+            conn.commit()
+        assert "readonly" in str(excinfo.value).lower(), (
+            f"write failed for the wrong reason: {excinfo.value}"
+        )
+    finally:
+        conn.close()
+
+    check = sqlite3.connect(db_path)
+    rows = check.execute("SELECT COUNT(*) FROM probe").fetchone()[0]
+    check.close()
+    assert rows == 1, "the API's read-only connection managed to write a row"
 
 
 # ---------------------------------------------------------------------------
