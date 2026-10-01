@@ -151,7 +151,15 @@ class _Finder(ast.NodeVisitor):
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if is_broad(node) and _swallows_and_returns_empty(node):
-            qual = ".".join(self.scope) or "<module>"
+            # Key on the FUNCTION name only, not the enclosing class. A
+            # method moving from a mixin to a service class is the same
+            # handler in the same file; keying on the class made every such
+            # rename look like a fresh batch of silent swallows and blocked
+            # the conversion this guard is meant to run alongside. The
+            # ordinal still separates several handlers in one function, and
+            # two same-named functions in one module stay distinguishable
+            # by it.
+            qual = self.scope[-1] if self.scope else "<module>"
             k = (self.rel, qual)
             self.ordinal[k] = self.ordinal.get(k, 0) + 1
             self.hits.append((f"{self.rel}::{qual}#{self.ordinal[k]}", node.lineno))
