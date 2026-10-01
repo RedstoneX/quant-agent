@@ -230,6 +230,8 @@ __all__ = [
     "assess_target_revision",
     "TRIGGER_DERIVATION_CORRECTED",
     "assess_bugfix_backfill",
+    "SEAT_STRUCTURAL_SWEEP",
+    "SWEEP_EVIDENCE",
 ]
 
 # --- Triggers: what legitimises re-deriving -------------------------------
@@ -251,6 +253,24 @@ TRIGGER_TARGET_INSIDE_NOISE = "TARGET_INSIDE_TODAYS_NOISE_FLOOR"
 #: docstring's trigger 3 for why this is the mirror of TRIGGER_LEVEL_BROKEN
 #: and not a new kind of event.
 TRIGGER_WALL_IN_FRONT_OF_TARGET = "STRUCTURAL_WALL_STANDING_IN_FRONT_OF_TARGET"
+
+#: THE WAY IN (item 194). Recorded as the `seat` on every outcome that was
+#: adjudicated because the position is open, not because a seat named it.
+#: `src.models.TargetRevisionFlag` has exactly two fields, symbol and
+#: evidence, and no price, so a seat flag supplies NO input to
+#: `assess_target_revision` — every number it uses is recomputed from bars
+#: or read off the ratified config. Gating the measurement on whether an
+#: LLM happened to mention the symbol therefore does not make the write
+#: safer; it only makes the coverage arbitrary. This label exists so the
+#: record can always say which outcomes came from the unconditional sweep.
+SEAT_STRUCTURAL_SWEEP = "structural_sweep"
+
+#: The evidence string filed for a swept position. Deliberately states the
+#: absence of a seat opinion rather than inventing one.
+SWEEP_EVIDENCE = (
+    "no seat raised this symbol; adjudicated because the position is open "
+    "and its stored target is re-measured from the chart every session"
+)
 
 # --- Outcomes that are NOT a revision, each recorded by name --------------
 

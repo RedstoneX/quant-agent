@@ -23,6 +23,7 @@ confined to intent; math is code.
 
 from __future__ import annotations
 
+import json
 import math
 import logging
 import re
@@ -30,6 +31,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from src.data.levels import (
+    describe_stop_level_basis,
     COVERAGE_UNKNOWN,
     FAULT_NO_ANALYSIS,
     FAULT_NO_ENTRY,
@@ -3313,6 +3315,73 @@ class PortfolioConstructor:
         )
         return STOP_RULE_LEVEL_HONOURED if level is not None else None
 
+    def shipped_stop_level_basis(
+        self,
+        analysis: TechAnalysisResult | None,
+        entry_price: float,
+        stop_loss: float,
+        direction: str = "long",
+    ) -> str | None:
+        """WHAT the shipping stop was based on, as a JSON record. Item 55.
+
+        RECORDING ONLY, FALSIFICATION ONLY, and it changes nothing. It asks
+        `_level_backing_stop` the SAME question `shipped_stop_rule` above
+        already asks, with the same arguments and the same `computed_levels`,
+        and writes down the answer's ingredients: which level, how many times
+        price turned there, how many bars confirm a swing point, how wide the
+        level's zone was, and how far the stop sat from it. No caller reads
+        the result back into a decision — it goes to the `trades` row and
+        stops there.
+
+        The point is that board item 55 ("what IS a structural level") has
+        been argued three times and measured three times to three different
+        answers, because the desk never recorded what its own stops were
+        standing on. This records it. See the falsification-only limit on
+        `src.data.levels.describe_stop_level_basis`: this data may show the
+        current definition is WRONG and may NEVER be swept for a better bar
+        count or zone width.
+
+        Returns None only when the inputs cannot produce an honest record
+        (no analysis, or a non-finite entry/stop) — never a substituted one.
+        A trade whose stop had NO level behind it still gets a record, with
+        `level_backed` false, because that is the control the falsification
+        needs.
+        """
+        if analysis is None:
+            return None
+        try:
+            entry_f = float(entry_price)
+            stop_f = float(stop_loss)
+        except (TypeError, ValueError):
+            return None
+        if (
+            not math.isfinite(entry_f) or entry_f <= 0
+            or not math.isfinite(stop_f) or stop_f <= 0
+        ):
+            return None
+        is_short = direction == "short"
+        level = self._level_backing_stop(analysis, entry_f, stop_f, is_short)
+        record = describe_stop_level_basis(
+            level_price=level,
+            stop_loss=stop_f,
+            entry_price=entry_f,
+            computed_levels=getattr(analysis, "computed_levels", None),
+            computed_level_touches=getattr(analysis, "computed_level_touches", None),
+            is_short=is_short,
+        )
+        # The ATR precondition `shipped_stop_rule` applies is an EXEMPTION
+        # question, not a structure question, so it is recorded rather than
+        # allowed to suppress the record: without it a later reader cannot
+        # tell "no level" from "level, but no ATR to be exempt from".
+        record["shipped_stop_rule"] = self.shipped_stop_rule(
+            analysis, entry_f, stop_f, direction,
+        )
+        record["levels_coverage"] = getattr(analysis, "levels_coverage", None)
+        try:
+            return json.dumps(record, sort_keys=True)
+        except (TypeError, ValueError):
+            return None
+
     @staticmethod
     def _current_weights(
         positions: list[Position], total_value: float,
@@ -3886,6 +3955,13 @@ class PortfolioConstructor:
             stop_rule=self.shipped_stop_rule(
                 analysis, entry_price, stop_loss, target.direction,
             ),
+            # Item 55 RECORDING, no behaviour: the same answer as stop_rule
+            # above, with the ingredients that produced it, so the desk can
+            # later ask what its levels actually did. See
+            # TradeDecision.stop_level_basis.
+            stop_level_basis=self.shipped_stop_level_basis(
+                analysis, entry_price, stop_loss, target.direction,
+            ),
             # Carried for the SAME reason as stop_rule: so the execution
             # stage's own reward:risk belt does not kill an order that was
             # deliberately permitted below the floor. See
@@ -4092,6 +4168,13 @@ class PortfolioConstructor:
             # Carried so the execution stage does not re-widen a stop this
             # constructor deliberately honoured at a computed level.
             stop_rule=self.shipped_stop_rule(
+                analysis, entry_price, stop_loss, target.direction,
+            ),
+            # Item 55 RECORDING, no behaviour: the same answer as stop_rule
+            # above, with the ingredients that produced it, so the desk can
+            # later ask what its levels actually did. See
+            # TradeDecision.stop_level_basis.
+            stop_level_basis=self.shipped_stop_level_basis(
                 analysis, entry_price, stop_loss, target.direction,
             ),
             # Carried for the SAME reason as stop_rule: so the execution
