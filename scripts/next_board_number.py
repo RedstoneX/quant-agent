@@ -40,6 +40,19 @@ for it has to acknowledge what they are getting, and the number it prints
 is labelled UNCHECKED in the output itself so the label travels with the
 number when it is pasted somewhere else.
 
+THE BOARD IS READ FROM `origin/main`, NOT FROM THE WORKING TREE. The board
+is shared state and the working tree is not: the main development checkout
+on this box is shared between sessions and nobody pulls it. On 2026-10-01
+it was 120 commits behind and two agents in parallel were both handed 222,
+for unrelated defects, because that number had already landed on the board
+before either of them asked. The open-pull-request half of this check
+could not catch it — that half looks FORWARD at numbers claimed on
+branches. So the shared ref is read too, with `git show` and never a
+`git fetch`, and the local copy still counts so an item written here but
+not yet pushed keeps its number. An unreadable ref falls back to the
+working tree alone and SAYS SO, because an agent blocked here cannot file
+its item at all.
+
 Usage:
     scripts/next_board_number.py
     scripts/next_board_number.py --work-md docs/WORK.md
@@ -65,17 +78,24 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts.board_numbers import (  # noqa: E402
     OpenPrClaims,
     read_open_pr_claims,
+    read_ref_work_md,
     retired_item_numbers,
     next_free_number,
 )
 
 DEFAULT_WORK_MD = "docs/WORK.md"
+DEFAULT_BOARD_REF = "origin/main"
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--work-md", default=DEFAULT_WORK_MD)
+    parser.add_argument(
+        "--board-ref", default=DEFAULT_BOARD_REF,
+        help="The shared ref holding the authoritative board (default: "
+             "origin/main). Read with `git show` only - never fetched.",
+    )
     parser.add_argument(
         "--accept-unchecked-number", action="store_true",
         help="Skip the open-pull-request read and accept a number that "
@@ -96,12 +116,27 @@ def main(argv: list[str] | None = None) -> int:
               f"{retired.error}", file=sys.stderr)
         return 3
 
+    # THE SHARED COPY OF A SHARED FILE. See `read_ref_work_md` for the
+    # collision this closes: the working tree alone cannot see a number
+    # that landed on the board before this agent asked.
+    ref_board = read_ref_work_md(work_md, ref=args.board_ref)
+    extra_texts: list[str] = []
+    if ref_board.text is not None:
+        ref_retired = retired_item_numbers(ref_board.text)
+        if ref_retired.error:
+            ref_board.text = None
+            ref_board.problem = ("its retired-numbers line could not be "
+                                 f"read: {ref_retired.error}")
+        else:
+            extra_texts.append(ref_board.text)
+
     unchecked = args.accept_unchecked_number
     claims: OpenPrClaims | None = None
     if not unchecked:
         claims = read_open_pr_claims()
 
-    result = next_free_number(text, pr_claims=claims)
+    result = next_free_number(text, pr_claims=claims,
+                              extra_texts=extra_texts)
 
     # FAIL CLOSED. The caller did not opt out, and the half of the check
     # that catches the parallel-agent race could not run. Printing the
@@ -125,6 +160,14 @@ def main(argv: list[str] | None = None) -> int:
     label = " (UNCHECKED)" if unchecked else ""
     print(f"Next free board item number{label}: {result.next_number}")
     print(f"  (highest number known to this check: {result.highest_known})")
+    if extra_texts:
+        print(f"  Board read from {ref_board.ref} (the shared, authoritative "
+              "copy) AND from the working tree.")
+    else:
+        print(f"  Board read from the WORKING TREE ONLY - {ref_board.ref} "
+              f"could not be read ({ref_board.problem}). A shared working "
+              "tree can sit many commits behind, so a number that already "
+              "landed on the board may not be visible here.")
     if unchecked:
         print("  UNCHECKED: open pull requests were NOT read "
               "(--accept-unchecked-number), so another agent may already "

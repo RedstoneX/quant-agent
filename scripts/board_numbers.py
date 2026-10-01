@@ -284,7 +284,79 @@ class NextNumberResult:
     open_pr_problem: str | None = None
 
 
+@dataclass
+class RefBoard:
+    """`docs/WORK.md` as the SHARED copy of the board has it, or why not.
+
+    THE FAILURE THIS CLOSES. The board is shared state: every agent on this
+    box allocates item numbers out of one sequence. The working tree is NOT
+    shared state — the main development checkout is shared between sessions
+    and nobody pulls it, so it sits arbitrarily far behind. On 2026-10-01 it
+    was 120 commits behind and two agents working in parallel were both
+    handed 222, for unrelated defects, because the number was already taken
+    on `main` before either of them asked and nothing in the check could see
+    it. The open-pull-request half of the check could not help: that half
+    looks FORWARD at numbers claimed on branches, and this number had
+    already landed.
+
+    So the authoritative copy of a shared file is the shared ref, not the
+    local one. Deliberately `git show` and nothing else: NO `git fetch`, so
+    this stays cheap and never reaches the network. A stale `origin/main`
+    is still enormously better than a stale working tree, because it is
+    advanced by every `git fetch` anything on the box runs, while the
+    working tree only moves when somebody pulls it on purpose.
+
+    It fails SOFT, unlike the open-PR half. A worktree with no `origin`
+    remote, or an `origin/main` that was never fetched, is a normal
+    situation; blocking there would stop an agent filing its item at all,
+    which is a worse outcome than the local read the tool already did
+    before this existed. The reason is always stated out loud.
+    """
+    text: str | None = None
+    ref: str = "origin/main"
+    problem: str | None = None
+
+
+def read_ref_work_md(work_md: Path, ref: str = "origin/main",
+                      run=None) -> RefBoard:
+    """Read `work_md` as `ref` has it. Never raises, never fetches.
+
+    `work_md` is resolved to its path INSIDE its own repository, so a
+    `--work-md` pointing at a fixture outside any checkout simply reports
+    that it is not in a repository and the caller falls back.
+    """
+    import subprocess
+
+    if run is None:
+        def run(args):
+            return subprocess.run(args, capture_output=True, text=True,
+                                  timeout=30)
+
+    work_md = Path(work_md)
+    directory = str(work_md.resolve().parent)
+    try:
+        prefix = run(["git", "-C", directory, "rev-parse", "--show-prefix"])
+    except Exception as exc:  # pragma: no cover - git missing entirely
+        return RefBoard(ref=ref, problem=f"could not run git: {exc}")
+    if prefix.returncode != 0:
+        detail = (prefix.stderr or "").strip().splitlines()
+        return RefBoard(ref=ref, problem=(
+            detail[0] if detail else f"{work_md} is not inside a git repository"))
+
+    relpath = prefix.stdout.strip() + work_md.name
+    try:
+        shown = run(["git", "-C", directory, "show", f"{ref}:{relpath}"])
+    except Exception as exc:  # pragma: no cover - git missing entirely
+        return RefBoard(ref=ref, problem=f"could not run git: {exc}")
+    if shown.returncode != 0:
+        detail = (shown.stderr or "").strip().splitlines()
+        return RefBoard(ref=ref, problem=(
+            detail[0] if detail else f"could not read {ref}:{relpath}"))
+    return RefBoard(text=shown.stdout, ref=ref)
+
+
 def next_free_number(work_md_text: str, pr_claims: OpenPrClaims | None = None,
+                      extra_texts: list[str] | None = None,
                       ) -> NextNumberResult:
     """The lowest number that is higher than every number this module knows
     about anywhere: live on the board, retired (either scheme — a number
@@ -293,9 +365,14 @@ def next_free_number(work_md_text: str, pr_claims: OpenPrClaims | None = None,
     convention (the retired line's own prose picks the next integer after
     the highest allocated, not the lowest unused gap).
     """
-    live = live_item_numbers(work_md_text)
-    retired = retired_item_numbers(work_md_text)
-    known = set(live) | retired.all_queue | set(retired.gate)
+    known: set[int] = set()
+    # Every copy of the board counts, and a number is taken if ANY of them
+    # has it: the shared ref carries what has already landed, the local
+    # copy carries an item this agent has written but not yet pushed.
+    for text in [work_md_text, *(extra_texts or [])]:
+        retired = retired_item_numbers(text)
+        known |= set(live_item_numbers(text))
+        known |= retired.all_queue | set(retired.gate)
     checked_open_prs = pr_claims is not None and pr_claims.problem is None
     if pr_claims is not None:
         known |= pr_claims.all_claimed
