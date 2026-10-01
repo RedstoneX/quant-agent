@@ -4033,26 +4033,49 @@ class Database:
     TARGET_REVISION_KIND = "target_revision"
 
     def save_target_level_break(
-        self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+        self, *, run_id: str, symbol: str, raw_broken: bool | None,
+        bar_date: str, raw_reach: bool | None = None,
+        raw_wall: bool | None = None,
     ) -> int:
-        """Record whether the close dated `bar_date` had cleared this
-        position's target level, so a LATER, DIFFERENT bar_date's read can
-        require it to still be cleared before treating the break as
-        confirmed."""
+        """Record the close dated `bar_date`'s RAW trigger state, so a
+        LATER, DIFFERENT bar_date's read can require the same condition to
+        still hold before treating it as confirmed.
+
+        THREE FLAGS, ONE ROW, ONE MECHANISM (item 194). `raw_broken` is the
+        original: the level the target was measured against was closed
+        through. `raw_reach` and `raw_wall` are the other two triggers' raw
+        state, carried in the SAME row under the same `bar_date` key so all
+        three are confirmed by one definition of "the prior trading day
+        agreed" rather than three. A flag omitted or passed None is written
+        as absent and read back as False — a question that could not be
+        asked can never be half of a confirmation.
+        """
+        payload: dict = {"bar_date": str(bar_date)}
+        for key, val in (
+            ("raw_broken", raw_broken),
+            ("raw_reach", raw_reach),
+            ("raw_wall", raw_wall),
+        ):
+            if val is not None:
+                payload[key] = bool(val)
         return self.insert_specialist_evidence(
             run_id=run_id, agent_name="risk_manager",
             kind=self.TARGET_LEVEL_BREAK_KIND, scope="symbol",
             symbol=symbol.upper(),
-            evidence_json=json.dumps({
-                "raw_broken": bool(raw_broken), "bar_date": str(bar_date),
-            }),
+            evidence_json=json.dumps(payload),
         )
 
     def get_prior_target_level_break(
         self, symbols, *, today_bar_date: str, exclude_run_id: str | None = None,
+        flag: str = "raw_broken",
     ) -> dict[str, bool]:
-        """The most recent target-level break flag per symbol from a close
-        dated STRICTLY BEFORE `today_bar_date`.
+        """The most recent target-revision trigger flag per symbol from a
+        close dated STRICTLY BEFORE `today_bar_date`.
+
+        `flag` picks which of the three raw states written by
+        `save_target_level_break` to read; the row selection, the
+        strictly-earlier bar_date rule and the missing-row rule are
+        identical for all three.
 
         A symbol absent from the result has no qualifying prior-day read, and
         callers must read that as False — a missing row can never manufacture
@@ -4061,13 +4084,14 @@ class Database:
         return self._prior_break_flags(
             symbols, kind=self.TARGET_LEVEL_BREAK_KIND,
             today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
+            flag=flag,
         )
 
     def _prior_break_flags(
         self, symbols, *, kind: str, today_bar_date: str,
-        exclude_run_id: str | None = None,
+        exclude_run_id: str | None = None, flag: str = "raw_broken",
     ) -> dict[str, bool]:
-        """Shared body of the two prior-close break reads."""
+        """Shared body of the prior-close break reads."""
         wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
         if not wanted:
             return {}
@@ -4080,24 +4104,50 @@ class Database:
         if exclude_run_id:
             sql += " AND run_id != ?"
             params.append(exclude_run_id)
-        sql += " ORDER BY timestamp DESC, id DESC LIMIT 500"
+        # KEYED ON THE CLOSE, NOT ON THE LAST ROW WRITTEN.
+        #
+        # This used to take the most recent row by timestamp. That is not
+        # "the prior trading day's close": several intraday cycles can
+        # re-read one close, and whichever of them happened to run last
+        # then decided the flag for the next day. The confirmation is a
+        # statement about a CLOSE, so it is now keyed on `bar_date` — the
+        # latest bar date strictly before today's that actually ANSWERED
+        # this question — and, among several readings of that same close,
+        # the EARLIEST recorded one (lowest id). Earliest, because it is
+        # the reading taken closest to the close itself and because it is
+        # the one choice that does not depend on how many cycles ran.
+        #
+        # A row that does not carry `flag` at all is a row that could not
+        # answer this question, and is SKIPPED rather than read as False —
+        # otherwise a degraded cycle's silence would erase an answer.
+        #
+        # [MEASURED 2026-10-01, production DB read-only] the stop-side
+        # twin holds 6 rows, exactly one per symbol+bar_date, and the
+        # target-side kind holds none at all, so no production row set is
+        # affected by this change today; it is a correctness fix against
+        # the intraday re-read, not a repair of an observed wrong answer.
+        sql += " ORDER BY id ASC LIMIT 500"
         with self._lock:
             rows = self.conn.execute(sql, tuple(params)).fetchall()
-        latest: dict[str, bool] = {}
+        best: dict[str, tuple[str, bool]] = {}
         for row in rows:
             row = dict(row)
             sym = row["symbol"]
-            if sym in latest:
-                continue
             try:
                 payload = json.loads(row.get("evidence_json") or "{}")
                 bar_date = payload.get("bar_date")
             except (TypeError, ValueError):
                 continue
-            if not bar_date or bar_date >= today_bar_date:
+            if not bar_date or str(bar_date) >= str(today_bar_date):
                 continue
-            latest[sym] = bool(payload.get("raw_broken"))
-        return latest
+            if flag not in payload:
+                continue
+            prior = best.get(sym)
+            # Rows arrive id-ascending, so the first one seen for a given
+            # bar date wins it; a strictly later bar date replaces it.
+            if prior is None or str(bar_date) > prior[0]:
+                best[sym] = (str(bar_date), bool(payload.get(flag)))
+        return {sym: val for sym, (_bd, val) in best.items()}
 
     def record_target_revision(
         self, *, run_id: str, symbol: str, code: str, seat: str,

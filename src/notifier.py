@@ -178,7 +178,7 @@ def _clip_text(text: str, max_chars: int, marker: str = " …") -> str:
 _MALFORMED_NUMBER_MARKER = "[number garbled — removed]"
 
 # Scope note, so this is never confused with the REJECTED "prompt-text
-# number scanner" (docs/BOARD_NOTES.md item 99): that idea was scanning
+# number scanner" (docs/board_notes/ item 99): that idea was scanning
 # ~1,825 numeric tokens inside PROMPT INPUT (config/prompts/*.md) — mostly
 # dates and list numbering, hopeless signal-to-noise, and explicitly not
 # built. This is the opposite direction: it scans the LLM's OUTPUT prose
@@ -2726,6 +2726,157 @@ def _append_company_identities(lines: list[str], symbols: list) -> None:
         lines.extend(identities)
 
 
+def describe_target_revisions(result: dict | None) -> list[str]:
+    """The session's take-profit revisions, in the owner's words.
+
+    WHY THIS EXISTS (item 194). The desk's standing rule is that every buy,
+    sell or hold states its real reason, and a bare number is a defect. A
+    target revision changes the number the desk quotes the owner for a
+    position he already holds, and until now it reached the dashboard
+    (`src/api/holding_why.py`) and Telegram nowhere at all — so for the
+    owner it did not happen.
+
+    Each line says WHAT CHANGED and WHY, never just the new number: the
+    structural event that legitimised asking (a ceiling broken, a ceiling
+    grown, today's volatility putting the old number out of reach), the
+    direction of travel, and the chart basis the new number was measured
+    from. Refusals and faults are summarised as a count rather than listed:
+    a refusal is the normal outcome on most held names every session, and
+    the owner's attention belongs on the ones that moved.
+
+    Nothing here changes what is sent to the broker. The revised target
+    places no order, and the alignment exit remains the only way a position
+    is closed on a thesis.
+    """
+    rows = [r for r in ((result or {}).get("target_revisions") or [])
+            if isinstance(r, dict)]
+    if not rows:
+        return []
+    applied = [r for r in rows if r.get("applied")]
+    pending = [
+        r for r in rows
+        if not r.get("applied")
+        and str(r.get("code") or "").upper().endswith("_PENDING_CONFIRMATION")
+    ]
+    if not applied and not pending:
+        return []
+    lines: list[str] = []
+    if not applied:
+        lines.append("🎯 Target: no revision applied this session")
+    if applied:
+        lines.append(f"🎯 Target revised: {len(applied)} position(s)")
+    for row in applied:
+        symbol = str(row.get("symbol") or "?").upper()
+        prior = row.get("prior_price")
+        new = row.get("new_price")
+        move = ""
+        try:
+            if prior and new:
+                direction = "up" if float(new) > float(prior) else "down"
+                move = (
+                    f"${float(prior):,.2f} → ${float(new):,.2f} "
+                    f"({direction})"
+                )
+        except (TypeError, ValueError):
+            move = ""
+        why = _target_revision_reason(str(row.get("trigger") or ""))
+        basis = str(row.get("basis") or "").strip()
+        text = f"   • {symbol}"
+        if move:
+            text += f" {move}"
+        if why:
+            text += f" — {why}"
+        if basis:
+            text += f"; measured from the chart as {basis}"
+        lines.append(_clip_text(text, 420))
+    if pending:
+        # A PENDING CONFIRMATION IS A HOLD ON A STALE NUMBER, caused by
+        # this desk's own brake, so it is named rather than counted. The
+        # owner is still being quoted a target the desk has itself stopped
+        # believing, and a bare count cannot tell him WHICH position that
+        # is. These are listed even on a session where nothing was
+        # applied, which is now the common case.
+        lines.append(
+            f"   ⏸️ {len(pending)} position(s) on a target the desk has "
+            f"stopped believing, waiting one more close to confirm:"
+        )
+        for row in pending:
+            symbol = str(row.get("symbol") or "?").upper()
+            prior = row.get("prior_price")
+            quoted = ""
+            try:
+                if prior:
+                    quoted = f" (still quoted ${float(prior):,.2f})"
+            except (TypeError, ValueError):
+                quoted = ""
+            why = _pending_confirmation_reason(str(row.get("code") or ""))
+            lines.append(_clip_text(f"      • {symbol}{quoted} — {why}", 420))
+    held = len(rows) - len(applied) - len(pending)
+    if held:
+        lines.append(
+            f"   ({held} other position(s) measured, target unchanged)"
+        )
+    lines.append(
+        "   The target is a quoted number, not a sell order — the desk "
+        "still exits only when the trend itself is over."
+    )
+    return lines
+
+
+def _pending_confirmation_reason(code: str) -> str:
+    """Plain words for why a revision the desk wanted to make is being held
+    one more session. Unknown codes return the code rather than silence."""
+    c = (code or "").strip().upper()
+    if c == "REFUSAL_WALL_PENDING_CONFIRMATION":
+        return (
+            "a new ceiling appeared between the buy price and the target on "
+            "today's close; the desk waits for a second day's close to agree "
+            "before moving the number"
+        )
+    if c == "REFUSAL_REACH_PENDING_CONFIRMATION":
+        return (
+            "today's daily range puts the target out of reach for the holding "
+            "period; the desk waits for a second day's close to agree before "
+            "moving the number"
+        )
+    if c == "REFUSAL_BREAK_PENDING_CONFIRMATION":
+        return (
+            "the ceiling this target was measured against was closed through "
+            "today; the desk waits for a second day's close to agree before "
+            "moving the number"
+        )
+    return c
+
+
+def _target_revision_reason(trigger: str) -> str:
+    """Plain words for why a target was re-measured. Unknown codes return
+    the code itself rather than silence — an unexplained revision must read
+    as unexplained, not as if there were no reason."""
+    code = (trigger or "").strip().upper()
+    if not code:
+        return ""
+    if code == "TARGET_LEVEL_BROKEN_CONFIRMED":
+        return (
+            "the ceiling this target was measured against has been closed "
+            "through on two consecutive days, so it is not a ceiling any more"
+        )
+    if code == "STRUCTURAL_WALL_STANDING_IN_FRONT_OF_TARGET":
+        return (
+            "a new ceiling has built up between the buy price and the old "
+            "target, confirmed on two consecutive days — the old number had "
+            "a wall in front of it"
+        )
+    if code == "TARGET_BEYOND_TODAYS_REACH":
+        return (
+            "this stock's daily range has shrunk enough that the old target "
+            "is no longer reachable inside the holding period, on two "
+            "consecutive days' readings"
+        )
+    if code == "TARGET_DERIVATION_BUG_CORRECTED":
+        return "the desk corrected a fault in how the original number was worked out"
+    return f"trigger {code}"
+
+
 def _append_trade_session_body(lines: list[str], result: dict) -> None:
     # audit round 2: "analysis_error" from a trading session means the PM
     # decision was never produced (LLM output unparseable / analysis step
@@ -2832,6 +2983,11 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
             lines.append("orders: 0")
 
     _new_block(lines, _render_orders)
+
+    def _render_target_revisions(lines: list[str]) -> None:
+        lines.extend(describe_target_revisions(result))
+
+    _new_block(lines, _render_target_revisions)
 
     from src import evidence_gate
     data_status = result.get("data_status") or {}

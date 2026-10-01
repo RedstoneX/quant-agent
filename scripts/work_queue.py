@@ -266,7 +266,7 @@ def build_queue(work_md: Path | None = None,
     never a silently empty queue that reads as "all done".
     """
     work_md = work_md or (REPO_ROOT / "docs" / "WORK.md")
-    board_notes = board_notes or (REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    board_notes = board_notes or (REPO_ROOT / "docs" / "board_notes")
     queue = Queue()
 
     try:

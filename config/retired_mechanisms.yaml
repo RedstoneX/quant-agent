@@ -65,7 +65,7 @@ retired:
       - src/retired_mechanisms.py
       - docs/INCIDENT_HISTORY.md
       - docs/WORK.md
-      - docs/BOARD_NOTES.md
+      - docs/board_notes/
       - tests/test_retired_mechanisms.py
 
   - name: the flat -3% daily-loss threshold
@@ -91,7 +91,7 @@ retired:
       - src/retired_mechanisms.py
       - docs/INCIDENT_HISTORY.md
       - docs/WORK.md
-      - docs/BOARD_NOTES.md
+      - docs/board_notes/
       - tests/test_retired_mechanisms.py
 
   - name: correlation breach as an exit trigger
@@ -113,7 +113,7 @@ retired:
       - src/retired_mechanisms.py
       - docs/INCIDENT_HISTORY.md
       - docs/WORK.md
-      - docs/BOARD_NOTES.md
+      - docs/board_notes/
       - tests/test_retired_mechanisms.py
 
   - name: the account-level loss-alarm halt and the rolling-return BUY brake
@@ -184,7 +184,7 @@ retired:
       - src/retired_mechanisms.py
       - docs/INCIDENT_HISTORY.md
       - docs/WORK.md
-      - docs/BOARD_NOTES.md
+      - docs/board_notes/
       - tests/test_retired_mechanisms.py
 
   - name: the automatic 25% oversized base-allocation cut
@@ -216,7 +216,7 @@ retired:
       - src/retired_mechanisms.py
       - docs/INCIDENT_HISTORY.md
       - docs/WORK.md
-      - docs/BOARD_NOTES.md
+      - docs/board_notes/
       - tests/test_retired_mechanisms.py
 
   - name: the noise floor as a target-level filter ("not a destination")
@@ -248,7 +248,7 @@ retired:
       - src/retired_mechanisms.py
       - docs/INCIDENT_HISTORY.md
       - docs/WORK.md
-      - docs/BOARD_NOTES.md
+      - docs/board_notes/
       - tests/test_retired_mechanisms.py
 
   - name: sweep-vehicle liquidation before a BUY
@@ -277,7 +277,7 @@ retired:
       - src/retired_mechanisms.py
       - docs/INCIDENT_HISTORY.md
       - docs/WORK.md
-      - docs/BOARD_NOTES.md
+      - docs/board_notes/
       - tests/test_retired_mechanisms.py
 
 # ===========================================================================

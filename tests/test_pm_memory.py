@@ -715,7 +715,7 @@ def test_pm_renders_weight_pct_and_drift_flag():
         assert "⚠️DRIFT" not in msft_line
 
 
-def test_clamp_queued_earnings_buys_caps_allocation():
+def test_queued_earnings_buys_are_refused_not_capped():
     from src.models import TradeDecision
     from src.pipeline import TradingPipeline
 
@@ -736,11 +736,13 @@ def test_clamp_queued_earnings_buys_caps_allocation():
          "form_type": "10-Q", "filing_date": "2026-04-18"},
         {"symbol": "MSFT", "queued": False, "analysis": {"investment_implications": {}}},
     ]
-    out = TradingPipeline._clamp_queued_earnings_buys(decisions, earnings_results)
-    nvda = next(d for d in out if d.symbol == "NVDA")
+    out = TradingPipeline._refuse_queued_earnings_buys(decisions, earnings_results)
     msft = next(d for d in out if d.symbol == "MSFT")
     aapl = next(d for d in out if d.symbol == "AAPL")
-    assert nvda.allocation_pct == 5.0  # capped
+    # Board item 186 (2026-10-01): an unread filing is an UNCONVICTED earnings
+    # seat, and doctrine refuses an entry the seats are not right about, so the
+    # BUY is gone rather than shrunk to a 5%-of-book figure nothing sourced.
+    assert [d.symbol for d in out if d.action == "BUY"] == ["MSFT"]
     assert msft.allocation_pct == 8.0   # untouched (no queued flag)
     assert aapl.allocation_pct == 100   # SELL untouched
 
@@ -874,7 +876,7 @@ def test_earnings_record_failure_abandons_after_max_attempts(tmp_path):
            provider.manifest["NVDA_10-Q"].get("abandoned") is not True
 
 
-def test_clamp_queued_earnings_noop_when_nothing_queued():
+def test_queued_earnings_refusal_noop_when_nothing_queued():
     from src.models import TradeDecision
     from src.pipeline import TradingPipeline
 
@@ -886,7 +888,7 @@ def test_clamp_queued_earnings_noop_when_nothing_queued():
     # Only fully-analyzed entries
     earnings_results = [{"symbol": "NVDA", "queued": False,
                          "analysis": {"investment_implications": {}}}]
-    out = TradingPipeline._clamp_queued_earnings_buys(decisions, earnings_results)
+    out = TradingPipeline._refuse_queued_earnings_buys(decisions, earnings_results)
     assert out[0].allocation_pct == 12.0
 
 
@@ -972,9 +974,17 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
     assert "Technology long 30%" in out
     # The candidate set is described by its SECTOR COMPOSITION, not by a
     # projected weight.
-    assert "3 BUY-rated candidate(s) on offer, by sector: Technology 3" in out
+    assert (
+        "3 BUY-rated candidate(s) on offer, by sector: Technology 3 of 3 "
+        "(100% of the candidate set: NVDA, AMD, AAPL)"
+    ) in out
     # Each name carries its OWN stop distance and stop-implied ceiling.
-    assert "NVDA stop -5.0% → ≤100%" in out
+    # The stop implies 100%; what is PRINTED is clamped to the 65%
+    # single-name ceiling, because an unreachable number beside a sector
+    # label is an invitation to add up.
+    assert "NVDA stop -5.0% → ≤65%" in out
+    assert "board item\n    222" not in out
+    assert "which limit actually binds is unsettled" in out
     # And the preview says, in the prompt, that it cannot project a weight.
     assert "CANNOT tell you what these candidates would weigh" in out
     # Exactly one invested figure: the measured, held one.
@@ -1009,6 +1019,8 @@ def test_projected_portfolio_does_not_warn_below_the_configured_target(tmp_path)
     assert "concentration target" not in out
     # Wide stops imply small ceilings: 5% risk budget x 100/50 = 10%.
     assert _preview_ceilings(out) == {"NVDA": 10.0, "AMD": 10.0, "AAPL": 10.0}
+    # Each sector's share OF THE CANDIDATE SET: measured, not projected.
+    assert "Technology 3 of 3 (100% of the candidate set" in out
 
 
 def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
@@ -1109,6 +1121,79 @@ def test_preview_ceiling_is_not_independent_of_the_stop():
     )
     # Wider stop, lower ceiling: the direction matters, not just change.
     assert sizes[1] < sizes[0]
+
+
+def test_preview_ceiling_is_clamped_to_something_the_desk_could_reach():
+    """ITEM 221, adversary 2026-10-01. An UNCLAMPED stop-implied ceiling
+    prints figures like 247% beside a sector label, which is the rejected
+    225% arithmetic in another costume: prose saying "not a weight" is no
+    defence against a reader who joins the composition line to the ceiling
+    line. Nothing printed may exceed the single-name notional ceiling."""
+    pipeline = _sizing_pipeline()
+    tight = {"NVDA": 98.0, "AMD": 97.0, "AAPL": 99.0}
+    with patch("src.execution.broker._get_sector"):
+        out = pipeline._build_projected_portfolio(
+            [], _tech_buy_analyses(tight), total_value=10000,
+        )
+    ceilings = _preview_ceilings(out)
+    assert ceilings == {"NVDA": 65.0, "AMD": 65.0, "AAPL": 65.0}
+    assert max(ceilings.values()) <= 65.0
+
+
+def test_preview_dials_come_from_the_constructors_own_defaults():
+    """ITEM 221 criterion 2, adversary 2026-10-01. The preview's two sizing
+    dials must not be flat literals at the call site: the number-source
+    scanner reads definition sites, not positional call arguments, so a
+    literal here is a tracked number that became untracked and can desync
+    from the constructor the next time the default moves."""
+    import ast
+    import inspect
+    from src.pipeline import TradingPipeline
+    from src.portfolio_constructor import ConstructorConfig
+    body = inspect.getsource(TradingPipeline._build_projected_portfolio)
+    tree = ast.parse(textwrap.dedent(body))
+    dial = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "_dial"
+    )
+    assert not [
+        n for n in ast.walk(dial)
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float))
+        and not isinstance(n.value, bool) and n.value != 0
+    ], "a flat sizing literal is back in the preview's dial reader"
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline._last_symbol_sectors = {}
+    with patch("src.execution.broker._get_sector"):
+        out = pipeline._build_projected_portfolio(
+            [], _tech_buy_analyses({"NVDA": 50.0, "AMD": 50.0,
+                                    "AAPL": 50.0}),
+            total_value=10000,
+        )
+    # No constructor attached, so the fallback runs: it must reproduce
+    # ConstructorConfig's OWN declared defaults.
+    expected = ConstructorConfig().risk_budget_pct * 100 / 50
+    assert _preview_ceilings(out)["NVDA"] == pytest.approx(round(expected))
+    assert f"{ConstructorConfig().max_position_pct:.0f}% single-name" in out
+
+
+def test_preview_states_each_sectors_share_of_the_candidate_set():
+    """ITEM 221, ruling 2026-10-01. Six candidates in one sector against an
+    empty book must not read as a bare count: the PM's ordering and dropping
+    decision needs a measured forward fact, and the share OF THE CANDIDATE
+    SET is one — true of what is on offer, no projection, no threshold."""
+    pipeline = _sizing_pipeline()
+    analyses = _tech_buy_analyses({"NVDA": 90.0, "AMD": 90.0, "AAPL": 90.0})
+    pipeline._last_symbol_sectors = {
+        "NVDA": "Technology", "AMD": "Technology", "AAPL": "Energy",
+    }
+    with patch("src.execution.broker._get_sector"):
+        out = pipeline._build_projected_portfolio(
+            [], analyses, total_value=10000,
+        )
+    assert "Technology 2 of 3 (67% of the candidate set: NVDA, AMD)" in out
+    assert "Energy 1 of 3 (33% of the candidate set: AAPL)" in out
+    # No threshold, no warning level on the candidate composition.
+    assert "⚠" not in out
 
 
 def test_preview_claims_no_projected_sector_weight():

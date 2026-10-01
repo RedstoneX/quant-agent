@@ -20,7 +20,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: engine actually reads. A marker in any of these is a live wrong fact.
 GUARDED = (
     "docs/WORK.md",
-    "docs/BOARD_NOTES.md",
     "docs/INCIDENT_HISTORY.md",
     "docs/OUTCOME.md",
     "config/settings.yaml",
@@ -30,6 +29,13 @@ GUARDED = (
 #: so a document that legitimately DISCUSSES conflict markers (this file's own
 #: docstring, for instance) does not trip it.
 MARKERS = ("<<<<<<< ", "||||||| ", ">>>>>>> ")
+
+
+#: The board notes are one file per item; every one of them is guarded.
+GUARDED += tuple(
+    f"docs/board_notes/{p.name}"
+    for p in sorted((REPO_ROOT / "docs" / "board_notes").glob("*.md"))
+)
 
 
 @pytest.mark.parametrize("rel", GUARDED)

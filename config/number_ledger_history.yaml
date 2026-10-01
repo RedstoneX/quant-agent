@@ -947,3 +947,44 @@ changes:
       arbitrary number replaced it -- the two fallbacks the preview reads
       when no constructor is attached are `ConstructorConfig`'s own existing
       ratified defaults, already carried elsewhere in the ledger.
+
+  - delta: -1
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 186: -1 for
+      `src.pipeline.TradingPipeline._clamp_queued_earnings_buys(max_pct)`
+      (5). The number is RETIRED BY REFORMULATION, not re-derived and not
+      re-labelled: the 5%-of-book weight cap on a BUY whose just-filed report
+      is queued and unread no longer exists, because an unread filing is an
+      UNCONVICTED earnings seat and standing doctrine (owner ruling
+      2026-09-25) already refuses an entry the seats are not right about.
+      The gate now refuses the BUY and has no percentage in it at all, so the
+      parameter default it was read from is gone from the source and the row
+      has no site left to describe. The owner's 2026-09-30 ruling — a global
+      constant governing risk is a defect to remove, not an appetite to
+      answer — is what made reformulation the required move rather than a
+      third derivation attempt. The two failed derivations stay recorded in
+      docs/BOARD_NOTES.md (item 186) so neither is tried again.
+  - date: 2026-10-01
+    delta: 0
+    why: >-
+      CORRECTION to the 2026-10-01 entry above, which described a design
+      that was REJECTED before it shipped. That entry says the preview
+      "now sizes each candidate through `risk_budget_allocation_pct` ...
+      from that candidate's own entry and stop". It does not. Sizing every
+      candidate at the largest size its own stop permits was built,
+      measured and thrown out the same day: with this desk's ordinary stop
+      widths it reaches the single-name ceiling and projects sector weights
+      in the hundreds of percent, which is a more confident fiction than
+      the flat slice it replaced. What SHIPPED is that the preview states
+      no projected weight at all -- it reports the held book's measured
+      sector weights, each sector's share OF THE CANDIDATE SET, and per
+      candidate its own stop distance with the stop-implied ceiling CLAMPED
+      to the single-name notional ceiling, as a cap on one name that is
+      never summed. The deletion of the flat `default_buy_pct` row and its
+      -1 delta stand unchanged and are not re-counted here; this entry
+      moves no number, it corrects the permanent record of why the row
+      went. The preview's two remaining dials are read from
+      `ConstructorConfig`'s own declared field defaults, not from literals
+      at the call site, so no untracked flat number replaced the deleted
+      one.

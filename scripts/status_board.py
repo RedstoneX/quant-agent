@@ -16,7 +16,7 @@ So this board records nothing. It reads `docs/WORK.md` — the backlog that is t
 single source of truth for what this desk is doing — and `docs/phases.yaml`,
 where each phase carries mechanically checkable evidence rules. It re-evaluates
 every rule against the current tree, reads live state off the production box and
-its database, and renders what it found. A separate file, `docs/BOARD_NOTES.md`,
+its database, and renders what it found. A separate file, `docs/board_notes/`,
 supplies the owner-facing prose rendered alongside each item — see "The prose
 problem" below for why that is a second file rather than a section of WORK.md.
 
@@ -59,11 +59,11 @@ The prose problem, and the convention that solves it
 A plain-language explanation, a real-world example and a recommendation cannot
 be derived from the code — they are prose, and somebody has to write them.
 Putting them in this script would recreate exactly the hand-maintained document
-this board exists to replace. So they live in `docs/BOARD_NOTES.md`, keyed to
+this board exists to replace. So they live in `docs/board_notes/`, keyed to
 the item they describe by its NUMBER and section — never by its title, which
 can be reworded without warning.
 
-`docs/BOARD_NOTES.md` is deliberately a file of its own, separate from
+`docs/board_notes/` is deliberately a file of its own, separate from
 `docs/WORK.md`. `docs/WORK.md` stays the agent-facing source of truth for what
 an item IS — its number, title, status and ordering, everything this script
 re-derives — and is mechanically capped at 100,000 bytes (see
@@ -76,7 +76,7 @@ the PM test gate, or a pending decision's due date) is the only thing that
 connects the two files — see `load_board_notes`, `QueueItem.ref` and
 `PendingDecision.ref` for exactly how that key is spelled.
 
-The convention, inside `docs/BOARD_NOTES.md`, under a heading naming the item
+The convention, inside `docs/board_notes/`, under a heading naming the item
 it describes ("## item 32", "## gate item 4", "## decision due 2026-09-16"),
 each field on its own line:
 
@@ -97,7 +97,7 @@ Rules, deliberately few and deliberately dumb:
     into the recommendation.
   * Nothing is mandatory, and nothing is invented. An item with no plain-
     language block — whether because nobody has written to
-    `docs/BOARD_NOTES.md` for it yet, or because `docs/WORK.md` names an item
+    `docs/board_notes/` for it yet, or because `docs/WORK.md` names an item
     number no note names — renders with an explicit "not yet explained in
     plain language" marker — never hidden, never dropped, and never
     auto-generated into fake-friendly prose. Inventing an explanation would
@@ -676,7 +676,7 @@ def parse_prose(body_lines: list[str]) -> Prose:
     )
 
 
-#: The heading `docs/BOARD_NOTES.md` uses to key a prose block to the item it
+#: The heading `docs/board_notes/` uses to key a prose block to the item it
 #: describes: "## item 32", "## gate item 4", "## decision due 2026-09-16".
 #: Deliberately the SAME strings `QueueItem.ref` and `PendingDecision.ref`
 #: already render to the owner, so a lookup is one dict access and the key
@@ -689,7 +689,7 @@ _BOARD_NOTES_HEADING_RE = re.compile(
 
 
 def load_board_notes(path: Path) -> dict[str, Prose]:
-    """Parse `docs/BOARD_NOTES.md` into ``{identifier: Prose}``.
+    """Parse `docs/board_notes/` into ``{identifier: Prose}``.
 
     Keyed by the owner-facing identifier the page already shows for that item
     (`QueueItem.ref` / `PendingDecision.ref`) — ``"item 32"``, ``"gate item
@@ -707,6 +707,17 @@ def load_board_notes(path: Path) -> dict[str, Prose]:
     """
     if not path.exists():
         return {}
+    if path.is_dir():
+        # docs/board_notes/ — one file per item (see its README). Reading the
+        # directory is reading its files in name order, concatenated: the
+        # parser below is unchanged, so a note means exactly what it meant
+        # when every note lived in one file.
+        raw_text = "".join(
+            p.read_text() for p in sorted(path.glob("*.md"))
+            if p.name != "README.md"
+        )
+    else:
+        raw_text = path.read_text()
     notes: dict[str, Prose] = {}
     key: str | None = None
     lines: list[str] = []
@@ -715,7 +726,7 @@ def load_board_notes(path: Path) -> dict[str, Prose]:
         if key is not None:
             notes[key] = parse_prose(lines)
 
-    for raw in path.read_text().splitlines():
+    for raw in raw_text.splitlines():
         m = _BOARD_NOTES_HEADING_RE.match(raw.strip())
         if m:
             _flush()
@@ -1110,7 +1121,7 @@ def _parse_numbered_items(body: str, source: str = "backlog",
     makes the identifier on the page unambiguous — the funnel queue and the PM
     test gate both number from 1. See `_SOURCE_REF_LABEL`.
 
-    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes`
+    `notes` is `docs/board_notes/`, already parsed by `load_board_notes`
     into ``{identifier: Prose}``. An item's prose is looked up by its own
     `ref` (``"item 32"``, ``"gate item 4"``) — never parsed out of this body
     text, which is `docs/WORK.md` and carries the item itself, not the
@@ -1228,7 +1239,7 @@ def load_funnel_queue(work_md: Path,
                        ) -> tuple[list[QueueItem], str | None]:
     """Parse the ranked funnel queue out of docs/WORK.md.
 
-    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes` —
+    `notes` is `docs/board_notes/`, already parsed by `load_board_notes` —
     the item itself (number, title, status) still comes from `work_md`, only
     its plain-language prose is looked up from `notes`.
 
@@ -1283,7 +1294,7 @@ def load_pm_gate(work_md: Path,
                   ) -> tuple[list[QueueItem], str | None]:
     """Parse the PM-test-readiness gate out of docs/WORK.md.
 
-    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes` —
+    `notes` is `docs/board_notes/`, already parsed by `load_board_notes` —
     same lookup-by-`ref` arrangement as `load_funnel_queue`.
 
     Same shape and same failure behaviour as `load_funnel_queue`: a missing
@@ -1746,7 +1757,7 @@ def find_finished_items_still_on_board(
 
     `docs/WORK.md` opens with the owner's own rule: it holds only open work.
     Finished work belongs in `docs/INCIDENT_HISTORY.md`, with its
-    `## item N` block deleted from `docs/BOARD_NOTES.md` and its number
+    `## item N` block deleted from `docs/board_notes/` and its number
     added to the retired line. Nothing previously checked the OUTFLOW half
     of that rule -- `test_no_board_item_disappears_without_being_retired` and
     `test_work_md_stays_under_a_hundred_thousand_bytes` only stop the file
@@ -1778,7 +1789,7 @@ def find_finished_items_still_on_board(
         an event the desk cannot manufacture -- see the note above
         `_LIVE_EVENT_BLOCKED_RE`.
 
-    `board_notes` is `docs/BOARD_NOTES.md`'s path; it is loaded only so the
+    `board_notes` is `docs/board_notes/`'s path; it is loaded only so the
     lookup-by-`ref` prose attaches the same way the renderer attaches it --
     this check does not read the notes' own text, since an item's *headline*
     is where the backlog records its status, and the notes file is the
@@ -1827,7 +1838,7 @@ def find_finished_items_still_on_board(
                 "Write it up in docs/INCIDENT_HISTORY.md (newest first, "
                 "opening with one plain-language line), then delete its "
                 "docs/WORK.md block AND its matching '## " + item.ref +
-                "' block in docs/BOARD_NOTES.md, and add its number to "
+                "' block in its docs/board_notes/ file, and add its number to "
                 "the retired line at the end of the relevant list in "
                 "docs/WORK.md."
             )
@@ -1936,7 +1947,7 @@ def work_md_cap_warning(size: int,
         f"{work_md_growth_budget(size, cap):,} bytes, and that allowance "
         "keeps shrinking. Retire finished items into "
         "docs/INCIDENT_HISTORY.md, or move argument and history out of open "
-        "items into docs/BOARD_NOTES.md, before the cap starts refusing "
+        "items into docs/board_notes/, before the cap starts refusing "
         "work."
     )
 
@@ -1970,7 +1981,7 @@ def work_md_cap_blocker(before_size: int,
         f"(it was {before_size:,} before this change) — finished or decided "
         "content has likely crept back in; MOVE it to "
         "docs/INCIDENT_HISTORY.md, or move argument and history into "
-        "docs/BOARD_NOTES.md, rather than deleting it, and never raise this "
+        "docs/board_notes/, rather than deleting it, and never raise this "
         "number to make room. A change that SHRINKS the file is exempt from "
         "this cap even while it is still over, so the prune that fixes this "
         "can always merge."
@@ -2015,7 +2026,7 @@ def load_pending_decisions(work_md: Path, today: dt.date | None = None,
                             ) -> list[PendingDecision]:
     """Decisions the owner still owes an answer on, soonest first.
 
-    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes`.
+    `notes` is `docs/board_notes/`, already parsed by `load_board_notes`.
     A decision has no number of its own, so it is keyed by its due date —
     `"decision due 2026-09-16"`, the same string `PendingDecision.ref`
     renders — which is looked up here so a decision can carry its own
@@ -2931,7 +2942,7 @@ def _safely(loader: Any, work_md: Path, what: str,
     decoding error, a shape nobody anticipated — and reports it the same way,
     because the one thing this page must never do is fail to load.
 
-    `notes` is forwarded to the loader (`docs/BOARD_NOTES.md`, already
+    `notes` is forwarded to the loader (`docs/board_notes/`, already
     parsed) — a broken notes file must degrade the same way a broken backlog
     does: reported, never crashed on.
     """
@@ -3095,11 +3106,11 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     # could not read the backlog — it must never produce a stack trace on his
     # phone, because a board that 500s is a board he stops trusting.
     work_md = work_md or (REPO_ROOT / "docs" / "WORK.md")
-    # docs/BOARD_NOTES.md carries only the owner-facing prose, keyed by each
+    # docs/board_notes/ carries only the owner-facing prose, keyed by each
     # item's number and section (see `load_board_notes`). It is read
     # defensively too, for the same reason: a broken notes file must fall
     # back to "not yet explained" for every item, never a stack trace.
-    board_notes = board_notes or (REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    board_notes = board_notes or (REPO_ROOT / "docs" / "board_notes")
     try:
         notes = load_board_notes(board_notes)
     except Exception:  # noqa: BLE001 - a blank prose set beats a stack trace
@@ -3207,7 +3218,7 @@ def main() -> int:
     ap.add_argument("--work-md", default="docs/WORK.md",
                     help="the backlog to render from; point it elsewhere to "
                          "preview a page without touching the real one")
-    ap.add_argument("--board-notes", default="docs/BOARD_NOTES.md",
+    ap.add_argument("--board-notes", default="docs/board_notes",
                     help="the owner-facing prose to render alongside the "
                          "backlog's items; point it elsewhere to preview a "
                          "page without touching the real one")
