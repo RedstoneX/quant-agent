@@ -175,3 +175,49 @@ Held deliberately: this sits on step 2, which is itself unmerged, and nothing la
 trading day.
 
 Item 210 stays open: eight steps remain.
+
+## Step 4 — the held-position exit engine (`src/pipeline_exits.py`, `ExitEngineMixin`)
+
+Clusters K and L of the plan, re-measured against the step-3 branch before anything was
+touched: every offset the plan quotes was dead, so the spans were re-derived with an AST
+pass. Twenty methods and one class-level memo attribute moved verbatim out of
+`TradingPipeline`: the target-revision adjudication and its filing, structural protection
+for a holding and the voicing of its break, exit-trigger substantiation, the
+holding-discipline fact-check, the deterministic trails and their ratchet cooldown, the
+event-risk block, the alignment exit (cache, scan, reading record, opened-today test and
+per-holding verdict), the AI risk review of exits, the refusal and approval records, and
+the midday executor. The module-level exit-trigger vocabulary moved with them:
+`_HARD_TRIGGER_KEYWORDS` and `_reason_cites_hard_trigger`, plus `_actions_with_scan_fallback`
+and `_reason_claims_alignment_exit`, whose only caller is the midday executor.
+
+Pure move. Method bodies are byte-for-byte; the only edits are the enclosing class line,
+the import block and the base-class list. Last night's alignment exit and range-trail work
+travelled inside those byte-for-byte bodies and was not touched.
+
+Deviation, reported rather than forced: `_atr_for_symbol` and `_constructor_cfg_or_none`
+sit inside the cluster's range and did NOT move. `_atr_for_symbol` is the shared indicator
+helper the plan warned about — it is read by the base class's `_evening_stop_proximity`
+and by `PromptFactsMixin`, not only by the exits; `_constructor_cfg_or_none` is read by
+`TradingPipeline.__init__`. The base keeps both and lends them back to the mixin, the same
+base-lends-a-helper shape steps 2 and 3 each hit.
+
+Guards: `src/pipeline_exits.py` added to the inventory guard's tracked modules and to
+`SCOPED_PATHS`, and the inventory re-recorded in the same change. Four number-ledger ids
+migrated with the step-0 helper and confirmed by its verifier; the nested-function case
+step 1 hit was checked explicitly across every moved name and does not arise. The
+measured `src.pipeline` ledger-id count in the step-0 guard dropped from eight to four.
+Nine ledger prose citations quoting `src/pipeline.py` line ranges now past the end of the
+shortened file were re-pointed by content match, not by arithmetic.
+
+Re-pointed because the text they scan moved: `tests/test_shorts_emergency_close.py`'s
+`getsource(TradingPipeline)` scan for the midday loop's `qty <= 0` guard, and
+`tests/test_holding_discipline_intraday.py`'s module-source scan for
+`holding_discipline_claim_check`, both now read the mixin. One monkeypatch of
+`src.pipeline._reason_cites_hard_trigger` now patches `src.pipeline_exits`. The prose path
+in `tests/test_prompts_contract.py` was corrected. Every moved name stays re-exported from
+`src.pipeline`, so `tests/test_alignment_exit_wiring.py`'s imports are untouched.
+
+Held deliberately: this sits on step 3, which is itself unmerged, and nothing lands on a
+trading day.
+
+Item 210 stays open: seven steps remain.

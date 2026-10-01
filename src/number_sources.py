@@ -251,6 +251,10 @@ SCOPED_PATHS: tuple[str, ...] = (
     # item 186, 2026-10-01) — and the rule stays because the shape recurs.
     "src/pipeline.py",
     "src/pipeline_delever.py",
+    # The held-position exit engine and the exit-trigger vocabulary -- moved
+    # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
+    # Every trail multiple and every exit threshold it carries stays scoped.
+    "src/pipeline_exits.py",
     "src/pipeline_prompt_facts.py",
     # 2026-10-01, board item 210 step 2: the protection cluster -- stop
     # coverage, repair, protected sells, write-ahead restore, the fill and

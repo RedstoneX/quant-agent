@@ -7289,7 +7289,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline.py
     note: >-
-      No caller in src/, and the docstring (src/pipeline.py:10707-10713)
+      No caller in src/, and the docstring (src/pipeline.py:7005-7011)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(lookback_days)
@@ -7418,7 +7418,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:11847-11850). The LIVE number is the keyword literal at
+      (src/pipeline.py:8145-8148). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
@@ -7458,7 +7458,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:11847-11850). The LIVE number is the keyword literal at
+      (src/pipeline.py:8145-8148). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
@@ -7500,7 +7500,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:11847-11850). The LIVE number is the keyword literal at
+      (src/pipeline.py:8145-8148). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_own_recent_decisions(limit)
@@ -7872,43 +7872,43 @@ numbers:
         the recorded spreads show the point beyond which dropped names stop differing from admitted names in
         subsequent realised RANGE -- a property of the instrument. Explicitly never the spread that would have
         produced the best trades: that is fitting, and it is barred
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[0]
+  - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[0]
     value: 1.25
     status: derived
-    site: src/pipeline.py
+    site: src/pipeline_exits.py
     derived_from: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
     base_value: 1.25
     note: >-
       Midday noise-band clamp: a new stop inside 1.25 x ATR14 of price is
-      refused (src/pipeline.py:11313-11320). The same 1.25 as the trailing-
+      refused (src/pipeline.py:7611-7618). The same 1.25 as the trailing-
       stop noise band, which carries the open question.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]
+  - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]
     value: 1.005
     status: derived
-    site: src/pipeline.py
+    site: src/pipeline_exits.py
     derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the midday COVER limit, price x 1.005
-      (src/pipeline.py:11365-11372). Its comment ties it to the ExecutionStage
+      (src/pipeline.py:7663-7670). Its comment ties it to the ExecutionStage
       COVER loop. One number, mirrored.
-  - id: src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]
+  - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]
     value: 0.995
     status: derived
-    site: src/pipeline.py
+    site: src/pipeline_exits.py
     derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
-      (src/pipeline.py:11382). Same number as the ExecutionStage SELL offset.
-  - id: src.pipeline.TradingPipeline._trail_tightened_recently(calendar_days)
+      (src/pipeline.py:7680). Same number as the ExecutionStage SELL offset.
+  - id: src.pipeline_exits.ExitEngineMixin._trail_tightened_recently(calendar_days)
     value: 4
     status: arbitrary
-    site: src/pipeline.py
+    site: src/pipeline_exits.py
     note: >-
       Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
-      the last 4 calendar days (src/pipeline.py:10248-10256, caller
-      src/pipeline.py:11306 passes nothing). The docstring's reason is a
+      the last 4 calendar days (src/pipeline.py:6546-6554, caller
+      src/pipeline.py:7604 passes nothing). The docstring's reason is a
       forensic observation, not a measured cooldown length. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive the 4 calendar days from the ratified swing mandate. FAILED -- the mandate names no number, by design. Attempt (2): derive it from the reviewer's >=1.02x min-bump rule, i.e. the sessions needed for 2% of range to accumulate. FAILED -- that rule bounds the SIZE of one tighten and says nothing about spacing, and the 1.02 is itself unsourced. The measurement below is the route. Value unchanged.
     open_question: >-
       Over how many sessions does a tightened trail on this desk's names stay
@@ -7933,7 +7933,7 @@ numbers:
     site: src/pipeline.py
     note: >-
       Window of the quarterly meta-reflection digest
-      (src/pipeline.py:12433-12447). Its output reaches a prompt only as a
+      (src/pipeline.py:8731-8745). Its output reaches a prompt only as a
       STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]
@@ -8128,7 +8128,7 @@ numbers:
     base_value: 25
     note: >-
       Default maintenance margin (src/risk/rules.py:1468); the one caller
-      passes risk.maintenance_margin_pct (src/pipeline.py:11647-11649,
+      passes risk.maintenance_margin_pct (src/pipeline.py:7945-7947,
       11742-11744).
   - id: src.risk.target_revision.assess_target_revision(breakout_projection_atr_multiple)
     value: 1

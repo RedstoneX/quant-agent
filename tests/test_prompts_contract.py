@@ -109,7 +109,7 @@ def test_pm_contract_forbids_execution_detail() -> None:
 
 def test_position_reviewer_contract_says_never_opens_a_new_position() -> None:
     """position_reviewer.md must declare that it never opens a new
-    position — code in src/pipeline.py:_HARD_TRIGGER_KEYWORDS + the
+    position — code in src/pipeline_exits.py:_HARD_TRIGGER_KEYWORDS + the
     executor enforce it, but the prompt must also teach it so the LLM
     doesn't waste tokens proposing an action that would be dropped at
     execution.

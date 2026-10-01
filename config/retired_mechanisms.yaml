@@ -344,8 +344,8 @@ described:
       goes, the section silently renders the wrong set or nothing at all,
       and the 2026-05-04 AMZN 41 -> 21 -> 11 double-trim is back.
     symbols:
-      - file: src/pipeline.py
-        symbol: TradingPipeline._symbols_already_trimmed_today
+      - file: src/pipeline_exits.py
+        symbol: ExitEngineMixin._symbols_already_trimmed_today
     described_in:
       - file: src/agents/position_reviewer.py
         contains:
