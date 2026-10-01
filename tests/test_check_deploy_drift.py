@@ -20,6 +20,26 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import src.coverage_watchdog as _cw
+
+
+@pytest.fixture(autouse=True)
+def _drift_state_is_never_the_real_one(tmp_path, monkeypatch):
+    """Keep `main()` out of the repository's own alerting state.
+
+    `main()` persists its verdict through `src.coverage_watchdog`'s shared
+    state file, which the /health route READS. Without this, running this
+    module writes a fabricated "behind" snapshot — built from this file's
+    throwaway repositories — into `data/alerting/deploy_drift.json`, and
+    every later test that asks /health for the desk's status gets back
+    `degraded`. That is order-dependent and it reddened the whole merge
+    queue on 2026-10-01.
+    """
+    monkeypatch.setattr(
+        _cw, "DEPLOY_DRIFT_STATE_PATH", tmp_path / "deploy_drift.json"
+    )
+
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = PROJECT_ROOT / "scripts" / "check_deploy_drift.py"
 
@@ -259,3 +279,17 @@ def test_no_telegram_flag_skips_send_even_when_behind(tmp_path, capsys):
     notifier.send.assert_not_called()
     out = capsys.readouterr().out
     assert "fix: something merged" in out
+
+
+def test_no_test_leaves_a_drift_snapshot_in_the_repository():
+    """The repository's own alerting state is not a test artefact.
+
+    A fabricated snapshot left here answers /health for every later test in
+    the same run, and the status it fabricates is `behind`, which degrades
+    the whole board. This is the mechanical guard: the file must not exist
+    once this module has run.
+    """
+    assert not _cw.DEPLOY_DRIFT_STATE_PATH.exists(), (
+        f"{_cw.DEPLOY_DRIFT_STATE_PATH} was written by a test; point the "
+        "writer at a temporary path instead"
+    )
