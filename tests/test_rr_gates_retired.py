@@ -184,3 +184,25 @@ def test_rr_floor_argument_cannot_reinstate_the_size_cap():
         real_reward_risk_by_symbol={"AAA": 3.0},
     )
     assert result.targets[0].risk_allocation_pct == 3.0
+
+
+def test_risk_seat_not_told_thin_ratio_was_paid_for_in_size():
+    """The tech-signals block once said a thin range ratio 'has already been
+    paid for in size by the constructor'. The constructor computes the ratio
+    for ranking/logging and resizes nothing on it; the seat must be told so."""
+    src = (Path(__file__).resolve().parents[1] / "src/agents/risk_manager.py").read_text()
+    assert "paid for in size" not in src
+    flat = " ".join(src.replace('"', " ").split())
+    assert "is NOT resized by anything" in flat
+    assert "ranking and logging only" in flat
+
+
+def test_risk_seat_not_told_thin_ratio_was_paid_for_in_size():
+    """The tech-signals block once said a thin range ratio 'has already been
+    paid for in size by the constructor'. The constructor computes the ratio
+    for ranking/logging and resizes nothing on it; the seat must be told so."""
+    src = (Path(__file__).resolve().parents[1] / "src/agents/risk_manager.py").read_text()
+    assert "paid for in size" not in src
+    flat = " ".join(src.replace('"', " ").split())
+    assert "is NOT resized by anything" in flat
+    assert "ranking and logging only" in flat
