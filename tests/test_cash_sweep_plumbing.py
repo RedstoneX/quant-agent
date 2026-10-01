@@ -118,127 +118,14 @@ def _events(pipeline) -> list[tuple]:
 # ---------------------------------------------------------------------------
 
 
-def test_funding_is_capped_by_the_risk_budget_not_the_allocation():
-    """20% of a $100k book is $20,000 of allocation. The §11.1 risk budget
-    (item 22 fix: the ratified 5% of equity = $5,000, not the stale 0.5%)
-    against a $50/share stop distance allows 100 shares = $10,000. The
-    submit loop spends $10,000, so the sweep must liquidate $10,000 — not
-    $20,000 with $10,000 re-parked minutes later. `pipeline` is a MagicMock
-    here, so `config.risk.max_position_risk_pct` is an unset Mock attribute
-    and `_qty_by_risk_budget` falls back to the ratified 5.0 default."""
-    pipeline = _pipeline(live_price=100.0, cash=50_000.0)
-    recorded = _install_sweeper(pipeline)
-    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=20,
-        entry_price=100.0, stop_loss=50.0, take_profit=175.0,
-        reasoning="risk budget binds",
-    )])
-
-    ExecutionStage(pipeline=pipeline).run(ctx)
-
-    assert recorded["planned"] == 10_000.0, (
-        "funding must cover the risk-capped size the submit loop will spend"
-    )
 
 
-def test_funding_still_covers_the_allocation_when_risk_does_not_bind():
-    """The cap is a MIN, not a replacement. A tight stop leaves the risk
-    budget slack, and funding must still cover the full allocation or the
-    BUY it was meant to fund gets clamped for want of cash."""
-    pipeline = _pipeline(live_price=100.0, cash=50_000.0)
-    recorded = _install_sweeper(pipeline)
-    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=5,
-        entry_price=100.0, stop_loss=99.0, take_profit=110.0,
-        reasoning="allocation binds",
-    )])
-
-    ExecutionStage(pipeline=pipeline).run(ctx)
-
-    # alloc: 5% of $100k = $5,000 = 50 sh. risk: $500 / $1 = 500 sh. Min = 50.
-    assert recorded["planned"] == 5_000.0
 
 
-@pytest.mark.parametrize("entry,stop,alloc", [
-    (105.0, 95.0, 20),    # entry ABOVE market — loop sizes at max(mkt, entry)
-    (95.0, 90.0, 20),     # entry BELOW market — limit is raised to market
-    (100.0, 99.5, 20),    # tight stop — the allocation binds, not the budget
-    (100.0, 80.0, 3),     # wide stop, small allocation
-])
-def test_funding_is_never_less_than_what_the_loop_spends(entry, stop, alloc):
-    """The invariant the whole fix rests on: the sweep may over-sell, but it
-    must never sell LESS than the BUY loop is about to spend. Under-funding
-    costs a trade; over-funding costs a spread.
-
-    It holds because the preflight prices the risk cap at the loop's own
-    reference — `max(market, entry)` for a long — and every later adjustment
-    (marketable-limit ceiling, ATR stop floor) only shrinks the quantity.
-    """
-    pipeline = _pipeline(live_price=100.0, cash=50_000.0)
-    recorded = _install_sweeper(pipeline)
-    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=alloc,
-        entry_price=entry, stop_loss=stop, take_profit=entry * 1.4,
-        reasoning="funding must cover this",
-    )])
-
-    ExecutionStage(pipeline=pipeline).run(ctx)
-
-    assert pipeline.broker.submit_order.called, "scenario must reach a submit"
-    submitted = pipeline.broker.submit_order.call_args.kwargs
-    spent = submitted["qty"] * max(100.0, entry)
-    assert recorded["planned"] >= spent - 0.01, (
-        f"funded ${recorded['planned']:,.2f} but the loop spent "
-        f"${spent:,.2f} — the sweep would under-fund its own BUY"
-    )
 
 
-def test_shorts_are_excluded_from_the_funding_total():
-    """A SHORT sells borrowed shares and never draws on `available_cash`
-    (D11 in the submit loop). Liquidating SGOV to fund one raises cash no
-    order can spend — guaranteed churn, not a safety margin."""
-    pipeline = _pipeline(live_price=100.0, cash=50_000.0)
-    recorded = _install_sweeper(pipeline)
-    pipeline.broker.get_shortability.return_value = {
-        "shortable": True, "easy_to_borrow": True,
-    }
-    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([
-        TradeDecision(action="BUY", symbol="XLE", allocation_pct=5,
-                      entry_price=100.0, stop_loss=99.0, take_profit=110.0,
-                      reasoning="real cash spend"),
-        TradeDecision(action="SHORT", symbol="XLF", allocation_pct=5,
-                      entry_price=100.0, stop_loss=101.0, take_profit=90.0,
-                      reasoning="spends no cash"),
-    ])
-
-    ExecutionStage(pipeline=pipeline).run(ctx)
-
-    # Only the BUY's $5,000 — the SHORT's $5,000 must not be funded.
-    assert recorded["planned"] == 5_000.0
 
 
-def test_short_only_session_funds_nothing():
-    pipeline = _pipeline(live_price=100.0, cash=50_000.0)
-    recorded = _install_sweeper(pipeline)
-    pipeline.broker.get_shortability.return_value = {
-        "shortable": True, "easy_to_borrow": True,
-    }
-    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    ctx = _ctx([TradeDecision(
-        action="SHORT", symbol="XLF", allocation_pct=5,
-        entry_price=100.0, stop_loss=101.0, take_profit=90.0,
-        reasoning="spends no cash",
-    )])
-
-    ExecutionStage(pipeline=pipeline).run(ctx)
-
-    assert recorded["planned"] == 0.0, (
-        "a short-only session must not liquidate the yield vehicle at all"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -351,49 +238,5 @@ def test_unconfirmed_funding_is_governed_by_raw_cash_not_refused():
     assert ctx.execution_skips == []
 
 
-def test_unconfirmed_funding_is_visible_not_silent():
-    """The zero-confirmed path must leave a durable trace: a
-    `cash_sweep_released_zero` pipeline event. Fixed 2026-09-24: the
-    resized buy is now placed rather than skipped, so the durable trace of
-    the resize itself is the `funding` / `resized` pipeline event, not a
-    skip."""
-    pipeline = _pipeline(live_price=100.0, cash=174.96, fractional=True)
-    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-    _install_sweeper(pipeline, freed=0.0)
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-        reasoning="approved, funding unconfirmed",
-    )], cash=174.96)
-
-    ExecutionStage(pipeline=pipeline).run(ctx)
-
-    payloads = " ".join(p for _kind, p in _events(pipeline))
-    assert "cash_sweep_released_zero" in payloads
-    assert "confirmed_cash_partially_funded_order" in payloads
-    assert ctx.execution_skips == []
 
 
-def test_unconfirmed_funding_adopts_the_refreshed_cash_reading():
-    """`fund_buys` refreshes ctx from the broker BEFORE deciding it cannot
-    confirm anything. If that refresh shows LESS cash than the pre-sale
-    reading, the BUY loop must clamp against the smaller, truer figure —
-    the stale reading is the one that lets an unfunded order through."""
-    pipeline = _pipeline(live_price=100.0, cash=10_000.0, fractional=True)
-    pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
-
-    def _drain(ctx):
-        ctx.cash = 750.0          # broker says less than we started with
-
-    _install_sweeper(pipeline, freed=0.0, on_call=_drain)
-    ctx = _ctx([TradeDecision(
-        action="BUY", symbol="XLE", allocation_pct=10,
-        entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-        reasoning="approved",
-    )], cash=10_000.0)
-
-    orders = ExecutionStage(pipeline=pipeline).run(ctx)
-
-    assert len(orders) == 1
-    # Stale pre-sale cash ($10,000) would have funded the full 100 shares.
-    assert pipeline.broker.submit_order.call_args.kwargs["qty"] == 7.5

@@ -696,6 +696,32 @@ class Database:
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            -- Board item 187: one row per morning-open FRED fetch, written by
+            -- the pipeline from the coverage objects the fetch itself
+            -- returned (nothing re-derived from log text). `series_failed`
+            -- are series that WERE asked and failed (with reason);
+            -- `series_not_attempted` never reached the wire. They are kept
+            -- apart because "never attempted" is the item's complaint.
+            -- `releases_*` is the event-calendar half; NULL there means that
+            -- coverage object was not available, NOT zero. The calendar
+            -- provider cannot tell "asked and failed" from "deadline hit
+            -- before the ask", so its failures are recorded with their own
+            -- reason text and are never claimed as either.
+            CREATE TABLE IF NOT EXISTS fred_fetch_coverage_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT,
+                recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+                series_configured INTEGER,
+                series_succeeded INTEGER,
+                series_failed TEXT,
+                series_not_attempted TEXT,
+                releases_configured INTEGER,
+                releases_succeeded INTEGER,
+                releases_from_cache INTEGER,
+                releases_failed TEXT,
+                full_coverage INTEGER NOT NULL
+            );
+
             -- The evening run's OWN OUTPUT — the exact result dict the
             -- evening Telegram formatter (src/trader_feed.py
             -- `_format_evening`) was handed, plus the book as the
@@ -4114,6 +4140,22 @@ class Database:
                      source=excluded.source""",
                 (date, debit_balance, rate_pct, daily_usd, days_charged,
                  period_usd, source),
+            )
+            self.conn.commit()
+
+    def insert_fred_fetch_coverage_run(self, row: dict) -> None:
+        """Board item 187 record: one row per morning FRED fetch. See the
+        table comment in `initialize()`; `row` comes from
+        `src.data.fetch_coverage_record.build_row`."""
+        cols = ("run_id", "series_configured", "series_succeeded",
+                "series_failed", "series_not_attempted",
+                "releases_configured", "releases_succeeded",
+                "releases_from_cache", "releases_failed", "full_coverage")
+        with self._lock:
+            self.conn.execute(
+                f"INSERT INTO fred_fetch_coverage_runs ({', '.join(cols)}) "
+                f"VALUES ({', '.join('?' for _ in cols)})",
+                tuple(row[c] for c in cols),
             )
             self.conn.commit()
 

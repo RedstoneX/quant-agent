@@ -65,7 +65,11 @@ NOTHING_ACTS_ON_TARGET = (
     "entry, not an instruction. Since 12 September 2026 the trailing stop "
     "is the only automatic exit, and reaching a profit target is not by "
     "itself an accepted reason to sell. The number is not revisited after "
-    "entry."
+    "entry. It is not quite inert, and this is the one thing it still "
+    "does: on a range trade, whether price has passed this number decides "
+    "whether the automatic trailing stop keeps the locked-in floor "
+    "underneath it or is free to trail without one, so the number still "
+    "shapes where the stop sits even though no order rests on it."
 )
 
 #: Also verbatim. `expected_horizon_sessions` is written only on the entry
