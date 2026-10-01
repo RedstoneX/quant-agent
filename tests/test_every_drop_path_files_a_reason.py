@@ -243,6 +243,10 @@ _CANNOT_END_A_CANDIDATE = {
     "_note_refusal": "the recorder itself",
     "_note_data_fault": "the recorder itself",
     "shipped_stop_rule": "names the rule on an order already built",
+    "shipped_stop_level_basis": (
+        "item 55 recording only — describes the level behind a stop on an order "
+        "already built, and no caller reads it back into a decision"
+    ),
 }
 
 #: The drop sites that legitimately file nothing THEMSELVES, each with the

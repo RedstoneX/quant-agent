@@ -42,14 +42,23 @@ _FITTED_RESOLUTIONS = (
     r"\bMAE\b",
     r"\bbacktest(ing|ed)?\b",
     r"curve[- ]fit",
-    r"(this |the )desk'?s own (trades|fills|trade record|outcomes|P&L|pnl)",
-    r"our own (trades|fills|outcomes)",
+    # 2026-10-01, board item 185: the original wording of this pattern
+    # required "own" to sit immediately against the noun, so THREE trailing
+    # rows saying "on this desk's own CLOSED trades" sailed through the very
+    # check written to catch them. Any adjectives in between are allowed now.
+    r"(this |the )desk'?s own (\w+ ){0,3}(trades|fills|trade record|outcomes|positions|P&L|pnl)",
+    r"our own (\w+ ){0,3}(trades|fills|outcomes|positions)",
+    r"on (this |the )desk'?s own (closed |completed )?(trades|positions)",
 )
 
 # A row may MENTION a barred study in order to record that it was rejected.
 # The exemption is explicit and narrow: the text has to say so.
 _REJECTION_MARKERS = (
-    "bars",
+    # 2026-10-01: "bars" alone was here and matched the word "bars" in "daily
+    # bars", which would have exempted any row that mentioned price history.
+    # The exemption now needs a phrase that actually says the study is refused.
+    "doctrine bars",
+    "outcome.md bars",
     "barred",
     "forbid",
     "rejected",
@@ -101,6 +110,12 @@ def test_no_ledger_open_question_promises_a_fitted_resolution() -> None:
         "What does this desk's own maximum adverse excursion say about it?",
         "Settle it by backtesting the last forty trades.",
         "Measured on our own fills once there are enough of them.",
+        # The exact wording that slipped past the first version of this file.
+        "At what R of open profit does the stop stop costing more than it "
+        "saves, on this desk's own closed trades?",
+        "Settle it against this desk's own closed positions.",
+        # ...and the wording that the over-broad "bars" exemption excused.
+        "What do this desk's own fills say, measured off daily bars?",
     ],
 )
 def test_the_check_actually_fires(question: str) -> None:

@@ -1876,6 +1876,12 @@ class StructuralProtectionCheck:
         "noise_band_unevaluable_no_data",
     ]
     detail: str
+    #: The structural level price this read found CONFIRMED broken, on the
+    #: `structural_level_broken` basis only; None on every other basis.
+    #: Added 2026-09-30 so a caller can name WHICH level broke instead of
+    #: guessing one by proximity to the close (the alignment exit did
+    #: exactly that and could admit an overhead level that never broke).
+    broken_level: float | None = None
     #: True when TODAY's close (independent of the confirmation gate below)
     #: found the thesis/level basis broken. Callers must persist this value
     #: keyed by symbol AND today's close date, so it can be fed back in as
@@ -2242,6 +2248,34 @@ def check_structural_protection(
                     ),
                     raw_broken=False,
                 )
+            # BOARD ITEM 70, THE SETTLEMENT RECORDING (2026-10-01). The break
+            # margin is `arbitrary` and, worse, UNIDENTIFIABLE in its own
+            # units: every published answer to "how far beyond a level is a
+            # real break" is a PERCENTAGE of price scaled by how important the
+            # level is (Edwards & Magee ~3% major / ~1% short-term), never an
+            # ATR multiple. Nothing in the desk's record said what 1.0 ATR
+            # actually amounted to in those units at the moment of a decision,
+            # so the number could never be compared against the only
+            # literature that measures the same quantity. Every break
+            # evaluation now records the margin in BOTH units, plus the touch
+            # count that is the desk's only level-importance signal. This is a
+            # RECORDING ONLY — `break_margin` above is unchanged and nothing
+            # about when the desk sells moves. It accrues the observations in
+            # the literature's units that would let this constant be settled
+            # (or replaced) on evidence rather than re-searched a third time.
+            _margin_pct = (break_margin / cur * 100.0) if cur > 0 else float("nan")
+            _level_touches = None
+            if computed_level_touches:
+                _level_touches = computed_level_touches.get(level)
+            break_margin_payload = (
+                f"rule=break_confirmation_margin "
+                f"margin_atr_multiple={BREAK_CONFIRMATION_ATR_MULTIPLE:g} "
+                f"atr14={atr_f:.4g} margin_price={break_margin:.4g} "
+                f"margin_pct_of_close={_margin_pct:.3g} "
+                f"level={level:g} level_touches={_level_touches} "
+                f"min_level_touches={min_level_touches} "
+                f"regime={trend_context} | "
+            )
             if is_short:
                 broken = cur >= level + break_margin
             else:
@@ -2271,7 +2305,9 @@ def check_structural_protection(
                 if confirmed:
                     return StructuralProtectionCheck(
                         protected=False, basis="structural_level_broken",
+                        broken_level=_finite(level),
                         detail=(
+                            break_margin_payload +
                             f"structural level {level} backing the stop has "
                             f"closed beyond it on {closes_seen} confirming "
                             f"trading-day close(s) (regime: {trend_context}"
@@ -2301,6 +2337,7 @@ def check_structural_protection(
                     protected=True,
                     basis="structural_level_pending_confirmation",
                     detail=(
+                        break_margin_payload +
                         f"structural level {level} backing the stop closed "
                         f"beyond it today ({pending_reason}, regime: "
                         f"{trend_context}) — still protected pending "
@@ -2325,6 +2362,7 @@ def check_structural_protection(
             return StructuralProtectionCheck(
                 protected=True, basis="structural_level_intact",
                 detail=(
+                    break_margin_payload +
                     f"structural level {level} backing the stop is intact: "
                     f"close {cur} vs level {level} (break margin "
                     f"{break_margin:.4g})"
