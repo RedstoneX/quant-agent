@@ -964,8 +964,17 @@ def widest_reachable_stop_atr_multiple(
 class PortfolioConstructor:
     """Stateless translator: target state → concrete orders."""
 
-    def __init__(self, config: ConstructorConfig | None = None):
+    def __init__(self, config: ConstructorConfig | None = None, db=None):
         self.cfg = config or ConstructorConfig()
+        # Owner ruling 2026-10-01 (board item 218) made the parity refusal a
+        # TRIAL — "see if that improves the desk purchases" — and a trial
+        # judged by grepping English prose out of an in-memory dict cannot
+        # be judged at all. `db` is optional so every existing caller and
+        # every test still constructs this class with no arguments; when it
+        # is supplied, each refusal is written to the `trade_refusals` table
+        # with the numbers in their OWN columns, never as a sentence.
+        self.db = db
+        self.last_parity_standdowns: dict[str, dict] = {}
         # Populated fresh by every `construct_orders` call — see
         # `_DropReasonCapture`. {symbol: "Constructor: ... rejected/refused
         # ..."} for every target dropped THIS call. Empty, never absent, so
@@ -1070,6 +1079,95 @@ class PortfolioConstructor:
         refusals = dict(self.last_refusals)
         self.last_refusals = {}
         return refusals
+
+    #: Parity stand-downs (owner ruling 2026-10-01, board item 218).
+    #: {SYMBOL: {"reason", "detail", "direction"}} for every name the parity
+    #: refusal declined to judge because the reward side was not a number
+    #: the code itself believes. Kept SEPARATE from `last_refusals` because a
+    #: stand-down is not a refusal: the trade ships. It is recorded so the
+    #: trial can report how often the gate had no opinion, which is the
+    #: difference between "parity refused little" and "parity ran rarely".
+    PARITY_STANDDOWN_NO_LEVEL = "no_structural_level_found"
+    PARITY_STANDDOWN_LEVEL_PAST_REACH = "level_past_horizon_reach"
+    PARITY_STANDDOWN_REWARD_INSIDE_NOISE = "reward_inside_noise_floor"
+
+    def _parity_verdict(self, entry_price, stop_loss, derivation, is_short):
+        """The ONE parity test. Returns `(refuse, ratio, standdown)`.
+
+        Called from `_resolve_entry_and_stop` (construction) and from
+        `real_reward_risk_preview` (PM eligibility/ranking) so the two
+        cannot disagree. Before 2026-10-01's second pass the preview did
+        not run it at all, so a name could rank, be proposed, and then die
+        silently at construction — the exact divergence
+        `real_reward_risk_preview` was built to close.
+
+        THREE STAND-DOWNS, all of them "the numerator is not a number this
+        code believes", and all recorded rather than silent:
+
+        * no structural level found at all — refusing on the ATR
+          projection would be refusing on an invented number, which
+          doctrine bars;
+        * the level is PAST the horizon reach, in which case
+          `derive_structural_target` has already ruled it unreachable and
+          returned a measured-move target instead, while still reporting
+          the level in `level_used`. Crediting reward from a price the
+          same function just declared unreachable overstates the reward;
+        * the reward sits INSIDE the one-session noise floor
+          (`target_inside_noise`), i.e. the code has already labelled the
+          reward noise. Refusing on a figure labelled noise is refusing on
+          a number the desk does not believe.
+        """
+        level = getattr(derivation, "level_used", None)
+        if level is None:
+            return (False, None, self.PARITY_STANDDOWN_NO_LEVEL)
+        if getattr(derivation, "basis", "") != "structural_level":
+            return (False, None, self.PARITY_STANDDOWN_LEVEL_PAST_REACH)
+        if getattr(derivation, "target_inside_noise", False):
+            return (False, None, self.PARITY_STANDDOWN_REWARD_INSIDE_NOISE)
+        refuse, ratio = reward_risk_parity_refuses(
+            entry_price, stop_loss, level,
+            is_short=is_short, reward_is_measured_level=True,
+        )
+        return (refuse, ratio, None)
+
+    def _note_parity_standdown(self, symbol, direction, reason, derivation):
+        key = str(symbol or "").strip().upper()
+        if not key:
+            return
+        self.last_parity_standdowns[key] = {
+            "reason": reason, "direction": direction,
+            "basis": getattr(derivation, "basis", ""),
+            "level_used": getattr(derivation, "level_used", None),
+            "horizon_reach": getattr(derivation, "horizon_reach", None),
+        }
+
+    def _record_parity_refusal(
+        self, symbol, direction, entry, stop, level, ratio, *, stage="construction",
+    ):
+        """Write ONE parity refusal to the durable table. Never raises.
+
+        The owner ruled parity a trial. A trial whose only record is an
+        English sentence in an in-memory dict, drained only for the symbols
+        that happen to reach `constructor_dropped`, cannot be judged — so
+        every number goes in its OWN column here.
+        """
+        db = getattr(self, "db", None)
+        if db is None:
+            return
+        try:
+            db.insert_trade_refusal(
+                symbol=symbol, direction=direction,
+                refusal=STOP_REFUSAL_REWARD_BELOW_RISK,
+                entry_price=float(entry), stop_price=float(stop),
+                level_used=float(level), reward_risk=float(ratio),
+                threshold=float(REWARD_RISK_PARITY),
+                level_was_measured=True, stage=stage,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Constructor: parity refusal row write failed for %s: %s",
+                symbol, e,
+            )
 
     def _note_refusal(
         self, symbol: str, direction: str, refusal: str, detail: str,
@@ -2297,47 +2395,62 @@ class PortfolioConstructor:
             # forecast level this desk never actually sells at (it rides a
             # trailing stop out), so the ratio compares one real number
             # against one estimated one.
-            # Measured against `level_used` — the structural level the
-            # desk's own scan found — and NOT against `derivation.price`,
-            # which is that level after the horizon reach cap. Measuring
-            # the capped price would compare stop width against the
-            # instrument's reach, and refuse every stop wider than reach:
-            # that IS the deleted stop-width gate (board item 56) under a
-            # new name, and it broke the three guard tests that pin "a
-            # stop past the instrument's reach still ships, answered by
-            # size". The owner's own worked case is stated in structural
-            # levels ("nearest level above 104"), so the level is also the
-            # number he ruled on. `level_used is None` — no ceiling found
-            # — stands the refusal down, which is the already-settled
-            # measured half of the trend-trade test.
-            refuse_rr, rr_ratio = reward_risk_parity_refuses(
-                entry_price, stop_loss, derivation.level_used,
-                is_short=is_short,
-                reward_is_measured_level=(derivation.level_used is not None),
+            # WHERE THIS READS ITS RISK, stated truthfully (coordinator
+            # ruling 2026-10-01). `_widen_stop_past_noise` has already run
+            # a few lines above, so `stop_loss` here is the FINAL stop
+            # INCLUDING any widening, and for a widened name this refusal
+            # is therefore a function of the widened stop width. That is
+            # deliberate and it is a departure from the old "a wide stop
+            # ships and is answered by size" rule, which the owner's
+            # 2026-10-01 ruling supersedes for this case: the widened stop
+            # is the risk the desk will actually transact, and measuring
+            # the narrower pre-widening stop would judge a trade nobody
+            # takes. The earlier claim here that the refusal is "not a
+            # function of stop width" was false for every widened name and
+            # has been removed.
+            #
+            # WHAT IT READS AS REWARD: `level_used`, the structural level
+            # the desk's own scan found, not `derivation.price`, which is
+            # that level after the horizon reach cap. See `_parity_verdict`
+            # for the three stand-downs and why each one is a number the
+            # code does not believe.
+            refuse_rr, rr_ratio, standdown = self._parity_verdict(
+                entry_price, stop_loss, derivation, is_short,
             )
+            if standdown is not None:
+                self._note_parity_standdown(
+                    target.symbol, target.direction, standdown, derivation,
+                )
             if refuse_rr:
-                # Durable, per-symbol, and carrying the measured ratio, so
-                # "see if that improves the desk purchases" can be answered
-                # later from data rather than from impression.
+                level = float(derivation.level_used)
+                # Durable, per-symbol, numbers in their OWN fields.
+                self._record_parity_refusal(
+                    target.symbol, target.direction, entry_price, stop_loss,
+                    level, rr_ratio,
+                )
                 self._note_refusal(
                     target.symbol, target.direction,
                     STOP_REFUSAL_REWARD_BELOW_RISK,
                     f"reward:risk {rr_ratio:.2f} is below parity "
                     f"({REWARD_RISK_PARITY:.2f}): entry ${entry_price:,.2f}, "
-                    f"stop ${stop_loss:,.2f} (risking "
-                    f"${abs(entry_price - stop_loss):,.2f}/share) against the "
-                    f"nearest structural level at ${derivation.level_used:,.2f} "
-                    f"(making ${abs(derivation.level_used - entry_price):,.2f}"
-                    f"/share). Owner ruling 2026-10-01 refuses the purchase "
-                    f"outright rather than shrinking it. Caveat recorded "
-                    f"with the number: the reward side is a forecast level "
-                    f"the desk never actually sells at.",
+                    f"final stop ${stop_loss:,.2f} INCLUDING any widening "
+                    f"(risking ${abs(entry_price - stop_loss):,.2f}/share) "
+                    f"against the nearest structural level at ${level:,.2f} "
+                    f"(making ${abs(level - entry_price):,.2f}/share). Owner "
+                    f"ruling 2026-10-01 refuses the purchase outright rather "
+                    f"than shrinking it. Two caveats recorded with the "
+                    f"number: the reward side is a forecast level the desk "
+                    f"never actually sells at, and refusing a name here "
+                    f"happens before book-level risk rationing, so the "
+                    f"surviving names do take a larger share of the "
+                    f"session's at-risk budget — nothing is resized within "
+                    f"this name, but the BOOK is.",
                 )
                 logger.warning(
                     "Constructor: %s %s refused — reward:risk %.2f below "
-                    "parity (entry=$%.2f, stop=$%.2f, level=$%.2f)",
+                    "parity (entry=$%.2f, final stop=$%.2f, level=$%.2f)",
                     "SHORT" if is_short else "BUY", target.symbol,
-                    rr_ratio, entry_price, stop_loss, derivation.level_used,
+                    rr_ratio, entry_price, stop_loss, level,
                 )
                 return (None, None)
         if invalid:
@@ -2714,6 +2827,47 @@ class PortfolioConstructor:
             # ranking consumes) rather than a None the gate reads as
             # "ineligible".
             return None
+        # ONE DEFINITION (coordinator ruling 2026-10-01). The parity
+        # verdict used to run only at construction, so a sub-parity name
+        # could rank here, be proposed by the PM, and then die silently
+        # downstream — the precise divergence this method exists to close.
+        # It runs here too, against the SAME numerator, and files the SAME
+        # refusal code, so the PM sees the name as refused BY CODE (the
+        # `last_refusals` snapshot DecisionStage already reads) instead of
+        # as a number it may rank.
+        refuse_rr, rr_ratio, standdown = self._parity_verdict(
+            entry_price, honoured_stop, derivation, is_short,
+        )
+        if standdown is not None:
+            self._note_parity_standdown(
+                analysis.symbol, direction, standdown, derivation,
+            )
+        if refuse_rr:
+            level = float(derivation.level_used)
+            self._record_parity_refusal(
+                analysis.symbol, direction, entry_price, honoured_stop,
+                level, rr_ratio, stage="preview",
+            )
+            self._note_refusal(
+                analysis.symbol, direction, STOP_REFUSAL_REWARD_BELOW_RISK,
+                f"reward:risk {rr_ratio:.2f} is below parity "
+                f"({REWARD_RISK_PARITY:.2f}) at PM-eligibility preview: "
+                f"entry ${entry_price:,.2f}, final stop "
+                f"${honoured_stop:,.2f} INCLUDING any widening, structural "
+                f"level ${level:,.2f}. Owner ruling 2026-10-01.",
+            )
+            # The real number is still RETURNED, deliberately. This
+            # method's contract is "None means cannot judge", and callers
+            # are documented as forbidden to read a None as "sub-floor";
+            # returning None here would have broken that contract and two
+            # guard tests that pin a weak-but-real range payoff yielding
+            # its honest number for RANKING. What the ruling requires is
+            # that the name not die SILENTLY, and it no longer does: the
+            # refusal is filed by code into `last_refusals`, which
+            # DecisionStage already snapshots at PM-eligibility time, and
+            # into the durable `trade_refusals` table. One definition of
+            # the verdict, used by both stages; the ranking number stays a
+            # ranking number.
         ratio = self._reward_risk_at(
             entry_price, honoured_stop, derivation.price, is_short,
         )

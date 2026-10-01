@@ -21,9 +21,26 @@ same day on sourced research, before it ran a session:
     AMENDED 2026-10-01 (owner ruling, board item 218): that is still the
     answer to WIDTH, and width alone. A separate rule, measured where the
     trade as a whole is accepted or declined, refuses a purchase whose
-    reward is smaller than its risk. Fixtures in this file were given
-    parity-clearing targets so they keep testing width rather than
-    silently testing the new rule.
+    reward is smaller than its risk. WHICH FIXTURES WERE MOVED, AND WHY,
+    stated per fixture because "it went green" is not a reason:
+
+      * `test_the_band_itself_still_ships_at_every_horizon`,
+        `test_the_owners_gap_example_now_ships_and_is_answered_by_SIZE`
+        and every other case in this file: UNTOUCHED. They pass for the
+        original reason — a wide stop ships and is answered by size.
+      * `test_a_stop_past_the_instruments_reach_now_ships`,
+        `test_the_eligibility_preview_refuses_nothing_on_width` (level
+        110 -> 130) and `test_the_gate_no_longer_refuses_a_short_either`
+        (level 90 -> 70): MOVED, and the honest reason is that these
+        three fixtures put $20 of risk against $10 of reward at a level
+        INSIDE the instrument's reach, which is exactly the geometry the
+        owner's 2026-10-01 ruling refuses. For that geometry the old rule
+        and the new one genuinely contradict, and the owner's ruling
+        wins. The fixtures were moved so the three keep testing the
+        deleted WIDTH cap — the stop is still $20 wide and still past
+        `horizon_reach`, which is the thing under test — instead of
+        silently re-testing the new rule. Nothing was weakened: every
+        assertion in them is unchanged.
 
 Pinned here: (1) the level scan's relevance window is still read from the
 instrument (kept from #330); (2) an unbacked or missing stop is read from

@@ -1421,6 +1421,9 @@ class TradingPipeline:
         # ceiling is the one `verify_commissioning.py` can see.
         self.portfolio_constructor = PortfolioConstructor(
             build_constructor_config(config, self.risk_engine.config),
+            # Board item 218: the parity refusal is a TRIAL and must leave a
+            # durable, numeric, per-symbol record or it cannot be judged.
+            db=self.db,
         )
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.

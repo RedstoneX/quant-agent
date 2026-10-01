@@ -1002,11 +1002,13 @@ def test_widening_a_stop_into_a_sub_parity_payoff_now_refuses_the_trade():
     )
     # AMENDED 2026-10-01 (owner ruling, board item 218). 4.00 of reward
     # against 5.2875 of risk is 0.76 — below parity — so the purchase is
-    # now refused. Read what this does and does not say: the refusal is NOT
-    # a width rule. It is measured where the trade as a whole is accepted
-    # or declined, on the final entry, the final stop and the derived
-    # target; a stop that widens and still clears parity ships untouched,
-    # and no stop, target or trailing behaviour changed.
+    # now refused. Stated truthfully: the stop here HAS been widened, and
+    # the refusal reads that final widened stop, so for this name the
+    # refusal IS a function of the widened width. That is the departure
+    # the owner's ruling makes from "a wide stop is answered by size" —
+    # the widened stop is the risk the desk actually transacts. What did
+    # NOT change: no stop, target or trailing behaviour moved, and nothing
+    # was resized within this name.
     assert decisions == []
     assert (
         constructor.last_refusals["MSFT"]["refusal"]
