@@ -814,6 +814,22 @@ numbers:
         NOT be optimised against: fitting a number to this desk's own trading
         record is barred outright (docs/OUTCOME.md), and that is how the 1.5
         was produced in the first place.
+        LIVENESS, MEASURED in production on 2026-10-01 and not
+        inferred: the columns this route depends on are EMPTY --
+        entry_atr, stop_basis, max_adverse_excursion and
+        max_favourable_excursion are non-null on 0 of the 80 rows in
+        trades. The route is therefore BUILT but has settled nothing,
+        and the reason is dated rather than unknown: the entry-side
+        write read ATR off the wrong object until it was corrected and
+        deployed late on 2026-09-30, and no entry has been written
+        since that deploy, so the recording is UNPROVEN rather than
+        demonstrated dead. The excursion columns cannot fill
+        independently of that: their accumulating UPDATE filters on
+        entry_atr IS NOT NULL, so they stay empty for every trade
+        entered before the correction. The first entry taken after it
+        is the observation that decides whether this route is alive;
+        until one exists, no reader may treat the floor as being under
+        falsification.
     note: >-
       Minimum stop distance in ATRs where no real level backs the stop, a
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
