@@ -267,15 +267,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 194)
 
-**193. The scale-in cancel-to-rearm window leaves the WHOLE held position unprotected, and it is now measured — filed 2026-09-30. Detail: `docs/BOARD_NOTES.md` ("item 193").**
-
-DONE WHEN:
-  - [x] the window is measured from the broker's own cancel and rearm acknowledgements rather than from database write times, so the figure bounds real exposure instead of event bookkeeping — every scale-in now emits its own measured window (2026-09-30)
-  - [ ] the gap between write-ahead-log row ids and filed cancel events is explained, so the pair count is known to be complete rather than a floor
-  - [x] the desk can answer "is any position naked right now, and for how long" without a one-off query, whether by an alert, a dashboard line or a periodic check — every coverage sweep now names each symbol it deliberately skipped for a live scale-in, with its held quantity and roughly how long its protection has been down, in the run record and in the one greppable log line; a window longer than the longest the desk has ever measured pages the owner once per symbol per day, and with no measured history nothing is called overdue (2026-09-30)
-
-detail: docs/BOARD_NOTES.md (item 193)
-
 **199. Read the unbacked-stop floor off the chart instead of off an ATR multiple — filed 2026-09-30, carried out of item 90's `min_stop_atr_multiple` pass. TIER 1.** Detail: `docs/BOARD_NOTES.md` ("item 199").
 DONE WHEN:
   - [x] 2026-09-30, the RECORDING exists, and it — not another re-derivation — is what this item now turns on: every position the desk opens pins its entry price, entry ATR, the stop placed at entry and that stop's basis (the constructor's own `stop_rule`, which already separates a stop sitting on a COMPUTED structural level from one set by the ATR band), and every position accumulates its worst AND best excursion while open, joining the realised outcome and the `broker_stop_fill` category already on the exit row. The stop's distance in ATR multiples is RECOMPUTED from entry price, entry stop and entry ATR rather than stored a second time, per "never store what code can recompute". Anything genuinely unavailable at that moment is stored NULL, never substituted. Two hard caveats any reader must carry: the excursions are accumulated from session snapshots, so each is a FLOOR on the true figure (a reading that says the floor WAS violated is trustworthy; one that says it was not is only "not observed"), and legacy rows predating the columns are NULL. FALSIFICATION ONLY — this record may show whether the ratified floor was ever violated in practice and may NOT be swept for a better multiplier; doctrine bars fitting a number to this desk's history.
@@ -356,6 +347,7 @@ DONE WHEN:
   - [ ] a conclusion is written down on whether the Google route enforces the sent schema, or the counts are shown to be too sparse to conclude
 detail: docs/BOARD_NOTES.md (item 214)
 
+
 **220. A technical row the model returned malformed was dropped and the name carried on with the timing veto unrecorded — filed 2026-10-01.** The technical seat is the desk's timing veto and the standing rule is that every seat must be right to ENTER and to STAY, but a row that failed schema parsing was dropped individually, logged, and the run continued; the name then reached the decision with no technical answer and nothing in the durable record said the seat had been asked and lost. MEASURED: over 2026-09-29 17:16 to 2026-10-01 04:00 the technical seat made 8 calls, all on the free Google route, all recorded success and none truncated, and ONE returned syntactically invalid JSON inside the strict schema (an unquoted property name) on a complete answer [production database, read-only, plus the retained box log]. Eight calls cannot support a rate and none is stated or assumed here. What was ALREADY right and is not changed: `risk.rules.own_bar_block_reason` already refuses ENTRY on "no technical read this review", and rotation's `ineligible_hold` tier already drops a held name that fails that same bar out of the ranked survivors, so absence was already blocking at both decisions. What was WRONG is the record: the per-name coverage record (item 20) never saw held names at all, never saw a name whose only appearance was the lost row, and could not tell a seat that was never asked from a seat that answered unreadably. CLOSING CONDITION: a name whose technical row came back unreadable appears in the per-name coverage record with the technical seat listed as uncovered AND as unreadable, held names are inside that record's universe, and `evidence_gate.names_missing_blocking_seat` names it; no retry, no JSON repair and no new refusal are added. RULED 2026-10-01, no longer open: a lost technical row does NOT cull a held name. The stay test is opposition-only by the owner's 2026-09-25 ruling, and an answer nobody could read is not opposition; selling on an absence would be inventing a verdict, the same failure as inventing a number. Dropping the name out of the ranked survivors is the right strength — it loses its claim to be KEPT on conviction without being forced out on silence. The reasoning is written beside the test that pins it so the next reader does not "fix" it. DELIBERATE NON-CHOICE, also 2026-10-01: no retry of an unreadable row. NOT a cost decision — the route is free today. A retry that silently succeeded would hide the very signal this record exists to capture, and a retry inside a session that has a time ceiling is a change to the session's shape rather than a one-line fix. On file as a decision, not as an omission; revisit only with the session-shape question answered.
 
 DONE WHEN:
@@ -395,9 +387,10 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
+- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 157
+- retired queue: 193
 - retired queue: 119
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
