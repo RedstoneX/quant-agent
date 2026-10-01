@@ -228,3 +228,10 @@ remain — the four `src.verdicts` seat weights, `src.rotation.ROTATION_MARGIN_P
 `src.pipeline_stages.LEVELS_DEGRADED_RUN_EMPTY_SHARE` and one
 `ExecutionStage._run_session` factor. No value moved and the `arbitrary` count
 is unchanged at 133. The item stays OPEN.
+
+
+**Board text moved here 2026-10-01** to bring the item inside the new
+per-item byte budget. The board keeps the title; the running account of
+half one and half two follows, unchanged.
+
+**Half one, DONE:** every numeric definition site in scope must carry a `config/number_ledger.yaml` entry saying where it came from, or `pytest` fails. **Routing pass 2026-10-01:** the 16-row smart-money reading tranche (ranking tables + truncation caps + the two cluster rows) now carries settlement routes; routeless rows 130 -> 114; the ranking integers were found to cancel algebraically to a pure sort order. **Routing pass 2026-10-01, tranche three:** the 16 smart-money admission-screen rows and the 15 agent-result scoring fields now carry routes; routeless rows 114 -> 83. The scoring weights were checked for the sort-key shape and do NOT have it -- they are summed and compared across candidates, so their spacing is load-bearing. **Routing pass 2026-10-01, tranche five:** the 22 routeless rows of the live risk subsystem (exit guard, trailing stops, de-levering ladder, reward-to-risk reference, cluster cap) now carry routes; routeless rows 83 -> 43 after the in-flight tranches land. See docs/board_notes/ item 90. **Routing pass 2026-10-01, tranche seven:** the routeless residue was re-counted at 24 (not the 45 projected) and all 16 remaining `src/config.py` rows now carry routes; routeless rows 24 -> 8, `arbitrary` unchanged at 133. See docs/board_notes/ item 90.
