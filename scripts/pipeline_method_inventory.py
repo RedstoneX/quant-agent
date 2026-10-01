@@ -24,6 +24,7 @@ INVENTORY_PATH = REPO_ROOT / "tests" / "pipeline_method_inventory.json"
 TRACKED_MODULES: tuple[str, ...] = (
     "src/pipeline.py",
     "src/pipeline_delever.py",
+    "src/pipeline_evening.py",
     "src/pipeline_exits.py",
     "src/pipeline_prompt_facts.py",
     "src/pipeline_protection.py",

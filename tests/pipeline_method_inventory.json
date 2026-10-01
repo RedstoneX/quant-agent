@@ -42,11 +42,8 @@
           "_earnings_preprocess_symbols",
           "_evaluate_external_admission_gates",
           "_evaluate_screened_admission",
-          "_evening_earnings_proximity",
-          "_evening_stop_proximity",
           "_evidence_gate_skip",
           "_execution_stage",
-          "_expected_sessions_missing_today",
           "_filter_hard_risk_decisions",
           "_filter_supported_symbols",
           "_findings_from_specialist_evidence",
@@ -78,7 +75,6 @@
           "_macro_history_regime_changed",
           "_macro_regime_or_print_changed",
           "_macro_series_prints_changed",
-          "_maybe_run_quarterly_meta",
           "_news_has_newer_material_wire",
           "_news_held_symbols",
           "_paid_suspended_payload",
@@ -86,7 +82,6 @@
           "_parse_logged_agent_response",
           "_peek_news_headlines",
           "_peeked_news_wire_text",
-          "_persist_evening_report",
           "_persist_hard_risk_block",
           "_persist_heal_call",
           "_persist_healed_macro_store",
@@ -113,7 +108,6 @@
           "_risk_mod_floor_breach",
           "_risk_stage",
           "_run_earnings_preprocess_body",
-          "_run_evening_body",
           "_run_intra_check_body",
           "_run_intra_safety_preamble",
           "_run_intraday_opportunity_scan",
@@ -134,15 +128,12 @@
           "_universe_screen_sources",
           "_watched_research_symbols",
           "run_close",
-          "run_daily",
           "run_earnings_preprocess",
-          "run_evening",
           "run_intra_check",
           "run_intra_safety",
           "run_midday",
           "run_morning",
-          "run_position_review",
-          "run_quarterly_meta_reflection"
+          "run_position_review"
         ]
       }
     },
@@ -165,6 +156,22 @@
           "_record_delever_shortfall",
           "_resolve_gross_ceiling",
           "_submit_gross_ceiling_trims"
+        ]
+      }
+    },
+    "src/pipeline_evening.py": {
+      "module_functions": [],
+      "classes": {
+        "EveningMixin": [
+          "_evening_earnings_proximity",
+          "_evening_stop_proximity",
+          "_expected_sessions_missing_today",
+          "_maybe_run_quarterly_meta",
+          "_persist_evening_report",
+          "_run_evening_body",
+          "run_daily",
+          "run_evening",
+          "run_quarterly_meta_reflection"
         ]
       }
     },

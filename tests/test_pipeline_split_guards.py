@@ -185,11 +185,14 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     36 and 22; the ids under `src.pipeline.*` had since fallen to 34, and step 1
     (the prompt-facts mixin) moved 25 of them to `src.pipeline_prompt_facts.*`,
     leaving 9; step 3 (the de-levering ladder) moved `_force_delever`'s one id to
-    `src.pipeline_delever.*` and then `src.pipeline_exits.*`, leaving 4. The point of this assertion is that a
+    `src.pipeline_delever.*` and then `src.pipeline_exits.*`, leaving 4; step 9 (the evening
+    session) moved `run_quarterly_meta_reflection`'s one id to `src.pipeline_evening.*`, leaving 3.
+    The point of this assertion is that a
     later step cannot move ids without the count moving."""
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    assert len(ledger_ids_for_module("src.pipeline", ledger)) == 4
+    assert len(ledger_ids_for_module("src.pipeline", ledger)) == 3
     assert len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 1
+    assert len(ledger_ids_for_module("src.pipeline_evening", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 25
     assert len(ledger_ids_for_module("src.pipeline_stages", ledger)) == 22
 
@@ -244,7 +247,7 @@ def test_migration_helper_rewrites_ids_and_scoped_paths_on_a_synthetic_move() ->
     # The entries that moved get the new `site:`; everything else keeps the old one.
     assert new_ledger.count("site: src/pipeline_split_canary.py") == len(plan.id_rewrites)
     untouched = len(ledger_ids_for_module("src.pipeline", new_ledger))
-    assert untouched == 4 - len(plan.id_rewrites)
+    assert untouched == 3 - len(plan.id_rewrites)
     assert '    "src/pipeline_split_canary.py",\n' in new_scoped
     # Nothing but the id, the site and the scope list may change.
     assert len(new_ledger.splitlines()) == len(ledger.splitlines())

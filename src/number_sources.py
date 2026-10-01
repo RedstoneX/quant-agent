@@ -254,6 +254,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # The held-position exit engine and the exit-trigger vocabulary -- moved
     # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
     # Every trail multiple and every exit threshold it carries stays scoped.
+    "src/pipeline_evening.py",
     "src/pipeline_exits.py",
     "src/pipeline_prompt_facts.py",
     # 2026-10-01, board item 210 step 2: the protection cluster -- stop

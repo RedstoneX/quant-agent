@@ -578,6 +578,9 @@ quant-agent/
 │   ├── pipeline.py                # Orchestrator (morning/midday/close/evening/earnings_preprocess/intra_check/meta)
 │   ├── pipeline_protection.py     # ProtectionMixin — stop coverage, repair, protected sells, WAL restore, reconcilers
 │   ├── pipeline_prompt_facts.py   # PromptFactsMixin — read-only DB/broker reads turned into LLM prompt context
+│   ├── pipeline_exits.py          # ExitEngineMixin — target revision, trigger substantiation, trails, exit execution
+│   ├── pipeline_delever.py        # DeleverMixin — Spec §11.2 gross-exposure ceiling and the de-lever ladder
+│   ├── pipeline_evening.py        # EveningMixin — evening session, proximity checks, quarterly meta reflection
 │   ├── pipeline_stages.py         # MorningResearch / Decision / Risk / Execution stage classes
 │   ├── pipeline_context.py        # RunContext dataclass — explicit shared state across stages
 │   ├── notifier.py                # Telegram session-status push (opt-in via env vars; per-mode noise policy)

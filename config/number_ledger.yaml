@@ -7388,7 +7388,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Window of the PM's own hit-rate/return calibration note
-      (src/pipeline.py:8588-8593). Its only caller passes nothing, so this
+      (src/pipeline_prompt_facts.py:3037-3043). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7418,7 +7418,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:8145-8148). The LIVE number is the keyword literal at
+      (src/pipeline_prompt_facts.py:2145-2152). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
@@ -7458,7 +7458,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:8145-8148). The LIVE number is the keyword literal at
+      (src/pipeline_prompt_facts.py:2145-2152). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
@@ -7500,7 +7500,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline.py:8145-8148). The LIVE number is the keyword literal at
+      (src/pipeline_prompt_facts.py:2145-2152). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_own_recent_decisions(limit)
@@ -7927,13 +7927,13 @@ numbers:
         that session count has a stable distribution across names, so the cooldown is set from how long a tightened
         stop actually stays clear of noise on the instrument, instead of from the single 2026-07-16 forensic anecdote
         the docstring currently offers as its reason
-  - id: src.pipeline.TradingPipeline.run_quarterly_meta_reflection(lookback_days)
+  - id: src.pipeline_evening.EveningMixin.run_quarterly_meta_reflection(lookback_days)
     value: 90
     status: not-trade-governing
-    site: src/pipeline.py
+    site: src/pipeline_evening.py
     note: >-
       Window of the quarterly meta-reflection digest
-      (src/pipeline.py:8731-8745). Its output reaches a prompt only as a
+      (src/pipeline_evening.py:EveningMixin.run_quarterly_meta_reflection). Its output reaches a prompt only as a
       STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]
@@ -8128,8 +8128,8 @@ numbers:
     base_value: 25
     note: >-
       Default maintenance margin (src/risk/rules.py:1468); the one caller
-      passes risk.maintenance_margin_pct (src/pipeline.py:7945-7947,
-      11742-11744).
+      passes risk.maintenance_margin_pct (src/pipeline_delever.py:510-512,
+      765-771).
   - id: src.risk.target_revision.assess_target_revision(breakout_projection_atr_multiple)
     value: 1
     status: derived
