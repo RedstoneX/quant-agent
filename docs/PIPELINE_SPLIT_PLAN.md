@@ -180,6 +180,7 @@ Same rule: these are already free functions, so each move is a file change plus 
 | `src/pipeline_sizing.py` | 3370–3760 | 390 | share sizing, risk budget, deployment budget, single-name cap — money-governing, 22 ledger sites |
 | `src/pipeline_earnings_quality.py` | 3094–3370 | 280 | earnings-figure sanity + XBRL cross-check |
 | **stays in `src/pipeline_stages.py`** | 143–290, 2930–3094, 3763–4820 | ~1,500 | shared record/alert/nomination helpers, `_persist_evidence`, `_record_pipeline_event` |
+| `src/ports/event_journal.py` + `src/storage/event_journal.py` | — | ~120 | **LANDED (conversion step 6, 2026-10-01).** `_persist_evidence` / `_record_pipeline_event` are now shims over the L2 `EventJournal` port; the bodies live in the L3 `DatabaseEventJournal`. In-memory fake for injection: `tests/fake_event_journal.py`. Rows byte-identical before/after (captured on both sides, diffed); the only observable delta is the storage-failure WARNING's logger name. |
 
 ---
 

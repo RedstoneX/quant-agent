@@ -69,6 +69,7 @@ from src.portfolio_constructor import (
     LEVEL_BACKED_STOP_RULES,
 )
 from src.pipeline_context import RunContext
+from src.storage.event_journal import DatabaseEventJournal, pipeline_event_fields
 # Step 11 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): these bodies moved
 # out verbatim and are re-exported here so every original import path and
 # every `monkeypatch.setattr(pipeline_stages, ...)` patch target is unchanged.
@@ -403,24 +404,16 @@ def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str
                        decision_id: str | None = None) -> None:
     """Best-effort Stage 4 structured-evidence write — NEVER raises.
 
-    Wraps `Database.insert_specialist_evidence` so every call site below can
-    call this unconditionally without its own try/except. A failure here
-    (disk full, lock contention, whatever) is a forensic-display gap, not a
-    reason to mark research/decision data degraded or interrupt the
-    pipeline — see docs/architecture/MISSION_CONTROL_API.md and
-    .claude/rules/trading-core.md's "Logging/forensic persistence failure
-    must never relax a deterministic block" rule.
+    Conversion step 6: a compatibility shim over the `EventJournal` port
+    (`src.ports.event_journal`); the body lives in
+    `src.storage.event_journal.DatabaseEventJournal.persist_evidence`. Kept
+    so the existing call sites work unchanged until each service takes a
+    `journal: EventJournal` in its constructor.
     """
-    try:
-        db.insert_specialist_evidence(
-            run_id=run_id, agent_name=agent_name, kind=kind, scope=scope,
-            evidence_json=evidence_json, symbol=symbol, decision_id=decision_id,
-        )
-    except Exception as e:
-        logger.warning(
-            "Failed to persist Stage 4 specialist evidence (agent=%s kind=%s "
-            "scope=%s symbol=%s): %s", agent_name, kind, scope, symbol, e,
-        )
+    DatabaseEventJournal(db).persist_evidence(
+        run_id=run_id, agent_name=agent_name, kind=kind, scope=scope,
+        evidence_json=evidence_json, symbol=symbol, decision_id=decision_id,
+    )
 
 
 def _check_levels_coverage(db: "Database", ctx: RunContext,
@@ -748,15 +741,16 @@ def _record_scale_in_window_closed(pipeline, ctx, spec: dict, *, covered: bool) 
 
 def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
                            outcome: str, reason: str = "", **details) -> None:
-    """Append one typed lifecycle fact to the existing evidence stream."""
-    import json as _json
-    payload = {"stage": stage, "outcome": outcome, "reason": reason, **details}
-    _persist_evidence(
-        pipeline.db, run_id=ctx.run_id, agent_name="pipeline",
-        kind="pipeline_event", scope="symbol" if symbol else "run",
-        symbol=symbol, decision_id=ctx.decision_id,
-        evidence_json=_json.dumps(payload, sort_keys=True),
-    )
+    """Append one typed lifecycle fact to the existing evidence stream.
+
+    Conversion step 6: shim over `EventJournal.record_pipeline_event`. Routes
+    through this module's `_persist_evidence` on purpose, so a test that
+    patches that name still sees every event, exactly as before.
+    """
+    _persist_evidence(pipeline.db, **pipeline_event_fields(
+        run_id=ctx.run_id, decision_id=ctx.decision_id, symbol=symbol,
+        stage=stage, outcome=outcome, reason=reason, details=details,
+    ))
 
 
 #: The seat this accounting spends its one paid retry under. Distinct from
