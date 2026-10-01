@@ -317,3 +317,51 @@ changes:
       always binds first; the entry-slippage belt goes if it is redundant
       with the universe half-spread screen; and the gross cap goes if the
       maintenance-margin requirement binds before it in every scenario.
+  - delta: -8
+    date: '2026-10-01'
+    why: >-
+      Board item 90, routing tranche EIGHT and last: the routeless residue
+      reaches ZERO. RECOUNTED AFTER MERGE, not carried over. This tranche was
+      written against a ledger whose routeless residue was 24 and would have
+      taken it to zero on its own; tranche seven landed on main in parallel
+      and had already routed sixteen of the same rows, leaving eight. The
+      delta on this line is therefore -8, the figure `classification()` gives
+      against the MERGED ledger, and not either side's pre-merge number. Twenty-three rows gained a `settles_by` route -- the
+      four `SEAT_WEIGHT` seat priors, the rotation margin, the short-gap
+      sizing haircut, the exit limit pad, and the sixteen remaining
+      `src.config` rows (cash reserve, deployment-gap band, event horizon,
+      entry-slippage ceiling, the three intraday-scan rows, the two
+      nomination caps, and the seven `RiskConfig` rows). The twenty-fourth,
+      the levels-degraded share, left the `arbitrary` set entirely for
+      `not-trade-governing` and carries its own delta line in
+      `config/number_ledger_history.yaml`.
+
+      HOW EACH NUMBER IS CONSUMED WAS READ, NOT INFERRED FROM ITS SHAPE.
+      The four seat weights are the shape an earlier tranche was fooled by
+      and they are NOT a sort key: `rank_verdicts` builds
+      `[seat_weight(v.seat) for v in group]` and uses those weights in
+      weighted means of magnitude, conviction and reward-to-risk which are
+      then summed into one score compared ACROSS candidates, so the spacing
+      between 1.2 and 0.8 is load-bearing and every route says so.
+
+      NO ROUTE POINTS AT THIS DESK'S OWN TRADES. The stop floor, the gross
+      ceiling, the target horizon and reach, the level-touch threshold, the
+      move threshold, the slippage ceiling, the exit pad, the rotation
+      margin and the four seat weights all route to measurements over the
+      UNIVERSE the desk could trade, on public daily or intraday bars.
+      The short-gap haircut is routed to board item 186, whose question it
+      is, and is deliberately NOT re-derived here.
+
+      DELETE OUTCOMES ARE STATED BESIDE THE SET-IT OUTCOMES. The likeliest
+      deletions are the target-reach multiple, which goes if it never
+      changes a target the horizon test did not already change, and the
+      whole `SEAT_WEIGHT` dict, which collapses to an unweighted mean if no
+      seat separates from another beyond sampling error. The intraday move
+      threshold is deleted in its FLAT form either way, because one
+      percentage across names of different volatility is the defect
+      regardless of the level.
+
+      One row is routed as a `ratified-bound`: the per-name risk envelope
+      is owner appetite, so its route records the dollar loss it represents
+      at a dated equity. It STAYS `arbitrary` when he states it, because
+      ratification is not a source.
