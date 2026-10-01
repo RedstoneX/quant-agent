@@ -1359,3 +1359,39 @@ class HoldingWhyResponse(BaseModel):
     #: Accession numbers, internal flags, broker-eligibility JSON, run
     #: identifiers — everything deliberately kept out of `readable`.
     raw_evidence: dict = {}
+
+
+class DeferredSuspension(BaseModel):
+    """One owner page the cost circuit held back (item 211)."""
+
+    trigger_code: str | None = None
+    detail: str | None = None
+    run_id: str | None = None
+    created_at: str | None = None
+
+
+class SuppressedRepeatEvent(BaseModel):
+    key: str | None = None
+    day: str | None = None
+
+
+class SuppressedRepeat(BaseModel):
+    """Repeat alerts of ONE type the watchdog declined to resend today."""
+
+    day: str | None = None
+    count: int = 0
+    events: list[SuppressedRepeatEvent] = []
+
+
+class SuppressedAlertsResponse(BaseModel):
+    """Item 211 — the suppression record, readable without Telegram.
+
+    `*_available` is False when the underlying record could not be read at
+    all, which is a different fact from "nothing was suppressed" and is
+    reported as such rather than as an empty list.
+    """
+
+    deferred_available: bool = False
+    deferred_suspensions: list[DeferredSuspension] = []
+    suppression_state_available: bool = False
+    suppressed_repeats: dict[str, SuppressedRepeat] = {}

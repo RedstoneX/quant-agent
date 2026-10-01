@@ -321,6 +321,13 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 208)
 
 
+**218. Arithmetically losing geometry has no owner ruling: the desk may neither refuse it nor resize for it — OPEN, filed 2026-10-01.** On the real book [measured 2026-10-01 against the production database, read-only, 33 BUY trades carrying an entry, a stop and a target] reward:risk runs median 1.44, minimum 0.68, with SIX below parity (RSG 0.76, RSG 0.90, NUE 0.82 range; COP 0.68, OXY 0.87, RKLB 0.82 breakout). A refusal at parity was built in `_widen_stop_past_noise` and REMOVED before merge: placed in the stop-widening path and keyed off the widened stop it fires as a function of stop width, which is the deleted stop-width gate under another name, and the standing ruling is that a wide stop ships and is answered by SMALLER SIZE, never by refusal (seven existing guard tests fail against it, four of them the owner's own worked examples). The "parity is arithmetic" argument fails with it: the break-even identity assumes the position is sold AT THE TARGET and this desk never sells at a target (exits are on alignment, owner 2026-09-30), so the reward side is a floor on the payoff, not the payoff. A size-based variant is barred by the reward:risk helper's own recorded ruling that the figure is for ranking, never a cutoff and never a size cap. `MAX_REACH_ATR_MULTIPLE` was investigated and KEPT, and it is NOT what holds targets close [measured 2026-10-01, the desk's own stored 400-bar daily set, 101 symbols, ATR(14), rolling windows: median per-name realised favourable excursion 1.93 ATR over a 15-session hold, per-name maximum 8.78 ATR, against the cap's 1.5*sqrt(15) = 5.81 ATR] — that measurement corrects an earlier diagnosis in this repo which treated the cap as the thing clipping targets in.
+
+DONE WHEN:
+  - [ ] the OWNER rules on whether an arithmetically losing entry — reward smaller than risk against the stop that will actually ship — may ship at all, because the current ruling set forbids BOTH available responses: refusing it is barred (a wide stop is answered by smaller size, never by refusal) and resizing for it is barred (the reward:risk figure is for ranking, never a cutoff and never a size cap), which leaves the desk with no mechanism of any kind; the question is recorded and deliberately NOT routed by the branch that filed it, and no answer is invented here
+detail: docs/BOARD_NOTES.md (item 218)
+
+
 **212. A range (Type A) position's structural trail is gated behind the recorded take-profit target, a number nobody sourced, so from entry until price passes that target the position is protected by its original entry stop alone and by nothing that follows price up. Measured on 33 real production BUY trades: the target's reward-to-risk is median 1.33 and at most 1.72, so the target IS reached in practice while +2R never has been — which is why PR #857's attempt to move the gate to +2R was reverted as strictly worse on live data. Separately verified: the target has no power to close or cap a position, since no take-profit order ever reaches the broker and a target rationale cannot authorise a sale, so gating this trail is its ONLY live behaviour. The owner's ratified answer is exit-on-alignment — sell when structure, ATR and an SMA cross agree the trend is over, never on a made-up level — and the alignment exit on open PR #853 is the candidate replacement for this gate; do NOT build a replacement, re-derive the gate, or widen any multiple under this item. Detail: `docs/BOARD_NOTES.md` (item 212).** The defect is the unprotected stretch between entry and the gate, not the choice of multiple.
 
 DONE WHEN:
@@ -328,17 +335,6 @@ DONE WHEN:
   - [ ] (b) the chosen answer is live for Type A entries and a range position between entry and its target is observably protected by something that reads off the instrument, not by an unsourced level.
 detail: docs/BOARD_NOTES.md (item 212)
 
-
-**211. Alarm flapping — the desk paged the owner on BOTH edges of a self-clearing fault, and he muted every alert — filed 2026-09-30.** 107 Telegram messages went out between 26 and 29 Sep, 46 on the 28th and 42 on the 29th [measured, production `notifier_sends`]. 22 "PAID ANALYSIS SUSPENDED" and 22 "PAID ANALYSIS RESUMED" of those are ONE underlying fault — paid provider calls failing — latching and self-clearing all weekend, announced twice per cycle, plus 5 identical deploy-drift repeats from a timer-run unit that had no per-type suppression at all. The owner turned every desk alert off, including live-risk ones, so this defect is currently suppressing the alerts that protect money. FIXED HERE: `LLMCostCircuitBreaker._notify_if_needed` defers the owner page for a `_SELF_CLEARING_HARD_TRIGGERS` latch until it has outlived `transient_latch_cooldown_minutes` — the circuit's OWN self-clear timing, read from the same config field `_auto_clear_transient_latch_locked` gates on, not a threshold picked here. A latch that expires inside that window leaves `alert_state` at 0, which the existing item-174 pairing already reads to suppress the matching "RESUMED" note, so a blip is one recorded episode and zero messages. Both owner-facing messages now carry the episode's duration and how many times the same trigger self-cleared today. Nothing is dropped: the trip event, a once-per-latch `suspend_alert_deferred` event and the CRITICAL log line all still land in `llm_circuit_events`, and `scripts/check_deploy_drift.py` now claims through a new GENERIC per-type, per-key, ET-day marker (`coverage_watchdog.claim_typed_alert`) that writes every refused claim to `suppressed_alerts` in the watchdog state file.
-
-detail: docs/BOARD_NOTES.md (item 211)
-
-DONE WHEN:
-  - [x] a transient provider latch that self-clears inside the circuit's own self-clear window sends the owner NOTHING and is still fully recorded
-  - [x] the durability threshold is read from `transient_latch_cooldown_minutes`, so changing the self-clear timing moves the paging threshold with it
-  - [x] the suspension and resume messages both state the episode's duration and its self-clear count
-  - [x] repeat suppression is per alert TYPE and per key, never global, so one noisy fault cannot silence an unrelated one
-  - [ ] the `suppressed_alerts` record and the `suspend_alert_deferred` events are surfaced on the read-only API/dashboard — NOT DONE HERE, they are durable in the state file and the DB but no endpoint reads them yet
 
 **214. Nobody has read the technical seat's schema-hygiene counters, so whether the Google route actually honours the sent schema is still unanswered — filed 2026-09-30, OPEN, carrying item 157's first criterion.** Item 157's enforced answer format shipped on both wire routes, but its live-confirmation criterion could never run: no deployed process holds a real Google credential for a pytest call. `_record_answer_hygiene` was shipped instead and records fenced-markdown and undeclared-key hits per provider on every real call; nobody has since looked at what it recorded.
 
@@ -386,11 +382,12 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
-- retired queue: 193
 - retired queue: 196
 - retired queue: 99
 - retired queue: 157
 - retired queue: 119
+- retired queue: 193
+- retired queue: 211
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
