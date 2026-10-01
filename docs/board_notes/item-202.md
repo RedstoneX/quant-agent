@@ -183,6 +183,44 @@ answer, and the Yahoo bulk is the same sector lookup the rehearsal needs
 recorded.
 
 
+### Item 202 update 6 — FRED and the news feeds are now recorded (2026-10-01)
+
+The settling run voided on 11 blocked endpoints and every one was FRED
+(`api.stlouisfed.org`, 15 series) or one of the ten news/reference hosts.
+Both are now served from `ops/rehearsal/recordings/feeds.json.gz` by
+`ops/rehearsal/feed_recording.py`, which copies the pattern the bars and the
+sector lookup already use rather than adding a second mechanism: capture once
+as an operator command, then patch the name in the module that BUILDS the
+client, so everything above the transport stays real.
+
+Two transports, because the dependency set has two. `src.data.macro` builds
+`fredapi.Fred` (a bare `urlopen` of its own, so patching `urlopen` would not
+have caught it), and `src.data.news`, `src.data.event_calendar` and
+`src.data.earnings` each import `urlopen` into their own namespace — the FRED
+release-dates call, the Fed/SEC pages and the ~20 RSS feeds all go through
+that one name. The retry, budget, coverage-accounting and honest-degradation
+logic above both is untouched, and nothing changes what any provider is asked
+for.
+
+**Failures are recorded as failures.** Every FRED failure in the retained log
+is `fetch_deadline_exceeded`; a recording that only replayed successes could
+not reproduce the thing the log is full of. A recorded failure is re-raised at
+the same place the live one was raised.
+
+**A gap raises.** An unrecorded series or URL is named in the `unavailable`
+list — which `assert_hermetic` turns into a loud `MissingRecordedInput` — and
+the call itself raises rather than returning a default, an empty body or a
+computed stand-in. Credentials are stripped before a URL becomes a recording
+key, so no API key is written to disk and the recording replays under any key.
+
+**Measured 2026-10-01:** `tests/test_rehearsal_feed_replay.py`, 7 tests, each
+run inside the rehearsal's own `no_network` wall — the wall journals any
+outbound attempt, and the journal is empty for every served call, which is the
+same discriminator the curl_cffi hole needed. Not claimed: the settling run was
+NOT repeated here, so no verdict follows from this; and two unrecorded inputs
+named in update 4 remain — the pinned market recording holds zero sectors, and
+the Alpaca asset directory is unavailable offline.
+
 ### Board text moved here (2026-10-01, per-item byte budget)
 
 The item block below is the full prose that stood in `docs/WORK.md` before the

@@ -461,6 +461,23 @@ def run_rehearsal(
         checks.append(
             stack.enter_context(recorded_sector_lookup(unavailable, _recording))
         )
+        # Board item 202, the last two unrecorded inputs. The settling run of
+        # 2026-10-01 was voided by 11 blocked attempts and every one of them
+        # was FRED or a news/reference feed. They are now served from their
+        # own recording by the same patch-where-the-client-is-built pattern,
+        # failures included; a gap raises rather than substituting anything.
+        from ops.rehearsal.feed_recording import load as _load_feeds
+        from ops.rehearsal.feed_recording import recorded_feeds
+
+        _feeds = _load_feeds()
+        if not _feeds:
+            notes.append(
+                "no recorded FRED/news feeds on this box, so every macro and "
+                "news read raises as a missing recorded input — capture one "
+                "with `python -m ops.rehearsal.feed_recording --series ...` "
+                "(board item 202)"
+            )
+        checks.append(stack.enter_context(recorded_feeds(unavailable, _feeds)))
         checks.append(assert_broker_is_stubbed(pipeline.broker))
         checks.append(
             "no outbound network connection is possible for the duration of "
