@@ -1,0 +1,42 @@
+# The SETTLEMENT-ROUTE ratchet's append-only record (board item 90, half two).
+#
+# `MAX_ROUTELESS_ARBITRARY` in `src/number_sources.py` is the SUM of the
+# deltas below, and the ledger check requires it to EQUAL the number of
+# `status: arbitrary` rows in `config/number_ledger.yaml` that carry no valid
+# `settles_by:` block. It is the same ratchet shape as the arbitrary count
+# (`config/number_ledger_history.yaml`) and for the same reason: a count kept
+# as a hand-edited literal drifts from its own record, and a count kept as a
+# ceiling rewards deleting the row instead of answering it.
+#
+# WHAT IT COUNTS. Item 90 requires every trade-governing number to sit in one
+# of exactly three states: (1) sourced or measured, (2) ratified as a
+# structural bound with the reason recorded, or (3) UNSOURCEABLE TODAY with a
+# named recording -- already built or specified -- that would settle it, that
+# recording being its closing condition. States 1 and 2 are the existing
+# `sourced` / `derived` / `instrument` statuses. State 3 is an `arbitrary` row
+# WITH a `settles_by:` block. A number in none of the three is an `arbitrary`
+# row with no `settles_by:`, and that residue is what this file counts.
+#
+# LOWER it by appending a negative delta in the same commit that gives a row
+# its `settles_by:` block or sources the number outright. Raising it means a
+# new unsourced number arrived with no route to an answer, which is an owner
+# decision and not a build fix.
+changes:
+  - delta: 135
+    date: "2026-10-01"
+    why: |
+      Genesis, measured from the ledger on 2026-10-01 (board item 90): 135 of
+      the 329 ledger rows carry `status: arbitrary`, and at the moment this
+      ratchet was built NONE of them declared a settlement route, because the
+      schema had no way to express one. Every arbitrary row already carries
+      `open_question` and `cost_while_unanswered` -- what it owed and what the
+      debt costs -- but neither says whether anything in this desk WILL ever
+      answer it. That is the whole of item 90's remaining work, now countable.
+  - delta: -1
+    date: "2026-10-01"
+    why: |
+      `src.config.RiskConfig.min_stop_atr_multiple` (2.5) is state 3. The
+      recording that settles it was BUILT on 2026-09-30 by item 90's own
+      `min_stop_atr_multiple` pass: the per-closed-trade excursion columns in
+      `src/storage/db.py`. The value is untouched and is not re-derived here;
+      only the route to its answer is now written where the check can see it.
