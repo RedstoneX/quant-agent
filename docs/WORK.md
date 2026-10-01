@@ -306,6 +306,7 @@ DONE WHEN:
   - [ ] (a) any message or dashboard field that says a position is level-backed / still protected also carries the level's measured zone span, so the owner can see whether his stop sits at the level or merely inside its band
   - [ ] (b) a recorded decision, in `docs/INCIDENT_HISTORY.md`, on whether "stop inside a wide zone" should read as backed at all, or whether the claim must be narrowed to stops within some measured distance of the level price — no number is introduced by this item; it is a measurement plus an owner-doctrine question
 detail: docs/BOARD_NOTES.md (item 215)
+  - [ ] (c) the backtest engine carries each level's pivot-bar ranges, so it runs the same stop rule live runs instead of failing closed on every level (done 2026-10-01).
 
 
 **217. Prompt claims that another part of the desk "handles" something — verify each against the code (filed 2026-10-01 after the risk seat was told a thin reward:risk had been "paid for in size by the constructor"; it had not, and that sentence is corrected).** The sweep was by text search only, so claims phrased differently may remain. Not yet verified: the portfolio-manager prompt's statements that "the constructor will deny it" (immaterial-payoff trades), "the constructor REJECTS the trade outright" (stop on the wrong side of entry), and "the constructor will NOT flip" a held short in one session.
