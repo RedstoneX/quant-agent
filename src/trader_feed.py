@@ -2130,6 +2130,14 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
 
     _new_block(lines, _render_review_summary)
 
+    def _render_target_revisions(lines: list[str]) -> None:
+        # ONE renderer, not a second telling (item 194): the owner feed and
+        # the plain session message say the same words about a revision.
+        from src.notifier import describe_target_revisions
+        lines.extend(describe_target_revisions(result))
+
+    _new_block(lines, _render_target_revisions)
+
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)
     _new_block(lines, _append_held, held_symbols, profiles)

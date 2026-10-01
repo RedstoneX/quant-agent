@@ -146,7 +146,7 @@ Risk-stage rows are:
   (`rm_modification_unknown_field`, `rm_modification_no_matching_decision`).
   An edit naming a symbol with no decision in the plan is filed run-scoped
   with `symbol_named`, so it never becomes a phantom candidate.
-- `deterministic_gate` / `blocked` or `modified`, `reason=queued_earnings_cap`
+- `deterministic_gate` / `blocked`, `reason=queued_earnings_unconvicted_seat`
   with `before_allocation_pct` / `after_allocation_pct` — the symbol's
   `proposed_order` row is written earlier and keeps the pre-cap size.
 - `deterministic_gate` / `modified`, `reason=side_flip_refused` — a flip

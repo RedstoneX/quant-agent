@@ -501,39 +501,42 @@ def test_trim_guard_still_allows_retry_after_a_zero_fill_rejection():
     assert p._symbols_already_trimmed_today() == set()
 
 
-# ---------- queued-earnings cap must bound the RESULTING weight ----------
-
-def test_queued_earnings_cap_bounds_the_resulting_weight_not_the_add():
-    """A name already at 15% with an unread filing could be topped up to 20%
-    because the ADD itself was <= 5% — the belt capped the delta, while the
-    prompt/docstring promise a cap on the resulting position."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    held = Position(symbol="NKE", qty=150, avg_entry=100, current_price=100,
-                    market_value=15_000, unrealized_pnl=0.0,
-                    sector="Consumer Cyclical")
-    queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
-    out = p._clamp_queued_earnings_buys(
-        [_buy("NKE", alloc=5.0)], queued,
-        positions=[held], total_value=100_000.0,
-    )
-    assert out == [], "already at 15% > the 5% cap — the add must be dropped"
-
-
-def test_queued_earnings_cap_still_allows_a_bounded_fresh_entry():
-    p = TradingPipeline.__new__(TradingPipeline)
-    queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
-    out = p._clamp_queued_earnings_buys(
-        [_buy("NKE", alloc=12.0)], queued, positions=[], total_value=100_000.0,
-    )
-    assert len(out) == 1 and out[0].allocation_pct == 5.0
+# ---------- an unread filing refuses the BUY, it does not size it ----------
+#
+# WHAT THIS SECTION USED TO PIN, AND WHY THE EXPECTATION CHANGED. The
+# 2026-07-16 audit fixed a real defect: the belt capped the ADD rather than
+# the resulting weight, so a name already at 15% could be topped up to 20%
+# while each add stayed under the 5% cap. The fix was right about the bug and
+# the tests below still pin the two cases it found (a held name at 15%, a
+# fresh entry at 12%) — but board item 186 removed the CAP itself on
+# 2026-10-01, because the 5 was an invented share of the book with no source
+# and the owner ruled on 2026-09-30 that such a constant is a defect to
+# remove, not an appetite to answer. The condition is now read for what it
+# is: an unread filing is an UNCONVICTED earnings seat, and standing doctrine
+# already refuses an entry the seats are not right about. So BOTH cases now
+# end in no BUY at all, which is strictly tighter than the old cap in every
+# case the old tests covered — the fresh entry that used to be allowed at 5%
+# is the only behaviour change, and it is a refusal, never a larger position.
 
 
-def test_queued_earnings_cap_untouched_symbols_pass_through():
+def test_queued_earnings_refuses_a_top_up_on_a_held_name():
     p = TradingPipeline.__new__(TradingPipeline)
     queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
-    out = p._clamp_queued_earnings_buys(
-        [_buy("AAPL", alloc=12.0)], queued, positions=[], total_value=100_000.0,
-    )
+    out = p._refuse_queued_earnings_buys([_buy("NKE", alloc=5.0)], queued)
+    assert out == [], "the filing is unread — the seat is not convicted"
+
+
+def test_queued_earnings_refuses_a_fresh_entry_outright():
+    p = TradingPipeline.__new__(TradingPipeline)
+    queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
+    out = p._refuse_queued_earnings_buys([_buy("NKE", alloc=12.0)], queued)
+    assert out == [], "no bounded entry survives an unread filing any more"
+
+
+def test_queued_earnings_untouched_symbols_pass_through():
+    p = TradingPipeline.__new__(TradingPipeline)
+    queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
+    out = p._refuse_queued_earnings_buys([_buy("AAPL", alloc=12.0)], queued)
     assert len(out) == 1 and out[0].allocation_pct == 12.0
 
 

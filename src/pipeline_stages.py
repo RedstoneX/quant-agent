@@ -7192,58 +7192,50 @@ class DecisionStage:
         return ctx
 
 
-def _record_earnings_cap(pipeline, ctx, before: list, after: list) -> None:
-    """One durable per-symbol row for every BUY the queued-earnings cap
-    dropped or cut (`TradingPipeline._clamp_queued_earnings_buys`).
+def _record_queued_earnings_refusals(
+    pipeline, ctx, before: list, after: list,
+) -> None:
+    """One durable per-symbol row for every BUY the queued-earnings gate
+    REFUSED (`TradingPipeline._refuse_queued_earnings_buys`).
 
-    Board item 164 (2026-09-19). The cap is a BUY-only gate that either
-    removes a decision or replaces it with a smaller copy, so both outcomes
-    are read by comparing the list it was handed with the list it returned:
-    a BUY absent afterwards was DROPPED, one whose `allocation_pct` fell was
-    CUT. The size is stated before and after because the symbol's
-    `proposed_order` row, written earlier by DecisionStage, still carries
-    the pre-cap number. Never raises — a record failure must not stop the
+    Board item 164 (2026-09-19) built this recording for the old 5%-of-book
+    clamp, which could either drop a BUY or shrink it; board item 186
+    (2026-10-01) removed the clamp, so the only outcome left is a refusal and
+    the `modified` row no longer exists. A refused BUY is absent from the
+    list the gate returned, so it is read by comparing the two lists. The
+    size is stated before and after (after is always 0) because the symbol's
+    `proposed_order` row, written earlier by DecisionStage, still carries the
+    size that was asked for. The detail is the gate's own refusal string
+    (`risk.rules.unread_filing_block_reason`), which carries its own prefix
+    and is deliberately NOT the conviction bar's: this is missing evidence,
+    not a seat's verdict, and entries only — nothing here reads or changes a
+    held position. Never raises — a record failure must not stop the
     stage (`_persist_evidence`'s contract).
     """
     try:
-        after_by_symbol = {
-            d.symbol.strip().upper(): d
+        from src.risk.rules import unread_filing_block_reason
+        after_symbols = {
+            d.symbol.strip().upper()
             for d in (after or []) if d is not None and d.action == "BUY"
         }
         for d in before or []:
             if d is None or d.action != "BUY":
                 continue
-            sym = d.symbol.strip().upper()
-            kept = after_by_symbol.get(sym)
-            if kept is None:
-                _record_pipeline_event(
-                    pipeline, ctx, d.symbol, "deterministic_gate", "blocked",
-                    "queued_earnings_cap", gate="queued_earnings_cap",
-                    before_allocation_pct=d.allocation_pct,
-                    after_allocation_pct=0.0,
-                    detail=(
-                        f"BUY {d.symbol} DROPPED: a just-filed earnings "
-                        f"report is queued and not yet read, and the name is "
-                        f"already at or over the queued-earnings weight cap, "
-                        f"so there is no room to add. The proposed order "
-                        f"asked for {d.allocation_pct:.2f}%."
-                    ),
-                )
-            elif kept.allocation_pct < d.allocation_pct:
-                _record_pipeline_event(
-                    pipeline, ctx, d.symbol, "deterministic_gate", "modified",
-                    "queued_earnings_cap", gate="queued_earnings_cap",
-                    before_allocation_pct=d.allocation_pct,
-                    after_allocation_pct=kept.allocation_pct,
-                    detail=(
-                        f"BUY {d.symbol} CUT from {d.allocation_pct:.2f}% to "
-                        f"{kept.allocation_pct:.2f}%: a just-filed earnings "
-                        f"report is queued and not yet read, so the resulting "
-                        f"position is held to the queued-earnings weight cap."
-                    ),
-                )
+            if d.symbol.strip().upper() in after_symbols:
+                continue
+            _record_pipeline_event(
+                pipeline, ctx, d.symbol, "deterministic_gate", "blocked",
+                "queued_earnings_unread_filing",
+                gate="queued_earnings_unread_filing",
+                before_allocation_pct=d.allocation_pct,
+                after_allocation_pct=0.0,
+                detail=(
+                    f"BUY {d.symbol} REFUSED at {d.allocation_pct:.2f}%: "
+                    + unread_filing_block_reason(d.symbol)
+                ),
+            )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("queued-earnings cap recording failed: %s", exc)
+        logger.warning("queued-earnings refusal recording failed: %s", exc)
 
 
 def _apply_sector_unresolved_alert(data_status: dict, violations: list) -> None:
@@ -7664,20 +7656,18 @@ class RiskStage:
                 len(portfolio_decision.decisions),
             )
 
-        # Pass the book so the cap measures the RESULTING weight, not just the
-        # add: allocation_pct here is the constructor's delta, so a name already
-        # at 15% with an unread filing could otherwise be topped up to 20%.
-        # rm_positions (sweep-vehicle-free) is the right basis — parked T-bills
-        # are cash and never carry an earnings filing.
+        # Board item 186 (2026-10-01): no book is needed any more. The gate
+        # no longer measures a resulting weight against a 5%-of-book cap — an
+        # unread filing is an unconvicted earnings seat, so the BUY is refused
+        # outright and there is nothing to size.
         before_earnings_cap = list(portfolio_decision.decisions)
-        portfolio_decision.decisions = pipeline._clamp_queued_earnings_buys(
+        portfolio_decision.decisions = pipeline._refuse_queued_earnings_buys(
             portfolio_decision.decisions, earnings_results,
-            positions=rm_positions, total_value=total_value,
         )
-        # Board item 164: the cap used to reach the log only, while this
+        # Board item 164: the gate used to reach the log only, while this
         # symbol's `proposed_order` row (written by DecisionStage, before
-        # this gate) kept the pre-cap size. Recording only.
-        _record_earnings_cap(
+        # this gate) kept the pre-gate size. Recording only.
+        _record_queued_earnings_refusals(
             pipeline, ctx, before_earnings_cap, portfolio_decision.decisions,
         )
 

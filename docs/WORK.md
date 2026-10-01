@@ -174,7 +174,7 @@ DONE WHEN:
   - [ ] ***OWNER APPETITE*** how much of total equity may the desk lose overnight on ONE name whose just-filed report nobody has read, accepting the stop does not hold through a gap? Answer that tolerance L and the cap stops being chosen: it reads L divided by the expected absolute earnings-day move, and L = 0.25% reproduces today's 5%
   - [x] 2026-09-30 OWNER RULING APPLIED: risk is never a global dial, so no appetite number on this item is routed to the owner any more; each remaining ceiling is either replaced by a per-name read or recorded as blocked with its blocker named. Both previously routed questions are WITHDRAWN, not pending
   - [ ] `short_gap_risk_multiple` (1.5) becomes a read off that stock's own overnight-gap behaviour instead of one constant for every short — BLOCKED on stored daily bars, which the desk does not keep (the constructor is handed `analysis.atr_14` and no bar history, verified 2026-09-30). No value picked, no appetite asked
-  - [ ] the queued-earnings BUY clamp (5% of the book) stops being a global share — the structural alternative identified 2026-09-30 is that an unread filing IS an unconvicted seat, which under standing doctrine (all five seats right to enter) bars the BUY rather than sizing it; it changes live sizing behaviour, so it needs an adversary pass before it ships and was NOT applied in this pass
+  - [x] the queued-earnings BUY clamp (5% of the book) stops being a global share — SHIPPED 2026-10-01 as the structural alternative, not a re-derivation: the `queued` flag marks a filing the pre-market preprocess FAILED to analyse, so this is MISSING EVIDENCE and the BUY is refused on its own reason prefix (not the conviction bar's, which rotation string-matches on held names) and recorded per symbol; the 5 is deleted from the ledger; measured on the retained record the gate has never fired and no queued-unread filing appears at all, so no recorded BUY changes and no held position is affected. Detail: docs/BOARD_NOTES.md (item 186)
 
   - [x] the portfolio and cluster ceilings (25 total at-risk, 90 terminal sector and its constructor mirror, 40 cluster share) each end in a definite state rather than as an open appetite question — 2026-10-01: values unchanged and still owner-ratified, every appetite question WITHDRAWN under the 2026-09-30 ruling, both failed derivations written down per ceiling (two of them algebraic cancellations: 25 is five full-size names and 40% of 25% is two, at the ratified 5% per-trade envelope), and each row now names the recording that would settle it with the route ratchet moved to match. Do not re-derive these three
 detail: docs/BOARD_NOTES.md (item 186)
@@ -214,18 +214,6 @@ DONE WHEN:
 
 detail: docs/BOARD_NOTES.md (item 190)
 
-**194. The wall re-derivation now sweeps the whole book; two brakes on it are still missing — filed 2026-09-30, UN-RETIRED 2026-10-01. Detail: `docs/BOARD_NOTES.md` ("item 194").**
-
-AT MERGE THIS CHANGES NO STOP [measured 2026-10-01, production DB read-only]: ten of the eleven open positions carry a live target identical to their entry target, and the one that differs — a short range trade, by about 2.2% of price — has price on the same side of both boundaries. The trailing-regime correction moves protection in BOTH directions: it removes a ratchet that could never be given back, and it loosens the boundary case.
-
-DONE WHEN:
-  - [x] either the scheduled check's `TARGET_AIMS_PAST_A_STANDING_WALL` finding feeds the same `assess_target_revision` adjudication a seat flag does, or it is recorded why a seat flag must stay the only way in — MET 2026-10-01: every open position is adjudicated every session, the flag now supplies only the seat label
-  - [x] AAPL and NOK are each either re-derived or recorded, by name, as findings the desk has decided not to correct — MET 2026-10-01 by the same change: both are open positions, so both are in the swept population and each produces a re-derivation or a named refusal every session
-  - [ ] the ATR-reach trigger and the wall trigger carry a brake of the same kind the level-broken trigger's two-close confirmation is, so a target sitting near a bound cannot flip session to session off one day's ATR and one day's level set — no damping CONSTANT may be picked for this
-  - [ ] a target revision is voiced to the owner, saying what actually changed rather than only quoting a new number; the outcomes reach the dashboard today (`src/api/holding_why.py`) and reach Telegram nowhere
-
-detail: docs/BOARD_NOTES.md (item 194)
-
 **201. The rest of the cancel+resubmit stop path — filed 2026-09-30 alongside the in-place amend fix. Detail: `docs/BOARD_NOTES.md` ("item 201"). OPEN: the conversions are in and the failure branch is honest, but no production evidence yet shows a two-leg amend landing.** The ex-dividend shift and the trailing re-price now share BOTH the measured-safe shape test and the failure classification, amend every resting leg in place, confirm each replacement id, and record the per-leg outcome as a durable row; a partial or an unanswered amend carries no order id, so nothing is written back and the owner is told. What still cancels then resubmits: a coverage-repairing FRACTIONAL quantity change (measured refused 2026-09-30), the stop-LIMIT fallback leg, a bracket/OTO child (UNMEASURED, not known-unamendable), and the lot-consolidating fallback, which is a design choice about per-lot levels rather than a broker limit.
 
 DONE WHEN:
@@ -240,16 +228,6 @@ DONE WHEN:
   - [ ] production evidence shows a fractional position's two hybrid legs BOTH amending in place. Not yet observed: no desk session may place a broker order, and no amend outcome was ever recorded before this change (the `trades` table carries 80 rows from 2026-09-02 to 2026-09-30 and 0 ex-dividend shifts, so waiting on an ex-dividend alone was an unbounded wait) [measured 2026-10-01, production `quant_agent.db`, read-only]. CLOSING CONDITION: a `specialist_evidence` row of kind `stop_shift_legs` whose `legs` list holds two legs, one whole-share and one sub-share, both `outcome="amended"` with distinct `new_id`s. The trailing path writes that row on every re-price (9 TRAIL_STOP rows in the same measured month), so the wait is now bounded by ordinary trailing rather than by a dividend
 
 detail: docs/BOARD_NOTES.md (item 201)
-
-**200. The status board's own file was one change away from blocking every other change — filed 2026-09-30. OPEN: the move is made, the guard against it recurring is not.**
-
-DONE WHEN:
-  - [x] `docs/WORK.md` is back under 70% of its cap by MOVING argument, history and measurement out of open items — not deleting it, not raising the cap — with every moved byte proved verbatim in `docs/BOARD_NOTES.md` by a line-level diff and the rendered owner prose unchanged block-for-block
-  - [x] the cap and the growth budget are named as what they are: both PICKED, not derived (100,000 gave ~5% headroom over a measured 94,801; the 0.5 growth share calls itself provisional), and both allowed to be picked because a documentation size limit governs no money
-  - [ ] the move is REPEATABLE without a human deciding what to carve: nothing yet stops the same items re-accreting history in place, so the next time the cap binds it will again be hand-work
-   — the file passing (say) 80% should say so in the same place the growth-budget failure already speaks, rather than the first warning being a blocked merge
-
-detail: docs/BOARD_NOTES.md (item 200)
 
 **202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, and (2026-10-01) rebinding the market provider on the morning-research stage, which held its own reference and so kept the live one after the swap — tech_analyst now runs offline [measured 2026-10-01]. `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis` still XFAILs. 2026-10-01: the replay now covers the FOURTH transport (`_openai_wire_call`, which the failover and tertiary routes called directly) so the Portfolio Manager runs offline, and sector lookups no longer build their own yfinance client; the run now stops loudly on a missing recorded PM response instead of `APIConnectionError`, and FRED plus 20 news feeds are still not recorded. detail: docs/BOARD_NOTES.md (item 202)
 
@@ -397,6 +375,8 @@ DONE WHEN:
 - retired queue: 20
 - retired queue: 216
 - retired queue: 217
+- retired queue: 194
+- retired queue: 200
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

@@ -949,3 +949,21 @@ changes:
       the session kill budget in src/pipeline_stages.py, and the reserve band
       only changed its home (`CashSweepConfig.reserve_pct` ->
       `CashReserveConfig.pct`), which is a rename, not a count move.
+
+  - delta: -1
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 186: -1 for
+      `src.pipeline.TradingPipeline._clamp_queued_earnings_buys(max_pct)`
+      (5). The number is RETIRED BY REFORMULATION, not re-derived and not
+      re-labelled: the 5%-of-book weight cap on a BUY whose just-filed report
+      is queued and unread no longer exists, because an unread filing is an
+      UNCONVICTED earnings seat and standing doctrine (owner ruling
+      2026-09-25) already refuses an entry the seats are not right about.
+      The gate now refuses the BUY and has no percentage in it at all, so the
+      parameter default it was read from is gone from the source and the row
+      has no site left to describe. The owner's 2026-09-30 ruling — a global
+      constant governing risk is a defect to remove, not an appetite to
+      answer — is what made reformulation the required move rather than a
+      third derivation attempt. The two failed derivations stay recorded in
+      docs/BOARD_NOTES.md (item 186) so neither is tried again.

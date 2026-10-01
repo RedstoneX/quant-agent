@@ -769,7 +769,15 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     """
     ids = {site.site_id for site in collect_sites()}
     # (c) parameter defaults.
-    assert "src.pipeline.TradingPipeline._clamp_queued_earnings_buys(max_pct)" in ids
+    # `_clamp_queued_earnings_buys(max_pct)` was rule (c)'s original example
+    # and is GONE: board item 186 (2026-10-01) deleted the 5%-of-book clamp
+    # rather than re-deriving it — an unread filing refuses the BUY. Rule (c)
+    # is pinned on the other parameter default it found, so the shape stays
+    # covered and a new one still cannot arrive unseen.
+    assert not any(
+        i.startswith("src.pipeline.TradingPipeline._refuse_queued_earnings_buys")
+        for i in ids
+    )
     assert "src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)" in ids
     # (d) class attributes.
     assert "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT" in ids
