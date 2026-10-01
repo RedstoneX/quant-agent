@@ -1141,6 +1141,9 @@ class RiskStage:
                 holding_discipline_claim_check,
                 veto_contradicted_exit,
             )
+            from src.agents.portfolio_manager import (
+                PortfolioManagerAgent as _PortfolioManagerAgent,
+            )
             hd_surviving: list = []
             hd_blocked: list[tuple[str, str]] = []
             macro_regime_today = _macro_regime(macro_analysis)
@@ -1216,6 +1219,7 @@ class RiskStage:
                     protected=protection.protected,
                     macro_regime_today=macro_regime_today,
                     macro_status=macro_status,
+                    state_change_parser=_PortfolioManagerAgent._state_change_symbols_by_date,
                     active_state_changes=hd_active_state_changes,
                 )
                 if check.blocks:

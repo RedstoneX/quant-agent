@@ -41,7 +41,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, Protocol
 
 __all__ = [
     "MetricDeltas",
@@ -61,6 +61,7 @@ __all__ = [
     "claims_regime_flip",
     "claims_bearish_state_change",
     "claims_thesis_invalidation",
+    "StateChangeParser",
     "holding_discipline_false_claim",
     "HoldingDisciplineClaimCheck",
     "holding_discipline_claim_check",
@@ -1579,6 +1580,18 @@ class HoldingDisciplineClaimCheck:
         return self.verdict == "false"
 
 
+class StateChangeParser(Protocol):
+    """Narrow doctrine-layer view of the one thing the claim check needs from
+    the PM agent: parse the rendered active-state-change block into
+    `{iso_date: {SYMBOL: {direction, ...}}}`. The caller supplies the
+    concrete parser (`PortfolioManagerAgent._state_change_symbols_by_date`);
+    this module must never import an agent."""
+
+    def __call__(
+        self, active_state_changes: str, asof: date | None = None,
+    ) -> dict[str, dict[str, set[str]]]: ...
+
+
 def holding_discipline_claim_check(
     *,
     action: str,
@@ -1587,6 +1600,7 @@ def holding_discipline_claim_check(
     protected: bool,
     macro_regime_today: str | None,
     macro_status: str | None,
+    state_change_parser: StateChangeParser,
     active_state_changes: str = "",
     asof: date | None = None,
     exit_trigger: object = None,
@@ -1610,8 +1624,9 @@ def holding_discipline_claim_check(
       (c) a claimed HIGH-conviction bearish state_change. CONTRADICTED when a
           same-day `active_state_changes` row DOES name the symbol but with a
           recorded direction that is NOT bearish (parsed via
-          `PortfolioManagerAgent._state_change_symbols_by_date`, the exact
-          function that already owns this parsing for the sub-floor catalyst
+          the caller-supplied `state_change_parser` (the PM agent's
+          `_state_change_symbols_by_date` — injected so doctrine never
+          imports an agent), the exact function that already owns this parsing for the sub-floor catalyst
           gate — not reimplemented here); UNVERIFIABLE when no same-day row
           names the symbol at all, because the news pipeline can simply not
           have logged a real catalyst as a formal `state_change` row yet.
@@ -1692,11 +1707,7 @@ def holding_discipline_claim_check(
             and not claims_bearish_state_change(reason)
             else "a HIGH-conviction bearish state change"
         )
-        from src.agents.portfolio_manager import PortfolioManagerAgent
-
-        by_date = PortfolioManagerAgent._state_change_symbols_by_date(
-            active_state_changes, asof,
-        )
+        by_date = state_change_parser(active_state_changes, asof)
         try:
             from src.trading_calendar import et_today
             today_iso = str(asof) if asof is not None else str(et_today())
@@ -1759,6 +1770,7 @@ def holding_discipline_false_claim(
     protected: bool,
     macro_regime_today: str | None,
     macro_status: str | None,
+    state_change_parser: StateChangeParser,
     active_state_changes: str = "",
     asof: date | None = None,
 ) -> str | None:
@@ -1779,6 +1791,7 @@ def holding_discipline_false_claim(
         protected=protected,
         macro_regime_today=macro_regime_today,
         macro_status=macro_status,
+        state_change_parser=state_change_parser,
         active_state_changes=active_state_changes,
         asof=asof,
     )

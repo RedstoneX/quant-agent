@@ -22,6 +22,7 @@ gate, and the noise-band fallback).
 Each test names the exact hand-computed scenario it proves.
 """
 
+from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.risk.exit_guard import (
     claims_bearish_state_change,
     claims_regime_flip,
@@ -48,6 +49,7 @@ def _asc(date_str: str, event: str, symbols: dict[str, str]) -> str:
 
 def test_false_regime_flip_claim_is_caught():
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Selling ACME — macro regime flipped to risk-off today, "
                "de-risking ahead of the weekend.",
@@ -71,6 +73,7 @@ def test_false_bearish_state_change_claim_is_caught():
     active = _asc(TODAY, "Guidance raise", {"ACME": "bullish"})
     from datetime import date
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Selling ACME on a high-conviction bearish state change "
                "reversing the entry thesis.",
@@ -93,6 +96,7 @@ def test_false_bearish_state_change_claim_is_caught():
 
 def test_true_regime_flip_claim_is_not_flagged():
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Regime flipped to risk-off today per Macro; cutting risk.",
         symbol="ACME",
@@ -108,6 +112,7 @@ def test_true_bearish_state_change_claim_is_not_flagged():
     from datetime import date
     active = _asc(TODAY, "Regulatory crackdown announced", {"ACME": "bearish"})
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="High-conviction bearish state change on ACME today directly "
                "reverses the entry thesis — exiting.",
@@ -128,6 +133,7 @@ def test_true_bearish_state_change_claim_is_not_flagged():
 
 def test_thesis_invalid_if_reliance_is_never_flagged():
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="thesis_invalid_if triggered: ACME closed below the $142 "
                "support level named at entry.",
@@ -144,6 +150,7 @@ def test_unverifiable_regime_claim_is_not_flagged():
     """Macro data untrusted this run (e.g. failed) -> the claim cannot be
     checked, so it must not be treated as false."""
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Regime flipped to risk-off today; cutting risk.",
         symbol="ACME",
@@ -159,6 +166,7 @@ def test_unverifiable_state_change_claim_is_not_flagged():
     """No same-day row names the symbol at all — the news pipeline may
     simply not have logged it yet. Absence is not proof of falsity."""
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="High-conviction bearish state change on ACME today.",
         symbol="ACME",
@@ -180,6 +188,7 @@ def test_unprotected_position_is_out_of_scope():
     justification for a plain exit, so nothing here is worth checking even
     though the reasoning names a checkable-and-false trigger."""
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Regime flipped to risk-off today.",
         symbol="ACME",
@@ -193,6 +202,7 @@ def test_unprotected_position_is_out_of_scope():
 
 def test_non_exit_action_is_out_of_scope():
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="HOLD",
         reason="Regime flipped to risk-off today.",
         symbol="ACME",
@@ -207,6 +217,7 @@ def test_non_exit_action_is_out_of_scope():
 def test_reason_naming_no_recognized_trigger_is_not_flagged():
     """No (b)/(c) claim in the text at all -> nothing to contradict."""
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Taking profits, thesis played out.",
         symbol="ACME",
@@ -254,6 +265,7 @@ def test_holding_discipline_false_claim_does_not_fire_on_a_denied_claim():
     finding — the reasoning agrees with the data (both say no flip); only
     an actual assertion contradicted by real data should ever be flagged."""
     finding = holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="No regime shift to risk-off has occurred; exiting purely on thesis_invalid_if.",
         symbol="AAPL",
@@ -262,3 +274,34 @@ def test_holding_discipline_false_claim_does_not_fire_on_a_denied_claim():
         macro_status="ok",
     )
     assert finding is None
+
+
+# ---------------------------------------------------------------------------
+# Dependency inversion: doctrine takes the parser, never imports an agent.
+# ---------------------------------------------------------------------------
+
+def test_claim_check_uses_the_supplied_parser_and_imports_no_agent():
+    import pathlib
+    from datetime import date
+
+    calls = []
+
+    def stand_in(block, asof=None):
+        calls.append((block, asof))
+        return {"2026-09-30": {"ACME": {"bullish"}}}
+
+    finding = holding_discipline_false_claim(
+        action="SELL",
+        reason="high-conviction bearish state change on ACME",
+        symbol="ACME",
+        protected=True,
+        macro_regime_today=None,
+        macro_status=None,
+        state_change_parser=stand_in,
+        active_state_changes="ignored by the stand-in",
+        asof=date(2026, 9, 30),
+    )
+    assert calls == [("ignored by the stand-in", date(2026, 9, 30))]
+    assert finding is not None and "bullish" in finding
+    src = pathlib.Path(__file__).parent.parent / "src" / "risk" / "exit_guard.py"
+    assert "src.agents" not in src.read_text().replace("src.agents/", "")

@@ -49,6 +49,7 @@ from src.pipeline_stages import (
 )
 from src.portfolio_constructor import PortfolioConstructor
 from src.risk.budget import RiskRequest, allocate_risk_budget
+from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.risk.exit_guard import (
     StructuralProtectionCheck,
     claims_bearish_state_change,
@@ -573,6 +574,7 @@ def test_reason_makes_no_claim_the_holding_discipline_checker_could_find_false()
     assert not claims_regime_flip(reason)
     assert not claims_bearish_state_change(reason)
     check = holding_discipline_claim_check(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL", reason=reason, symbol="OLD", protected=True,
         macro_regime_today="risk-on", macro_status="ok", active_state_changes="",
     )

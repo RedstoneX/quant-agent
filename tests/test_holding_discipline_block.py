@@ -31,6 +31,7 @@ from src.models import (
 )
 from src.pipeline_context import RunContext
 from src.pipeline_stages import RiskStage
+from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.risk.exit_guard import (
     StructuralProtectionCheck,
     holding_discipline_claim_check,
@@ -55,6 +56,7 @@ def test_contradicted_regime_claim_is_verdict_false_and_blocks():
     """Real, trusted macro read says risk-ON; the reasoning asserts a flip to
     risk-off. That is a claim the desk's own data affirmatively denies."""
     check = holding_discipline_claim_check(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Cutting ACME — the macro regime flipped to risk-off today.",
         symbol="ACME",
@@ -74,6 +76,7 @@ def test_uncheckable_regime_claim_is_verdict_unverifiable_and_does_not_block():
     """The macro seat failed this run. The identical sentence is now
     unverifiable, NOT false — this is the distinction the veto rests on."""
     check = holding_discipline_claim_check(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Cutting ACME — the macro regime flipped to risk-off today.",
         symbol="ACME",
@@ -92,6 +95,7 @@ def test_missing_state_change_row_is_unverifiable_not_false():
     """No same-day row names the symbol either way. The news pipeline can
     simply not have logged a real catalyst yet."""
     check = holding_discipline_claim_check(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="High-conviction bearish state change on ACME today.",
         symbol="ACME",
@@ -108,6 +112,7 @@ def test_missing_state_change_row_is_unverifiable_not_false():
 def test_state_change_row_with_the_wrong_direction_is_false():
     """A same-day row DOES name ACME, recorded bullish. Checkable and wrong."""
     check = holding_discipline_claim_check(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Selling ACME on a high-conviction bearish state change.",
         symbol="ACME",
@@ -124,6 +129,7 @@ def test_state_change_row_with_the_wrong_direction_is_false():
 def test_confirmed_claim_is_verdict_ok():
     """Macro really did flip to risk-off. Nothing to say at all."""
     check = holding_discipline_claim_check(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Regime flipped to risk-off today per Macro; cutting risk.",
         symbol="ACME",
@@ -141,6 +147,7 @@ def test_a_contradiction_outranks_a_co_occurring_unverifiable_clause():
     """Regime claim provably false; state-change claim uncheckable in the
     same sentence. One provable contradiction is enough to block."""
     check = holding_discipline_claim_check(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Regime flipped to risk-off and there is a high-conviction "
                "bearish state change on ACME today.",
@@ -161,12 +168,14 @@ def test_legacy_wrapper_still_returns_only_proven_false_findings():
     string for a proven-false claim, None for everything else INCLUDING the
     unverifiable case it now has a name for."""
     assert holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Regime flipped to risk-off today.",
         symbol="ACME", protected=True,
         macro_regime_today="risk-on", macro_status="ok",
     ) is not None
     assert holding_discipline_false_claim(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="Regime flipped to risk-off today.",
         symbol="ACME", protected=True,
