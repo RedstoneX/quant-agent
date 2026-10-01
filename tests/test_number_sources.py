@@ -958,3 +958,51 @@ def test_a_settlement_route_that_cannot_be_acted_on_is_refused() -> None:
         broken = dict(good)
         broken[field] = "later"
         assert "not a route" in str(settlement_route_problem({"settles_by": broken}))
+
+
+def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
+    """Item 186's aggregate ceilings, guarded against their own failure mode.
+
+    These four rows are the ceilings that ration the whole book: total
+    at-risk, the terminal sector bound and its constructor mirror, and the
+    share one correlation cluster may hold. Twice now the item has tried to
+    close them by asking the owner what concentration he accepts, and the
+    owner ruled on 2026-09-30 that risk is read per name and never set as a
+    global dial, so that question may not come back. What each row owes
+    instead is a recording. This fails the build if one loses its settlement
+    route or starts asking the owner for a value again.
+    """
+    from src.number_sources import load_ledger, settlement_route_problem
+
+    ledger = load_ledger()
+    ceilings = (
+        "src.config.RiskConfig.max_portfolio_risk_pct",
+        "src.config.RiskConfig.SECTOR_HARD_CEILING_MAX",
+        "src.config.RiskConfig.max_cluster_risk_share_pct",
+        "src.portfolio_constructor.ConstructorConfig.max_sector_hard_pct",
+    )
+    for site_id in ceilings:
+        entry = ledger[site_id]
+        assert settlement_route_problem(entry) is None, (
+            f"{site_id} is a book-wide ceiling with no actionable recording: "
+            f"{settlement_route_problem(entry)}"
+        )
+        assert entry["settles_by"]["kind"] == "recording", (
+            f"{site_id} cannot settle by anything but a recording: there is "
+            "no instrument a book-wide ceiling could be read off."
+        )
+        question = str(entry.get("open_question", ""))
+        assert "WITHDRAWN" in question, (
+            f"{site_id} must say its appetite question is withdrawn, not "
+            "leave it standing as though the owner still owes an answer."
+        )
+        lowered = question.lower()
+        for phrase in ("the owner accept", "does the owner"):
+            start = 0
+            while (hit := lowered.find(phrase, start)) != -1:
+                assert "withdrawn" in lowered[hit:hit + 160], (
+                    f"{site_id} asks the owner for a concentration he "
+                    "accepts without marking it withdrawn, which his "
+                    "2026-09-30 ruling on global risk dials bars."
+                )
+                start = hit + 1
