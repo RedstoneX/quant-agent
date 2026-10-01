@@ -276,6 +276,15 @@ DONE WHEN:
   - [ ] (b) any other seat-prompt sentence of the form "X already handles Y" found by reading the rendered prompts is confirmed or corrected
 detail: docs/BOARD_NOTES.md (item 217)
 
+**215. A stop can be reported STILL PROTECTED by a level whose zone is a fifth of the price wide, so the price area the stop actually sits at may already have failed. Surfaced 2026-09-30 while measuring item 55 on the live book. `_level_backing_stop` in `src/portfolio_constructor.py` honours a stop as structurally backed when the stop is anywhere INSIDE a level's zone, and since item 55 that zone is the measured span of the bars that drew the level — min 0.53%, median 3.47%, max 22.11% of price across the 101-name universe [measured 2026-09-30, 704 levels, complete-linkage clustering]. Inside a wide zone "the level is intact" and "the price where the stop rests is intact" are different statements, and the desk reports the first while the owner reads the second. MEASURED on the live book the same day: ETN's stop at 405.43 is honoured by a level at 388.55 whose zone runs 381.06-413.77 — the stop is 16.88 away from the level it is said to rest on, 3.90% of the 432.56 entry; RKLB's stop at 65.14 is honoured by a level at 67.31 with a 13.27% half-width, 2.17 away, 3.11% of entry; NOK's stop at 9.39 is honoured by a level at 9.78, 0.39 away, 3.79% of entry. In all three the stop can be hit with the level still unbroken, and nothing in the report says so. This item is the REPORTING defect only — the honouring rule itself is item 46/55 territory and is not reopened here.
+
+DONE WHEN:
+  - [ ] (a) any message or dashboard field that says a position is level-backed / still protected also carries the level's measured zone span, so the owner can see whether his stop sits at the level or merely inside its band
+  - [ ] (b) a recorded decision, in `docs/INCIDENT_HISTORY.md`, on whether "stop inside a wide zone" should read as backed at all, or whether the claim must be narrowed to stops within some measured distance of the level price — no number is introduced by this item; it is a measurement plus an owner-doctrine question
+detail: docs/BOARD_NOTES.md (item 215)
+  - [ ] (c) the backtest engine carries each level's pivot-bar ranges, so it runs the same stop rule live runs instead of failing closed on every level (done 2026-10-01).
+
+
 **216. The short-side gap haircut is applied in TWO places and the constructor's copy is not the one that binds — filed 2026-09-30.**
 
 Execution sizes a position as min(qty_by_alloc, qty_by_risk). The constructor
@@ -369,21 +378,21 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
+- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 157
-- retired queue: 119
 - retired queue: 193
+- retired queue: 119
 - retired queue: 211
-- retired queue: 107
 - retired queue: 185
-- retired queue: 76
 - retired queue: 214
-- retired queue: 199
-- retired queue: 212
+- retired queue: 107
+- retired queue: 76
 - retired queue: 174
-- retired queue: 70
+- retired queue: 199
 - retired queue: 20
+- retired queue: 212
+- retired queue: 70
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

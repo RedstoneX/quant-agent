@@ -45,6 +45,7 @@ def _analysis(
         support_levels=[stop], resistance_levels=[target],
         computed_levels=[stop, target],
         computed_level_touches={stop: 5, target: 5},
+        computed_level_bars={stop: [(stop, stop)], target: [(target, target)]},
         atr_14=(entry - stop) / 3.5 if atr is None else atr,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
@@ -852,7 +853,7 @@ def test_the_ceiling_still_binds_a_genuinely_too_tight_stop():
 # --------------------------------------------------------------------------
 
 def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
-                  computed=None, touches=None):
+                  computed=None, touches=None, bars=None):
     """A widening fixture: the stop is NOT at a computed structural level.
 
     `computed_levels` defaults to the target alone, and that default is
@@ -887,6 +888,15 @@ def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
     if not any(0 < float(p) < float(entry) for p in levels):
         levels.append(round(float(entry) * 0.5, 2))
     default_touches = {price: 5 for price in levels}
+    # Item 215 (2026-09-30): a level backs a stop only when the stop rests
+    # inside the traded range of a bar that DREW the level, not merely inside
+    # the level's zone. These fixtures carry no bar history, so each level
+    # states the narrowest bar that can have drawn it — its own price. A test
+    # that lists the stop in `computed` therefore still means "this stop is on
+    # the level"; one that does not still means "nothing is under this stop".
+    default_bars = {price: [(price, price)] for price in levels}
+    if bars:
+        default_bars.update(bars)
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test", support_levels=[stop],
@@ -894,6 +904,7 @@ def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
         expected_horizon_sessions=horizon, atr_14=atr,
         computed_levels=levels,
         computed_level_touches=default_touches if touches is None else touches,
+        computed_level_bars=default_bars,
         reasoning_chain=TechReasoningChain(
             trend="x", momentum="x", volatility="x", volume="x",
             support_resistance="x"),
@@ -1272,10 +1283,14 @@ def test_the_absolute_floor_is_configurable_and_can_be_switched_off():
 
 
 def test_a_near_miss_outside_the_tolerance_is_not_level_backed():
-    """The tolerance is a boundary, not a suggestion. The boundary is the
-    level's OWN zone: `CLUSTER_TOLERANCE_PCT` (1%) of the computed level at
-    $95.00 = $0.95. So $95.90 is sitting on that level, $96.10 is not, and
-    the second one gets the band like any unbacked stop.
+    """The boundary is a boundary, not a suggestion. Since item 215
+    (2026-09-30) it is the traded range of a BAR that drew the level, not
+    the level's zone: the session that turned at $95.00 traded up to
+    $96.00, so $95.90 is sitting on that bar and $96.10 is not, and the
+    second one gets the band like any unbacked stop. The two stops and
+    every other number in this fixture are unchanged — only what makes
+    $95.90 count has changed, from "within 1% of the level" to "inside a
+    session the market actually defended".
 
     Both candidate stops are deliberately INSIDE the 2.25 ATR band ($94.71)
     and outside the 1.00 ATR hard floor ($97.65) — 95.90 is 4.10 / 2.35 =
@@ -1298,7 +1313,8 @@ def test_a_near_miss_outside_the_tolerance_is_not_level_backed():
         return constructor._widen_stop_past_noise(
             "MSFT",
             _vol_analysis("MSFT", _ENTRY, stop, 130.0, atr=_ATR,
-                          computed=[_TIGHT_STOP, 130.0]),
+                          computed=[_TIGHT_STOP, 130.0],
+                          bars={_TIGHT_STOP: [(_TIGHT_STOP, 96.00)]}),
             entry_price=_ENTRY, stop_loss=stop, target_price=130.0,
         )
 
@@ -1903,6 +1919,7 @@ def test_single_short_ceiling_rounding_to_zero_leaves_a_durable_reason():
         reference_target=60.0, reasoning="test",
         support_levels=[60.0], resistance_levels=[110.0],
         computed_levels=[60.0, 110.0], computed_level_touches={60.0: 5, 110.0: 5},
+        computed_level_bars={60.0: [(60.0, 60.0)], 110.0: [(110.0, 110.0)]},
         atr_14=(110.0 - 100.0) / 3.5, setup_type="range",
         expected_horizon_sessions=60, reasoning_chain=_tech_rc(),
         thesis_invalid_if="closes below support",
