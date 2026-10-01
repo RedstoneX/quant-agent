@@ -827,8 +827,19 @@ numbers:
       relevant at all - scales off this one number.
   - id: src.config.RiskConfig.min_level_touches_for_stop_honor
     value: 5
-    status: sourced
+    status: arbitrary
     site: src/config.py
+    downgraded: >-
+      WAS `sourced`. DOWNGRADED 2026-10-01 (docs/WORK.md item 55), because the
+      input its source was measured on no longer exists. The table below was
+      built with levels clustered by the flat 1%-of-price rule; item 55 deletes
+      that rule and clusters on the overlap of the bars that made each pivot
+      instead, so the OBJECT the touch count is counting changed. docs/OUTCOME.md
+      requires every number derived from a changed input to be re-checked, and
+      the re-derivation was attempted twice and FAILED both times -- both
+      reasons recorded in docs/WORK.md item 55 rather than glossed. The value
+      stays at 5 because moving it would be inventing a number; the status no
+      longer claims a measurement that stands.
     source: >-
       In-repo measured study at src/config.py:722-740 (Phase 12.1, 2026-09-03,
       docs/RESEARCH_FINDINGS.md section 7): a real-vs-shuffled bounce-probability
@@ -846,8 +857,21 @@ numbers:
       chosen: below it a stop is not treated as level-backed and falls back to
       the unbacked-stop floor exactly as any unbacked stop does.
     open_question: >-
-      Whether that table -- 101 symbols over 5 years of daily bars -- transfers
-      to the holding periods and names this desk actually trades.
+      Does the real-versus-shuffled separation survive the new overlap
+      clustering, and at what touch count? Unanswered: the attempt on the
+      276-bar panel this repo holds yields n=27 real observations at 5 touches
+      against n=400+ in the original, and the shuffled control scored HIGHER
+      than real at every touch count, which means the reconstruction is not
+      the original test. docs/WORK.md item 55 names the recording that would
+      settle it. The older open question stands too: whether a table over 101
+      symbols and 5 years of daily bars transfers to the holding periods and
+      names this desk actually trades.
+    cost_while_unanswered: >-
+      Five touches is the bar a level must clear before a stop resting on it
+      earns the tight-stop exemption (1.0 ATR instead of 2.5 ATR), so an
+      unproven bar decides how tight a live stop may be. Set too low, a stop is
+      honoured against a separation that could be noise; set too high, real
+      structure is ignored and every stop is widened to the unbacked floor.
   - id: src.config.RiskConfig.min_position_risk_pct
     value: 0.5
     status: derived
@@ -2067,33 +2091,45 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.data.levels.CLUSTER_TOLERANCE_PCT
+  - id: src.data.levels.CLUSTER_TOLERANCE_PCT_FALLBACK
     value: 1
     status: arbitrary
     site: src/data/levels.py
     note: >-
-      Two pivots within this percentage of each other are the same level, so a
-      cluster spans at most 1.0%. src/data/levels.py:112-129 is unusually
-      honest about it: that is HALF the narrowest bin the literature has
-      tested, the match zone built from it spans exactly that narrowest tested
-      bin, and "1.0 is not shown to be right, and it is not shown to be wrong
-      either". It stays labelled rather than being moved to a foreign default,
-      which would be the same unsourced act in the other direction.
-      Ratified as owner-appetite 2026-09-25 (item 55): Zapranis & Tsinaslanidis
-      (2012), Applied Financial Economics 22(19) tested band widths from 2% to
-      5% and found the bounce-behaviour result did not change across that
-      range -- the literature gives a shape (a range with no measured winner
-      inside it), not a single value, so no citation can pick this number for
-      us. The on-desk sweep named below (item 55) would still narrow it if
-      run; until then this stays labelled `arbitrary` per this ledger's
-      convention for owner-ratified appetite figures.
+      SUPERSEDED 2026-09-30, docs/WORK.md item 55. This used to BE the level
+      definition: two pivots within 1% of each other were one level. That 1%
+      was never shown to be right (this entry said so in its own words) and
+      it did not scale with how violently a name moves. It is gone from the
+      definition. `_cluster` now groups two pivots when the price RANGES the
+      bars actually traded OVERLAP, and the level's width is those bars' own
+      combined span - read off the instrument, with no width to pick and
+      nothing left to sweep. The open question this entry used to carry ("at
+      what price separation do two pivots stop being one level") no longer
+      has to be answered, because nothing asks it any more.
+      The 1.0 is NOT deleted and this entry stays `arbitrary`, because the
+      number is still reachable and still unsourced wherever it is reached.
+      It remains reachable in four places, named rather than glossed:
+      (1) `level_zone_halfwidth` uses it whenever `zone_low`/`zone_high` are
+      absent, non-finite, inverted, or describe a zero-width bar;
+      (2) `_cluster` falls back to it to group a pivot whose bar range is not
+      a finite number;
+      (3) `risk.level_cluster_tolerance_pct` is a live configured parameter
+      carrying this value into `src/risk/exit_guard.py` and
+      `src/risk/target_revision.py`, where a level with no zone is still
+      matched as `price * pct / 100`;
+      (4) the alias `CLUSTER_TOLERANCE_PCT` is still exported and is still
+      the default argument of the public helpers.
+      What DID change is that the number no longer defines a level: every
+      level `find_structural_levels` builds from bars now carries its own
+      measured zone and never consults this value.
     open_question: >-
-      At what price separation do two pivots stop being one level, measured on
-      the bounce behaviour of this desk's own names? docs/WORK.md item 55
-      names what would settle it.
+      What bound should a zone-less level get, when no bar range is available
+      to read one off? Unanswered; 1% is a guess standing in for a
+      measurement, exactly as before.
     cost_while_unanswered: >-
-      Level clustering decides where structure is, and structure places stops
-      - so this sets the granularity of every level-backed stop.
+      A level reaching the risk seats without a zone is matched on a guessed
+      1% band, so a stop can be reported as backed by structure on the
+      strength of an unsourced width. docs/WORK.md item 55.
   - id: src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
     value: 10
     status: arbitrary
