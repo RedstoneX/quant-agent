@@ -41,3 +41,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/check_stale_ci.py --repo "$GITHUB_REPOSITORY"
+
+  # The neighbouring blind spot, and the larger one. Branch protection reads
+  # a pull request's own `pytest` check and does not require the branch to be
+  # current with main first (`strict: false`), so two independently-green
+  # changes can merge into a red main -- and nothing reads the run main
+  # produces afterwards. On 2026-10-01 main sat red while every open PR
+  # showed green. This job asks the only question that closes that gap: did
+  # main's own newest completed push run pass? It goes RED in the Actions tab
+  # when the answer is no, and writes the failing commit, its subject and how
+  # long the branch has been red into the run summary, so the record is
+  # legible on its own without a Telegram message nobody will receive.
+  main-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Is main's own test run red?
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/check_main_red.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --branch "${{ github.event.repository.default_branch }}"

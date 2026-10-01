@@ -602,9 +602,8 @@ class PositionReviewerAgent(BaseAgent):
         # Account + cash.
         cash_pct = f"{cash_balance / total_value * 100:.1f}%" if total_value else "N/A"
         reserve_line = (
-            f"\n  (of which ${reserve_balance:,.2f} is sweep-parked and "
-            f"auto-liquidated before any BUY executes — already included "
-            f"in Cash above)"
+            f"\n  (a further ${reserve_balance:,.2f} is sweep-parked; it "
+            f"is NOT sold to fund a BUY and is NOT part of the Cash above)"
             if reserve_balance > 0 else ""
         )
 
