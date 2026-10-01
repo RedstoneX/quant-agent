@@ -7844,7 +7844,7 @@ numbers:
       bid, whose displayed size is finite, so this is a reachable state, not
       a theoretical one. Booking from the filled quantity and continuing to
       sell while the deficit stands would delete this haircut entirely.
-  - id: src.pipeline_risk_gate.RiskGateMixin._has_actionable_signal_fn:factor[0]
+  - id: src.pipeline_risk_gate.RiskGate._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary
     site: src/pipeline_risk_gate.py
