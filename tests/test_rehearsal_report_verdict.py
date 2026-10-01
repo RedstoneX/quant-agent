@@ -288,7 +288,8 @@ def _derive_known_pipeline_statuses() -> set[str]:
         ],
         type_ignores=[],
     )
-    stages_tree = ast.parse((REPO_ROOT / "src" / "pipeline_stages.py").read_text())
+    # item 210 step 10 moved RiskStage into src/stage_risk.py.
+    stages_tree = ast.parse((REPO_ROOT / "src" / "stage_risk.py").read_text())
     pm_tree = ast.parse((REPO_ROOT / "src" / "agents" / "portfolio_manager.py").read_text())
 
     # A call to another _PIPELINE_SESSION_FUNCTIONS entry (e.g.

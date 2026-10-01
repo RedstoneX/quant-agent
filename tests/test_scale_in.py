@@ -1096,17 +1096,21 @@ def test_emergency_cover_source_guards_its_submit_result():
     import pathlib
 
     import src.pipeline_stages as stages_mod
+    import src.stage_execution as stage_execution_mod
 
-    src = pathlib.Path(stages_mod.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
+    # item 210 step 10 moved ExecutionStage (which owns the D7 block) into
+    # src/stage_execution.py. Scan both modules so the guard still has to
+    # be found somewhere in the executable product code.
     blocks = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Try):
-            continue
-        segment = ast.get_source_segment(src, node) or ""
-        if '"EMERGENCY_COVER"' in segment and "submit_order" in segment:
-            blocks.append((node, segment))
+    for mod in (stages_mod, stage_execution_mod):
+        src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try):
+                continue
+            segment = ast.get_source_segment(src, node) or ""
+            if '"EMERGENCY_COVER"' in segment and "submit_order" in segment:
+                blocks.append((node, segment))
     assert blocks, "the D7 EMERGENCY_COVER submit block has disappeared"
     # Enclosing `try`s match too (the whole protection phase is wrapped);
     # the INNERMOST match is the cover's own guard, so take the shortest.

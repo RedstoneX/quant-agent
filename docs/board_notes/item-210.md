@@ -227,3 +227,27 @@ Held deliberately: this sits on step 3, which is itself unmerged, and nothing la
 trading day.
 
 Item 210 stays open: seven steps remain.
+
+### 2026-10-01 — step 10 landed
+
+`src/pipeline_stages.py` 10,709 → 4,977 lines. The four stage classes moved
+verbatim into one file each: `src/stage_morning_research.py` (1,637),
+`src/stage_decision.py` (710), `src/stage_risk.py` (1,360, `RiskStage` plus its
+five private helpers and their two constants) and `src/stage_execution.py`
+(2,081). PR 844 was already MERGED, so its caveat lapsed; the plan's line
+offsets were dead and the ranges were re-derived from the AST.
+
+`pipeline_stages` re-exports all eleven moved names through a module
+`__getattr__`, so `from src.pipeline_stages import RiskStage` and
+`patch("src.pipeline_stages.RiskStage")` still resolve, and it mirrors any
+attribute set on it into the stage modules that hold the same name, so the 30
+test patch sites on `src.pipeline_stages` (25 of them `compute_indicators`)
+still patch the object the moved code calls.
+
+Still open on item 210: steps 5–9 and 11–12 (`src/pipeline.py`, and the
+remaining `pipeline_stages` helper files — rotation exec, entry orders, sizing,
+earnings quality).
+
+Landing records for steps 5 and 6 (moved here verbatim from the board item; note the older 'still open' paragraph above predates them):
+
+STEP 5 LANDED 2026-10-01 (merged with main after step 7): `src/pipeline_risk_gate.py` (`RiskGateMixin`) carries cluster D plus `_refuse_queued_earnings_buys` -- 909 lines moved verbatim; `compute_indicators`, `_get_sector` and `HARD_BLOCK_RULES` now resolve against the new module, so the 5 patch sites in `tests/test_bugfixes.py` and the import in `tests/test_sector_cap_unresolved.py` were re-pointed in the same change; the one ledger id (`_has_actionable_signal_fn:factor[0]`) was migrated and the new module added to `SCOPED_PATHS` and to the method-inventory guard. STEP 6 LANDED the same day, also after step 7: `src/pipeline_admission.py` (`AdmissionMixin`) carries cluster C -- 11 methods, 510 lines moved verbatim; the 8 `src.pipeline._get_sector` patch sites that reach it were re-pointed and the 12 hard-risk-cap sites stay on `src/pipeline.py`.

@@ -4143,7 +4143,7 @@ def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
         max_position_pct=40, max_total_position_pct=50,
         max_sector_pct=90, require_stop_loss=True,
     ))
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(

@@ -3161,7 +3161,7 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.pipeline_stages._DEFAULT_RISK_BUDGET_PCT
+  - id: src.pipeline_sizing._DEFAULT_RISK_BUDGET_PCT
     value: 5
     status: derived
     site: src/pipeline_stages.py
@@ -3169,111 +3169,111 @@ numbers:
     base_value: 5
     note: >-
       The fallback used when the configured risk budget cannot be read.
-      src/pipeline_stages.py:2254-2267 records the incident it came out of -
+      src/pipeline_sizing.py:123-136 records the incident it came out of -
       real NVDA/ORCL/RSG rows risking ~$49 on a ~$9.85k book where ~$490 was
       ratified - and says the 5.0 here is the ratified default, not an
       invented one. Recorded as derived so it cannot drift from the
       constructor's own value, which is the exact failure it was introduced to
       fix.
-  - id: src.pipeline_stages._EARNINGS_XBRL_DOLLAR_FLOOR
+  - id: src.pipeline_earnings_quality._EARNINGS_XBRL_DOLLAR_FLOOR
     value: 10000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       Absolute floor stopping that same post-hoc percentage test from
-      exploding on a near-zero true value (src/pipeline_stages.py:2030-2040).
+      exploding on a near-zero true value (src/pipeline_earnings_quality.py:194-204).
       Same boundary as the tolerance above: a data-quality record, not a trade
       decision.
-  - id: src.pipeline_stages._EARNINGS_XBRL_EPS_FLOOR
+  - id: src.pipeline_earnings_quality._EARNINGS_XBRL_EPS_FLOOR
     value: 0.02
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The same floor for EPS - one cent above ordinary EPS reporting precision
-      (src/pipeline_stages.py:2041). Same boundary: it grades a stored
+      (src/pipeline_earnings_quality.py:205). Same boundary: it grades a stored
       analysis, it does not gate a trade.
-  - id: src.pipeline_stages._EARNINGS_XBRL_TOLERANCE_PCT
+  - id: src.pipeline_earnings_quality._EARNINGS_XBRL_TOLERANCE_PCT
     value: 0.05
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       Tolerance for a POST-HOC data-quality comparison between an earnings
       analysis's numeric fields and the filer's own XBRL figures
-      (src/pipeline_stages.py:2020-2028). It records whether the analyst's
+      (src/pipeline_earnings_quality.py:184-192). It records whether the analyst's
       number and the filing disagree; nothing in the entry, sizing, stop or
       exit path reads the result. The 5% itself mirrors the accounting
       materiality rule of thumb discussed in SEC Staff Accounting Bulletin No.
       99.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['b']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['b']
     value: 1000000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "b" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['billion']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['billion']
     value: 1000000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "billion" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['bn']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['bn']
     value: 1000000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "bn" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['k']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['k']
     value: 1000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "k" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['m']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['m']
     value: 1000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "m" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['million']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['million']
     value: 1000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "million" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['mm']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['mm']
     value: 1000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "mm" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['thousand']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['thousand']
     value: 1000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "thousand" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
   - id: src.portfolio_constructor.ConstructorConfig.absolute_min_stop_atr_multiple
@@ -7045,7 +7045,7 @@ numbers:
     base_value: 10
     note: >-
       Default macro-event horizon (src/agents/macro_analyst.py:211);
-      production passes event_risk.horizon_days (src/pipeline_stages.py:3819).
+      production passes event_risk.horizon_days (src/stage_risk.py:412).
       A further inline `or 10` fallback sits at
       src/agents/macro_analyst.py:37, which no rule sees.
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.candidate_eligibility(rr_floor)
@@ -7278,7 +7278,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline.py
     note: >-
-      Dead. Defined at src/pipeline.py:1464 and described in comments as the
+      Dead. Defined at src/pipeline_admission.py:247 and described in comments as the
       de-lever cushion, but nothing reads it: the de-lever no longer prices off
       a fixed % of the mark at all -- it crosses the LIVE quote or sends a
       MARKET order (src.pipeline.TradingPipeline._live_delever_price, branch
@@ -7844,10 +7844,10 @@ numbers:
       bid, whose displayed size is finite, so this is a reachable state, not
       a theoretical one. Booking from the filled quantity and continuing to
       sell while the deficit stands would delete this haircut entirely.
-  - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
+  - id: src.pipeline_risk_gate.RiskGateMixin._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary
-    site: src/pipeline.py
+    site: src/pipeline_risk_gate.py
     note: >-
       Research pre-filter: a symbol whose MA20/MA50 spread is under 0.5 x
       ATR14 counts as having an actionable signal and is sent to the technical
@@ -7886,7 +7886,7 @@ numbers:
     value: 1.005
     status: derived
     site: src/pipeline_exits.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the midday COVER limit, price x 1.005
@@ -7896,7 +7896,7 @@ numbers:
     value: 0.995
     status: derived
     site: src/pipeline_exits.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
@@ -7936,7 +7936,7 @@ numbers:
       (src/pipeline_evening.py:EveningMixin.run_quarterly_meta_reflection). Its output reaches a prompt only as a
       STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
       evolution enabled with dry_run true (stage-only).
-  - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+  - id: src.stage_execution.ExecutionStage._run_session:factor[0]
     settles_by:
       kind: measurement
       state: specified
@@ -7950,10 +7950,10 @@ numbers:
         never binds a fill
     value: 0.995
     status: arbitrary
-    site: src/pipeline_stages.py
+    site: src/stage_execution.py
     note: >-
       Board item 138, the 0.5% offset: an ordinary decision-path SELL is
-      limited at price x 0.995 (src/pipeline_stages.py:6501-6502). The midday
+      limited at price x 0.995 (src/stage_execution.py:240-241). The midday
       and cover sites mirror it.
     open_question: >-
       What limit distance fills an ordinary exit on this desk's names without
@@ -7974,11 +7974,11 @@ numbers:
       the one naming what the sale was cleared on, or that the close is
       contingent on the replacement buy. Read from the truncation it has to
       survive; if that column width changes, this changes with it.
-  - id: src.pipeline_stages._projected_post_sale_cash:factor[0]
+  - id: src.pipeline_rotation_exec._projected_post_sale_cash:factor[0]
     value: 1.005
     status: derived
-    site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    site: src/pipeline_rotation_exec.py
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The same mirrored 0.5% exit offset as the
@@ -7986,21 +7986,21 @@ numbers:
       than to the equity: a COVER buys the borrowed shares back at
       price x 1.005 and spends that cash. Read from the loop it mirrors;
       not a second number.
-  - id: src.pipeline_stages._projected_post_sale_cash:factor[1]
+  - id: src.pipeline_rotation_exec._projected_post_sale_cash:factor[1]
     value: 0.995
     status: derived
-    site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    site: src/pipeline_rotation_exec.py
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The SELL side of the same mirrored offset:
       a sale credits price x 0.995, the limit the SELL loop actually
       places, rather than the mark.
-  - id: src.pipeline_stages._projected_post_sale_book:factor[0]
+  - id: src.pipeline_rotation_exec._projected_post_sale_book:factor[0]
     value: 1.005
     status: derived
-    site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    site: src/pipeline_rotation_exec.py
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The COVER mirror of the SELL offset below,
@@ -8009,11 +8009,11 @@ numbers:
       one below sat on each other's entry - the 1.005 row carried the SELL
       text and the 0.995 row the COVER text - from the day they were filed
       until 2026-09-23.
-  - id: src.pipeline_stages._projected_post_sale_book:factor[1]
+  - id: src.pipeline_rotation_exec._projected_post_sale_book:factor[1]
     value: 0.995
     status: derived
-    site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    site: src/pipeline_rotation_exec.py
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The rotation sequencing gate projects the
@@ -8022,15 +8022,15 @@ numbers:
       at the mark. This is that same 0.5% offset, read from the loop it
       mirrors - not a second number. If the two ever differ, the projection
       is describing a fill that never happens.
-  - id: src.pipeline_stages.ExecutionStage._run_session:factor[1]
+  - id: src.stage_execution.ExecutionStage._run_session:factor[1]
     value: 1.005
     status: derived
-    site: src/pipeline_stages.py
-    derived_from: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    site: src/stage_execution.py
+    derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 138: the COVER mirror of the 0.5% SELL offset
-      (src/pipeline_stages.py:6638-6642), 1.005 = 2 - 0.995. One number,
+      (src/stage_execution.py:396-397), 1.005 = 2 - 0.995. One number,
       mirrored.
   - id: src.risk.budget.allocate_risk_budget(ceiling_pct)
     value: 25

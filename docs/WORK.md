@@ -1,3 +1,4 @@
+
 # QAMC Current Work
 
 ## Active finish line
@@ -280,7 +281,7 @@ DONE WHEN:
 - [ ] the three citations named in the note are corrected and the guard passes with no exemption list
 detail: docs/board_notes/item-225.md
 
-**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards), 1 (prompt facts), 2 (protection), 3 (the de-levering ladder), 4 (the held-position exit engine) and 10 (the four stage classes) have landed, and step 7 (research continuity — change detectors, carry-forward, Form-4 backlog, seat healing; 1,308 lines moved verbatim) is landing; steps 5 (the risk gate) and 6 (universe admission) are open pull requests; steps 8, 9, 11 and 12 remain. `src/pipeline.py` is 7,687 lines, down from 21,864 when the plan was written.
+**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards), 1 (prompt facts), 2 (protection), 3 (the de-levering ladder), 4 (the held-position exit engine), 5 (the risk gate), 6 (universe admission), 7 (research continuity — change detectors, carry-forward, Form-4 backlog, seat healing; 1,308 lines moved verbatim) and 10 (the four stage classes) have landed; steps 8, 9, 11 and 12 remain. `src/pipeline.py` is 7,687 lines, down from 21,864 when the plan was written. STEP 5 and STEP 6 LANDED 2026-10-01 (merged with main after step 7); the full landing records are in the item 210 note.
 
 DONE WHEN:
   - [ ] 1. the open pull-request queue is at zero, because the split moves `src/pipeline.py` and `src/pipeline_stages.py`, which nearly every open pull request touches, so splitting sooner collides with all of them
