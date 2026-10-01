@@ -11,7 +11,8 @@ from src.agents.prompt_limits import LiveLimitPrompt
 from src.models import (
     AnalystVerdict, CandidateRejection, EarningsAnalysis, MacroAnalysis,
     NewsIntelligenceReport,
-    PortfolioDecision, Position, TargetPosition, TechAnalysisResult,
+    PortfolioDecision, Position, ReasoningChain, TargetPosition,
+    TechAnalysisResult,
     SmartMoneyFinding, news_verdict_for_symbol, normalize_sector_stance,
     open_target_missing_falsifier, parse_telemetry,
 )
@@ -827,6 +828,12 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
         # previous session's ranking behind for the constructor to spend this
         # session's budget against.
         self.last_candidate_ranking = None
+        # Board item 177 — the no-op gate reads the SAME deterministic
+        # pre-work this render is built from, never a second copy of it.
+        # Reset first so a previous session's view can never leak in.
+        self.last_eligibility_blocked = None
+        self.last_evidence_registry = None
+        self.last_held_symbols = None
         ranked, blocked = self.rank_candidates(
             analyses=analyses,
             evidence_registry=evidence_registry,
@@ -883,6 +890,11 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             ),
         )
         self.last_candidate_ranking = list(ranked)
+        # Board item 177 — kept for `_no_op_gate`, which must decide
+        # whether to ASK off exactly these objects.
+        self.last_eligibility_blocked = dict(blocked)
+        self.last_evidence_registry = evidence_registry
+        self.last_held_symbols = set(_held_now)
 
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
@@ -2639,6 +2651,68 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         result.semantic_error = str(error)
         return None, result
 
+    def _no_op_gate(self, render_kwargs: dict):
+        """Board item 177. Render the prompt (free, deterministic) and ask
+        whether anything this seat decides is non-empty. FAILS OPEN on
+        anything at all — an unreadable input, a render that raises, a
+        bookkeeping re-ask already in flight."""
+        from src.pm_gate import PMGateVerdict, evaluate_pm_gate
+        if render_kwargs.get("accounting_challenge"):
+            return PMGateVerdict(
+                skip=False, reason="a bookkeeping re-ask is in flight",
+            )
+        try:
+            self.build_user_message(**render_kwargs)
+        except Exception as exc:  # noqa: BLE001 - fail open
+            return PMGateVerdict(
+                skip=False,
+                reason=f"the prompt could not be rendered ({exc!r})",
+            )
+        return evaluate_pm_gate(
+            blocked=getattr(self, "last_eligibility_blocked", None),
+            ranked=getattr(self, "last_candidate_ranking", None),
+            precheck=getattr(self, "last_rotation_precheck", None),
+            held_symbols=getattr(self, "last_held_symbols", None),
+            evidence_registry=getattr(self, "last_evidence_registry", None),
+            pending_soft_exit_heals=getattr(
+                self, "last_soft_exit_heals", None,
+            ) or None,
+        )
+
+    def _skipped_decision(self, verdict):
+        """The skipped call, said out loud. Silence is never the output: the
+        returned `AgentResult` is what the caller already persists to
+        `agent_logs`, so "the manager did not run" can never read as "the
+        manager ran and did nothing" — the row carries the reason and the
+        emptiness of EVERY condition, and the `portfolio_view` carries the
+        same sentence into the owner's report."""
+        from src.agents.base import AgentResult
+        record = verdict.as_record()
+        line = verdict.summary_line()
+        note = (
+            "Not asked this session \u2014 " + verdict.reason
+            + ". No model was called and nothing was charged."
+        )
+        decision = PortfolioDecision(
+            reasoning_chain=ReasoningChain(
+                macro_filter=note, news_check=note, earnings_check=note,
+                signal_conflicts=note, sizing_logic=note,
+                portfolio_balance=note, cash_target=note,
+            ),
+            targets=[], rejections=[], portfolio_view=line,
+        )
+        result = AgentResult(
+            raw_text=json.dumps(record),
+            tokens_used=0,
+            model="none (no-op gate: seat not asked)",
+            user_message="",
+            cost_usd=0.0,
+        )
+        result.semantic_status = "skipped_no_op"
+        result.gate_reason = "portfolio_manager_no_op_skip"
+        result.gate_record = record
+        return decision, result
+
     def decide(self, analyses: list[TechAnalysisResult], positions: list[Position],
                macro_analysis: dict | None = None, cash_balance: float = 0,
                reserve_balance: float = 0.0,
@@ -2745,7 +2819,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         # durable row per symbol, and the blank-falsifier refusal quotes it
         # instead of asserting a retry that may never have run.
         self.last_soft_exit_heals: dict[str, dict[str, str]] = {}
-        result = self.run(
+        _render_kwargs = dict(
             analyses=analyses,
             positions=positions,
             macro_analysis=macro_analysis,
@@ -2794,6 +2868,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             constructor_refusals_by_symbol=constructor_refusals_by_symbol,
             accounting_challenge=accounting_challenge,
         )
+        # Board item 177 — do not pay this seat to decide nothing. Pure
+        # emptiness test over everything it is the decider for; any doubt
+        # calls. See `src/pm_gate.py` for the enumeration.
+        gate_verdict = self._no_op_gate(_render_kwargs)
+        self.last_gate_verdict = gate_verdict
+        if gate_verdict.skip:
+            return self._skipped_decision(gate_verdict)
+        result = self.run(**_render_kwargs)
         parsed = result.parse_json()
         if parsed is None:
             logger.error("Portfolio manager returned non-JSON response")
