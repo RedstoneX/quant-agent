@@ -305,16 +305,6 @@ DONE WHEN:
   - [ ] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs
 detail: docs/BOARD_NOTES.md (item 199) — item 90's ledger entry carries the retracted arguments so they are not re-proposed
 
-**200. The status board's own file was one change away from blocking every other change — filed 2026-09-30. OPEN: the move is made, the guard against it recurring is not.**
-
-DONE WHEN:
-  - [x] `docs/WORK.md` is back under 70% of its cap by MOVING argument, history and measurement out of open items — not deleting it, not raising the cap — with every moved byte proved verbatim in `docs/BOARD_NOTES.md` by a line-level diff and the rendered owner prose unchanged block-for-block
-  - [x] the cap and the growth budget are named as what they are: both PICKED, not derived (100,000 gave ~5% headroom over a measured 94,801; the 0.5 growth share calls itself provisional), and both allowed to be picked because a documentation size limit governs no money
-  - [ ] the move is REPEATABLE without a human deciding what to carve: nothing yet stops the same items re-accreting history in place, so the next time the cap binds it will again be hand-work
-   — the file passing (say) 80% should say so in the same place the growth-budget failure already speaks, rather than the first warning being a blocked merge
-
-detail: docs/BOARD_NOTES.md (item 200)
-
 **202. The rehearsal harness is not hermetic — a test that replays a RECORDED session downloads live market data — filed 2026-09-30.** `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis` reaches yfinance for price history on every run and takes ~196s doing it; it FAILS on main today [measured 2026-09-30, `origin/main`, network reachable]. Pre-existing, not caused by the conftest network guard that exposed it. detail: docs/BOARD_NOTES.md (item 202)
 
 DONE WHEN:
@@ -351,6 +341,7 @@ detail: docs/BOARD_NOTES.md (item 208)
 - retired queue: 182
 - retired queue: 192
 - retired queue: 195
+- retired queue: 200
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

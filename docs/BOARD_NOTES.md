@@ -775,7 +775,7 @@ Why it mattered: the split was the direct cause of two confident, wrong agent
 diagnoses in one session. A prompt-drift check hashed `ast.dump()` of a parsed
 function, 3.12 changed that output, and identical source hashed differently
 locally and in CI.
-## item 200
+## item 200 — RETIRED 2026-10-01, size-cap deadlock and 80% warning already shipped, per-item budget is PR 836
 
 **Plain language —** The desk's to-do list lives in one file, and that file had a hard size limit it was about to hit. Once it is nearly full, each change is only allowed to add a few thousand characters, so ordinary work started getting turned away for being too wordy rather than wrong. The fix was to lift the long back-story, old measurements and abandoned proposals out of the still-open entries and park them, word for word, in this file, leaving the to-do list as a short list of what is open and what would finish it.
 **Example —** One entry about order-placement limits ran to thirteen thousand characters, most of it a diary of what had already been tried and ruled out. What a reader needs from it on the board is the title and the four things still unfinished; the diary now sits here, unchanged, with a pointer left behind.
