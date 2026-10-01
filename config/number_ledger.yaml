@@ -2788,6 +2788,23 @@ numbers:
     cost_while_unanswered: >-
       This is the cap that actually binds most real trades; it is a round 65
       with no derivation.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        the distribution of overnight and intraday gap moves against position, in
+        percent of prior close, measured off public daily bars for the eligible
+        universe over a stated window -- the no-stop-fill case this ceiling is the
+        only guard against. Measured on the instrument, over names the desk could
+        have held rather than names it did hold, so it is a property of the tape and
+        not of this desk's trade record
+      closes_when: >-
+        the owner states the single-name account loss he will tolerate when a stop
+        does not fill at all, and the measured gap distribution at a stated
+        percentile turns that tolerance into a notional share. The ceiling is then
+        that computed share. Until both halves exist the desk pays a round 65 nobody
+        derived; the open mandate half belongs to board item 186
   - id: src.portfolio_constructor.ConstructorConfig.max_sector_hard_pct
     value: 90
     status: arbitrary
@@ -2839,6 +2856,25 @@ numbers:
     cost_while_unanswered: >-
       A diversification-shaped number on a desk whose mandate explicitly
       rejects diversification as a goal.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        the common component of same-sector drawdown in the eligible universe: for
+        each sector, the size of the simultaneous adverse move across its names on
+        the worst days of a stated window, read off public daily bars. This measures
+        whether a sector share behaves as one position or as several, which is the
+        only survival-grounded reason this desk -- which rejects diversification as
+        a goal -- would cap a sector at all
+      closes_when: >-
+        the measurement shows the sector share at which a one-day sector shock
+        reaches the same single-name tolerance the max_position_pct route elicits;
+        the soft target is set there and the ceiling behind it follows from the same
+        number. If same-sector names do not move together enough for any share to
+        reach that tolerance, the soft target is DELETED rather than re-picked,
+        because then it is a diversification number the mandate does not want. Board
+        item 104 separately owns the prompt wording defect
   - id: src.portfolio_constructor.ConstructorConfig.max_target_horizon_sessions
     value: 60
     status: derived
@@ -2894,6 +2930,26 @@ numbers:
       A no-ATR name's protective stop sits a flat 0.5% past its level rather
       than a distance anyone chose; too tight risks a wick-out, too loose gives
       up more than intended on the rare name that loses its ATR reading.
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every no-ATR structural stop placement, carrying the level the stop was read
+        from, the half-width of the price cluster that formed that level (the
+        dispersion of the touches the level detector already groups), the distance
+        this flat 0.5% put the stop at, and whether the subsequent low pierced the
+        buffer without invalidating the level. The cluster half-width is a reading
+        off the instrument that is already computed at placement time; nothing here
+        consults the trade's profit or loss
+      closes_when: >-
+        the recording shows the cluster half-width is present and non-degenerate at
+        placement on a stated run of placements, at which point the buffer becomes
+        that measured half-width per name and the flat percentage is DELETED. If the
+        half-width is routinely unavailable, the flat percentage stays and the
+        recording states how often it was too tight -- pierced without the level
+        breaking -- so the cost is at least a measured number instead of an
+        assumption
   - id: src.portfolio_constructor.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived
@@ -2987,6 +3043,25 @@ numbers:
     cost_while_unanswered: >-
       Owner-ratified at 5% on 2026-08-27 but not sourced; it caps every real
       position.
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every sizing decision, carrying the name, the risk envelope this flat 5%
+        implies in dollars, the envelope the name's own measured behaviour implies
+        (its stop distance in ATR units and the conviction the seats recorded), and
+        WHICH of the two actually bound the final size. The ruling of 2026-09-30 is
+        that risk is read per name and that a global risk constant is a defect, so
+        what has to be observed is whether this constant ever binds anything the
+        per-name reading would not
+      closes_when: >-
+        the recording covers a stated run of sessions and shows either that the flat
+        envelope never binds a trade the per-name envelope would not -- in which
+        case it is DELETED as dead rather than re-derived -- or that it does bind,
+        in which case the per-name formula replaces it and this row leaves the
+        ledger. Never set by searching for the envelope that would have performed
+        best on this desk's own fills
   - id: src.portfolio_constructor.ConstructorConfig.short_gap_risk_multiple
     value: 1.5
     status: derived
@@ -3058,6 +3133,26 @@ numbers:
       Every stop in a high-volatility regime is widened by a scaler no
       measurement supports (src/portfolio_constructor.py:636-646 says exactly
       that).
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every macro-regime classification the constructor makes, paired with a
+        measurement taken off public daily bars for the SAME eligible universe and
+        the SAME regime bucket: the realized true range over the days that follow
+        the classification, divided by the trailing ATR reading the stop was sized
+        from on the classification day. This is a lag measurement on the instrument
+        -- how far behind the tape the ATR window sits once the regime has changed
+        -- and it is taken from price alone, with no reference to any position this
+        desk held
+      closes_when: >-
+        the measured ratio for the risk-off bucket is stable across a stated number
+        of regime transitions and a stated universe, at which point this rung is set
+        to that measured ratio and the appetite wording is withdrawn. If the ratio
+        for this bucket is indistinguishable from 1.0 the rung is DELETED rather
+        than kept at its present figure. Never set from which scaler would have
+        traded best on this desk's own record, which docs/OUTCOME.md bars outright
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[1][1]
     value: 1.1
     status: arbitrary
@@ -3077,6 +3172,26 @@ numbers:
       elevated-regime rung.
     cost_while_unanswered: >-
       As above.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every macro-regime classification the constructor makes, paired with a
+        measurement taken off public daily bars for the SAME eligible universe and
+        the SAME regime bucket: the realized true range over the days that follow
+        the classification, divided by the trailing ATR reading the stop was sized
+        from on the classification day. This is a lag measurement on the instrument
+        -- how far behind the tape the ATR window sits once the regime has changed
+        -- and it is taken from price alone, with no reference to any position this
+        desk held
+      closes_when: >-
+        the measured ratio for the elevated bucket is stable across a stated number
+        of regime transitions and a stated universe, at which point this rung is set
+        to that measured ratio and the appetite wording is withdrawn. If the ratio
+        for this bucket is indistinguishable from 1.0 the rung is DELETED rather
+        than kept at its present figure. Never set from which scaler would have
+        traded best on this desk's own record, which docs/OUTCOME.md bars outright
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]
     value: 0.95
     status: arbitrary
@@ -3096,6 +3211,26 @@ numbers:
     cost_while_unanswered: >-
       As above, and this rung TIGHTENS stops, so an error here moves exits
       inside noise.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        every macro-regime classification the constructor makes, paired with a
+        measurement taken off public daily bars for the SAME eligible universe and
+        the SAME regime bucket: the realized true range over the days that follow
+        the classification, divided by the trailing ATR reading the stop was sized
+        from on the classification day. This is a lag measurement on the instrument
+        -- how far behind the tape the ATR window sits once the regime has changed
+        -- and it is taken from price alone, with no reference to any position this
+        desk held
+      closes_when: >-
+        the measured ratio for the calm bucket is stable across a stated number of
+        regime transitions and a stated universe, at which point this rung is set to
+        that measured ratio and the appetite wording is withdrawn. If the ratio for
+        this bucket is indistinguishable from 1.0 the rung is DELETED rather than
+        kept at its present figure. Never set from which scaler would have traded
+        best on this desk's own record, which docs/OUTCOME.md bars outright
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[0][1]
     value: 1
     status: sourced
@@ -3129,6 +3264,25 @@ numbers:
       src/portfolio_constructor.py:644 calls it "a modest tightening off the
       base, not a specific measured number" - and it multiplies into every
       range trade's stop and therefore its size.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/BOARD_NOTES.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        the adverse excursion that follows a signal, in ATR units, measured
+        separately for range-classified and breakout-classified setups using the
+        desk's OWN setup classifier run over public daily bars for the eligible
+        universe. The classifier is applied to every bar that qualifies, not to the
+        bars this desk traded, so the result is a property of how the two setup
+        types behave and carries no survivorship from the desk's entries
+      closes_when: >-
+        the chosen percentile of the range distribution divided by the same
+        percentile of the breakout distribution is measured over a stated universe
+        and window and is stably below 1.0; this scaler is then set to that measured
+        ratio. If the two distributions are indistinguishable the scaler is DELETED
+        and range setups take the base width, rather than keeping a 0.90 the
+        definition site itself calls 'not a specific measured number'. Never set
+        from this desk's own trade outcomes
   - id: src.portfolio_constructor.ConstructorConfig.target_divergence_warn_pct
     value: 25
     status: derived
@@ -3936,6 +4090,24 @@ numbers:
       Trailing stops are placed on pivots found by a window nothing measured,
       and the disagreement with the level scan is currently harmless only
       because nothing compares them.
+  - id: src.risk.trailing.MIN_BARS_FOR_A_READING
+    value: 7
+    status: derived
+    derived_from: src.risk.trailing.PIVOT_WINDOW
+    base_value: 3
+    site: src/risk/trailing.py
+    note: >-
+      Not a chosen bar count. It is `PIVOT_WINDOW * 2 + 1`, computed in code
+      from the row above, because that is exactly the span a confirmed swing
+      pivot needs: the pivot bar plus `PIVOT_WINDOW` bars either side. Below
+      it neither trail leg has enough bars to read anything, so both refuse
+      with `too_few_bars_since_entry` rather than reading an extreme off
+      today's price. Added with board item 212, which removed the
+      take-profit gate on a range position's structural trail: with the gate
+      gone a position entered today would otherwise have yielded a single
+      bar and a chandelier that merely follows price, which is a different
+      exit rule, not a trail. It inherits `PIVOT_WINDOW`'s own unresolved
+      question and adds none of its own.
   - id: src.risk.trailing.RANGE_BREAKEVEN_R_MULTIPLE
     value: 1
     status: arbitrary

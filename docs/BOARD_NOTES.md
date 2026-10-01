@@ -447,6 +447,20 @@ The band's SECOND home is genuinely not redundant and must not be deleted with t
 
 **What the live code actually does, checked 2026-10-01 (claims in the original filing had rotted).** The target reaches no broker — still true. The target no longer gates whether the structural trail runs: item 142 removed that switch, and the trail runs for a range trade once it is past the +2R ratchet trigger. One live effect survives — whether price has exceeded the target decides whether the +1R lock floor constrains that trail — and the owner-facing note now says so instead of implying the number is inert. The alignment exit (`src/risk/alignment_exit.py`) sells a WHOLE position and contains no partial path, so the trim case is genuinely untouched by it.
 
+**BUILT 2026-10-01 — the recording the item turns on: `alignment_exit_readings`.** One row per open position per run, written whether or not the exit fires. Before this, only a FIRING alignment exit left any trace, so the population the whole question is about — positions that weakened and then recovered — was invisible and the question "do positions pass through a DURABLE intermediate band of weakening before the trend ends, or do they fall straight through?" could not be asked at all.
+
+**What is stored, and what deliberately is not.** The row carries the symbol, the run, the session date, the side, the verdict status and code, the raw give-back distance in that name's own ATR (`breach_atrs`), the tolerance the verdict was judged against (`band_atrs`), how many sessions the mark has been lost, the last mark's price and source, how many marks the chart presented, and which average the thesis named. NO band edge, NO threshold, NO horizon and NO classification is stored: "weakening", "durable" and "recovered" each need a cutoff nobody can source today, so only raw distances are kept and a later reader states its own cutoff. Unknown is NULL — an UNPARSEABLE read still writes a row with a NULL distance, because "the chart could not be read" and "the chart was intact" are different facts and neither is a zero.
+
+**It is the reading the exit ALREADY computes, not a second one.** The write takes the memoised `AlignmentExitCheck` the scan itself acts on, so the record cannot disagree with the decision. Nothing about when the exit fires, or what it does, changed, and no call order changed. A recording failure is swallowed and never blocks a sale.
+
+**THE RECORDING BUYS NO DATA TO FILL ITSELF, and an earlier draft of it did.** That draft moved the chart read ahead of the priority check so every position would be read, and called the change behaviour-neutral. It was not. A chart read is `pipeline._alignment_exit_for_holding` -> `market.get_ohlcv` -> a live `yfinance` download, uncached, one HTTP round trip per symbol per call; `compute_indicators` and `find_structural_levels` then run on those bars in-process. No model and no paid provider is reached — `yfinance` is free and the Alpaca fallback is inside the existing broker subscription — so the cost is network calls and wall-clock, not dollars. The worst case on an eleven-position book was eleven extra downloads per run, one for each position the scan would have skipped, and the memo would NOT have absorbed them: `_alignment_exit_cached` is called from only two places, the scan and the downstream confirmer, and the confirmer only runs on a sale whose own reason claims the alignment exit, so a name the review wanted sold for an earnings miss would have been downloaded purely to fill this table. The build therefore records what the scan already computed and writes the rest as an explicit NOT EVALUATED row — `not_evaluated_reason` set, every reading column NULL. A later reader needs those rows to know its own denominator and must not read a NULL reading as an intact chart.
+
+**RECORDING ONLY, and the bar is the item's own last criterion.** Nothing may read these rows back into a sizing, stop or exit decision, and they may NEVER be swept for the trim fraction that would have performed best — that is fitting a number to this desk's own trading record, which doctrine bars outright and which item 75's last criterion bars by name. The bar holds however much data accumulates, is written into the column comment in `src/storage/db.py`, and a test fails the build if any file under `src/` reads the table back.
+
+**Status: UNPROVEN, not populating.** The call site is reached from executable product code (`src/pipeline.py`, inside `_alignment_exit_scan`, which the session pipeline calls at `src/pipeline.py:13292`), not only from a test. No row exists yet: the last desk session ran 2026-09-30 19:30 and the next has not run. This criterion's companion — reading the record once and writing the answer here — cannot be attempted until rows exist.
+
+**STALENESS, flagged 2026-10-01.** The first criterion's tick says the target's one remaining live effect is gating the +1R trail floor on a range trade. Open PR 928 (item 212) removes that gate entirely, after which the target has NO live effect at all and the owner-facing note in `src/api/holding_why.py` describes an effect that no longer exists. The criterion's wording in `docs/WORK.md` was corrected to say the tick covers the statement being true of main rather than the effect surviving; when 928 merges, the note and its test must be re-read.
+
 **Three of the original six criteria are VOID, not deferred.** "Sell all at target", "sell half at target and trail the rest", and "target tightens the trail" are all barred outright by the 2026-09-30 ruling. Tracking what a barred rule would have done is only worth doing if it might be adopted, and it may not be.
 
 ## item 78
@@ -496,6 +510,22 @@ The band's SECOND home is genuinely not redundant and must not be deleted with t
 *The two cluster rows.* The reserved-slot count routes to a per-session count of detected same-day purchase clusters, so slot demand becomes a series. The minimum-insiders threshold routes to a measurement with two independent legs, because its citation has never been opened: obtain a retrievable copy of Alldredge & Blank (2019) and read its own cluster definition, and separately measure the distribution of distinct-insider counts per same-day cluster across the Form 4 record the desk already pulls.
 
 *Still open on this item:* 114 routeless rows. The largest remaining groups are the pipeline (18), the smart-money admission screen in `SmartMoneyConfig` (16), the agent-result shape (15) and the portfolio constructor (8).
+
+**item 90, half two — the 2026-10-01 PORTFOLIO-CONSTRUCTOR tranche (fourth tranche; routing only, no VALUE changed).** All 8 `arbitrary` rows under `src.portfolio_constructor.ConstructorConfig` that carried a status and no settlement route now carry one, so the ledger's routeless count falls from 96 to 88 [measured: `src.number_sources.classification()` over `config/number_ledger.yaml`, before and after, on a base that already holds the smart-money reading tranche and the pipeline tranche]. Counted independently rather than taken from the brief: the brief said "about 83 remain", and 96 is what the partition actually returned, because the third tranche (the 16-row `SmartMoneyConfig` admission screen and the 15 `AgentResult` scoring fields) is still in flight and is NOT on this base — those 31 rows were deliberately left alone to avoid colliding with it. The arbitrary count did not move, because no row changed status, so `MAX_ARBITRARY_ENTRIES` is unchanged at 136 and only the routeless ratchet moved, to 88, with its own delta line.
+
+*Why this group was taken as one tranche.* Every row in it is a multiplier or a ceiling inside the one object that turns a seat verdict into a dollar size and a stop price, so they are judged against each other: the notional ceiling and the risk envelope both bound the same position from different directions, and the four stop-width scalers all multiply the same ATR base. None of the eight could honestly be routed `not-trade-governing`; each one changes either how much is bought or where the protective stop sits.
+
+*The shape check, done rather than assumed.* The first tranche found eight integers whose spacing cancelled because they entered only as positions in a lexicographic sort key, and the next tranche found fifteen that looked identical and were not. Each of these eight was read at its consumption site: all are multiplied into a dollar size or an ATR distance and compared against other magnitudes, so the spacing is load-bearing in every case and the sort-key shape is absent here.
+
+*The three mandate ceilings.* The single-name notional ceiling (65) is the desk's only guard against the stop not filling at all — gap, halt, fraud, regulatory action — so it routes to a measurement of the gap-against-position distribution for the eligible universe off public daily bars, which turns an owner-stated tolerance for a single-name unstopped loss into a notional share. The sector soft target (75) routes to a measurement of the common component of same-sector drawdown, because the only survival-grounded reason this desk caps a sector is that its names move as one position; if they do not, the route says DELETE the target rather than re-pick it, since otherwise it is a diversification number the mandate rejects. The per-position risk envelope (5) does NOT route to a re-derivation at all: the 2026-09-30 ruling makes a global risk constant a defect, so it routes to a recording of whether the flat envelope ever binds a trade the per-name reading would not, with deletion as the outcome if it never does. The owner-appetite halves of the first two stay with board item 186; nothing was escalated from here.
+
+*The four stop-width scalers, and the trap that was avoided.* The three macro-regime rungs (1.2 / 1.1 / 0.95) and the range-setup rung (0.90) all previously pointed at a maximum-adverse-excursion study over this desk's own trades, which `docs/OUTCOME.md` bars outright and which was already deleted from `min_stop_atr_multiple` for that reason. Their routes are therefore instrument-side: the regime rungs settle against a measured LAG — the realized true range following a regime classification divided by the trailing ATR reading the stop was sized from on that day, taken over the universe the desk could trade rather than the trades it made — and the range rung settles against the adverse excursion following a signal, in ATR units, with the desk's own setup classifier applied to every qualifying bar in the universe rather than to the bars the desk entered. Each of the four states the DELETE outcome as well as the set-it outcome: a rung indistinguishable from 1.0 is removed, not re-picked.
+
+*The no-ATR structural buffer (0.5%).* It routes to a recording that writes, at every no-ATR stop placement, the level, the half-width of the price cluster the level detector already grouped to find that level, the distance the flat percentage produced, and whether the following low pierced the buffer without invalidating the level. It closes by replacing the percentage with the measured half-width; if the half-width turns out to be routinely unavailable, the percentage stays and the recording at least makes its cost a measured number.
+
+*Values left alone, and one thing worth saying.* No value was changed and none is being challenged on its arithmetic. The one observation for the owner is that the 65% single-name ceiling and the 5% risk envelope are described in the code as bounding the same position but are never reconciled anywhere — the ledger note on the risk envelope records that a separate 20%-notional cap has been limiting real trades to about 1%, so it is not clear either of these two is the binding number in practice. That is a finding, not a fix, and it is left as one.
+
+*Still open on this item:* 88 routeless rows on this base, fewer once the in-flight third tranche lands. The largest remaining groups are `src.config.RiskConfig` (7), `src.risk.rules` (7), `src.risk.exit_guard` (6) and `src.risk.trailing` (6). Item 90 stays OPEN.
 
 
 **Routing pass, 2026-10-01 -- tranche three: the smart-money admission screen (16 rows) and the agent-result scoring fields (15 rows).** Routeless rows 114 -> 83. No value moved, no status changed, and nothing was routed to the owner. The three affordability caps (external nominations, filings per refresh, refresh deadline) record BOTH failed derivation attempts and route to a recording of pre-cap demand; the ten filings-window rows and the three tradability floors route to measurements off the filings record and market prices, never off this desk's own fills.
@@ -1657,6 +1687,117 @@ sessions, MEASURED above, against a window needing `2 * PIVOT_WINDOW + 1`
 bars), remains unfixable while that constant is documented as unsourceable.
 No number was invented here; the band width, the chandelier multiple and the
 minimum ratchet are all unchanged.
+## item 212 — RETIRED 2026-10-01, target gate removed: the structural trail now runs from entry
+
+Filed 2026-09-30 alongside the revert of PR #857.
+
+What is true in the code: for a Type A (range) entry the structural and
+chandelier trail does not run at all until price exceeds the recorded
+take-profit target. The +1R breakeven lock and the +2R second ratchet are
+separate, ratified, and unaffected.
+
+Why the target gate is a defect: the target is an unsourced number, and the
+desk's doctrine bars an unsourced number from governing an exit. Between
+entry and the target the position has only its original entry stop, so
+nothing follows price up through the part of the move the trade actually
+spends most of its life in.
+
+Why PR #857 was NOT the fix, and was reverted: it moved the gate from the
+target to +2R. Measured on 33 real production BUY trades, the target's
+reward-to-risk is median 1.33 and at most 1.72 — never as high as 2.0. The
+target is therefore reachable in practice and +2R never has been, so the
+change made range positions LESS trailed on live data, not more. The
+backtest showed no difference only because its simulated targets sat nearer
+still.
+
+Also verified: the target cannot close or cap a position. No take-profit
+order is ever sent to the broker and a target rationale cannot authorise a
+sale, so gating this trail is the target's only live behaviour.
+
+The owner's ratified answer is exit-on-alignment: sell when structure, ATR
+and an SMA cross agree the trend is over, never on a single made-up level.
+The alignment exit on open PR #853 is the candidate replacement for this
+gate. Do not build a replacement under this item, and do not re-derive,
+widen or replace any multiple.
+
+RESOLVED 2026-10-01. The alignment exit (PR #853) is merged and live, so the
+owner's ratified answer to "when do we sell" exists in code and the gate had
+nothing left to stand on. The gate is REMOVED: a Type A position now runs the
+SAME structural/chandelier trail as Type B from entry, the two ratified
+R-multiple ratchets are unchanged and still run, and whichever leg proposes
+the TIGHTER stop is the one placed. No multiple was widened, no replacement
+gate was built, and no new constant was introduced.
+
+The load-bearing question — can ungating ever move a stop AWAY from price —
+is answered twice. By construction: every candidate must already sit strictly
+between the live stop and current price, must clear the minimum-ratchet and
+noise-band invariants, and is re-checked after rounding, so a looser level
+cannot be proposed at all. And by replay: all 20 filled range BUYs in the
+production record were replayed day by day over daily bars from each entry
+date, gated against ungated. 18 of the 20 replayed (two are for a symbol
+absent from the bar set). MEASURED: zero positions stopped out earlier under
+the ungated trail and zero stopped out that did not before; two positions
+ended with a tighter stop and neither was stopped out as a result (three
+before the noise-band invariant was made to bind on every leg; the invariant
+removed one of them).
+
+The two positions that could NOT be replayed are both RSG, absent from the
+101-symbol daily-bar set. Named here rather than described, so a reader can
+judge for themselves whether that exclusion correlates with volatility; this
+note does not claim it does not.
+
+POWER OF THE SAMPLE, stated so the replay is not read as proof: zero events in
+18 positions puts the 95% upper bound on the per-position harm rate at roughly
+15%. Zero differences is therefore the EXPECTED result at n=18 even if the
+change were harmful at a rate the desk would care about. Bounding that rate
+below 5% needs roughly 59 range positions, which the production record does
+not yet hold. The structural argument — that a candidate must sit strictly
+between the live stop and current price — is the stronger half of the
+evidence; the replay only fails to contradict it.
+
+Four defects found by the adversary on PR #928 and fixed in the same branch:
+(1) with no bars the chandelier read its extreme off CURRENT PRICE, so an
+entry-day position or any bar-fetch failure tightened a stop off nothing —
+an empty bar set now refuses with `no_bars_since_entry`; (2) the first patch
+had quieted four ratchet tests by removing their ATR, which is what hid
+defect 1 — every one is restored to its original ATR and the code satisfies
+them; (3) the structural leg's refusal reason could no longer be recorded for
+any range name — it now travels on the evaluation as `structural_code` and is
+written as the detail of the trail-state row; (4) preferring the tighter
+R-ratchet level over an ACCEPTED structural candidate could place a stop
+inside the noise band the structural leg honours, so that override now has to
+clear the same minimum-ratchet and noise-band invariants. The ratchets' own
+unconditional path, where no structural candidate exists, is untouched.
+
+Second review pass, 2026-10-01: three of those four fixes did not hold and
+are now redone. (1) The refusal only caught a ZERO-length bar set, while the
+caller filters bars to since-entry, so a position entered today handed the
+module one bar and the chandelier still read `today's high - 3 x ATR`. The
+minimum is now the window the STRUCTURE leg already needs before it can
+confirm a pivot — three bars either side of it, seven in all — and it is
+derived from that window in code, not chosen. Below it both legs refuse and
+the reason is recorded as `too_few_bars_since_entry`. (2) The noise-band and
+minimum-ratchet invariants bound only on the override branch, so a structural
+candidate refused as `inside_noise_band` still handed the decision to an
+unchecked ratchet level. They are now one function that every leg able to
+place a stop must clear. (3) The structural reason was dropped on the success
+branch and the recorder deduped on the primary code alone, so a changed
+structural reason wrote nothing; it is now carried on both branches and is
+part of the dedupe identity.
+
+THE ARGUMENT THE GATE WAS REALLY MAKING, answered here rather than in code.
+The gate's rationale was never the target number: it was that trailing a
+range trade early is how it gets stopped out inside the very range it was
+bought to traverse, and because every tightening is permanent, a stop
+ratcheted to the top of a range is still there on the next down-leg. Removing
+the gate because the TARGET is unsourced would discard that rationale along
+with it. What replaces it is defect 2 fixed properly: no leg may place a stop
+inside the daily-noise band, so a stop cannot be ratcheted into the range's
+own noise in the first place, and the band is measured from ATR rather than
+from a number anybody picked. The replay cannot speak to this at all — it
+counts stop-outs over 18 positions in a single market stretch, and the
+failure being argued about is a permanent tightening whose cost shows up on a
+later down-leg that may not be in the window.
 ## item 219
 
 The pruning pass's owner-facing report. `src/rotation.py::pruning_pass_lines` is the single renderer; it reads only the durable row `precheck_record` writes, so the sentence and the audit trail cannot drift apart. `src/trader_feed.py::_append_rotation` renders it into the Telegram session message beside `owner_precheck_lines`; `src/api/routes_history.py::_rotation_lines` serves the identical list on the run detail and `src/api/static/app.js` renders it. Tier 2 (`ranked_margin`) stays OFF and the report says so out loud, reading the recorded switch rather than a constant, so it tells the truth if it is ever turned on. The telemetry-unavailable outcome deliberately renders NO pruning block: the pass did not run that session, and saying how many holdings it examined would be exactly the untrue owner line this item exists to remove.
@@ -1697,92 +1838,6 @@ this defect is live on 3 of 11 names today.
 Scope: this item is about what the desk SAYS, not about whether the exemption
 should fire. Whether a stop inside a wide zone should count as backed at all is
 the decision in DONE WHEN (b). No number is introduced by this item.
-## item 212
-
-Filed 2026-09-30 alongside the revert of PR #857.
-
-What is true in the code: for a Type A (range) entry the structural and
-chandelier trail does not run at all until price exceeds the recorded
-take-profit target. The +1R breakeven lock and the +2R second ratchet are
-separate, ratified, and unaffected.
-
-Why the target gate is a defect: the target is an unsourced number, and the
-desk's doctrine bars an unsourced number from governing an exit. Between
-entry and the target the position has only its original entry stop, so
-nothing follows price up through the part of the move the trade actually
-spends most of its life in.
-
-Why PR #857 was NOT the fix, and was reverted: it moved the gate from the
-target to +2R. Measured on 33 real production BUY trades, the target's
-reward-to-risk is median 1.33 and at most 1.72 — never as high as 2.0. The
-target is therefore reachable in practice and +2R never has been, so the
-change made range positions LESS trailed on live data, not more. The
-backtest showed no difference only because its simulated targets sat nearer
-still.
-
-Also verified: the target cannot close or cap a position. No take-profit
-order is ever sent to the broker and a target rationale cannot authorise a
-sale, so gating this trail is the target's only live behaviour.
-
-The owner's ratified answer is exit-on-alignment: sell when structure, ATR
-and an SMA cross agree the trend is over, never on a single made-up level.
-The alignment exit on open PR #853 is the candidate replacement for this
-gate. Do not build a replacement under this item, and do not re-derive,
-widen or replace any multiple.
-## item 211 — RETIRED 2026-10-01, both-edge paging deferred to the circuit's own self-clear window, repeat suppression made per-type, and every refusal now readable at /alerts/suppressed
-
-Why the threshold is not a new number. The circuit already answers "how long
-before this stops being a blip": `_auto_clear_transient_latch_locked` refuses
-to retire a transient latch until `transient_latch_cooldown_minutes` of wall
-clock have passed, and refuses again if the day's
-`max_transient_latch_auto_clears_per_day` allowance is spent. Paging the owner
-the instant the latch is set contradicts the circuit's own stated belief that
-the fault may not be real yet. So the paging threshold IS that field. There was
-no need to invent one, and inventing one would have been a barred arbitrary
-number.
-
-Why an episode is one trigger code on one ET day. The auto-clear allowance is
-already counted per ET day against `llm_circuit_events` for exactly this
-purpose — "a fault recurring this often is not transient". The episode
-boundary reuses that unit rather than defining a second, differently-shaped
-notion of "the same fault again".
-
-What this does NOT do. It does not re-enable Telegram: the owner muted it
-deliberately on 2026-09-30 and it stays muted. It does not make the desk
-quieter about anything an operator must act on — every non-self-clearing
-trigger still pages immediately, because there is no window it can expire
-inside. It does not migrate the three existing per-symbol markers in
-`src/coverage_watchdog.py` onto the new generic helper; that is a refactor of
-working code and was left alone so this change cannot alter what they already
-suppress. The suppression record IS now on the API, which was the item's last open
-criterion: `GET /alerts/suppressed` returns the `suspend_alert_deferred`
-rows from `llm_circuit_events` alongside the `suppressed_alerts` block from
-BOTH watchdog state files, and reports "could not read it" separately from
-"nothing was suppressed" rather than collapsing the two into an empty list.
-It still does not migrate the three existing per-symbol markers in
-`src/coverage_watchdog.py` onto the generic helper; that is a refactor of
-working code and was left alone so this change cannot alter what they
-already suppress. There is no dashboard tile — the criterion reads
-"API/dashboard" and the API is what shipped.
-
-Correction to the item text as filed. It said `scripts/check_deploy_drift.py`
-claims through `coverage_watchdog.claim_typed_alert`. It does not: it keeps
-its own `drift_alerted_for` marker in `deploy_drift.json`, which is still a
-per-type, per-key, per-day claim but a separate implementation. What it was
-genuinely missing is the recording half — a repeat it declined to send left
-no trace at all — so `record_state` now writes that refusal through
-`_record_suppressed_alert`, into the same state file, where the endpoint
-reads it.
-
-Where the live-risk line is drawn. A live-risk alert is one about a position
-whose protection is gone or never arrived: a stop that failed to place, a
-stop that failed to re-arm after a scale-in, an uncovered position, a broker
-rejection. None of them is ever silenced: the cost circuit's deferral applies
-only to `_SELF_CLEARING_HARD_TRIGGERS` (paid-provider faults), and the typed
-claim helper always releases the FIRST occurrence for a symbol on an ET day,
-holding only a byte-identical repeat of the same fault for the same symbol on
-the same day — and recording even that. Both halves are proved in
-`tests/test_alert_suppression_api.py` and `tests/test_cost_circuit.py`.
 ## item 201
 
 The naked window is real and ordinary: every place the desk cancels a protective stop and submits a replacement, the position is unprotected for the width of that round trip, on paths that run on normal days against real open positions.
