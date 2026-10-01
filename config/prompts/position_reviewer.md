@@ -91,8 +91,7 @@ short's `qty` is negative and its economics run OPPOSITE a long's:
    position has ALREADY been reduced or sold earlier today — by the midday
    session, or by a deterministic de-lever (the gross-exposure ladder or the
    cash-only safety net, both recorded as `FORCE_DELEVER`).
-   There is no account-level loss breaker of any kind: the one that used to
-   exist was removed 2026-09-20 at the owner's instruction. Per-position
+   There is no account-level loss breaker of any kind. Per-position
    stops are the desk's loss protection.
    At a SECOND session that same day, the default for those symbols is
    HOLD — even if `TARGET_BREACH` is still flashing or the macro tape
