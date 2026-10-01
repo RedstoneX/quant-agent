@@ -353,7 +353,7 @@ The band's SECOND home is genuinely not redundant and must not be deleted with t
 
 **Moved from WORK.md (2026-09-24) —** Full account of what was built and the gate's own honest limit (it proves a justification was WRITTEN, never that it is TRUE): `docs/INCIDENT_HISTORY.md` (2026-09-18). The counts quoted there are a snapshot, already known stale by the next day — read `config/number_ledger.yaml` directly rather than trusting a number here. **Half two, STILL OPEN:** read each arbitrary entry off its instrument. Each states in the ledger the question that would settle it and what the desk pays meanwhile, which is what makes half two prioritisable rather than a list. `MAX_ARBITRARY_ENTRIES` is an EQUALITY, not a ceiling: as a ceiling it rewarded deleting a row.
 
-## item 99
+## item 99 — RETIRED 2026-10-01, both remaining criteria closed: the technical seat's prompt now names every data block the code sends it (the market-context bullet was missing the consolidation state, liquidity, up/down volume and unfilled-gap lines) and is pinned by `tests/test_tech_prompt_input_contract.py`; the deletion-site check shipped 2026-09-26 as `described_gaps()` and now registers the technical seat's two renderers
 
 **Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces. The desk already bans numbers that were invented rather than read off real data; a number that lives only in a brief is exactly that, and it was invisible because nobody had looked in the briefs. (Filed twice, as items 99 and 105; diffed and collapsed into this one 2026-09-18.)
 **What it found —**
@@ -518,6 +518,8 @@ Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured ze
 **Ledger gap is STRUCTURAL, not an oversight (verified 2026-09-25).** Both constants live in `LLMCostCircuitConfig`, which is DELIBERATELY outside the ledger's `SCOPED_CONFIG_CLASSES` (the scanner's own comment names "LLM cost circuits" as settings with "nothing to do with a trade"). Closing the gap would mean scoping the whole cost-circuit class and ledgering every numeric field in it — a scope-policy change, not bookkeeping — and even then `max_transient_latch_auto_clears_per_day` uses a `default_factory` (`_paid_run_count()`), which the scanner structurally cannot see (its own docstring lists this as uncatchable). So there is no clean two-row ledger add here; left for the owner/scope call, not fixed in the item-148 pass. **Separate finding, not mine to fix:** `intra_check` is the desk's LARGEST model spender — 72% of spend on 2026-09-22, 90% on 09-21, 13-14 paid runs a day [measured] — while its own code comment said "no LLM"; comment corrected, but whether a 30-min tick should be spending that is untouched.
 
 ## item 187
+
+**2026-10-01 — the closing observation now records itself.** Before this, coverage lived only as a prose line inside the macro seat's prompt (production `agent_logs`, `macro_analyst` rows 2026-09-21..09-30: 10 rows, 9 stating full coverage and 1 stating 7/15 on 09-22 [measured, production database, read-only]) and as a 21-day state file the box user alone can read. Neither covered the event-calendar half, neither was structured, and neither kept "asked and failed" apart from "never asked". The table `fred_fetch_coverage_runs` (one row per morning fetch, built from the coverage objects themselves) fixes that. The event-calendar provider cannot tell a release it asked for from one cut off by the deadline, so those failures are stored with their own reason text and never labelled either way. No row exists for any open before the deploy.
 
 **Moved from WORK.md (2026-09-24) —** Also: every FRED failure in the log is `fetch_deadline_exceeded`, 4 of 12 runs full coverage, worst 5/15 [measured 09-17..23] — owned by the approved fetch redesign.
 
@@ -944,6 +946,9 @@ earnings tolerance) are untouched.
 Item 90's half two, surfaced for visibility. What caps deployment and crowding is flat and unsourced: the 25% total at-risk portfolio ceiling (`RiskConfig.max_portfolio_risk_pct`), the 90% terminal sector-ceiling bound (`RiskConfig.SECTOR_HARD_CEILING_MAX`, whose definition site says it is "open for the owner to move"), the 40% share of total risk one correlation cluster may hold (`RiskConfig.max_cluster_risk_share_pct`), the 0.7 correlation cutoff that defines what counts as one cluster (`correlation.CLUSTER_CORRELATION_THRESHOLD`), the 1.5x short-side sizing haircut (`RiskConfig.short_gap_risk_multiple`), and the 5% resulting-weight cap on a BUY whose earnings filing is queued but unanalysed (`_clamp_queued_earnings_buys`). All `status: arbitrary`. The already owner-ratified ceilings (per-trade 5%, gross 2.0x, single-name 65% notional, sector soft/hard 75 / 90 on the constructor) are excluded — they are accepted appetite, not open debt. **2026-09-25 (owner delegated to the adversary):** `max_portfolio_risk_pct` (25), `SECTOR_HARD_CEILING_MAX` (90) and `max_cluster_risk_share_pct` (40) RATIFIED as owner-appetite (values unchanged, kept `status: arbitrary`+note). Item STAYS OPEN: `CLUSTER_CORRELATION_THRESHOLD` (0.7), `short_gap_risk_multiple` (1.5) and the queued-earnings BUY clamp (5%) are not yet resolved. **2026-09-26 pass — all three researched, none sourceable, all three refused rather than picked; item STAYS OPEN on three owner-appetite answers.** Findings, each recorded in the number ledger: (a) `CLUSTER_CORRELATION_THRESHOLD` — the definition site's claim that 0.7 is "the traditional finance cutoff" was UNTRUE and is deleted from the code, not softened. There is no such cutoff: the mainstream portfolio-clustering literature thresholds nothing, it clusters hierarchically on a correlation distance; where thresholded correlation networks are used the published cutoffs run ~0.3-0.8 and are picked for the network density a study wants. The old open question was also wrong — asking when this desk's names "actually fail together" is fitting a threshold to past outcomes, which doctrine bars. (b) `short_gap_risk_multiple` — the direction is arithmetic (a short's loss above its stop is unbounded, a long's is bounded by zero) and needs no citation; the magnitude is not sourceable and the literature that looks like it should settle it measures a different quantity, so it is NOT adopted: skewness-pricing work is about expected returns to lottery-like stocks, and the empirical overnight-gap studies are index-level and disagree in sign (the DJIA's larger median gap is on the UPSIDE but its skew is strongly negative, i.e. the fatter tail runs against longs). Measuring it properly is blocked on data, not thinking — the desk's database holds no OHLCV/bar table (verified 2026-09-26), bars are fetched live and discarded, so there is no stored gap history and no recorded short universe. (c) the queued-earnings BUY clamp — the near miss is written down so nobody adopts it later: the published ~5.07% average one-day absolute earnings-announcement return is a MOVE, this 5.0 is a share of the BOOK, and the two agreeing to two digits is a coincidence of units. Deriving it from the desk's own per-trade envelope fails too: run forward, a 5%-of-equity tolerance against a ~5.07% move would permit a weight near 100%, so the envelope does not bind here at all. Run backward it is a useful cross-check — today's 5% cap implies accepting ~0.25% of equity of unprotected overnight exposure, about half `min_position_risk_pct`, so the cap is conservative on the desk's own scale.
 
 
+**2026-10-01 pass — the PORTFOLIO and CLUSTER ceilings are closed as far as they can honestly be closed: no value moved, no appetite routed, and each now carries a named recording plus BOTH of its failed derivations.** The three ratified ceilings (25 total at-risk, 90 terminal sector, 40 cluster share, plus the constructor's mirror of the 90) were re-checked against live code and against `config/number_ledger.yaml` first; all four were already ledgered and already re-affirmed as AGGREGATE rationing that the owner's "risk is never a global dial" ruling does not convert into a defect. What they did NOT have was the thing this item's closing condition actually asks for — a settlement route — so all four were sitting in the ledger's `unclassified` bucket, owing an answer with nothing named that could ever supply it. (a) EACH ROW'S APPETITE QUESTION IS WITHDRAWN, not pending: all three still asked the owner what concentration he accepts, which his 2026-09-30 ruling bars, and asking again is the failure mode this item has already suffered twice. (b) BOTH DERIVATIONS FAILED, PER CEILING, AND THE REASONS DIFFER. For the 25% book ceiling: no recording (the production `positions` table is an 11-row snapshot with no stop column and no history, so the book's loss-if-stopped has never been written down once — measured 2026-10-01 against /home/qamc/quant-agent/data/quant_agent.db, read-only), and THE ALGEBRA CANCELS (at the ratified 5% per-trade envelope a 25% ceiling is exactly five full-size names, so deriving it reduces to picking a name count). For the 90 terminal sector ceiling: THE ALGEBRA CANCELS (it is already a cap on a derivation, `min(1.5 x max_sector_pct, 90)`, so deriving it means deriving the 1.5 or the §12.3 target of 75, both unsourced), and no recording (sector is stored only on the snapshot; measured 2026-10-01 on production, the largest live sector share is 44.3% of gross market value against a 90 ceiling — one observation, not a distribution). For the 40% cluster share: THE ALGEBRA CANCELS, and this is the attempt that looked per-name and was not — 40% of 25% is 10% of equity, exactly TWO full-size positions at the 5% envelope, so the cluster share is a name count wearing a percent sign — and no recording (clusters are recomputed each session from live correlations and discarded; the production database has 24 tables and none of them holds a cluster). (c) THE RECORDINGS THAT CLOSE THEM are now written into the ledger rows themselves where the mechanical check reads them, with the route ratchet moved by -4 and the reason recorded: per-session book loss-if-stopped with the equity it was measured against; per-session sector shares of gross notional; per-session cluster membership from the correlation-distance cut with each cluster's share of total at-risk. Until those series exist the three ceilings stay `arbitrary` and stay at their ratified values. (d) A STALE DOCSTRING WAS CORRECTED ON SIGHT: `src/risk/budget.py` still told the reader clusters arrive "thresholded", which stopped being true when the 0.7 cutoff was removed on 2026-09-30, and still called the 40% "suggested". DO NOT RE-DERIVE these three: the loop has now failed twice on each, both reasons are written above, and in every case the second failure is circularity rather than missing data, so no new recording would rescue a derivation attempt — only a measurement of what the book actually does.
+
+
 ## item 188 — detail moved from the board 2026-09-30
 
 The road half of this is FIXED in the same change: on 2026-09-29 all three of the portfolio manager's routes ran over one OpenRouter account, the balance hit HTTP 402, and the whole intraday decision run died while the desk's other endpoint was answering for free in the same process [measured, production log 19:46:45-19:47:46 against 19:46:08]. Route 3 for the three OpenRouter-primary seats now goes to Google AI Studio direct, so no seat has every route on one provider, and a CI test reads `config/settings.yaml` and fails if that ever regresses. What is OPEN is the quality half: `gemini-3.5-flash-lite` has never been benchmarked at the portfolio-manager, risk-manager or position-reviewer seat, so what the desk actually produces in a total OpenRouter outage is unknown rather than merely degraded. The routing-policy test does not catch it because it only governs models reached over OpenRouter.
@@ -961,6 +966,10 @@ Item 183 found that `CashSweepConfig.reserve_pct` (the 1% cash-reserve band) can
 `min_order_usd` is the opposite shape: the code itself records that no trade path rejects on it any more and that `apply_gross_ceiling` ignores it, so it is vestigial as a gate — but the portfolio manager still says the number out loud to the owner in its funding narrative, so the deletion has to rewrite that prose rather than just remove a field.
 
 The 187-reference estimate is low: ~550 mentions across 88 files, including four frontend components, the Mission Control API schema and routes, the branch-preview tool, and roughly thirty test modules. No removal was attempted in this pass — a partial gut of a path that runs before every BUY is worse than leaving the switched-off shell standing, and the two live readers above have to be settled first.
+
+**Step 4, part done 2026-10-01.** A latent defect in the piece step 4 owns was fixed ahead of the rest: the account view's "deployable cash" added the market value of the parked T-bill vehicle even with the sweep switched off, a state in which nothing converts that vehicle back into cash for a purchase. The engine never did this, so the two numbers the desk calls by the same name would have disagreed — the operator's tile reading higher than the money the desk can actually spend. Nothing is held in the vehicle, so it never produced a wrong number in real life; the production database records no such holding today.
+
+The rest of step 4 is blocked rather than skipped. Steps 2 and 3 — rewriting the owner-facing funding wording, and deleting the sweeper itself — have not reached the main branch, so the sweeper is still live code. Deleting its number-ledger entries now would leave constants that still run with no record of where they came from, and stripping the sweep fields out of the account view and the frontend would remove the only place a leftover holding would be visible. The item stays open with those criteria written into its board entry.
 
 ## item 192 — detail moved from the board 2026-09-30
 
@@ -1017,3 +1026,56 @@ The order matters and is the completion criteria:
 ## item 195 — RETIRED 2026-09-30, the window-start inconsistency it named is fixed and merged, and the only remaining lever on the structural leg is barred
 
 The measured finding stands and is preserved in the retired item's own text: the structural pivot has never produced a candidate, because a confirmed pivot needs `2 * PIVOT_WINDOW + 1` = 7 bars and a scale-in additionally reset the caller's bar window to zero. That second half was the defect in how the candidate is FOUND and it is fixed on main (`Database.get_position_open_timestamp`, `tests/test_position_open_timestamp.py`); re-running all 21 recorded refusals through the new window flipped none. The first half is arithmetic reach, and the only way to shorten it is to move `PIVOT_WINDOW`, which the module documents as unsourceable in the literature — moving it to obtain a result the data would like is picking a number, which doctrine bars. The leg is NOT deleted: item 196's change means it now competes with the chandelier on equal terms instead of pre-empting it, and `tests/test_trailing_candidate_set.py` pins that it is still preferred where it does produce a usable pivot.
+
+## item 196 — RETIRED 2026-10-01, both criteria met: refusing was MEASURED to be the better policy and the frequency it left unmeasured is now counted in production
+
+The open half was a doctrine question — when the chandelier candidate itself
+lands inside the noise band, is refusing to move correct (the move would be
+noise) or a protection failure (the stop should have tightened and did not)?
+It is answered with a measurement, not an argument.
+
+MEASURED, on the desk's own stored daily bars (101 symbols x 276 bars,
+`scratchpad/zone/bars400.pkl`), replaying the live `evaluate_trailing_stop`
+geometry — same chandelier, same 1.25-ATR band, same 2% minimum ratchet, same
+derived opening level for both policies — against the only alternative the
+item named, falling back to the band edge `current_price - 1.25 * ATR`:
+
+* Over a 14-session horizon (the LONGEST round trip in the production record,
+  `trades` table, 19 closed round trips, min 0 / median 3 / max 14 days):
+  the fallback changed the exit on 28 of 4,877 simulated holdings. 15 were
+  WORSE by a mean 1.44 ATR, 13 were BETTER by a mean 0.61 ATR; the mean of
+  all 28 is -0.49 ATR. Tightening into the band loses more when it is wrong
+  than it saves when it is right.
+* Over the median 3-session horizon the fallback changed 2 exits and both
+  were worse.
+* A candidate lands inside the band on 9.1% (3 sessions) to 18.6% (14
+  sessions) of evaluations, but only 84 of 9,902 in-band events would have
+  produced a band-edge level that both beat the resting stop and cleared the
+  minimum ratchet — so the path is common and its consequences are rare.
+
+So refusing outright STANDS, now on evidence rather than on the doctrine
+conflict alone (the band edge is read off today's price, which this module's
+own `_swing_lows` docstring rejects, and a level-based exit conflicts with
+the ratified rule to exit on ALIGNMENT, never on a level).
+`tests/test_trail_code_census.py` pins the refusal alongside
+`tests/test_trailing_candidate_set.py` and carries the measurement in its
+docstring so a later patch cannot reopen it without answering the numbers.
+
+The second criterion is now built rather than argued.
+`record_trail_state_if_changed` writes nothing when a stock refuses for the
+same reason two runs running — bounded by design — so it can say WHY a stop
+has not moved and never HOW OFTEN, which is exactly why the production record
+carried ZERO `inside_noise_band` rows (MEASURED 2026-10-01 on production:
+37 `trail_state` rows over 5 days, codes `no_structure_and_no_usable_chandelier`
+11, `move_smaller_than_min_ratchet` 10, `trailed` 7, `range_below_target_not_yet_1r`
+5, two others 2 each, and no noise-band refusal at all). A per-run census
+(`kind='trail_code_census'`) now counts EVERY trail outcome once per run in
+one portfolio-scoped row, so the frequency becomes readable without a row per
+stock per tick. Recording only: nothing reads it back to decide anything.
+
+CARRIED FORWARD and still barred: criterion 195/2, that `PIVOT_WINDOW` cannot
+confirm a swing low inside this desk's typical holding period (median 3
+sessions, MEASURED above, against a window needing `2 * PIVOT_WINDOW + 1`
+bars), remains unfixable while that constant is documented as unsourceable.
+No number was invented here; the band width, the chandelier multiple and the
+minimum ratchet are all unchanged.
