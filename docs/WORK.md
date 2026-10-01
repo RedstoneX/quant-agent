@@ -132,7 +132,7 @@ DONE WHEN:
   - [ ] MEASURED AGAIN 2026-10-01 against the live database (specialist_evidence, 13,815 rows total; 327 technical-seat analysis rows since 2026-09-26): condition STILL NOT met, the technical seat returned a blank or `unknown` `thesis_invalid_if` on 53 of 78 stocks (68%) on 2026-09-30, after 134 of 223 on 2026-09-29 and 14 of 26 on 2026-09-28, so the blank rate has not fallen; the portfolio manager emitted a falsifier on all 2 targets it wrote on 2026-09-30, but 2 is too few to demonstrate anything; zero `soft-exit missing after retry` refusals and zero `soft_exit_heal` rows exist, so criteria 2 and 3 are still unevaluable. Do not re-measure until the soft-exit heal outcome row exists.
 detail: docs/board_notes/item-078.md
 
-**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, half shipped 2026-09-18, item stays OPEN.** **Half one, DONE:** every numeric definition site in scope must carry a `config/number_ledger.yaml` entry saying where it came from, or `pytest` fails. **Routing pass 2026-10-01:** the 16-row smart-money reading tranche (ranking tables + truncation caps + the two cluster rows) now carries settlement routes; routeless rows 130 -> 114; the ranking integers were found to cancel algebraically to a pure sort order. **Routing pass 2026-10-01, tranche three:** the 16 smart-money admission-screen rows and the 15 agent-result scoring fields now carry routes; routeless rows 114 -> 83. The scoring weights were checked for the sort-key shape and do NOT have it -- they are summed and compared across candidates, so their spacing is load-bearing. **Routing pass 2026-10-01, tranche five:** the 22 routeless rows of the live risk subsystem (exit guard, trailing stops, de-levering ladder, reward-to-risk reference, cluster cap) now carry routes; routeless rows 83 -> 43 after the in-flight tranches land. See docs/board_notes/ item 90. **Routing pass 2026-10-01, tranche seven:** the routeless residue was re-counted at 24 (not the 45 projected) and all 16 remaining `src/config.py` rows now carry routes; routeless rows 24 -> 8, `arbitrary` unchanged at 133. See docs/board_notes/ item 90.
+**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, half shipped 2026-09-18, item stays OPEN.** Detail in the note.
 
 **2026-09-30 — `risk.min_stop_atr_multiple` (2.5): the value is UNCHANGED, the claim that it was SOURCED is withdrawn, and the reformulation is filed as item 199 rather than refused.** Detail: `docs/board_notes/` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
   - [ ] 2026-09-30, second pass: the floor's VALUE is untouched and the evidence to judge it is now recorded per closed trade (entry price, entry ATR, the entry stop and its basis, and the maximum ADVERSE and FAVOURABLE excursions, alongside the realised outcome and stop-hit category already stored; the ATR multiple is recomputed from those, not stored again), and the pipeline's stale 1.5 fallback is closed at source by reading the declared default instead of a copied literal; the record is for FALSIFICATION only (was the floor ever violated in practice) and may NOT be optimised against, so the next pass reads it rather than re-deriving a multiple. Detail: `docs/board_notes/` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
@@ -264,15 +264,6 @@ DONE WHEN:
 - [x] every message the global mute drops is recorded with its type, symbols and timestamp; nothing is un-muted and no configuration is touched
 - [ ] the owner is shown what the mute has been swallowing since 30 September
 
-**215. A stop can be reported STILL PROTECTED by a level whose zone is a fifth of the price wide, so the price area the stop actually sits at may already have failed. Surfaced 2026-09-30 while measuring item 55 on the live book. `_level_backing_stop` in `src/portfolio_constructor.py` honours a stop as structurally backed when the stop is anywhere INSIDE a level's zone, and since item 55 that zone is the measured span of the bars that drew the level — min 0.53%, median 3.47%, max 22.11% of price across the 101-name universe [measured 2026-09-30, 704 levels, complete-linkage clustering]. Inside a wide zone "the level is intact" and "the price where the stop rests is intact" are different statements, and the desk reports the first while the owner reads the second. MEASURED on the live book the same day: ETN's stop at 405.43 is honoured by a level at 388.55 whose zone runs 381.06-413.77 — the stop is 16.88 away from the level it is said to rest on, 3.90% of the 432.56 entry; RKLB's stop at 65.14 is honoured by a level at 67.31 with a 13.27% half-width, 2.17 away, 3.11% of entry; NOK's stop at 9.39 is honoured by a level at 9.78, 0.39 away, 3.79% of entry. In all three the stop can be hit with the level still unbroken, and nothing in the report says so. This item is the REPORTING defect only — the honouring rule itself is item 46/55 territory and is not reopened here.
-
-DONE WHEN:
-  - [ ] (a) any message or dashboard field that says a position is level-backed / still protected also carries the level's measured zone span, so the owner can see whether his stop sits at the level or merely inside its band
-  - [ ] (b) a recorded decision, in `docs/INCIDENT_HISTORY.md`, on whether "stop inside a wide zone" should read as backed at all, or whether the claim must be narrowed to stops within some measured distance of the level price — no number is introduced by this item; it is a measurement plus an owner-doctrine question
-detail: docs/board_notes/item-215.md
-  - [ ] (c) the backtest engine carries each level's pivot-bar ranges, so it runs the same stop rule live runs instead of failing closed on every level (done 2026-10-01).
-
-
 **218. Arithmetically losing geometry is REFUSED — the owner ruled 2026-10-01; built, measurement corrected, still open on one half.** His words: "For now, let's refuse a bad risk reward ratio. See if that improves the desk purchases." Shown buy 100 / stop 94 / nearest level above 104 — risking 6 to make 4 — he chose refusal over both leaving it alone and shrinking the position, which SUPERSEDES the previous standing rule that a wide stop ships and is answered by smaller size. The threshold is PARITY and nothing above it, because parity is the only line needing no invented value; why that is so, and what it costs to compare a real price against an estimated one, is in the board note. MEASUREMENT CORRECTED (the earlier median 1.44 / minimum 0.68 / six-below read post-management trailed columns; see the note). Re-measured against the decision-time columns the gate actually sees [measured 2026-10-01 against the production database, read-only, `initial_stop_loss` / `initial_take_profit`, 33 BUY trades], median reward:risk is 1.24, minimum 0.42, and ELEVEN buys sit below parity (0.42, 0.44, 0.46, 0.68, 0.76, 0.79, 0.82, 0.87, 0.90, 0.95, 0.96 (symbols withheld: the repo is public). THIS NUMBER IS AN UPPER BOUND ON REFUSALS, NOT A PREDICTION: it is computed from `initial_take_profit`, the horizon-reach-CAPPED target, which is exactly the basis this item argues is the wrong numerator. The gate measures the UNCAPPED structural level, which is never stored, so the real refusal count can only be lower (a capped target understates reward) and the measured-versus-projected split cannot be recovered). The refusal is placed where the trade as a whole is accepted or declined, NOT inside `_widen_stop_past_noise` — keying it off the widened stop would make it a function of stop width, the deleted stop-width gate under another name. The breakout exemption was DROPPED at this gate and replaced by the measured test, because the honest question is whether the level computation found a level above entry, not whether an analyst typed "breakout" — and the label-keyed version would have spared the two WORST ratios on the real book (0.42 and 0.46, both labelled breakout [measured]) while refusing better trades.
 
 DONE WHEN:
@@ -295,11 +286,12 @@ DONE WHEN:
 - [ ] no retry, no JSON repair and no new refusal is added by this change, and the entry and stay refusals keep the behaviour the 2026-09-25 ruling gave them
 
 
-
 **224. The desk records no realised sector weights, so concentration can only be guessed before the fact and never read after it -- filed 2026-10-01 from item 221.** Item 221 established that the pre-decision preview cannot project a sector mix at all, because sizing depends on a PM target that does not exist when the preview is built; what the desk could record instead, and does not, is the sector weights of the orders the constructor ACTUALLY built, once per run. Without that row nobody can say afterwards whether a session concentrated the book or not. Detail in `docs/board_notes/item-221.md`.
 
 DONE WHEN:
 - [ ] one durable row per run carries the realised `(sector, side)` weights of the orders the constructor built that session, written from executable product code with its call site named, and classified POPULATING rather than UNPROVEN against a real session
+
+detail: docs/board_notes/item-224.md
 
 **210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are.
 
@@ -368,8 +360,9 @@ DONE WHEN:
 - retired queue: 217
 - retired queue: 194
 - retired queue: 200
-- retired queue: 221
 - retired queue: 223
+- retired queue: 215
+- retired queue: 221
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

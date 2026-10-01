@@ -1,4 +1,4 @@
-## item 215
+## item 215 — RETIRED 2026-10-01, every level-backed claim now carries the level's measured zone span, and the claim itself is narrowed to the stop-distance bound the code already enforces (ruling in docs/INCIDENT_HISTORY.md)
 
 Filed 2026-09-30 out of the item 55 measurement pass, as a SEPARATE defect that
 item 55 surfaced and deliberately did not fix.

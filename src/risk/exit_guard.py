@@ -1845,6 +1845,62 @@ def holding_discipline_false_claim(
 # anywhere in this path.
 
 
+def level_zone_span_phrase(
+    level: float,
+    computed_level_zones: dict | None = None,
+    computed_level_bars: dict | None = None,
+) -> str:
+    """How wide the level is, in words, for every claim that it is BACKING.
+
+    docs/WORK.md item 215. A position could be reported to the owner as still
+    protected by a level whose measured zone runs a fifth of the price wide,
+    and nothing in the sentence said so: "the level is intact" and "the price
+    where the stop rests is intact" are different statements inside a wide
+    zone. Every owner-facing sentence that says a level is backing the stop
+    now carries the level's MEASURED span, so the owner can see how precise
+    the claim is without anyone inventing a "wide"/"tight" cutoff.
+
+    The span is read, in order, off the measured zone (`computed_level_zones`,
+    ``[low, high]``) or off the bars that drew the level
+    (`computed_level_bars`). Neither present means the span is UNKNOWN and
+    this says so — it never substitutes a percentage of price for a
+    measurement the caller did not supply.
+    """
+    low = high = None
+    zone = (computed_level_zones or {}).get(level)
+    if zone is not None:
+        try:
+            low, high = float(zone[0]), float(zone[1])
+        except (TypeError, ValueError, IndexError, KeyError):
+            low = high = None
+    if low is None or high is None:
+        lows, highs = [], []
+        for rng in ((computed_level_bars or {}).get(level) or ()):
+            try:
+                b_low, b_high = float(rng[0]), float(rng[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not (math.isfinite(b_low) and math.isfinite(b_high)) or b_low > b_high:
+                continue
+            lows.append(b_low)
+            highs.append(b_high)
+        if lows and highs:
+            low, high = min(lows), max(highs)
+    if (
+        low is None or high is None
+        or not (math.isfinite(low) and math.isfinite(high)) or high < low
+    ):
+        return "measured zone span NOT RECORDED for this level"
+    span = high - low
+    pct = (
+        f", {span / level * 100:.2f}% of the level price"
+        if math.isfinite(level) and level > 0 else ""
+    )
+    return (
+        f"measured zone {low:.4g}-{high:.4g}, span {span:.4g}{pct}"
+    )
+
+
 @dataclass(frozen=True)
 class StructuralProtectionCheck:
     """Whether a position's thesis-backing level is still intact.
@@ -2269,7 +2325,11 @@ def check_structural_protection(
                     detail=(
                         f"structural level {level} backs the stop but no "
                         f"current_price (closing price) supplied — treated "
-                        f"as intact"
+                        f"as intact ("
+                        + level_zone_span_phrase(
+                            level, computed_level_zones, computed_level_bars,
+                        )
+                        + ")"
                     ),
                     raw_broken=False,
                 )
@@ -2390,7 +2450,11 @@ def check_structural_protection(
                     break_margin_payload +
                     f"structural level {level} backing the stop is intact: "
                     f"close {cur} vs level {level} (break margin "
-                    f"{break_margin:.4g})"
+                    f"{break_margin:.4g}; "
+                    + level_zone_span_phrase(
+                        level, computed_level_zones, computed_level_bars,
+                    )
+                    + ")"
                 ),
                 raw_broken=False,
                 trend_context=trend_context,

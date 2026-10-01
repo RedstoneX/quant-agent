@@ -52,6 +52,93 @@ Re-cutting the work to fit the wallet would make the analysis depend on the
 balance, which is the opposite of what the desk is for.
 
 
+### 2026-10-01 — "still protected by a level" now means what the code means, and always says how wide the level is
+
+**In one line:** the desk could tell the owner a position was still protected
+by a structural level whose measured zone was a fifth of the price wide, so
+the price his stop actually sat at could already have failed while he read a
+reassuring word; the claim is now narrowed to the bound the code already
+enforces, and every sentence that makes it carries the level's measured span.
+
+**The symptom.** A level's zone is the combined traded range of the bars that
+drew it (board item 55). Measured 2026-09-30 over this desk's own 704 levels,
+that span runs from 0.53% of price to 22.11%. Inside a zone that wide, "the
+level is intact" and "the price where the stop rests is intact" are two
+different statements, and the desk reported the first while the owner read the
+second. On the live book the same day, three of eleven positions were in
+exactly that position (the measurements are in `docs/board_notes/item-215.md`).
+
+**THE RULING (owner, 2026-10-01).** The claim is narrowed, and it is narrowed
+by a rule that already exists rather than by a new width cutoff. A stop counts
+as level-backed only when the level's measured zone is STRICTLY NARROWER than
+the trade's own stop distance — the level must be more precise than the thing
+it is backing. "Still protected by a level" means exactly that, everywhere the
+desk says it; anywhere the words were used more loosely than the code, the
+words are corrected to the code, never the other way round.
+
+**Why that bound and not a width cutoff.** Any "a zone wider than X% is too
+wide" rule needs an X nobody measured, which is the made-up-number failure
+this desk has ruled against repeatedly. The stop-distance bound needs nothing
+invented: the stop distance is `abs(entry - stop)`, already decided before the
+question is asked, and it is a property of the trade rather than a constant,
+so there is nothing to sweep and nothing to ratify. Because the stop-to-level
+gap can never exceed the zone span, the bound also guarantees the thing the
+owner assumed all along — the level a stop claims to rest on is never further
+from the stop than the stop is from the entry.
+
+**VERIFIED, not taken on trust.** The bound is really there and really
+enforced in both places that answer the question:
+
+  * `src/data/levels.py`, `stop_rests_on_level` (definition at lines 147-230):
+    returns False unless the span of the pivot bars that drew the level is
+    strictly less than `stop_distance`, and False when `stop_distance` is
+    missing, non-finite or non-positive. It also requires the stop to lie
+    inside at least one of those bars' high-low ranges. Entry sizing reaches
+    it through `PortfolioConstructor._level_backing_stop`
+    (`src/portfolio_constructor.py` lines 2585-2690), which passes
+    `stop_distance=abs(entry_price - stop_loss)` and skips the level
+    otherwise, so the stop falls through to the ordinary ATR floor.
+  * `src/risk/exit_guard.py` lines 1950-2016, the holding-side level match:
+    the same test restated inline (the module imports nothing), computing
+    `stop_distance = abs(entry_price - stop_loss)`, skipping the level when
+    that is non-finite or non-positive, and skipping it when
+    `max(high) - min(low)` over the bar ranges is `>=` the stop distance.
+
+Both are strict `>=`-rejects on the span, so equality fails closed, and both
+fail closed on missing bar data. The ruling therefore describes the code as it
+stands rather than asking for new behaviour, and nothing about when the desk
+buys, sells or moves a stop changes with this entry.
+
+**What changed in what the desk SAYS.** Every claim that a level is backing
+the stop now carries that level's MEASURED zone — its low, its high, the span
+and the span as a percentage of the level price — through one helper,
+`level_zone_span_phrase` in `src/risk/exit_guard.py`, used by both
+`structural_level_intact` outcomes. That text is what every downstream owner
+surface quotes: the persisted per-symbol protection record, the holding-
+discipline log line, and the rotation sell reason that reaches Telegram. No
+"wide" or "tight" word is used anywhere, because either would need a cutoff
+nobody sourced. Where the span was never recorded, the sentence says it is NOT
+RECORDED rather than substituting a percentage-of-price stand-in.
+
+**Findings from the sweep for looser claims.**
+
+  * No surface was found claiming level backing on a LOOSER test than the code
+    applies. The desk has exactly one level-match implementation per side
+    (constructor, exit guard), both carrying the bound, and every owner-facing
+    sentence is built from their output rather than from a second judgement.
+  * The dashboard makes no level-backed claim at all. Its only "protected"
+    wording, in the holding explanation, is about the broker-resident stop
+    order and names no level; the level data is not in scope at that point, so
+    nothing there can carry a span and nothing was computed as a substitute.
+    That is stated here rather than silently left as an unexplained gap.
+  * The buy-time stop rule that records a level-honoured stop never reaches
+    Telegram or the API in words; it is a stored field, read by the
+    falsification record only.
+
+**What would catch it again.** `tests/test_structural_protection.py` pins both
+the span text and the NOT-RECORDED wording on the intact claim, so a future
+edit that drops the span from an owner-facing protection sentence fails.
+
 ## Item 198 — the number-ledger ratchet stops being one hand-edited line
 
 **RETIRED 2026-09-30, shipped in the same change.** Every pull request that
