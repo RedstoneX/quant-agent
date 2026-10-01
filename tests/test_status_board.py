@@ -2740,11 +2740,12 @@ def test_the_board_reports_a_self_contradicting_item_to_the_owner_itself():
     him as FINISHED, with the untidy line stated, rather than being filed as
     live work (which is the déjà vu) or silently as signed off."""
     it = sb.QueueItem(25, "A protected-position rule", "", "", None, False,
-                      headline="A protected-position rule — DONE 2026-09-04.")
+                      headline="A protected-position rule — DONE 2026-09-04.",
+                      raw_body="DONE WHEN: - [x] the rule ships")
     assert it.claims_closure is True
     assert it.bucket == "finished_unmarked"
     out = sb._render_finished_unmarked([it])
-    assert "finished according to its own note" in out
+    assert "DONE WHEN boxes is ticked" in out
     assert "not ticked it off" in out
     assert "item 25" in out
 
@@ -2884,7 +2885,8 @@ def test_a_bare_closure_word_is_still_read_when_it_is_not_a_cross_reference():
     number appears nearby — only a number IMMEDIATELY followed by its own
     parenthetical status is a cross-reference."""
     it = sb.QueueItem(1, "t", "", "", None, False,
-                      headline="A thing — FIXED, see item 12 for detail.")
+                      headline="A thing — FIXED, see item 12 for detail.",
+                      raw_body="DONE WHEN: - [x] done")
     assert it.closure_claim == "finished"
     assert it.claims_closure is True
 
@@ -2915,7 +2917,8 @@ def test_widening_the_renderer_did_not_widen_the_build_failing_check(tmp_path):
 
     # A newly-recognised word does NOT fail the build...
     p = tmp_path / "WORK.md"
-    p.write_text("## THE FUNNEL QUEUE\n\n**4. A thing — SHIPPED 2026-09-04.**\n")
+    p.write_text("## THE FUNNEL QUEUE\n\n**4. A thing — SHIPPED 2026-09-04.**\n"
+                 "\nDONE WHEN: - [x] it ships\n")
     assert sb.find_closed_items_not_marked_done(p) == []
     # ...while the page still shows it as finished rather than as live work.
     items = sb._parse_numbered_items(p.read_text().split(sb._QUEUE_HEADING, 1)[1])
@@ -3310,7 +3313,8 @@ def test_finished_and_partly_done_both_outrank_in_hand():
     outstanding work on a mostly-finished item stays in the running order,
     labelled — the existing tests pin that and this one must not undo it."""
     shipped = sb.QueueItem(1, "t", "", "", None, False,
-                           headline="A thing — SHIPPED 2026-09-04, owner-requested.")
+                           headline="A thing — SHIPPED 2026-09-04, owner-requested.",
+                           raw_body="DONE WHEN: - [x] shipped")
     assert shipped.bucket == "finished_unmarked"
     partial = sb.QueueItem(1, "t", "", "", None, False,
                            headline="A thing — PARTIALLY FIXED, rest IN FLIGHT.")
@@ -3942,7 +3946,7 @@ def test_a_description_is_not_read_as_a_closure_claim(headline, expected):
     Only the STATUS half of a headline — after the last em dash — is a claim
     about where the item stands, and a negated status is not a claim at all."""
     it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
-    assert it.claims_closure is expected
+    assert (it.closure_claim == "finished") is expected
 
 
 def test_the_real_backlog_flags_only_genuine_self_contradictions():
@@ -4305,6 +4309,7 @@ def test_finished_and_parked_work_is_behind_one_closed_disclosure_with_counts(tm
         "**3. Reviewed thing — FIXED, pending review.**\n\n"
         "**~~4. Signed off thing — FIXED 2026-09-03.~~**\n\n"
         "**5. Shipped thing — SHIPPED 2026-09-10.**\n\n"
+        "DONE WHEN: - [x] it shipped\n\n"
         "**6. Live thing — DEFECT.**\n\n"
         "### Re-measure gate\n"
     )
@@ -4509,7 +4514,11 @@ def test_a_self_closure_still_flags_even_when_another_item_is_named():
                       headline="A thing — SHIPPED 2026-09-04, superseding "
                                "item 12.")
     assert it.closure_claim == "finished"
-    assert it.claims_closure is True
+    # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
+    # prose closure is a HINT and no longer classifies on its own. The
+    # vocabulary must still RECOGNISE this sentence, which is what this
+    # test was written to protect; the bucket assertion moved to the
+    # box-based tests above.
 
 
 def test_an_item_quoting_its_own_number_still_claims_closure():
@@ -4517,12 +4526,81 @@ def test_an_item_quoting_its_own_number_still_claims_closure():
     it = sb.QueueItem(42, "t", "", "", None, False,
                       headline="A thing — item 42 SHIPPED 2026-09-04.")
     assert it.closure_claim == "finished"
-    assert it.claims_closure is True
+    # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
+    # prose closure is a HINT and no longer classifies on its own. The
+    # vocabulary must still RECOGNISE this sentence, which is what this
+    # test was written to protect; the bucket assertion moved to the
+    # box-based tests above.
 
 
 def test_a_plain_self_closure_still_flags():
     """The case the marker exists for must keep firing."""
     it = sb.QueueItem(7, "t", "", "", None, False,
                       headline="A thing — SHIPPED 2026-09-04.")
+    assert it.closure_claim == "finished"
+    # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
+    # prose closure is a HINT and no longer classifies on its own. The
+    # vocabulary must still RECOGNISE this sentence, which is what this
+    # test was written to protect; the bucket assertion moved to the
+    # box-based tests above.
+
+
+# ---------------------------------------------------------------------------
+# The finished-but-still-listed signal reads BOXES, not prose.
+# Owner ruling 2026-10-01, after two false alarms in one night: an item whose
+# headline mentioned ANOTHER item's completion was reported finished with zero
+# of its ten DONE WHEN boxes ticked.
+# ---------------------------------------------------------------------------
+
+
+def _boxed(headline, body, rank=1):
+    return sb.QueueItem(rank, "t", "", "", None, False,
+                        headline=headline, raw_body=body)
+
+
+def test_every_box_ticked_and_still_listed_is_flagged():
+    """The signal must still fire, or it is useless."""
+    it = _boxed("A thing — DEFECT, nobody rewrote the headline.",
+                "DONE WHEN: - [x] one - [x] two")
+    assert it.box_state == "finished"
     assert it.claims_closure is True
     assert it.bucket == "finished_unmarked"
+
+
+def test_an_outstanding_box_is_never_finished_whatever_the_prose_says():
+    """The exact false alarm: prose says finished, the boxes say otherwise."""
+    it = _boxed("A thing — FIXED 2026-09-30, see the history.",
+                "DONE WHEN: - [x] one - [ ] two")
+    assert it.box_state == "outstanding"
+    assert it.claims_closure is False
+    assert it.bucket != "finished_unmarked"
+
+
+def test_an_item_with_no_boxes_is_not_finished_the_empty_set_trap():
+    """Zero outstanding out of zero boxes is not done — it is unstructured."""
+    it = _boxed("A thing — SHIPPED 2026-09-10.", "no criteria written here")
+    assert it.box_state == "none"
+    assert it.claims_closure is False
+    assert it.bucket != "finished_unmarked"
+    # The prose hint is still READ — it just never classifies on its own.
+    assert it.closure_claim == "finished"
+
+
+def test_prose_disagreeing_with_the_boxes_is_surfaced_both_ways():
+    disputed = _boxed("A thing — FIXED 2026-09-30.",
+                      "DONE WHEN: - [x] one - [ ] two")
+    assert disputed.closure_disputed is True
+    assert "boxes are still open" in disputed.closure_disagreement
+    silent = _boxed("A thing — DEFECT.", "DONE WHEN: - [x] one")
+    assert silent.closure_disputed is False
+    assert "does not say so" in silent.closure_disagreement
+    out = sb._render_finished_unmarked([silent], [disputed])
+    assert out.count("one of the two is wrong") == 2
+
+
+def test_a_struck_through_item_is_never_flagged_however_its_boxes_read():
+    it = sb.QueueItem(1, "t", "", "", None, True, headline="A thing — FIXED.",
+                      raw_body="DONE WHEN: - [x] one")
+    assert it.claims_closure is False
+    assert it.closure_disagreement == ""
+    assert it.bucket == "resolved"
