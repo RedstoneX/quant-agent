@@ -324,11 +324,11 @@ phases:
         sha: "c9d7eb67a77bb07ae7bf4124e9adcd6d7d4674bb"
         note: "same-day fix for a crash the §4.1 carry-forward surfaced (sector_guidance shape mismatch)"
       - kind: symbol_in_file
-        path: "src/pipeline.py"
+        path: "src/pipeline_research_continuity.py"
         symbol: "def _carry_forward_macro"
         note: "§4.1 done"
       - kind: symbol_in_file
-        path: "src/pipeline.py"
+        path: "src/pipeline_research_continuity.py"
         symbol: "def _carry_forward_news"
       - kind: pr_merged
         number: 113

@@ -579,6 +579,7 @@ quant-agent/
 │   ├── pipeline_protection.py     # ProtectionMixin — stop coverage, repair, protected sells, WAL restore, reconcilers
 │   ├── pipeline_prompt_facts.py   # PromptFactsMixin — read-only DB/broker reads turned into LLM prompt context
 │   ├── pipeline_intraday.py       # IntradayMixin — intra-check session, scan locks, paid-scan slot, intraday opportunity scan
+│   ├── pipeline_research_continuity.py  # ResearchContinuityMixin — change detectors, carry-forward, Form-4 backlog, seat healing
 │   ├── pipeline_stages.py         # MorningResearch / Decision / Risk / Execution stage classes
 │   ├── pipeline_context.py        # RunContext dataclass — explicit shared state across stages
 │   ├── notifier.py                # Telegram session-status push (opt-in via env vars; per-mode noise policy)
