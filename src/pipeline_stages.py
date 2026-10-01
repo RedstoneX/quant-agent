@@ -10082,7 +10082,17 @@ class ExecutionStage:
                     # multiplier — doctrine bars fitting a number to this
                     # desk's history. See the `entry_atr` migration note in
                     # src/storage/db.py.
-                    entry_atr=getattr(decision, "atr_14", None),
+                    # Read off the ENTRY ANALYSIS, not off `decision`:
+                    # `TradeDecision` has no `atr_14` field at all (ATR(14)
+                    # lives on `TechnicalIndicators`/the analysis object), so
+                    # the original `getattr(decision, "atr_14", None)` was a
+                    # silent typo that resolved to its default on every
+                    # single trade and left the column empty for the whole
+                    # life of the feature. Same accessor the fat-finger
+                    # refusal below already uses. None on the resume/sweep
+                    # lanes that carry no analysis — the row then records no
+                    # ATR rather than a reconstructed one.
+                    entry_atr=getattr(entry_analysis, "atr_14", None),
                     stop_basis=getattr(decision, "stop_rule", None),
                     # Conviction ledger (spec §7.2) — pinned at entry from
                     # the constructor's TradeDecision (see portfolio_
