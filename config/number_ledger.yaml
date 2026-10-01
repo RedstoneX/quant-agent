@@ -191,6 +191,18 @@ numbers:
       and the share of the book that number silently refuses changes as equity
       changes.
   - id: src.config.CashReserveConfig.pct
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: 'every session, the cash the reserve withheld from deployment beside the cash the account
+        actually had to meet that session: broker fees, margin interest debits, settlement timing
+        and any sizing-to-fill shortfall, so the buffer is compared against a measured obligation
+        rather than a round one percent'
+      closes_when: a run of sessions shows the largest same-day cash obligation the account met, and
+        the reserve is set above that observed maximum with the observation named; it is DELETED,
+        and deployable cash becomes the whole balance, if no session ever consumes cash the reserve
+        was holding back
     value: 1
     status: arbitrary
     site: src/config.py
@@ -219,6 +231,17 @@ numbers:
       Too low and a funded order fails for want of cash; too high and equity
       sits in raw cash earning nothing.
   - id: src.config.DeploymentGapConfig.band_pct
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the session-to-session drift of a FIXED share-count book's invested percentage caused
+        by price movement alone, measured across the universe the desk could trade, on public daily
+        bars for a book of the size the desk runs, so the tolerance band is compared against passive
+        drift the desk did not cause
+      closes_when: the measured passive drift distribution is in hand and the band is set at a stated
+        percentile of it; it is DELETED, and any gap is reported as-is, if passive drift turns out
+        to be smaller than the reporting resolution of the invested share
     value: 1
     status: arbitrary
     site: src/config.py
@@ -313,6 +336,17 @@ numbers:
       much to trade. A wrong value degrades data availability, which is a
       separate failure the seats already see as missing evidence.
   - id: src.config.EventRiskConfig.horizon_days
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: how many sessions ahead of a scheduled event the realised daily range of a name is
+        elevated above its own baseline, measured over the universe the desk could trade, on public
+        daily bars across many scheduled events, so the lookahead window is read off when event risk
+        actually begins rather than picked at two trading weeks
+      closes_when: the elevation-versus-days-ahead curve is in hand and the horizon is set where elevation
+        becomes indistinguishable from baseline; it is DELETED, and event proximity stops being a
+        sizing or gating input, if no pre-event elevation is measurable at any horizon
     value: 10
     status: arbitrary
     site: src/config.py
@@ -341,6 +375,18 @@ numbers:
       desk trades) and docs/QAMC_REMEDIATION_SPEC.md:1457 (the
       fractional-order spec, which names this key and its default).
   - id: src.config.ExecutionConfig.max_entry_slippage_bps
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the distribution of quoted half-spread in basis points across the universe the desk
+        could trade, on public daily bars, sampled at the time of day the desk actually sends entries,
+        so the admission ceiling is a point on a measured spread distribution rather than a round
+        forty basis points
+      closes_when: the half-spread distribution is in hand and the ceiling is set at a stated percentile
+        with the share of the universe it excludes named; it is DELETED, and the spread is charged
+        to sizing instead of gating admission, if the measured distribution has no tail the ceiling
+        separates
     value: 40
     status: arbitrary
     site: src/config.py
@@ -413,6 +459,17 @@ numbers:
       much to trade. A wrong value degrades data availability, which is a
       separate failure the seats already see as missing evidence.
   - id: src.config.IntradayScanConfig.cooldown_hours
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: how often a name that crosses the intraday move threshold crosses it again within one,
+        two, three, six and twelve hours, measured over the universe the desk could trade, on public
+        daily bars on intraday bars, so the re-evaluation lock is read off the real repeat rate rather
+        than picked at three hours
+      closes_when: the repeat-crossing curve is in hand and the cooldown is set where a second crossing
+        stops being the same move being counted twice; it is DELETED, and every crossing is evaluated,
+        if repeat crossings turn out to carry independent information
     value: 3
     status: arbitrary
     site: src/config.py
@@ -431,6 +488,16 @@ numbers:
       Either a real intraday development is ignored, or the seat is re-billed
       for the same read.
   - id: src.config.IntradayScanConfig.max_candidates_per_scan
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: at every intraday scan, how many names crossed the move threshold BEFORE the cut, how
+        many survived it, the move size of the worst name taken and of the best name dropped, and
+        the scan timestamp, so the cost of the cap is a series instead of an assumption
+      closes_when: a run of scans shows the demand behind the cap, and the cap is set above the observed
+        demand or removed; it is DELETED if the number of crossing names never reaches it, and it
+        is a measured affordability limit, stated as such, if it binds often
     value: 5
     status: arbitrary
     site: src/config.py
@@ -449,6 +516,18 @@ numbers:
       A real candidate is dropped unseen once the cap is hit, with no record
       that it was.
   - id: src.config.IntradayScanConfig.move_threshold_pct
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the intraday move distribution of the universe the desk could trade, on public daily
+        bars expressed in each name's own ATR units rather than in percent, so a flat three percent
+        is replaced by a volatility-relative threshold that means the same thing on a quiet name and
+        a violent one
+      closes_when: the ATR-normalised move distribution is in hand and the threshold is restated as
+        a multiple of the name's own range at a stated percentile; the FLAT form is DELETED either
+        way, because one percentage applied across names of different volatility is the defect regardless
+        of what the level turns out to be
     value: 3
     status: arbitrary
     site: src/config.py
@@ -467,6 +546,17 @@ numbers:
       A flat percentage means a 1.2%/day utility triggers on nothing and an
       8%/day name triggers on everything.
   - id: src.config.NominationConfig.max_per_seat_per_run
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: at every run, how many nominations each seat OFFERED before the cap per seat was applied,
+        how many were admitted, and which were dropped, so the demand behind the cap becomes a series
+        instead of a boolean that it bound
+      closes_when: a run of sessions shows the offered-versus-admitted distribution, and the cap is
+        set above observed demand or removed; it is DELETED if offered nominations never reach it,
+        and it is restated as a named affordability limit, with the research cost per nomination beside
+        it, if it binds
     value: 3
     status: arbitrary
     site: src/config.py
@@ -482,6 +572,17 @@ numbers:
       A seat's best idea can be crowded out by its own earlier ones, ranked
       only by arrival.
   - id: src.config.NominationConfig.max_total_per_run
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: at every run, how many nominations each seat OFFERED before the cap across all seats
+        was applied, how many were admitted, and which were dropped, so the demand behind the cap
+        becomes a series instead of a boolean that it bound
+      closes_when: a run of sessions shows the offered-versus-admitted distribution, and the cap is
+        set above observed demand or removed; it is DELETED if offered nominations never reach it,
+        and it is restated as a named affordability limit, with the research cost per nomination beside
+        it, if it binds
     value: 6
     status: arbitrary
     site: src/config.py
@@ -556,6 +657,18 @@ numbers:
       ceiling is defined there as a multiple of the sector target. Definition
       site: src/config.py:1000. The multiple is the spec's, not this file's.
   - id: src.config.RiskConfig.absolute_min_stop_atr_multiple
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the distribution of adverse excursion within the holding window, in ATR units, measured
+        over the universe the desk could trade, on public daily bars and NOT over this desk's own
+        fills, so the hard floor under every stop is read off how far names of this kind routinely
+        move against a position before resuming
+      closes_when: the universe excursion distribution is in hand and the absolute floor is set at
+        the point below which a stop is inside ordinary noise; it is DELETED, and the single minimum
+        multiple governs alone, if the measurement cannot distinguish the absolute floor from the
+        ordinary one
     value: 1
     status: arbitrary
     site: src/config.py
@@ -687,6 +800,18 @@ numbers:
         the cap is set against observed crowding rather than against an
         implied two-names-per-theme count nobody chose
   - id: src.config.RiskConfig.max_gross_exposure_x
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the one-session adverse gap distribution of the universe the desk could trade, on public
+        daily bars, aggregated across a book of the concentration the desk actually runs, so the leverage
+        ceiling is read off the gross at which a single overnight move would breach the broker maintenance
+        requirement
+      closes_when: the aggregate gap distribution is in hand and the ceiling is set below the gross
+        that breaches maintenance at a stated severity; it is DELETED, and gross is bounded only by
+        the per-name risk envelope, if the measurement shows maintenance is never the binding constraint
+        at any gross the desk can reach
     value: 2
     status: arbitrary
     site: src/config.py
@@ -756,6 +881,16 @@ numbers:
         binding, so the ceiling can be set above observed behaviour instead
         of picked
   - id: src.config.RiskConfig.max_position_risk_pct
+    settles_by:
+      kind: ratified-bound
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the dollar loss a single name at this envelope represents at the account equity on
+        the day, written down with that date and that equity beside it, so the appetite is recorded
+        as a sum of money rather than as a percentage nobody converted
+      closes_when: the owner states the per-name dollar loss he will accept and the envelope is restated
+        as that figure over current equity; this row stays ARBITRARY in the ledger when he does, because
+        ratified appetite is not a source, and only the recorded dollar figure and its date change
     value: 5
     status: arbitrary
     site: src/config.py
@@ -772,6 +907,16 @@ numbers:
       Ratified is not sourced: the desk's largest routine exposure rests on a
       round number.
   - id: src.config.RiskConfig.max_target_horizon_sessions
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the distribution of how many sessions the universe the desk could trade, on public
+        daily bars takes to travel a given ATR multiple from a comparable setup, so the reachability
+        horizon is read off real traverse times instead of a round three trading months
+      closes_when: the sessions-to-traverse distribution is in hand and the horizon is set at a stated
+        percentile of it; it is DELETED, together with the reach test, if traverse time turns out
+        to carry no information about whether a target is reached at all
     value: 60
     status: arbitrary
     site: src/config.py
@@ -799,6 +944,17 @@ numbers:
       A target 60 sessions out licenses a claim of roughly 8 ATRs of travel
       with nothing measured behind the horizon.
   - id: src.config.RiskConfig.max_target_reach_atr_multiple
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: 'the same sessions-to-traverse measurement over the universe the desk could trade,
+        on public daily bars, read on the other axis: how far in ATR units price travels within the
+        horizon, so the per-session reach allowance is read off observed travel rather than picked
+        at one and a half'
+      closes_when: the travel-per-session distribution is in hand and the allowance is set at a stated
+        percentile; it is DELETED if the reach test never changes a target that the horizon test did
+        not already change, since the two are then one constraint written twice
     value: 1.5
     status: arbitrary
     site: src/config.py
@@ -813,6 +969,17 @@ numbers:
       Every reachability judgement - for targets AND for whether a level is
       relevant at all - scales off this one number.
   - id: src.config.RiskConfig.min_level_touches_for_stop_honor
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the bounce rate at a structural level as a function of how many prior touches it carries,
+        measured on daily bars over the universe the desk could trade, on public daily bars, with
+        distance from the level held fixed, so the credibility threshold is read off where touches
+        start to predict a hold
+      closes_when: the bounce-rate-versus-touch-count curve is in hand and the threshold is set where
+        bounce rate separates from the unconditional base rate; the touch test is DELETED, and levels
+        are honoured on distance alone, if the curve is flat in touch count
     value: 5
     status: arbitrary
     site: src/config.py
@@ -1112,6 +1279,18 @@ numbers:
       arbitrary number. Board item 216, 2026-10-01 — before that date the
       literal 1.5 was written out four times and applied at three sites.
   - id: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-186.md -- this is board item 186's question, not this constant's,
+        and it is routed here rather than re-derived
+      records: the overnight gap distribution of the SHORTABLE part of the universe the desk could
+        trade, on public daily bars against the short side, beside the same distribution against the
+        long side, so the haircut becomes the measured ratio of adverse short-side gap to adverse
+        long-side gap rather than a chosen one and a half
+      closes_when: item 186 holds the measured short-versus-long adverse gap ratio and the haircut
+        is restated as that ratio; it is DELETED, and shorts are sized exactly as longs are, if the
+        two distributions turn out not to differ beyond their own sampling error
     value: 1.5
     status: arbitrary
     site: src/risk/constants.py
@@ -1212,6 +1391,17 @@ numbers:
       Shorts are sized by a haircut whose direction is arithmetic and whose
       magnitude is neither sourced nor measured.
   - id: src.config.RiskConfig.target_divergence_warn_pct
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: every time the constructor compares its own target against the analyst target, the
+        signed gap, whether the warning fired, and whether any stop, target or size was subsequently
+        changed on that name, so the warning threshold is judged on whether the warning ever changes
+        a decision
+      closes_when: a run of sessions shows the gap distribution and the action rate behind it, and
+        the threshold is set where a warning is followed by a change; the warning is DELETED, and
+        the gap is simply reported with every target, if no firing has ever been followed by a change
     value: 25
     status: arbitrary
     site: src/config.py
@@ -2599,7 +2789,7 @@ numbers:
       binds there, and it changes no trade either way.
   - id: src.pipeline_stages.LEVELS_DEGRADED_RUN_EMPTY_SHARE
     value: 0.5
-    status: arbitrary
+    status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The partial-outage alarm: a feed serving short or stale history to MOST
@@ -2615,6 +2805,17 @@ numbers:
       A partial feed outage is either reported as a market reading or a quiet
       market is reported as an outage; this alarm is what stops the desk
       trading on blind levels.
+    reclassified_2026_10_01: >-
+      Board item 90, eighth routing tranche: status moved from `arbitrary`
+      to `not-trade-governing` after reading every consumer. This share is
+      read in exactly one place, the levels-coverage check in
+      `src/pipeline_stages.py`, and all it decides there is WHICH OF TWO
+      OWNER-ALERT HEADERS is sent -- the red blind-spot header above the
+      blind share, the orange degraded header above this one. The function
+      sends the alert and returns; no order, size, stop, entry or exit
+      reads it, and no gate consumes the blind/degraded lists. A wrong
+      value changes the colour and wording of a message to the owner, which
+      is a reporting loss, not a trade decision.
   - id: src.pipeline_stages.MAX_ENTRY_SLIPPAGE_BPS
     value: 40
     status: derived
@@ -4576,6 +4777,18 @@ numbers:
       The lock level is a chosen multiple; too high it rarely engages and gives
       back more, too low it caps the trade near scratch on a normal pullback.
   - id: src.rotation.ROTATION_MARGIN_PCT
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the session-to-session noise in the desk's own ranking score for an UNCHANGED name
+        over the universe the desk could trade, on public daily bars, so the margin a challenger must
+        clear is compared against how much the score moves on its own when nothing about the name
+        has changed
+      closes_when: the score-noise distribution is in hand and the margin is set above the noise at
+        a stated percentile, so a rotation cannot be triggered by score jitter; the margin is DELETED,
+        and rank order alone decides, if the measured score noise is below the resolution the score
+        is reported at
     value: 0.25
     status: arbitrary
     site: src/rotation.py
@@ -4630,6 +4843,19 @@ numbers:
       0..1, read at src/verdicts.py:176 and multiplied by SEAT_WEIGHT into a
       magnitude that orders the book.
   - id: src.verdicts.SEAT_WEIGHT['earnings']
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: 'the forward discriminating power of the earnings seat''s own signal, measured on public
+        data over the universe the desk could trade, on public daily bars and NOT on this desk''s
+        fills: the difference in forward move between names the seat called favourably and names it
+        did not, over a stated horizon, for every seat on the same footing'
+      closes_when: every seat carries a measured discriminating power and the weights are restated
+        as their ratio; the WHOLE dict is DELETED, and the score becomes an unweighted mean, if no
+        seat separates from another beyond sampling error -- the spacing here is load-bearing, because
+        these weights are summed into a score compared ACROSS candidates, not used as positions in
+        a sort key
     value: 1.2
     status: arbitrary
     site: src/verdicts.py
@@ -4651,6 +4877,19 @@ numbers:
       spacing silently reorders the book; src/verdicts.py:38-41 already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['macro']
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: 'the forward discriminating power of the macro seat''s own signal, measured on public
+        data over the universe the desk could trade, on public daily bars and NOT on this desk''s
+        fills: the difference in forward move between names the seat called favourably and names it
+        did not, over a stated horizon, for every seat on the same footing'
+      closes_when: every seat carries a measured discriminating power and the weights are restated
+        as their ratio; the WHOLE dict is DELETED, and the score becomes an unweighted mean, if no
+        seat separates from another beyond sampling error -- the spacing here is load-bearing, because
+        these weights are summed into a score compared ACROSS candidates, not used as positions in
+        a sort key
     value: 0.8
     status: arbitrary
     site: src/verdicts.py
@@ -4682,6 +4921,19 @@ numbers:
       it (src/verdicts.py:52-59). Same number and same baseline as
       _DEFAULT_SEAT_WEIGHT.
   - id: src.verdicts.SEAT_WEIGHT['smart_money']
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: 'the forward discriminating power of the smart_money seat''s own signal, measured on
+        public data over the universe the desk could trade, on public daily bars and NOT on this desk''s
+        fills: the difference in forward move between names the seat called favourably and names it
+        did not, over a stated horizon, for every seat on the same footing'
+      closes_when: every seat carries a measured discriminating power and the weights are restated
+        as their ratio; the WHOLE dict is DELETED, and the score becomes an unweighted mean, if no
+        seat separates from another beyond sampling error -- the spacing here is load-bearing, because
+        these weights are summed into a score compared ACROSS candidates, not used as positions in
+        a sort key
     value: 0.8
     status: arbitrary
     site: src/verdicts.py
@@ -4703,6 +4955,19 @@ numbers:
       spacing silently reorders the book; src/verdicts.py:38-41 already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['technical']
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: 'the forward discriminating power of the technical seat''s own signal, measured on
+        public data over the universe the desk could trade, on public daily bars and NOT on this desk''s
+        fills: the difference in forward move between names the seat called favourably and names it
+        did not, over a stated horizon, for every seat on the same footing'
+      closes_when: every seat carries a measured discriminating power and the weights are restated
+        as their ratio; the WHOLE dict is DELETED, and the score becomes an unweighted mean, if no
+        seat separates from another beyond sampling error -- the spacing here is load-bearing, because
+        these weights are summed into a score compared ACROSS candidates, not used as positions in
+        a sort key
     value: 1.2
     status: arbitrary
     site: src/verdicts.py
@@ -7356,6 +7621,17 @@ numbers:
       STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.pipeline_stages.ExecutionStage._run_session:factor[0]
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the quoted bid-ask spread and top-of-book depth for the universe the desk could trade,
+        on public daily bars at the time of day the desk sends exits, so the fifty-basis-point give-up
+        on a marketable sell limit becomes a multiple of a measured spread rather than a round number
+      closes_when: the spread and depth distribution is in hand and the pad is restated as a stated
+        multiple of the measured spread for the name being sold; it is DELETED, and the exit leg becomes
+        a plain marketable order, if the measured spread never approaches the pad and the pad therefore
+        never binds a fill
     value: 0.995
     status: arbitrary
     site: src/pipeline_stages.py

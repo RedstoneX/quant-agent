@@ -159,3 +159,60 @@ are read from.
 remain, concentrated in `src.config.RiskConfig` (7), `src.risk.rules` (7),
 `src.risk.exit_guard` (6), `src.risk.trailing` (6) and `src.verdicts` (4).
 The item stays OPEN.
+
+## item 90 — the 2026-10-01 EIGHTH routing tranche (the last one; routeless reaches ZERO)
+
+**The headline: ROUTELESS ROWS ARE NOW ZERO.** `src.number_sources.classification()`
+over `config/number_ledger.yaml` returns an empty `unclassified` list. The previous
+tranche reported eight rows remaining; the honest count was 24, and all 24 are
+settled here. No VALUE was changed anywhere in this pass.
+
+Counted, not inherited: `{'sourced_or_measured': 88, 'ratified_bound': 1,
+'recording_named': 134, 'unclassified': 0, 'not_trade_governing': 114}`.
+`MAX_ARBITRARY_ENTRIES` moves 135 -> 134 and `MAX_ROUTELESS_ARBITRARY` 24 -> 0,
+each with its own delta line in its history file.
+
+**The four seat weights, which are the shape that fooled an earlier tranche.**
+`src/verdicts.py::rank_verdicts` builds `[seat_weight(v.seat) for v in group]` and
+uses those weights in weighted means of magnitude, conviction and reward-to-risk,
+which are then summed into one score compared ACROSS candidates. That is the
+summed-and-compared shape, not the lexicographic-sort-key shape, so the spacing
+between 1.2 and 0.8 is load-bearing. Each routes to the same measurement on the
+same footing: the forward discriminating power of that seat's own signal on public
+data over the tradable universe. The DELETE outcome is the whole dict: if no seat
+separates from another beyond sampling error, the score becomes an unweighted mean.
+
+**The one reclassification.** `LEVELS_DEGRADED_RUN_EMPTY_SHARE` (0.5) is now
+`not-trade-governing`. Every consumer was read: it appears only in the
+levels-coverage check, and only to choose between the red blind-spot owner alert
+and the orange degraded one. The function sends the alert and returns; nothing
+reads the blind/degraded lists. A wrong value changes a message's colour and
+wording, not an order.
+
+**The short-gap sizing haircut (1.5)** is routed, deliberately not re-derived: it
+is board item 186's question. Its route is the measured ratio of adverse short-side
+to adverse long-side overnight gap over the shortable universe.
+
+**One `ratified-bound` route.** The per-name risk envelope is owner appetite, so its
+route records the dollar loss it represents at a dated equity. It STAYS `arbitrary`
+when he states it, because ratification is not a source.
+
+**No route points at this desk's own trades.** The stop floor, the gross ceiling,
+the target horizon and reach, the level-touch threshold, the intraday move
+threshold, the entry-slippage ceiling, the exit limit pad, the rotation margin and
+the four seat weights all route to measurements over the universe the desk could
+trade. The cash-reserve and nomination/scan caps route to recordings of the desk's
+own cash obligations and its own truncation demand, which are arithmetic and
+counts, not studies of its returns.
+
+**Delete outcomes are stated beside the set-it outcomes** for all 23 routed rows.
+The likeliest deletions: the target-reach multiple, if it never changes a target the
+horizon test did not already change; the whole seat-weight dict, if no seat
+separates; and the intraday move threshold in its FLAT form either way, because one
+percentage across names of different volatility is the defect regardless of level.
+
+**ITEM 90 STAYS OPEN, and the reason is the only one left.** Routing is complete.
+Half one (the gate) shipped 2026-09-18. Half two — reading each number off the
+instrument it is meant to describe — is NOT done: every route here is `state:
+specified`, which means the measurement or recording has been named and nobody has
+run or built it yet. The item retires when those routes close, not when they exist.
