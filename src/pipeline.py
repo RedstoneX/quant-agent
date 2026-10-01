@@ -15127,14 +15127,20 @@ class TradingPipeline:
             unreadable_by_seat = {
                 "tech": set(getattr(ctx, "tech_unreadable", None) or {}),
             }
+            asked_no_answer_by_seat = {
+                "tech": set(getattr(ctx, "tech_unanswered", None) or set()),
+            }
             universe |= {str(s) for s in unreadable_by_seat["tech"]}
+            universe |= {str(s) for s in asked_no_answer_by_seat["tech"]}
             try:
                 universe |= {str(s) for s in self.config.trading.universe}
             except Exception:  # noqa: BLE001 — config shape is not this record's job
                 pass
 
             coverage_by_name = evidence_gate.name_coverage(
-                universe, seat_symbols, unreadable_by_seat=unreadable_by_seat,
+                universe, seat_symbols,
+                unreadable_by_seat=unreadable_by_seat,
+                asked_no_answer_by_seat=asked_no_answer_by_seat,
             )
             for name, coverage in coverage_by_name.items():
                 record = coverage.to_evidence()

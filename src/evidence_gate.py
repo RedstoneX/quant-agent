@@ -760,6 +760,16 @@ class NameCoverage:
     #: record tells the TRUE story: this seat spoke and the desk lost it,
     #: rather than this seat was never asked. Neither reads as agreement.
     unreadable: list[str] = field(default_factory=list)
+    #: Seats that WERE asked about this name and produced nothing usable at
+    #: all. THE THREE CAUSES ARE KEPT APART ON PURPOSE and a later reader
+    #: must be able to tell them apart from the FIELDS, never from prose:
+    #:   * `unreadable`        — asked, an answer came back, it could not be read
+    #:   * `asked_no_answer`   — asked, nothing usable came back at all
+    #:   * uncovered minus both — never asked about this name
+    #: Same consequence (no answer, so no veto satisfied) but three different
+    #: causes with three different fixes, and collapsing them would hide
+    #: which one is happening.
+    asked_no_answer: list[str] = field(default_factory=list)
 
     def to_evidence(self) -> dict:
         return {
@@ -767,10 +777,19 @@ class NameCoverage:
             "covered_seats": list(self.covered),
             "uncovered_seats": list(self.uncovered),
             "unreadable_seats": list(self.unreadable),
+            "asked_no_answer_seats": list(self.asked_no_answer),
+            "never_asked_seats": list(self.never_asked),
             "blocking_seats_missing": list(self.blocking_missing),
             "run_scoped_seats": list(self.run_scoped),
             "summary": self.summary,
         }
+
+    @property
+    def never_asked(self) -> list[str]:
+        """Uncovered seats with neither an unreadable row nor a lost answer."""
+        return sorted(
+            set(self.uncovered) - set(self.unreadable) - set(self.asked_no_answer)
+        )
 
     @property
     def blocking_missing(self) -> list[str]:
@@ -784,10 +803,17 @@ class NameCoverage:
 
     @property
     def summary(self) -> str:
-        unread = (
-            f" (returned an unreadable answer: {', '.join(self.unreadable)})"
-            if self.unreadable else ""
-        )
+        unread = "".join([
+            (
+                f" (returned an unreadable answer: {', '.join(self.unreadable)})"
+                if self.unreadable else ""
+            ),
+            (
+                f" (asked and produced nothing usable: "
+                f"{', '.join(self.asked_no_answer)})"
+                if self.asked_no_answer else ""
+            ),
+        ])
         return (
             f"{self.symbol}: answered about this name by "
             f"{', '.join(self.covered) or 'no seat'}; no answer about this "
@@ -828,6 +854,7 @@ def name_coverage(
     seat_symbols,
     run_scoped=RUN_SCOPED_SEATS,
     unreadable_by_seat=None,
+    asked_no_answer_by_seat=None,
 ) -> dict:
     """Record, per name, which name-scoped seats answered about it.
 
@@ -850,13 +877,18 @@ def name_coverage(
                 for s in (symbols or ())
                 if str(s).strip()
             }
-        unread_map = {}
-        for seat, symbols in dict(unreadable_by_seat or {}).items():
-            unread_map[str(seat)] = {
-                str(s).strip().upper()
-                for s in (symbols or ())
-                if str(s).strip()
-            }
+        def _symbol_map(raw):
+            built = {}
+            for seat, symbols in dict(raw or {}).items():
+                built[str(seat)] = {
+                    str(s).strip().upper()
+                    for s in (symbols or ())
+                    if str(s).strip()
+                }
+            return built
+
+        unread_map = _symbol_map(unreadable_by_seat)
+        silent_map = _symbol_map(asked_no_answer_by_seat)
         scoped = sorted({str(s) for s in (run_scoped or ())})
         out = {}
         for name in names:
@@ -872,9 +904,17 @@ def name_coverage(
                 seat for seat in uncovered
                 if name in unread_map.get(seat, set())
             )
+            # An unreadable row wins over "asked and silent" when both are
+            # claimed for the same name: a row DID come back.
+            asked_no_answer = sorted(
+                seat for seat in uncovered
+                if name in silent_map.get(seat, set())
+                and seat not in unreadable
+            )
             out[name] = NameCoverage(
                 symbol=name, covered=covered, uncovered=uncovered,
                 run_scoped=scoped, unreadable=unreadable,
+                asked_no_answer=asked_no_answer,
             )
         return out
     except Exception as exc:  # noqa: BLE001 — a record must never break a run

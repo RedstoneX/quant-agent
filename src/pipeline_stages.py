@@ -5261,6 +5261,12 @@ class MorningResearchStage:
             ctx.tech_unreadable = dict(
                 getattr(self.tech_analyst, "last_unreadable", None) or {}
             )
+            ctx.tech_unanswered = set(
+                getattr(self.tech_analyst, "last_unanswered", None) or set()
+            )
+            ctx.tech_unanswered = set(
+                getattr(self.tech_analyst, "last_unanswered", None) or set()
+            )
             resolved = [a for a in analyses_map.values() if a is not None]
             if resolved:
                 try:

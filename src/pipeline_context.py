@@ -113,6 +113,10 @@ class RunContext:
     #: seat was never asked about: both are "no answer", but only this one
     #: had an answer and lost it, and the owner-facing record must say which.
     tech_unreadable: dict = field(default_factory=dict)
+    #: Symbols the technical seat WAS asked about and that produced nothing
+    #: usable at all — no row to call unreadable. The third of the three
+    #: causes, kept apart from `tech_unreadable` and from "never asked".
+    tech_unanswered: set = field(default_factory=set)
     earnings_results: list[dict] = field(default_factory=list)
     smart_money_observations: list = field(default_factory=list)
     smart_money_findings: list = field(default_factory=list)

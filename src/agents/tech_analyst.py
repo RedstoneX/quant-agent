@@ -632,6 +632,14 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         #: VETO, so "no objection recorded" must never be readable as
         #: agreement; this is the raw input to the per-name coverage record.
         self.last_unreadable: dict[str, str] = {}
+        #: Symbols that WERE submitted and resolved to nothing usable without
+        #: an unreadable row to blame — absent from every answer. Distinct
+        #: from `last_unreadable` (a row came back and could not be read) and
+        #: distinct again from a name this seat was never asked about, which
+        #: appears in neither. Three different causes, three different fixes;
+        #: a later reader must be able to tell them apart from the fields
+        #: alone, never from prose (board item 220).
+        self.last_unanswered: set[str] = set()
         if not symbols_data:
             return {}, None
 
@@ -652,6 +660,10 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             self.last_unreadable = {
                 sym: why for sym, why in single_unusable.items()
                 if single_out.get(sym) is None
+            }
+            self.last_unanswered = {
+                sym for sym, a in single_out.items()
+                if a is None and sym not in self.last_unreadable
             }
             return single_out, single_result
 
@@ -728,6 +740,11 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         self.last_unreadable = {
             sym: why for sym, why in unusable.items()
             if merged.get(sym) is None
+        }
+        self.last_unanswered = {
+            str(item.get("symbol")) for item in symbols_data
+            if merged.get(item.get("symbol")) is None
+            and item.get("symbol") not in self.last_unreadable
         }
         if final_missing:
             logger.error(

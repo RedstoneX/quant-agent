@@ -760,7 +760,8 @@ def test_name_coverage_holds_no_threshold_ratio_or_verdict():
     # assertions below still bind on every field.
     assert set(payload) == {
         "symbol", "covered_seats", "uncovered_seats", "run_scoped_seats",
-        "unreadable_seats", "blocking_seats_missing", "summary",
+        "unreadable_seats", "asked_no_answer_seats", "never_asked_seats",
+        "blocking_seats_missing", "summary",
     }
     for value in payload.values():
         assert not isinstance(value, (int, float, bool)), payload
@@ -810,6 +811,9 @@ def test_unreadable_record_says_did_not_answer_never_neutral():
     evidence = cov.to_evidence()
     assert evidence["unreadable_seats"] == ["tech"]
     assert evidence["blocking_seats_missing"] == ["tech"]
+    # Asked-and-unreadable is NOT never-asked: different cause, different fix.
+    assert "tech" not in evidence["never_asked_seats"]
+    assert "tech" not in evidence["asked_no_answer_seats"]
 
 
 def test_names_missing_blocking_seat_lists_only_the_blocked_names():
@@ -845,6 +849,13 @@ def test_stay_and_entry_both_see_a_lost_technical_row_as_a_missing_seat():
     an absent objection. Owner ruling 2026-09-25 keeps the CULL test
     opposition-only, so a missing row does not cull and this test pins that
     distinction rather than quietly widening it.
+
+    DO NOT "FIX" THIS BY MAKING A MISSING ROW CULL. Ruled 2026-10-01: an
+    answer nobody could read is NOT opposition, and selling a held name on
+    an absence would be inventing a verdict — the same failure as inventing
+    a number. Dropping the name out of the ranked survivors is the right
+    strength: it loses its claim to be KEPT on conviction without being
+    forced out on silence. Widening the stay test is the owner's call.
     """
     from src.risk.rules import own_bar_block_reason, own_bar_opposition_reason
 
@@ -852,3 +863,38 @@ def test_stay_and_entry_both_see_a_lost_technical_row_as_a_missing_seat():
     entry = own_bar_block_reason(no_tech, direction="bullish")
     assert entry is not None and "no technical read" in entry
     assert own_bar_opposition_reason(no_tech, direction="bullish") is None
+
+
+def test_three_causes_of_a_missing_seat_are_told_apart_by_the_fields():
+    """Asked-and-unreadable, asked-and-silent, and never-asked are distinct.
+
+    A later reader must be able to tell them apart WITHOUT parsing prose:
+    they share one consequence (no answer, so no veto satisfied) but have
+    three different causes and three different fixes, and collapsing them
+    would hide which one is actually happening.
+    """
+    cov = evidence_gate.name_coverage(
+        ["AAA", "BBB", "CCC"],
+        {"news": ["AAA", "BBB", "CCC"], "earnings": ["AAA", "BBB", "CCC"],
+         "smart_money": ["AAA", "BBB", "CCC"]},
+        unreadable_by_seat={"tech": ["AAA"]},
+        asked_no_answer_by_seat={"tech": ["BBB"]},
+    )
+    assert cov["AAA"].unreadable == ["tech"]
+    assert cov["AAA"].asked_no_answer == [] and cov["AAA"].never_asked == []
+    assert cov["BBB"].asked_no_answer == ["tech"]
+    assert cov["BBB"].unreadable == [] and cov["BBB"].never_asked == []
+    assert cov["CCC"].never_asked == ["tech"]
+    assert cov["CCC"].unreadable == [] and cov["CCC"].asked_no_answer == []
+    # All three are the SAME missing veto, whatever the cause.
+    for name in ("AAA", "BBB", "CCC"):
+        assert cov[name].blocking_missing == ["tech"]
+
+
+def test_a_row_that_came_back_outranks_asked_and_silent():
+    cov = evidence_gate.name_coverage(
+        ["AAA"], {"news": ["AAA"]},
+        unreadable_by_seat={"tech": ["AAA"]},
+        asked_no_answer_by_seat={"tech": ["AAA"]},
+    )["AAA"]
+    assert cov.unreadable == ["tech"] and cov.asked_no_answer == []
