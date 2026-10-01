@@ -47,6 +47,7 @@ from src.models import PortfolioDecision, ReasoningChain, TradeDecision
 from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
 from src.pipeline_stages import ExecutionStage, _size_shares
+from tests.pipeline_factory import build_pipeline
 
 
 # ==========================================================================
@@ -1294,8 +1295,7 @@ def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
     """Same hazard on the partial-exit path: trimming 5 shares off 12.3456
     leaves a 7.3456 residual, and re-protecting it with one fractional order
     would leave the whole residual DAY-only."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker._list_open_sell_stop_orders.return_value = []
     pipeline._format_qty = lambda q: str(q)
     pipeline.db = None

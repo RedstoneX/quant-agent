@@ -36,6 +36,7 @@ from src.config import RiskConfig
 from src.models import Position, TradeDecision
 from src.pipeline_risk_gate import HARD_BLOCK_RULES
 from src.risk.rules import RiskRuleEngine
+from tests.pipeline_factory import build_pipeline
 
 
 def _engine(**overrides) -> RiskRuleEngine:
@@ -321,8 +322,7 @@ def test_normal_resolution_under_cap_produces_zero_violations():
 def test_pending_sector_investment_pools_unknown_across_the_batch():
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = _engine(max_sector_pct=10.0, max_sector_hard_pct=15.0)
+    pipeline = build_pipeline(risk_engine=_engine(max_sector_pct=10.0, max_sector_hard_pct=15.0))
     decisions = [
         _buy("FIRST", allocation_pct=8.0),
         _buy("SECOND", allocation_pct=8.0),

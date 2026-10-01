@@ -40,6 +40,7 @@ from src.risk.trailing import (
     MIN_RATCHET_PCT,
     compute_trailing_stop,
 )
+from tests.pipeline_factory import build_pipeline
 
 
 # ==========================================================================
@@ -543,9 +544,7 @@ def test_replace_stop_loss_no_position_returns_none_unchanged(mock_tc_cls):
 
 def _pipeline_for_reconcile(positions, snapshot_side_effect):
     from src.pipeline import TradingPipeline
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
-    pipe.db = MagicMock()
+    pipe = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipe.db.get_pending_protection_restores.return_value = []
     pipe.broker.get_positions.return_value = positions
     pipe.broker.snapshot_protective_stops.side_effect = snapshot_side_effect
