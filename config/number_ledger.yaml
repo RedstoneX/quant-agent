@@ -3518,6 +3518,24 @@ numbers:
       Trailing stops are placed on pivots found by a window nothing measured,
       and the disagreement with the level scan is currently harmless only
       because nothing compares them.
+  - id: src.risk.trailing.MIN_BARS_FOR_A_READING
+    value: 7
+    status: derived
+    derived_from: src.risk.trailing.PIVOT_WINDOW
+    base_value: 3
+    site: src/risk/trailing.py
+    note: >-
+      Not a chosen bar count. It is `PIVOT_WINDOW * 2 + 1`, computed in code
+      from the row above, because that is exactly the span a confirmed swing
+      pivot needs: the pivot bar plus `PIVOT_WINDOW` bars either side. Below
+      it neither trail leg has enough bars to read anything, so both refuse
+      with `too_few_bars_since_entry` rather than reading an extreme off
+      today's price. Added with board item 212, which removed the
+      take-profit gate on a range position's structural trail: with the gate
+      gone a position entered today would otherwise have yielded a single
+      bar and a chandelier that merely follows price, which is a different
+      exit rule, not a trail. It inherits `PIVOT_WINDOW`'s own unresolved
+      question and adds none of its own.
   - id: src.risk.trailing.RANGE_BREAKEVEN_R_MULTIPLE
     value: 1
     status: arbitrary
