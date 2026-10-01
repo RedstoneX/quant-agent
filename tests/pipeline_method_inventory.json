@@ -312,6 +312,21 @@
     "src/pipeline_risk_gate.py": {
       "module_functions": [],
       "classes": {
+        "RiskGate": [
+          "__init__",
+          "_apply_risk_modifications",
+          "_filter_hard_risk_decisions",
+          "_has_actionable_signal_fn",
+          "_persist_hard_risk_block",
+          "_reconcile_size_to_risk_budget",
+          "_refuse_queued_earnings_buys",
+          "_risk_mod_floor_breach"
+        ]
+      }
+    },
+    "src/pipeline_risk_gate_mixin.py": {
+      "module_functions": [],
+      "classes": {
         "RiskGateMixin": [
           "_apply_risk_modifications",
           "_filter_hard_risk_decisions",
@@ -319,6 +334,7 @@
           "_persist_hard_risk_block",
           "_reconcile_size_to_risk_budget",
           "_refuse_queued_earnings_buys",
+          "_risk_gate",
           "_risk_mod_floor_breach"
         ]
       }

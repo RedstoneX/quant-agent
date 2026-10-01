@@ -68,7 +68,7 @@ Tier 1 numbers size a position or price a live order on EVERY trade; tier 2 gate
 - `execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS` = 3
 - `execution.broker._STOP_PLACEMENT_BACKOFF_S[0]` = 0.5
 - `execution.broker._STOP_PLACEMENT_BACKOFF_S[1]` = 1.5
-- `pipeline_risk_gate.RiskGateMixin._has_actionable_signal_fn:factor[0]` = 0.5
+- `pipeline_risk_gate.RiskGate._has_actionable_signal_fn:factor[0]` = 0.5
 
 **Tier 2 gates entries/exits or shapes stops after entry.** Cash reserve and deployment band; settled by recorded assumed-vs-debited cash and by the measured round-trip cost of trading the gap.
 
