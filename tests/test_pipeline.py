@@ -800,12 +800,11 @@ def test_pipeline_morning_bails_cleanly_on_broker_snapshot_failure():
     """If Alpaca's get_account / get_positions raises at the snapshot step,
     morning should return a broker_error status rather than propagate and
     leave ctx half-populated. Mirrors the existing run_intra_check guard."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), morning_research_stage=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.cancel_open_entry_orders.return_value = None
     pipeline.broker.get_account.side_effect = RuntimeError("Alpaca 503")
     pipeline._reconcile_fills = MagicMock()
-    pipeline.morning_research_stage = MagicMock()
 
     result = pipeline.run_morning()
 
@@ -820,14 +819,12 @@ def test_pipeline_morning_bails_cleanly_on_broker_snapshot_failure():
 def test_pipeline_morning_early_return_still_reconciles_fills():
     """Even when research returns no analyses (early exit), the morning finally
     block must still sweep broker fills for any orders that made it out."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), morning_research_stage=MagicMock(), risk_engine=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.cancel_open_entry_orders.return_value = None
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = []
-    pipeline.morning_research_stage = MagicMock()
     pipeline._reconcile_fills = MagicMock()
-    pipeline.risk_engine = MagicMock()
 
     def _populate_empty_research(ctx):
         ctx.analyses = []
@@ -851,16 +848,13 @@ def test_pipeline_midday_skips_non_trading_day():
 
 
 def test_pipeline_midday_preserves_protective_orders():
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = []
-    pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
-    pipeline.db = MagicMock()
     # Circuit-breaker probe runs on every position_review tick. No breach in
     # this scenario — return None so execution flows into the normal path.
-    pipeline.risk_engine = MagicMock()
 
     result = pipeline.run_midday()
 
@@ -871,15 +865,13 @@ def test_pipeline_midday_preserves_protective_orders():
 
 @pytest.mark.parametrize("session_type", ["midday", "close"])
 def test_prelatched_position_review_preserves_deterministic_safety(session_type):
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_session_close.return_value = None
     pipeline.broker.get_account.return_value = {
         "cash": 1000.0, "portfolio_value": 10_000.0, "last_equity": 10_000.0,
     }
     pipeline.broker.get_positions.return_value = []
-    pipeline.db = MagicMock()
-    pipeline.risk_engine = MagicMock()
     pipeline._drain_pending_protection_restores = MagicMock()
     pipeline._reconcile_orphan_pending_submits = MagicMock()
     pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
@@ -890,7 +882,6 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline._reconcile_fills = MagicMock()
     pipeline._run_news_update = MagicMock()
     pipeline._load_earnings_analyses = MagicMock()
-    pipeline.position_reviewer = MagicMock()
     pipeline.cost_circuit = MagicMock()
     pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
     pipeline.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
@@ -1538,12 +1529,11 @@ def test_intra_check_drains_orphan_restores_at_entry(tmp_path):
         specs_json=_json.dumps(cancelled),
     )
 
-    pipeline = build_pipeline(db=db)
+    pipeline = build_pipeline(db=db, broker=MagicMock(), risk_engine=MagicMock())
     # Item 127: the broker-writing preamble runs only under the desk's
     # advisory flock, which lives beside the database named in config.
     from types import SimpleNamespace
     pipeline.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
-    pipeline.broker = MagicMock()
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {
         "portfolio_value": 100_500.0, "last_equity": 100_000.0, "cash": 5000.0,
@@ -1562,7 +1552,6 @@ def test_intra_check_drains_orphan_restores_at_entry(tmp_path):
         "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
     }
     pipeline.broker._restore_stop_orders.return_value = (1, [])  # full success
-    pipeline.risk_engine = MagicMock()
 
     pipeline.run_intra_check()
 
@@ -2261,7 +2250,7 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
         stop_loss=480.0, take_profit=540.0,
     )
 
-    pipeline = build_pipeline(db=db, broker=MagicMock())
+    pipeline = build_pipeline(db=db, broker=MagicMock(), macro=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
@@ -2276,7 +2265,6 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
     pipeline.broker.get_order_fill_info.return_value = {
         "status": "filled", "filled_qty": "10.0", "filled_avg_price": "500.0",
     }
-    pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
     pipeline.config = MagicMock()
     pipeline.config.llm.position_reviewer_model = "test-model"
@@ -2284,8 +2272,6 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
     pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
-    pipeline.risk_engine = MagicMock()
-    pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
         _mock_agent_result(),
@@ -2313,7 +2299,7 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
 
 
 def test_pipeline_midday_fetches_only_executed_morning_trades():
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
@@ -2322,9 +2308,7 @@ def test_pipeline_midday_fetches_only_executed_morning_trades():
             market_value=5050.0, unrealized_pnl=50.0, sector="ETF",
         )
     ]
-    pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
-    pipeline.db = MagicMock()
     pipeline.db.get_trades.return_value = []
     pipeline.config = MagicMock()
     pipeline.config.llm.position_reviewer_model = "test-model"
@@ -2333,8 +2317,6 @@ def test_pipeline_midday_fetches_only_executed_morning_trades():
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
-    pipeline.risk_engine = MagicMock()
-    pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
         _mock_agent_result(),
@@ -2412,7 +2394,7 @@ def test_midday_does_not_trim_a_big_winner_on_gain_alone():
     a HOLD-only review must leave the book untouched at midday. Under the
     deleted rule this position would have been trimmed 15% before the
     reviewer ever saw it."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 17000.0}
     pipeline.broker.get_positions.return_value = [
@@ -2421,9 +2403,7 @@ def test_midday_does_not_trim_a_big_winner_on_gain_alone():
             market_value=16000.0, unrealized_pnl=6000.0, sector="Technology",
         )
     ]
-    pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
-    pipeline.db = MagicMock()
     pipeline.db.get_trades.return_value = []
     pipeline.config = MagicMock()
     pipeline.config.llm.position_reviewer_model = "test-model"
@@ -2431,8 +2411,6 @@ def test_midday_does_not_trim_a_big_winner_on_gain_alone():
     pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._reconcile_fills = MagicMock()
-    pipeline.risk_engine = MagicMock()
-    pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
         _mock_agent_result(),
@@ -2873,7 +2851,7 @@ def test_sold_out_symbol_does_not_reach_position_reviewer():
     symbols still in the broker-truth position list, so a sold-out name can
     never surface in the prompt (and therefore never in a fabricated
     action) again."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
@@ -2882,9 +2860,7 @@ def test_sold_out_symbol_does_not_reach_position_reviewer():
             market_value=2100.0, unrealized_pnl=100.0, sector="Technology",
         )
     ]
-    pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
-    pipeline.db = MagicMock()
     # XOM was fully SOLD this morning — a real sell-side row exists in the
     # trades table even though the broker no longer holds any XOM shares.
     pipeline.db.get_trades.return_value = [
@@ -2897,8 +2873,6 @@ def test_sold_out_symbol_does_not_reach_position_reviewer():
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
-    pipeline.risk_engine = MagicMock()
-    pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
         _mock_agent_result(),
@@ -2927,7 +2901,7 @@ def test_partially_trimmed_still_held_symbol_stays_in_discipline_set():
     in already_trimmed_today — that is the discipline the set exists to
     enforce (2026-05-04 AMZN double-trim). Only a fully-closed name should
     be dropped."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
@@ -2936,9 +2910,7 @@ def test_partially_trimmed_still_held_symbol_stays_in_discipline_set():
             market_value=2352.0, unrealized_pnl=252.0, sector="Consumer Cyclical",
         )
     ]
-    pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
-    pipeline.db = MagicMock()
     pipeline.db.get_trades.return_value = [
         {"action": "REDUCE", "symbol": "AMZN", "fill_status": "filled"},
     ]
@@ -2949,8 +2921,6 @@ def test_partially_trimmed_still_held_symbol_stays_in_discipline_set():
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
-    pipeline.risk_engine = MagicMock()
-    pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
         _mock_agent_result(),
@@ -3700,9 +3670,8 @@ def test_sync_positions_from_broker_uses_provided_snapshot_without_a_broker_call
 
 def test_sync_positions_from_broker_failure_does_not_abort():
     """A snapshot-write failure must not take down the trading session."""
-    pipeline = build_pipeline(db=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.db.sync_positions.side_effect = RuntimeError("sqlite locked")
-    pipeline.broker = MagicMock()
     pipeline.broker.get_positions.return_value = []
     pipeline._sync_positions_from_broker()  # must not raise
 
@@ -3710,15 +3679,13 @@ def test_sync_positions_from_broker_failure_does_not_abort():
 def test_pipeline_morning_syncs_positions_at_snapshot_and_after_reconcile():
     """Morning previously never wrote the local table. Snapshot + finally
     after reconcile_fills are the two moments the book is known."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), morning_research_stage=MagicMock(), risk_engine=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.cancel_open_entry_orders.return_value = None
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = []
-    pipeline.morning_research_stage = MagicMock()
     pipeline._reconcile_fills = MagicMock()
     pipeline._sync_positions_from_broker = MagicMock()
-    pipeline.risk_engine = MagicMock()
 
     def _populate_empty_research(ctx):
         ctx.analyses = []
@@ -3756,7 +3723,7 @@ def test_intra_check_reconciles_outstanding_fills(tmp_path):
         stop_loss=500.0, take_profit=600.0,
     )
 
-    pipeline = build_pipeline(db=db)
+    pipeline = build_pipeline(db=db, broker=MagicMock(), risk_engine=MagicMock())
     # Item 127: the broker-writing preamble runs only under the desk's
     # advisory flock, which lives beside the database named in config.
     from types import SimpleNamespace
@@ -3774,7 +3741,6 @@ def test_intra_check_reconciles_outstanding_fills(tmp_path):
         return_value={"status": "intraday_scan_disabled"}
     )
     pipeline._sync_positions_from_broker = MagicMock()
-    pipeline.broker = MagicMock()
     pipeline.broker.get_account.return_value = {
         "cash": 1000.0, "portfolio_value": 5000.0, "last_equity": 5000.0,
     }
@@ -3784,7 +3750,6 @@ def test_intra_check_reconciles_outstanding_fills(tmp_path):
     pipeline.broker.get_order_fill_info.return_value = {
         "status": "filled", "filled_qty": "5.0", "filled_avg_price": "549.11",
     }
-    pipeline.risk_engine = MagicMock()
 
     result = pipeline.run_intra_check()
 
@@ -3819,7 +3784,7 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
         broker_order_id="alpaca-nvda-1", fill_status="submitted",
     )
 
-    pipeline = build_pipeline(db=db)
+    pipeline = build_pipeline(db=db, broker=MagicMock(), risk_engine=MagicMock())
     # Item 127: the broker-writing preamble runs only under the desk's
     # advisory flock, which lives beside the database named in config.
     from types import SimpleNamespace
@@ -3837,7 +3802,6 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
         return_value={"status": "intraday_scan_disabled"}
     )
     pipeline._sync_positions_from_broker = MagicMock()
-    pipeline.broker = MagicMock()
     pipeline.broker.get_account.return_value = {
         "cash": 1000.0, "portfolio_value": 5000.0, "last_equity": 5000.0,
     }
@@ -3851,7 +3815,6 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
         return None
 
     pipeline.broker.get_order_fill_info.side_effect = _fill_info
-    pipeline.risk_engine = MagicMock()
 
     result = pipeline.run_intra_check()
 

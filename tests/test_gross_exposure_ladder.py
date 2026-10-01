@@ -505,13 +505,12 @@ def test_the_preamble_de_lever_submits_sells_with_no_pm_decision_present():
     from src.pipeline import TradingPipeline
     from src.pipeline_context import RunContext
 
-    pipeline = build_pipeline(db=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk = _risk_config()
     pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
     # A book that fell 16% from its high: the ladder demands 1.0x.
     pipeline.db.get_daily_pnl.return_value = [{"total_value": EQUITY / 0.84}]
-    pipeline.broker = MagicMock()
     pipeline.broker.get_account.return_value = {
         "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
     }
@@ -551,13 +550,12 @@ def test_a_delever_that_fails_to_clear_the_ceiling_is_flagged():
     from src.pipeline import TradingPipeline
     from src.pipeline_context import RunContext
 
-    pipeline = build_pipeline(db=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk = _risk_config()
     pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
     # A book that fell 16% from its high: the ladder demands 1.0x.
     pipeline.db.get_daily_pnl.return_value = [{"total_value": EQUITY / 0.84}]
-    pipeline.broker = MagicMock()
     # Post-refresh the broker still reports an over-levered book (the sell
     # only partially filled) — 1.5x against a 1.0x ceiling.
     pipeline.broker.get_account.return_value = {
@@ -2678,14 +2676,13 @@ def _morning_delever_pipeline(drawdown_frac):
     from src.config import CashSweepConfig
     from src.pipeline import TradingPipeline
 
-    pipeline = build_pipeline(db=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk = _risk_config()
     pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
     pipeline.db.get_daily_pnl.return_value = [
         {"total_value": EQUITY / (1.0 - drawdown_frac)},
     ]
-    pipeline.broker = MagicMock()
     pipeline.broker.get_account.return_value = {
         "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
     }

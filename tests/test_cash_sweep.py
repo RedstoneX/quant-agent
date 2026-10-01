@@ -58,7 +58,7 @@ NVDA = Position(symbol="NVDA", qty=10, avg_entry=900, current_price=950,
 
 
 def _sweep_pipeline(enabled=True, min_order_usd=500.0):
-    pipeline = build_pipeline()
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(
             enabled=enabled, symbol="SGOV",
@@ -70,8 +70,6 @@ def _sweep_pipeline(enabled=True, min_order_usd=500.0):
             require_stop_loss=True, allow_margin=False,
         ),
     )
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
     pipeline.cash_sweeper = CashSweeper(pipeline=pipeline)
     pipeline.risk_engine = RiskRuleEngine(pipeline.config.risk)
     return pipeline

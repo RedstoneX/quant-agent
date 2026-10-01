@@ -189,11 +189,9 @@ def test_held_sector_etf_counts_toward_the_sector_cap():
 # ---------- ex-dividend: next TRADING day, not calendar tomorrow ----------
 
 def _exdiv_pipeline(div_date, today):
-    p = build_pipeline(db=MagicMock())
+    p = build_pipeline(db=MagicMock(), market=MagicMock(), broker=MagicMock())
     p.db.get_trades.return_value = []
-    p.market = MagicMock()
     p.market.get_upcoming_ex_dividend.return_value = {"date": div_date, "amount": 0.51}
-    p.broker = MagicMock()
     p.broker.is_trading_day.side_effect = lambda d: d.weekday() < 5
     p.broker.get_current_stop_price.return_value = 61.80
     # audit round 2: ex-div now shifts EVERY stop (preserving per-lot levels)
@@ -289,10 +287,9 @@ def test_finalize_persists_pre_sell_qty_so_the_drain_can_reprotect():
     `residual - fill` — a double subtraction that hit 0 for an exact fill,
     took the "full exit, nothing to protect" early return, reported success,
     and DELETED the row. The residual stayed naked forever."""
-    p = build_pipeline(broker=MagicMock())
+    p = build_pipeline(broker=MagicMock(), db=MagicMock())
     p.broker.wait_for_order_terminal.return_value = "filled"
     p.broker.get_order_fill_info.return_value = {"status": "filled", "filled_qty": 50.0}
-    p.db = MagicMock()
     p._current_position_qty_for_finalize = MagicMock(return_value=50.0)
     p._reprotect_residual_after_partial_sell = MagicMock(return_value=False)  # blip
     p._persist_orphaned_protection_restore = MagicMock()

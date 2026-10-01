@@ -55,7 +55,7 @@ def _intra_pipeline_with_a_cancelled_stop(tmp_path):
         symbol="NVDA", sell_order_id="alpaca-sell-in-flight",
         position_qty_before_sell=100.0, specs_json=json.dumps(cancelled),
     )
-    p = build_pipeline(db=db, broker=MagicMock())
+    p = build_pipeline(db=db, broker=MagicMock(), risk_engine=MagicMock())
     p.config = SimpleNamespace(storage=SimpleNamespace(db_path=db.db_path))
     p.broker.is_trading_day.return_value = True
     p.broker.get_account.return_value = {
@@ -72,7 +72,6 @@ def _intra_pipeline_with_a_cancelled_stop(tmp_path):
         "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
     }
     p.broker._restore_stop_orders.return_value = (1, [])
-    p.risk_engine = MagicMock()
     return p, db, cancelled
 
 

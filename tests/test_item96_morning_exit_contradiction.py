@@ -113,7 +113,6 @@ def _stage_pipeline(*, decisions, metric_deltas):
     """
     from src.pipeline import TradingPipeline
 
-    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( side_effect=lambda d, *a, **kw: (list(d), [], []), ), _build_active_state_changes=MagicMock(return_value=""), _structural_protection_for_holding=MagicMock( return_value=StructuralProtectionCheck( protected=False, basis="noise_band_fallback", detail="no qualifying structural level", ), ), _build_position_facts=MagicMock(return_value={}), _build_review_metric_deltas=MagicMock(return_value=metric_deltas))
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(), reason_category="clean",
         reasoning="no objection at the book level",
@@ -121,7 +120,7 @@ def _stage_pipeline(*, decisions, metric_deltas):
     rm_result = MagicMock()
     rm_result.used_fallback = False
     rm_result.raw_text = "{}"
-    pipeline.risk_manager = MagicMock()
+    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( side_effect=lambda d, *a, **kw: (list(d), [], []), ), _build_active_state_changes=MagicMock(return_value=""), _structural_protection_for_holding=MagicMock( return_value=StructuralProtectionCheck( protected=False, basis="noise_band_fallback", detail="no qualifying structural level", ), ), _build_position_facts=MagicMock(return_value={}), _build_review_metric_deltas=MagicMock(return_value=metric_deltas), risk_manager=MagicMock())
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
     return pipeline
 

@@ -354,7 +354,7 @@ def test_force_delever_skips_sub_dollar_noise():
 
 def test_force_delever_picks_biggest_loser_first():
     """Biggest unrealized loss gets sold first (cut-losers discipline)."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
     pipeline.broker.submit_order.return_value = {
@@ -381,7 +381,6 @@ def test_force_delever_picks_biggest_loser_first():
     pipeline.broker.get_latest_quote.return_value = {
         "bid_price": 248.50, "ask_price": 248.90,
     }
-    pipeline.db = MagicMock()
 
     from src.pipeline_context import RunContext
     ctx = RunContext.start("morning")
@@ -407,7 +406,7 @@ def test_force_delever_picks_biggest_loser_first():
 
 def test_force_delever_stops_once_deficit_covered():
     """Sells only as many positions as needed to cover the deficit."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
     pipeline.broker.submit_order.return_value = {
@@ -422,7 +421,6 @@ def test_force_delever_stops_once_deficit_covered():
         "cash": 1_000.0, "portfolio_value": 10_000.0, "last_equity": 11_000.0,
     }
     pipeline.broker.get_positions.return_value = []
-    pipeline.db = MagicMock()
 
     from src.pipeline_context import RunContext
     ctx = RunContext.start("morning")
@@ -477,7 +475,7 @@ def test_filter_does_not_credit_zero_allocation_sell_as_proceeds():
 def test_force_delever_tiebreak_is_deterministic_on_equal_pnl():
     """When multiple positions tie on (unrealized_pnl, market_value), sort
     must fall back to symbol alphabetical so behavior is reproducible."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
     pipeline.broker.submit_order.return_value = {
@@ -492,7 +490,6 @@ def test_force_delever_tiebreak_is_deterministic_on_equal_pnl():
         "cash": 100.0, "portfolio_value": 10_000.0, "last_equity": 10_500.0,
     }
     pipeline.broker.get_positions.return_value = []
-    pipeline.db = MagicMock()
 
     from src.pipeline_context import RunContext
     ctx = RunContext.start("morning")

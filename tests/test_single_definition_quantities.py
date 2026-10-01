@@ -93,7 +93,7 @@ def _book_as_api_payload() -> dict:
 
 
 def _pipeline() -> TradingPipeline:
-    p = build_pipeline()
+    p = build_pipeline(broker=MagicMock(), db=MagicMock())
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(
             enabled=True, symbol=SWEEP_SYMBOL,
@@ -105,8 +105,6 @@ def _pipeline() -> TradingPipeline:
             require_stop_loss=True, allow_margin=False,
         ),
     )
-    p.broker = MagicMock()
-    p.db = MagicMock()
     p.cash_sweeper = CashSweeper(pipeline=p)
     p.risk_engine = RiskRuleEngine(p.config.risk)
     return p

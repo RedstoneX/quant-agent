@@ -470,7 +470,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     from types import SimpleNamespace
     from src.config import IntradayScanConfig
 
-    p = build_pipeline()
+    p = build_pipeline(broker=MagicMock(), db=MagicMock(), market=MagicMock(), macro_store=MagicMock(), news_store=MagicMock(), tech_store=MagicMock(), tech_analyst=MagicMock(), decision_stage=MagicMock(), risk_stage=MagicMock(), execution_stage=MagicMock())
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
         storage=SimpleNamespace(
@@ -478,7 +478,6 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         ),
         intraday_scan=IntradayScanConfig(enabled=True),
     )
-    p.broker = MagicMock()
     p.broker.get_intraday_snapshots.return_value = {
         # `last_trade_at`/`session_bar_at` are board item 120: a payload
         # with no timestamps is correctly not-today and buys no paid
@@ -486,15 +485,11 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         "AAPL": {"last_price": 110.0, "prev_close": 100.0,
                  "last_trade_at": todays_session_stamp()},
     }
-    p.db = MagicMock()
     p.db.get_trades.return_value = []
-    p.market = MagicMock()
     p.market.get_ohlcv.return_value = [MagicMock()]
-    p.macro_store = MagicMock()
     from tests.test_intraday_scan import _todays_macro_state
     from src.trading_calendar import et_today
     p.macro_store.load_last_state.return_value = _todays_macro_state()
-    p.news_store = MagicMock()
     from src.models import MacroNarrative, NewsIntelligenceReport
     p.news_store.load_daily_report.return_value = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
@@ -505,10 +500,8 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         pm_briefing="test", market_sentiment="bullish",
         confidence="medium",
     ).model_dump()
-    p.tech_store = MagicMock()
     p.tech_store.load.return_value = {}
     p.tech_store.compute_ages.return_value = {}
-    p.tech_analyst = MagicMock()
 
     from src.models import TechAnalysisResult, TechReasoningChain
     analysis = TechAnalysisResult(
@@ -528,17 +521,14 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         MagicMock(user_message="m", raw_text="{}", tokens_used=1,
                   input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
     )
-    p.decision_stage = MagicMock()
     p.decision_stage.run.side_effect = lambda ctx: setattr(
         ctx, "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
     )
-    p.risk_stage = MagicMock()
     # Deterministic gate blocks everything — RiskStage's existing early-exit.
     p.risk_stage.run.return_value = {
         "status": "hard_risk_block", "orders": [], "reason": "cash_only",
     }
-    p.execution_stage = MagicMock()
 
     ctx = RunContext.start("intra_check")
     with patch("src.pipeline_intraday.compute_indicators", return_value=MagicMock()):
