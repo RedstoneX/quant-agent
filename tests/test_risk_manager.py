@@ -303,7 +303,7 @@ def test_a_hard_limit_still_reads_as_a_breach_the_engine_enforced():
 def test_the_class_is_read_from_the_rule_set_never_from_the_rule_name():
     """`max_sector_pct` and `max_sector_hard_pct` differ by one word and sit
     on opposite sides of the line. A name-based split gets this wrong."""
-    from src.pipeline import HARD_BLOCK_RULES
+    from src.risk.rules import HARD_BLOCK_RULES
     assert "max_sector_pct" not in HARD_BLOCK_RULES
     assert "max_sector_hard_pct" in HARD_BLOCK_RULES
     soft = _findings("max_sector_pct")
@@ -348,7 +348,7 @@ def test_every_advisory_the_pipeline_can_raise_renders_as_an_advisory():
 
 
 def test_every_hard_rule_renders_as_a_hard_limit():
-    from src.pipeline import HARD_BLOCK_RULES
+    from src.risk.rules import HARD_BLOCK_RULES
     for rule in sorted(HARD_BLOCK_RULES):
         text = _findings(rule)
         assert f"HARD LIMIT BREACHED [{rule}]" in text, rule
