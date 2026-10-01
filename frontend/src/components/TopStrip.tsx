@@ -51,6 +51,28 @@ function healthColor(health: HealthResponse | null): { dot: string; label: strin
   return { dot: "bg-pos", label: "all systems reachable" };
 }
 
+// Presentation-only mapping from the colour token `healthColor` already
+// returns to a NON-COLOUR cue. Colour alone fails for a colour-blind reader
+// and in a greyscale screenshot, and the dashboard is now the owner's only
+// alert channel, so severity is carried three ways at once: swatch SHAPE,
+// text WEIGHT and text COLOUR. No new states and no new wording — every
+// label string still comes verbatim from `healthColor`.
+function statusTreatment(dot: string): { swatch: string; text: string } {
+  if (dot === "bg-neg") {
+    // Square swatch, heaviest text: a detected fault.
+    return { swatch: "rounded-none", text: "font-bold text-neg uppercase tracking-wide" };
+  }
+  if (dot === "bg-warn") {
+    // Diamond swatch, medium weight: degraded or unmeasured.
+    return { swatch: "rounded-sm rotate-45", text: "font-semibold text-warn" };
+  }
+  if (dot === "bg-dim") {
+    return { swatch: "rounded-full", text: "font-normal text-dim" };
+  }
+  // Round swatch, lightest text: healthy.
+  return { swatch: "rounded-full", text: "font-normal text-pos" };
+}
+
 // Slim app-chrome header — brand, PAPER/LIVE mode, system health, desk
 // diary and legacy links. The actual account KPIs (equity/P&L/exposure/regime) live in
 // `HeroBand` below this, which owns the "what do I own, what's the market
@@ -74,15 +96,28 @@ export function TopStrip({
       ? { text: "LIVE — REAL MONEY", color: "rose" as Color }
       : { text: "MODE UNKNOWN", color: "slate" as Color };
   const { dot, label } = healthColor(health);
+  const treatment = statusTreatment(dot);
 
   return (
     <header className="sticky top-0 z-10 bg-bg border-b border-border flex items-center gap-5 flex-wrap px-4 py-2">
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex items-center gap-2 flex-wrap min-w-0">
         <h1 className="text-[0.95rem] font-bold whitespace-nowrap m-0">
           QAMC <span className="text-dim font-normal">Mission Control</span>
         </h1>
         <Badge color={modeBadge.color} size="sm">{modeBadge.text}</Badge>
-        <span className={`inline-block w-2.5 h-2.5 rounded-full ${dot}`} title={label} />
+        <span
+          role="status"
+          aria-live="polite"
+          aria-label={`Desk status: ${label}`}
+          title={label}
+          className={`inline-flex items-start gap-1.5 max-w-full min-w-0 rounded border border-border bg-panel px-2 py-0.5 text-[0.8125rem] leading-snug ${treatment.text}`}
+        >
+          <span
+            aria-hidden="true"
+            className={`inline-block w-2.5 h-2.5 flex-shrink-0 mt-[0.25rem] ${treatment.swatch} ${dot}`}
+          />
+          <span className="min-w-0 break-words">{label}</span>
+        </span>
       </div>
 
       {accountError && (
@@ -92,7 +127,6 @@ export function TopStrip({
       )}
 
       <div className="ml-auto flex flex-wrap items-center gap-3 text-[0.8125rem] text-dim">
-        <span>{label}</span>
         {updatedAt && <span>updated {updatedAt.toLocaleTimeString()}</span>}
         <a
           href="/diary/"
