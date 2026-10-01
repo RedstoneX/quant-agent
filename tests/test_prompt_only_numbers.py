@@ -72,5 +72,6 @@ def test_rows_are_honest_and_complete():
 
 def test_the_retired_pm_sizing_figures_stay_out_of_the_pm_sheet():
     text = (PROMPTS / "portfolio_manager.md").read_text()
-    for gone in (r"you MAY add 20-30%", r"cut allocation 50%", r"ceilings at\s+3\.0%", r"Today's\s+schedule"):
+    for gone in (r"you MAY add 20-30%", r"cut allocation 50%", r"ceilings at\s+3\.0%", r"Today's\s+schedule",
+                 r"stale\s*=\s*0\.5", r"× stale", r"Stale-signal halve"):
         assert not re.search(gone, text), gone

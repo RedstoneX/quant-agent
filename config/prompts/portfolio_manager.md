@@ -656,9 +656,11 @@ base       = conviction_to_base(alignment)
              # high=3.0 (mid of 2.0-4.0), moderate=1.75 (mid of 1.0-2.5),
              # low=0.75 (mid of 0.5-1.0)
 rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
-stale      = 0.5 if (Tech high-conv at age≥8d AND no progress) else 1.0
+# no multiplier for a stale call: if Tech high-conv sits at or past the
+# code's stale boundary (age≥8d) with no progress, NAME the override in
+# `sizing_logic` and do not size above what a stale call has earned
 
-raw  = base × rr_mult × stale
+raw  = base × rr_mult
 risk = min(raw, {{risk.max_position_risk_pct}})   # single-name hard cap
 ```
 
@@ -835,7 +837,7 @@ one-directional formality.
 | 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
 | 7 | **Range setups only.** A computed R/R, however thin, and an unmeasurable R/R, are KEPT at the size you asked for (never dropped, never size-capped in Python). **A breakout setup is exempt from this row entirely.** | Conviction, signal alignment | Rewritten 2026-09-17. Invented reward:risk floors were eliminated because the numbers were made up. A trend trade has no ceiling to measure a reward against; a range trade's real ratio is a ranking signal, not a cutoff or a size cap. An unknown payoff is recorded, not refused, and does not open a catalyst-exception door. |
 | 8 | Holding discipline: default HOLD while the thesis-backing level is intact (no day count) | A single-day technical downgrade | A level that hasn't broken hasn't broken, whatever the calendar says. |
-| 9 | Stale-signal halve (age ≥8d, no progress) | Original conviction sizing | The thesis had a week to work and did not. |
+| 9 | Stale-signal override (Tech high-conv past the code's stale boundary, age ≥8d, no progress): NAME it in `sizing_logic`, do not size above what a stale call has earned | Original conviction sizing | The thesis had a week to work and did not. No multiplier is stated; none is computed. |
 | 10 | Sector concentration → **scale the position down** | Rubber-stamping every technical BUY | A dial, not a gate: the idea still gets in, smaller. |
 
 Rows 9 and 10 are applied by deterministic code after you submit. Never fold
