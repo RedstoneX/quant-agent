@@ -76,7 +76,13 @@ def count_test_files_importing_pipeline(tests_dir: Path = TESTS) -> int:
     (imports, names, attributes; prose strings excluded)."""
     n = 0
     for p in sorted(tests_dir.rglob("*.py")):
-        if p.name == "boundary_harness.py" or p.name == "test_boundary_harness.py":
+        # The harness's own files, and the ONE deliberate whole-system test.
+        # test_e2e_morning_session.py exists precisely to build a real
+        # TradingPipeline and drive every stage end to end; counting it would
+        # penalise the test this metric most wants to exist. Every OTHER test
+        # that needs a whole pipeline is what the ratchet is measuring.
+        if p.name in ("boundary_harness.py", "test_boundary_harness.py",
+                      "test_e2e_morning_session.py"):
             continue
         try:
             tree = _parse(p)
