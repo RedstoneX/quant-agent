@@ -3434,6 +3434,7 @@ class Database:
     def save_holding_protection_break(
         self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
         close: float | None = None,
+        basis: str | None = None, detail: str | None = None,
     ) -> int:
         """Record whether the close dated `bar_date` came back broken for
         `symbol`, so a LATER, DIFFERENT bar_date's read can require it to
@@ -3444,6 +3445,22 @@ class Database:
         trend regime (the margin-consistency guard #4 in
         `src.risk.exit_guard`), rather than trusting a stale broken flag."""
         payload: dict = {"raw_broken": bool(raw_broken), "bar_date": str(bar_date)}
+        # SETTLEMENT RECORDINGS, 2026-10-01. The structural-protection check
+        # builds two machine-readable `rule=` payloads into its `detail`
+        # string -- the break-confirmation margin in both ATR multiples and
+        # percent of close (board item 70) and the noise-band read (item 109)
+        # -- and this call was the ONLY thing that persisted the check at
+        # all. It kept three scalars and threw the payload away, so both
+        # recordings had produced zero observations in production: measured
+        # read-only 2026-10-01, 0 of 13,822 `specialist_evidence` rows carry
+        # any `rule=` text. Keeping `basis` and `detail` is what turns those
+        # recordings from code that exists into evidence that accrues. Both
+        # stay OPTIONAL and stay NULL-equivalent when absent -- nothing is
+        # reconstructed, and no exit behaviour is touched by this.
+        if basis is not None:
+            payload["basis"] = str(basis)
+        if detail is not None:
+            payload["detail"] = str(detail)
         try:
             if close is not None:
                 cf = float(close)
