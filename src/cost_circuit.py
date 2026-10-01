@@ -1255,7 +1255,11 @@ class UnavailableLLMCostCircuit:
         logger.critical("\n%s", message)
         sent = False
         try:
-            sent = bool(self.notifier.send(message))
+            from src.notifier import CATEGORY_OPERATIONAL
+
+            sent = bool(self.notifier.send(
+                message, category=CATEGORY_OPERATIONAL,
+            ))
         except Exception:
             logger.exception("cost-circuit unavailable Telegram alert failed")
         # item 17(b): fold this outcome into the SAME durable marker the
@@ -2963,7 +2967,11 @@ class LLMCostCircuitBreaker:
             logger.critical("\n%s", text)
             sent = False
             try:
-                sent = bool(self.notifier.send(text))
+                from src.notifier import CATEGORY_OPERATIONAL
+
+                sent = bool(self.notifier.send(
+                    text, category=CATEGORY_OPERATIONAL,
+                ))
             except Exception:  # notifier must never affect trading/safety
                 logger.exception("cost circuit Telegram alert failed")
             with self._connect() as conn:
@@ -3005,7 +3013,11 @@ class LLMCostCircuitBreaker:
             logger.critical("\n%s", message)
             sent = False
             try:
-                sent = bool(self.notifier.send(message))
+                from src.notifier import CATEGORY_OPERATIONAL
+
+                sent = bool(self.notifier.send(
+                    message, category=CATEGORY_OPERATIONAL,
+                ))
             except Exception:
                 logger.exception("cost quota Telegram alert failed")
             with self._connect() as conn:
@@ -3048,7 +3060,11 @@ class LLMCostCircuitBreaker:
             logger.info("\n%s", message)
             sent = False
             try:
-                sent = bool(self.notifier.send(message))
+                from src.notifier import CATEGORY_OPERATIONAL
+
+                sent = bool(self.notifier.send(
+                    message, category=CATEGORY_OPERATIONAL,
+                ))
             except Exception:
                 logger.exception("cost quota recovery Telegram alert failed")
             with self._connect() as conn:
@@ -3173,7 +3189,11 @@ class LLMCostCircuitBreaker:
             logger.info("\n%s", message)
             sent = False
             try:
-                sent = bool(self.notifier.send(message))
+                from src.notifier import CATEGORY_OPERATIONAL
+
+                sent = bool(self.notifier.send(
+                    message, category=CATEGORY_OPERATIONAL,
+                ))
             except Exception:
                 logger.exception("cost-circuit auto-reset Telegram alert failed")
             with self._connect() as conn:

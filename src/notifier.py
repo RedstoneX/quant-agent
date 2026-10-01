@@ -736,6 +736,58 @@ def _close_open_markup(body: str) -> str:
     return body
 
 
+#: Message CATEGORY — the axis the per-category mute (`TELEGRAM_RISK_ONLY`)
+#: routes on. Deliberately NOT inferred from message text: a keyword guess
+#: on prose is exactly the kind of classifier that silently starts dropping
+#: a money-at-risk alarm the day someone rewords it. Every send site either
+#: declares its category or inherits one from an EXPLICIT `kind` mapping
+#: below; anything else fails CLOSED and is delivered.
+CATEGORY_RISK = "risk"
+CATEGORY_OPERATIONAL = "operational"
+
+#: `kind` -> category, for the kinds that are routine BY CONSTRUCTION (a
+#: scheduled session summary, the P&L document, the hourly intraday check).
+#: `generic` and `owner_alert` are absent on purpose: both carry a mix of
+#: naked-position alarms and operational faults, so they are classified at
+#: the CALL SITE via the `category=` argument, and fail closed to risk when
+#: a site has not been classified.
+_KIND_CATEGORY: dict[str, str] = {
+    "morning": CATEGORY_OPERATIONAL,
+    "midday": CATEGORY_OPERATIONAL,
+    "close": CATEGORY_OPERATIONAL,
+    "evening": CATEGORY_OPERATIONAL,
+    "intra_check": CATEGORY_OPERATIONAL,
+    "document": CATEGORY_OPERATIONAL,
+    "earnings_preprocess": CATEGORY_OPERATIONAL,
+}
+
+
+def resolve_category(category: str | None, kind: str | None) -> str:
+    """Decide whether a message is money-at-risk or operational.
+
+    FAILS CLOSED. An unset, unrecognised or malformed `category`, on a
+    `kind` with no explicit mapping, resolves to `CATEGORY_RISK` and is
+    therefore DELIVERED under risk-only. Silence is the dangerous failure
+    here, not noise: the whole reason the owner muted the channel was
+    operational noise, but the thing that must never be lost is "nothing is
+    protecting this position".
+    """
+    value = str(category or "").strip().lower()
+    if value == CATEGORY_OPERATIONAL:
+        return CATEGORY_OPERATIONAL
+    if value == CATEGORY_RISK:
+        return CATEGORY_RISK
+    if value:
+        # An unknown string is a bug at the call site, not a licence to
+        # drop the message.
+        logger.warning(
+            "notifier: unknown message category %r (kind=%s) — "
+            "treating as money-at-risk and delivering", category, kind,
+        )
+        return CATEGORY_RISK
+    return _KIND_CATEGORY.get(str(kind or ""), CATEGORY_RISK)
+
+
 class TelegramNotifier:
     """Best-effort Telegram Bot API notifier.
 
@@ -776,6 +828,15 @@ class TelegramNotifier:
         # and "no credentials" into one false, and probe() has to report
         # which of the two it actually is.
         self.muted = kill_switch
+        # SECOND, INDEPENDENT switch (2026-10-01). `TELEGRAM_DISABLED` is a
+        # hard mute of everything and keeps that meaning exactly — it is set
+        # in production. `TELEGRAM_RISK_ONLY` narrows the channel instead of
+        # closing it: money-at-risk alarms still land, operational noise is
+        # dropped (and still recorded). When both are set the hard mute wins,
+        # because `enabled` is already False by the time the filter runs.
+        self.risk_only = os.getenv("TELEGRAM_RISK_ONLY", "").strip().lower() in (
+            "1", "true", "yes",
+        )
         self.enabled = bool(self.token and self.chat_id) and not kill_switch
         # Tap-through link target for send(). Unlike token/chat_id this is
         # NOT read from the environment — src/config.py::NotificationsConfig
@@ -931,6 +992,34 @@ class TelegramNotifier:
         except Exception as exc:  # noqa: BLE001
             logger.warning("notifier: _record_send raised unexpectedly: %s", exc)
 
+    def _filtered_by_category(
+        self, *, kind: str, category: str | None, text: str,
+        run_id: str | None = None, symbols: list[str] | None = None,
+    ) -> bool:
+        """True when risk-only mode drops this message. Records the drop.
+
+        A dropped alarm that leaves no trace is indistinguishable from an
+        alarm that never fired, so the drop lands in `notifier_sends` with
+        its own status — `filtered`, distinct from both `sent` and the
+        hard mute's `muted` — exactly as the `muted` path does.
+        """
+        if not getattr(self, "risk_only", False):
+            return False
+        if resolve_category(category, kind) != CATEGORY_OPERATIONAL:
+            return False
+        joined = ", ".join(_dedupe_symbols(symbols or []))
+        self._safe_record_send(
+            kind=kind,
+            status="filtered",
+            run_id=run_id,
+            text=text,
+            detail=(
+                "dropped by TELEGRAM_RISK_ONLY (operational category)"
+                + (f"; symbols: {joined}" if joined else "")
+            ),
+        )
+        return True
+
     def send(
         self,
         text: str,
@@ -940,6 +1029,7 @@ class TelegramNotifier:
         preserve_structural_markup: bool = False,
         kind: str = "generic",
         run_id: str | None = None,
+        category: str | None = None,
     ) -> bool:
         """Fire-and-forget send. Returns True on success.
 
@@ -1000,6 +1090,10 @@ class TelegramNotifier:
                 )
             return False
         if not text:
+            return False
+        if self._filtered_by_category(
+            kind=kind, category=category, text=text, run_id=run_id, symbols=symbols,
+        ):
             return False
         # Single chokepoint for every owner-facing message this notifier
         # sends, regardless of which of the ~20 upstream formatters (PM
@@ -1269,6 +1363,7 @@ class TelegramNotifier:
     def send_document(
         self, csv_bytes: bytes, filename: str, caption: str = "",
         kind: str = "document", run_id: str | None = None,
+        category: str | None = None,
     ) -> bool:
         """Send a file (e.g. CSV) via Telegram sendDocument. Best-effort.
 
@@ -1281,6 +1376,10 @@ class TelegramNotifier:
         if not self.enabled:
             return False
         recorded_text = f"[document: {filename}] {caption}".strip()
+        if self._filtered_by_category(
+            kind=kind, category=category, text=recorded_text, run_id=run_id,
+        ):
+            return False
         try:
             response = requests.post(
                 f"https://api.telegram.org/bot{self.token}/sendDocument",
@@ -1344,7 +1443,10 @@ def _with_pnl_header(text: str) -> str:
         return text
 
 
-def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
+def send_owner_alert(
+    text: str, *, symbols: list[str] | None = None,
+    category: str | None = None,
+) -> bool:
     """Push an alert to the owner NOW, outside the session-result message.
 
     Spec §11.1 guard 2. Some conditions cannot wait for a session to finish
@@ -1369,7 +1471,9 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
     text = _with_pnl_header(text)
     logger.critical("OWNER ALERT\n%s", text)
     try:
-        return bool(TelegramNotifier().send(text, symbols=symbols, kind="owner_alert"))
+        return bool(TelegramNotifier().send(
+            text, symbols=symbols, kind="owner_alert", category=category,
+        ))
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery failed")
         return False
@@ -1849,7 +1953,7 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
         f"Machine record, kept for the log — nothing here needs anything "
         f"from you: {raw}"
     )
-    return send_owner_alert(text)
+    return send_owner_alert(text, category=CATEGORY_OPERATIONAL)
 
 
 # === Fill-confirmation alerts (own message, not bundled) ===

@@ -153,6 +153,7 @@ def test_run_safe_notifies_on_completed_session(mock_pipeline_cls, mock_fmt):
     # purpose — see TelegramNotifier.send()'s docstring.
     scheduler.notifier.send.assert_called_once_with(
         "MSG", symbols=[], preserve_structural_markup=True,
+        category="operational",
     )
 
 
@@ -177,6 +178,7 @@ def test_run_safe_notifies_on_raised_session(mock_pipeline_cls, mock_fmt):
     # from (extract_alert_symbols runs for real here, not mocked).
     scheduler.notifier.send.assert_called_once_with(
         "FAILED morning", symbols=[], preserve_structural_markup=True,
+        category="operational",
     )
 
 

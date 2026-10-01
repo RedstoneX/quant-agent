@@ -38,7 +38,7 @@ class _Notifier:
     def __init__(self):
         self.messages: list[str] = []
 
-    def send(self, message: str) -> bool:
+    def send(self, message: str, **_kwargs) -> bool:
         self.messages.append(message)
         return True
 
@@ -1837,7 +1837,7 @@ class _FailingNotifier:
     def __init__(self):
         self.attempts = 0
 
-    def send(self, message: str) -> bool:
+    def send(self, message: str, **_kwargs) -> bool:
         self.attempts += 1
         return False
 
@@ -2379,7 +2379,7 @@ def test_auto_clear_resume_alert_retries_after_a_telegram_outage(
         def __init__(self):
             self.calls = 0
 
-        def send(self, _message):
+        def send(self, _message, **_kwargs):
             self.calls += 1
             return False
 
@@ -3015,7 +3015,7 @@ def test_resume_is_not_announced_for_a_suspension_the_owner_never_received(
     class _Down:
         messages: list[str] = []
 
-        def send(self, _message):
+        def send(self, _message, **_kwargs):
             return False
 
     circuit = _latch_on_failed_call(path, notifier=_Down())
@@ -3469,7 +3469,7 @@ class _MutedNotifier(_Notifier):
 
     enabled = False
 
-    def send(self, message: str) -> bool:
+    def send(self, message: str, **_kwargs) -> bool:
         self.messages.append(message)
         return False
 

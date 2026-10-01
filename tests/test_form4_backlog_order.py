@@ -502,7 +502,9 @@ def test_pre_open_check_alerts_before_the_day_is_lost(monkeypatch):
     from src.util.time import et_today
 
     sent: list[str] = []
-    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **_kw: sent.append(text),
+    )
     check = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
 
     # Clean morning: silence.
@@ -702,7 +704,9 @@ def test_combined_provider_surfaces_the_drain_outcome_to_the_pre_open_check(
     assert result["watched_names_read_through"] == 82
 
     sent: list[str] = []
-    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **_kw: sent.append(text),
+    )
     TradingPipeline._alert_form4_backlog_before_open.__get__(object())(result)
     assert sent == []
 

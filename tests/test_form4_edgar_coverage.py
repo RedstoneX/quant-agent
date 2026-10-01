@@ -534,7 +534,9 @@ def test_the_pre_open_alert_names_the_unreadable_count(monkeypatch):
         },
     }
     sent: list[str] = []
-    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **_kw: sent.append(text),
+    )
     alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
 
     alert(clean)
@@ -570,7 +572,9 @@ def test_the_pre_open_alert_fails_closed_on_a_missing_coverage_record(monkeypatc
         "watched_drain_ran": True, "watched_drain_deadline_hit": False,
     }
     sent: list[str] = []
-    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **_kw: sent.append(text),
+    )
     alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
 
     alert(base)  # a Form 4 pass ran and recorded no coverage at all
@@ -759,7 +763,9 @@ def test_the_alert_carries_the_coverage_counts_whatever_it_is_about(monkeypatch)
     from src.pipeline import TradingPipeline
 
     sent: list[str] = []
-    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **_kw: sent.append(text),
+    )
     alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
 
     # The complaint is unread filings, NOT coverage — coverage is verified.
@@ -791,7 +797,9 @@ def test_a_form4_provider_that_blew_up_still_answers_for_coverage(monkeypatch):
     from src.pipeline import TradingPipeline
 
     sent: list[str] = []
-    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **_kw: sent.append(text),
+    )
     alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
 
     alert({"status": "provider_error", "error": "0:SECForm4Provider:boom"})
@@ -857,7 +865,9 @@ def test_an_ordinary_clean_morning_logs_the_coverage_and_alerts_nobody(
     from src.pipeline import TradingPipeline
 
     sent: list[str] = []
-    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **_kw: sent.append(text),
+    )
     alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
 
     with caplog.at_level(logging.INFO, logger="src.pipeline"):
@@ -892,7 +902,9 @@ def test_a_blank_coverage_record_reads_as_unknown_not_as_nothing_to_report(
     from src.pipeline import TradingPipeline
 
     sent: list[str] = []
-    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    monkeypatch.setattr(
+        notifier, "send_owner_alert", lambda text, **_kw: sent.append(text),
+    )
     alert = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
 
     alert({

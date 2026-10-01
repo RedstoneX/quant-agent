@@ -12903,14 +12903,21 @@ class TradingPipeline(PromptFactsMixin):
         # message is a different renderer) keeps its alert unchanged.
         if session == "morning":
             try:
-                from src.notifier import describe_skipped_decision, send_owner_alert
+                from src.notifier import (
+                    CATEGORY_OPERATIONAL,
+                    describe_skipped_decision,
+                    send_owner_alert,
+                )
 
                 # Plain words only — no run id, no seat key, no state token
                 # and no `verdict.reason`. The machine reason is unchanged in
                 # the result dict, the event rows and the log line above.
-                send_owner_alert("\n".join(
-                    describe_skipped_decision(verdict.lost, verdict.data_status)
-                ))
+                send_owner_alert(
+                    "\n".join(
+                        describe_skipped_decision(verdict.lost, verdict.data_status)
+                    ),
+                    category=CATEGORY_OPERATIONAL,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("evidence gate: owner alert failed: %s", exc)
         return {
@@ -15189,13 +15196,14 @@ class TradingPipeline(PromptFactsMixin):
             from src import notifier as _notifier
 
             misses = result.get("consecutive_misses", 0)
-            _notifier.send_owner_alert(
+            _notifier.send_owner_alert(  # provider failure, not a risk alarm
                 "INTRADAY SNAPSHOT UNAVAILABLE\n"
                 f"{symbol} has failed to return snapshot data for "
                 f"{misses} consecutive scans (~{misses * 30} min). It is being "
                 "silently excluded from intraday move detection until this "
                 "resolves — check whether the ticker is still valid/tradable "
-                "on Alpaca. Will not re-alert on this symbol for 24h."
+                "on Alpaca. Will not re-alert on this symbol for 24h.",
+                category=_notifier.CATEGORY_OPERATIONAL,
             )
         except Exception:
             logger.warning(
@@ -15636,8 +15644,8 @@ class TradingPipeline(PromptFactsMixin):
         )
         logger.error("PRE-OPEN: %s", text)
         try:
-            from src.notifier import send_owner_alert
-            send_owner_alert(text)
+            from src.notifier import CATEGORY_OPERATIONAL, send_owner_alert
+            send_owner_alert(text, category=CATEGORY_OPERATIONAL)
         except Exception as exc:  # noqa: BLE001
             logger.error("Form 4 backlog pre-open alert failed to send: %s", exc)
 
