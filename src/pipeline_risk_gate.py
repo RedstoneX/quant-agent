@@ -1,25 +1,17 @@
-"""The deterministic application of risk verdicts to sizes.
+"""RiskGate — the deterministic application of risk verdicts to sizes. MONEY.
 
-Step 5 of `docs/PIPELINE_SPLIT_PLAN.md` (board item 210), cluster D plus
-`_refuse_queued_earnings_buys`. Moved verbatim out of `src/pipeline.py` as a
-mixin, so `TradingPipeline` keeps every one of these as its own attribute and
-every test that calls them is untouched.
+Conversion step 7 (docs/ARCHITECTURE.md §4). The hard-block filter that drops
+a decision the risk engine refused, the durable record of that block, the
+application of the risk seat's size/stop/target modifications, the minimum-
+risk floor breach, the reconciliation of a modified size back to the risk
+budget, the research pre-filter, and the refusal of a queued BUY whose filing
+is unread. Every body here is the former `RiskGateMixin` body, byte for byte;
+only the collaborators changed from inherited attributes to constructor
+parameters. `TradingPipeline` reaches it through the thin delegating
+`RiskGateMixin` in `src/pipeline_risk_gate_mixin.py`.
 
-This is `RiskStage`'s backend: the hard-block filter that drops a decision the
-risk engine refused, the durable record of that block, the application of the
-risk seat's size/stop/target modifications, the minimum-risk floor breach, the
-reconciliation of a modified size back to the risk budget, the research
-pre-filter that decides whether a symbol has an actionable signal, and the
-refusal of a queued BUY whose filing is unread. It is money-governing.
-
-Names the moved bodies read are imported here and are therefore resolved
-against `src.pipeline_risk_gate`, NOT `src.pipeline` (plan S5, silent-behaviour
-risk 1). Two matter: `compute_indicators` and `_get_sector`. A test that
-patches either on `src.pipeline` no longer reaches this module's code and must
-patch it here instead; the sites that needed it were re-pointed in the same
-change.
-
-Nothing here may import `src.pipeline`: this module is one of its bases.
+`compute_indicators` and `_get_sector` resolve against THIS module (patch
+them here). Nothing here may import `src.pipeline` (boundary clause 3).
 """
 
 import logging
@@ -39,8 +31,16 @@ from src.risk.rules import HARD_BLOCK_RULES
 logger = logging.getLogger("src.pipeline")
 
 
-class RiskGateMixin:
-    """Risk-verdict application. Mixed into `TradingPipeline`; see module docstring."""
+class RiskGate:
+    """Risk-verdict application, built alone from its three collaborators."""
+
+    def __init__(self, *, risk_engine, db, sweeper, config) -> None:
+        # risk_engine.check refuses; db.insert_agent_log records a hard block (not
+        # on the EventJournal port); sweeper() = `TradingPipeline._sweeper`; config.
+        self.risk_engine = risk_engine
+        self.db = db
+        self._sweeper = sweeper
+        self.config = config
 
     def _filter_hard_risk_decisions(
         self,

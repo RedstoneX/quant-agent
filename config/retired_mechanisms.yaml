@@ -357,12 +357,12 @@ described:
       The risk manager is told that an `allocation_pct` it edits is applied
       as an INCREMENT on top of what is already held, and that an edit
       RAISING it is refused by the engine while a reduction is applied.
-      Both halves are `RiskGateMixin._apply_risk_modifications`. If that
+      Both halves are `RiskGate._apply_risk_modifications`. If that
       guard went, the seat would go on believing it cannot increase risk
       while its edits did exactly that.
     symbols:
       - file: src/pipeline_risk_gate.py
-        symbol: RiskGateMixin._apply_risk_modifications
+        symbol: RiskGate._apply_risk_modifications
     described_in:
       - file: src/agents/risk_manager.py
         contains:

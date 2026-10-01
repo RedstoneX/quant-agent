@@ -400,9 +400,15 @@ reaching for `self.db` and the module-level helper.
 **Step 7. `RiskGateMixin` → `RiskGate`.** **MONEY** — this is the gate that sizes
 down and refuses.
 *Measured:* 954 lines, 6 distinct `self.` names, 1 foreign method call.
-*Constructor:* `RiskGate(journal, risk_engine)` — replacing `self.db` (via the
-journal port) and `self.risk_engine`. The one foreign call (`_sweeper`) becomes a
-constructor parameter.
+*Constructor (as built, 2026-10-01):* `RiskGate(*, risk_engine, db, sweeper)`.
+The journal port could NOT replace `self.db` here: the gate's one `db` use is
+`insert_agent_log` (an `agent_logs` row, read back by `scripts/replay_decision.py`),
+which is not on `EventJournal`; routing it through the journal is a body change
+and is left for its own reviewed step. The one foreign call (`_sweeper`) is a
+constructor parameter. `TradingPipeline` keeps a thin delegating `RiskGateMixin`
+(`src/pipeline_risk_gate_mixin.py`) that re-resolves the gate from the live
+collaborators per call, because tests assign `db`/`risk_engine`/`_sweeper` after
+construction.
 *Proof:* standard, plus every refusal and every resize produced over a replayed
 session must match the pre-change output exactly, field by field. Second reviewer
 required.

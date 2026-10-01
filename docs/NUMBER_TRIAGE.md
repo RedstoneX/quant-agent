@@ -20,6 +20,12 @@ Sorts every ledger row the guard marks `arbitrary` into one of four piles. It ad
 
 Rule for every pile: a number is settled by a mechanical measurement of how the market or the broker behaved, never by what would have made money on the desk's own record.
 
+## Top five, measured 2026-10-01
+
+The five highest-ranked SETTLEABLE rows (all tier 1, binding on every order) were measured; results sit under each row below as `Measured 2026-10-01`. Chosen because they set stop width, share count and the single-name ceiling on every trade: `min_stop_atr_multiple`, `absolute_min_stop_atr_multiple`, `max_position_risk_pct`, `max_position_pct`, `min_risk_pct` (with its twin `STARTER_POSITION_RISK_PCT`, one number). No value was changed.
+
+Method, shared by all five: public daily bars, 2 years, for the 101-name tradable universe in `config/settings.yaml` (49,983 bar-days, 102 symbols incl. one held name outside the universe) [measured: yfinance, 2026-10-01]; the production database read-only for the desk's own entries (41 entries with a stop, 2026-09-02 to 2026-10-01) [measured]. ATR is 14-period; the stop-touch table used a simple true-range mean, the gap and entry-width tables Wilder's -- the repo measured the two to differ by a mean 7% (`src/data/technical.py`), so touch rates carry that tolerance. Nothing was fitted to profit or loss; every figure is a count of touches, gaps or widths.
+
 ## Ranking basis
 
 Tier 1 numbers size a position or price a live order on EVERY trade; tier 2 gate entries or exits or shape stops after entry; tier 3 only shape which names reach the seats. Within a tier, a number that binds on every order outranks one that binds only in a tail event. Judgement, not a computed dollar figure [estimate: read from how each site is consumed].
@@ -35,11 +41,17 @@ Tier 1 numbers size a position or price a live order on EVERY trade; tier 2 gate
 - `portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]` = 0.95
 - `portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[1][1]` = 0.9
 
+Measured 2026-10-01, `absolute_min_stop_atr_multiple` = 1 (the hard floor): on the universe, a stop k ATR below the close is touched within 10 sessions 61% of the time at k=1.0, 87% at k=0.25, 23% at k=2.5, 7% at k=4.0 (15,744 entry-days per row, every third day) [measured]. The whipsaw share of touches -- price closes back above the stop within 3 sessions -- is FLAT at 73-78% at EVERY distance from 0.25 to 4.0 ATR [measured]; there is no knee at 1.0 or anywhere else. The route's level-touch-count split was NOT done (needs the level engine), so the conditional knee it asks for is still unmeasured. Reading: distance alone does not separate whipsaw from trend break on daily bars; the 1.0 floor is neither vindicated nor falsified by this, and the remaining measurement is the level-conditioned one. On the desk's own 41 entries, 4 shipped with a stop inside 1 ATR (one above the entry price) and 0 sat exactly at 1.0, so the backstop the prompt says is applied in code either did not fire or the recorded `stop_loss` is the pre-floor value -- a recording-truth defect to settle before this number can be [measured].
+
 **Tier 1 sizes positions or prices/places live orders.** Per-position size cap, loss-if-gapped-through bound and gross leverage; settled by the measured overnight gap distribution of the tradable universe. Survivability bound is measurable; only the tolerance above it is appetite.
 
 - `config.RiskConfig.max_gross_exposure_x` = 2
 - `config.RiskConfig.max_position_risk_pct` = 5
 - `portfolio_constructor.ConstructorConfig.max_position_pct` = 65
+
+Measured 2026-10-01, `max_position_risk_pct` = 5: a 2.5-ATR stop placed at the prior close is gapped through at the next open on 0.17% of bar-days (87 of 49,983) [measured]; when it is, the realised loss is a median 1.3x the planned risk, p90 2.0x, p99 2.75x, worst 2.92x [measured]. So the survivability half is settled: one name can lose up to ~2.9x its planned risk on daily bars, i.e. ~14.6% of the account at 5% planned risk. Whether 14.6% is tolerable is the owner's envelope, as the row already says. On the desk's record 0 of 41 entries requested or were allocated 5%; the maximum was 3.0% [measured], so the 5 has never bound. Survives as a ceiling that nothing has reached; its value stays unsettled until the owner states the whole-book envelope.
+
+Measured 2026-10-01, `max_position_pct` = 65: pooled overnight gaps on the universe (49,881 gaps): worst 1-in-100 is -4.8%, 1-in-1,000 is -11.6%, 1-in-10,000 is -20.1%, worst single gap -41.1%; 75 gaps worse than -10%, 6 worse than -20% [measured]. A 65%-notional name at those gaps costs the account 3.1% / 7.6% / 13.0% / 26.7% [measured arithmetic]. The desk's largest live name is 19.9% of the book, average 9.1% (11 positions) [measured], so 65 has never bound. The measurement half is done; the ceiling closes only when the owner names the single-name no-fill loss he will accept (board item 186) and picks the percentile.
 
 **Tier 1 sizes positions or prices/places live orders.** Target-reach cap in ATR; settled by realised travel over each holding length on public bars.
 
@@ -49,10 +61,14 @@ Tier 1 numbers size a position or price a live order on EVERY trade; tier 2 gate
 
 - `config.RiskConfig.min_stop_atr_multiple` = 2.5
 
+Measured 2026-10-01: the built recording is still EMPTY (entry ATR on 3 of 84 trade rows, adverse excursion on 1) [measured], so it settled nothing; the width was recomputed instead from public bars at each entry date. Of the desk's 41 entries, stop width in ATR was min -0.4, p25 1.5, median 2.1, p75 2.4, max 4.5; 34 sat below 2.5, 2 within 0.05 of it, 5 above; 17 fell inside the 2.14-3.00 push-out band [measured]. That is consistent with the prompt's rule that a level-backed stop is honoured as placed, but `stop_level_basis` is written on only 3 rows, so level-backed and floor-bypassed cannot be told apart -- the desk never recorded which stops the floor acted on. On the universe a 2.5-ATR stop is touched within 10 sessions 23% of the time and within 20 sessions 38% [measured]; a 1.5-ATR stop 45% and 58%. The floor is not falsified (nothing in the touch table says 2.5 is wrong) and not vindicated (the floor-violation question cannot be asked until `stop_basis` and `entry_atr` populate); the actionable finding is the recording gap.
+
 **Tier 1 sizes positions or prices/places live orders.** Minimum and starter risk floor; a built recording counts every order the floor refuses, which settles whether the floor ever binds.
 
 - `portfolio_constructor.ConstructorConfig.min_risk_pct` = 0.5
 - `risk.constants.STARTER_POSITION_RISK_PCT` = 0.5
+
+Measured 2026-10-01: the item-223 recording has written 0 rows -- `trade_refusals` holds 14 rows, all reward-to-risk refusals from the parity gate, and `requested_risk_pct` is null on every one [measured]. On the 41 entries with a recorded request, 0 asked for less than 0.5%; 8 asked for 0.5-1.0% (minimum allocated 0.5%), 15 for 1-2%, 18 for 2-3% [measured]. The floor has never refused anything and the seat's lowest request equals the floor, so the number currently governs nothing; the route's one-year clock for reformulation is the right close and is running. Survives, unexercised.
 
 **Tier 1 sizes positions or prices/places live orders.** Refusal gate on every buy; settled from the reward-to-risk of every nominated name on public bars, never from the desk's own fills.
 
@@ -68,7 +84,7 @@ Tier 1 numbers size a position or price a live order on EVERY trade; tier 2 gate
 - `execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS` = 3
 - `execution.broker._STOP_PLACEMENT_BACKOFF_S[0]` = 0.5
 - `execution.broker._STOP_PLACEMENT_BACKOFF_S[1]` = 1.5
-- `pipeline_risk_gate.RiskGateMixin._has_actionable_signal_fn:factor[0]` = 0.5
+- `pipeline_risk_gate.RiskGate._has_actionable_signal_fn:factor[0]` = 0.5
 
 **Tier 2 gates entries/exits or shapes stops after entry.** Cash reserve and deployment band; settled by recorded assumed-vs-debited cash and by the measured round-trip cost of trading the gap.
 

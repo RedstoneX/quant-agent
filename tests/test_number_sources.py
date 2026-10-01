@@ -780,7 +780,7 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # covered and a new one still cannot arrive unseen.
     assert not any(
         i.startswith(
-            "src.pipeline_risk_gate.RiskGateMixin._refuse_queued_earnings_buys"
+            "src.pipeline_risk_gate.RiskGate._refuse_queued_earnings_buys"
         )
         for i in ids
     )

@@ -79,7 +79,28 @@
     "src/pipeline_admission.py": {
       "module_functions": [],
       "classes": {
+        "AdmissionService": [
+          "__init__",
+          "_admit_nominated_external_symbols",
+          "_admit_screened_universe_symbols",
+          "_admit_transient_smart_money_symbols",
+          "_attach_universe_changes",
+          "_constructor_cfg_or_none",
+          "_evaluate_external_admission_gates",
+          "_evaluate_screened_admission",
+          "_filter_supported_symbols",
+          "_form4_admission_is_current",
+          "_run_universe_screen",
+          "_universe_screen_enabled",
+          "_universe_screen_sources"
+        ]
+      }
+    },
+    "src/pipeline_admission_shell.py": {
+      "module_functions": [],
+      "classes": {
         "AdmissionMixin": [
+          "_admission_service",
           "_admit_nominated_external_symbols",
           "_admit_screened_universe_symbols",
           "_admit_transient_smart_money_symbols",
@@ -91,6 +112,16 @@
           "_run_universe_screen",
           "_universe_screen_enabled",
           "_universe_screen_sources"
+        ],
+        "_Late": [
+          "__getattr__",
+          "__init__"
+        ],
+        "_PipelineDatabaseJournal": [
+          "__init__",
+          "_journal",
+          "persist_evidence",
+          "record_pipeline_event"
         ]
       }
     },
@@ -281,6 +312,21 @@
     "src/pipeline_risk_gate.py": {
       "module_functions": [],
       "classes": {
+        "RiskGate": [
+          "__init__",
+          "_apply_risk_modifications",
+          "_filter_hard_risk_decisions",
+          "_has_actionable_signal_fn",
+          "_persist_hard_risk_block",
+          "_reconcile_size_to_risk_budget",
+          "_refuse_queued_earnings_buys",
+          "_risk_mod_floor_breach"
+        ]
+      }
+    },
+    "src/pipeline_risk_gate_mixin.py": {
+      "module_functions": [],
+      "classes": {
         "RiskGateMixin": [
           "_apply_risk_modifications",
           "_filter_hard_risk_decisions",
@@ -288,6 +334,7 @@
           "_persist_hard_risk_block",
           "_reconcile_size_to_risk_budget",
           "_refuse_queued_earnings_buys",
+          "_risk_gate",
           "_risk_mod_floor_breach"
         ]
       }

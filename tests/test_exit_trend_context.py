@@ -37,6 +37,7 @@ from src.risk.exit_guard import (
     classify_trend_context,
     render_owner_break_message,
 )
+from tests.pipeline_factory import build_pipeline
 
 MIN_TOUCHES = 5
 _LEVELS = [90.0]
@@ -336,10 +337,8 @@ def test_no_owner_message_on_intact_basis():
 
 
 def _voicing_pipeline():
-    from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     return p
 
 

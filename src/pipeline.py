@@ -77,15 +77,14 @@ from src.pipeline_exits import (  # noqa: F401
     _reason_claims_alignment_exit,
     _reason_cites_hard_trigger,
 )
-from src.pipeline_admission import AdmissionMixin
+from src.pipeline_admission_shell import AdmissionMixin
 from src.pipeline_delever import (  # noqa: F401
     DeleverMixin,
     _optional_risk_number,
     _risk_number,
 )
-from src.pipeline_risk_gate import (  # noqa: F401
-    RiskGateMixin,
-)
+from src.pipeline_risk_gate import RiskGate
+from src.pipeline_risk_gate_mixin import RiskGateMixin  # noqa: F401
 # Step 7 of docs/PIPELINE_SPLIT_PLAN.md: the research-continuity cluster
 # (change detectors, carry-forward, Form-4 backlog, seat healing) moved to a
 # mixin module. `CarryForward` travelled with it because only those bodies
@@ -968,6 +967,7 @@ class TradingPipeline(
         # __init__) degrade to a disabled sweeper instead of AttributeError.
         from src.execution.cash_sweep import CashSweeper
         self.cash_sweeper = CashSweeper(pipeline=self)
+        self.risk_gate = RiskGate(risk_engine=self.risk_engine, db=self.db, sweeper=self._sweeper, config=self.config)
         # Exit orders still working at the broker — see the attribute's own
         # comment above `_register_exit_settlement`.
         self._unsettled_exit_orders = {}
@@ -979,14 +979,8 @@ class TradingPipeline(
         __new__() without __init__ — for them (and for enabled=False
         configs) every sweep hook must be a structural no-op.
         """
-        from src.execution.cash_sweep import CashSweeper
-        sweeper = getattr(self, "cash_sweeper", None)
-        if not isinstance(sweeper, CashSweeper):
-            return None
-        try:
-            return sweeper if sweeper.enabled() else None
-        except Exception:  # noqa: BLE001 — a broken config must not take down a session
-            return None
+        from src.execution.cash_sweep import sweeper_or_none
+        return sweeper_or_none(getattr(self, "cash_sweeper", None))
 
     def _retired_cash_park_symbol(self) -> str | None:
         """The configured sweep vehicle when the sweep is DISABLED, else None.
@@ -1722,18 +1716,11 @@ class TradingPipeline(
 
         Used by the TRAIL_STOP noise-band clamp and the position-facts
         vol-unit metrics. Failure is always None (callers degrade to the
-        pre-clamp behavior) — never raises.
+        pre-clamp behavior) — never raises. The body lives in
+        `src.data.technical.atr_for_symbol`; this is the delegation.
         """
-        try:
-            bars = self.market.get_ohlcv(symbol, 30) or []
-            if len(bars) < 15:
-                return None
-            from src.data.technical import compute_indicators
-            atr = compute_indicators(symbol, bars).atr_14
-            return float(atr) if atr and atr > 0 else None
-        except Exception as e:  # noqa: BLE001
-            logger.warning("ATR fetch failed for %s: %s", symbol, e)
-            return None
+        from src.data.technical import atr_for_symbol
+        return atr_for_symbol(getattr(self, "market", None), symbol)
 
     def _constructor_cfg_or_none(self):
         """The LIVE `ConstructorConfig`, for rules that must agree with the
@@ -1741,10 +1728,12 @@ class TradingPipeline(
         screen's volatility ceiling is 1 / the widest stop this object can
         produce). `None` when no constructor has been built -- some tests
         drive a bare pipeline -- and the caller then falls back to
-        `config.risk` plus the class defaults.
+        `config.risk` plus the class defaults. The body lives in
+        `src.risk.constants.live_constructor_cfg_or_none`.
         """
-        return getattr(
-            getattr(self, "portfolio_constructor", None), "cfg", None,
+        from src.risk.constants import live_constructor_cfg_or_none
+        return live_constructor_cfg_or_none(
+            getattr(self, "portfolio_constructor", None),
         )
 
     def _sweep_symbol(self) -> str | None:
@@ -1896,13 +1885,13 @@ class TradingPipeline(
 
     @staticmethod
     def _parse_logged_agent_response(row: dict):
-        """Parse stored fenced/prose-wrapped JSON exactly as live agents do."""
+        """Parse stored fenced/prose-wrapped JSON exactly as live agents do.
 
-        return AgentResult(
-            raw_text=row.get("full_response") or "",
-            tokens_used=0,
-            model=row.get("model") or "",
-        ).parse_json()
+        The body lives in `src.agents.logged_response`; this delegation
+        keeps every `self._parse_logged_agent_response(row)` caller working.
+        """
+        from src.agents.logged_response import parse_logged_agent_response
+        return parse_logged_agent_response(row)
 
     @staticmethod
     def _paid_suspended_payload(
