@@ -10,7 +10,10 @@ So this is NOT a three-way vote and NOT a quorum. It is ONE READING.
   * STRUCTURE and TREND supply MARKS — prices the chart says matter. A
     confirmed-broken structural level is a mark. The moving average the
     position's own thesis names is a mark, as is the next longer average
-    the desk already computes. Same kind of thing, read off the same
+    the desk already computes; when the thesis names no average the desk
+    computes, the chart's OWN averages are the marks instead, so no
+    position is left unreadable by how a model happened to word its
+    thesis. Same kind of thing, read off the same
     bars, so they go into one set rather than into separate ballots.
   * VOLATILITY supplies the UNIT and the TOLERANCE. It is not a condition;
     it is how the single distance below the last mark is judged real.
@@ -62,6 +65,7 @@ from src.risk.exit_guard import _MA_REF_RE
 __all__ = [
     "ALIGNMENT_GIVE_BACK_ATR_MULTIPLE",
     "AlignmentExitCheck",
+    "CHART_MA_PERIODS",
     "SMA_LADDER",
     "ChartMark",
     "check_alignment_exit",
@@ -98,6 +102,15 @@ ALIGNMENT_GIVE_BACK_ATR_MULTIPLE: float = 3.0
 #: upstream, so "the next longer one" has exactly one answer for 20 and 50
 #: and none for 200.
 SMA_LADDER: dict[int, int] = {20: 50, 50: 200}
+
+#: Every average the desk already computes upstream, derived from the
+#: ladder above rather than written out again. These are the marks the
+#: CHART supplies when the thesis prose names no average the desk can
+#: compute — see `check_alignment_exit`. No new number: the set is exactly
+#: the periods already named by `SMA_LADDER`.
+CHART_MA_PERIODS: tuple[int, ...] = tuple(
+    sorted(set(SMA_LADDER) | set(SMA_LADDER.values()))
+)
 
 #: Durable, machine-readable verdict codes. Every read writes one of these
 #: per symbol, INCLUDING the states where the desk could not read the chart
@@ -309,26 +322,43 @@ def check_alignment_exit(
         m = ChartMark(lvl, "confirmed-broken structural level")
         marks.append(m)
         mark_periods[m.source] = None
+    # THE CHART CAN SPEAK WITHOUT THE PROSE. When the thesis names an
+    # average the desk computes, that average (of the KIND THE THESIS
+    # NAMED) and the next longer one on the ladder are the marks — the
+    # position's own stated line comes first. When the thesis names no
+    # average, or names one the desk does not compute, the chart still
+    # supplies its own: the simple averages the pipeline already computes
+    # for every name. Coverage is therefore NOT set by how a model worded
+    # its thesis; prose only chooses WHICH average, never WHETHER there is
+    # one. No new number is introduced — `CHART_MA_PERIODS` is derived
+    # from the same ladder.
     if fast is not None:
-        # The thesis mark is computed as the KIND THE THESIS NAMED. The
-        # ladder mark is the next longer average the desk itself computes
-        # upstream, which is a simple average, and is labelled as one — so
-        # no mark is ever a price the chart was not asked for.
-        for period, k in ((fast, kind), (SMA_LADDER.get(fast), "SMA")):
-            if period is None:
-                continue
-            v = moving_average(series, period, k)
-            if v is not None:
-                m = ChartMark(v, f"{k}{period} (thesis rides the {kind}{fast})")
-                marks.append(m)
-                mark_periods[m.source] = (period, k)
+        ma_pairs: tuple[tuple[int | None, str], ...] = (
+            (fast, kind), (SMA_LADDER.get(fast), "SMA"),
+        )
+    else:
+        ma_pairs = tuple((p, "SMA") for p in CHART_MA_PERIODS)
+    for period, k in ma_pairs:
+        if period is None:
+            continue
+        v = moving_average(series, period, k)
+        if v is not None:
+            label = (
+                f"{k}{period} (thesis rides the {kind}{fast})"
+                if fast is not None
+                else f"SMA{period} (the chart's own average — the thesis "
+                     f"named none the desk computes)"
+            )
+            m = ChartMark(v, label)
+            marks.append(m)
+            mark_periods[m.source] = (period, k)
 
     if not marks:
         return AlignmentExitCheck(
             "UNPARSEABLE", CODE_NO_MARK, (), None, None, None,
             "the chart presents no mark for this position — no confirmed "
-            "structural break and no thesis-named average — so there is "
-            "nothing to read; refusing to invent one",
+            "structural break, and too few closes for any average the desk "
+            "computes — so there is nothing to read; refusing to invent one",
             thesis_ma_period=fast, thesis_ma_kind=kind, thesis_text=thesis_text,
         )
     if a is None or a <= 0:
