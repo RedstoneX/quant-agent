@@ -4476,6 +4476,75 @@ def test_the_retired_line_carries_no_per_item_reason():
     )
 
 
+#: Item 187's real headline, 2026-10-01. Every closure word in its status
+#: tail belongs to item 175; the one clause that is about item 187 says the
+#: opposite. Read naively, a live item was reported as finished.
+_ITEM_187_REAL_HEADLINE = (
+    "FRED fetch reliability — the chronic fetch_deadline_exceeded failure "
+    "— filed 2026-09-25, carried out of item 175's retirement. Item 175's "
+    "weekend/holiday overdue-date roll shipped and was retired; this is "
+    "the separate, still-open half."
+)
+
+
+def test_another_items_closure_cited_in_prose_is_not_this_items_status():
+    """Regression for the real item 187: the closure words sit in a clause
+    whose SUBJECT is item 175, not this item."""
+    it = sb.QueueItem(187, "t", "", "", None, False,
+                      headline=_ITEM_187_REAL_HEADLINE)
+    assert it.closure_claim == ""
+    assert it.claims_closure is False
+    assert it.bucket != "finished_unmarked"
+
+
+def test_a_half_shipped_item_is_part_done_not_finished():
+    """Regression for the real item 90: "HALF SHIPPED ... ITEM STAYS OPEN"
+    is a partial statement, read as full closure before the fix."""
+    it = sb.QueueItem(90, "t", "", "", None, False,
+                      headline="Unsourced numbers — TIER 1, half shipped "
+                               "2026-09-18, item stays OPEN.")
+    assert it.closure_claim == "part_done"
+    assert it.claims_closure is False
+
+
+def test_a_self_closure_still_flags_even_when_another_item_is_named():
+    """The guard must not go silent: a real self-closure whose clause
+    happens to end by naming another item is still a closure claim."""
+    it = sb.QueueItem(5, "t", "", "", None, False,
+                      headline="A thing — SHIPPED 2026-09-04, superseding "
+                               "item 12.")
+    assert it.closure_claim == "finished"
+    # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
+    # prose closure is a HINT and no longer classifies on its own. The
+    # vocabulary must still RECOGNISE this sentence, which is what this
+    # test was written to protect; the bucket assertion moved to the
+    # box-based tests above.
+
+
+def test_an_item_quoting_its_own_number_still_claims_closure():
+    """A reference to the item's OWN number is not a cross-reference."""
+    it = sb.QueueItem(42, "t", "", "", None, False,
+                      headline="A thing — item 42 SHIPPED 2026-09-04.")
+    assert it.closure_claim == "finished"
+    # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
+    # prose closure is a HINT and no longer classifies on its own. The
+    # vocabulary must still RECOGNISE this sentence, which is what this
+    # test was written to protect; the bucket assertion moved to the
+    # box-based tests above.
+
+
+def test_a_plain_self_closure_still_flags():
+    """The case the marker exists for must keep firing."""
+    it = sb.QueueItem(7, "t", "", "", None, False,
+                      headline="A thing — SHIPPED 2026-09-04.")
+    assert it.closure_claim == "finished"
+    # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
+    # prose closure is a HINT and no longer classifies on its own. The
+    # vocabulary must still RECOGNISE this sentence, which is what this
+    # test was written to protect; the bucket assertion moved to the
+    # box-based tests above.
+
+
 # ---------------------------------------------------------------------------
 # The finished-but-still-listed signal reads BOXES, not prose.
 # Owner ruling 2026-10-01, after two false alarms in one night: an item whose

@@ -996,7 +996,10 @@ class QueueItem:
         reference to another PR or item stripped first (`_strip_cross_
         references`) — a status word cited about something ELSE this item's
         tail happens to mention ("...while PR #343 (merged) repaired...")
-        is not a claim about this item. Negation is still read on the
+        is not a claim about this item. A closure word sitting in a clause
+        whose SUBJECT is another item ("item 175's roll SHIPPED and was
+        RETIRED; this is the separate, still-open half") is stripped the same
+        way, by `_strip_other_item_clauses`. Negation is still read on the
         UNSTRIPPED tail: "STILL OPEN" and friends are claims about the item
         itself and must not depend on whether a reference happens to sit
         nearby.
@@ -1004,7 +1007,7 @@ class QueueItem:
         tail = self.status_tail
         if any(w in tail for w in _CLOSURE_NEGATIONS):
             return ""
-        scan = _strip_cross_references(tail)
+        scan = _strip_other_item_clauses(_strip_cross_references(tail), self.rank)
         if not _closure_hit(scan, _RENDER_CLOSURE_WORDS):
             return ""
         if _closure_hit(scan, _RENDER_PART_DONE_WORDS):
@@ -1481,7 +1484,11 @@ _RENDER_REVIEW_OWED_WORDS = (
 #: them out would hide live work, which is a worse failure than the one being
 #: fixed. They are labelled instead, so a mostly-finished item does not read
 #: as untouched.
-_RENDER_PART_DONE_WORDS = ("PARTIALLY", "PARTIAL", "MOSTLY")
+#: "HALF" is the same statement as "PARTIALLY" in the backlog's own voice:
+#: item 1's real tail is "TIER 1, HALF SHIPPED 2026-09-18, ITEM STAYS OPEN",
+#: which a plain closure-word search read as fully finished when the author
+#: had written, in the same breath, that it was not.
+_RENDER_PART_DONE_WORDS = ("PARTIALLY", "PARTIAL", "MOSTLY", "HALF")
 
 
 def _closure_hit(tail: str, words: tuple[str, ...]) -> bool:
@@ -1522,6 +1529,50 @@ def _strip_cross_references(tail: str) -> str:
     artifact removed, so `_closure_hit` can never read one as a claim about
     the item whose own tail merely cites it. See `_CROSS_REF_STATUS_RE`."""
     return _CROSS_REF_STATUS_RE.sub(" ", tail)
+
+
+#: A reference to a DIFFERENT numbered item, opening a clause that then says
+#: what happened to THAT item. Item 187's real tail is "... CARRIED OUT OF
+#: ITEM 175'S RETIREMENT. ITEM 175'S WEEKEND/HOLIDAY OVERDUE-DATE ROLL
+#: SHIPPED AND WAS RETIRED; THIS IS THE SEPARATE, STILL-OPEN HALF." — every
+#: closure word in it belongs to item 175, and the one sentence that is about
+#: item 187 says the opposite. Read naively it put a live item in the
+#: "finished, not struck through" bucket.
+#:
+#: Same family as `_CROSS_REF_STATUS_RE`, one shape wider: that one only
+#: catches a parenthetical ("PR #343 (merged)"), i.e. a status in brackets
+#: immediately after the number. This one catches the prose shape, where the
+#: other item is the SUBJECT of a clause and its status is the verb.
+_OTHER_ITEM_REF_RE = re.compile(r"\bITEMS?\s+#?(\d+)", re.I)
+
+#: Clause boundaries. A closure word only belongs to the other item when it
+#: sits in the SAME clause as the reference, so the strip must stop at the
+#: next one rather than swallowing the item's own status.
+_CLAUSE_SPLIT_RE = re.compile(r"([;.]|\u2014)")
+
+
+def _strip_other_item_clauses(tail: str, own_rank: int | None) -> str:
+    """`tail` with each clause truncated at the point where it starts
+    talking about a DIFFERENT numbered item.
+
+    Only the text FROM the reference to the end of that clause is dropped,
+    never the text before it. That direction matters in both directions:
+
+      "ITEM 175'S ROLL SHIPPED"   -> ""           (not this item's closure)
+      "SHIPPED, superseding item 12" -> "SHIPPED" (still this item's closure)
+
+    A reference to the item's OWN number is left alone, so an item that
+    writes its status as "item 42 shipped" about itself still reads as a
+    closure claim. See `_OTHER_ITEM_REF_RE`.
+    """
+    out = []
+    for part in _CLAUSE_SPLIT_RE.split(tail):
+        for m in _OTHER_ITEM_REF_RE.finditer(part):
+            if own_rank is None or int(m.group(1)) != own_rank:
+                part = part[:m.start()]
+                break
+        out.append(part)
+    return "".join(out)
 
 
 def find_closed_items_not_marked_done(work_md: Path) -> list[str]:
