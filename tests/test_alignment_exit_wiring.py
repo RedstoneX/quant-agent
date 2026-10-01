@@ -322,11 +322,13 @@ def test_scan_never_overwrites_an_exit_the_review_asked_for():
         priority=_PRIORITY,
     )
     assert best["AAA"] is mine
-    # The chart IS now read, because item 75's recording needs every open
-    # position every session; reading it still changes nothing here — the
-    # model's own exit stands untouched.
-    assert p._seen == ["AAA"]
+    # STILL not read: item 75's recording does not buy a chart read (a live
+    # yfinance download) to fill itself. The position is recorded as NOT
+    # EVALUATED instead, so a later reader knows its own denominator.
+    assert p._seen == []
     assert [r["symbol"] for r in p._recorded] == ["AAA"]
+    assert p._recorded[0]["verdict"] is None
+    assert "not read this session" in p._recorded[0]["not_evaluated_reason"]
 
 
 def test_scan_supersedes_hold_because_the_chart_decides_not_the_prose():
@@ -599,6 +601,7 @@ def test_every_position_is_recorded_whether_or_not_the_exit_fires(status):
     assert p._recorded[0]["symbol"] == "AAA"
     assert p._recorded[0]["run_id"] == "r"
     assert p._recorded[0]["verdict"].status == status
+    assert p._recorded[0]["not_evaluated_reason"] is None
 
 
 def test_a_recording_failure_never_blocks_the_sale():
@@ -659,6 +662,18 @@ def test_the_stored_reading_keeps_the_raw_distance_and_nulls_the_unknown(tmp_pat
         )
     }
     assert not (cols & {"band", "classification", "weakening", "trim_fraction"})
+    # A position the scan never evaluated is a row of NULLs plus a reason —
+    # the recording never buys a chart read (a live download) to fill itself.
+    assert db.record_alignment_exit_reading(
+        symbol="CCC", verdict=None, run_id="r", is_short=False,
+        not_evaluated_reason="the review already proposed a SELL",
+    )
+    row = db.conn.execute(
+        "SELECT status, breach_atrs, marks_count, not_evaluated_reason"
+        " FROM alignment_exit_readings WHERE symbol = 'CCC'"
+    ).fetchone()
+    assert row[0] is None and row[1] is None and row[2] is None
+    assert row[3] == "the review already proposed a SELL"
 
 
 def test_nothing_reads_the_item_75_recording_back_into_a_decision():

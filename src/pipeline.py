@@ -12671,6 +12671,30 @@ class TradingPipeline:
                 # (the executor's qty-sign gate rejects a SELL on one).
                 act = "COVER" if is_short else "SELL"
                 existing = best_by_symbol.get(symbol)
+                # ITEM 75 RECORDING, AND IT BUYS NOTHING IT DOES NOT ALREADY
+                # HAVE. A chart read is a live `yfinance` download
+                # (`market.get_ohlcv`, uncached), so reading the chart for a
+                # position this scan would have skipped is NEW network work,
+                # not free evidence — the record is therefore written from
+                # what the scan ALREADY computes, and a position the scan
+                # skips gets an explicit "not evaluated this session" row
+                # with a NULL reading rather than a chart read bought to
+                # fill it. A later reader needs the skipped rows to know its
+                # own denominator; it must not mistake them for health.
+                if existing is not None and priority.get(
+                    existing.get("action"), 99,
+                ) <= priority.get(act, 99):
+                    self._record_alignment_reading(
+                        symbol=symbol, verdict=None, run_id=run_id,
+                        is_short=is_short,
+                        not_evaluated_reason=(
+                            "the review already proposed a "
+                            f"{existing.get('action')} for this name, which "
+                            "the scan does not override, so its chart was "
+                            "not read this session"
+                        ),
+                    )
+                    continue
                 facts = (position_facts or {}).get(symbol, {}) or {}
                 verdict = self._alignment_exit_cached(
                     symbol=symbol,
@@ -12682,30 +12706,14 @@ class TradingPipeline:
                     or facts.get("stop_loss"),
                     run_id=run_id,
                 )
-                # ITEM 75 RECORDING, and it changes no decision. The reading
-                # is written for EVERY open position EVERY run, including
-                # the ones this scan is about to skip and the ones that
-                # HOLD — the sessions the exit does not fire are the whole
-                # point, because they are the only population a partial
-                # (trim) could ever be read off and the desk keeps no trace
-                # of them today. The verdict is the one the scan itself
-                # uses, memoised, so nothing is computed a second way.
-                # Nothing reads these rows back into any decision; see
-                # `db.record_alignment_exit_reading`.
-                try:
-                    self.db.record_alignment_exit_reading(
-                        symbol=symbol, verdict=verdict, run_id=run_id,
-                        is_short=is_short,
-                    )
-                except Exception as e:  # noqa: BLE001 — a recording never blocks
-                    logger.warning(
-                        "alignment-exit reading for %s was not recorded (%s)",
-                        symbol, e,
-                    )
-                if existing is not None and priority.get(
-                    existing.get("action"), 99,
-                ) <= priority.get(act, 99):
-                    continue
+                # The reading the scan itself acts on, memoised, written
+                # whether or not it fires — the sessions it does NOT fire are
+                # the whole point. Nothing reads these rows back into any
+                # decision; see `db.record_alignment_exit_reading`.
+                self._record_alignment_reading(
+                    symbol=symbol, verdict=verdict, run_id=run_id,
+                    is_short=is_short,
+                )
                 if not verdict.exit_cleared:
                     continue
                 if self._position_opened_today(symbol):
@@ -12745,6 +12753,23 @@ class TradingPipeline:
                     "is raised for it",
                     getattr(position, "symbol", "?"), e,
                 )
+
+    def _record_alignment_reading(
+        self, *, symbol: str, verdict, run_id: str, is_short: bool,
+        not_evaluated_reason: str | None = None,
+    ) -> None:
+        """Item 75 recording. Never raises, never blocks a sale, never
+        buys a chart read to fill itself."""
+        try:
+            self.db.record_alignment_exit_reading(
+                symbol=symbol, verdict=verdict, run_id=run_id,
+                is_short=is_short, not_evaluated_reason=not_evaluated_reason,
+            )
+        except Exception as e:  # noqa: BLE001 — a recording never blocks
+            logger.warning(
+                "alignment-exit reading for %s was not recorded (%s)",
+                symbol, e,
+            )
 
     def _position_opened_today(self, symbol: str) -> bool:
         """Was this position bought in TODAY's session? DATE EQUALITY ONLY.

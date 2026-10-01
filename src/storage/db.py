@@ -1187,6 +1187,7 @@ class Database:
                 marks_count INTEGER,
                 thesis_ma_period INTEGER,
                 thesis_ma_kind TEXT,
+                not_evaluated_reason TEXT,
                 UNIQUE (run_id, symbol)
             )
             """
@@ -1194,6 +1195,10 @@ class Database:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_alignment_exit_readings_symbol_ts "
             "ON alignment_exit_readings (symbol, session_date)"
+        )
+        _ensure_column(
+            "alignment_exit_readings", "not_evaluated_reason",
+            "not_evaluated_reason TEXT",
         )
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
@@ -2890,6 +2895,7 @@ class Database:
     def record_alignment_exit_reading(
         self, *, symbol: str, verdict, run_id: str | None = None,
         is_short: bool | None = None, session_date: str | None = None,
+        not_evaluated_reason: str | None = None,
     ) -> bool:
         """Record one open position's alignment-exit reading for this run.
 
@@ -2906,6 +2912,13 @@ class Database:
         open position is written EVERY run, fired or not: the whole point
         is the sessions the exit does NOT fire, which leave no trace today.
 
+        THIS RECORDING BUYS NO DATA TO FILL ITSELF. A chart read is a live
+        `yfinance` download (`market.get_ohlcv`, uncached), so a position
+        the scan did not already evaluate is written with `verdict=None`
+        and an explicit `not_evaluated_reason`, leaving every reading
+        column NULL. A later reader needs those rows to know its own
+        denominator, and must not read a NULL reading as an intact chart.
+
         Unknown stays NULL. A HOLD with nothing given up carries no
         distance, and an UNPARSEABLE read carries no distance and no band;
         neither is filled with a zero or an assumed value, because "price
@@ -2917,7 +2930,7 @@ class Database:
         double-counting a position.
         """
         sym = (symbol or "").strip().upper()
-        if not sym or verdict is None:
+        if not sym or (verdict is None and not not_evaluated_reason):
             return False
 
         def _num(x):
@@ -2947,8 +2960,8 @@ class Database:
                     "  status, code, breach_atrs, band_atrs,"
                     "  sessions_since_mark_lost, last_mark_price,"
                     "  last_mark_source, marks_count, thesis_ma_period,"
-                    "  thesis_ma_kind"
-                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "  thesis_ma_kind, not_evaluated_reason"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         self._sqlite_utc_timestamp(datetime.now(UTC)),
                         run_id or None,
@@ -2962,9 +2975,10 @@ class Database:
                         sessions,
                         _num(getattr(last_mark, "price", None)),
                         getattr(last_mark, "source", None),
-                        len(marks),
+                        len(marks) if verdict is not None else None,
                         period,
                         (getattr(verdict, "thesis_ma_kind", "") or "") or None,
+                        not_evaluated_reason or None,
                     ),
                 )
                 self.conn.commit()
