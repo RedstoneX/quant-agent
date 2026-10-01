@@ -77,7 +77,7 @@ from src.pipeline_exits import (  # noqa: F401
     _reason_claims_alignment_exit,
     _reason_cites_hard_trigger,
 )
-from src.pipeline_admission import AdmissionMixin
+from src.pipeline_admission_shell import AdmissionMixin
 from src.pipeline_delever import (  # noqa: F401
     DeleverMixin,
     _optional_risk_number,
