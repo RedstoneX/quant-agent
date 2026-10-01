@@ -319,8 +319,6 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 208)
 
 
-**212. A range (Type A) position's structural trail is gated behind the recorded take-profit target, a number nobody sourced, so from entry until price passes that target the position is protected by its original entry stop alone and by nothing that follows price up. Measured on 33 real production BUY trades: the target's reward-to-risk is median 1.33 and at most 1.72, so the target IS reached in practice while +2R never has been — which is why PR #857's attempt to move the gate to +2R was reverted as strictly worse on live data. Separately verified: the target has no power to close or cap a position, since no take-profit order ever reaches the broker and a target rationale cannot authorise a sale, so gating this trail is its ONLY live behaviour. The owner's ratified answer is exit-on-alignment — sell when structure, ATR and an SMA cross agree the trend is over, never on a made-up level — and the alignment exit on open PR #853 is the candidate replacement for this gate; do NOT build a replacement, re-derive the gate, or widen any multiple under this item. Detail: `docs/BOARD_NOTES.md` (item 212).** The defect is the unprotected stretch between entry and the gate, not the choice of multiple.
-
 DONE WHEN:
   - [ ] (a) a recorded decision, in `docs/INCIDENT_HISTORY.md`, on what enables a range position's structural trail once PR #853's alignment exit has landed — either the alignment reading itself replaces the target gate, or the gate is removed and the reason the entry stop alone suffices is written down.
   - [ ] (b) the chosen answer is live for Type A entries and a range position between entry and its target is observably protected by something that reads off the instrument, not by an unsourced level.
@@ -380,6 +378,7 @@ detail: docs/BOARD_NOTES.md (item 210)
 - retired queue: 99
 - retired queue: 157
 - retired queue: 119
+- retired queue: 212
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

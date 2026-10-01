@@ -17632,3 +17632,35 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **Revisit only on a measurement:** the tie rate of the current four-key sort on real sessions is not measured here (the 9-of-12 figure predates the tiebreaks); if it is high, reopen with that number.
 
 **What would catch it next time.** `tests/test_ranking_composite_inputs.py` fails if reward:risk becomes a score input or stops being a tiebreak. Items 208(b) (provider-console spend cap) and 208(c) (paid benchmark) remain open.
+
+## 2026-10-01 — DECISION: the Type A take-profit gate on the structural trail is removed (item 212)
+
+A range (Type A) position's structural and chandelier trail used to be gated
+behind the recorded take-profit target. The target is an unsourced number, it
+never reaches the broker as an order, and a target rationale cannot authorise
+a sale — so gating this trail was the only live behaviour the target had, and
+between entry and the target the position was protected by its original entry
+stop alone.
+
+DECIDED: remove the gate. A Type A position now runs the same structural /
+chandelier trail as Type B from entry. The two owner-ratified R-multiple
+ratchets (+1R breakeven, +2R lock-at-+1R) are unchanged and still run first;
+whichever leg proposes the TIGHTER stop is placed. No multiple was widened,
+no replacement gate was built, and no new constant was introduced. What
+closes a range position remains the alignment exit — sell when structure, ATR
+and an SMA cross agree the trend is over — never the target.
+
+Why now: the alignment exit is merged and deployed, so the owner's ratified
+answer to "when do we sell" exists in code. PR #857's earlier attempt to move
+the gate to +2R was reverted as strictly worse on live data; this change does
+not move the gate, it deletes it.
+
+MEASURED, 2026-10-01: all 20 filled range BUYs in the production record were
+replayed day by day over daily bars from each entry date, gated against
+ungated; 18 replayed (two are for a symbol absent from the bar set). Zero
+positions stopped out earlier under the ungated trail and zero stopped out
+that did not before; three ended with a tighter stop and none of the three
+was stopped out as a result. Separately, by construction the trail cannot
+loosen a stop: every candidate must sit strictly between the live stop and
+current price, must clear the minimum-ratchet and noise-band invariants, and
+is re-checked after rounding.

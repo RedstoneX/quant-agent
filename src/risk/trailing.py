@@ -682,37 +682,47 @@ def evaluate_trailing_stop(
     # identical to the pre-item-82 `!= "breakout"` compare this replaces.
     from src.risk.constants import is_trend_trade
 
-    # --- Type A: no STRUCTURAL trailing until the target is exceeded -------
+    # --- Type A: the R-ratchets, then the SAME structural trail as Type B --
+    # Item 212: the structural/chandelier trail used to be GATED behind the
+    # recorded take-profit target, so between entry and that target a range
+    # position had only its original entry stop and nothing followed price
+    # up. The target is an unsourced number, it never reaches the broker as
+    # an order, and gating this trail was its only live behaviour — so the
+    # gate is removed rather than re-derived or replaced (the owner's
+    # ratified answer to "when do we sell" is the alignment exit, which is
+    # already live). No multiple is widened and no new constant appears.
+    #
+    # The two ratified R-multiple ratchets are UNCHANGED and still run
+    # first; the structural trail is now simply also allowed to run, and
+    # whichever of the two proposes the TIGHTER stop wins. Both legs only
+    # ever ratchet toward less risk, so nothing here can move a stop away
+    # from price.
+    range_fallback: TrailEvaluation | None = None
     if not is_trend_trade(setup_type, structural_ceiling=structural_ceiling):
-        target = _finite(reference_target) if reference_target is not None else None
-        exceeded = False
-        if target is not None:
-            # Short mirror: the target is a level BELOW entry someone is
-            # defending. "Exceeded" means price fell PAST it.
-            exceeded = (cur < target) if is_short else (cur > target)
-        if not exceeded:
-            # Fix #3 + item 142: not yet past the target, so no STRUCTURAL
-            # trail — but the two R-multiple ratchets still apply here, which
-            # is exactly the gap these fixes close (previously: fully
-            # unprotected until 100% of target, target-missing data included).
-            # Try the higher-protection +2R -> lock-+1R step first (item 142);
-            # if price has not reached +2R it returns no proposal and the +1R
-            # -> breakeven step (fix #3) decides. Both fail closed without an
-            # initial stop, and neither ever loosens a stop.
-            second = _range_second_ratchet(
+        # Try the higher-protection +2R -> lock-+1R step first (item 142); if
+        # price has not reached +2R it returns no proposal and the +1R ->
+        # breakeven step (fix #3) decides. Both fail closed without an
+        # initial stop, and neither ever loosens a stop.
+        second = _range_second_ratchet(
+            symbol=symbol, ent=ent, cur=cur, stop=stop,
+            initial_stop=initial_stop, is_short=is_short,
+            setup_type=setup_type,
+        )
+        range_fallback = second if second.proposal is not None else (
+            _range_breakeven_ratchet(
                 symbol=symbol, ent=ent, cur=cur, stop=stop,
                 initial_stop=initial_stop, is_short=is_short,
                 setup_type=setup_type,
             )
-            if second.proposal is not None:
-                return second
-            return _range_breakeven_ratchet(
-                symbol=symbol, ent=ent, cur=cur, stop=stop,
-                initial_stop=initial_stop, is_short=is_short,
-                setup_type=setup_type,
-            )
-        # Target exceeded: fall through to the structural/chandelier trail
-        # below exactly as before fix #3 — unchanged.
+        )
+
+    def _or_range(ev: "TrailEvaluation") -> "TrailEvaluation":
+        """The structural leg found nothing usable: fall back to whatever the
+        ratified R-ratchets proposed, which is exactly what this function
+        returned for a Type A position before item 212."""
+        if range_fallback is not None and range_fallback.proposal is not None:
+            return range_fallback
+        return range_fallback if range_fallback is not None else ev
 
     # --- Candidate SET: structure first, chandelier second -----------------
     # BOTH legs are now always built. Before this change the chandelier was
@@ -766,7 +776,7 @@ def evaluate_trailing_stop(
                 candidates.append((chandelier, "chandelier"))
 
     if not candidates:
-        return TrailEvaluation(None, TRAIL_CODE_NO_CANDIDATE)
+        return _or_range(TrailEvaluation(None, TRAIL_CODE_NO_CANDIDATE))
 
     # --- Invariants --------------------------------------------------------
     # Ratchet toward less risk only, and only when the move is worth an order,
@@ -802,15 +812,25 @@ def evaluate_trailing_stop(
             first_refusal = _refusal
 
     if candidate is None:
-        return TrailEvaluation(None, first_refusal or TRAIL_CODE_NO_CANDIDATE)
+        return _or_range(
+            TrailEvaluation(None, first_refusal or TRAIL_CODE_NO_CANDIDATE)
+        )
 
     candidate = round(candidate, 2)
     if is_short:
         if candidate >= stop or candidate <= cur:
-            return TrailEvaluation(None, TRAIL_CODE_ROUNDED_OFF_SIDE)
+            return _or_range(TrailEvaluation(None, TRAIL_CODE_ROUNDED_OFF_SIDE))
     else:
         if candidate <= stop or candidate >= cur:
-            return TrailEvaluation(None, TRAIL_CODE_ROUNDED_OFF_SIDE)
+            return _or_range(TrailEvaluation(None, TRAIL_CODE_ROUNDED_OFF_SIDE))
+
+    # Item 212: a Type A position can now have BOTH a ratchet proposal and a
+    # structural one. Take the tighter — never the looser, and never a step
+    # away from price.
+    if range_fallback is not None and range_fallback.proposal is not None:
+        _r = range_fallback.proposal.new_stop
+        if (_r < candidate) if is_short else (_r > candidate):
+            return range_fallback
 
     locked = ""
     if is_short:

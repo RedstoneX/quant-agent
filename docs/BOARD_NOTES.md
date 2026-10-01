@@ -1175,7 +1175,7 @@ sessions, MEASURED above, against a window needing `2 * PIVOT_WINDOW + 1`
 bars), remains unfixable while that constant is documented as unsourceable.
 No number was invented here; the band width, the chandelier multiple and the
 minimum ratchet are all unchanged.
-## item 212
+## item 212 — RETIRED 2026-10-01, target gate removed: the structural trail now runs from entry
 
 Filed 2026-09-30 alongside the revert of PR #857.
 
@@ -1207,6 +1207,25 @@ and an SMA cross agree the trend is over, never on a single made-up level.
 The alignment exit on open PR #853 is the candidate replacement for this
 gate. Do not build a replacement under this item, and do not re-derive,
 widen or replace any multiple.
+
+RESOLVED 2026-10-01. The alignment exit (PR #853) is merged and live, so the
+owner's ratified answer to "when do we sell" exists in code and the gate had
+nothing left to stand on. The gate is REMOVED: a Type A position now runs the
+SAME structural/chandelier trail as Type B from entry, the two ratified
+R-multiple ratchets are unchanged and still run, and whichever leg proposes
+the TIGHTER stop is the one placed. No multiple was widened, no replacement
+gate was built, and no new constant was introduced.
+
+The load-bearing question — can ungating ever move a stop AWAY from price —
+is answered twice. By construction: every candidate must already sit strictly
+between the live stop and current price, must clear the minimum-ratchet and
+noise-band invariants, and is re-checked after rounding, so a looser level
+cannot be proposed at all. And by replay: all 20 filled range BUYs in the
+production record were replayed day by day over daily bars from each entry
+date, gated against ungated. 18 of the 20 replayed (two are for a symbol
+absent from the bar set). MEASURED: zero positions stopped out earlier under
+the ungated trail and zero stopped out that did not before; three positions
+ended with a tighter stop and none of the three was stopped out as a result.
 ## item 211
 
 Why the threshold is not a new number. The circuit already answers "how long
