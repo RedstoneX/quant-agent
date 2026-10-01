@@ -81,8 +81,10 @@ def get_cash_sweep_symbol() -> str:
     return get_config().cash_sweep.symbol
 
 
-def get_cash_sweep_reserve_pct() -> float:
-    return get_config().cash_sweep.reserve_pct
+def get_cash_reserve_pct() -> float:
+    """The /account reserve band. Relocated out of `cash_sweep` 2026-10-01
+    (board item 190): the retired sweep no longer owns it."""
+    return get_config().cash_reserve.pct
 
 
 def get_risk_limits() -> RiskConfig:

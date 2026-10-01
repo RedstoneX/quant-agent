@@ -166,10 +166,11 @@ def _cash_sweep_config() -> dict:
     try:
         raw = yaml.safe_load(SETTINGS_PATH.read_text()) or {}
         sweep = raw.get("cash_sweep") or {}
+        reserve = raw.get("cash_reserve") or {}
         return {
             "enabled": bool(sweep.get("enabled", False)),
             "symbol": (str(sweep.get("symbol", "SGOV")).strip().upper() or "SGOV"),
-            "reserve_pct": float(sweep.get("reserve_pct", 1.0)),
+            "reserve_pct": float(reserve.get("pct", 1.0)),
         }
     except Exception as exc:
         logger.warning("could not read cash_sweep config: %s", exc)

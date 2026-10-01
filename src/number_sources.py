@@ -274,6 +274,7 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
     "RiskConfig",
     "ExecutionConfig",
     "CashSweepConfig",
+    "CashReserveConfig",
     "DeploymentGapConfig",
     "IntradayScanConfig",
     "SmartMoneyConfig",
@@ -293,7 +294,7 @@ SCOPED_CONFIG_MODULE = "src/config.py"
 #: `absolute_min_stop_atr_multiple = 1.0` (in both `RiskConfig` and
 #: `ConstructorConfig`), `min_target_atr_multiple = 1.0`,
 #: `breakout_projection_atr_multiple = 1.0`, `NOISE_BAND_ATR_MULTIPLE = 1.0`
-#: and `CashSweepConfig.reserve_pct = 1.0`. One ATR is not an identity — it
+#: and `CashReserveConfig.pct = 1.0`. One ATR is not an identity — it
 #: is the hard floor under every stop this desk sets.
 NEUTRAL_VALUES: frozenset[float] = frozenset({0.0})
 

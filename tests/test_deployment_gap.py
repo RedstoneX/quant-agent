@@ -42,7 +42,7 @@ def test_pm_facts_render_deployment_gap_when_under():
 
 
 def test_pm_facts_render_near_mandate_still_asks_for_residual_cash_reason():
-    """-0.5pp is inside the default cash-reserve band (`reserve_pct`=1.0,
+    """-0.5pp is inside the default cash-reserve band (`deployment_gap.band_pct`=1.0,
     unset here so PMFacts falls back to CashSweepConfig's own default)."""
     f = PMFacts()
     f.invested_pct = 99.5

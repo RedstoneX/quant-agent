@@ -84,7 +84,7 @@ def _park_pipeline():
     p = TradingPipeline.__new__(TradingPipeline)
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
-                                   reserve_pct=1.0, min_order_usd=500.0),
+                                   min_order_usd=500.0),
         risk=RiskConfig(max_position_pct=20, max_total_position_pct=90,
                         max_sector_pct=40,
                         require_stop_loss=True, allow_margin=False),
@@ -320,7 +320,7 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     p = TradingPipeline.__new__(TradingPipeline)
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
-                                   reserve_pct=1.0, min_order_usd=500.0),
+                                   min_order_usd=500.0),
         risk=RiskConfig(max_position_pct=20, max_total_position_pct=90,
                         max_sector_pct=40,
                         require_stop_loss=True, allow_margin=False))
