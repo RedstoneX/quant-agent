@@ -115,8 +115,9 @@ Why it was rewritten. Four of the six original criteria were written before the 
 What was checked against live code on 2026-10-01, because the filing's own claims had rotted. The target still reaches no broker (`src/api/holding_why.py` records this and it is still true: no caller passes `take_profit_price` to Alpaca). But the claim that the target gates whether the structural trail runs is now FALSE — `src/risk/trailing.py` removed that gate under item 142 and the structural trail runs for a range trade once it is past the owner-ratified +2R ratchet trigger, target or no target. One live effect survives: whether price has exceeded the target decides whether the +1R lock floor constrains that trail, so a number the desk calls made-up still moves a live stop. That is now said in the owner-facing note rather than contradicted by it.
 
 DONE WHEN:
-  - [x] the target's one remaining live effect (gating the +1R trail floor on a range trade) is stated wherever the target is shown to the owner, and pinned by a test — done 2026-10-01, `src/api/holding_why.py` + `tests/test_holding_why.py`
-  - [ ] the desk records, for every open position every session, the alignment-exit reading it already computes (how far below the last mark price has closed, in that name's own ATR) EVEN WHEN it does not trigger an exit — the desk today keeps no trace of a position that weakened and recovered, which is the only population a partial could ever be read off
+  - [x] the target's one remaining live effect is stated wherever the target is shown to the owner, and pinned by a test — done 2026-10-01; the effect named was gating the +1R trail floor on a range trade, and open PR 928 (item 212) removes that gate, after which the target has NO live effect and the owner-facing wording must be re-read, so this tick covers the statement being true of main, not the effect surviving
+  - [x] the desk records, for every open position every session, the alignment-exit reading it already computes (how far below the last mark price has closed, in that name's own ATR) EVEN WHEN it does not trigger an exit — built 2026-10-01, `alignment_exit_readings`, RECORDING ONLY and UNPROVEN until a live session writes a row
+  - [ ] the owner is no longer told the target does anything once PR 928 (item 212) removes its last live effect: the "soft — you manage exit" wording and the `+1R trail floor` sentence are gone from `src/api/holding_why.py`, the dashboard holding card and every Telegram position line that shows a target, each replaced by a statement that the target informs nothing and moves no stop; pinned by a test that fails if any owner-facing surface claims a live effect for it. Ticks only after 928 merges; an untrue statement to the owner is a lie, so this is a defect and not a reminder.
   - [ ] that record has been read once, and the answer written into `docs/BOARD_NOTES.md` (item 75): either positions do pass through a durable intermediate band of weakening before the trend ends, in which case a trim has something to key off, or they do not, in which case the alignment exit is the whole answer and this item retires
   - [ ] no trim fraction is chosen before that record exists; two derivations were attempted on 2026-10-01 and both failed, and the reasons are written down in `docs/BOARD_NOTES.md` (item 75) so neither is retried blind
   - [ ] nothing here is fitted to the desk's own trading record, and nothing ships alone
@@ -378,19 +379,19 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
+- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 157
-- retired queue: 119
 - retired queue: 193
+- retired queue: 119
 - retired queue: 211
-- retired queue: 107
 - retired queue: 185
-- retired queue: 76
 - retired queue: 214
+- retired queue: 107
+- retired queue: 76
+- retired queue: 174
 - retired queue: 199
 - retired queue: 20
-- retired queue: 174
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
