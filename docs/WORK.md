@@ -239,14 +239,6 @@ DONE WHEN:
 detail: docs/board_notes/
 
 
-**211. Alert coalescing was keyed to the wrong quantity, the unprotected-position alert was deduped per DAY not per symbol, and the mute dropped messages before recording them — re-opened 2026-10-01 after measurement.** The 2026-10-01 coalescing shipped and SAVES NOTHING on real data: all 22 suspension episodes of 26-30 Sep ran 24 to 253 minutes, none was inside the 15-minute self-clear window it keys on, so all 44 of 107 messages still paged [measured, production `llm_circuit_events` + `notifier_sends`, read-only]. Suppression now spans the EPISODE — same trigger code, same ET budget day, resolved or not — with no duration invented. detail: docs/board_notes/
-
-DONE WHEN:
-- [x] a re-latch of one unresolved fault inside its budget day pages the owner once, not once per flap, and the hold is written to the event record with its reason
-- [x] the "position is unprotected" owner alert is deduped per symbol per day like its two siblings, so a second name going naked the same day still pages
-- [x] every message the global mute drops is recorded with its type, symbols and timestamp; nothing is un-muted and no configuration is touched
-- [ ] the owner is shown what the mute has been swallowing since 30 September
-
 **218. Arithmetically losing geometry is REFUSED — the owner ruled 2026-10-01; built, measurement corrected, still open on one half.** His words: "For now, let's refuse a bad risk reward ratio. See if that improves the desk purchases." Shown buy 100 / stop 94 / nearest level above 104 — risking 6 to make 4 — he chose refusal over both leaving it alone and shrinking the position, which SUPERSEDES the previous standing rule that a wide stop ships and is answered by smaller size. The threshold is PARITY and nothing above it, because parity is the only line needing no invented value; why that is so, and what it costs to compare a real price against an estimated one, is in the board note. MEASUREMENT CORRECTED (the earlier median 1.44 / minimum 0.68 / six-below read post-management trailed columns; see the note). Re-measured against the decision-time columns the gate actually sees [measured 2026-10-01 against the production database, read-only, `initial_stop_loss` / `initial_take_profit`, 33 BUY trades], median reward:risk is 1.24, minimum 0.42, and ELEVEN buys sit below parity (0.42, 0.44, 0.46, 0.68, 0.76, 0.79, 0.82, 0.87, 0.90, 0.95, 0.96 (symbols withheld: the repo is public). THIS NUMBER IS AN UPPER BOUND ON REFUSALS, NOT A PREDICTION: it is computed from `initial_take_profit`, the horizon-reach-CAPPED target, which is exactly the basis this item argues is the wrong numerator. The gate measures the UNCAPPED structural level, which is never stored, so the real refusal count can only be lower (a capped target understates reward) and the measured-versus-projected split cannot be recovered). The refusal is placed where the trade as a whole is accepted or declined, NOT inside `_widen_stop_past_noise` — keying it off the widened stop would make it a function of stop width, the deleted stop-width gate under another name. The breakout exemption was DROPPED at this gate and replaced by the measured test, because the honest question is whether the level computation found a level above entry, not whether an analyst typed "breakout" — and the label-keyed version would have spared the two WORST ratios on the real book (0.42 and 0.46, both labelled breakout [measured]) while refusing better trades.
 
 DONE WHEN:
@@ -330,8 +322,9 @@ detail: docs/board_notes/item-219.md
 - retired queue: 223
 - retired queue: 222
 - retired queue: 215
-- retired queue: 190
 - retired queue: 220
+- retired queue: 190
+- retired queue: 211
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
