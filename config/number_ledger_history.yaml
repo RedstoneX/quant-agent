@@ -967,3 +967,26 @@ changes:
       answer — is what made reformulation the required move rather than a
       third derivation attempt. The two failed derivations stay recorded in
       docs/BOARD_NOTES.md (item 186) so neither is tried again.
+  - delta: 2
+    date: "2026-10-01"
+    why: |
+      2026-10-01, board item 223: +2 for the minimum-risk-per-trade floor
+      (0.5), which this ledger carries as two rows for one number --
+      `src.risk.constants.STARTER_POSITION_RISK_PCT` and
+      `src.portfolio_constructor.ConstructorConfig.min_risk_pct`. Both moved
+      from `sourced` to `arbitrary`. Neither VALUE changes and no behaviour
+      changes. Their stated source was the owner's own ratification of
+      2026-08-27 plus the deployed key in config/settings.yaml, and this
+      desk's own rule is that a ratified point is not a sourced point -- so
+      `sourced` overstated what is known. Both now carry the open question,
+      what it costs unanswered, and a BUILT settlement route: the sub-floor
+      recording added in the same change writes every positive below-floor
+      portfolio-manager request to `trade_refusals.requested_risk_pct` with
+      the floor in force beside it. They move together because one number
+      cannot hold two statuses. Measured over 142 portfolio-manager logs
+      (2026-08-17 to 2026-09-30), 115 targets carried a risk allocation and
+      ZERO were positive-but-below the floor -- which is also why a deterministic
+      sub-floor refusal was ruled out on the risk route 2026-10-01, on the
+      adversary's measurement: it would have fired
+      zero times. The citation `config/settings.yaml:751` was stale in four
+      places and is corrected to 685 in the same commit.
