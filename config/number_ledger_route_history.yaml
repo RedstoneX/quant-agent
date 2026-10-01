@@ -280,11 +280,53 @@ changes:
       become indistinguishable from no de-levering at all if the configured
       gross cap is ever lowered to 1.0x, and it is to be deleted in that
       case rather than re-picked at some other multiple.
-  - delta: -24
+  - date: 2026-10-01
+    delta: -16
+    why: >-
+      Board item 90, routing tranche seven: every remaining routeless row in
+      `src/config.py` gains a settlement route. 16 rows -- the cash reserve,
+      the deployment-gap band, the macro event horizon, the entry-slippage
+      belt, the three intraday-scan numbers, the two nomination caps, and
+      seven `RiskConfig` fields (the hard stop floor, the gross cap, the
+      single-name risk envelope, the target horizon, the target reach cap,
+      the level touch bar and the target-divergence warning band). No value
+      moved, no status changed, nothing was routed to the owner, and the
+      `arbitrary` count is unchanged at 133.
+
+      RATIFICATION IS NOT A SOURCE. The gross cap (owner-ratified
+      2026-09-01), the single-name risk envelope (2026-08-27) and the target
+      horizon (2026-09-25) were all candidates to be relabelled `sourced` on
+      the strength of the owner's own sign-off, and all three stay
+      `arbitrary` with a route, because this desk labels ratified appetite
+      `arbitrary` and says so in the route itself.
+
+      NO ROUTE POINTS AT THIS DESK'S OWN TRADES. The stop floor, the gross
+      cap, the single-name envelope, the target reach cap, the intraday move
+      trigger, the macro horizon and the level touch bar all route to
+      measurements over the UNIVERSE the desk could trade. The level touch
+      bar additionally records that the in-repo 2026-09-03 table is not a
+      source and that its reconstruction on this checkout's 276-bar panel
+      FAILED, with the shuffled control beating real at every touch count.
+
+      DELETE OUTCOMES ARE STATED. The likeliest deletion is the target
+      horizon: Rex's 2026-09-30 ruling is that the desk exits on alignment
+      and never on a target, so the recording is expected to show the
+      ceiling changing no order at all, and the target reach cap goes with
+      it. The nomination per-seat cap goes if the run-level total always
+      binds first; the intraday candidate cap goes if the risk envelope
+      always binds first; the entry-slippage belt goes if it is redundant
+      with the universe half-spread screen; and the gross cap goes if the
+      maintenance-margin requirement binds before it in every scenario.
+  - delta: -8
     date: '2026-10-01'
     why: >-
       Board item 90, routing tranche EIGHT and last: the routeless residue
-      reaches ZERO. Twenty-three rows gained a `settles_by` route -- the
+      reaches ZERO. RECOUNTED AFTER MERGE, not carried over. This tranche was
+      written against a ledger whose routeless residue was 24 and would have
+      taken it to zero on its own; tranche seven landed on main in parallel
+      and had already routed sixteen of the same rows, leaving eight. The
+      delta on this line is therefore -8, the figure `classification()` gives
+      against the MERGED ledger, and not either side's pre-merge number. Twenty-three rows gained a `settles_by` route -- the
       four `SEAT_WEIGHT` seat priors, the rotation margin, the short-gap
       sizing haircut, the exit limit pad, and the sixteen remaining
       `src.config` rows (cash reserve, deployment-gap band, event horizon,

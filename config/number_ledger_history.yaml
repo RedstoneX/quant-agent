@@ -934,6 +934,19 @@ changes:
       moving it would be inventing a number; only the honesty of the label
       changes.
 
+  - date: 2026-10-01
+    delta: -1
+    why: >-
+      Board item 221. The sector-concentration preview's flat per-candidate
+      size, `TradingPipeline._build_projected_portfolio(default_buy_pct)` at
+      5, is DELETED rather than re-valued: the preview now sizes each
+      candidate through `risk_budget_allocation_pct`, the same single
+      definition the constructor caps a long and a short with, from that
+      candidate's own entry and stop. The row leaves the ledger because the
+      number no longer exists, not because it was sourced, and no new
+      arbitrary number replaced it -- the two fallbacks the preview reads
+      when no constructor is attached are `ConstructorConfig`'s own existing
+      ratified defaults, already carried elsewhere in the ledger.
   - delta: -3
     date: "2026-10-01"
     why: |
@@ -967,6 +980,29 @@ changes:
       answer — is what made reformulation the required move rather than a
       third derivation attempt. The two failed derivations stay recorded in
       docs/BOARD_NOTES.md (item 186) so neither is tried again.
+  - date: 2026-10-01
+    delta: 0
+    why: >-
+      CORRECTION to the 2026-10-01 entry above, which described a design
+      that was REJECTED before it shipped. That entry says the preview
+      "now sizes each candidate through `risk_budget_allocation_pct` ...
+      from that candidate's own entry and stop". It does not. Sizing every
+      candidate at the largest size its own stop permits was built,
+      measured and thrown out the same day: with this desk's ordinary stop
+      widths it reaches the single-name ceiling and projects sector weights
+      in the hundreds of percent, which is a more confident fiction than
+      the flat slice it replaced. What SHIPPED is that the preview states
+      no projected weight at all -- it reports the held book's measured
+      sector weights, each sector's share OF THE CANDIDATE SET, and per
+      candidate its own stop distance with the stop-implied ceiling CLAMPED
+      to the single-name notional ceiling, as a cap on one name that is
+      never summed. The deletion of the flat `default_buy_pct` row and its
+      -1 delta stand unchanged and are not re-counted here; this entry
+      moves no number, it corrects the permanent record of why the row
+      went. The preview's two remaining dials are read from
+      `ConstructorConfig`'s own declared field defaults, not from literals
+      at the call site, so no untracked flat number replaced the deleted
+      one.
   - delta: 2
     date: "2026-10-01"
     why: |

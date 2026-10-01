@@ -7,6 +7,8 @@ that cares about "is this account meaningfully on margin?" imports from
 here.
 """
 
+import math
+
 MARGIN_DEFICIT_FLOOR_USD = 1.0
 """Minimum cash deficit (in USD) before cash-only-policy actions fire.
 
@@ -278,6 +280,60 @@ Both legs now call `gap_adjusted_risk_per_share` below, and
 `tests/test_one_definition_per_quantity.py` fails if a second application
 of this multiple reappears anywhere under `src/`.
 """
+
+
+def risk_budget_allocation_pct(
+    *, entry_price: float, stop_price: float, total_value: float,
+    risk_budget_pct: float, is_short: bool = False,
+    short_gap_risk_multiple: float | None = None,
+) -> float | None:
+    """How big this ONE name's OWN stop distance lets it be, as a RAW
+    notional percentage of equity. `None` when the geometry cannot bound it.
+
+    THE one definition of stop-derived size, board item 221. Three callers:
+    `PortfolioConstructor._build_buy` and `._build_short`, which cap the
+    PM's requested delta with it, and the PM-facing projected-portfolio
+    preview (`TradingPipeline._build_projected_portfolio`), which sizes each
+    candidate with it.
+
+    The preview used to give every candidate an identical flat slice, so the
+    sector mix the PM self-corrected against was a book no candidate would
+    ever be given: a wide-stopped name gets far less than a flat slice and a
+    tight-stopped name far more. Both directions were live — a sector the
+    preview showed as crowded could be light in reality (a good name dropped
+    for nothing) and one it showed as comfortable could be heavy (the
+    crowding went through unflagged).
+
+    The arithmetic below is the constructor's own, moved here verbatim and
+    in the same order, so the extraction changes no traded value:
+
+        qty_by_risk   = risk_dollars_allowed / risk_per_share
+        position_$    = qty_by_risk * entry_price
+        allocation_%  = position_$ / total_value * 100
+
+    `risk_per_share` is UNSIGNED (D4: a short's stop sits ABOVE its entry),
+    and the D8 short-side gap haircut is applied through the one
+    application site below, never re-implemented.
+    """
+    try:
+        entry = float(entry_price)
+        stop = float(stop_price)
+        equity = float(total_value)
+        budget = float(risk_budget_pct)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(entry) and math.isfinite(stop)
+            and math.isfinite(equity) and math.isfinite(budget)):
+        return None
+    if equity <= 0:
+        return None
+    risk_per_share = gap_adjusted_risk_per_share(
+        abs(entry - stop), is_short=is_short, multiple=short_gap_risk_multiple,
+    )
+    if risk_per_share <= 0:
+        return None
+    risk_dollars_allowed = equity * budget / 100
+    return risk_dollars_allowed * entry / risk_per_share / equity * 100
 
 
 def gap_adjusted_risk_per_share(

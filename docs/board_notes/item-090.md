@@ -155,10 +155,79 @@ constants decide whether and how a protective stop gets placed, and the level
 and bar-cap constants decide where structure is found, which is where stops
 are read from.
 
-**Still open on item 90 after this tranche:** 45 routeless `arbitrary` rows
-remain, concentrated in `src.config.RiskConfig` (7), `src.risk.rules` (7),
-`src.risk.exit_guard` (6), `src.risk.trailing` (6) and `src.verdicts` (4).
-The item stays OPEN.
+**Still open after the sixth tranche:** the count was reported as 45; counted
+again with `src.number_sources.classification()` at the head of the seventh it
+was 24, the in-flight tranches having landed in between.
+
+## item 90 — the 2026-10-01 seventh routing tranche (every remaining `src/config.py` row)
+
+Counted first, not taken on trust. `classification()` takes a mapping keyed by
+site id, so it is fed `load_ledger()` and not the raw `numbers:` list; the
+`unclassified` bucket is the routeless residue. It held 24 rows, not the 45 the
+sixth tranche projected. The largest coherent group is the configuration
+dataclasses: 16 of the 24 live in `src/config.py`, and all 16 are routed here.
+The eight left over are four seat weights in `src.verdicts`, the rotation
+margin, the short-gap multiple, the levels-degraded share and one execution
+factor.
+
+- **Cash reserve (1).** `CashReserveConfig.pct`. Recording over assumed versus
+  settled order cost. Its only readers today are the two displayed liquidity
+  figures, so the DELETE outcome is explicit: if no order is ever short at
+  settlement over a full quarter, the band goes and the view reports raw cash.
+- **Deployment gap band (1).** `DeploymentGapConfig.band_pct`. Cost arithmetic
+  over this account's own fee schedule and the entry-slippage distribution
+  already measured in this ledger, not an appetite question.
+- **Macro event horizon (1).** `EventRiskConfig.horizon_days`. Pre-release
+  moves across the tradable universe, and the route requires the answer in
+  SESSIONS, which also settles board item 91's calendar-day defect for this
+  field.
+- **Entry-slippage belt (1).** `ExecutionConfig.max_entry_slippage_bps`. The
+  existing measurement cannot close the row because the belt truncates its own
+  tail, so the route is a recording of refused orders plus a declared, bounded
+  widened subset that observes the censored tail at all.
+- **Intraday scan (3).** Trigger, cooldown and per-scan cap. Settled together
+  as docs/WORK.md item 177 requires. The move trigger is restated in ATR
+  multiples, because a flat 3% holds a quiet name and a volatile one to the
+  same bar.
+- **Nomination caps (2).** One recording serves both: they are two readings of
+  the same affordability question. NO DERIVATION WAS ATTEMPTED — 6 is not two
+  times 3 in any defensible sense, since the desk runs more than two
+  nominating seats.
+- **`RiskConfig` (7).** The hard stop floor, the gross cap, the single-name
+  risk envelope, the target horizon, the target reach cap, the level touch bar
+  and the target-divergence warning band.
+
+**Ratification is not a source.** Three of the seven `RiskConfig` rows carry an
+owner sign-off — the gross cap (2026-09-01), the single-name envelope
+(2026-08-27) and the target horizon (2026-09-25). All three stay `arbitrary`
+with a route and say so in the route text. The hard stop floor's existing
+justification rests on `config/prompts/tech_analyst.md`, which Invariant 2 bars
+as a final authority, and its route says that too.
+
+**No route points at this desk's own trades.** The stop floor, the gross cap,
+the single-name envelope, the reach cap, the intraday trigger, the macro
+horizon and the touch bar all route to measurements over the universe the desk
+could trade. The touch bar's route additionally records that the in-repo
+2026-09-03 table is not a source and that its reconstruction on this
+checkout's 276-bar panel FAILED, the shuffled control beating real at every
+touch count.
+
+**DELETE outcomes.** The likeliest deletion is the target horizon: Rex's
+2026-09-30 ruling is that the desk exits on ALIGNMENT and never on a target, so
+the recording is expected to show the ceiling changing no order, and the reach
+cap goes with it. Also stated: the nomination per-seat cap goes if the run
+total always binds first; the intraday candidate cap goes if the risk envelope
+always binds first; the belt goes if it is redundant with the universe
+half-spread screen; the gross cap goes if maintenance margin binds first; the
+cash reserve goes if no order is ever short; and the touch bar goes, taking the
+tight-stop exemption with it, if no touch count separates real from shuffled.
+
+**Still open on item 90 after this tranche:** 8 routeless `arbitrary` rows
+remain — the four `src.verdicts` seat weights, `src.rotation.ROTATION_MARGIN_PCT`,
+`src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT`,
+`src.pipeline_stages.LEVELS_DEGRADED_RUN_EMPTY_SHARE` and one
+`ExecutionStage._run_session` factor. No value moved and the `arbitrary` count
+is unchanged at 133. The item stays OPEN.
 
 ## item 90 — the 2026-10-01 EIGHTH routing tranche (the last one; routeless reaches ZERO)
 
