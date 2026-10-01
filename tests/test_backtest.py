@@ -93,10 +93,25 @@ def _build_long_win_series() -> list[OHLCV]:
       ever looked at for a signal — bars 0..208 give exactly 209 bars of
       history on day 208, one short of the threshold.
     * Two deliberate, confirmed swing lows at exactly $95.00 (bars 40 and
-      140) and two at exactly $125.00 (bars 70 and 170) — clustered
-      (`CLUSTER_TOLERANCE_PCT`), each with `touches=2` (`MIN_TOUCHES`), so
-      `find_structural_levels` reports support=$95.00 and resistance=$125.00
-      with nothing else nearby to compete.
+      140) and two at exactly $125.00 (bars 70 and 170), each with
+      `touches=2` (`MIN_TOUCHES`), so `find_structural_levels` reports
+      support=$95.00 and resistance=$125.00 with nothing else nearby to
+      compete.
+
+      **Those four bars are TIGHT around their own pivot price, and that is
+      load-bearing since 2026-09-30 (docs/WORK.md item 55).** A level's
+      extent is no longer a percentage of its price; it is the combined
+      traded span of the bars that drew it, and pivots group when those
+      spans overlap. The dip bars used to be written as $95.00-$101.50 and
+      the spike bars as $98.50-$125.00 — ranges that overlap each other, so
+      under the measured definition all four pivots are ONE blob of
+      structure spanning $95 to $125, priced at its mean $110: neither a
+      support nor a resistance, and no stop can rest on it. That was the
+      fixture describing a clean $95 shelf in the comment while planting a
+      $95 wick on a bar that also traded at $101.50. Drawn tight
+      ($95.00-$97.00 and $123.50-$125.00) the two groups no longer touch,
+      and the series means what this docstring always said it meant. Every
+      hand-computed number below is UNCHANGED by the redraw.
     * Bar 209 (the 210th bar, first one ever evaluated) closes back at the
       baseline (~$100) — support/resistance classification is relative to
       THIS close — with volume 5x the prior 10-day average on the last 5
@@ -131,9 +146,9 @@ def _build_long_win_series() -> list[OHLCV]:
     for i in range(n_pad):
         drift = 0.0002 * i  # negligible (<= ~$0.04 over the whole window)
         if i in dip_indices:
-            o, h, l, c = 99.8 + drift, 101.5 + drift, 95.00, 99.5 + drift
+            o, h, l, c = 96.5 + drift, 97.00 + drift, 95.00, 96.0 + drift
         elif i in spike_indices:
-            o, h, l, c = 100.2 + drift, 125.00, 98.5 + drift, 100.5 + drift
+            o, h, l, c = 124.0 + drift, 125.00, 123.50 + drift, 124.5 + drift
         else:
             # A $3 daily range (ATR ~3) — a real instrument's, not a
             # hairline. Since 2026-09-12 the level scan's relevance window

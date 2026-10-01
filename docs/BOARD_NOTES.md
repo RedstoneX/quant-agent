@@ -358,6 +358,92 @@ is pinned by tests. They are kept only so the history reads straight.
 
 **RULED and BUILT 2026-10-01 — this closes on the desk's own record, not on another argument.** The rework offered for this item (PR 880: complete-linkage clustering plus a redefinition of what makes a stop "level-backed") is HELD and will NOT be merged: measured against the eleven real open positions it was a net LOOSENING, 0 of 11 level-backed today against 2 of 11 with both changes, which is the opposite of the intent — and worse, three separate measurements of the SAME baseline returned 0, 1 and 4. A number that unstable cannot govern money, and a fourth measurement would not fix it. What shipped instead changes NO behaviour at all: the desk now RECORDS, for every position it opens, what the stop was actually based on. The pinned half is a JSON `stop_level_basis` on the `trades` row — whether a computed structural level stood behind the stop, and if so its price and side, how many separate times price turned there, how many bars either side confirm a swing point and the whole confirmation span, the zone's edges and width as the live definition drew them, and the signed distances from the stop and from the entry to the level. It is written for stops with NOTHING behind them too, with `level_backed: false`, because that is the control group without which "levels hold" cannot be falsified. The running half is two raw distances widened from each session's position snapshot: how far price travelled beyond the FAR edge of the zone, and the closest it ever came to the NEAR edge. NO VERDICT IS STORED — "respected", "pierced and recovered" and "broken outright" each need a cutoff nobody can source today, so only raw distances in price units are kept and a later reader states and defends its own cutoff against numbers that were never rounded to it. Anything genuinely unknown at write time is NULL, never substituted. The record EXTENDS the per-closed-trade stop-basis and excursion store built 2026-09-30 rather than standing up a second parallel one — same table, same rows, same joins to the realised outcome, which is the honest fit because the question is about the same trades. HARD LIMIT, written into the code beside the recording and pinned by a test: this may show that the CURRENT definition of a level is WRONG, and it may NEVER be swept for a better bar count or zone width. Fitting a number to this desk's own trading history is barred outright. The item stays OPEN; nothing has been read yet, because nothing has been recorded yet.
 
+
+### 2026-10-01 — the adversary pass on PR 880, and what it changed
+
+THE REFUTED CLAIM. PR 880 argued that item 55 (clustering on bar overlap) and
+item 215 (a stop must rest on a forming bar) cancel out, one widening the zone
+and the other narrowing what counts as resting on it. They do not. Item 215
+only punches holes in the zone's INTERIOR; it cannot narrow the outward reach
+by one cent, because the zone's edges ARE bar extremes and an extreme always
+lies inside some bar. The furthest a stop could sit from the level price and
+still be called backed was therefore the zone halfwidth exactly, with NO bound
+anywhere, against a hard 1.00% of price on main. Measured on the desk's own
+400-bar, 101-symbol set, 704 levels under the new clustering: median halfwidth
+3.33% of price, p90 9.41%, max 36.07%; restricted to the 154 levels with at
+least 5 touches, median 4.31% and 38% of them above 5%. Since the break check
+evaluates the matched LEVEL price and not the stop, the desk could report
+"structure intact" with the stop a fifth of the price away.
+
+THE BOUND THAT WAS RESTORED, AND IT IS NOT A NUMBER. The level must be more
+precise than the thing it is backing: its measured zone (min low to max high
+over the bars that drew it) must be STRICTLY NARROWER than the trade's own
+stop distance, `abs(entry - stop)`, which is already decided before this
+question is asked. Because the stop-to-level gap can never exceed that span,
+this makes `abs(stop - level) < abs(entry - stop)` a guarantee: the level a
+stop claims to rest on is never further from the stop than the stop is from
+the entry. Nothing is chosen, so there is nothing to sweep and nothing to
+ratify. It is enforced in `src/data/levels.py::stop_rests_on_level` and
+mirrored in `src/risk/exit_guard.py`, and `tests/test_level_match_zone.py`
+now pins it.
+
+WHAT IT ADMITS AND REFUSES [measured 2026-10-01, same 704 levels, using the
+desk's two EXISTING stop floors as the stop distance so the measurement
+introduces no number either]: at a 1.0-ATR stop it admits 33/704 levels (5%)
+and 1/154 of the 5-touch-plus levels; at a 2.5-ATR stop it admits 465/704
+(66%) and 63/154 (41%). The levels it refuses at 2.5 ATR have median halfwidth
+5.64% of price and reach 36.07%; the widest it admits has halfwidth 13.41%,
+still inside the trade's own risk by construction. The tight-stop exemption
+therefore becomes RARE, and that is the honest consequence of refusing to pick
+a width rather than a flaw in the bound: a level too vague to be more precise
+than the stop has not earned that stop the right to be tighter than the noise
+floor.
+
+THE DIRECTION OF FAILING CLOSED, STATED PLAINLY BOTH WAYS. The adversary's
+one-way-tightening worry does NOT apply here, and saying otherwise would be
+wrong: not-backed routes a stop to the 2.5-ATR floor while backed floors it at
+1.0 ATR, so failing closed WIDENS the stop rather than tightening it, and
+every fail-closed branch in this diff moves protection outward. The flip side
+is equally plain: the shipped effect is that two live stops become eligible to
+sit at 1.0 ATR where they sit at 2.5 ATR today. With n=11 positions and 2
+affected, this book cannot see harm either way — that is a sample too small to
+measure, not evidence of safety. The live stop prices quoted in item 215 were
+never re-verified against the broker and should not be treated as current.
+
+THE CLUSTERING CLAIM WAS CORRECTED, NOT DEFENDED. `_cluster`'s docstring
+claimed complete linkage. The ACCEPTANCE TEST is all-members (a pivot joins
+only if its bar overlaps every member's, which is what buys the anti-chaining
+property), but the PARTITION is greedy first-fit over price-sorted pivots: a
+pivot overlapping two levels joins the lower-priced one and the result depends
+on sweep order. True complete linkage merges the globally closest pair at each
+step and is order-independent. The docstring now says exactly that. An untrue
+description of an algorithm is the same class of defect as an untrue alert.
+
+THE TOUCH COUNT COULD NOT BE RE-DERIVED, AND BOTH FAILURES ARE RECORDED.
+`min_level_touches_for_stop_honor` = 5 was `sourced` on a real-versus-shuffled
+bounce table over 101 symbols — built on the 1% clustering this item deletes,
+so docs/OUTCOME.md requires it re-checked. Two attempts, both failed.
+(1) DATA. The panel this repo holds is 276 bars per symbol, not the original's
+five years; half is spent discovering levels, leaving n=27 real observations
+at 5 touches with a 95% interval of [0.407, 0.778] — roughly four times the
+original's width, so no separation at ANY touch count could be detected even
+if it were there. (2) METHOD. The original's bounce procedure is reported in
+docs/RESEARCH_FINDINGS.md section 7 as a table, not as reproducible steps, so
+the reconstruction is not the same test — and it fails its own sanity check:
+the SHUFFLED control scored HIGHER than real at every touch count (shuffled
+0.688/0.725/0.717 at 2/3/4 touches against real 0.641/0.646/0.679), which
+means the reconstruction is measuring something other than structure. The
+value stays at 5, because moving it would be inventing a number; its ledger
+status is downgraded from `sourced` to `arbitrary`, with both ratchets
+appended.
+
+THE RECORDING THAT WOULD SETTLE IT: the original 101-symbol panel at five
+years of daily bars, levels rebuilt under the overlap clustering, the section
+7 bounce procedure restated in code in the repo rather than described, real
+against a returns-shuffled control, 95% intervals by touch count; the
+threshold is the lowest touch count whose interval clears the control's. Until
+that exists the 5 is an unsourced bar deciding how tight a live stop may be.
+
 ## item 63
 
 **Plain language —** When a company insider sells shares, the desk wants to know whether that's a real opinion about the stock or just someone raising cash. The best measure is how much of their own pile they sold. The research that measures this found something counter-intuitive: an insider selling a *small* slice of what they hold is actually a mildly *good* sign — they need money, they're keeping the rest, they still like the company. Selling more than half is the only case that reliably means bad news. The desk was doing the opposite of reading that correctly: it treated small sales as meaningless and threw them out of the ranking entirely. That's now fixed — nothing is thrown out, and every insider trade arrives at the analyst carrying how big it was relative to what the person held, plus what the research says that size means. What's still missing is narrower: the desk's internal "how much does this matter" score is a single dial from 0 to 1, and a dial cannot say "this matters, and it points the *other* way." So the analyst reads the direction in the notes, but the automatic ranking underneath it doesn't.
@@ -1814,6 +1900,40 @@ The pruning pass's owner-facing report. `src/rotation.py::pruning_pass_lines` is
 ## item 217
 
 Found 2026-10-01: the risk seat's tech-signals block said a thin range ratio "has already been paid for in size by the constructor". Measured in the code: the constructor computes the ratio, logs it and returns the stop unchanged; nothing resizes on it. The sentence was corrected and a test pins the new wording. The sweep for the same class of claim was a text search, so the portfolio-manager statements listed on the board item are unverified, not known false.
+## item 215
+
+Filed 2026-09-30 out of the item 55 measurement pass, as a SEPARATE defect that
+item 55 surfaced and deliberately did not fix.
+
+What the code does: `_level_backing_stop` (`src/portfolio_constructor.py`) walks
+the computed structural levels on the protective side of entry, keeps those with
+at least `risk.min_level_touches_for_stop_honor` touches, and honours the stop as
+level-backed when `abs(stop - level) <= level_zone_halfwidth(...)`. Since item 55
+that half-width is the MEASURED span of the bars that drew the level rather than a
+flat 1% of price. That is the right bound for "is this stop resting on this level".
+It is not a bound on how far the stop is from the level, and the two are reported
+as the same thing.
+
+Measured 2026-09-30, complete-linkage clustering, 400-day bars, 101-name universe:
+704 levels, zone half-width min 0.53%, median 3.47%, max 22.11% of price.
+
+Measured the same day against the 11 live positions and their live stops as the
+production desk database holds them:
+
+| symbol | entry | live stop | honouring level | level touches | zone | half-width | stop-to-level gap |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ETN | 432.56 | 405.43 | 388.55 | 6 | 381.06-413.77 | 6.49% of level | 16.88 = 3.90% of entry |
+| RKLB | 69.72 | 65.14 | 67.31 | 6 | 62.99-76.24 | 13.27% of level | 2.17 = 3.11% of entry |
+| NOK | 10.30 | 9.39 | 9.78 | 5 | 9.54-10.33 | 5.62% of level | 0.39 = 3.79% of entry |
+
+In each of the three the stop can be taken out with the level itself never broken,
+and every owner-facing statement about the position still reads "protected by
+structure". The other eight live positions are not level-backed either way, so
+this defect is live on 3 of 11 names today.
+
+Scope: this item is about what the desk SAYS, not about whether the exemption
+should fire. Whether a stop inside a wide zone should count as backed at all is
+the decision in DONE WHEN (b). No number is introduced by this item.
 ## item 201
 
 The naked window is real and ordinary: every place the desk cancels a protective stop and submits a replacement, the position is unprotected for the width of that round trip, on paths that run on normal days against real open positions.
