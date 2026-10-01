@@ -1549,6 +1549,45 @@ CI runs 3.11 (`.github/workflows/test.yml`); the checked-in dev `.venv` measured
         raised 25 to 40 in 2026-08 for exactly that drift); (b) re-measure the untruncated fill rate, newly
         possible because the deleted 2% ask-skip lets a too-tight entry rest and be recorded. Both belong to
         item 90's half-two re-derivation, not to a gate inventory.
+## item 209 — RETIRED 2026-10-01, full-book search throttle shipped and wired into the session pipeline
+WHY IT EXISTS. Owner ask 2026-09-30, unprompted and previously unbuilt and
+undocumented: the desk hunts for new trades several times a day, and that
+hunting is largely wasted paid spend when the portfolio is already full.
+The same day the paid model provider returned 402 Payment Required and the
+owner declined to top it up while the board is full, so cutting wasted paid
+runs was the cheapest available cost win.
+THE SHAPE. The SEARCH throttles, the REVIEW never does. Doctrine
+(conviction outranks balance; all five seats must be right to STAY, not
+only to enter) makes throttling the review of a holding unacceptable — a
+name that stops earning its place has to be found on the normal cadence.
+READING "FULL". No picked number and no cadence schedule. The book is full
+when it is already at one of its OWN ratified ceilings: deployable cash at
+or below zero, invested share at or above `risk.max_total_position_pct`, or
+gross exposure at or above `risk.max_gross_exposure_x`. The throttle
+therefore releases itself as soon as capital is freed, rather than waiting
+for a timer.
+THE URGENCY LANE. Four ways a throttled session still acts:
+1. every deterministic safety step (stop-coverage audit, protection
+   restores, forced de-lever, gross-ceiling enforcement, fill and stop-out
+   reconciliation) runs BEFORE the paid boundary and is untouched;
+2. held names keep full research, so a broken thesis is still found, voiced
+   and sold;
+3. run-scoped admissions (SEC Form 4 smart-money, universe screen) come
+   from free deterministic signals and survive the narrowing, so a
+   genuinely urgent new name still reaches the seats;
+4. anything that frees capital un-throttles the next session.
+MEASURED SAVING. One hunting session per trading day — the morning session
+is the only one that researches new candidates (`morning_research`);
+midday and close are position reviews and the intraday check reads held
+names only [measured: main.py mode map + scripts/systemd timers]. Its
+research surface is the 101-symbol configured universe [measured:
+config/settings.yaml trading.universe]. With a full book that surface
+becomes the held names plus free admissions, so the per-symbol paid model
+and paid search work drops by the whole non-held remainder of those 101 —
+typically the large majority of them. The live held count could not be read
+from the development box, so the exact per-day figure is not stated here
+rather than estimated.
+FAILS OPEN. Any error in the throttle runs the full hunt.
 **2026-09-30 MEASUREMENT AND DECISION — the structural floor is a no-op for the majority and unbounded for the rest, so no widening anchor ships and `min_stop_atr_multiple` keeps governing every unbacked stop.** Population: the 867 technical-seat candidate records in the production database that carry an entry price, an ATR14 reading and a `computed_levels` array (backup `quant_agent_backup_20260930T130524.db`, table `specialist_evidence`, agent `tech_analyst`). This is real production output, not a fixture and not a backtest. **(1) Coverage.** 843 of 867 (97.2%) have at least one computed level at or below entry at ANY touch count; only 275 of 867 (31.7%) have one clearing the current `min_level_touches_for_stop_honor` bar of 5. So dropping the trust bar from 5 to `MIN_TOUCHES` (2) for the WIDENING direction really would take the population from a third to nearly all of it, exactly as the item argued, and the residue an ATR multiple would still govern on coverage grounds alone is 2.8%. **(2) That coverage is not the binding fact.** Measured as a distance, the nearest computed level below entry sits at p10 0.15, p25 0.42, p50 1.41, p75 2.65, p90 5.14 and max 10.1 ATRs from entry. The current floor is 2.5 ATRs before the setup and regime scalers, reaching 3.00 at its widest. For 71.8% of candidates the nearest structural level below entry is TIGHTER than the flat floor, so a level used only as a WIDENING anchor does nothing there and the flat multiple remains the operative number. The reformulation therefore does not remove the constant; it leaves it governing roughly seven candidates in ten. **(3) The far-anchor case decides itself, and it decides against building.** On the 28.2% where the structural anchor IS wider, it runs out to 10.1 ATRs, which under risk-based sizing is a four-fold cut in position size against the present floor and is the `position_sized_to_zero` risk the item named. Capping the widening at the flat multiple makes the whole rule arithmetically inert — `max(flat, structural)` capped at `flat` IS `flat`, for every name, so the constant is untouched and a code path is added that can never change an outcome. Any OTHER cap is a newly invented number governing money, which is what the item exists to avoid. **(4) Decision.** No structural widening anchor ships. `min_stop_atr_multiple` is confirmed as governing the unbacked-stop floor for the whole candidate population, not a residue, and the honest position is that this constant is still an interim unsourced value rather than one the chart has replaced. The one thing that could change this is not a measurement and not a literature search: it is an owner-appetite dial, named exactly — **the maximum stop widening, in ATRs, the desk will accept in order to sit behind real structure** (equivalently, the largest fraction of position size it will give up for that). Without that dial the far-anchor case has no principled bound, and with it the rule reduces to `min(structural_gap, dial)` where the dial is the number doing the work. That dial is risk appetite, which is the owner's call and not the desk's; it is not invented here.
 
 
