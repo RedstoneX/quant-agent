@@ -241,3 +241,39 @@ DONE WHEN:
 
 
 ```
+
+
+### Item 202 update 7 — the test suite is closed at the socket (2026-10-01)
+
+Update 5 measured what the `requests`-level wall could SEE. A socket-level
+journal run over the same suite found what it could not: 17 tests reaching the
+wire through `urllib.request.urlopen` — `fredapi` (api.stlouisfed.org, 94
+attempts), the Fed's calendar page (www.federalreserve.gov, 26) and ten
+news/reference feeds (33) — and every one of them green, because the code
+degrades a failed fetch by design. Two more (`test_universe_screen.py`) went to
+openrouter.ai only when the developer's shell carried `OPENROUTER_API_KEY`:
+green in CI, red or slow at a desk, which is the exact shape of a check nobody
+trusts.
+
+Causes, each fixed at its seam, none by retry, skip or xfail:
+
+* `NewsDataProvider(feeds={})` is falsy, so the provider fell back to the FULL
+  feed list; the three lookback tests now stub `_fetch_feed` as the dedup tests
+  already did. One of them carried a comment claiming it did so — it did not.
+* `TradingPipeline.__init__` builds `MacroEventCalendarProvider` and
+  `FOMCCalendarProvider` itself; every morning-run test patched the other four
+  providers at `src.pipeline.*` and forgot these two. `offline_calendars`
+  (autouse, `tests/network_guard.py`) patches the same two names at the same
+  seam; the research stage reads an empty schedule with no coverage.
+* `test_event_risk_calendar._provider` now defaults the fetch to offline; the
+  one test that did not override it was the leak.
+* `tests/conftest.py` clears `OPENROUTER_API_KEY` as it already clears
+  `OPENAI_BASE_URL`; the balance-line tests set it themselves.
+
+The guard (`tests/network_guard.py`, imported by `tests/conftest.py`) wraps the
+same three socket calls `ops/rehearsal/isolation.no_network` wraps, allows
+loopback, journals to `QAMC_NETWORK_JOURNAL` in the same `nodeid<TAB>target`
+shape, and FAILS THE TEST AT TEARDOWN whether or not the error was swallowed.
+No allow-list ships: nothing is left to allow. Proven both ways: a probe that
+swallows a blocked `create_connection` errors at teardown naming itself and
+`192.0.2.1:81`; the full suite is green with the guard on.
