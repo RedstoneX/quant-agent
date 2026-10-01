@@ -3081,7 +3081,7 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
             )
             lines.append(f"🟡 {skip_lines[0]}")
             lines.extend(skip_lines[1:])
-        elif status == "intraday_scan_crashed":
+        elif status in ("intraday_scan_crashed", "intraday_scan_out_of_credit"):
             # Operator-honesty fix: this used to be indistinguishable from a
             # healthy tick that ran and found nothing — the scan raised, the
             # caller swallowed the exception and set scan_result to None, and no
@@ -3089,11 +3089,19 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
             # attaches a dict with this status, so it renders through the same
             # nested path `paid_analysis_suspended` / `intraday_analysis_error`
             # already use, instead of silently reading as "Status: ok".
-            lines.append(
-                "🛑 CRASHED: the search for intraday opportunities stopped "
-                "with a fault, so it found nothing. The automatic loss "
-                "check above ran normally."
-            )
+            if status == "intraday_scan_out_of_credit":
+                lines.append(
+                    "🛑 OUT OF CREDIT: the search for intraday opportunities "
+                    "stopped because the paid research account has no credit "
+                    "left, so it found nothing. This is not a fault in the "
+                    "desk. The automatic loss check above ran normally."
+                )
+            else:
+                lines.append(
+                    "🛑 CRASHED: the search for intraday opportunities stopped "
+                    "with a fault, so it found nothing. The automatic loss "
+                    "check above ran normally."
+                )
             # The exception TYPE is not thrown away — it moves out of the
             # owner's sentence and into the labelled machine line with the
             # message, where it belongs and where it stays greppable.
@@ -3281,7 +3289,8 @@ def _intraday_tick_actionable(result: dict, nested: dict | None, snap: dict[str,
     status = str(nested.get("status") or "")
     if status in (
         "intraday_executed", "intraday_analysis_error",
-        "intraday_scan_crashed", "paid_analysis_suspended",
+        "intraday_scan_crashed", "intraday_scan_out_of_credit",
+        "paid_analysis_suspended",
         "evidence_gate_skip",
     ):
         return True

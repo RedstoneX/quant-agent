@@ -373,6 +373,7 @@ NON_DECIDING_STATUSES = frozenset({
     "paid_analysis_suspended",
     "evidence_gate_skip",
     "intraday_scan_crashed",
+    "intraday_scan_out_of_credit",
     "intraday_analysis_error",
     "intraday_scan_disabled",
     "intraday_scan_lock_contended",

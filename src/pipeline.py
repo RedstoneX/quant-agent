@@ -94,6 +94,7 @@ from src.cost_circuit import (
     LLMCostCircuitBreaker,
     PaidAnalysisSuspended,
     UnavailableLLMCostCircuit,
+    is_payment_refusal,
 )
 from src.models import (
     NewsIntelligenceReport,
@@ -9304,14 +9305,40 @@ class TradingPipeline(ProtectionMixin, PromptFactsMixin, DeleverMixin):
             # dict (mirroring the `paid_analysis_suspended` shape
             # above) makes the crash visible through the same nested
             # path, while the tick itself still completes normally.
-            logger.error("Intraday opportunity scan crashed (non-fatal): %s", e)
-            scan_result = {
-                "status": "intraday_scan_crashed",
-                "run_id": run_id,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "preserved": "fill reconciliation and stop-coverage repair",
-            }
+            # MEASURED, production DB read-only 2026-10-01: of the 9
+            # `intraday_scan_crashed` outcomes in 116 recorded half-hourly
+            # checks, 9 of 9 were HTTP 402 "requires more credits" from
+            # OpenRouter (2026-09-28 18:20 ET .. 2026-09-29 19:47 ET). Not
+            # one was a fault in this desk's code. Reporting an empty
+            # research account as "the scan for movers crashed" sends the
+            # owner looking for broken software; the true state is that the
+            # account has no credit and the provider refused before
+            # generating. Same loud, unhealthy, non-deciding outcome --
+            # nothing is swallowed, nothing is retried, no number is
+            # invented -- only the name is made true.
+            if is_payment_refusal(e):
+                logger.error(
+                    "Intraday opportunity scan refused: the paid research "
+                    "account is out of credit (non-fatal): %s", e,
+                )
+                scan_result = {
+                    "status": "intraday_scan_out_of_credit",
+                    "run_id": run_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "preserved": "fill reconciliation and stop-coverage repair",
+                }
+            else:
+                logger.error(
+                    "Intraday opportunity scan crashed (non-fatal): %s", e,
+                )
+                scan_result = {
+                    "status": "intraday_scan_crashed",
+                    "run_id": run_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "preserved": "fill reconciliation and stop-coverage repair",
+                }
         if scan_result is not None:
             result["intraday_scan"] = scan_result
             if scan_result.get("status") == "intraday_executed":

@@ -30,3 +30,48 @@ The trigger sets how many movers *qualify*; the cap decides how many of those ar
 2. **Every intra-preamble job on its own schedule.** **DONE 2026-10-01.** The free safety work no longer depends on the paid tick: it is one shared method with two callers — the paid `intra_check` tick (unchanged) and a new free `intra_safety` mode with its own systemd service and timer. Additive, not a move, so there is no window in which protection is not restored; both callers take the same broker-write flock and the same blocking-owner check (item 127), so concurrent firing serialises rather than races, and each tick now has two independent chances at the safety work instead of one. The new timer's interval is the already-ledgered `INTRA_CHECK_TICK_MINUTES` (the cadence this work runs on today, so latency is unchanged by construction) and its phase is the midpoint of the two phases already in use on the box, which is the only one at that interval colliding with no existing unit; both are pinned by `tests/test_intra_safety_schedule.py`. **Nothing here licenses choosing a different interval** — the input that would, the observed distribution of how long a position actually stays unprotected, cannot be computed at all yet — `pending_protection_restores` records when the intent was written but the drain deletes the row on success, so nothing records when protection came back [measured 2026-10-01 against the production DB, read-only]. A cleared-at record has to exist before an interval can be chosen on evidence. **Consequence for the rest of this item:** cutting the paid cadence is now a pure spend decision and no longer trades against loss-protection latency.
 3. **A correction the ledger needs and this change could not make** (`config/number_ledger.yaml` is held by another change): the `source:` on `src.config.INTRA_CHECK_TICK_MINUTES` names `src/scheduler.py:56` as "the authority for how often the intraday control actually fires". That is **false in production** — `src/scheduler.py` is the `--mode live` path and the box runs the systemd timer. The row's status can stay `sourced`; the source text should name `scripts/systemd/quant-agent-intra_check.timer` crossed with `run_if_et_window.sh`'s window, with `src/scheduler.py` as the live-mode mirror, and cite `tests/test_systemd_units.py` for the pin that now holds all three sites together.
 
+
+### 2026-10-01 — what the paid tick actually wastes, MEASURED
+
+The owner asked what the half-hourly `intra_check` session is losing. Measured
+read-only against the production DB on 2026-10-01, across 116 recorded
+half-hourly checks: 32 no-opportunity, 27 no-trades, 18 paid-analysis-suspended,
+17 `evidence_gate_skip`, 9 `intraday_scan_crashed`, 1 `intraday_analysis_error`,
+1 rejected, 11 executed. The session is 63% of lifetime model spend ($13.93 of
+about $22) and sourced 37 of the desk's 80 trades, so the question is only about
+the wasted ticks, not about the tick itself.
+
+**ONE cause explains 9 of the 9 crashes, and it is not a defect in this repo.**
+Every one of the 9 `intraday_scan_crashed` payloads carries the same error:
+OpenRouter HTTP 402, "This request requires more credits, or fewer max_tokens.
+You requested up to 16000 tokens, but can only afford 843/811/775". First
+occurrence 2026-09-28 18:20 ET, last 2026-09-29 19:47 ET; eight of the nine fall
+inside a single afternoon once the research balance ran down. The provider
+refused before generating, so the refused call itself billed nothing — the loss
+is the free setup work the tick does before reaching the paid call, repeated
+every half hour while the balance stayed empty.
+
+The 1 `intraday_analysis_error` is a DIFFERENT and unrelated cause: a
+`pm_grounding_error` on 2026-09-25 where the PM's own output claimed news
+coverage that did not exist and mislabelled a macro stance. That is the
+grounding check doing its job and refusing an ungrounded decision, not a fault.
+
+**FIXED here:** the naming. Reporting an exhausted research account as "the scan
+for movers crashed" is a false statement about the desk's own state, which this
+desk treats as a root-cause defect in its own right. A payment refusal out of
+the scan is now reported as `intraday_scan_out_of_credit` with its own plain-words
+line in the owner feed ("the research account is out of credit"), while staying
+in exactly the same unhealthy, non-deciding, owner-visible class as the crash it
+replaces. Nothing is swallowed, no retry/backoff/timeout was added, and no
+number was introduced.
+
+**STILL PRESENT, and deliberately not fixed here:** the tick keeps re-entering
+the scan every half hour while the account is empty, doing its free setup work
+and reaching a refusal each time. The cost-circuit latch that would stop that
+(`provider_out_of_credit`) is self-clearing by design, so it re-arms rather than
+holding. Pre-checking the remaining balance before the tick's work would need a
+threshold — how little credit is too little — and this desk does not invent
+numbers, so that is recorded as an owner appetite question, not picked here.
+
+**NOT REPRODUCIBLE / not applicable:** nothing. Both causes are fully explained
+by their recorded payloads.
