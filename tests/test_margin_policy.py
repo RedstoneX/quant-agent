@@ -18,6 +18,7 @@ from src.config import RiskConfig
 from src.models import Position, TradeDecision
 from src.pipeline import HARD_BLOCK_RULES, TradingPipeline
 from src.risk.rules import RiskRuleEngine
+from tests.pipeline_factory import build_pipeline
 
 
 def _risk_config(allow_margin: bool = False) -> RiskConfig:
@@ -31,8 +32,7 @@ def _risk_config(allow_margin: bool = False) -> RiskConfig:
 
 
 def _pipeline_with_engine(cfg: RiskConfig) -> TradingPipeline:
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(cfg)
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(cfg))
     pipeline.config = MagicMock()
     pipeline.config.trading.universe = ["NVDA", "AAPL"]
     return pipeline
@@ -300,11 +300,9 @@ def test_pm_prompt_no_mandate_when_margin_enabled():
 
 def test_force_delever_noop_when_margin_allowed():
     """With `allow_margin=True`, the safety-net never fires."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = True
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
 
     from src.pipeline_context import RunContext
     ctx = RunContext.start("morning")
@@ -321,11 +319,9 @@ def test_force_delever_noop_when_margin_allowed():
 
 def test_force_delever_noop_when_cash_positive():
     """Positive cash → never fires, even with margin disabled."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
 
     from src.pipeline_context import RunContext
     ctx = RunContext.start("morning")
@@ -339,11 +335,9 @@ def test_force_delever_noop_when_cash_positive():
 
 def test_force_delever_skips_sub_dollar_noise():
     """Cash=-$0.30 is rounding noise; don't fire the safety-net either."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
 
     from src.pipeline_context import RunContext
     ctx = RunContext.start("morning")
@@ -360,10 +354,9 @@ def test_force_delever_skips_sub_dollar_noise():
 
 def test_force_delever_picks_biggest_loser_first():
     """Biggest unrealized loss gets sold first (cut-losers discipline)."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
-    pipeline.broker = MagicMock()
     pipeline.broker.submit_order.return_value = {
         "id": "ord-1", "status": "accepted", "symbol": "LOSER",
     }
@@ -414,10 +407,9 @@ def test_force_delever_picks_biggest_loser_first():
 
 def test_force_delever_stops_once_deficit_covered():
     """Sells only as many positions as needed to cover the deficit."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
-    pipeline.broker = MagicMock()
     pipeline.broker.submit_order.return_value = {
         "id": "ord-X", "status": "accepted", "symbol": "X",
     }
@@ -485,10 +477,9 @@ def test_filter_does_not_credit_zero_allocation_sell_as_proceeds():
 def test_force_delever_tiebreak_is_deterministic_on_equal_pnl():
     """When multiple positions tie on (unrealized_pnl, market_value), sort
     must fall back to symbol alphabetical so behavior is reproducible."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
-    pipeline.broker = MagicMock()
     pipeline.broker.submit_order.return_value = {
         "id": "ord-1", "status": "accepted", "symbol": "AAA",
     }
@@ -538,11 +529,9 @@ def test_margin_deficit_floor_is_single_source_of_truth():
 
 def test_force_delever_noop_on_empty_positions():
     """Negative cash but no positions to sell — logs error and exits cleanly."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
 
     from src.pipeline_context import RunContext
     ctx = RunContext.start("morning")
@@ -563,11 +552,9 @@ def test_run_position_review_reconciles_after_force_delever():
     from src.pipeline import TradingPipeline
     from src.pipeline_context import RunContext
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
 
     call_log: list[str] = []
     pipeline._force_delever = MagicMock(
@@ -594,11 +581,9 @@ def test_run_position_review_skips_reconcile_when_nothing_delevered():
     from src.pipeline import TradingPipeline
     from src.pipeline_context import RunContext
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk.allow_margin = False
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
 
     pipeline._force_delever = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()

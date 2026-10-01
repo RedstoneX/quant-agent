@@ -36,6 +36,7 @@ from src.models import (
     ExitReviewChain, PortfolioDecision, Position, ReasoningChain,
     TradeDecision,
 )
+from tests.pipeline_factory import build_pipeline
 
 #: The exact banner text the exit path must never carry.
 NOT_PERFORMED = "Treat the audit step as NOT PERFORMED"
@@ -302,9 +303,7 @@ def _pipeline_double():
     """A bare pipeline object with only what `_risk_review_exits` touches."""
     from src.pipeline import TradingPipeline
 
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.risk_manager = MagicMock()
-    pipe.db = MagicMock()
+    pipe = build_pipeline(risk_manager=MagicMock(), db=MagicMock())
     pipe.market = None          # forces the labelled NOT FETCHED earnings form
     pipe.config = MagicMock()
     return pipe

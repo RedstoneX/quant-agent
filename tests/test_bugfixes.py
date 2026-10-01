@@ -20,6 +20,7 @@ from src.models import (
     PositionReview, PositionAction,
     EveningReport, EveningReasoningChain,
 )
+from tests.pipeline_factory import build_pipeline
 
 
 def _valid_evening_rc() -> EveningReasoningChain:
@@ -274,13 +275,7 @@ def test_trade_decision_validates_assignment():
 
 
 def test_pipeline_hard_risk_filter_blocks_missing_stop_loss():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20,
-        max_total_position_pct=90,
-        max_sector_pct=40,
-        require_stop_loss=True,
-    ))
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=20, max_total_position_pct=90, max_sector_pct=40, require_stop_loss=True, )))
 
     decisions = [
         TradeDecision(
@@ -310,14 +305,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_sector_buy():
     blocks. The companion test below pins the other half of §10.3: at the OLD
     40% boundary nothing is blocked any more.
     """
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=40,
-        max_total_position_pct=90,
-        max_sector_pct=40,
-        max_sector_hard_pct=60,
-        require_stop_loss=True,
-    ))
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=40, max_total_position_pct=90, max_sector_pct=40, max_sector_hard_pct=60, require_stop_loss=True, )))
     decisions = [
         TradeDecision(
             action="BUY", symbol="AAPL", allocation_pct=35,
@@ -348,14 +336,7 @@ def test_pipeline_hard_risk_filter_no_longer_vetoes_at_the_sector_target():
     them), with the target breach reported as an advisory violation rather
     than swallowing the trade.
     """
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=30,
-        max_total_position_pct=90,
-        max_sector_pct=40,
-        max_sector_hard_pct=60,
-        require_stop_loss=True,
-    ))
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=30, max_total_position_pct=90, max_sector_pct=40, max_sector_hard_pct=60, require_stop_loss=True, )))
     decisions = [
         TradeDecision(
             action="BUY", symbol="AAPL", allocation_pct=25,
@@ -381,13 +362,7 @@ def test_pipeline_hard_risk_filter_no_longer_vetoes_at_the_sector_target():
 
 
 def test_pipeline_hard_risk_filter_blocks_second_same_symbol_buy():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20,
-        max_total_position_pct=90,
-        max_sector_pct=40,
-        require_stop_loss=True,
-    ))
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=20, max_total_position_pct=90, max_sector_pct=40, require_stop_loss=True, )))
     decisions = [
         TradeDecision(
             action="BUY", symbol="SPY", allocation_pct=15,
@@ -411,7 +386,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_symbol_buy():
 
 
 def test_pipeline_symbol_guard_blocks_off_universe_and_unanalyzed_buys():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = MagicMock()
     pipeline.config.trading.universe = ["SPY", "QQQ"]
 
@@ -454,7 +429,7 @@ def test_pipeline_symbol_guard_blocks_off_universe_and_unanalyzed_buys():
 
 
 def test_pipeline_symbol_guard_allows_only_run_admitted_analyzed_buy():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = MagicMock()
     pipeline.config.trading.universe = ["SPY"]
     analysis = TechAnalysisResult(
@@ -484,7 +459,7 @@ def test_transient_admission_requires_sec_purchase_broker_and_market_quality(mon
     from types import SimpleNamespace
     from src.models import OHLCV
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
@@ -532,7 +507,7 @@ def test_transient_admission_rejects_unresolved_sector(monkeypatch):
     from types import SimpleNamespace
     from src.models import OHLCV
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
@@ -630,7 +605,7 @@ def test_pipeline_drops_decision_when_risk_modification_invalid():
     RM's intent is always protective; if we can't apply the change, we can't
     assume the un-modified decision is safe. Pre-fix this used to silently
     execute the original allocation, dropping RM's protective intent."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     decision = TradeDecision(
         action="BUY", symbol="SPY", allocation_pct=10,
         entry_price=500, stop_loss=480, take_profit=530, reasoning="test",
@@ -656,7 +631,7 @@ def test_pipeline_drops_decision_when_risk_modification_invalid():
 def test_pipeline_drops_only_the_decision_with_bad_mod_keeps_rest():
     """A bad mod on SPY must not affect the QQQ decision — only the symbol
     whose mod failed gets dropped, the rest of the morning still executes."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     spy = TradeDecision(
         action="BUY", symbol="SPY", allocation_pct=10,
         entry_price=500, stop_loss=480, take_profit=530, reasoning="t",
@@ -697,7 +672,7 @@ def test_risk_mod_matches_decision_symbol_case_insensitively():
     fail-closed posture for exactly this kind of mismatch. See
     `test_risk_mod_symbol_normalized_at_the_model_boundary` for why the fix
     lives at the model, not just at this one comparison site."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     decision = TradeDecision(
         action="BUY", symbol="AAPL", allocation_pct=10,
         entry_price=200, stop_loss=190, take_profit=220, reasoning="test",
@@ -745,7 +720,7 @@ def test_risk_mod_cannot_silently_zero_a_sell_allocation():
     no distinguishable trace. Matches the two live 2026-08-24 incidents.
     The exit must still ship at its pre-modification size, and the refusal
     must be visible via the returned `rejected` list."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     sell = TradeDecision(
         action="SELL", symbol="XLE", allocation_pct=100,
         entry_price=0, stop_loss=0, take_profit=0, reasoning="exit",
@@ -773,7 +748,7 @@ def test_risk_mod_cannot_zero_a_cover_allocation():
     """Same guard, COVER side — D10 says a cover can never be blocked by the
     hard-risk gate, and it must not be cancellable through a modification
     either."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     cover = TradeDecision(
         action="COVER", symbol="XLB", allocation_pct=50,
         entry_price=0, stop_loss=0, take_profit=0, reasoning="cover half",
@@ -797,7 +772,7 @@ def test_risk_mod_cannot_reduce_a_sell_below_its_intended_size():
     desk sells to reduce risk, so it is now REVERTED — the SELL stays full and
     the refusal is visible. (Previously this trim applied; the ruling reverses
     that.)"""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     sell = TradeDecision(
         action="SELL", symbol="NET", allocation_pct=100,
         entry_price=0, stop_loss=0, take_profit=0, reasoning="exit",
@@ -820,7 +795,7 @@ def test_risk_mod_cannot_reduce_a_sell_below_its_intended_size():
 def test_risk_mod_can_still_increase_a_sell_allocation():
     """An UPWARD edit to an exit (selling MORE) only reduces risk, so it is
     still allowed — the guard reverts reductions only."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     sell = TradeDecision(
         action="SELL", symbol="NET", allocation_pct=50,
         entry_price=0, stop_loss=0, take_profit=0, reasoning="exit",
@@ -851,7 +826,7 @@ def test_risk_mod_stop_widening_below_rr_floor_is_now_allowed():
     The edit is applied. What still guards this path is unchanged and
     tested below: an edit that pulls the stop inside the ATR noise band is
     refused. An unmeasurable ratio is not an edit refusal."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     buy = TradeDecision(
         action="BUY", symbol="SPY", allocation_pct=10,
         entry_price=500, stop_loss=490, take_profit=530,  # R/R = 3.0
@@ -874,7 +849,7 @@ def test_risk_mod_stop_widening_below_rr_floor_is_now_allowed():
 
 def test_risk_mod_short_stop_widening_below_rr_floor_is_now_allowed():
     """Mirror of the BUY case for a SHORT — item 1(d) applies identically."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     short = TradeDecision(
         action="SHORT", symbol="XLB", allocation_pct=10,
         entry_price=100, stop_loss=104, take_profit=88,  # R/R = 3.0
@@ -899,7 +874,7 @@ def test_risk_mod_stop_inside_noise_band_is_rejected_when_bars_available():
     ATR noise band all but guarantees a whipsaw exit. When bars are
     available to compute a real ATR, this must be caught even though the
     edit looks "more protective" (smaller nominal risk)."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = MagicMock()
     pipeline.config.risk.absolute_min_stop_atr_multiple = 1.0
 
@@ -941,7 +916,7 @@ def test_risk_mod_genuine_protective_tighten_still_applies():
     """Do not regress the happy path: RM tightening allocation size or a
     stop that stays outside the noise band and above the R/R floor must
     still apply exactly as before."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     buy = TradeDecision(
         action="BUY", symbol="SPY", allocation_pct=10,
         entry_price=500, stop_loss=480, take_profit=560,
@@ -961,7 +936,7 @@ def test_risk_mod_genuine_protective_tighten_still_applies():
 
 
 def test_fractional_sell_helpers_preserve_position_size():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
 
     assert pipeline._full_sell_qty(0.4) == pytest.approx(0.4)
     assert pipeline._reduce_sell_qty(0.4) == pytest.approx(0.2)
@@ -970,11 +945,7 @@ def test_fractional_sell_helpers_preserve_position_size():
 
 def test_evening_return_pct_handles_zero_last_equity():
     """Evening must not divide-by-zero when last_equity is 0 (brand-new account)."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    pipeline.macro = MagicMock()
-    pipeline.evening_analyst = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
 
@@ -997,11 +968,7 @@ def test_evening_return_pct_handles_zero_last_equity():
 
 def test_evening_daily_pnl_uses_last_equity():
     """daily_pnl = total_value - last_equity (includes realized fills)."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    pipeline.macro = MagicMock()
-    pipeline.evening_analyst = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
 
@@ -1025,15 +992,9 @@ def test_evening_daily_pnl_uses_last_equity():
 
 
 def test_evening_reconciles_before_loading_trade_inputs():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    pipeline.macro = MagicMock()
-    pipeline.evening_analyst = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock(), _run_news_update=MagicMock(return_value=(None, None)), _load_earnings_analyses=MagicMock(return_value=([], [])))
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
-    pipeline._run_news_update = MagicMock(return_value=(None, None))
-    pipeline._load_earnings_analyses = MagicMock(return_value=([], []))
 
     events: list = []
 
@@ -1067,21 +1028,9 @@ def test_evening_reconciles_before_loading_trade_inputs():
 
 
 def test_evening_persists_daily_pnl_when_analysis_raises():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    pipeline.macro = MagicMock()
-    pipeline.evening_analyst = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock(), _run_news_update=MagicMock(return_value=(None, None)), _load_earnings_analyses=MagicMock(return_value=([], [])), _build_recent_sells_for_grading=MagicMock(return_value=[]), _build_recent_buys_for_grading=MagicMock(return_value=[]), _build_recent_outlook_calibration=MagicMock(return_value={"samples": [], "n": 0}), _build_weekly_narrative=MagicMock(return_value=""), _build_active_state_changes=MagicMock(return_value=""), _reconcile_fills=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
-    pipeline._run_news_update = MagicMock(return_value=(None, None))
-    pipeline._load_earnings_analyses = MagicMock(return_value=([], []))
-    pipeline._build_recent_sells_for_grading = MagicMock(return_value=[])
-    pipeline._build_recent_buys_for_grading = MagicMock(return_value=[])
-    pipeline._build_recent_outlook_calibration = MagicMock(return_value={"samples": [], "n": 0})
-    pipeline._build_weekly_narrative = MagicMock(return_value="")
-    pipeline._build_active_state_changes = MagicMock(return_value="")
-    pipeline._reconcile_fills = MagicMock()
 
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {
@@ -1106,17 +1055,7 @@ def test_evening_persists_daily_pnl_when_analysis_raises():
 
 
 def test_prelatched_evening_preserves_reconciliation_and_daily_pnl():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    pipeline._drain_pending_protection_restores = MagicMock()
-    pipeline._reconcile_orphan_pending_submits = MagicMock()
-    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
-    pipeline._reconcile_fills = MagicMock()
-    pipeline._run_news_update = MagicMock()
-    pipeline._load_earnings_analyses = MagicMock()
-    pipeline.evening_analyst = MagicMock()
-    pipeline.cost_circuit = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), _drain_pending_protection_restores=MagicMock(), _reconcile_orphan_pending_submits=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]), _reconcile_fills=MagicMock(), _run_news_update=MagicMock(), _load_earnings_analyses=MagicMock(), evening_analyst=MagicMock(), cost_circuit=MagicMock())
     pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
     pipeline.cost_circuit.require_paid_analysis.side_effect = PaidAnalysisSuspended(
         "prelatched", {"suspended": True},
@@ -1143,9 +1082,7 @@ def test_prelatched_evening_preserves_reconciliation_and_daily_pnl():
 
 
 def test_recent_sells_builder_reads_only_executed_trades():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.db.get_trades.return_value = []
 
     assert pipeline._build_recent_sells_for_grading() == []
@@ -1211,7 +1148,7 @@ def test_broker_limit_price_none_vs_zero():
 
 def test_hedge_nets_out_for_total_exposure():
     """Inverse ETFs are hedges: SQQQ short + SPY long should NET, not sum."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40,
         max_total_position_pct=50,  # tight limit
@@ -1243,13 +1180,7 @@ def test_hedge_nets_out_for_total_exposure():
 
 def test_same_direction_longs_sum_for_total_exposure():
     """Two longs (no hedge) sum to net exposure and can exceed the cap."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=40,
-        max_total_position_pct=50,
-        max_sector_pct=90,
-        require_stop_loss=True,
-    ))
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=40, max_total_position_pct=50, max_sector_pct=90, require_stop_loss=True, )))
     # SPY 30% + QQQ 30% both long → net 60% > 50% → QQQ blocked
     decisions = [
         TradeDecision(
@@ -1358,11 +1289,7 @@ def test_deployment_gap_emits_advisory_violation():
     """When projected invested is UNDER the fully-invested mandate by more
     than the advisory band (`deployment_gap.band_pct`), a non-blocking
     violation is emitted."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=40, max_total_position_pct=90,
-        max_sector_pct=90, require_stop_loss=True,
-    ))
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=40, max_total_position_pct=90, max_sector_pct=90, require_stop_loss=True, )))
     decisions = [
         TradeDecision(action="BUY", symbol="SPY", allocation_pct=40,
                       entry_price=500, stop_loss=480, take_profit=530, reasoning="aggressive"),
@@ -1383,11 +1310,7 @@ def test_deployment_gap_emits_advisory_violation():
 def test_deployment_gap_skipped_when_within_tolerance():
     """`pipeline.config` is unset (bare `__new__`), so the band falls back
     to `DeploymentGapConfig`'s own declared `band_pct` default (1.0)."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=40, max_total_position_pct=90,
-        max_sector_pct=90, require_stop_loss=True,
-    ))
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=40, max_total_position_pct=90, max_sector_pct=90, require_stop_loss=True, )))
     from src.models import Position
     held = [Position(symbol="SPY", qty=199, avg_entry=500, current_price=500,
                      market_value=99_500, unrealized_pnl=0.0,
@@ -1776,7 +1699,7 @@ def test_insights_excludes_today(tmp_path):
 
 def test_sell_allocation_100_is_full_sell():
     """allocation_pct=100 for SELL should be treated as full sell, not partial."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     decision = TradeDecision(
         action="SELL", symbol="SPY", allocation_pct=100,
         entry_price=0, stop_loss=0, take_profit=0, reasoning="exit",
@@ -1866,8 +1789,7 @@ def test_outlook_calibration_adds_5session_trend_metric():
     5-session cumulative is +1.0% (> 0.75 band → trend MATCH). The fix must
     score next-day=0% but trend=100% so evening stops concluding 'too
     bullish → default neutral'."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
     # insights returned most-recent-first; three bullish/high calls
     pipeline.db.get_recent_insights = MagicMock(return_value=[
         {"date": "2026-04-15", "tomorrow_bias": "bullish", "tomorrow_conviction": "high"},
@@ -1899,8 +1821,7 @@ def test_outlook_calibration_adds_5session_trend_metric():
 def test_outlook_calibration_trend_none_when_no_forward_window():
     """A prediction at the very end of the series has no 5-session forward
     window yet → trend_matched None, trend rates None (not a false 0%)."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
     pipeline.db.get_recent_insights = MagicMock(return_value=[
         {"date": "2026-04-15", "tomorrow_bias": "bullish", "tomorrow_conviction": "high"},
     ])
@@ -1962,11 +1883,7 @@ def test_pm_prompt_example_reasoning_chain_parses_with_premortem():
 def _evening_pipeline_with_closes(closes):
     """Minimal run_evening harness (mirrors the evening tests above) with a
     real get_recent_daily_closes payload so the backfill loop executes."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    pipeline.macro = MagicMock()
-    pipeline.evening_analyst = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
     pipeline.broker.is_trading_day.return_value = True
@@ -2111,7 +2028,7 @@ def test_risk_mod_cannot_increase_a_buy_allocation():
     edit grows the position by more than the number reads. An increase must
     be reverted and recorded in `rejected`; the BUY ships at the
     constructor's size."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     buy = TradeDecision(
         action="BUY", symbol="RSG", allocation_pct=44.23,
         entry_price=100, stop_loss=95, take_profit=115, reasoning="add",
@@ -2137,7 +2054,7 @@ def test_risk_mod_cannot_increase_a_buy_allocation():
 def test_risk_mod_reducing_a_buy_allocation_still_applies():
     """The guard above must not block the seat's actual job. A REDUCTION of a
     BUY's allocation_pct is applied exactly as before."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     buy = TradeDecision(
         action="BUY", symbol="RSG", allocation_pct=44.23,
         entry_price=100, stop_loss=95, take_profit=115, reasoning="add",
@@ -2162,7 +2079,7 @@ def test_out_of_range_buy_allocation_still_drops_the_decision():
     validation branch and DROPS the decision — the stricter outcome, and the
     behaviour `test_pipeline_drops_decision_when_risk_modification_invalid`
     pins. Only values Pydantic accepts reach the reduce-only guard."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     buy = TradeDecision(
         action="BUY", symbol="SPY", allocation_pct=10,
         entry_price=500, stop_loss=480, take_profit=530, reasoning="t",

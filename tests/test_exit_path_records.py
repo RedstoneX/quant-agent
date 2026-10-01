@@ -30,6 +30,7 @@ from src.risk.trailing import (
     evaluate_trailing_stop,
 )
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _db(tmp_path) -> Database:
@@ -81,8 +82,7 @@ def test_evaluate_returns_the_same_proposal_as_compute_plus_a_code():
 
 
 def _trail_pipeline(db, buy_row, stop):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = db
+    p = build_pipeline(db=db)
     db.get_symbol_last_buy = MagicMock(return_value=buy_row)
     p.broker = MagicMock()
     p.broker.get_current_stop_price.return_value = stop
@@ -205,8 +205,7 @@ def test_a_guard_refusal_writes_a_row(tmp_path):
 
 def test_the_session_sweep_passes_the_resting_orders_to_the_record(tmp_path):
     db = _db(tmp_path)
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = db
+    p = build_pipeline(db=db)
     db.get_symbol_last_buy = MagicMock(return_value={"stop_loss": 158.75})
     db.get_pending_protection_restores = MagicMock(return_value=[])
     p.broker = _repair_broker(None)
@@ -261,9 +260,7 @@ def test_the_broker_records_every_protective_stop_its_kill_switch_refuses(
         kill_switch_path=str(flag),
     )
     db = _db(tmp_path)
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = broker
-    p.db = db
+    p = build_pipeline(broker=broker, db=db)
     p._wire_protective_stop_block_recorder()
     result = broker._submit_stop_limit_order(
         symbol="AAA", qty=5, stop_price=90.0, side="sell",

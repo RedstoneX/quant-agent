@@ -53,6 +53,7 @@ from src.models import (
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
 from tests.session_clock import todays_session_stamp
+from tests.pipeline_factory import build_pipeline
 
 # A stand-in "actually answered" model — always distinct from the
 # "configured" model set on each test's mock_config so a passing assertion
@@ -446,8 +447,7 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
 def test_position_reviewer_persists_actual_model_on_failover():
     """midday/close (audit site pipeline.py:6109) must persist
     AgentResult.model, not config.llm.position_reviewer_model."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
@@ -488,8 +488,7 @@ def test_position_reviewer_persists_actual_model_on_failover():
 def test_earnings_preprocess_persists_actual_model_on_failover(tmp_path):
     """earnings_preprocess (audit site pipeline.py:6296) must persist
     AgentResult.model, not config.llm.earnings_analyst_model."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline = build_pipeline(db=Database(str(tmp_path / "t.db")))
     pipeline.db.initialize()
     pipeline.broker = MagicMock()
     pipeline.broker.is_trading_day.return_value = True
@@ -527,11 +526,7 @@ def test_earnings_preprocess_persists_actual_model_on_failover(tmp_path):
 def test_evening_analyst_persists_actual_model_on_failover():
     """evening (audit site pipeline.py:6668) must persist AgentResult.model,
     not config.llm.evening_analyst_model."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    pipeline.macro = MagicMock()
-    pipeline.evening_analyst = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
     pipeline.config = _mock_config()
 
     pipeline.broker.is_trading_day.return_value = True
@@ -634,8 +629,7 @@ _VALID_META_REFLECTION_JSON = json.dumps({
 def test_meta_reflector_persists_actual_model_on_failover(tmp_path):
     """quarterly meta (audit site pipeline.py:7050) must persist
     AgentResult.model, not config.llm.meta_reflector_model."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline = build_pipeline(db=Database(str(tmp_path / "t.db")))
     pipeline.db.initialize()
     pipeline.market = MagicMock()
     pipeline.market.get_ohlcv.return_value = []

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from src.models import Position, PositionReasoningChain, PositionReview
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _rc() -> PositionReasoningChain:
@@ -36,10 +37,8 @@ def _mk_pipeline() -> TradingPipeline:
     # weekday counter reproduces the same numbers as before.
     from src.trading_calendar import trading_sessions_held as _weekday_sessions_held
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.config = MagicMock()
-    pipeline.broker = MagicMock()
     pipeline.broker.trading_sessions_held.side_effect = _weekday_sessions_held
     return pipeline
 
@@ -671,8 +670,7 @@ def test_symbols_already_trimmed_today_pulls_sell_actions(tmp_path):
     # HOLD audit row — never counts.
     db.insert_trade("GOOGL", "HOLD", 0, 0, "no action", "r1")
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
+    pipeline = build_pipeline(db=db)
 
     out = pipeline._symbols_already_trimmed_today()
     assert out == {"AMZN", "META", "WDC", "AAPL"}, (
@@ -780,8 +778,7 @@ def _mk_review_with_action(symbol: str, action: str, reason: str,
 def _executor_pipeline_with_position(symbol: str, qty: float, current_price: float):
     """Pipeline scaffold sufficient to exercise _midday_execute_llm_actions
     on a single position. broker / db are mocked at the call surface."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     # audit F1 #1: SELL paths use the split snapshot/cancel seam.
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
     pipeline.broker.cancel_snapshotted_stops.return_value = True

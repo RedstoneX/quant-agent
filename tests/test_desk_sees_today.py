@@ -26,6 +26,7 @@ from src.trading_calendar import (
     last_completed_bar_date,
     live_price_is_today,
 )
+from tests.pipeline_factory import build_pipeline
 
 # Thursday 2026-09-10, the ORCL session.
 ORCL_OPEN = datetime(2026, 9, 10, 9, 30, tzinfo=ET)
@@ -171,8 +172,7 @@ def test_tech_prompt_labels_unavailable_live_price_as_stale():
 
 def _pipeline(snapshots):
     from src.pipeline import TradingPipeline
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.get_intraday_snapshots.return_value = snapshots
     return p
 
@@ -742,8 +742,7 @@ def test_the_intraday_mover_scan_does_not_buy_a_paid_look_on_yesterdays_move(
 
     now = SEP17_OPEN.replace(hour=11)
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.get_intraday_snapshots.return_value = {
         "ORCL": _snap(last_price=140.0, last_trade_at=SEP16_CLOSE,
                       prev_close=161.79),
@@ -774,8 +773,7 @@ def test_a_symbol_the_feed_returned_nothing_for_is_still_a_snapshot_miss():
     from src.pipeline import TradingPipeline
 
     now = SEP17_OPEN.replace(hour=11)
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.get_intraday_snapshots.return_value = {
         "MSFT": _snap(last_price=400.0, last_trade_at=now, prev_close=440.0),
         "BADTIX": {},

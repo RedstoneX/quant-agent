@@ -42,6 +42,7 @@ import pytest
 
 from src.models import Position
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 # ==========================================================================
@@ -53,13 +54,7 @@ def _protected_close_pipe(*, accepted=True, submit_raises=False, clear_ok=True):
     _submit_protected_sell directly, independent of any caller. Mirrors
     tests/test_pipeline.py's _protected_sell_pipe (same seam), kept local
     so this file stands alone."""
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
-    pipe.db = MagicMock()
-    pipe._cancel_stops_with_write_ahead = MagicMock(
-        return_value=(clear_ok, [{"id": "s1", "qty": 10}], 99),
-    )
-    pipe._order_accepted = MagicMock(return_value=accepted)
+    pipe = build_pipeline(broker=MagicMock(), db=MagicMock(), _cancel_stops_with_write_ahead=MagicMock( return_value=(clear_ok, [{"id": "s1", "qty": 10}], 99), ), _order_accepted=MagicMock(return_value=accepted))
     if submit_raises:
         pipe.broker.submit_order.side_effect = RuntimeError("broker down")
     else:
@@ -76,8 +71,7 @@ def _emergency_liquidate_pipe():
     mocking — same pattern tests/test_pipeline.py's emergency-liquidate
     tests use."""
     from src.storage.db import Database
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.db = MagicMock()
+    pipe = build_pipeline(db=MagicMock())
     pipe.db.has_pending_action_for_symbol.return_value = False
     pipe.db.insert_trade = MagicMock(return_value=1)
     pipe.broker = MagicMock()
@@ -310,11 +304,7 @@ def test_indeterminate_qty_never_reaches_broker_via_forced_close_gate():
 # ==========================================================================
 
 def _halted_pipe():
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
-    pipe.db = MagicMock()
-    pipe._reconcile_fills = MagicMock()
-    pipe._reconcile_stop_coverage = MagicMock(return_value=[])
+    pipe = build_pipeline(broker=MagicMock(), db=MagicMock(), _reconcile_fills=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]))
     pipe.broker.snapshot_protective_stops.return_value = (True, [{"qty": 1e9}])
     pipe._submit_protected_sell = MagicMock()
     return pipe
@@ -378,9 +368,7 @@ def test_execution_stage_sell_decision_loop_still_refuses_a_short(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock())
 
     stage = ExecutionStage(pipeline=pipeline)
     ctx = RunContext.start("test")
@@ -432,9 +420,7 @@ def test_midday_review_loop_guard_source_still_reads_qty_le_0():
 # ==========================================================================
 
 def test_reprotect_residual_picks_highest_stop_for_a_long_unchanged():
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
-    pipe._format_qty = lambda q: str(q)
+    pipe = build_pipeline(broker=MagicMock(), _format_qty=lambda q: str(q))
     cancelled = [
         {"id": "lo", "qty": 51, "stop_price": 240.0},
         {"id": "hi", "qty": 51, "stop_price": 248.5},
@@ -451,9 +437,7 @@ def test_reprotect_residual_picks_lowest_stop_for_a_short():
     (tightest, closest to price from above) — the opposite extreme from a
     long's SELL stop. Picking max() here would silently place the
     loosest, least-protective stop instead of the tightest one."""
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
-    pipe._format_qty = lambda q: str(q)
+    pipe = build_pipeline(broker=MagicMock(), _format_qty=lambda q: str(q))
     cancelled = [
         {"id": "hi", "qty": 51, "stop_price": 260.0},
         {"id": "lo", "qty": 51, "stop_price": 252.5},
@@ -561,10 +545,7 @@ def test_drain_sentinel_restores_buy_side_stops_for_a_short(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.db = db
-    pipe.broker = MagicMock()
-    pipe._format_qty = lambda q: str(q)
+    pipe = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
 
     specs = [{"id": "s1", "qty": 73, "stop_price": 262.0, "limit_price": 264.0}]
     db.insert_pending_protection_restore(
@@ -599,10 +580,7 @@ def test_drain_finalize_restores_buy_side_stops_for_a_short(tmp_path):
         position_qty_before_sell=73.0, specs_json=json.dumps(cancelled),
     )
 
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.db = db
-    pipe.broker = MagicMock()
-    pipe._format_qty = lambda q: str(q)
+    pipe = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     pipe.broker.get_order_fill_info.return_value = {
         "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
     }
@@ -634,10 +612,7 @@ def test_drain_finalize_long_row_has_no_side_kwarg_unchanged(tmp_path):
         position_qty_before_sell=73.0, specs_json=json.dumps(cancelled),
     )
 
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.db = db
-    pipe.broker = MagicMock()
-    pipe._format_qty = lambda q: str(q)
+    pipe = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     pipe.broker.get_order_fill_info.return_value = {
         "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
     }
@@ -683,10 +658,7 @@ def test_drain_finalize_degrades_to_sell_default_when_broker_unreadable(tmp_path
         position_qty_before_sell=100.0, specs_json=json.dumps(cancelled),
     )
 
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.db = db
-    pipe.broker = MagicMock()
-    pipe._format_qty = lambda q: str(q)
+    pipe = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     pipe.broker.get_order_fill_info.return_value = {
         "status": "canceled", "filled_qty": "0", "filled_avg_price": None,
     }

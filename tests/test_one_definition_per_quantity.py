@@ -42,6 +42,7 @@ from src.pipeline import TradingPipeline
 from src.portfolio_constructor import PortfolioConstructor
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import book_exposure, position_weight_pct, weight_pct_of
+from tests.pipeline_factory import build_pipeline
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 
@@ -162,8 +163,7 @@ def test_no_second_definition_of_unrealized_pnl_pct():
 # --------------------------------------------------------------------------
 
 def _pipeline_for_facts():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
     pipeline.db.compute_trade_calibration.return_value = {}
     pipeline.db.get_recent_agent_outputs.return_value = []
     pipeline.tech_store = MagicMock()
@@ -178,9 +178,7 @@ def _gate_projected_pct(positions, total_value, target):
     decision list, which is the shortest path that still executes the
     production `deployment_gap` code (formerly `macro_exposure_deviation`).
     """
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline._sweeper = lambda: None
-    pipeline.risk_engine = MagicMock(check=MagicMock(return_value=[]))
+    pipeline = build_pipeline(_sweeper=lambda: None, risk_engine=MagicMock(check=MagicMock(return_value=[])))
     _allowed, violations, _blocked = pipeline._filter_hard_risk_decisions(
         decisions=[], positions=positions, total_value=total_value, cash=0.0, invested_target_pct=target,)
     gap = [v for v in violations if v.rule == "deployment_gap"]
@@ -357,8 +355,7 @@ def test_every_weight_consumer_uses_the_gross_multiplier():
     )
     assert intent == "sell"
     # `_build_position_facts` (the position reviewer's metric line)
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
     pipeline.db.get_symbol_last_buy.return_value = None
     pipeline.db.get_trades.return_value = []
     pipeline.broker = MagicMock()
@@ -415,8 +412,7 @@ def test_every_pnl_pct_consumer_renders_the_same_number():
     # `_build_position_facts` feeds the same percent into the reviewer's
     # winner flags. A short held one day and up 9% is parabolic; with a
     # sign-flipped denominator it reads as -9% and never flags.
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
     pipeline.db.get_symbol_last_buy.return_value = {
         "timestamp": "2999-01-01 10:00:00", "stop_loss": 0,
     }

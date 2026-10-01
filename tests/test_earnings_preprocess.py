@@ -6,13 +6,12 @@ from unittest.mock import MagicMock
 from src.agents.base import AgentResult
 from src.cost_circuit import PaidAnalysisSuspended
 from src.data.earnings import EarningsReport
-from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _mk_pipeline(tmp_path, earnings_provider, earnings_analyst):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline = build_pipeline(db=Database(str(tmp_path / "t.db")))
     pipeline.db.initialize()
     pipeline.broker = MagicMock()
     pipeline.broker.is_trading_day.return_value = True
@@ -132,9 +131,7 @@ def test_prelatched_preprocess_fetches_filing_but_never_marks_it_failed(tmp_path
 
 
 def test_preprocess_skips_when_market_closed(tmp_path):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.broker.is_trading_day.return_value = False
     pipeline.earnings_provider = MagicMock()
     pipeline.earnings_analyst = MagicMock()

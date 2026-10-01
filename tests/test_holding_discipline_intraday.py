@@ -38,6 +38,7 @@ from src.models import (
 from src.pipeline import TradingPipeline
 from src.risk.exit_guard import HoldingDisciplineClaimCheck
 from src.trading_calendar import et_today
+from tests.pipeline_factory import build_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +70,7 @@ def _protection(protected: bool):
 
 
 def _pipeline(*, macro_state=None, protected=True, state_changes=None):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_symbol_last_buy.return_value = {
         "price": 100.0, "stop_loss": 94.0,
         "thesis_invalid_if": "loses the 94 shelf on a close",

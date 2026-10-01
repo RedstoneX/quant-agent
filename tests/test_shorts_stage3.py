@@ -36,6 +36,7 @@ from src.pipeline_context import RunContext
 from src.pipeline_stages import ExecutionStage
 from src.portfolio_constructor import PortfolioConstructor
 from src.risk.rules import RiskRuleEngine
+from tests.pipeline_factory import build_pipeline
 
 
 # ==========================================================================
@@ -1024,8 +1025,7 @@ def test_risk_engine_long_only_output_unchanged_with_no_shorts_anywhere():
 def test_emergency_cover_cancels_the_symbols_resting_short_entry_order():
     """EMERGENCY_COVER must cancel that symbol's own resting entry order
     exactly as EMERGENCY_SELL does for a long."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
     p.db = MagicMock()
@@ -1042,8 +1042,7 @@ def test_emergency_sell_still_cancels_the_symbols_resting_long_entry_order():
     pre-existing EMERGENCY_SELL behaviour is unaffected by the short-side
     fix (same assertion shape as tests/test_pipeline.py's
     test_full_exit_sell_cancels_same_symbol_entry_orders)."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
     p.db = MagicMock()
@@ -1072,8 +1071,7 @@ def _midday_pipeline_with_short(symbol: str, qty: float, current_price: float):
     """Pipeline scaffold sufficient to exercise _midday_execute_llm_actions
     on a single SHORT position. Mirrors tests/test_position_reviewer.py's
     _executor_pipeline_with_position, kept local for the same reason."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
     pipeline.broker.cancel_snapshotted_stops.return_value = True
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
@@ -1209,8 +1207,7 @@ def test_cancel_open_entry_orders_long_only_book_cancels_only_the_buy():
     """Long-only regression proof for the broker-level fix: a book with no
     short-side orders at all cancels exactly what it always did (see
     tests/test_broker.py's fuller mixed-book proof for the mechanism)."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
     p.db = MagicMock()

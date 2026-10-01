@@ -29,6 +29,7 @@ import pytest
 
 import src.execution.cash_sweep as cash_sweep_module
 from src.config import CashSweepConfig
+from tests.pipeline_factory import build_pipeline
 
 
 @pytest.fixture(autouse=True)
@@ -57,7 +58,7 @@ NVDA = Position(symbol="NVDA", qty=10, avg_entry=900, current_price=950,
 
 
 def _sweep_pipeline(enabled=True, min_order_usd=500.0):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(
             enabled=enabled, symbol="SGOV",
@@ -96,13 +97,13 @@ def test_split_positions_passthrough_when_disabled():
 
 def test_sweeper_none_for_bare_new_pipeline():
     """__new__-built pipelines (no cash_sweeper attr) degrade to disabled."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     assert pipeline._sweeper() is None
 
 
 def test_magicmock_config_reads_as_disabled():
     """MagicMock auto-attrs are truthy — enabled() must use `is True`."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = MagicMock()
     pipeline.cash_sweeper = CashSweeper(pipeline=pipeline)
     assert pipeline.cash_sweeper.enabled() is False
@@ -201,7 +202,6 @@ def _funding_pipeline():
     }
     p.broker.get_positions.return_value = [NVDA]
     return p
-
 
 
 

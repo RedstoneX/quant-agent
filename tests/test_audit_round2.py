@@ -9,7 +9,7 @@ import pytest
 
 from src.execution.broker import AlpacaBroker
 from src.models import Position
-from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _broker(mock_tc_cls):
@@ -52,8 +52,7 @@ def test_entry_protection_terminal_zero_fill_does_not_cancel(mock_tc_cls):
 # ---------- full exits cancel the same-day resting entry BUY ----------
 
 def test_full_exit_sell_cancels_same_symbol_entry_orders():
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
     p.db = MagicMock()
@@ -65,8 +64,7 @@ def test_full_exit_sell_cancels_same_symbol_entry_orders():
 
 
 def test_partial_trim_keeps_its_entry_orders():
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
     p.db = MagicMock()
@@ -81,7 +79,7 @@ def _park_pipeline():
     from types import SimpleNamespace
     from src.config import CashSweepConfig, RiskConfig
     from src.execution.cash_sweep import CashSweeper
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
                                    min_order_usd=500.0),
@@ -202,14 +200,7 @@ def test_pm_parse_failure_is_analysis_error_not_no_trades():
     last-run marker written, trading day silently skipped. analysis_error is
     retryable: the next tick retries (and the checkpoint resumes at RM)."""
     from src import decision_checkpoint as dc
-    p = TradingPipeline.__new__(TradingPipeline)
-    p._is_trading_day = lambda: True
-    p._drain_pending_protection_restores = MagicMock()
-    p._reconcile_orphan_pending_submits = MagicMock()
-    p._reconcile_stop_coverage = MagicMock(return_value=[])
-    p._reconcile_fills = MagicMock()
-    p._force_delever = MagicMock(return_value=[])
-    p.broker = MagicMock()
+    p = build_pipeline(_is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock(), _reconcile_orphan_pending_submits=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]), _reconcile_fills=MagicMock(), _force_delever=MagicMock(return_value=[]), broker=MagicMock())
     p.broker.get_account.return_value = {
         "cash": 50_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
     }
@@ -265,9 +256,7 @@ def test_missed_lessons_one_streak_is_not_recurring():
     """A single >=8% move re-emits on ~5 consecutive evenings via the rolling
     window — one episode, one symbol: NOT a recurring theme."""
     import json
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
-    p.broker = MagicMock()
+    p = build_pipeline(db=MagicMock(), broker=MagicMock())
     rows = [
         {"date": f"2026-07-{d:02d}", "missed_opportunities_json": json.dumps([
             {"miss_category": "trend_timing_miss", "symbol": "SNDK",
@@ -280,9 +269,7 @@ def test_missed_lessons_one_streak_is_not_recurring():
 
 def test_missed_lessons_two_symbols_same_theme_still_recurs():
     import json
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
-    p.broker = MagicMock()
+    p = build_pipeline(db=MagicMock(), broker=MagicMock())
     p.db.get_recent_insights.return_value = [
         {"date": "2026-07-15", "missed_opportunities_json": json.dumps([
             {"miss_category": "theme_blindspot", "symbol": "VST",
@@ -317,7 +304,7 @@ def test_force_delever_unparks_only_what_the_deficit_needs():
     from types import SimpleNamespace
     from src.config import CashSweepConfig, RiskConfig
     from src.execution.cash_sweep import CashSweeper
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
                                    min_order_usd=500.0),

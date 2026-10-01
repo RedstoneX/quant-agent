@@ -37,6 +37,7 @@ from src.models import (
 from src.pipeline_context import RunContext
 from src.pipeline_stages import RiskStage
 from src.risk.exit_guard import StructuralProtectionCheck, compute_deltas
+from tests.pipeline_factory import build_pipeline
 
 
 # --- delta fixtures (real MetricDeltas, built the same way the reader does) --
@@ -112,23 +113,7 @@ def _stage_pipeline(*, decisions, metric_deltas):
     """
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
-    pipeline._sweeper = MagicMock(return_value=None)
-    pipeline._filter_supported_symbols = MagicMock(return_value=(decisions, []))
-    pipeline._refuse_queued_earnings_buys = MagicMock(return_value=decisions)
-    pipeline._filter_hard_risk_decisions = MagicMock(
-        side_effect=lambda d, *a, **kw: (list(d), [], []),
-    )
-    pipeline._build_active_state_changes = MagicMock(return_value="")
-    pipeline._structural_protection_for_holding = MagicMock(
-        return_value=StructuralProtectionCheck(
-            protected=False, basis="noise_band_fallback",
-            detail="no qualifying structural level",
-        ),
-    )
-    pipeline._build_position_facts = MagicMock(return_value={})
-    pipeline._build_review_metric_deltas = MagicMock(return_value=metric_deltas)
+    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( side_effect=lambda d, *a, **kw: (list(d), [], []), ), _build_active_state_changes=MagicMock(return_value=""), _structural_protection_for_holding=MagicMock( return_value=StructuralProtectionCheck( protected=False, basis="noise_band_fallback", detail="no qualifying structural level", ), ), _build_position_facts=MagicMock(return_value={}), _build_review_metric_deltas=MagicMock(return_value=metric_deltas))
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(), reason_category="clean",
         reasoning="no objection at the book level",

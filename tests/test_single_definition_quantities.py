@@ -43,7 +43,7 @@ from src.models import OHLCV, Position, TradeDecision
 from src.pipeline import TradingPipeline, _missed_ops_quality_metrics
 from src.quantities import ETF_LEVERAGE, avg_dollar_volume, inverse_etf_symbols
 from src.risk.rules import RiskRuleEngine
-
+from tests.pipeline_factory import build_pipeline
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -93,7 +93,7 @@ def _book_as_api_payload() -> dict:
 
 
 def _pipeline() -> TradingPipeline:
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(
             enabled=True, symbol=SWEEP_SYMBOL,
