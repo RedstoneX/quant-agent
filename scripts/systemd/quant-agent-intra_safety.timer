@@ -1,0 +1,38 @@
+# Board item 177 (2026-10-01): the FREE safety work gets its own schedule.
+[Unit]
+Description=quant-agent intra_safety — free broker-truth safety preamble (fill reconcile, stop-out reconcile, protection-restore drain, repeg drain) on its OWN schedule, independent of the paid intraday tick
+
+[Timer]
+# NO NUMBER WAS INVENTED HERE. Both halves of this expression are copied
+# from something that already exists:
+#
+#   INTERVAL — 30 minutes, which is `src.config.INTRA_CHECK_TICK_MINUTES`,
+#   an operator-set value carrying `status: sourced` in
+#   config/number_ledger.yaml. This work already runs on that interval
+#   today, as the opening block of the paid intra_check tick; keeping it
+#   there changes the protection latency by exactly nothing, which is the
+#   point — the schedule becomes explicit without becoming different.
+#
+#   PHASE — :07:30 / :37:30 is the MIDPOINT of the two phases already in
+#   use on this box: every other session timer is on *:0/30 and
+#   quant-agent-intra_check.timer is on *:15,45 (moved there 2026-09-17 to
+#   stop same-second races; see that unit's header and
+#   docs/INCIDENT_HISTORY.md). Half of that 15-minute spacing is 7m30s.
+#   The midpoint is the only phase at this interval that shares a second
+#   with no existing unit, and it is derived from the two existing phases
+#   rather than picked.
+#
+# What would let someone choose a DIFFERENT interval: nothing in the
+# record can justify one yet. The honest input would be the observed
+# distribution of how long a position actually stays unprotected — i.e.
+# the gap between a protection-restore intent being written and the drain
+# clearing it, and between a broker-side stop-out filling and the
+# reconciler writing it back. Those timestamps are persisted
+# (pending_protection_restores, the stop-out reconcile rows) but have
+# never been measured as a latency distribution. Until they are, a
+# tighter or looser number would be a guess.
+OnCalendar=*:07,37:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

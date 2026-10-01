@@ -18,10 +18,15 @@ cluster cap the total ceiling is trivially satisfiable by a book that is
 concentrated in exactly the way the ceiling exists to prevent, which is why
 "total risk is under 25%" was never on its own a meaningful statement about
 diversification. A single cluster may take at most `cluster_share_pct` of the
-total ceiling (suggested 40%, i.e. 10% of equity at a 25% ceiling).
+total ceiling (40%, i.e. 10% of equity at a 25% ceiling -- which is
+exactly two full-size positions at the ratified 5% per-trade envelope,
+so the share is a name count written as a percent and is not derivable
+independently of the two ceilings it sits between; item 186).
 
 Clusters arrive from `src/data/correlation.py::correlation_clusters` — measured
-return correlation over five years, transitive, thresholded. They are not a
+return correlation over five years, transitive, and cut from the
+correlation-distance tree at its own widest gap -- there is no correlation
+threshold any more (removed 2026-09-30, item 186). They are not a
 hand-maintained sector table, so a theme that trades together is caught whether
 or not anyone thought to name it.
 
