@@ -755,6 +755,55 @@ Moved out of `docs/WORK.md` on 2026-09-30 to keep that file under the
 changed; this is the item body verbatim.
  `risk.min_stop_atr_multiple` (2.5) is not sourced — there is no citation for a fixed entry stop at that multiple and both ends of the band quoted at its definition site are unsupported (item 90, 2026-09-30) — so `docs/OUTCOME.md`'s first-ranked remedy applies: reformulate the rule so it needs no constant. Doctrine's own worked example is structural ("does the last higher low still hold?" needs no number because the chart supplies the level), and item 90's pass established that this desk can already do it. `_level_backing_stop` discards any level with fewer than `min_level_touches_for_stop_honor` (5) touches, after which the stop falls to the flat ATR multiple; but that 5 was measured for whether a level is trustworthy enough to justify a stop TIGHTER than the floor, where a level that fails costs a whipsaw. Used as a WIDENING anchor the bet inverts: the stop sits beyond the level, so a level that fails leaves the stop merely wider than needed, which under risk-based sizing costs position size and not loss. That asymmetry has never been examined and it is where the constant's blast radius shrinks. The measured backing is in the repo and is not fitting, because it is measured off bars rather than off this desk's trades: pooled bounce probability rises from 0.516 at first touch to 0.644 at 5+ touches against a flat ~0.48-0.51 shuffled control (7,218 touch episodes, 101 symbols, 5 years; `src/data/levels.py`, `docs/RESEARCH_FINDINGS.md` §7), so a 2-touch level (`MIN_TOUCHES` = 2) still carries real information. The machinery also exists: `_derive_structural_stop_no_atr` (owner-ratified, item 80) already reads a protective stop from structure using the ratified `structural_stop_buffer_pct`; only its trigger condition would change. **Two things this must settle rather than assume, both of which could sink it:** what the floor does when the nearest computed level below entry is very far away (a distant anchor shrinks the position toward `position_sized_to_zero` and may be worse than the flat multiple), and what happens when no computed level exists below entry at all — that residue is the only population an ATR multiple would still govern, and item 90 stays open on it.
 
+## item 90 — the 2026-10-01 LIVENESS measurement (is the settling recording actually filling?)
+
+No number was derived, moved or re-picked in this pass, and nothing was routed to
+the owner. The question asked was the one a settlement route cannot answer about
+itself: a route pointing at a recording that writes nothing closes nothing, and
+several recordings built in the last two days turned out to be writing nothing in
+production. Measured directly against the live database on 2026-10-01, read-only,
+per column of `trades` (80 rows):
+
+- `entry_atr` — non-null on 0 of 80. DEAD so far, cause dated: the write read
+  ATR(14) off `decision`, which has no such field, so it resolved to its default on
+  every trade. Corrected in `d9a853e7` (2026-09-30 17:57) and that commit IS an
+  ancestor of the deployed `208b2c67` (2026-09-30 23:28). The last entry in the
+  database is `2026-09-30 14:47`, i.e. BEFORE the corrected code reached the box, so
+  the correction is UNPROVEN rather than refuted. Zero trades have been written
+  since the deploy.
+- `stop_basis` — non-null on 0 of 80, same write site and same dating.
+- `max_adverse_excursion` / `max_favourable_excursion` — non-null on 0 of 80, and
+  they cannot fill ahead of `entry_atr`: the accumulating UPDATE in
+  `src/storage/db.py` filters on `entry_atr IS NOT NULL`, so every trade entered
+  before the correction is permanently excluded from the excursion record. The
+  falsification evidence therefore begins at the first entry after the deploy and
+  cannot be backfilled.
+- `structural_ceiling` — non-null on 0 of 80. This one is NOT item 90's (it is item
+  82's) and it is recorded here only because the same measurement produced it: its
+  writer landed `f37410e7` (2026-09-24 22:00) and is deployed, and exactly one BUY
+  has been written since (`2026-09-30 14:47`) with the column NULL. That is one
+  observation, not a proof, but it is the only post-deploy entry there is and it did
+  not fill. Reported, not fixed — it predates this task.
+- The per-position stop-basis record described as added today is NOT on `origin/main`
+  and the production `positions` table has no such column; the production table has
+  the eight columns it always had. Whatever built it is unmerged, so no route may
+  cite it yet.
+
+Checked explicitly rather than assumed, because the brief warned about it: the
+floor's route is a per-closed-trade record, which is the shape of barred fitting,
+but its `closes_when` asks only whether the floor was ever VIOLATED. Falsification
+of a standing number is not fitting a new one, and the route says in terms that the
+multiple may not be optimised against it. The route is left in place. The four
+ceiling rows that joined state 3 on the same day are `state: specified` and belong to
+item 186; they were read and left alone.
+
+Why item 90 does not retire today: half two is not met on any reading. The ledger
+still carries 131 rows in none of the three states, `MAX_ARBITRARY_ENTRIES` is not
+zero, all four tranche items (182, 183, 185, 186) are open, and the one state-3 row
+this item owns has a recording that has so far recorded nothing. The honest status is
+that the item moved from "the recording is built" to "the recording is built and
+measurably empty, with a dated reason and a named observation that would settle it".
+
 ## item 90 — the 2026-10-01 classification pass (mechanical, no number changed)
 **Verdict: the item stays OPEN, and the honest count of remaining work is 134, not the "half done" the board carried.** What was built is the CLASSIFICATION itself, mechanically and from the ledger, plus the ratchet that keeps it honest; what was deliberately NOT done is any re-derivation, because that is the move this item has already recorded as failing every time — the desk cannot derive these numbers from data it never recorded. (a) `src/number_sources.py` gains `classification()`, which partitions all 329 ledger rows into item 90's three states — sourced or measured; ratified as a structural bound with the reason recorded; unsourceable today with a NAMED recording, built or specified, that would settle it — and a fourth bucket that is the defect, a live number in none of the three. A test pins that every row lands in exactly one bucket, so a row cannot fall through the classification unnoticed. (b) `status: arbitrary` rows may now carry `settles_by:` (`kind`, `state` built/specified, `where`, `records`, `closes_when`). That is the only way to express state 3; before this the schema could not tell "unsourceable but recorded against" from "nothing will ever answer this", which is why the classification could only be produced by hand and never stayed produced. A malformed or unactionable route is a HARD build failure, on the ground that it reads as an answer while silently removing the row from the outstanding count; a missing route is counted instead, because 134 of them exist and deleting rows is not the fix. (c) `MAX_ROUTELESS_ARBITRARY` is computed from `config/number_ledger_route_history.yaml` and checked for EQUALITY — identical in shape to `MAX_ARBITRARY_ENTRIES` and chosen for the same two reasons already learned on that ratchet: a hand-edited literal drifts from its own record, and a ceiling rewards deleting a row rather than answering it. Lowering it requires an appended negative delta naming the row and the recording, in the same commit. (d) MEASURED from the ledger 2026-10-01: 109 not trade-governing, 82 sourced or measured, 3 ratified as a bound, 1 in state 3, 134 in none of the three. The 134 are enumerated by the check, not duplicated in prose, and group as `src.config` 36, `src.agents` 30, `src.risk` 21, `src.pipeline` 18, `src.portfolio_constructor` 9, `src.execution` 8, `src.data` 5, `src.verdicts` 4, `src.pipeline_stages` 2, `src.rotation` 1. (e) The single state-3 row is `src.config.RiskConfig.min_stop_atr_multiple`, routed to the per-closed-trade excursion recording built by the 2026-09-30 pass; its value is UNCHANGED and the recording may not be optimised against, since fitting a number to this desk's own trading record is barred outright. (f) One sentinel moved for a non-trade reason and is declared: `MAX_UNSCOPED_NUMERIC_SITES` 154 -> 155 for `MIN_ROUTE_PROSE_CHARS` (40), the shortest route prose the schema accepts — it governs the ledger's own schema and no size, price, stop or exit.
 
