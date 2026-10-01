@@ -91,6 +91,14 @@ def _insert(db: Any, *, run_id: str | None, kind: str, symbol: str,
 # 1. trailing stop: why it did or did not trail, on a change only
 # ---------------------------------------------------------------------------
 
+def _state_key(code: str, structural_code: Any = None) -> str:
+    """The dedupe identity of a trail state: its code plus the structural
+    leg's code when there is one. Two states that differ only in why the
+    STRUCTURAL leg refused are different states and each deserves its row."""
+    extra = str(structural_code or "")
+    return f"{code}|{extra}" if extra else str(code)
+
+
 def last_trail_states(db: Any, symbols) -> dict[str, str]:
     """`{symbol: last recorded trail code}`. Empty on any failure — which
     makes the next evaluation record again, the safe direction for a
@@ -109,7 +117,13 @@ def last_trail_states(db: Any, symbols) -> dict[str, str]:
         except (TypeError, ValueError):
             continue
         if isinstance(payload, dict) and payload.get("code"):
-            out[str(symbol).upper()] = str(payload["code"])
+            # Item 212: the dedupe key is the code AND the structural leg's
+            # own code. On a range name the R-ratchet supplies `code`, so a
+            # changed structural reason under an unchanged `code` would
+            # otherwise never be written at all.
+            out[str(symbol).upper()] = _state_key(
+                str(payload["code"]), payload.get("structural_code"),
+            )
     return out
 
 
@@ -146,7 +160,8 @@ def record_trail_code_census(
 
 def record_trail_state_if_changed(
     db: Any, last_codes: dict[str, str], *, run_id: str, symbol: str,
-    code: str, detail: str = "", **facts: Any,
+    code: str, detail: str = "", structural_code: str | None = None,
+    **facts: Any,
 ) -> bool:
     """Record `code` for `symbol` only when it differs from the last one on
     record. Bounded by design: a stop that sits untrailed for the same
@@ -155,15 +170,18 @@ def record_trail_state_if_changed(
     evaluation of the same symbol in one pass is compared against the first.
     """
     symbol_u = str(symbol or "").strip().upper()
+    key = _state_key(code, structural_code)
     previous = last_codes.get(symbol_u)
-    if previous == code:
+    if previous == key:
         return False
     written = record_trail_state(
         db, run_id=run_id, symbol=symbol_u, code=code, detail=detail,
-        previous_code=previous, **facts,
+        previous_code=(previous.split("|")[0] if previous else None),
+        structural_code=(str(structural_code) if structural_code else None),
+        **facts,
     )
     if written:
-        last_codes[symbol_u] = code
+        last_codes[symbol_u] = key
     return written
 
 
