@@ -515,3 +515,59 @@ def test_the_merged_file_is_read_back_with_the_boards_own_parsers():
     assert problem is None and gate_problem is None
     assert sorted(i.rank for i in queue) == [1, 2, 3, 8, 9]
     assert sorted(i.rank for i in gate) == [7, 8]
+
+
+# ---------------------------------------------------------------------------
+# One side did not touch the region (PRs 828, 836, 845, 855)
+# ---------------------------------------------------------------------------
+
+_NOTE_BASE = (
+    "Preamble.\n\n"
+    "## item 9\n"
+    "First paragraph, written when the item was opened.\n\n"
+    "Second paragraph, the measurement.\n"
+)
+
+
+def test_a_note_only_one_side_touched_takes_that_side_without_refusing():
+    """A side that changed nothing has no opinion, so there is nothing to
+    reconcile and nothing for a human to renumber. This shape blocked four
+    PRs in one day: the resolver called it a NUMBER COLLISION because the two
+    texts were not byte-identical, without ever asking whether one of them
+    was simply the merge base."""
+    theirs = _NOTE_BASE + "\nUPDATE 2026-09-30. Theirs appended this.\n"
+    assert rdc.resolve_notes(_NOTE_BASE, _NOTE_BASE, theirs) == theirs
+    assert rdc.resolve_notes(_NOTE_BASE, theirs, _NOTE_BASE) == theirs
+
+
+def test_two_sides_appending_different_paragraphs_keep_both():
+    """The normal way a board note grows is an appended UPDATE paragraph.
+    Two branches each appending their own touch nothing of each other's, so
+    both paragraphs survive; neither may be dropped silently."""
+    ours = _NOTE_BASE + "\nUPDATE 2026-09-30. Ours: the amend path is live.\n"
+    theirs = _NOTE_BASE + "\nUPDATE 2026-09-30. Theirs: the wall is flagged.\n"
+    merged = rdc.resolve_notes(_NOTE_BASE, ours, theirs)
+    assert "Ours: the amend path is live." in merged
+    assert "Theirs: the wall is flagged." in merged
+    assert "Second paragraph, the measurement." in merged
+    for marker in rdc.CONFLICT_MARKERS:
+        assert marker not in merged
+
+
+def test_both_sides_rewriting_the_same_lines_is_still_refused():
+    """The protection this fix must not weaken: two different rewrites of the
+    SAME lines is a real editorial conflict, and picking one would delete the
+    other's words."""
+    ours = _NOTE_BASE.replace("the measurement.", "the measurement, ours says 3.")
+    theirs = _NOTE_BASE.replace("the measurement.", "the measurement, theirs says 7.")
+    with pytest.raises(rdc.Refusal) as exc:
+        rdc.resolve_notes(_NOTE_BASE, ours, theirs)
+    assert "NUMBER COLLISION" in str(exc.value)
+
+
+def test_a_duplicate_board_number_is_still_refused():
+    """A number naming two different items is still a renumber only a human
+    can make."""
+    doubled = _NOTE_BASE + "\n## item 9\nA second, unrelated item 9.\n"
+    with pytest.raises(rdc.Refusal):
+        rdc.resolve_notes(_NOTE_BASE, doubled, _NOTE_BASE)
