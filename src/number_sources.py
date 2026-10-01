@@ -250,6 +250,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # longer exists — that gate refuses the BUY instead of sizing it (board
     # item 186, 2026-10-01) — and the rule stays because the shape recurs.
     "src/pipeline.py",
+    "src/pipeline_prompt_facts.py",
     # Every seat's prompt-construction and LLM-call code -- the path from
     # evidence to a seat's verdict the scope rule names. Most of what lives
     # here is LLM plumbing (timeouts, retries, token budgets) that is

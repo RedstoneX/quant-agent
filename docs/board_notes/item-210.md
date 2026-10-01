@@ -44,3 +44,46 @@ carries 36 ids under the larger file and 22 under the smaller. Measured against
 current main today: 34 and 22. The 36 is stale by two; the 22 is right. The
 counts are now pinned by a test, so the next drift is a red build rather than a
 discovery. Eleven steps remain and this item stays open.
+
+## Step 1 — the prompt-facts mixin (2026-10-01)
+
+`src/pipeline_prompt_facts.py` now holds `PromptFactsMixin`: 39 methods and three
+module-level helpers lifted out of `src/pipeline.py` byte-for-byte, 3,432 lines of
+method bodies in all. `src/pipeline.py` falls from 21,864 lines to 18,289. The class
+gains one base and nothing else; every method keeps its name on `TradingPipeline`, so
+the 338 construction sites and every `self._build_*` call are untouched.
+
+The mapping was re-derived from the AST on the day, not read from the plan, whose
+offsets were already dead: cluster I is today methods `_build_position_history`
+(line 7415) through `_compute_recent_performance` (line 10636), plus the position-facts
+trio from the review cluster.
+
+**`_handle_ex_dividends` did not move.** It sits inside cluster I's line range and it
+moves live stops, which is the one thing this module must not do; it is reassigned to
+the protection module in step 2. Nothing else in the moved set places, cancels or
+amends an order — the three hits for `stop_records` in the moved text are reads of the
+desk's own stop records for display.
+
+Re-exported from `src.pipeline` on purpose: `_PM_PROFILE_SYMBOL_CAP`,
+`_missed_ops_quality_metrics` and `_valuation_signal_from`, because tests and prose
+import them from there by that name. `_valuation_signal_from` is used only by moved
+prompt builders, so it travels with them rather than with the exit-trigger helpers the
+plan groups it beside.
+
+The logger in the new module is bound to the name `src.pipeline` rather than
+`__name__`, so every log record the moved code writes is unchanged.
+
+Three test patch sites had to be re-pointed, and the plan predicted exactly this class
+of breakage: `src.pipeline.et_today` no longer reaches a method that now resolves the
+name in the new module. They failed loudly (day counts of 14 against an expected 1)
+rather than silently, and are re-pointed at `src.pipeline_prompt_facts.et_today`.
+`_get_sector` needed nothing: every moved use of it is already a function-local import.
+
+Ledger: 25 ids moved from `src.pipeline.*` to `src.pipeline_prompt_facts.*` through the
+step-0 helper, which verified the rewrite afterwards and reported nothing left behind;
+the new file is in `SCOPED_PATHS`, and the pinned count for the old module drops from
+34 to 9. One id names a nested function and needed a second pass to catch, which is
+worth knowing before step 2. The method inventory was re-recorded in the same change
+and the new module added to the tracked list.
+
+Item 210 stays open: ten steps remain.
