@@ -1357,7 +1357,12 @@ def test_an_unreadable_anti_churn_record_leaves_a_durable_reason(
 
 def test_a_lost_anti_churn_write_leaves_a_durable_reason(tmp_path):
     """`_persist_evidence` swallows write failures, so the `sell_submitted`
-    row can be LOST as well as unreadable. Same silent hole, other half."""
+    row can be LOST as well as unreadable. Same silent hole, other half.
+
+    2026-10-01: the session's own rotation result proves the name was sold
+    today, so the guard now CLOSES on that fact instead of only recording
+    itself open. The durable row stays, and still says what happened.
+    """
     from src import pipeline_stages as _ps
 
     pipeline, db, probe = _pipeline(tmp_path)
@@ -1365,9 +1370,18 @@ def test_a_lost_anti_churn_write_leaves_a_durable_reason(tmp_path):
     # A rotation sale WAS submitted this session, but no durable record of
     # it can be read back — the write was lost.
     ctx.rotation = {"held_symbol": "OLD", "sell_order_id": "o-1"}
-    buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
-    assert _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys) == buys
+    buys = [
+        TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t"),
+        TargetPosition(symbol="FRESH", risk_allocation_pct=2.0, thesis="t"),
+    ]
+    kept = _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys)
+    # The same-day re-buy is STOPPED; every other buy is untouched.
+    assert [d.symbol for d in kept] == ["FRESH"]
 
-    (symbol, payload), = _failed_open(db)
+    (symbol, payload), = [
+        (sym, p) for sym, p in _rotation_events(db)
+        if p["outcome"] == "rebuy_guard_closed_from_session_fact"
+    ]
     assert symbol == "OLD"
     assert payload["failure"] == "record_unwritten"
+    assert "still stopped" in payload["reason"]

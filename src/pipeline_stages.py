@@ -1713,32 +1713,39 @@ def _drop_buys_sold_today_below_bar(pipeline, ctx, buy_decisions: list) -> list:
                 pipeline, ctx, getattr(d, "symbol", None), "rotation",
                 "rebuy_guard_failed_open",
                 "the buy-side anti-churn guard could not read the desk's "
-                f"own rotation sell record ({exc}), so this buy was NOT "
-                "checked against today's rotation sales and proceeded "
-                "through its ordinary gates",
+                f"own rotation sell record ({exc}), so this buy was checked "
+                "only against the rotation sale this session itself made, "
+                "and otherwise proceeded through its ordinary gates",
                 failure="record_unreadable",
             )
-        return buy_decisions
-    if sold_this_session and sold_this_session not in set(sold_today or ()):
+        sold_today = ()
+    blocked = {str(s or "").strip().upper() for s in (sold_today or ())}
+    blocked.discard("")
+    if sold_this_session and sold_this_session not in blocked:
         # The other half of the same hole: `_persist_evidence` swallows
         # write failures, so the `sell_submitted` row can be LOST as well as
-        # unreadable. A rotation sale was submitted this session and the
-        # guard cannot see it, which means the guard is open for that name.
+        # unreadable. 2026-10-01 — this branch already PROVES, from the
+        # session's own rotation result, the one fact the durable row would
+        # have carried: this name was sold today. So it CLOSES the guard
+        # rather than only reporting it open. No new state and no new
+        # number — the same fact over the same exchange day, read from the
+        # session instead of from disk.
+        blocked.add(sold_this_session)
         _record_pipeline_event(
             pipeline, ctx, sold_this_session, "rotation",
-            "rebuy_guard_failed_open",
-            "the rotation closed this name this session, but no durable "
+            "rebuy_guard_closed_from_session_fact",
+            "the rotation closed this name this session but no durable "
             "sell record for it could be read back, so the buy-side "
-            "anti-churn guard is open for it and a same-day re-buy would "
-            "not be stopped",
+            "anti-churn guard used the session's own rotation result "
+            "instead; a same-day re-buy of it is still stopped",
             failure="record_unwritten",
         )
-    if not sold_today:
+    if not blocked:
         return buy_decisions
     kept: list = []
     for d in buy_decisions:
         sym = str(getattr(d, "symbol", "") or "").strip().upper()
-        if sym and sym in sold_today:
+        if sym and sym in blocked:
             _record_execution_skip(
                 pipeline, ctx, d.symbol, "sold_today_below_entry_bar",
                 "the desk closed this name earlier today because it no "

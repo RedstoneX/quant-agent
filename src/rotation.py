@@ -1379,6 +1379,12 @@ ROTATION_TELEMETRY_UNAVAILABLE = "telemetry_unavailable"
 ROTATION_ROOM_AVAILABLE = "room_available"
 ROTATION_FULL_NOTHING_BETTER = "full_nothing_outranked_a_holding"
 ROTATION_FULL_OPPORTUNITY = "full_candidate_outranked_a_holding"
+#: 2026-10-01. The categorical tier now runs BEFORE the "is the book even
+#: constrained" refusal, so a below-bar holding can be put up to be cut with
+#: the book not full and no candidate ready to take its place. That is not
+#: the outranked case and must never borrow its sentence: there is nothing
+#: on the other side of the comparison to name.
+ROTATION_HOLDING_BELOW_BAR = "holding_below_entry_bar_no_replacement"
 
 
 def precheck_outcome(precheck) -> str:
@@ -1394,7 +1400,12 @@ def precheck_outcome(precheck) -> str:
     """
     if not getattr(precheck, "telemetry_available", True):
         return ROTATION_TELEMETRY_UNAVAILABLE
-    if getattr(precheck, "opportunity", None) is not None:
+    opportunity = getattr(precheck, "opportunity", None)
+    if opportunity is not None:
+        # 2026-10-01. No replacement candidate means nothing outranked
+        # anything: the holding is up to be cut on its own merits alone.
+        if not str(getattr(opportunity, "new_symbol", "") or "").strip():
+            return ROTATION_HOLDING_BELOW_BAR
         return ROTATION_FULL_OPPORTUNITY
     if _precheck_binding(precheck):
         return ROTATION_FULL_NOTHING_BETTER
@@ -1604,9 +1615,50 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
     # would have gone on quoting it while the real cause was $92 of cash
     # against a $500 minimum order — a true-sounding sentence about the
     # wrong number.
-    full = "🔄 Rotation check: the book is FULL — " + _full_book_cause(
-        record, headroom=headroom, ceiling=ceiling, floor=floor,
-    ) + " This is a normal state, not a fault."
+    #
+    # 2026-10-01. And only say it is full when a limit actually binds. The
+    # categorical tier can now reach this block with every limit slack, and
+    # "the book is FULL" was being asserted there from the outcome name
+    # alone — true of the outcome's original case, false of the new one.
+    constrained = bool(
+        [b for b in str(record.get("binding") or "").split(",") if b]
+    )
+    if constrained:
+        full = "🔄 Rotation check: the book is FULL — " + _full_book_cause(
+            record, headroom=headroom, ceiling=ceiling, floor=floor,
+        ) + " This is a normal state, not a fault."
+    else:
+        full = (
+            f"🔄 Rotation check: the book has room — {headroom} of risk "
+            f"headroom under the desk's {ceiling} ceiling, and no limit is "
+            "stopping the desk opening a new position."
+        )
+
+    if outcome == ROTATION_HOLDING_BELOW_BAR:
+        held = str(record.get("held_symbol") or "").upper()
+        reasons = [
+            s for s in str(record.get("held_reasons") or "").split(",") if s
+        ]
+        why = "; ".join(reasons) if reasons else (
+            "it no longer clears the desk's own entry bar"
+        )
+        subject = held if held else "A holding"
+        lines = [
+            full,
+            f"   {subject} is up to be cut on its own merits: it would not "
+            f"be bought today — {why}. Nothing outranked it; there was no "
+            "candidate on the other side of this at all.",
+            "   Whatever this frees stays in the book as cash, because "
+            "nothing was ready to replace it. Room was never the reason "
+            "for the cut.",
+        ]
+        if not record.get("execute_enabled"):
+            lines.append(
+                "   The desk is not switched on to act on this by itself, "
+                "so this is information only — nothing was sold."
+            )
+        return lines
+
     if outcome == ROTATION_FULL_NOTHING_BETTER:
         return [
             full,
@@ -1618,14 +1670,23 @@ def owner_precheck_lines(record: dict | None) -> list[str]:
     if outcome != ROTATION_FULL_OPPORTUNITY:
         return []
 
-    held = str(record.get("held_symbol") or "?").upper()
-    new = str(record.get("new_symbol") or "?").upper()
+    held = str(record.get("held_symbol") or "").upper()
+    new = str(record.get("new_symbol") or "").upper()
     tier = str(record.get("tier") or "")
+    # 2026-10-01. Never render a placeholder to the owner: if either side of
+    # the comparison is absent the sentence naming it cannot be written, so
+    # it is not written. Nor claim the holding was "using the room" when no
+    # limit was binding — it was not competing for anything.
+    if not (held and new):
+        return [full]
+    weakest = (
+        ", the weakest thing currently using the room" if constrained else ""
+    )
     lines = [
         full,
         f"   Every new candidate was ranked against what is already held, "
-        f"and one comparison came out the other way: {new} outranks {held}, "
-        f"the weakest thing currently using the room.",
+        f"and one comparison came out the other way: {new} outranks {held}"
+        f"{weakest}.",
     ]
     if not record.get("execute_enabled"):
         lines.append(

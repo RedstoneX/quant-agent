@@ -84,3 +84,111 @@ def test_an_empty_book_says_so_rather_than_claiming_a_count():
     ))
     assert "no holdings to examine" in text
     assert "score-margin" in text
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-01. The gap that let a false owner line ship: NO test rendered
+# `owner_precheck_lines` for an `ineligible_hold` opportunity at all. The
+# categorical tier now runs before the "is the book even constrained"
+# refusal, so the pre-check reaches the owner with a holding up to be cut,
+# no replacement, and every limit slack.
+
+
+def _precheck_rec(**over) -> dict:
+    from src.rotation import ROTATION_HOLDING_BELOW_BAR
+
+    record = {
+        "outcome": ROTATION_HOLDING_BELOW_BAR,
+        "headroom_pct": 14.5,
+        "ceiling_pct": 25.0,
+        "floor_pct": 0.5,
+        "entry_budget_usd": 50_000.0,
+        "min_order_usd": 500.0,
+        "binding": "",
+        "tier": "ineligible_hold",
+        "held_symbol": "OLD",
+        "new_symbol": "",
+        "held_reasons": "R2 rating below bar",
+        "execute_enabled": True,
+        "ranked_margin_enabled": False,
+    }
+    record.update(over)
+    return record
+
+
+def _assert_no_placeholders(text: str) -> None:
+    assert "?" not in text
+    assert "None" not in text
+
+
+def test_below_bar_holding_with_room_and_no_replacement_tells_the_truth():
+    from src.rotation import owner_precheck_lines
+
+    text = " ".join(owner_precheck_lines(_precheck_rec()))
+    _assert_no_placeholders(text)
+    # The three false statements this test exists to prevent.
+    assert "FULL" not in text
+    assert "outranks" not in text
+    assert "the weakest thing currently using the room" not in text
+    # And what is actually true.
+    assert "has room" in text
+    assert "OLD" in text
+    assert "R2 rating below bar" in text
+    assert "would not be bought today" in text
+    assert "nothing was ready to replace it" in text
+
+
+def test_below_bar_holding_in_a_full_book_still_says_full():
+    from src.rotation import owner_precheck_lines
+
+    text = " ".join(owner_precheck_lines(_precheck_rec(
+        binding="risk_budget", headroom_pct=0.2,
+    )))
+    _assert_no_placeholders(text)
+    assert "the book is FULL" in text
+    assert "0.20% of risk headroom" in text
+    # Still no replacement, so still nothing outranked anything.
+    assert "outranks" not in text
+    assert "nothing was ready to replace it" in text
+
+
+def test_the_original_outranked_case_is_unchanged():
+    from src.rotation import (
+        ROTATION_FULL_OPPORTUNITY, owner_precheck_lines, precheck_outcome,
+    )
+    from src.rotation import RotationOpportunity, RotationPrecheck
+
+    opportunity = RotationOpportunity(
+        new_symbol="NEW", new_score=1.8, held_symbol="OLD", held_score=0.9,
+        tier="ranked_margin",
+    )
+    precheck = RotationPrecheck(
+        opportunity=opportunity, headroom_pct=0.2, ceiling_pct=25.0,
+        floor_pct=0.5,
+    )
+    assert precheck_outcome(precheck) == ROTATION_FULL_OPPORTUNITY
+    text = " ".join(owner_precheck_lines(_precheck_rec(
+        outcome=ROTATION_FULL_OPPORTUNITY, binding="risk_budget",
+        headroom_pct=0.2, tier="ranked_margin", new_symbol="NEW",
+    )))
+    _assert_no_placeholders(text)
+    assert "the book is FULL" in text
+    assert "NEW outranks OLD, the weakest thing currently using the room" in text
+
+
+def test_an_opportunity_without_a_replacement_is_not_the_outranked_outcome():
+    from src.rotation import (
+        ROTATION_HOLDING_BELOW_BAR, RotationOpportunity, RotationPrecheck,
+        precheck_outcome,
+    )
+
+    precheck = RotationPrecheck(
+        opportunity=RotationOpportunity(
+            new_symbol=None, new_score=None, held_symbol="OLD",
+            held_score=None, tier="ineligible_hold",
+            reasons=("R2 rating below bar",),
+        ),
+        headroom_pct=14.5, ceiling_pct=25.0, floor_pct=0.5,
+        entry_budget_usd=50_000.0, min_order_usd=500.0,
+    )
+    assert precheck_outcome(precheck) == ROTATION_HOLDING_BELOW_BAR
