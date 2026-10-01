@@ -525,7 +525,7 @@ def test_both_real_consumers_report_the_pinned_number():
     that they match each other.
     """
     from src.data.context import compute_market_context
-    from src.pipeline import _missed_ops_quality_metrics
+    from src.pipeline_prompt_facts import _missed_ops_quality_metrics
 
     bars = halted_session_bars()
     digest_millions, _, _ = _missed_ops_quality_metrics(bars, lookback_days=20)
