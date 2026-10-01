@@ -1228,9 +1228,9 @@ class CashSweepConfig(BaseModel):
     raised this to 5.0 as a workaround for BUYs being skipped for lack of
     cash — that was treating a symptom. Alpaca credits `cash` as soon as a
     SELL fills, so a filled SGOV liquidation funds an equity BUY in the
-    same session; the real fix is confirming that fill before the BUY
-    phase (see `CashSweeper.fund_buys`), not starving the sweep of the
-    idle cash it exists to put to work."""
+    same session; the real fix was confirming that fill before the BUY
+    phase, not starving the sweep of the idle cash it exists to put to
+    work. That pre-BUY funding sale no longer exists (item 190)."""
 
     min_order_usd: float = Field(default=500.0, ge=0)
     """Don't churn sub-$500 parking orders — spread + noise beat the

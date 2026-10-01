@@ -397,7 +397,13 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 155, (
+  # 2026-10-01, board item 63: +1 for `src.data.smart_money.MAX_SALE_CENSUS_ROWS`
+  # (200), the row cap on the new insider-SALE recording. It is NOT ledgered
+  # because its module is outside SCOPED_PATHS, and it does not belong in
+  # scope: it decides, sizes, prices and exits nothing. The census it bounds
+  # is written to `specialist_evidence` as evidence and is read by no gate,
+  # no ranking key and no sizing path.
+    assert MAX_UNSCOPED_NUMERIC_SITES == 156, (
         "154 -> 155 on 2026-10-01, item 90: +1 for "
         "src.number_sources.MIN_ROUTE_PROSE_CHARS (40), the shortest "
         "`records` / `closes_when` prose a ledger row's `settles_by` "
@@ -940,8 +946,19 @@ def test_a_settlement_route_that_cannot_be_acted_on_is_refused() -> None:
         "maximum adverse excursion reached before the exit",
         "closes_when": "enough closed trades carry the columns to show "
         "whether the floor was ever violated in practice",
+        # A BUILT recording also has to name fields the storage layer really
+        # writes (2026-10-01): three recordings were found collecting nothing
+        # while their columns existed, so "built" now has to be falsifiable.
+        "writes": ["trades.entry_atr", "trades.max_adverse_excursion"],
     }
     assert settlement_route_problem({"settles_by": good}) is None
+    for field in ("writes",):
+        broken = dict(good)
+        broken.pop(field)
+        assert field in str(settlement_route_problem({"settles_by": broken}))
+    dead = dict(good)
+    dead["writes"] = ["trades.nothing_in_the_code_ever_writes_this"]
+    assert "nothing in" in str(settlement_route_problem({"settles_by": dead}))
     assert settlement_route_problem({}) == "no `settles_by` block"
     assert "not a mapping" in str(settlement_route_problem({"settles_by": "soon"}))
     for field in ("kind", "state", "where", "records", "closes_when"):
