@@ -116,6 +116,62 @@ def test_a_missing_backlog_is_reported_not_treated_as_finished(tmp_path):
     assert not q.actionable
 
 
+# --- which board was read --------------------------------------------------
+
+def test_the_board_is_read_from_the_shared_ref_not_the_working_tree(
+        monkeypatch, tmp_path):
+    """The working tree of a long-lived shared checkout goes stale without
+    anyone noticing, and a queue built from it offers finished work. The
+    board is shared state, so the default read is the shared ref."""
+    seen: dict[str, Path] = {}
+
+    def fake_git_board(ref, dest):
+        seen["ref"] = ref
+        wm = dest / "WORK.md"
+        wm.write_text(BACKLOG)
+        notes = dest / "board_notes"
+        notes.mkdir()
+        return wm, notes
+
+    monkeypatch.setattr(work_queue, "_git_board", fake_git_board)
+    q = work_queue.build_queue()
+    assert seen["ref"] == work_queue.BOARD_REF
+    assert work_queue.BOARD_REF in q.source
+    assert work_queue.BOARD_REF in work_queue.render(q)
+
+
+def test_an_unreadable_ref_falls_back_and_says_why(monkeypatch):
+    """No origin remote, or a ref never fetched, must not crash the hook and
+    must not pass a working-tree answer off as the shared one."""
+
+    def explode(ref, dest):
+        raise RuntimeError("no such ref")
+
+    monkeypatch.setattr(work_queue, "_git_board", explode)
+    q = work_queue.build_queue()
+    assert "working tree" in q.source
+    assert "could not be read" in q.source
+    assert work_queue.BOARD_REF in q.source
+
+
+def test_reading_the_shared_ref_never_touches_the_network(monkeypatch):
+    """A hook that fetches on every stop is a cost and a hang. It reads
+    what is already local, or it falls back."""
+    calls: list[tuple] = []
+
+    class _Done:
+        stdout = b""
+
+    def fake_run(args, **kw):
+        calls.append(tuple(args))
+        return _Done()
+
+    monkeypatch.setattr(work_queue.subprocess, "run", fake_run)
+    work_queue.build_queue()
+    assert calls, "the shared-ref read should have shelled out to git"
+    assert not any("fetch" in a for call in calls for a in call)
+
+
 # --- the decision ----------------------------------------------------------
 
 def _queue(actionable=(), unreadable=()):
