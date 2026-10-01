@@ -225,8 +225,10 @@ def _scan_pipeline(verdicts: dict):
     p._seen = seen
     # Bought long before today: the scan's same-session gate needs a real
     # entry date, and an unreadable one deliberately holds.
+    p._recorded = []
     p.db = types.SimpleNamespace(
         get_symbol_last_buy=lambda sym: {"timestamp": "2020-01-01 10:00:00"},
+        record_alignment_exit_reading=lambda **kw: p._recorded.append(kw),
     )
     return p
 
@@ -320,7 +322,13 @@ def test_scan_never_overwrites_an_exit_the_review_asked_for():
         priority=_PRIORITY,
     )
     assert best["AAA"] is mine
-    assert p._seen == []  # not even read: the model's exit already stands
+    # STILL not read: item 75's recording does not buy a chart read (a live
+    # yfinance download) to fill itself. The position is recorded as NOT
+    # EVALUATED instead, so a later reader knows its own denominator.
+    assert p._seen == []
+    assert [r["symbol"] for r in p._recorded] == ["AAA"]
+    assert p._recorded[0]["verdict"] is None
+    assert "not read this session" in p._recorded[0]["not_evaluated_reason"]
 
 
 def test_scan_supersedes_hold_because_the_chart_decides_not_the_prose():
@@ -572,3 +580,112 @@ def test_scan_passes_the_position_facts_stop_loss(monkeypatch):
         displaced={},
     )
     assert calls and calls[0]["stop_loss"] == 91.0
+
+
+# --------------------------------------------------------------------------
+# 7. ITEM 75 RECORDING — the reading is kept for EVERY open position EVERY
+# session, INCLUDING the sessions the exit does not fire.
+#
+# Only a FIRING exit left any trace before this, so "do positions pass
+# through a durable intermediate band of weakening before the trend ends, or
+# do they fall straight through?" could not be asked at all. RECORDING ONLY:
+# nothing reads these rows back into a sizing, stop or exit decision.
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("status", ["EXIT", "HOLD", "UNPARSEABLE"])
+def test_every_position_is_recorded_whether_or_not_the_exit_fires(status):
+    p = _scan_pipeline({"AAA": _verdict(status)})
+    p._alignment_exit_scan(
+        [_pos("AAA")], {}, run_id="r", position_facts=None, priority=_PRIORITY,
+    )
+    assert len(p._recorded) == 1, status
+    assert p._recorded[0]["symbol"] == "AAA"
+    assert p._recorded[0]["run_id"] == "r"
+    assert p._recorded[0]["verdict"].status == status
+    assert p._recorded[0]["not_evaluated_reason"] is None
+
+
+def test_a_recording_failure_never_blocks_the_sale():
+    p = _scan_pipeline({"AAA": _verdict("EXIT")})
+
+    def _boom(**kw):
+        raise RuntimeError("disk full")
+
+    p.db.record_alignment_exit_reading = _boom
+    best: dict = {}
+    p._alignment_exit_scan(
+        [_pos("AAA")], best, run_id="r", position_facts=None,
+        priority=_PRIORITY,
+    )
+    assert best["AAA"]["action"] == "SELL"
+
+
+def test_the_stored_reading_keeps_the_raw_distance_and_nulls_the_unknown(tmp_path):
+    """Unknown stays NULL — never a zero and never an assumed value, and no
+    band edge or classification is stored for a later reader to inherit."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    held = ae.AlignmentExitCheck(
+        "HOLD", ae.CODE_HOLD, (ae.ChartMark(99.0, "SMA50"),),
+        ae.ChartMark(99.0, "SMA50"), 0.37, 1.0, "detail",
+        sessions_since_mark_lost=2,
+    )
+    blind = ae.AlignmentExitCheck(
+        "UNPARSEABLE", ae.CODE_NO_ATR, (), None, None, None, "no atr",
+    )
+    assert db.record_alignment_exit_reading(
+        symbol="AAA", verdict=held, run_id="r", is_short=False,
+    )
+    assert db.record_alignment_exit_reading(
+        symbol="BBB", verdict=blind, run_id="r", is_short=False,
+    )
+    rows = {
+        r[0]: r for r in db.conn.execute(
+            "SELECT symbol, status, breach_atrs, band_atrs,"
+            " sessions_since_mark_lost, last_mark_source"
+            " FROM alignment_exit_readings"
+        )
+    }
+    # A position that weakened WITHOUT firing is now on the record.
+    assert rows["AAA"][1] == "HOLD"
+    assert rows["AAA"][2] == pytest.approx(0.37)
+    assert rows["AAA"][4] == 2
+    # An unreadable chart is a row with NULLs, not a fabricated zero.
+    assert rows["BBB"][1] == "UNPARSEABLE"
+    assert rows["BBB"][2] is None and rows["BBB"][3] is None
+    assert rows["BBB"][5] is None
+    # No classification column exists: the cutoff belongs to a later reader.
+    cols = {
+        c[1] for c in db.conn.execute(
+            "PRAGMA table_info(alignment_exit_readings)"
+        )
+    }
+    assert not (cols & {"band", "classification", "weakening", "trim_fraction"})
+    # A position the scan never evaluated is a row of NULLs plus a reason —
+    # the recording never buys a chart read (a live download) to fill itself.
+    assert db.record_alignment_exit_reading(
+        symbol="CCC", verdict=None, run_id="r", is_short=False,
+        not_evaluated_reason="the review already proposed a SELL",
+    )
+    row = db.conn.execute(
+        "SELECT status, breach_atrs, marks_count, not_evaluated_reason"
+        " FROM alignment_exit_readings WHERE symbol = 'CCC'"
+    ).fetchone()
+    assert row[0] is None and row[1] is None and row[2] is None
+    assert row[3] == "the review already proposed a SELL"
+
+
+def test_nothing_reads_the_item_75_recording_back_into_a_decision():
+    """RECORDING ONLY. The table may be WRITTEN, and read by a human asking
+    item 75's question; it may never be read back into live logic."""
+    import pathlib
+
+    readers = []
+    for f in pathlib.Path("src").rglob("*.py"):
+        text = f.read_text()
+        if "alignment_exit_readings" not in text:
+            continue
+        if "SELECT" in text and "FROM alignment_exit_readings" in text:
+            readers.append(str(f))
+    assert readers == []
