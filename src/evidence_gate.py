@@ -695,3 +695,125 @@ def evaluate(data_status: dict | None) -> EvidenceGateVerdict:
         data_status=clean,
         freshness=freshness(data_status),
     )
+
+
+# ---------------------------------------------------------------------------
+# THE COUNTING HALF — RECORDED, NOT SCORED (docs/WORK.md item 20)
+# ---------------------------------------------------------------------------
+# The half of the owner's design left open was "the seat answered about 40 of
+# 65 companies — is that enough?". Two honest attempts at deriving that bar
+# were made on 2026-10-01 and BOTH failed, for reasons that are written down
+# here so the third attempt is not made blind:
+#
+#   1. From published practice: nothing published states how much of a
+#      candidate list a research seat must cover before a decision is sound.
+#      This is the same dead end the seat-count half hit in 2026-09-02.
+#
+#   2. From the desk's own record: the production evidence table cannot
+#      answer it, because per-name coverage is only recorded for the seats
+#      that happen to write symbol-scoped rows. Measured read-only against
+#      the production DB on 2026-10-01 over the 228 runs that wrote any
+#      symbol-scoped evidence: the technical seat covers a median 100% of the
+#      names seen in a run, earnings peaks at 96%, smart-money at 100%,
+#      macro at 50% — and the news seat writes NO symbol-scoped row at all,
+#      in any run. News per-name coverage is therefore UNRECORDED, not zero.
+#      A bar fitted to that record would be fitted to a hole in the record.
+#
+# So, per the owner's standing rulings — risk is read per name and never set
+# as a global dial, and a number that cannot be sourced is not invented — the
+# counting half is NOT a ratio with a bar. It collapses to the same
+# categorical question the seat half already answers, asked once per name:
+#
+#     for THIS name, did this seat produce an answer about it, or not?
+#
+# That is a yes-or-no fact, it needs no bar, and it cannot be fitted. What
+# ships here is the RECORDING of it. Nothing below refuses anything, scores
+# anything, or holds a threshold. The entry path already enforces the one
+# per-name coverage rule the desk has ratified — `pipeline._filter_supported_
+# symbols` blocks a BUY or a SHORT on a name with no technical analysis — and
+# this record is what would let a bar for the other seats be derived from
+# measured desk data later, instead of picked.
+
+#: Seats that answer ABOUT A NAME, so "did it cover this name" is meaningful.
+NAME_SCOPED_SEATS = ("tech", "earnings", "news", "smart_money")
+
+#: Seats whose answer is about the market, not about a name. Recorded
+#: separately so a run-scoped seat is never booked as a per-name gap — that
+#: would manufacture missing coverage out of a seat that cannot have any.
+RUN_SCOPED_SEATS = ("macro",)
+
+
+@dataclass(frozen=True)
+class NameCoverage:
+    """Which research seats produced an answer about ONE name.
+
+    Disclosure only. No bar, no score, no ratio — see the block above.
+    """
+
+    symbol: str
+    covered: list[str] = field(default_factory=list)
+    uncovered: list[str] = field(default_factory=list)
+    run_scoped: list[str] = field(default_factory=list)
+
+    def to_evidence(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "covered_seats": list(self.covered),
+            "uncovered_seats": list(self.uncovered),
+            "run_scoped_seats": list(self.run_scoped),
+            "summary": self.summary,
+        }
+
+    @property
+    def summary(self) -> str:
+        return (
+            f"{self.symbol}: answered about this name by "
+            f"{', '.join(self.covered) or 'no seat'}; no answer about this "
+            f"name from {', '.join(self.uncovered) or 'no seat'}; "
+            f"market-wide seats not scoped to a name: "
+            f"{', '.join(self.run_scoped) or 'none'}"
+        )
+
+
+def name_coverage(
+    universe,
+    seat_symbols,
+    run_scoped=RUN_SCOPED_SEATS,
+) -> dict:
+    """Record, per name, which name-scoped seats answered about it.
+
+    `seat_symbols` maps a seat to the symbols it produced an answer about.
+    A seat absent from the mapping is a seat whose per-name coverage this
+    desk does not record, and it is reported as uncovered for every name
+    rather than silently assumed complete — claiming coverage that was
+    never recorded is the failure this exists to stop.
+
+    NEVER raises and NEVER judges: it returns a record, not a verdict.
+    """
+    try:
+        names = sorted(
+            {str(s).strip().upper() for s in (universe or ()) if str(s).strip()}
+        )
+        mapping = {}
+        for seat, symbols in dict(seat_symbols or {}).items():
+            mapping[str(seat)] = {
+                str(s).strip().upper()
+                for s in (symbols or ())
+                if str(s).strip()
+            }
+        scoped = sorted({str(s) for s in (run_scoped or ())})
+        out = {}
+        for name in names:
+            covered = sorted(
+                seat for seat in NAME_SCOPED_SEATS
+                if name in mapping.get(seat, set())
+            )
+            uncovered = sorted(set(NAME_SCOPED_SEATS) - set(covered))
+            out[name] = NameCoverage(
+                symbol=name, covered=covered, uncovered=uncovered,
+                run_scoped=scoped,
+            )
+        return out
+    except Exception as exc:  # noqa: BLE001 — a record must never break a run
+        logger.warning("evidence gate: name coverage record failed: %s", exc)
+        return {}
