@@ -63,7 +63,8 @@ def main():
         "--mode",
         choices=[
             "live", "once", "morning", "midday", "close", "evening",
-            "intra_check", "earnings_preprocess", "meta", "daily",
+            "intra_check", "intra_safety", "earnings_preprocess", "meta",
+            "daily",
         ],
         default="once", help="Run mode",
     )
@@ -202,6 +203,10 @@ def main():
             result = pipeline.run_evening()
         elif args.mode == "intra_check":
             result = pipeline.run_intra_check()
+        elif args.mode == "intra_safety":
+            # Board item 177: the FREE safety preamble on its own schedule,
+            # independent of whether the paid intraday tick runs.
+            result = pipeline.run_intra_safety()
         elif args.mode == "earnings_preprocess":
             result = pipeline.run_earnings_preprocess()
         elif args.mode == "meta":

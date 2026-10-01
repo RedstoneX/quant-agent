@@ -17102,89 +17102,63 @@ class TradingPipeline:
             "smart_money_refresh": smart_money_refresh,
         }
 
-    def run_intra_check(self) -> dict:
-        """Intra-session circuit-breaker check, plus the durable record of
-        its own output.
+    def run_intra_safety(self) -> dict:
+        """The FREE safety preamble, on its own schedule (board item 177).
 
-        Same gap as `run_morning`/`run_position_review` (2026-09-18 sweep):
-        `stop_coverage_gaps` is computed from live broker state every tick
-        and handed to the notifier with no other durable home. This wrapper
-        persists every return path, keyed by run_id (not date — this fires
-        roughly every 30 minutes, so a date-keyed row would keep only the
-        last tick; see `Database.save_intra_check_report`). Fail-soft.
+        Fill reconcile, stop-out reconcile, protection-restore drain and
+        repeg drain cost no model spend and protect live capital. Until
+        2026-10-01 they existed ONLY as the opening block of
+        ``_run_intra_check_body``, so they were welded to the *paid*
+        intraday tick: cutting the paid cadence would silently have cut
+        the loss-protection latency with it. That coupling was the defect
+        item 177 names.
+
+        The body is unchanged and lives in ``_run_intra_safety_preamble``.
+        Both entry points call that one method, so this is strictly
+        ADDITIVE: the paid tick still runs the preamble exactly as before,
+        and the standalone ``intra_safety`` mode gives it a second,
+        independent chance every tick. There is no new window in which
+        protection is not restored — the only change is that one more
+        caller can reach the same idempotent work.
+
+        Both callers take the same advisory ``_intraday_scan_process_lock``
+        and the same ``_blocking_owner_session`` check (board item 127), so
+        two of them firing together cannot race: whichever acquires the
+        lock does the work and the other defers, which is the behaviour the
+        lock was built for.
+
+        No LLM calls, and deliberately NO cost session — this path can
+        never spend, and activating one would put empty rows into the very
+        ``llm_budget_sessions`` measurement item 177 reads.
         """
-        self._last_evidence_freshness = None
-        self._last_account_snapshot = None
-        self._intra_preamble_deferred = ""
-        result = self._run_intra_check_body()
-        if isinstance(result, dict) and self._intra_preamble_deferred:
-            result["preamble_deferred"] = self._intra_preamble_deferred
-        self._attach_pnl(result)
-        self._attach_evidence_freshness(result)
-        self._persist_intra_check_report(result)
-        return result
-
-    def _persist_intra_check_report(self, result: dict) -> None:
-        if not isinstance(result, dict):
-            return
-        run_id = result.get("run_id")
-        if not run_id:
-            return
-        try:
-            self.db.save_intra_check_report(
-                run_id=run_id, date=session_date_key(), payload=result,
-            )
-        except Exception as exc:  # noqa: BLE001 — never break the push
-            logger.warning(
-                "intra_check report persistence failed (non-fatal): %s", exc,
-            )
-
-    def _run_intra_check_body(self) -> dict:
-        """Lightweight intra-session maintenance tick (no LLM calls).
-
-        Scheduled between morning and midday (typically 12:00 ET). It
-        reconciles fills, repairs stop coverage on anything found
-        unprotected, reports the session snapshot, and runs the bounded
-        intraday opportunity scan.
-
-        **It no longer carries an account-level loss breaker.** That whole
-        mechanism — a daily P&L vs loss-limit test that halted the desk —
-        was removed 2026-09-20 on the owner's instruction (retired item 32,
-        docs/INCIDENT_HISTORY.md). Loss protection is the per-position stop
-        living at the broker, which does not depend on this tick running.
-        Runs in ~5 seconds.
-        """
-        ctx = RunContext.start("intra_check")
+        ctx = RunContext.start("intra_safety")
         run_id = ctx.run_id
-        logger.info("=== Intra-session risk check: %s ===", run_id)
+        logger.info("=== Intra safety preamble (free): %s ===", run_id)
 
         if not self._is_trading_day():
-            logger.info("Intra check skipped: market closed for non-trading day")
+            logger.info("Intra safety skipped: market closed for non-trading day")
             return {"status": "market_holiday", "run_id": run_id}
 
         halt = self._kill_switch_halt_result(run_id)
         if halt is not None:
             return halt
 
-        self._activate_cost_session(run_id, "intra_check")
+        coverage_gaps, preamble_deferred = self._run_intra_safety_preamble(run_id)
+        self._intra_preamble_deferred = preamble_deferred
+        return {
+            "status": "deferred" if preamble_deferred else "ok",
+            "run_id": run_id,
+            "stop_coverage_gaps": coverage_gaps,
+            "preamble_deferred": preamble_deferred,
+        }
 
-        # Board item 127 (2026-09-19). Every write below reaches the broker,
-        # and `intra_check` is exempt from the wrapper's session lock (item
-        # 128), so this whole preamble used to run with no lock at all. It
-        # now runs only while this process holds the same advisory flock the
-        # paid scan below takes (`_intraday_scan_process_lock`) — which the
-        # standalone coverage sweep's repair pass also takes — and only while
-        # no morning/midday/close session owns the desk
-        # (`_blocking_owner_session`, the check the paid scan already uses).
-        # A live session runs this same preamble itself near the start of its
-        # own run, and it may be in the middle of cancelling stops to sell; a
-        # stop added here in that window is the worst pairing item 127 names.
-        # Deferring skips only this tick's preamble, and the next tick
-        # re-reads the broker. This used to add "the loss check below still
-        # runs every tick" as the rest of the safety argument; there is no
-        # loss check any more (2026-09-20, retired item 32), so the
-        # argument for deferring now rests entirely on the next tick
-        # re-reading. Board item 127 is open on that exposure.
+    def _run_intra_safety_preamble(self, run_id: str) -> tuple[list[dict], str]:
+        """Run the free broker-truth safety work; return (gaps, deferred_reason).
+
+        Called by BOTH ``_run_intra_check_body`` (the paid tick) and
+        ``run_intra_safety`` (the standalone free tick). Idempotent and
+        fail-soft throughout; an empty deferred reason means it ran.
+        """
         coverage_gaps: list[dict] = []
         preamble_deferred = ""
         with self._intraday_scan_process_lock() as preamble_lock:
@@ -17280,6 +17254,96 @@ class TradingPipeline:
                 # mid-session stop-out reaches him fastest.
                 self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
+        return coverage_gaps, preamble_deferred
+
+    def run_intra_check(self) -> dict:
+        """Intra-session circuit-breaker check, plus the durable record of
+        its own output.
+
+        Same gap as `run_morning`/`run_position_review` (2026-09-18 sweep):
+        `stop_coverage_gaps` is computed from live broker state every tick
+        and handed to the notifier with no other durable home. This wrapper
+        persists every return path, keyed by run_id (not date — this fires
+        roughly every 30 minutes, so a date-keyed row would keep only the
+        last tick; see `Database.save_intra_check_report`). Fail-soft.
+        """
+        self._last_evidence_freshness = None
+        self._last_account_snapshot = None
+        self._intra_preamble_deferred = ""
+        result = self._run_intra_check_body()
+        if isinstance(result, dict) and self._intra_preamble_deferred:
+            result["preamble_deferred"] = self._intra_preamble_deferred
+        self._attach_pnl(result)
+        self._attach_evidence_freshness(result)
+        self._persist_intra_check_report(result)
+        return result
+
+    def _persist_intra_check_report(self, result: dict) -> None:
+        if not isinstance(result, dict):
+            return
+        run_id = result.get("run_id")
+        if not run_id:
+            return
+        try:
+            self.db.save_intra_check_report(
+                run_id=run_id, date=session_date_key(), payload=result,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break the push
+            logger.warning(
+                "intra_check report persistence failed (non-fatal): %s", exc,
+            )
+
+    def _run_intra_check_body(self) -> dict:
+        """Lightweight intra-session maintenance tick (no LLM calls).
+
+        Scheduled between morning and midday (typically 12:00 ET). It
+        reconciles fills, repairs stop coverage on anything found
+        unprotected, reports the session snapshot, and runs the bounded
+        intraday opportunity scan.
+
+        **It no longer carries an account-level loss breaker.** That whole
+        mechanism — a daily P&L vs loss-limit test that halted the desk —
+        was removed 2026-09-20 on the owner's instruction (retired item 32,
+        docs/INCIDENT_HISTORY.md). Loss protection is the per-position stop
+        living at the broker, which does not depend on this tick running.
+        Runs in ~5 seconds.
+        """
+        ctx = RunContext.start("intra_check")
+        run_id = ctx.run_id
+        logger.info("=== Intra-session risk check: %s ===", run_id)
+
+        if not self._is_trading_day():
+            logger.info("Intra check skipped: market closed for non-trading day")
+            return {"status": "market_holiday", "run_id": run_id}
+
+        halt = self._kill_switch_halt_result(run_id)
+        if halt is not None:
+            return halt
+
+        self._activate_cost_session(run_id, "intra_check")
+
+        # Board item 127 (2026-09-19). Every write below reaches the broker,
+        # and `intra_check` is exempt from the wrapper's session lock (item
+        # 128), so this whole preamble used to run with no lock at all. It
+        # now runs only while this process holds the same advisory flock the
+        # paid scan below takes (`_intraday_scan_process_lock`) — which the
+        # standalone coverage sweep's repair pass also takes — and only while
+        # no morning/midday/close session owns the desk
+        # (`_blocking_owner_session`, the check the paid scan already uses).
+        # A live session runs this same preamble itself near the start of its
+        # own run, and it may be in the middle of cancelling stops to sell; a
+        # stop added here in that window is the worst pairing item 127 names.
+        # Deferring skips only this tick's preamble, and the next tick
+        # re-reads the broker. This used to add "the loss check below still
+        # runs every tick" as the rest of the safety argument; there is no
+        # loss check any more (2026-09-20, retired item 32), so the
+        # argument for deferring now rests entirely on the next tick
+        # re-reading. Board item 127 is open on that exposure.
+        # Board item 177 (2026-10-01): the free safety work below now also
+        # has its own entry point (`run_intra_safety`) and its own systemd
+        # unit, so it no longer depends on this paid tick running. The paid
+        # tick still calls it, unchanged, so nothing here got less reliable.
+        coverage_gaps, preamble_deferred = self._run_intra_safety_preamble(run_id)
         self._intra_preamble_deferred = preamble_deferred
 
         try:
