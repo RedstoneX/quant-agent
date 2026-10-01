@@ -5651,3 +5651,15 @@ numbers:
       inline literal, newly named, still unsourced, informational-only (see
       that entry for the full reasoning; not repeated to avoid two owners of
       one explanation).
+  - id: src.data.levels.STOP_LEVEL_BASIS_VERSION
+    value: 1
+    status: not-trade-governing
+    site: src/data/levels.py
+    note: >
+      Board item 55. A record-format version for the stop-level-basis row,
+      not a quantity. It is compared only for equality by a later reader
+      deciding which fields a stored row carries; it is never multiplied,
+      added to a price, or compared against a market value, so no buy, sell,
+      size or stop depends on it. It is bumped only when a field is added or
+      an existing field's meaning changes. There is nothing to source: the
+      value is an identifier that happens to be written as a number.
