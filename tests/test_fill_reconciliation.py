@@ -4,12 +4,11 @@ from unittest.mock import MagicMock
 
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _mk_pipeline(db: Database, broker: MagicMock) -> TradingPipeline:
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = broker
+    pipeline = build_pipeline(db=db, broker=broker)
     return pipeline
 
 

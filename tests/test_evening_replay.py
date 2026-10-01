@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tests.pipeline_factory import build_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ def test_persist_replay_writes_atomic_json(tmp_path):
     from src.pipeline import TradingPipeline
     from src.models import Position, MissedOpportunitySnapshot
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     positions = [Position(
         symbol="NVDA", qty=10, avg_entry=200, current_price=210,
         market_value=2100, unrealized_pnl=100, sector="Technology",
@@ -85,7 +86,7 @@ def test_persist_replay_handles_news_intel_pydantic(tmp_path):
     from src.pipeline import TradingPipeline
     from src.models import NewsIntelligenceReport
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     news = NewsIntelligenceReport.model_validate({
         "macro_narrative": {
             "last_updated": "2026-04-20",
@@ -127,7 +128,7 @@ def test_persist_replay_tolerates_unusual_objects(tmp_path):
         def __str__(self):
             return "<weird obj>"
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     out = p._persist_evening_replay_inputs(
         date_iso="2026-04-20",
         run_id="x", positions=[],

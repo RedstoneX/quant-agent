@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 from src.execution.broker import AlpacaBroker
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _order(order_id, stop_price, status="new", qty=2.43):
@@ -36,8 +37,7 @@ def _order(order_id, stop_price, status="new", qty=2.43):
 
 
 def _pipeline(existing):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker._list_open_sell_stop_orders.return_value = existing
     p.broker._list_open_protective_stop_orders.return_value = existing
     p.broker._submit_stop_limit_order.return_value = {

@@ -15,13 +15,11 @@ import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _mk_pipeline():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     return pipeline
 
 
