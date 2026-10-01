@@ -214,6 +214,8 @@ detail: docs/BOARD_NOTES.md (item 185)
 DONE WHEN:
   - [x] the three already-ratified ceilings (25 / 90 / 40) stay ratified, and the remaining three are researched to a definite verdict rather than left unexamined
   - [x] WITHDRAWN 2026-09-30 — the pairwise-correlation appetite question is moot: the cutoff is removed, not set. Cluster membership is now read from the book's own correlation-distance tree (Mantegna MST cut at its widest gap), per the owner's ruling that risk tolerance is never a global dial. Still transitive, still rationing only.
+  - [ ] the short-side haircut CLOSES ON RECORDED EVIDENCE, NOT ON A THIRD DERIVATION. Two attempts to read the 1.5 off the instrument were made and both withdrawn 2026-09-30, with NO sizing change shipped: (1) worst historical gap over the fetch lookback — dead, that lookback is a 5-year window chosen for chart structure and a max over a fixed window can only grow, so one old gap governs size for years and a regime change cannot update it; (2) stop distance plus one ATR — dead on algebra, the stop is itself 2.5 ATR so the multiple is (2.5+1)/2.5 = 1.40 for every name, the per-name ATR cancels, and it is LOWER than the 1.5 it replaced. Do not attempt a third derivation. The criterion is now that the desk has RECORDED, for shorts it opened and closed, the adverse overnight gaps actually suffered beside the entry volatility read and the stop distance — shipped 2026-09-30 as `trades.max_adverse_overnight_gap` / `overnight_gap_sessions` joined to `entry_atr` and `initial_stop_loss` — and that enough closed shorts exist to read the distribution. Recording only: nothing reads it back into sizing. Separately, this number binds at EXECUTION, not in the constructor (see item 216)
+  - [ ] ***OWNER APPETITE*** how much of total equity may the desk lose overnight on ONE name whose just-filed report nobody has read, accepting the stop does not hold through a gap? Answer that tolerance L and the cap stops being chosen: it reads L divided by the expected absolute earnings-day move, and L = 0.25% reproduces today's 5%
   - [x] 2026-09-30 OWNER RULING APPLIED: risk is never a global dial, so no appetite number on this item is routed to the owner any more; each remaining ceiling is either replaced by a per-name read or recorded as blocked with its blocker named. Both previously routed questions are WITHDRAWN, not pending
   - [ ] `short_gap_risk_multiple` (1.5) becomes a read off that stock's own overnight-gap behaviour instead of one constant for every short — BLOCKED on stored daily bars, which the desk does not keep (the constructor is handed `analysis.atr_14` and no bar history, verified 2026-09-30). No value picked, no appetite asked
   - [ ] the queued-earnings BUY clamp (5% of the book) stops being a global share — the structural alternative identified 2026-09-30 is that an unread filing IS an unconvicted seat, which under standing doctrine (all five seats right to enter) bars the BUY rather than sizing it; it changes live sizing behaviour, so it needs an adversary pass before it ships and was NOT applied in this pass
@@ -327,6 +329,28 @@ DONE WHEN:
   - [ ] (a) each constructor claim above is confirmed against the live code or corrected, with a test pinning the wording
   - [ ] (b) any other seat-prompt sentence of the form "X already handles Y" found by reading the rendered prompts is confirmed or corrected
 detail: docs/BOARD_NOTES.md (item 217)
+
+**216. The short-side gap haircut is applied in TWO places and the constructor's copy is not the one that binds — filed 2026-09-30.**
+
+Execution sizes a position as min(qty_by_alloc, qty_by_risk). The constructor
+applies the short-side haircut on the allocation leg; the risk-budget leg in
+`src/pipeline_stages.py` reads `RiskConfig.short_gap_risk_multiple` and applies
+it again. Whenever the risk leg is the binding one, the number that actually
+sizes the live short is the execution-side read, not the constructor's. This
+was found 2026-09-30 when a proposed constructor-only change was about to ship
+a ledger line claiming the number no longer sized any short — which would have
+been untrue. Latent, not live-breaking: today both sites hold the same value,
+so the two agree by coincidence of configuration rather than by construction.
+The defect is that a future change to one is silently a no-op, or worse, a
+half-change.
+
+DONE WHEN:
+  - [ ] it is established by reading the code which leg binds in practice, and recorded, rather than assumed
+  - [ ] the short-side haircut has ONE definition site that both legs read, or the two sites are documented as deliberately distinct with the reason and a check that fails when they diverge
+  - [ ] no statement anywhere in docs or the number ledger claims a constructor-side change has retired this number unless the execution-side read changed with it
+
+detail: docs/BOARD_NOTES.md (item 216)
+
 
 **218. Arithmetically losing geometry has no owner ruling: the desk may neither refuse it nor resize for it — OPEN, filed 2026-10-01.** On the real book [measured 2026-10-01 against the production database, read-only, 33 BUY trades carrying an entry, a stop and a target] reward:risk runs median 1.44, minimum 0.68, with SIX below parity (RSG 0.76, RSG 0.90, NUE 0.82 range; COP 0.68, OXY 0.87, RKLB 0.82 breakout). A refusal at parity was built in `_widen_stop_past_noise` and REMOVED before merge: placed in the stop-widening path and keyed off the widened stop it fires as a function of stop width, which is the deleted stop-width gate under another name, and the standing ruling is that a wide stop ships and is answered by SMALLER SIZE, never by refusal (seven existing guard tests fail against it, four of them the owner's own worked examples). The "parity is arithmetic" argument fails with it: the break-even identity assumes the position is sold AT THE TARGET and this desk never sells at a target (exits are on alignment, owner 2026-09-30), so the reward side is a floor on the payoff, not the payoff. A size-based variant is barred by the reward:risk helper's own recorded ruling that the figure is for ranking, never a cutoff and never a size cap. `MAX_REACH_ATR_MULTIPLE` was investigated and KEPT, and it is NOT what holds targets close [measured 2026-10-01, the desk's own stored 400-bar daily set, 101 symbols, ATR(14), rolling windows: median per-name realised favourable excursion 1.93 ATR over a 15-session hold, per-name maximum 8.78 ATR, against the cap's 1.5*sqrt(15) = 5.81 ATR] — that measurement corrects an earlier diagnosis in this repo which treated the cap as the thing clipping targets in.
 
