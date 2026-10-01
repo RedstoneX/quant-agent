@@ -303,8 +303,7 @@ def _pipeline_double():
     """A bare pipeline object with only what `_risk_review_exits` touches."""
     from src.pipeline import TradingPipeline
 
-    pipe = build_pipeline(risk_manager=MagicMock(), db=MagicMock())
-    pipe.market = None          # forces the labelled NOT FETCHED earnings form
+    pipe = build_pipeline(risk_manager=MagicMock(), db=MagicMock(), market=None)
     pipe.config = MagicMock()
     return pipe
 

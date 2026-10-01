@@ -447,7 +447,7 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
 def test_position_reviewer_persists_actual_model_on_failover():
     """midday/close (audit site pipeline.py:6109) must persist
     AgentResult.model, not config.llm.position_reviewer_model."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), macro=MagicMock(), db=MagicMock(), risk_engine=MagicMock(), position_reviewer=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = [
@@ -456,9 +456,7 @@ def test_position_reviewer_persists_actual_model_on_failover():
             market_value=5050.0, unrealized_pnl=50.0, sector="ETF",
         )
     ]
-    pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
-    pipeline.db = MagicMock()
     pipeline.db.get_trades.return_value = []
     pipeline.config = _mock_config()
     pipeline._handle_ex_dividends = MagicMock(return_value=[])
@@ -466,8 +464,6 @@ def test_position_reviewer_persists_actual_model_on_failover():
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
     pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
     pipeline._reconcile_fills = MagicMock()
-    pipeline.risk_engine = MagicMock()
-    pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
         PositionReview(
             reasoning_chain=_review_rc(), actions=[],

@@ -108,11 +108,10 @@ def test_deterministic_trail_write_back_matches_the_new_level(db):
         "setup_type = 'breakout' WHERE symbol = 'AAA'",
     )
     db.conn.commit()
-    pipeline = build_pipeline(db=db, broker=MagicMock())
+    pipeline = build_pipeline(db=db, broker=MagicMock(), market=MagicMock())
     pipeline.broker.get_current_stop_price.return_value = 95.0
     pipeline.broker.replace_stop_loss.return_value = {"id": "o1"}
     pipeline._atr_for_symbol = MagicMock(return_value=2.0)
-    pipeline.market = MagicMock()
     pipeline.market.get_ohlcv.return_value = []
 
     pos = Position(

@@ -250,11 +250,10 @@ def test_rm_is_told_when_risk_could_not_be_computed():
 
 def test_position_facts_carry_the_r_multiple_against_the_entry_stop():
     """The denominator is the bet that was made, not the trailed level."""
-    pipeline = build_pipeline(db=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.db.get_symbol_last_buy.return_value = {
         "stop_loss": 90.0, "take_profit": 130.0, "timestamp": None,
     }
-    pipeline.broker = MagicMock()
     pipeline.broker.get_current_stop_price.return_value = 105.0   # trailed up
     pipeline._atr_for_symbol = MagicMock(return_value=2.0)
 
@@ -270,11 +269,10 @@ def test_position_facts_carry_the_r_multiple_against_the_entry_stop():
 
 
 def test_position_facts_omit_r_when_no_risk_was_defined_at_entry():
-    pipeline = build_pipeline(db=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.db.get_symbol_last_buy.return_value = {
         "stop_loss": 0.0, "take_profit": 130.0, "timestamp": None,
     }
-    pipeline.broker = MagicMock()
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline._atr_for_symbol = MagicMock(return_value=2.0)
 

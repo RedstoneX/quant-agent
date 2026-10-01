@@ -72,7 +72,7 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
     the early-return paths under test are the genuine production code
     paths, not a stubbed return value.
     """
-    p = build_pipeline()
+    p = build_pipeline(broker=MagicMock(), db=MagicMock(), market=MagicMock(), macro_store=MagicMock(), news_store=MagicMock(), tech_store=MagicMock(), tech_analyst=MagicMock(), decision_stage=MagicMock(), risk_stage=MagicMock(), execution_stage=MagicMock(), risk_engine=MagicMock())
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=list(universe), lookback_days=100),
         storage=SimpleNamespace(
@@ -83,27 +83,17 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
             cooldown_hours=3.0, max_candidates_per_scan=5,
         ),
     )
-    p.broker = MagicMock()
     p.broker.get_account.return_value = {
         "cash": 10_000.0, "portfolio_value": 10_100.0, "last_equity": 10_000.0,
         "non_marginable_buying_power": 10_000.0,
     }
     p.broker.get_positions.return_value = []
-    p.db = MagicMock()
     p.db.get_trades.return_value = other_session_rows or []
-    p.market = MagicMock()
     p.market.get_ohlcv.return_value = [MagicMock()]
-    p.macro_store = MagicMock()
     p.macro_store.load_last_state.return_value = _todays_macro_state()
-    p.news_store = MagicMock()
     p.news_store.load_daily_report.return_value = _todays_news_dump()
-    p.tech_store = MagicMock()
     p.tech_store.load.return_value = {}
     p.tech_store.compute_ages.return_value = {}
-    p.tech_analyst = MagicMock()
-    p.decision_stage = MagicMock()
-    p.risk_stage = MagicMock()
-    p.execution_stage = MagicMock()
 
     p._activate_cost_session = MagicMock()
     p._drain_pending_protection_restores = MagicMock()
@@ -112,7 +102,6 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
     p._reconcile_orphan_pending_submits = MagicMock()
     p._reconcile_stop_out_fills = MagicMock()
     p._is_trading_day = MagicMock(return_value=True)
-    p.risk_engine = MagicMock()
     return p
 
 

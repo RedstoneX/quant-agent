@@ -131,10 +131,8 @@ def test_prelatched_preprocess_fetches_filing_but_never_marks_it_failed(tmp_path
 
 
 def test_preprocess_skips_when_market_closed(tmp_path):
-    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock())
     pipeline.broker.is_trading_day.return_value = False
-    pipeline.earnings_provider = MagicMock()
-    pipeline.earnings_analyst = MagicMock()
     pipeline.config = MagicMock()
 
     result = pipeline.run_earnings_preprocess()

@@ -71,10 +71,9 @@ def _emergency_liquidate_pipe():
     mocking — same pattern tests/test_pipeline.py's emergency-liquidate
     tests use."""
     from src.storage.db import Database
-    pipe = build_pipeline(db=MagicMock())
+    pipe = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipe.db.has_pending_action_for_symbol.return_value = False
     pipe.db.insert_trade = MagicMock(return_value=1)
-    pipe.broker = MagicMock()
     pipe.broker.cancel_open_entry_orders.return_value = 0
     pipe.broker.snapshot_protective_stops.return_value = (True, [])
     pipe.broker.cancel_snapshotted_stops.return_value = True

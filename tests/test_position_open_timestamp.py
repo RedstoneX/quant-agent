@@ -183,9 +183,8 @@ def test_trailing_pass_reads_the_open_not_the_add(db):
                     take_profit=310.0, setup_type="range",
                     fill_status="filled")
 
-    p = build_pipeline(db=db, broker=MagicMock())
+    p = build_pipeline(db=db, broker=MagicMock(), market=MagicMock())
     p.broker.get_current_stop_price.return_value = 244.0
-    p.market = MagicMock()
     p.market.get_ohlcv.return_value = []
     p._atr_for_symbol = MagicMock(return_value=5.0)
     position = SimpleNamespace(symbol="MRVL", avg_entry=247.5,

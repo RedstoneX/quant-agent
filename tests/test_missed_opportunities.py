@@ -54,18 +54,16 @@ def _pipeline_with(
     _build_missed_opportunities_digest touches. All other TradingPipeline
     attributes are absent — any accidental access will AttributeError the
     test, which is what we want."""
-    p = build_pipeline()
+    p = build_pipeline(broker=MagicMock(), market=MagicMock(), db=MagicMock(), news_store=MagicMock(), earnings_provider=MagicMock(), macro_store=MagicMock())
 
     # Config — only the universe is read.
     p.config = MagicMock()
     p.config.trading.universe = universe or []
 
     # Broker — only get_top_movers.
-    p.broker = MagicMock()
     p.broker.get_top_movers.return_value = top_movers or []
 
     # Market — per-symbol get_ohlcv.
-    p.market = MagicMock()
     def _ohlcv(symbol: str, lookback_days: int = 10):
         closes = (market_closes_by_symbol or {}).get(symbol)
         if not closes:
@@ -74,18 +72,14 @@ def _pipeline_with(
     p.market.get_ohlcv.side_effect = _ohlcv
 
     # DB — only the two calls made by missed_ops helpers.
-    p.db = MagicMock()
     p.db.get_trades.return_value = trades or []
     p.db.get_recent_agent_outputs.return_value = tech_rows or []
 
     # News store — get_missed_ops reads files under data_dir.
-    p.news_store = MagicMock()
     p.news_store.data_dir = news_dir_path or Path("/tmp/does-not-exist-missed-ops-test")
 
     # Earnings + macro stores.
-    p.earnings_provider = MagicMock()
     p.earnings_provider.manifest = earnings_manifest or {}
-    p.macro_store = MagicMock()
     p.macro_store.load_last_state.return_value = macro_state
 
     return p

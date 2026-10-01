@@ -163,10 +163,9 @@ def test_no_second_definition_of_unrealized_pnl_pct():
 # --------------------------------------------------------------------------
 
 def _pipeline_for_facts():
-    pipeline = build_pipeline(db=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), tech_store=MagicMock())
     pipeline.db.compute_trade_calibration.return_value = {}
     pipeline.db.get_recent_agent_outputs.return_value = []
-    pipeline.tech_store = MagicMock()
     pipeline.tech_store.get_history.return_value = []
     return pipeline
 
@@ -355,10 +354,9 @@ def test_every_weight_consumer_uses_the_gross_multiplier():
     )
     assert intent == "sell"
     # `_build_position_facts` (the position reviewer's metric line)
-    pipeline = build_pipeline(db=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.db.get_symbol_last_buy.return_value = None
     pipeline.db.get_trades.return_value = []
-    pipeline.broker = MagicMock()
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline._atr_for_symbol = lambda symbol: None
     facts = pipeline._build_position_facts([position], [], total_value)
@@ -412,12 +410,11 @@ def test_every_pnl_pct_consumer_renders_the_same_number():
     # `_build_position_facts` feeds the same percent into the reviewer's
     # winner flags. A short held one day and up 9% is parabolic; with a
     # sign-flipped denominator it reads as -9% and never flags.
-    pipeline = build_pipeline(db=MagicMock())
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.db.get_symbol_last_buy.return_value = {
         "timestamp": "2999-01-01 10:00:00", "stop_loss": 0,
     }
     pipeline.db.get_trades.return_value = []
-    pipeline.broker = MagicMock()
     pipeline.broker.get_current_stop_price.return_value = None
     pipeline._atr_for_symbol = lambda symbol: None
     big_winner = _pos("TSLA", -100, 200.0, 100.0)   # +$10,000, +50%

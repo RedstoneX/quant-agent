@@ -432,9 +432,8 @@ def test_build_recent_sells_joins_current_prices(tmp_path):
     )
     db.conn.commit()
 
-    pipeline = build_pipeline(db=db)
     # Mock broker to return a specific current price
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.get_latest_price = MagicMock(return_value=530.0)
 
     out = pipeline._build_recent_sells_for_grading(lookback_days=2)

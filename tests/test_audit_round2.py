@@ -52,10 +52,9 @@ def test_entry_protection_terminal_zero_fill_does_not_cancel(mock_tc_cls):
 # ---------- full exits cancel the same-day resting entry BUY ----------
 
 def test_full_exit_sell_cancels_same_symbol_entry_orders():
-    p = build_pipeline(broker=MagicMock())
+    p = build_pipeline(broker=MagicMock(), db=MagicMock())
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
-    p.db = MagicMock()
 
     p._submit_protected_sell(symbol="VST", qty=31, limit_price=150.0,
                              reference_price=151.0, position_qty_before_sell=31,
@@ -64,10 +63,9 @@ def test_full_exit_sell_cancels_same_symbol_entry_orders():
 
 
 def test_partial_trim_keeps_its_entry_orders():
-    p = build_pipeline(broker=MagicMock())
+    p = build_pipeline(broker=MagicMock(), db=MagicMock())
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p._cancel_stops_with_write_ahead = MagicMock(return_value=(True, [], 7))
-    p.db = MagicMock()
 
     p._submit_protected_sell(symbol="VST", qty=10, limit_price=150.0,
                              reference_price=151.0, position_qty_before_sell=31,
@@ -79,7 +77,7 @@ def _park_pipeline():
     from types import SimpleNamespace
     from src.config import CashSweepConfig, RiskConfig
     from src.execution.cash_sweep import CashSweeper
-    p = build_pipeline()
+    p = build_pipeline(broker=MagicMock(), db=MagicMock(), risk_engine=MagicMock())
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(enabled=True, symbol="SGOV",
                                    min_order_usd=500.0),
@@ -87,7 +85,6 @@ def _park_pipeline():
                         max_sector_pct=40,
                         require_stop_loss=True, allow_margin=False),
     )
-    p.broker = MagicMock()
     p.broker.get_account.return_value = {
         "cash": 99_000.0, "portfolio_value": 100_000.0,
         "last_equity": 104_000.0,
@@ -96,9 +93,7 @@ def _park_pipeline():
     p.broker.open_buy_notional.return_value = 0.0
     p.broker.get_latest_price.return_value = 100.60
     p.broker.submit_order.return_value = {"id": "b1", "status": "accepted"}
-    p.db = MagicMock()
     p.db.insert_trade.return_value = 9
-    p.risk_engine = MagicMock()
     p.cash_sweeper = CashSweeper(pipeline=p)
     return p
 
@@ -200,18 +195,15 @@ def test_pm_parse_failure_is_analysis_error_not_no_trades():
     last-run marker written, trading day silently skipped. analysis_error is
     retryable: the next tick retries (and the checkpoint resumes at RM)."""
     from src import decision_checkpoint as dc
-    p = build_pipeline(_is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock(), _reconcile_orphan_pending_submits=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]), _reconcile_fills=MagicMock(), _force_delever=MagicMock(return_value=[]), broker=MagicMock())
+    p = build_pipeline(_is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock(), _reconcile_orphan_pending_submits=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]), _reconcile_fills=MagicMock(), _force_delever=MagicMock(return_value=[]), broker=MagicMock(), risk_engine=MagicMock(), morning_research_stage=MagicMock(), decision_stage=MagicMock())
     p.broker.get_account.return_value = {
         "cash": 50_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
     }
     p.broker.get_positions.return_value = []
-    p.risk_engine = MagicMock()
-    p.morning_research_stage = MagicMock()
     def _research(ctx):
         ctx.analyses = [MagicMock()]
         ctx.data_status = {"tech": "ok"}
     p.morning_research_stage.run.side_effect = _research
-    p.decision_stage = MagicMock()
     p.decision_stage.run.side_effect = lambda ctx: (
         setattr(ctx, "analysis_failure_status", "pm_parse_error"),
         setattr(ctx, "analysis_failure_error", "PM returned non-JSON body"),

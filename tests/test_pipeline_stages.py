@@ -1308,7 +1308,7 @@ def test_decision_stage_passes_valid_carried_macro_dict_after_coerce():
     from src.models import MacroAnalysis
     from src.pipeline import TradingPipeline
 
-    p = build_pipeline(db=MagicMock())
+    p = build_pipeline(db=MagicMock(), portfolio_manager=MagicMock())
     p.db.get_latest_insights.return_value = None
     p._sweeper = MagicMock(return_value=None)
     p._compute_recent_performance = MagicMock(return_value={})
@@ -1329,7 +1329,6 @@ def test_decision_stage_passes_valid_carried_macro_dict_after_coerce():
     p.config.risk.allow_margin = False
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
-    p.portfolio_manager = MagicMock()
     p.portfolio_manager.decide.return_value = (
         None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
                         input_tokens=1, output_tokens=1, cost_usd=0.0,
@@ -1362,7 +1361,7 @@ def test_decision_stage_does_not_pass_chainless_trim_into_pm():
     from src.agents.portfolio_manager import PortfolioManagerAgent
 
     PortfolioManagerAgent._macro_parse_failures = []
-    p = build_pipeline(db=MagicMock())
+    p = build_pipeline(db=MagicMock(), portfolio_manager=MagicMock())
     p.db.get_latest_insights.return_value = None
     p._sweeper = MagicMock(return_value=None)
     p._compute_recent_performance = MagicMock(return_value={})
@@ -1383,7 +1382,6 @@ def test_decision_stage_does_not_pass_chainless_trim_into_pm():
     p.config.risk.allow_margin = False
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
-    p.portfolio_manager = MagicMock()
     p.portfolio_manager.decide.return_value = (
         None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
                         input_tokens=1, output_tokens=1, cost_usd=0.0,
@@ -1417,7 +1415,7 @@ def test_decision_stage_still_model_dumps_a_fresh_macro_model():
         MacroAnalysis, MacroPositionGuidance, MacroReasoningChain,
     )
 
-    p = build_pipeline(db=MagicMock())
+    p = build_pipeline(db=MagicMock(), portfolio_manager=MagicMock())
     p.db.get_latest_insights.return_value = None
     p._sweeper = MagicMock(return_value=None)
     p._compute_recent_performance = MagicMock(return_value={})
@@ -1438,7 +1436,6 @@ def test_decision_stage_still_model_dumps_a_fresh_macro_model():
     p.config.risk.allow_margin = False
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
-    p.portfolio_manager = MagicMock()
     p.portfolio_manager.decide.return_value = (
         None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
                         input_tokens=1, output_tokens=1, cost_usd=0.0,
@@ -1483,7 +1480,7 @@ def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
     from src.pipeline import TradingPipeline
     from src.risk.constants import REWARD_RISK_FLOOR
 
-    p = build_pipeline(db=MagicMock())
+    p = build_pipeline(db=MagicMock(), portfolio_manager=MagicMock())
     p.db.get_latest_insights.return_value = None
     p._sweeper = MagicMock(return_value=None)
     p._compute_recent_performance = MagicMock(return_value={})
@@ -1506,7 +1503,6 @@ def test_decision_stage_threads_the_configured_rr_floor_and_starter_size():
     p.config.risk.min_position_risk_pct = 0.3
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
-    p.portfolio_manager = MagicMock()
     p.portfolio_manager.decide.return_value = (
         None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
                         input_tokens=1, output_tokens=1, cost_usd=0.0,
@@ -4031,14 +4027,13 @@ def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
         ),
     )
 
-    p = build_pipeline(market=MagicMock())
+    p = build_pipeline(market=MagicMock(), risk_manager=MagicMock(), db=MagicMock())
     p.market.get_ohlcv.return_value = []
     p._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
     p._refuse_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
     # Hard filter is a pass-through HERE so we can isolate the scale behaviour;
     # a separate test proves the real hard filter still binds.
     p._filter_hard_risk_decisions = MagicMock(side_effect=lambda d, *a, **k: (d, [], []))
-    p.risk_manager = MagicMock()
     p.risk_manager.review.return_value = (
         RiskVerdict(
             approved=True, modifications=[],
@@ -4053,7 +4048,6 @@ def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
         MagicMock(user_message="m", raw_text="{}", tokens_used=1,
                   input_tokens=1, output_tokens=1, cost_usd=0.0),
     )
-    p.db = MagicMock()
     p.config = MagicMock()
     p.config.llm.risk_manager_model = "test-model"
     p.config.trading.lookback_days = 120

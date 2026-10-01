@@ -778,7 +778,7 @@ def _mk_review_with_action(symbol: str, action: str, reason: str,
 def _executor_pipeline_with_position(symbol: str, qty: float, current_price: float):
     """Pipeline scaffold sufficient to exercise _midday_execute_llm_actions
     on a single position. broker / db are mocked at the call surface."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     # audit F1 #1: SELL paths use the split snapshot/cancel seam.
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
     pipeline.broker.cancel_snapshotted_stops.return_value = True
@@ -792,7 +792,6 @@ def _executor_pipeline_with_position(symbol: str, qty: float, current_price: flo
         "status": "filled", "filled_qty": str(int(qty * 0.5)),
         "filled_avg_price": str(current_price),
     }
-    pipeline.db = MagicMock()
     pipeline.db.has_pending_action_for_symbol.return_value = False
     pipeline._order_accepted = MagicMock(return_value=True)
     pipeline._reprotect_residual_after_partial_sell = MagicMock()

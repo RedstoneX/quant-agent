@@ -126,19 +126,13 @@ def test_checkpoint_wrong_version_ignored(monkeypatch, tmp_path):
 
 def _resume_pipeline():
     """__new__-built pipeline with every preamble dependency stubbed."""
-    p = build_pipeline(_is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock(), _reconcile_orphan_pending_submits=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]), _reconcile_fills=MagicMock(), _force_delever=MagicMock(return_value=[]), broker=MagicMock())
+    p = build_pipeline(_is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock(), _reconcile_orphan_pending_submits=MagicMock(), _reconcile_stop_coverage=MagicMock(return_value=[]), _reconcile_fills=MagicMock(), _force_delever=MagicMock(return_value=[]), broker=MagicMock(), risk_engine=MagicMock(), morning_research_stage=MagicMock(), risk_stage=MagicMock(), execution_stage=MagicMock(), decision_stage=MagicMock(), market=MagicMock())
     p.broker.get_account.return_value = {
         "cash": 50_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
     }
     p.broker.get_positions.return_value = []
-    p.risk_engine = MagicMock()
-    p.morning_research_stage = MagicMock()
-    p.risk_stage = MagicMock()
     p.risk_stage.run.return_value = None          # RM approved, proceed
-    p.execution_stage = MagicMock()
     p.execution_stage.run.return_value = [{"id": "o1", "action": "BUY"}]
-    p.decision_stage = MagicMock()
-    p.market = MagicMock()
     p.market.get_ohlcv.return_value = []
     p.config = MagicMock()
     p.config.trading.lookback_days = 120

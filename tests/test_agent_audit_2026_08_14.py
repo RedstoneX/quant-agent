@@ -253,7 +253,7 @@ def _run_risk_stage_capturing_review(ctx, *, position_history=None,
     from src.pipeline_stages import RiskStage
 
     decisions = [_decision()]
-    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( return_value=(decisions, [], []), ), _apply_risk_modifications=MagicMock(return_value=(decisions, [])))
+    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( return_value=(decisions, [], []), ), _apply_risk_modifications=MagicMock(return_value=(decisions, [])), risk_manager=MagicMock())
 
     def _seam(value):
         if isinstance(value, BaseException):
@@ -273,7 +273,6 @@ def _run_risk_stage_capturing_review(ctx, *, position_history=None,
     )
     rm_result = MagicMock()
     rm_result.used_fallback = False
-    pipeline.risk_manager = MagicMock()
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
 
     ctx.total_value = 100_000.0

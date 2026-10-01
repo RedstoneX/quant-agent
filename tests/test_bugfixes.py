@@ -459,7 +459,7 @@ def test_transient_admission_requires_sec_purchase_broker_and_market_quality(mon
     from types import SimpleNamespace
     from src.models import OHLCV
 
-    pipeline = build_pipeline()
+    pipeline = build_pipeline(broker=MagicMock(), market=MagicMock())
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
@@ -468,12 +468,10 @@ def test_transient_admission_requires_sec_purchase_broker_and_market_quality(mon
             min_external_avg_dollar_volume_usd=10_000_000,
         ),
     )
-    pipeline.broker = MagicMock()
     pipeline.broker.get_transient_equity_eligibility.return_value = {
         "eligible": True, "reason": "eligible", "name": "Vistra Corp",
         "exchange": "nyse",
     }
-    pipeline.market = MagicMock()
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: "Utilities")
     pipeline.market.get_ohlcv.return_value = [
         OHLCV(
@@ -507,7 +505,7 @@ def test_transient_admission_rejects_unresolved_sector(monkeypatch):
     from types import SimpleNamespace
     from src.models import OHLCV
 
-    pipeline = build_pipeline()
+    pipeline = build_pipeline(broker=MagicMock(), market=MagicMock())
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
@@ -516,11 +514,9 @@ def test_transient_admission_rejects_unresolved_sector(monkeypatch):
             min_external_avg_dollar_volume_usd=10_000_000,
         ),
     )
-    pipeline.broker = MagicMock()
     pipeline.broker.get_transient_equity_eligibility.return_value = {
         "eligible": True,
     }
-    pipeline.market = MagicMock()
     pipeline.market.get_ohlcv.return_value = [
         OHLCV(
             date=date.today() - timedelta(days=30 - i), open=100, high=102,
@@ -1148,13 +1144,12 @@ def test_broker_limit_price_none_vs_zero():
 
 def test_hedge_nets_out_for_total_exposure():
     """Inverse ETFs are hedges: SQQQ short + SPY long should NET, not sum."""
-    pipeline = build_pipeline()
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig(
         max_position_pct=40,
         max_total_position_pct=50,  # tight limit
         max_sector_pct=90,  # high to not interfere
         require_stop_loss=True,
-    ))
+    )))
     # SQQQ 10% raw * -3 = -30% signed (short Nasdaq via inverse 3x)
     # SPY  25% raw * +1 = +25% signed (long S&P)
     # Net exposure = |-30 + 25| = 5% << 50% → both pass as a hedge.

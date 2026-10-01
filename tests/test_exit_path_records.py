@@ -82,11 +82,9 @@ def test_evaluate_returns_the_same_proposal_as_compute_plus_a_code():
 
 
 def _trail_pipeline(db, buy_row, stop):
-    p = build_pipeline(db=db)
     db.get_symbol_last_buy = MagicMock(return_value=buy_row)
-    p.broker = MagicMock()
+    p = build_pipeline(db=db, broker=MagicMock(), market=MagicMock())
     p.broker.get_current_stop_price.return_value = stop
-    p.market = MagicMock()
     p.market.get_ohlcv.return_value = []
     p._atr_for_symbol = MagicMock(return_value=2.0)
     return p
@@ -205,10 +203,9 @@ def test_a_guard_refusal_writes_a_row(tmp_path):
 
 def test_the_session_sweep_passes_the_resting_orders_to_the_record(tmp_path):
     db = _db(tmp_path)
-    p = build_pipeline(db=db)
     db.get_symbol_last_buy = MagicMock(return_value={"stop_loss": 158.75})
     db.get_pending_protection_restores = MagicMock(return_value=[])
-    p.broker = _repair_broker(None)
+    p = build_pipeline(db=db, broker=_repair_broker(None))
     p.broker.get_positions.return_value = [MagicMock(symbol="VST", qty=31.0)]
     resting = [{"id": "s1", "qty": 10.0, "stop_price": 158.0}]
     p.broker.snapshot_protective_stops.return_value = (True, resting)
