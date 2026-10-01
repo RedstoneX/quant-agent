@@ -243,10 +243,12 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/execution/broker.py",
     "src/execution/stop_repair.py",
     "src/coverage_watchdog.py",
-    # The pipeline's own decision/execution glue. `_clamp_queued_earnings_
-    # buys`' `max_pct=5.0` is a function-parameter default and the de-lever
-    # and midday order-price buffers are inline multipliers; rules (c) and
-    # (e) see them since 2026-09-19.
+    # The pipeline's own decision/execution glue. The de-lever and midday
+    # order-price buffers are inline multipliers and rule (e) has seen them
+    # since 2026-09-19; rule (c) (function-parameter defaults) was added the
+    # same day for `_clamp_queued_earnings_buys`' `max_pct=5.0`, which no
+    # longer exists — that gate refuses the BUY instead of sizing it (board
+    # item 186, 2026-10-01) — and the rule stays because the shape recurs.
     "src/pipeline.py",
     # Every seat's prompt-construction and LLM-call code -- the path from
     # evidence to a seat's verdict the scope rule names. Most of what lives
@@ -413,6 +415,58 @@ def routeless_ratchet(path: Path | None = None) -> int:
 MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
 
 
+#: Fields `src/storage/db.py` actually WRITES, as opposed to merely creating.
+#: A settlement route whose state is `built` has to name where its evidence
+#: lands, and this is what makes that claim falsifiable: the named field must
+#: be used by executable code in the storage layer, NOT merely declared by the
+#: `_ensure_column` migration. The three dead recordings found on 2026-10-01
+#: all passed "the column exists" and failed "something writes it" -- the
+#: break-confirmation-margin payload, for one, is built into a prose `detail`
+#: string that the only persisting call throws away.
+_DB_SOURCE_PATH = "src/storage/db.py"
+
+
+def written_fields(source: str | None = None) -> frozenset[str]:
+    """Every field name the storage layer writes, read out of its own AST.
+
+    A name counts when it appears as a string constant in EXECUTABLE code --
+    an SQL column list, a `(column, value)` update pair, a persisted payload
+    key. It does NOT count when its only appearance is the `_ensure_column`
+    migration that creates it (a column nothing writes is exactly the defect)
+    or a docstring/comment mentioning it.
+    """
+    import ast as _ast
+
+    if source is None:
+        source = (REPO_ROOT / _DB_SOURCE_PATH).read_text(encoding="utf-8")
+    tree = _ast.parse(source)
+    migration_only: set[int] = set()
+    docstrings: set[int] = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Call):
+            fname = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if fname == "_ensure_column":
+                for arg in node.args[1:]:
+                    if isinstance(arg, _ast.Constant) and isinstance(arg.value, str):
+                        migration_only.add(id(arg))
+        if isinstance(node, _ast.Expr) and isinstance(node.value, _ast.Constant):
+            if isinstance(node.value.value, str):
+                docstrings.add(id(node.value))
+    found: set[str] = set()
+    ident = re.compile(r"^[a-z_][a-z0-9_]*$")
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Constant) or not isinstance(node.value, str):
+            continue
+        if id(node) in migration_only or id(node) in docstrings:
+            continue
+        text = node.value
+        for token in re.split(r"[\s,()=?]+", text):
+            token = token.strip().strip("'\"")
+            if ident.match(token):
+                found.add(token)
+    return frozenset(found)
+
+
 def settlement_route_problem(entry: dict[str, Any]) -> str | None:
     """Why this entry's `settles_by` is not a route, or None if it is one."""
     route = entry.get("settles_by")
@@ -439,6 +493,31 @@ def settlement_route_problem(entry: dict[str, Any]) -> str | None:
                 f"`settles_by.{field}` is under {MIN_ROUTE_PROSE_CHARS} "
                 f"characters, which is not a route anybody can act on"
             )
+    if route["state"] == "built":
+        writes = route.get("writes")
+        if not isinstance(writes, list) or not writes:
+            return (
+                "`settles_by.state` is `built` but the route names no "
+                "`writes:` list. A BUILT recording has to say which fields "
+                "carry its evidence, or nobody can tell a recording that is "
+                "collecting from one that is silently collecting nothing"
+            )
+        written = written_fields()
+        for target in writes:
+            if not isinstance(target, str) or "." not in target:
+                return (
+                    f"`settles_by.writes` entry {target!r} is not a "
+                    f"`<table-or-kind>.<field>` name"
+                )
+            field = target.rsplit(".", 1)[1].strip()
+            if field not in written:
+                return (
+                    f"`settles_by.writes` names {target!r} but nothing in "
+                    f"{_DB_SOURCE_PATH} writes {field!r} -- it appears only "
+                    f"in the migration that creates it, in prose, or not at "
+                    f"all. A settlement route pointing at a field nothing "
+                    f"writes can never close"
+                )
     return None
 
 
@@ -483,7 +562,13 @@ def classification(
 #: chosen. The build fails if it RISES, so a trade number cannot be parked
 #: outside scope silently. Raising it is a reviewed line that says a new
 #: unscoped constant was looked at and is not trade-governing.
-MAX_UNSCOPED_NUMERIC_SITES = 155  # 2026-10-01, item 90: +1 for `src.number_sources.MIN_ROUTE_PROSE_CHARS` (40), the shortest `records`/`closes_when` prose a `settles_by` route may carry; it governs this LEDGER's schema, not a trade. Prior: # 2026-09-26, item 99(d): +1 for `src.retired_mechanisms.MIN_NEEDLE` (12), the minimum length a `described_in.contains` needle must have in the new deletion-site TRIGGER (`described:` / `described_gaps()`) so a short substring cannot match a sentence by accident. It bounds a STRING-MATCHING rule inside a build-time prompt-drift check, not any trade decision -- it decides whether a registry entry loads, never a size, price, stop or exit. Was 153  # 2026-09-24, item 163: +1 for `src.models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT` (0.5), the tolerance the new PM risk-narrative-mismatch check uses to compare an explicit risk-% claim in `TargetPosition.thesis` prose against the authoritative `risk_allocation_pct` field. Not an independent number -- it is `RiskConfig.min_position_risk_pct` (config/settings.yaml:659, already ledgered) duplicated as a literal because `TargetPosition` is an LLM-output model with no `RiskConfig` in scope at validation time. It only sets a durable, surfaced FLAG when prose and field disagree; `risk_allocation_pct` remains authoritative for sizing and is never overridden, so this cannot decide, size, price or exit a trade. Was 152  # 2026-09-24: +1 for `src.margin_interest.MAX_LOOKBACK_MONTHS` (6), the owner's own ask for how many months back the cumulative margin-interest view looks (this-week/current-month/up-to-6-months/all-time, replacing the old per-day/per-year cockpit and Telegram figures). It bounds how far back a PRESENTATION bucket looks, not any trade decision -- `overnight_debit_balance`/`estimate_daily_interest`, the actual interest math, are unchanged. Was 151  # 2026-09-23: +1 for `src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS` (7), the safety bound on the forward calendar walk that counts how many calendar days of margin interest the owner-facing ESTIMATE line will show (a Friday debit is carried 3 days). It bounds a Telegram/dashboard estimate and degrades to 1 when exhausted; it never decides, sizes, prices or exits a trade. Was 150  # 2026-09-23: +1 for `src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS` (120), the width of the single `/fred/release/dates` request per configured release. It is a FETCH window, not a horizon: `get_upcoming_events` still filters to `horizon_days` before anything reaches a seat, so this number cannot decide, size, price or exit a trade -- it only decides whether the desk can SEE a monthly release's published schedule at all. At the previous 10-day width three of four major releases came back empty and were mislabelled as source failures (measured against the live FRED API 2026-09-23; the measurement is recorded at the constant). Was 149  # 2026-09-23: +2 for the new `src/llm_route_journal.py` (the SQLite connect timeout and the `read_events` default page size). That module is a durable log of which LLM road answered a call and what that road lists at; neither number decides, sizes, prices or exits a trade. The four numbers the same change added to `src/agents/base.py` are absent from this count because that module is in SCOPED_PATHS and each one carries a config/number_ledger.yaml entry. Was 147  # 2026-09-19: +2, and they are this module's own `FACTOR_BAND` (0.5, 2.0) -- the classifier band rule (e) uses to tell a price/size margin from a unit conversion. It governs what the gate sees, not any trade. Was 145  # 2026-09-19, board item 130: -47. `src/execution/broker.py`, `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents` moved from unscoped to SCOPED_PATHS (192 -> 145) and every one of their 47 structural sites now carries a ledger entry instead of sitting in this count; none was deleted or reclassified to make the number fall. Was 192  # 2026-09-18: +3 for the trade_updates reconnect ceilings in `src/execution/broker.py` — `_STREAM_ATTEMPT_CEILING_PER_SESSION` (6, the attempt at which alpaca-py's own 1s/30s equal-jitter curve saturates), `_STREAM_ATTEMPT_CEILING_PER_DAY` (200, one minute of Alpaca's published 200-requests-per-minute account allowance, cross-checked against the measured 56 and 50 attempts of 2026-09-16/17) and `_STREAM_RATE_LIMIT_STAND_DOWN_S` (60, the published rate-limit window a 429 must sit out). They bound a fill-NOTIFICATION socket's retry loop after it logged 32,896 handshakes and 32,666 HTTP 429s on 2026-09-15; none of them decides, sizes, prices or exits a trade — the bounded REST fill path is unchanged and is what runs when they fire.  # was 189 (+1 for `src/trader_feed.py::_COMPANY_NAME_CAP`, presentation only).
+# 2026-10-01, board item 63: +1 for `src.data.smart_money.MAX_SALE_CENSUS_ROWS`
+# (200), the row cap on the new insider-SALE recording. It is NOT ledgered
+# because its module is outside SCOPED_PATHS, and it does not belong in
+# scope: it decides, sizes, prices and exits nothing. The census it bounds
+# is written to `specialist_evidence` as evidence and is read by no gate,
+# no ranking key and no sizing path.
+MAX_UNSCOPED_NUMERIC_SITES = 156  # 2026-10-01, item 90: +1 for `src.number_sources.MIN_ROUTE_PROSE_CHARS` (40), the shortest `records`/`closes_when` prose a `settles_by` route may carry; it governs this LEDGER's schema, not a trade. Prior: # 2026-09-26, item 99(d): +1 for `src.retired_mechanisms.MIN_NEEDLE` (12), the minimum length a `described_in.contains` needle must have in the new deletion-site TRIGGER (`described:` / `described_gaps()`) so a short substring cannot match a sentence by accident. It bounds a STRING-MATCHING rule inside a build-time prompt-drift check, not any trade decision -- it decides whether a registry entry loads, never a size, price, stop or exit. Was 153  # 2026-09-24, item 163: +1 for `src.models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT` (0.5), the tolerance the new PM risk-narrative-mismatch check uses to compare an explicit risk-% claim in `TargetPosition.thesis` prose against the authoritative `risk_allocation_pct` field. Not an independent number -- it is `RiskConfig.min_position_risk_pct` (config/settings.yaml:659, already ledgered) duplicated as a literal because `TargetPosition` is an LLM-output model with no `RiskConfig` in scope at validation time. It only sets a durable, surfaced FLAG when prose and field disagree; `risk_allocation_pct` remains authoritative for sizing and is never overridden, so this cannot decide, size, price or exit a trade. Was 152  # 2026-09-24: +1 for `src.margin_interest.MAX_LOOKBACK_MONTHS` (6), the owner's own ask for how many months back the cumulative margin-interest view looks (this-week/current-month/up-to-6-months/all-time, replacing the old per-day/per-year cockpit and Telegram figures). It bounds how far back a PRESENTATION bucket looks, not any trade decision -- `overnight_debit_balance`/`estimate_daily_interest`, the actual interest math, are unchanged. Was 151  # 2026-09-23: +1 for `src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS` (7), the safety bound on the forward calendar walk that counts how many calendar days of margin interest the owner-facing ESTIMATE line will show (a Friday debit is carried 3 days). It bounds a Telegram/dashboard estimate and degrades to 1 when exhausted; it never decides, sizes, prices or exits a trade. Was 150  # 2026-09-23: +1 for `src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS` (120), the width of the single `/fred/release/dates` request per configured release. It is a FETCH window, not a horizon: `get_upcoming_events` still filters to `horizon_days` before anything reaches a seat, so this number cannot decide, size, price or exit a trade -- it only decides whether the desk can SEE a monthly release's published schedule at all. At the previous 10-day width three of four major releases came back empty and were mislabelled as source failures (measured against the live FRED API 2026-09-23; the measurement is recorded at the constant). Was 149  # 2026-09-23: +2 for the new `src/llm_route_journal.py` (the SQLite connect timeout and the `read_events` default page size). That module is a durable log of which LLM road answered a call and what that road lists at; neither number decides, sizes, prices or exits a trade. The four numbers the same change added to `src/agents/base.py` are absent from this count because that module is in SCOPED_PATHS and each one carries a config/number_ledger.yaml entry. Was 147  # 2026-09-19: +2, and they are this module's own `FACTOR_BAND` (0.5, 2.0) -- the classifier band rule (e) uses to tell a price/size margin from a unit conversion. It governs what the gate sees, not any trade. Was 145  # 2026-09-19, board item 130: -47. `src/execution/broker.py`, `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents` moved from unscoped to SCOPED_PATHS (192 -> 145) and every one of their 47 structural sites now carries a ledger entry instead of sitting in this count; none was deleted or reclassified to make the number fall. Was 192  # 2026-09-18: +3 for the trade_updates reconnect ceilings in `src/execution/broker.py` — `_STREAM_ATTEMPT_CEILING_PER_SESSION` (6, the attempt at which alpaca-py's own 1s/30s equal-jitter curve saturates), `_STREAM_ATTEMPT_CEILING_PER_DAY` (200, one minute of Alpaca's published 200-requests-per-minute account allowance, cross-checked against the measured 56 and 50 attempts of 2026-09-16/17) and `_STREAM_RATE_LIMIT_STAND_DOWN_S` (60, the published rate-limit window a 429 must sit out). They bound a fill-NOTIFICATION socket's retry loop after it logged 32,896 handshakes and 32,666 HTTP 429s on 2026-09-15; none of them decides, sizes, prices or exits a trade — the bounded REST fill path is unchanged and is what runs when they fire.  # was 189 (+1 for `src/trader_feed.py::_COMPANY_NAME_CAP`, presentation only).
 
 #: Paths under `src/` the unscoped sentinel does not count: generated code and
 #: vendored trees have no author to ask.

@@ -235,6 +235,12 @@ class AnalysisParseTelemetry:
         self._counts: Counter = Counter()
         self._drops: Counter = Counter()
         self._hygiene: Counter = Counter()
+        # Denominator for the counter above (item 214, 2026-10-01): a zero
+        # violation count is worthless on its own, because it reads the
+        # same whether the route was clean or the check never ran. Every
+        # answer that is checked is tallied here, keyed by the same
+        # provider-tagged model name, so "0 of N" can be stated.
+        self._hygiene_observed: Counter = Counter()
         # WHY a row was dropped, keyed the same as `_drops` (model, symbol).
         # Board item 158: the reason used to live only in a log line and the
         # count above, so a later reader could not tell why a name was absent
@@ -350,6 +356,35 @@ class AnalysisParseTelemetry:
         with self._lock:
             self._hygiene[(model_name, kind)] += 1
 
+    def record_hygiene_observation(self, model_name: str) -> None:
+        """One tech answer was checked for hygiene (item 214, 2026-10-01).
+
+        Counted whether or not it violated anything. Without this, "zero
+        violations" and "the check never ran" are the same reading, which
+        is exactly the ambiguity item 214 was filed over.
+        """
+        if self._suspended:
+            return
+        with self._lock:
+            self._hygiene_observed[model_name] += 1
+
+    def hygiene_observed_snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._hygiene_observed)
+
+    def total_hygiene_observations(self) -> int:
+        with self._lock:
+            return sum(self._hygiene_observed.values())
+
+    def describe_hygiene_observations(self) -> str:
+        """One-line, grep-able denominator for the operator log."""
+        snap = self.hygiene_observed_snapshot()
+        if not snap:
+            return ""
+        return ", ".join(
+            f"{model}x{n}" for model, n in sorted(snap.items(), key=lambda kv: -kv[1])
+        )
+
     def snapshot(self) -> dict[tuple[str, str], int]:
         with self._lock:
             return dict(self._counts)
@@ -400,6 +435,7 @@ class AnalysisParseTelemetry:
             self._counts.clear()
             self._drops.clear()
             self._hygiene.clear()
+            self._hygiene_observed.clear()
             self._drop_reasons.clear()
 
     def describe_null_coercions(self) -> str:
@@ -1400,6 +1436,21 @@ class TechAnalysisResult(TechAnalystAnswerItem):
     # docs/RESEARCH_FINDINGS.md §7 for the touch-count evidence and the
     # threshold derived from it.
     computed_level_touches: dict[float, int] = Field(default_factory=dict)
+    # PYTHON-SET, keyed by the same prices as `computed_levels`: each level's
+    # MEASURED zone as ``[low, high]`` — the combined traded range of the
+    # pivot bars that formed it (item 55, 2026-09-30). This is what replaced
+    # the flat 1% cluster tolerance; see `src/data/levels.py::_cluster`.
+    # A price missing from this map is not an error: the matching sites fall
+    # back to the percentage bound, which is the fail-closed direction.
+    computed_level_zones: dict[float, list[float]] = Field(default_factory=dict)
+    #: (low, high) of the bars that DREW each computed level, keyed by the
+    #: same price. `_level_backing_stop` needs it to answer "is the stop AT
+    #: this level" without a tolerance — docs/WORK.md item 215. Python-set
+    #: from `find_structural_levels`, never emitted by a model; missing means
+    #: unknown, which fails closed to "not level-backed".
+    computed_level_bars: dict[float, list[tuple[float, float]]] = Field(
+        default_factory=dict
+    )
     # PYTHON-SET (2026-09-12): what the bar history behind `computed_levels`
     # was — one of the COVERAGE_* states in `src/data/levels.py`. An empty
     # `computed_levels` with coverage "measured" is a chart with no
@@ -1726,6 +1777,19 @@ class TradeDecision(LLMOutputModel):
     # bars. Recomputing level-backing there instead would have created
     # exactly the second data path §12.1 was careful not to build.
     stop_rule: str | None = None
+    # --- Item 55 RECORDING: what the stop was BASED on (2026-10-01) ------
+    # A JSON record, written at entry and read by nothing in the decision
+    # path, describing the structural level standing behind `stop_loss`:
+    # its price, how many times price turned there, how many bars confirm a
+    # swing point, how wide its zone was and how far the stop sat from it —
+    # or `level_backed: false` when no computed level stood behind it, which
+    # is the control the question needs. Produced by
+    # `PortfolioConstructor.shipped_stop_level_basis`, stored on the
+    # `trades` row, and governed by the FALSIFICATION-ONLY limit in
+    # `src.data.levels.describe_stop_level_basis`: it may show the current
+    # definition of a level is wrong and may NEVER be swept for a better bar
+    # count or zone width. Changes no behaviour whatsoever.
+    stop_level_basis: str | None = None
     # --- The sub-floor catalyst exception, carried to execution (2026-09-11)
     # True when this order was permitted BELOW `min_reward_risk_after_
     # widening` because the PM's sub-floor catalyst gate verified its

@@ -1336,3 +1336,96 @@ def get_holding_why(symbol: str) -> dict | None:
     finally:
         if conn is not None:
             conn.close()
+
+
+#: Item 211. The coverage watchdog's on-box state file, which is where
+#: `src.coverage_watchdog.claim_typed_alert` durably records every repeat
+#: alert it declined to resend. Spelled out here rather than imported so
+#: this module keeps its "no trading-module imports" isolation invariant
+#: (tests/test_api_safety.py); it is the same literal path
+#: `src.coverage_watchdog.STATE_PATH` builds, and a test pins the two
+#: together so a move cannot silently blank this endpoint.
+SUPPRESSION_STATE_PATHS = (
+    Path(__file__).resolve().parent.parent.parent
+    / "data" / "alerting" / "coverage_heartbeat.json",
+    Path(__file__).resolve().parent.parent.parent
+    / "data" / "alerting" / "deploy_drift.json",
+)
+
+
+def get_suppressed_alerts(limit: int = 50) -> dict:
+    """Item 211 — what the desk decided NOT to say, and why it is not lost.
+
+    Suppression is only honest if the suppressed thing stays readable. Two
+    records feed this, both already written by the suppressing code; this
+    function invents nothing and aggregates nothing it cannot point at.
+
+    * `deferred_suspensions` — `suspend_alert_deferred` rows in
+      `llm_circuit_events`, one per self-clearing latch whose owner page was
+      held back until it outlived the circuit's own self-clear window.
+    * `suppressed_repeats` — the `suppressed_alerts` block in each of the
+      watchdog's two state files (stop-coverage and deploy-drift), per
+      alert TYPE, per ET day.
+    """
+
+    out: dict = {
+        "deferred_suspensions": [],
+        "deferred_available": False,
+        "suppressed_repeats": {},
+        "suppression_state_available": False,
+    }
+    conn = None
+    try:
+        conn = _connect()
+        tables = {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "llm_circuit_events" in tables:
+            out["deferred_available"] = True
+            rows = conn.execute(
+                "SELECT trigger_code, detail, run_id, created_at "
+                "FROM llm_circuit_events WHERE event_type='suspend_alert_deferred' "
+                "ORDER BY id DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+            out["deferred_suspensions"] = [
+                {
+                    "trigger_code": r["trigger_code"],
+                    "detail": r["detail"],
+                    "run_id": r["run_id"],
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+            ]
+    except Exception:
+        pass
+    finally:
+        if conn is not None:
+            conn.close()
+
+    cleaned: dict = {}
+    for state_file in SUPPRESSION_STATE_PATHS:
+        try:
+            raw = json.loads(state_file.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        out["suppression_state_available"] = True
+        log = raw.get("suppressed_alerts")
+        if isinstance(log, dict):
+            for kind, entry in log.items():
+                if not isinstance(entry, dict):
+                    continue
+                events = entry.get("events")
+                cleaned[str(kind)] = {
+                    "day": entry.get("day"),
+                    "count": int(entry.get("count") or 0),
+                    "events": [e for e in events if isinstance(e, dict)][
+                        -max(1, int(limit)):
+                    ] if isinstance(events, list) else [],
+                }
+    out["suppressed_repeats"] = cleaned
+    return out

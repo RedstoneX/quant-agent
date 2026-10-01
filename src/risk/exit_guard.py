@@ -1919,6 +1919,8 @@ def _structural_level_backing_stop(
     is_short: bool,
     computed_levels: list | None,
     computed_level_touches: dict | None,
+    computed_level_zones: dict | None = None,
+    computed_level_bars: dict | None = None,
     min_level_touches: int,
     level_cluster_tolerance_pct: float,
 ) -> float | None:
@@ -1947,6 +1949,7 @@ def _structural_level_backing_stop(
     ATR — see docs/WORK.md item 46 / docs/INCIDENT_HISTORY.md.
     """
     touches_by_price = computed_level_touches or {}
+    bars_by_price = computed_level_bars or {}
     best: float | None = None
     best_gap = float("inf")
     for raw in computed_levels or []:
@@ -1963,14 +1966,52 @@ def _structural_level_backing_stop(
         touches = touches_by_price.get(price)
         if touches is None or touches < min_level_touches:
             continue
-        # This level's OWN zone — the same bound
-        # `src.data.levels.level_zone_halfwidth` derives, restated here in
-        # one line only because this module imports nothing.
-        tolerance = price * level_cluster_tolerance_pct / 100.0
-        if tolerance <= 0:
+        # "AT this level", not "inside its band" — docs/WORK.md item 215.
+        # The stop must lie inside the high-low range of at least one BAR
+        # that drew the level. `level_cluster_tolerance_pct` bounds the whole
+        # merged zone, which can span a fifth of the price, so a stop at one
+        # end of it could be taken out with the level never broken and the
+        # desk still reporting the position structurally protected. Missing
+        # bar ranges fail closed to not-backed, same as an unmatched stop.
+        # Mirrors `src.data.levels.stop_rests_on_level`, restated here in
+        # full only because this module imports nothing.
+        if price * level_cluster_tolerance_pct / 100.0 <= 0:
             continue
+        # OUTWARD BOUND, mirroring `src.data.levels.stop_rests_on_level`: the
+        # level's measured zone must be STRICTLY NARROWER than the trade's own
+        # risk. Membership in a forming bar alone has no ceiling — the zone
+        # edges ARE bar extremes — so without this a stop could be reported
+        # level-backed a fifth of the price away from the level the break
+        # check then evaluates. Fail closed when the risk is unusable.
+        stop_distance = abs(entry_price - stop_loss)
+        if not math.isfinite(stop_distance) or stop_distance <= 0:
+            continue
+        ranges = []
+        for rng in (bars_by_price.get(price) or ()):
+            try:
+                low, high = float(rng[0]), float(rng[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+                continue
+            ranges.append((low, high))
+        if not ranges:
+            continue
+        if (max(h for _, h in ranges) - min(l for l, _ in ranges)) >= stop_distance:
+            continue
+        rests = False
+        for rng in ranges:
+            try:
+                low, high = float(rng[0]), float(rng[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+                continue
+            if low <= stop_loss <= high:
+                rests = True
+                break
         gap = abs(stop_loss - price)
-        if gap <= tolerance and gap < best_gap:
+        if rests and gap < best_gap:
             best, best_gap = price, gap
     return best
 
@@ -1985,6 +2026,8 @@ def check_structural_protection(
     is_short: bool = False,
     computed_levels: list | None = None,
     computed_level_touches: dict | None = None,
+    computed_level_zones: dict | None = None,
+    computed_level_bars: dict | None = None,
     min_level_touches: int,
     level_cluster_tolerance_pct: float,
     ma_20: float | None = None,
@@ -2169,6 +2212,8 @@ def check_structural_protection(
             entry_price=ent, stop_loss=stop, is_short=is_short,
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
+            computed_level_zones=computed_level_zones,
+            computed_level_bars=computed_level_bars,
             min_level_touches=min_level_touches,
             level_cluster_tolerance_pct=level_cluster_tolerance_pct,
         )
@@ -2176,7 +2221,10 @@ def check_structural_protection(
             cur = _finite(current_price)
             # NOTE: matching WHICH level backs the stop (above, via
             # `_structural_level_backing_stop`) asks an IDENTITY question
-            # and is answered inside that level's own 1%-of-price zone.
+            # and is answered by whether the stop rests on a BAR that drew
+            # that level, with the level's measured zone required to be
+            # narrower than the trade's own risk (items 55 and 215). No
+            # percentage of price is involved on that side any more.
             # Deciding whether that level has since BROKEN is a different
             # question — it is about whether an adverse move is real, which
             # IS a volatility question — so it uses a wider, decisive
@@ -2225,6 +2273,34 @@ def check_structural_protection(
                     ),
                     raw_broken=False,
                 )
+            # BOARD ITEM 70, THE SETTLEMENT RECORDING (2026-10-01). The break
+            # margin is `arbitrary` and, worse, UNIDENTIFIABLE in its own
+            # units: every published answer to "how far beyond a level is a
+            # real break" is a PERCENTAGE of price scaled by how important the
+            # level is (Edwards & Magee ~3% major / ~1% short-term), never an
+            # ATR multiple. Nothing in the desk's record said what 1.0 ATR
+            # actually amounted to in those units at the moment of a decision,
+            # so the number could never be compared against the only
+            # literature that measures the same quantity. Every break
+            # evaluation now records the margin in BOTH units, plus the touch
+            # count that is the desk's only level-importance signal. This is a
+            # RECORDING ONLY — `break_margin` above is unchanged and nothing
+            # about when the desk sells moves. It accrues the observations in
+            # the literature's units that would let this constant be settled
+            # (or replaced) on evidence rather than re-searched a third time.
+            _margin_pct = (break_margin / cur * 100.0) if cur > 0 else float("nan")
+            _level_touches = None
+            if computed_level_touches:
+                _level_touches = computed_level_touches.get(level)
+            break_margin_payload = (
+                f"rule=break_confirmation_margin "
+                f"margin_atr_multiple={BREAK_CONFIRMATION_ATR_MULTIPLE:g} "
+                f"atr14={atr_f:.4g} margin_price={break_margin:.4g} "
+                f"margin_pct_of_close={_margin_pct:.3g} "
+                f"level={level:g} level_touches={_level_touches} "
+                f"min_level_touches={min_level_touches} "
+                f"regime={trend_context} | "
+            )
             if is_short:
                 broken = cur >= level + break_margin
             else:
@@ -2256,6 +2332,7 @@ def check_structural_protection(
                         protected=False, basis="structural_level_broken",
                         broken_level=_finite(level),
                         detail=(
+                            break_margin_payload +
                             f"structural level {level} backing the stop has "
                             f"closed beyond it on {closes_seen} confirming "
                             f"trading-day close(s) (regime: {trend_context}"
@@ -2285,6 +2362,7 @@ def check_structural_protection(
                     protected=True,
                     basis="structural_level_pending_confirmation",
                     detail=(
+                        break_margin_payload +
                         f"structural level {level} backing the stop closed "
                         f"beyond it today ({pending_reason}, regime: "
                         f"{trend_context}) — still protected pending "
@@ -2309,6 +2387,7 @@ def check_structural_protection(
             return StructuralProtectionCheck(
                 protected=True, basis="structural_level_intact",
                 detail=(
+                    break_margin_payload +
                     f"structural level {level} backing the stop is intact: "
                     f"close {cur} vs level {level} (break margin "
                     f"{break_margin:.4g})"
@@ -2394,6 +2473,8 @@ def structural_protection_broken(
     is_short: bool = False,
     computed_levels: list | None = None,
     computed_level_touches: dict | None = None,
+    computed_level_zones: dict | None = None,
+    computed_level_bars: dict | None = None,
     min_level_touches: int,
     level_cluster_tolerance_pct: float,
     ma_20: float | None = None,
@@ -2427,6 +2508,8 @@ def structural_protection_broken(
         is_short=is_short,
         computed_levels=computed_levels,
         computed_level_touches=computed_level_touches,
+        computed_level_zones=computed_level_zones,
+        computed_level_bars=computed_level_bars,
         min_level_touches=min_level_touches,
         level_cluster_tolerance_pct=level_cluster_tolerance_pct,
         ma_20=ma_20, ma_50=ma_50, ma_200=ma_200, ma_200_prior=ma_200_prior,

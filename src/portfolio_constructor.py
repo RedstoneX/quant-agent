@@ -23,6 +23,7 @@ confined to intent; math is code.
 
 from __future__ import annotations
 
+import json
 import math
 import logging
 import re
@@ -30,6 +31,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from src.data.levels import (
+    describe_stop_level_basis,
     COVERAGE_UNKNOWN,
     FAULT_NO_ANALYSIS,
     FAULT_NO_ENTRY,
@@ -37,6 +39,7 @@ from src.data.levels import (
     TargetDerivation,
     derive_structural_target,
     level_zone_halfwidth,
+    stop_rests_on_level,
     touch_probability,
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
@@ -44,7 +47,12 @@ from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision,
     reward_to_risk, stated_soft_exit,
 )
-from src.risk.constants import reward_risk_floor_applies
+from src.risk.constants import (
+    REWARD_RISK_PARITY,
+    gap_adjusted_risk_per_share,
+    reward_risk_floor_applies,
+    reward_risk_parity_refuses,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +515,15 @@ STOP_REFUSAL_GEOMETRY_AT_BAND = "reward_risk_below_floor_at_widened_stop"
 STOP_REFUSAL_GEOMETRY_AT_LEVEL = "reward_risk_below_floor_at_honoured_stop"
 STOP_REFUSAL_GEOMETRY_AT_KEPT = "reward_risk_below_floor_at_kept_stop"
 STOP_REFUSAL_GEOMETRY_UNMEASURABLE = "reward_risk_not_measurable"
+
+#: Owner ruling 2026-10-01 — "For now, let's refuse a bad risk reward ratio.
+#: See if that improves the desk purchases." Reward below risk REFUSES the
+#: purchase outright: no resize, no change to any stop, target or trailing
+#: behaviour. Distinct from the four GEOMETRY codes above, which belonged to
+#: the retired 1.5 floor measured inside the stop-widening path; this one is
+#: measured at the point where the trade as a whole is accepted or declined,
+#: so the refusal is not a function of stop width wearing a new name.
+STOP_REFUSAL_REWARD_BELOW_RISK = "reward_below_risk_at_parity"
 #: Not a refusal — the one PERMIT code in this block. A below-floor ratio let
 #: through because the PM's sub-floor catalyst gate verified the citation and
 #: capped the size (docs/WORK.md item 1, parts (b)+(c)). Greppable so "how
@@ -652,9 +669,15 @@ class ConstructorConfig:
     # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
     # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
     # this before it is converted to a weight, so the same risk allocation
-    # opens a smaller short than an equivalent long. Keep in sync with
-    # `risk.short_gap_risk_multiple`.
-    short_gap_risk_multiple: float = 1.5
+    # opens a smaller short than an equivalent long. Plumbing only: the
+    # value is `risk.short_gap_risk_multiple` and the default literal lives
+    # once, in `src.risk.constants` (board item 216). The haircut itself is
+    # applied by `gap_adjusted_risk_per_share`, never inline. There is
+    # deliberately NO default literal here: this field used to carry its own
+    # copy of the number and its own number-ledger row, and a mirror kept in
+    # sync is the same defect waiting to recur. `None` means "whatever the
+    # one definition says", which is what the helper resolves it to.
+    short_gap_risk_multiple: float | None = None
     # Minimum stop distance, in ATRs. A stop inside ordinary volatility is not
     # a thesis invalidation, it is a coin flip on noise — Phase 3 already
     # established 1.25 ATR as one ordinary day's range for a TRAILING stop,
@@ -951,8 +974,17 @@ def widest_reachable_stop_atr_multiple(
 class PortfolioConstructor:
     """Stateless translator: target state → concrete orders."""
 
-    def __init__(self, config: ConstructorConfig | None = None):
+    def __init__(self, config: ConstructorConfig | None = None, db=None):
         self.cfg = config or ConstructorConfig()
+        # Owner ruling 2026-10-01 (board item 218) made the parity refusal a
+        # TRIAL — "see if that improves the desk purchases" — and a trial
+        # judged by grepping English prose out of an in-memory dict cannot
+        # be judged at all. `db` is optional so every existing caller and
+        # every test still constructs this class with no arguments; when it
+        # is supplied, each refusal is written to the `trade_refusals` table
+        # with the numbers in their OWN columns, never as a sentence.
+        self.db = db
+        self.last_parity_standdowns: dict[str, dict] = {}
         # Populated fresh by every `construct_orders` call — see
         # `_DropReasonCapture`. {symbol: "Constructor: ... rejected/refused
         # ..."} for every target dropped THIS call. Empty, never absent, so
@@ -1057,6 +1089,95 @@ class PortfolioConstructor:
         refusals = dict(self.last_refusals)
         self.last_refusals = {}
         return refusals
+
+    #: Parity stand-downs (owner ruling 2026-10-01, board item 218).
+    #: {SYMBOL: {"reason", "detail", "direction"}} for every name the parity
+    #: refusal declined to judge because the reward side was not a number
+    #: the code itself believes. Kept SEPARATE from `last_refusals` because a
+    #: stand-down is not a refusal: the trade ships. It is recorded so the
+    #: trial can report how often the gate had no opinion, which is the
+    #: difference between "parity refused little" and "parity ran rarely".
+    PARITY_STANDDOWN_NO_LEVEL = "no_structural_level_found"
+    PARITY_STANDDOWN_LEVEL_PAST_REACH = "level_past_horizon_reach"
+    PARITY_STANDDOWN_REWARD_INSIDE_NOISE = "reward_inside_noise_floor"
+
+    def _parity_verdict(self, entry_price, stop_loss, derivation, is_short):
+        """The ONE parity test. Returns `(refuse, ratio, standdown)`.
+
+        Called from `_resolve_entry_and_stop` (construction) and from
+        `real_reward_risk_preview` (PM eligibility/ranking) so the two
+        cannot disagree. Before 2026-10-01's second pass the preview did
+        not run it at all, so a name could rank, be proposed, and then die
+        silently at construction — the exact divergence
+        `real_reward_risk_preview` was built to close.
+
+        THREE STAND-DOWNS, all of them "the numerator is not a number this
+        code believes", and all recorded rather than silent:
+
+        * no structural level found at all — refusing on the ATR
+          projection would be refusing on an invented number, which
+          doctrine bars;
+        * the level is PAST the horizon reach, in which case
+          `derive_structural_target` has already ruled it unreachable and
+          returned a measured-move target instead, while still reporting
+          the level in `level_used`. Crediting reward from a price the
+          same function just declared unreachable overstates the reward;
+        * the reward sits INSIDE the one-session noise floor
+          (`target_inside_noise`), i.e. the code has already labelled the
+          reward noise. Refusing on a figure labelled noise is refusing on
+          a number the desk does not believe.
+        """
+        level = getattr(derivation, "level_used", None)
+        if level is None:
+            return (False, None, self.PARITY_STANDDOWN_NO_LEVEL)
+        if getattr(derivation, "basis", "") != "structural_level":
+            return (False, None, self.PARITY_STANDDOWN_LEVEL_PAST_REACH)
+        if getattr(derivation, "target_inside_noise", False):
+            return (False, None, self.PARITY_STANDDOWN_REWARD_INSIDE_NOISE)
+        refuse, ratio = reward_risk_parity_refuses(
+            entry_price, stop_loss, level,
+            is_short=is_short, reward_is_measured_level=True,
+        )
+        return (refuse, ratio, None)
+
+    def _note_parity_standdown(self, symbol, direction, reason, derivation):
+        key = str(symbol or "").strip().upper()
+        if not key:
+            return
+        self.last_parity_standdowns[key] = {
+            "reason": reason, "direction": direction,
+            "basis": getattr(derivation, "basis", ""),
+            "level_used": getattr(derivation, "level_used", None),
+            "horizon_reach": getattr(derivation, "horizon_reach", None),
+        }
+
+    def _record_parity_refusal(
+        self, symbol, direction, entry, stop, level, ratio, *, stage="construction",
+    ):
+        """Write ONE parity refusal to the durable table. Never raises.
+
+        The owner ruled parity a trial. A trial whose only record is an
+        English sentence in an in-memory dict, drained only for the symbols
+        that happen to reach `constructor_dropped`, cannot be judged — so
+        every number goes in its OWN column here.
+        """
+        db = getattr(self, "db", None)
+        if db is None:
+            return
+        try:
+            db.insert_trade_refusal(
+                symbol=symbol, direction=direction,
+                refusal=STOP_REFUSAL_REWARD_BELOW_RISK,
+                entry_price=float(entry), stop_price=float(stop),
+                level_used=float(level), reward_risk=float(ratio),
+                threshold=float(REWARD_RISK_PARITY),
+                level_was_measured=True, stage=stage,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Constructor: parity refusal row write failed for %s: %s",
+                symbol, e,
+            )
 
     def _note_refusal(
         self, symbol: str, direction: str, refusal: str, detail: str,
@@ -1929,13 +2050,14 @@ class PortfolioConstructor:
             # `entry - stop` would corrupt the weight's sign; `abs()` keeps
             # this an unsigned magnitude exactly like the long case (D4).
             risk_per_share = abs(entry - stop)
-            if directions.get(sym) == "short":
-                # D8: gap-risk sizing haircut — SIZING ONLY, never applied
-                # to the stop placed above (already resolved). A short gaps
-                # through its stop with no bound, so the same nominal risk
-                # allocation must open a SMALLER short than an equivalent
-                # long at the same stop distance.
-                risk_per_share *= self.cfg.short_gap_risk_multiple
+            # D8: gap-risk sizing haircut — SIZING ONLY, never applied to
+            # the stop placed above (already resolved). One definition, in
+            # `src.risk.constants` (board item 216); a no-op for a long.
+            risk_per_share = gap_adjusted_risk_per_share(
+                risk_per_share,
+                is_short=directions.get(sym) == "short",
+                multiple=self.cfg.short_gap_risk_multiple,
+            )
             raw_weight = granted * entry / risk_per_share
             plans[sym] = RiskPlan(
                 symbol=sym,
@@ -2259,6 +2381,89 @@ class PortfolioConstructor:
             invalid = stop_loss is None or stop_loss <= 0 or stop_loss <= entry_price
         else:
             invalid = stop_loss is None or stop_loss <= 0 or stop_loss >= entry_price
+        if not invalid:
+            # ---- Owner ruling 2026-10-01: refuse arithmetically losing
+            # geometry ---------------------------------------------------
+            # "For now, let's refuse a bad risk reward ratio. See if that
+            # improves the desk purchases." This SUPERSEDES the previous
+            # standing rule, which was that a wide stop ships and is
+            # answered by a smaller position. Here, and only here: the
+            # trade is refused outright. Nothing is resized, and no stop,
+            # target or trailing behaviour changes.
+            #
+            # It sits at this line on purpose. Inside
+            # `_widen_stop_past_noise` the comparison would key off the
+            # WIDENED stop, which makes the refusal a function of stop
+            # width — the deleted width gate (board item 56) wearing a new
+            # name. This is the point where the trade as a whole is
+            # accepted or declined, on its own final entry, final stop and
+            # derived target.
+            #
+            # Threshold is PARITY and nothing above it; see
+            # `REWARD_RISK_PARITY` for why that is the only line needing no
+            # invented number, and for the caveat the owner accepted: the
+            # risk side is a real transactable price, the reward side is a
+            # forecast level this desk never actually sells at (it rides a
+            # trailing stop out), so the ratio compares one real number
+            # against one estimated one.
+            # WHERE THIS READS ITS RISK, stated truthfully (coordinator
+            # ruling 2026-10-01). `_widen_stop_past_noise` has already run
+            # a few lines above, so `stop_loss` here is the FINAL stop
+            # INCLUDING any widening, and for a widened name this refusal
+            # is therefore a function of the widened stop width. That is
+            # deliberate and it is a departure from the old "a wide stop
+            # ships and is answered by size" rule, which the owner's
+            # 2026-10-01 ruling supersedes for this case: the widened stop
+            # is the risk the desk will actually transact, and measuring
+            # the narrower pre-widening stop would judge a trade nobody
+            # takes. The earlier claim here that the refusal is "not a
+            # function of stop width" was false for every widened name and
+            # has been removed.
+            #
+            # WHAT IT READS AS REWARD: `level_used`, the structural level
+            # the desk's own scan found, not `derivation.price`, which is
+            # that level after the horizon reach cap. See `_parity_verdict`
+            # for the three stand-downs and why each one is a number the
+            # code does not believe.
+            refuse_rr, rr_ratio, standdown = self._parity_verdict(
+                entry_price, stop_loss, derivation, is_short,
+            )
+            if standdown is not None:
+                self._note_parity_standdown(
+                    target.symbol, target.direction, standdown, derivation,
+                )
+            if refuse_rr:
+                level = float(derivation.level_used)
+                # Durable, per-symbol, numbers in their OWN fields.
+                self._record_parity_refusal(
+                    target.symbol, target.direction, entry_price, stop_loss,
+                    level, rr_ratio,
+                )
+                self._note_refusal(
+                    target.symbol, target.direction,
+                    STOP_REFUSAL_REWARD_BELOW_RISK,
+                    f"reward:risk {rr_ratio:.2f} is below parity "
+                    f"({REWARD_RISK_PARITY:.2f}): entry ${entry_price:,.2f}, "
+                    f"final stop ${stop_loss:,.2f} INCLUDING any widening "
+                    f"(risking ${abs(entry_price - stop_loss):,.2f}/share) "
+                    f"against the nearest structural level at ${level:,.2f} "
+                    f"(making ${abs(level - entry_price):,.2f}/share). Owner "
+                    f"ruling 2026-10-01 refuses the purchase outright rather "
+                    f"than shrinking it. Two caveats recorded with the "
+                    f"number: the reward side is a forecast level the desk "
+                    f"never actually sells at, and refusing a name here "
+                    f"happens before book-level risk rationing, so the "
+                    f"surviving names do take a larger share of the "
+                    f"session's at-risk budget — nothing is resized within "
+                    f"this name, but the BOOK is.",
+                )
+                logger.warning(
+                    "Constructor: %s %s refused — reward:risk %.2f below "
+                    "parity (entry=$%.2f, final stop=$%.2f, level=$%.2f)",
+                    "SHORT" if is_short else "BUY", target.symbol,
+                    rr_ratio, entry_price, stop_loss, level,
+                )
+                return (None, None)
         if invalid:
             # Board item 10 (2026-09-14, second pass). THE BACKSTOP. Every
             # named stop refusal in `_widen_stop_past_noise` arrives here as
@@ -2362,6 +2567,7 @@ class PortfolioConstructor:
         """
         raw_levels = getattr(analysis, "computed_levels", None) or []
         touches_by_price = getattr(analysis, "computed_level_touches", None) or {}
+        bars_by_price = getattr(analysis, "computed_level_bars", None) or {}
         min_touches = self.cfg.min_level_touches_for_stop_honor
 
         best: float | None = None
@@ -2387,15 +2593,40 @@ class PortfolioConstructor:
                 # "below the bar" — fail closed, per Invariant 2, rather than
                 # honour a tight stop we cannot show cleared the bar.
                 continue
-            # "At" this level means INSIDE this level's own zone. The bound
-            # is read per-level off `CLUSTER_TOLERANCE_PCT`, the same
-            # constant `find_structural_levels` used to build the zone in the
-            # first place, so the tolerance is exactly as wide as the thing
-            # it is matching against — never narrower, never a second number
-            # that can drift. docs/WORK.md item 46.
-            tolerance = level_zone_halfwidth(price)
+            # "At" this level means ON ONE OF ITS BARS, not merely inside
+            # its band — docs/WORK.md item 215. Item 55 made the zone the
+            # MEASURED combined span of the bars that formed the level
+            # (`computed_level_zones`), which is honest about how wide the
+            # structure is but is exactly why "inside the zone" cannot earn
+            # the exemption: that span reaches a fifth of the price on some
+            # names, and a stop at one end of it can be taken out with the
+            # level itself never broken. The stop must instead lie inside
+            # the traded high-low range of at least one bar that DREW the
+            # level, carried here on `computed_level_bars`. No tolerance and
+            # no width cap is introduced: the bound is the instrument's own
+            # smallest statement that structure traded at that price.
+            #
+            # Fail closed: a level with no bar ranges recorded (older stored
+            # analysis, fixture) is NOT backing, and the stop falls through
+            # to the ordinary ATR floor, exactly as an unmatched stop does.
+            # The measured zone stays on the level for reporting; it is no
+            # longer what decides the exemption.
+            # ...AND the level must be more precise than the trade it is
+            # backing: its measured zone strictly narrower than the stop
+            # distance. Bar membership alone put NO ceiling on how far the
+            # stop could sit from the level (the zone edges are bar extremes,
+            # so the furthest passing stop is the halfwidth exactly — median
+            # 3.33% of price and up to 36.07% on this desk's own 704-level
+            # set), while the break check reads the LEVEL price. No number is
+            # introduced: the ceiling is this trade's own risk.
+            if not stop_rests_on_level(
+                stop_loss,
+                bars_by_price.get(price),
+                stop_distance=abs(entry_price - stop_loss),
+            ):
+                continue
             gap = abs(stop_loss - price)
-            if gap <= tolerance and gap < best_gap:
+            if gap < best_gap:
                 best, best_gap = price, gap
         return best
 
@@ -2633,6 +2864,47 @@ class PortfolioConstructor:
             # ranking consumes) rather than a None the gate reads as
             # "ineligible".
             return None
+        # ONE DEFINITION (coordinator ruling 2026-10-01). The parity
+        # verdict used to run only at construction, so a sub-parity name
+        # could rank here, be proposed by the PM, and then die silently
+        # downstream — the precise divergence this method exists to close.
+        # It runs here too, against the SAME numerator, and files the SAME
+        # refusal code, so the PM sees the name as refused BY CODE (the
+        # `last_refusals` snapshot DecisionStage already reads) instead of
+        # as a number it may rank.
+        refuse_rr, rr_ratio, standdown = self._parity_verdict(
+            entry_price, honoured_stop, derivation, is_short,
+        )
+        if standdown is not None:
+            self._note_parity_standdown(
+                analysis.symbol, direction, standdown, derivation,
+            )
+        if refuse_rr:
+            level = float(derivation.level_used)
+            self._record_parity_refusal(
+                analysis.symbol, direction, entry_price, honoured_stop,
+                level, rr_ratio, stage="preview",
+            )
+            self._note_refusal(
+                analysis.symbol, direction, STOP_REFUSAL_REWARD_BELOW_RISK,
+                f"reward:risk {rr_ratio:.2f} is below parity "
+                f"({REWARD_RISK_PARITY:.2f}) at PM-eligibility preview: "
+                f"entry ${entry_price:,.2f}, final stop "
+                f"${honoured_stop:,.2f} INCLUDING any widening, structural "
+                f"level ${level:,.2f}. Owner ruling 2026-10-01.",
+            )
+            # The real number is still RETURNED, deliberately. This
+            # method's contract is "None means cannot judge", and callers
+            # are documented as forbidden to read a None as "sub-floor";
+            # returning None here would have broken that contract and two
+            # guard tests that pin a weak-but-real range payoff yielding
+            # its honest number for RANKING. What the ruling requires is
+            # that the name not die SILENTLY, and it no longer does: the
+            # refusal is filed by code into `last_refusals`, which
+            # DecisionStage already snapshots at PM-eligibility time, and
+            # into the durable `trade_refusals` table. One definition of
+            # the verdict, used by both stages; the ranking number stays a
+            # ranking number.
         ratio = self._reward_risk_at(
             entry_price, honoured_stop, derivation.price, is_short,
         )
@@ -3313,6 +3585,73 @@ class PortfolioConstructor:
         )
         return STOP_RULE_LEVEL_HONOURED if level is not None else None
 
+    def shipped_stop_level_basis(
+        self,
+        analysis: TechAnalysisResult | None,
+        entry_price: float,
+        stop_loss: float,
+        direction: str = "long",
+    ) -> str | None:
+        """WHAT the shipping stop was based on, as a JSON record. Item 55.
+
+        RECORDING ONLY, FALSIFICATION ONLY, and it changes nothing. It asks
+        `_level_backing_stop` the SAME question `shipped_stop_rule` above
+        already asks, with the same arguments and the same `computed_levels`,
+        and writes down the answer's ingredients: which level, how many times
+        price turned there, how many bars confirm a swing point, how wide the
+        level's zone was, and how far the stop sat from it. No caller reads
+        the result back into a decision — it goes to the `trades` row and
+        stops there.
+
+        The point is that board item 55 ("what IS a structural level") has
+        been argued three times and measured three times to three different
+        answers, because the desk never recorded what its own stops were
+        standing on. This records it. See the falsification-only limit on
+        `src.data.levels.describe_stop_level_basis`: this data may show the
+        current definition is WRONG and may NEVER be swept for a better bar
+        count or zone width.
+
+        Returns None only when the inputs cannot produce an honest record
+        (no analysis, or a non-finite entry/stop) — never a substituted one.
+        A trade whose stop had NO level behind it still gets a record, with
+        `level_backed` false, because that is the control the falsification
+        needs.
+        """
+        if analysis is None:
+            return None
+        try:
+            entry_f = float(entry_price)
+            stop_f = float(stop_loss)
+        except (TypeError, ValueError):
+            return None
+        if (
+            not math.isfinite(entry_f) or entry_f <= 0
+            or not math.isfinite(stop_f) or stop_f <= 0
+        ):
+            return None
+        is_short = direction == "short"
+        level = self._level_backing_stop(analysis, entry_f, stop_f, is_short)
+        record = describe_stop_level_basis(
+            level_price=level,
+            stop_loss=stop_f,
+            entry_price=entry_f,
+            computed_levels=getattr(analysis, "computed_levels", None),
+            computed_level_touches=getattr(analysis, "computed_level_touches", None),
+            is_short=is_short,
+        )
+        # The ATR precondition `shipped_stop_rule` applies is an EXEMPTION
+        # question, not a structure question, so it is recorded rather than
+        # allowed to suppress the record: without it a later reader cannot
+        # tell "no level" from "level, but no ATR to be exempt from".
+        record["shipped_stop_rule"] = self.shipped_stop_rule(
+            analysis, entry_f, stop_f, direction,
+        )
+        record["levels_coverage"] = getattr(analysis, "levels_coverage", None)
+        try:
+            return json.dumps(record, sort_keys=True)
+        except (TypeError, ValueError):
+            return None
+
     @staticmethod
     def _current_weights(
         positions: list[Position], total_value: float,
@@ -3886,6 +4225,13 @@ class PortfolioConstructor:
             stop_rule=self.shipped_stop_rule(
                 analysis, entry_price, stop_loss, target.direction,
             ),
+            # Item 55 RECORDING, no behaviour: the same answer as stop_rule
+            # above, with the ingredients that produced it, so the desk can
+            # later ask what its levels actually did. See
+            # TradeDecision.stop_level_basis.
+            stop_level_basis=self.shipped_stop_level_basis(
+                analysis, entry_price, stop_loss, target.direction,
+            ),
             # Carried for the SAME reason as stop_rule: so the execution
             # stage's own reward:risk belt does not kill an order that was
             # deliberately permitted below the floor. See
@@ -3975,14 +4321,15 @@ class PortfolioConstructor:
         # D4: unsigned risk-per-share (stop sits ABOVE entry for a short).
         risk_per_share = abs(entry_price - stop_loss)
         # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement
-        # (the stop above was already resolved before this line runs). A
-        # short gaps through its stop upward with no bound, so the same
-        # nominal risk allocation must open a SMALLER short than an
-        # equivalent long at the same stop distance. Paper trading fills
-        # unrealistically through a gap on IEX data with no borrow-cost
-        # model, so this haircut is what keeps the measured size honest
-        # relative to what live capital would actually risk.
-        risk_per_share *= self.cfg.short_gap_risk_multiple
+        # (the stop above was already resolved before this line runs). Paper
+        # trading fills unrealistically through a gap on IEX data with no
+        # borrow-cost model, so this haircut is what keeps the measured size
+        # honest relative to what live capital would actually risk. One
+        # definition, in `src.risk.constants` (board item 216).
+        risk_per_share = gap_adjusted_risk_per_share(
+            risk_per_share, is_short=True,
+            multiple=self.cfg.short_gap_risk_multiple,
+        )
         risk_dollars_allowed = total_value * self.cfg.risk_budget_pct / 100
         cap_note = ""
         if risk_per_share > 0:
@@ -4092,6 +4439,13 @@ class PortfolioConstructor:
             # Carried so the execution stage does not re-widen a stop this
             # constructor deliberately honoured at a computed level.
             stop_rule=self.shipped_stop_rule(
+                analysis, entry_price, stop_loss, target.direction,
+            ),
+            # Item 55 RECORDING, no behaviour: the same answer as stop_rule
+            # above, with the ingredients that produced it, so the desk can
+            # later ask what its levels actually did. See
+            # TradeDecision.stop_level_basis.
+            stop_level_basis=self.shipped_stop_level_basis(
                 analysis, entry_price, stop_loss, target.direction,
             ),
             # Carried for the SAME reason as stop_rule: so the execution

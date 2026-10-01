@@ -983,10 +983,12 @@ def test_a_just_filed_name_loses_its_earnings_seat():
     ceiling already priced that missing seat at a lower rung. The graduated
     ceiling was retired on 2026-09-14 (owner decision — the sqrt law prices
     INDEPENDENT estimates and these seats are not independent), so a lower
-    net no longer costs size; it only refuses at or below zero. What still
-    caps a just-filed name is the deterministic Python belt,
-    `TradingPipeline._clamp_queued_earnings_buys` (5% NOTIONAL weight),
-    which is untouched by any of this.
+    net no longer costs size; it only refuses at or below zero. Since board
+    item 186 (2026-10-01) the deterministic Python belt,
+    `TradingPipeline._refuse_queued_earnings_buys`, no longer caps such a
+    name at 5% of the book either — it REFUSES the BUY, because an unread
+    filing is an unconvicted seat. The absent seat this test pins is the
+    same fact read upstream.
     """
     from src.agents.portfolio_manager import PortfolioManagerAgent
 

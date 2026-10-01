@@ -1883,9 +1883,13 @@ def _append_rotation(lines: list[str], snap: dict[str, Any] | None) -> None:
     nothing for a run with no pre-check row (every session before this
     shipped, and any stored report replayed from one).
     """
-    from src.rotation import owner_precheck_lines
+    from src.rotation import owner_precheck_lines, pruning_pass_lines
 
-    lines.extend(owner_precheck_lines((snap or {}).get("rotation")))
+    record = (snap or {}).get("rotation")
+    lines.extend(owner_precheck_lines(record))
+    # Board item 219. The pruning pass itself — that it ran, over what, what
+    # it cut and why, what it kept, and that the second tier is off.
+    lines.extend(pruning_pass_lines(record))
 
 
 def _append_held(lines: list[str], symbols: list[str], profiles: dict) -> None:
@@ -2125,6 +2129,14 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
         lines.append("📍 Review: " + " · ".join(bits))
 
     _new_block(lines, _render_review_summary)
+
+    def _render_target_revisions(lines: list[str]) -> None:
+        # ONE renderer, not a second telling (item 194): the owner feed and
+        # the plain session message say the same words about a revision.
+        from src.notifier import describe_target_revisions
+        lines.extend(describe_target_revisions(result))
+
+    _new_block(lines, _render_target_revisions)
 
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)

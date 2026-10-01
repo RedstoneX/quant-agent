@@ -1612,10 +1612,10 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
         )
 
         reserve_line = (
-            f"\n  (of which ${reserve_balance:,.2f} is parked in the "
-            f"cash-equivalent sweep vehicle and is auto-liquidated before "
-            f"any BUY executes — already included in Cash Balance above, "
-            f"do not add it again)"
+            f"\n  (a further ${reserve_balance:,.2f} is parked in the "
+            f"cash-equivalent sweep vehicle; the desk does NOT sell it to "
+            f"fund a BUY, and it is NOT part of the Cash Balance above — "
+            f"do not size against it)"
             if reserve_balance > 0 else ""
         )
         # 2026-09-17 fix: this used to hardcode "no margin" regardless of
@@ -2337,12 +2337,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         Capacity section does not.
         """
         held_below = holdings_below_entry_bar(blocked, held_symbols)
+        # Board item 219. What the pass looked at, kept verbatim so the
+        # owner's report states a measured count rather than an inference.
+        held_examined = tuple(sorted(
+            str(s).strip().upper() for s in held_symbols if str(s).strip()
+        ))
         if existing_risk_pct is None:
             return RotationPrecheck(
                 opportunity=None, headroom_pct=0.0, ceiling_pct=ceiling_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT, telemetry_available=False,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
-                held_below_entry_bar=held_below,
+                held_below_entry_bar=held_below, held_examined=held_examined,
             )
         headroom_pct = allocate_risk_budget(
             [], existing_pct=existing_risk_pct, clusters=None,
@@ -2366,7 +2371,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 floor_pct=STARTER_POSITION_RISK_PCT,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
             ),
-            held_below_entry_bar=held_below,
+            held_below_entry_bar=held_below, held_examined=held_examined,
         )
 
     @staticmethod
@@ -2399,7 +2404,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             parts.append(
                 f"only ${budget:,.2f} still deployable for new entries (the §11.2 "
                 "ladder-and-cash budget execution sizes entries against), "
-                f"under the ${floor:,.0f} minimum order worth placing — so "
+                "below the smallest order the desk will place — so "
                 "no new position can be funded at all without freeing "
                 "capital first"
                 if isinstance(budget, (int, float))
@@ -2476,8 +2481,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     f"{headroom_pct:.2f}% risk headroom left against the "
                     f"{ceiling_pct:.2f}% ceiling, and "
                     f"${precheck.entry_budget_usd:,.2f} is still deployable "
-                    f"for new entries against a ${precheck.min_order_usd:,.0f} "
-                    "minimum order — real room exists on every constraint, "
+                    "for new entries, above the smallest order the desk will "
+                    "place — real room exists on every constraint, "
                     "so there is nothing to rotate for."
                 )
             # Adversary review 2026-09-23: do NOT tell a seat that can sell
@@ -2627,6 +2632,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     @staticmethod
     def _semantic_failure(result, status: str, error: object):
         result.semantic_status = status
+        # Board item 188 (recording only): the gate's own word, so the
+        # agent_logs row says WHICH way the answer was unusable rather than
+        # only that the seat produced no decision.
+        result.gate_reason = status
         result.semantic_error = str(error)
         return None, result
 

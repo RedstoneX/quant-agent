@@ -28,6 +28,7 @@
 
 import ast
 import inspect
+import textwrap
 import pathlib
 import re
 
@@ -723,7 +724,11 @@ def test_a_wall_in_front_of_the_stored_target_is_a_trigger():
     wall, and the re-derivation returns the wall."""
     out = tr.assess_target_revision(
         stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
-        atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        # The wall was already in the way on the PRIOR close (item 194's
+        # brake); without that this is a one-session reading, which the
+        # dedicated test below pins as a refusal.
+        wall_seen_prior_close=True, **_COMMON,
     )
     assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
     assert out.revised
@@ -797,8 +802,573 @@ def test_the_new_trigger_cannot_substitute_a_number_when_it_refuses():
     out = tr.assess_target_revision(
         stored_target=120.0, target_level=120.0, levels=[110.0, 120.0],
         atr=5.0, close_price=113.0, break_seen_prior_close=False,
-        sessions_held=10, **_COMMON,
+        wall_seen_prior_close=True, sessions_held=10, **_COMMON,
     )
     assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
     assert out.new_price is None
     assert out.code == tr.REVISION_BEHIND_PRICE
+
+
+# ---------------------------------------------------------------------------
+# item 194 — THE WAY IN. The re-derivation used to run only on a symbol a
+# seat had raised a flag for, so a position that quietly grew a wall between
+# its entry and its stored target was never re-measured. These tests pin the
+# unconditional sweep: EVERY open position is adjudicated every session, and
+# a seat flag now only supplies the seat label and the prose evidence.
+# ---------------------------------------------------------------------------
+
+class _SweepPos:
+    def __init__(self, symbol, qty, avg_entry):
+        self.symbol = symbol
+        self.qty = qty
+        self.avg_entry = avg_entry
+
+
+class _SweepDB:
+    def __init__(self):
+        self.recorded = []
+        self.take_profit_writes = []
+
+    def get_symbol_last_buy(self, symbol, action=None):
+        return {"take_profit": 100.0, "expected_horizon_sessions": 20,
+                "setup_type": "range", "timestamp": "2026-09-01T00:00:00"}
+
+    def get_prior_target_level_break(self, symbols, **kwargs):
+        return {}
+
+    def save_target_level_break(self, **kwargs):
+        return None
+
+    def update_open_take_profit(self, symbol, price, action=None):
+        self.take_profit_writes.append((symbol, price))
+        return True
+
+    def record_target_revision(self, **kwargs):
+        self.recorded.append(kwargs)
+        return len(self.recorded)
+
+
+class _SweepMarket:
+    def get_ohlcv_batch(self, symbols, lookback_days):
+        # Batches fine, carries nothing — the normal, non-degraded shape
+        # for these tests, so the serial-fallback record stays off.
+        return {}
+
+    def get_ohlcv(self, symbol, lookback_days):
+        # A dead feed. The point of these tests is the WAY IN, not the
+        # derivation arithmetic, which `assess_target_revision`'s own tests
+        # above already pin; an unreadable chart must still produce a
+        # durable, named outcome rather than a blank.
+        return []
+
+
+class _SweepBroker:
+    def trading_sessions_held(self, start, end):
+        return 10
+
+
+def _sweep_pipeline():
+    from src.pipeline import TradingPipeline
+    import types
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = _SweepDB()
+    p.market = _SweepMarket()
+    p.broker = _SweepBroker()
+    p.config = types.SimpleNamespace(
+        trading=types.SimpleNamespace(lookback_days=400))
+    p.risk_engine = None
+    return p
+
+
+class _SweepReview:
+    def __init__(self, flags=()):
+        self.target_revision_flags = list(flags)
+
+
+def test_every_open_position_is_adjudicated_with_no_seat_flag():
+    """The residue of item 194: no flag, two open positions, two durable
+    outcomes — both attributed to the unconditional sweep, not to a seat."""
+    p = _sweep_pipeline()
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0)]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert [o["symbol"] for o in out] == ["AAA", "BBB"]
+    assert {o["seat"] for o in out} == {tr.SEAT_STRUCTURAL_SWEEP}
+    # Every outcome is persisted: the sweep can never produce a blank.
+    assert len(p.db.recorded) == 2
+    assert all(o["code"] for o in out)
+
+
+def test_seat_flag_is_not_duplicated_by_the_sweep():
+    """A symbol a seat did raise keeps the seat's label and its evidence,
+    and is adjudicated exactly once."""
+    p = _sweep_pipeline()
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0)]
+    flag = TargetRevisionFlag(symbol="aaa", evidence="the seat's words")
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview([flag]), positions, run_id="r1", seat="position_reviewer")
+    by_sym = {o["symbol"]: o for o in out}
+    assert sorted(by_sym) == ["AAA", "BBB"]
+    assert by_sym["AAA"]["seat"] == "position_reviewer"
+    assert by_sym["AAA"]["evidence"] == "the seat's words"
+    assert by_sym["BBB"]["seat"] == tr.SEAT_STRUCTURAL_SWEEP
+
+
+def test_flag_on_an_unheld_symbol_still_files_not_held():
+    """Widening the way in must not lose the existing finding that a seat
+    flagged something the broker does not show as held."""
+    p = _sweep_pipeline()
+    flag = TargetRevisionFlag(symbol="ZZZ", evidence="not in the book")
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview([flag]), [], run_id="r1", seat="position_reviewer")
+    assert len(out) == 1
+    assert out[0]["code"] == "REFUSAL_NOT_HELD"
+    assert out[0]["seat"] == "position_reviewer"
+
+
+def test_no_open_positions_and_no_flags_is_still_a_no_op():
+    p = _sweep_pipeline()
+    assert p._adjudicate_target_revision_flags(
+        _SweepReview(), [], run_id="r1", seat="position_reviewer") == []
+    assert p.db.recorded == []
+
+
+# ---------------------------------------------------------------------------
+# item 194 round 2 — the money fault. A wall-triggered revision can move a
+# target DOWN toward entry, which used to cross a range trade from the
+# below-target ratchets into the structural trail. The trail only ratchets
+# toward price, so restoring the target next session does NOT give the stop
+# back: oscillation accumulated tightening instead of cancelling, and the
+# sweep widened that from the flagged few to the whole book. The trailing
+# regime now reads the PINNED entry target, so a revision cannot ratchet a
+# stop the desk would not otherwise have moved.
+# ---------------------------------------------------------------------------
+
+def test_trailing_regime_reads_the_pinned_entry_target_not_the_live_one():
+    import ast
+    import inspect
+    from src.pipeline import TradingPipeline
+
+    src = inspect.getsource(TradingPipeline._apply_deterministic_trails)
+    tree = ast.parse(textwrap.dedent(src))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "reference_target":
+                found.append(ast.unparse(kw.value))
+    assert found, "the trail no longer passes a reference_target at all"
+    for expr in found:
+        assert "initial_take_profit" in expr, (
+            "the trailing regime boundary must read the PINNED entry target; "
+            f"it reads {expr!r}, which a target revision can move"
+        )
+
+
+def test_update_open_take_profit_is_not_the_trail_reference():
+    """The sibling half: the revision path writes `take_profit`, and the
+    column the trail now reads is explicitly not that one."""
+    import inspect
+    from src.storage.db import Database
+
+    src = inspect.getsource(Database.update_open_take_profit)
+    assert "initial_take_profit" not in src.split("UPDATE")[-1].split(")")[0], (
+        "the revision write must never touch the pinned column"
+    )
+
+
+# --- round 2 faults 3, 4 and 6 --------------------------------------------
+
+class _BatchMarket(_SweepMarket):
+    def __init__(self):
+        self.batch_calls = []
+        self.single_calls = []
+
+    def get_ohlcv_batch(self, symbols, lookback_days):
+        self.batch_calls.append(list(symbols))
+        return {}
+
+    def get_ohlcv(self, symbol, lookback_days):
+        self.single_calls.append(symbol)
+        return []
+
+
+def test_the_sweep_reads_bars_in_one_batch():
+    """The seat flag was rationing a serial per-name fetch. Removing the
+    gate without batching would have turned one or two round trips into one
+    per held name."""
+    p = _sweep_pipeline()
+    p.market = _BatchMarket()
+    positions = [_SweepPos("AAA", 10, 90.0), _SweepPos("BBB", 5, 40.0),
+                 _SweepPos("CCC", 7, 20.0)]
+    p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert p.market.batch_calls == [["AAA", "BBB", "CCC"]]
+
+
+def test_one_bad_name_does_not_truncate_the_rest_of_the_book():
+    """A mid-sweep failure must leave the remaining names explicitly
+    unmeasured, never invisibly skipped — the work list is sorted, so the
+    same tail of the book was dropped every single session, and each
+    dropped name kept a stored target the record did not mark unverified."""
+    p = _sweep_pipeline()
+    positions = [
+        _SweepPos("AAA", 10, 90.0),
+        # An unreadable side: `float(qty)` sits outside every inner guard,
+        # which is exactly the shape of the unexpected exception that used
+        # to unwind the whole sweep to the call site's bare `return []`.
+        _SweepPos("BBB", "not-a-number", 40.0),
+        _SweepPos("CCC", 7, 20.0),
+    ]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert [o["symbol"] for o in out] == ["AAA", "BBB", "CCC"], (
+        "every held name must get a row, fault or not"
+    )
+    bad = [o for o in out if o["symbol"] == "BBB"][0]
+    assert bad["code"] == "FAULT_POSITION_NOT_MEASURED"
+    assert bad["applied"] is False
+    # And it is durable: an unmeasured position is a recorded finding.
+    assert any(r["code"] == "FAULT_POSITION_NOT_MEASURED"
+               for r in p.db.recorded)
+
+
+def test_an_unchanged_refusal_is_not_refiled_every_session():
+    """Eleven names filing an identical recomputable refusal daily is
+    storage of recomputable state; the trail's own writer dedupes the same
+    way."""
+    p = _sweep_pipeline()
+    positions = [_SweepPos("AAA", 10, 90.0)]
+    first = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    code = first[0]["code"]
+    p.db.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
+    before = len(p.db.recorded)
+    second = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r2", seat="position_reviewer")
+    assert second[0]["code"] == code
+    assert second[0].get("unchanged_since_last_session") is True
+    assert len(p.db.recorded) == before, "the identical refusal was re-filed"
+
+
+# --- round 3 faults 4 and 5 ------------------------------------------------
+
+def test_a_failure_to_file_the_fault_row_still_does_not_truncate_the_book():
+    """The per-name guard was right, but the call that files the
+    not-measured row sat INSIDE the except block unguarded, so a failure
+    there unwound the remaining names after all — the same sorted-tail
+    truncation, one layer deeper."""
+    p = _sweep_pipeline()
+    real_file = p._file_target_revision
+
+    def _file(*, code, **kw):
+        if code == "FAULT_POSITION_NOT_MEASURED":
+            raise RuntimeError("synthetic filing failure")
+        return real_file(code=code, **kw)
+
+    p._file_target_revision = _file
+    positions = [_SweepPos("AAA", 10, 90.0),
+                 _SweepPos("BBB", "not-a-number", 40.0),
+                 _SweepPos("CCC", 7, 20.0)]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert [o["symbol"] for o in out] == ["AAA", "CCC"], (
+        "the tail of the book was truncated by the fault-filing failure"
+    )
+
+
+class _NoBatchMarket(_SweepMarket):
+    def get_ohlcv_batch(self, symbols, lookback_days):
+        raise RuntimeError("provider cannot batch today")
+
+
+def test_a_serial_bar_read_is_recorded_not_merely_logged():
+    """The batch fallback degraded to exactly the old serial path with only
+    a log line; somebody measuring a slow session later could not tell why.
+    A degraded session is also never deduped away."""
+    p = _sweep_pipeline()
+    p.market = _NoBatchMarket()
+    positions = [_SweepPos("AAA", 10, 90.0)]
+    out = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r1", seat="position_reviewer")
+    assert "one name at a time" in out[0]["detail"]
+    assert p.db.recorded and "one name at a time" in p.db.recorded[0]["detail"]
+    # Same outcome next session, but still written, because the session was
+    # degraded and that is the fact being preserved.
+    code = out[0]["code"]
+    p.db.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
+    before = len(p.db.recorded)
+    again = p._adjudicate_target_revision_flags(
+        _SweepReview(), positions, run_id="r2", seat="position_reviewer")
+    assert again[0].get("unchanged_since_last_session") is not True
+    assert len(p.db.recorded) == before + 1
+
+
+# ---------------------------------------------------------------------------
+# item 194 — THE BRAKE. The level-broken trigger has always required the
+# same condition on two consecutive completed daily closes. The reach and
+# wall triggers did not, so a target sitting near either bound flipped
+# session to session. These pin that all three now go through the ONE
+# existing confirmation mechanism, and that it is the same mechanism and
+# not a copy of it.
+# ---------------------------------------------------------------------------
+
+
+def test_a_wall_seen_only_today_is_refused_by_name():
+    """Identical inputs to the wall trigger's own test, minus the prior
+    day's agreement. The target stands, and the refusal says why."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        wall_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_WALL_PENDING_CONFIRMATION
+    assert out.new_price is None
+    assert out.prior_price == pytest.approx(110.0)
+    assert "prior trading day" in out.detail
+
+
+def test_a_reach_breach_seen_only_today_is_refused_by_name():
+    """A stored target outside today's reach, with no prior day's reading
+    to agree. One session's ATR is not a structural change."""
+    args = dict(_COMMON)
+    out = tr.assess_target_revision(
+        stored_target=200.0, target_level=None, levels=[200.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        reach_seen_prior_close=False, **args,
+    )
+    assert out.code == tr.REVISION_REACH_PENDING_CONFIRMATION
+    assert out.new_price is None
+
+
+def test_the_same_reach_breach_confirmed_is_a_trigger():
+    """The brake is a brake, not a block: the prior day's agreement lets
+    exactly the same reading through."""
+    out = tr.assess_target_revision(
+        stored_target=200.0, target_level=None, levels=[200.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        reach_seen_prior_close=True, **_COMMON,
+    )
+    assert out.trigger == tr.TRIGGER_TARGET_BEYOND_REACH
+
+
+def test_all_three_brakes_are_the_same_mechanism_not_three():
+    """The load-bearing claim. There is ONE definition of confirmed: the
+    raw state of a completed daily close, persisted under that close's own
+    bar_date, re-read on a strictly later one. No trigger carries a count
+    of closes or a margin of its own."""
+    flags = tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=2.5, close_price=101.0, horizon_sessions=10,
+        levels=[105.0, 110.0], is_short=False,
+    )
+    assert set(flags) == {"raw_broken", "raw_reach", "raw_wall"}
+    assert flags["raw_broken"] is False
+    assert flags["raw_reach"] is False
+    assert flags["raw_wall"] is True
+    src = inspect.getsource(tr)
+    # No second count of closes anywhere in the module.
+    assert "prior_break_streak" not in src
+
+
+def test_an_unmeasurable_input_is_never_half_a_confirmation():
+    """A question that cannot be asked is None, not False — a None is
+    never persisted, so it can neither confirm nor deny tomorrow."""
+    flags = tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=None, close_price=None, horizon_sessions=10,
+        levels=[105.0], is_short=False,
+    )
+    assert flags == {"raw_broken": None, "raw_reach": None, "raw_wall": None}
+
+
+def test_the_brake_adds_no_number():
+    """No new constant may be introduced by a brake. The module's constant
+    set is unchanged from the three bars it already held."""
+    consts = {
+        n for n in dir(tr)
+        if n.isupper() and isinstance(getattr(tr, n), (int, float))
+        and not isinstance(getattr(tr, n), bool)
+    }
+    assert consts == {
+        "MIN_TARGET_ATR_MULTIPLE", "BREAKOUT_PROJECTION_ATR_MULTIPLE",
+        "MAX_REACH_ATR_MULTIPLE", "MAX_HORIZON_SESSIONS",
+        "BREAK_CONFIRMATION_ATR_MULTIPLE",
+    }
+
+
+# ---------------------------------------------------------------------------
+# item 194 — THE VOICING. A revision changes the number the desk quotes the
+# owner. It reached the dashboard and reached Telegram nowhere.
+# ---------------------------------------------------------------------------
+
+
+def test_a_revision_is_voiced_with_its_reason_not_just_a_number():
+    from src import notifier
+    lines = notifier.describe_target_revisions({"target_revisions": [{
+        "symbol": "TEST", "applied": True, "prior_price": 110.0,
+        "new_price": 105.0, "basis": tr.STRUCTURAL_LEVEL_BASIS,
+        "trigger": tr.TRIGGER_WALL_IN_FRONT_OF_TARGET,
+    }]})
+    body = "\n".join(lines)
+    assert "TEST" in body
+    assert "ceiling" in body          # the REASON, in plain words
+    assert "$110.00" in body and "$105.00" in body
+    assert "down" in body
+    assert "not a sell order" in body
+
+
+def test_every_trigger_the_module_can_emit_has_owner_words():
+    """A revision the owner cannot read a reason for is the defect this
+    fixes, so no trigger may fall through to its raw code."""
+    from src.notifier import _target_revision_reason
+    for code in (
+        tr.TRIGGER_LEVEL_BROKEN, tr.TRIGGER_TARGET_BEYOND_REACH,
+        tr.TRIGGER_WALL_IN_FRONT_OF_TARGET, tr.TRIGGER_DERIVATION_CORRECTED,
+    ):
+        words = _target_revision_reason(code)
+        assert words and not words.startswith("trigger ")
+
+
+def test_a_session_with_no_applied_revision_says_nothing():
+    """Refusals are the normal outcome on most held names every session;
+    voicing them all would bury the one that moved."""
+    from src import notifier
+    assert notifier.describe_target_revisions({"target_revisions": [
+        {"symbol": "TEST", "applied": False, "code": tr.REVISION_NO_TRIGGER},
+    ]}) == []
+    assert notifier.describe_target_revisions({}) == []
+
+
+# ---------------------------------------------------------------------------
+# item 194 ROUND 3 — four defects the adversary traced in the brake itself.
+# ---------------------------------------------------------------------------
+
+
+def test_a_missing_level_set_cannot_persist_no_wall_as_a_fact():
+    """DEFECT 1. `levels_still_in_the_way([])` is `[]` and `walls_between`
+    on `[]` is a definite "no wall", so a degraded bar fetch used to write
+    False and erase a genuine True recorded earlier the same day. An
+    absent reading must never produce an action."""
+    for levels in (None, []):
+        flags = tr.raw_trigger_flags(
+            entry_price=100.0, stored_target=110.0, target_level=110.0,
+            atr=2.5, close_price=101.0, horizon_sessions=10,
+            levels=levels, is_short=False,
+        )
+        assert flags["raw_wall"] is None, levels
+    # A real level set still answers the question both ways.
+    assert tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=2.5, close_price=101.0, horizon_sessions=10,
+        levels=[105.0, 110.0], is_short=False,
+    )["raw_wall"] is True
+    assert tr.raw_trigger_flags(
+        entry_price=100.0, stored_target=110.0, target_level=110.0,
+        atr=2.5, close_price=101.0, horizon_sessions=10,
+        levels=[110.0], is_short=False,
+    )["raw_wall"] is False
+
+
+def test_an_unconfirmed_trigger_cannot_suppress_a_confirmed_one():
+    """DEFECT 3. A confirmed wall plus a one-day reach blip used to yield
+    no revision at all, and when it finally fired it fired under the reach
+    trigger — so the owner was handed the reach reason for a change the
+    wall caused."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=101.0,
+        break_seen_prior_close=False,
+        reach_seen_prior_close=False, wall_seen_prior_close=True, **_COMMON,
+    )
+    assert out.trigger == tr.TRIGGER_WALL_IN_FRONT_OF_TARGET
+    assert out.revised
+    assert out.new_price == pytest.approx(105.0)
+
+
+def test_a_pending_trigger_is_reported_as_pending_not_as_no_trigger():
+    """A hold on a number the desk has stopped believing is not a clean
+    bill of health, and only a chart with no trigger at all may say so."""
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[105.0, 110.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False,
+        wall_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_WALL_PENDING_CONFIRMATION
+    out = tr.assess_target_revision(
+        stored_target=110.0, target_level=110.0, levels=[110.0],
+        atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
+    )
+    assert out.code == tr.REVISION_NO_TRIGGER
+
+
+def test_the_confirmation_is_keyed_on_the_close_not_on_the_last_row(tmp_path):
+    """DEFECT 2. Several intraday cycles can re-read one close; whichever
+    ran last used to decide the flag. The reading is now the earliest row
+    recorded for the latest prior bar date, and a row that does not answer
+    the question is skipped rather than read as False."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    # Two cycles re-read the SAME prior close and disagree. The first
+    # reading of that close wins, whichever ran last.
+    db.save_target_level_break(
+        run_id="r1", symbol="TEST", bar_date="2026-09-29",
+        raw_broken=True, raw_wall=True,
+    )
+    db.save_target_level_break(
+        run_id="r2", symbol="TEST", bar_date="2026-09-29",
+        raw_broken=False, raw_wall=False,
+    )
+    for flag in ("raw_broken", "raw_wall"):
+        got = db.get_prior_target_level_break(
+            ["TEST"], today_bar_date="2026-09-30", flag=flag,
+        )
+        assert got.get("TEST") is True, flag
+    # A degraded later cycle that could not answer the wall question must
+    # not erase the answer already given for that close.
+    db.save_target_level_break(
+        run_id="r3", symbol="TEST", bar_date="2026-09-29",
+        raw_broken=False, raw_wall=None,
+    )
+    assert db.get_prior_target_level_break(
+        ["TEST"], today_bar_date="2026-09-30", flag="raw_wall",
+    ).get("TEST") is True
+    # Today's own close never confirms itself.
+    assert db.get_prior_target_level_break(
+        ["TEST"], today_bar_date="2026-09-29", flag="raw_wall",
+    ) == {}
+
+
+def test_a_session_that_applied_nothing_still_names_a_held_target():
+    """DEFECT 4. The brake makes an all-refused session the common case,
+    and the owner was told nothing at all while positions sat on quoted
+    targets the desk had stopped believing."""
+    from src import notifier
+
+    lines = notifier.describe_target_revisions({"target_revisions": [
+        {"symbol": "TEST", "applied": False, "prior_price": 110.0,
+         "code": tr.REVISION_WALL_PENDING_CONFIRMATION},
+        {"symbol": "OTHR", "applied": False, "code": tr.REVISION_NO_TRIGGER},
+    ]})
+    body = "\n".join(lines)
+    assert "TEST" in body                      # named, not counted
+    assert "$110.00" in body                   # the number he is still quoted
+    assert "second day's close" in body        # why it is being held
+    assert "OTHR" not in body                  # a clean name is not noise
+    assert "1 other position(s) measured" in body
+
+
+def test_every_pending_code_the_module_can_emit_has_owner_words():
+    from src.notifier import _pending_confirmation_reason
+
+    for code in (
+        tr.REVISION_BREAK_PENDING_CONFIRMATION,
+        tr.REVISION_REACH_PENDING_CONFIRMATION,
+        tr.REVISION_WALL_PENDING_CONFIRMATION,
+    ):
+        words = _pending_confirmation_reason(code)
+        assert words and words != code and "close" in words

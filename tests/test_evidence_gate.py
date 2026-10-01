@@ -754,9 +754,14 @@ def test_name_coverage_holds_no_threshold_ratio_or_verdict():
     this module it was invented, which the owner's ruling forbids."""
     record = evidence_gate.name_coverage({"AAA"}, {"tech": {"AAA"}})
     payload = record["AAA"].to_evidence()
+    # Item 220 added two CATEGORICAL list fields (which blocking seat did not
+    # answer about this name, and which of those returned something that could
+    # not be read). Neither is a count, a ratio or a bar, and the numeric
+    # assertions below still bind on every field.
     assert set(payload) == {
         "symbol", "covered_seats", "uncovered_seats", "run_scoped_seats",
-        "summary",
+        "unreadable_seats", "asked_no_answer_seats", "never_asked_seats",
+        "blocking_seats_missing", "summary",
     }
     for value in payload.values():
         assert not isinstance(value, (int, float, bool)), payload
@@ -766,3 +771,130 @@ def test_name_coverage_never_raises_on_junk():
     assert evidence_gate.name_coverage(None, None) == {}
     assert evidence_gate.name_coverage({"AAA"}, {"tech": None})["AAA"].covered == []
     assert evidence_gate.name_coverage(["aaa ", ""], {"tech": [" aaa"]})["AAA"].covered == ["tech"]
+
+
+# --- Board item 220: a seat answer that could not be read is never silence ---
+
+
+def test_unreadable_answer_is_not_coverage_and_is_named():
+    """A seat whose row came back unreadable stays UNCOVERED and is named.
+
+    The technical seat is the timing veto. Booking an unreadable row as an
+    answer would let the entry and stay paths read absence of an objection
+    as agreement, which is the defect item 220 exists to close.
+    """
+    cov = evidence_gate.name_coverage(
+        ["AAA", "BBB"],
+        {"tech": ["BBB"], "news": ["AAA", "BBB"],
+         "earnings": ["AAA", "BBB"], "smart_money": ["AAA", "BBB"]},
+        unreadable_by_seat={"tech": ["AAA"]},
+    )
+    assert "tech" not in cov["AAA"].covered
+    assert "tech" in cov["AAA"].uncovered
+    assert cov["AAA"].unreadable == ["tech"]
+    assert cov["AAA"].blocking_missing == ["tech"]
+    # The other name is untouched: one lost row is not a lost seat.
+    assert "tech" in cov["BBB"].covered
+    assert cov["BBB"].unreadable == []
+    assert cov["BBB"].blocking_missing == []
+
+
+def test_unreadable_record_says_did_not_answer_never_neutral():
+    cov = evidence_gate.name_coverage(
+        ["AAA"], {"news": ["AAA"]}, unreadable_by_seat={"tech": ["AAA"]},
+    )["AAA"]
+    text = cov.summary.lower()
+    assert "no answer about this name from" in text
+    assert "unreadable" in text
+    for word in ("neutral", "no objection", "agree"):
+        assert word not in text
+    evidence = cov.to_evidence()
+    assert evidence["unreadable_seats"] == ["tech"]
+    assert evidence["blocking_seats_missing"] == ["tech"]
+    # Asked-and-unreadable is NOT never-asked: different cause, different fix.
+    assert "tech" not in evidence["never_asked_seats"]
+    assert "tech" not in evidence["asked_no_answer_seats"]
+
+
+def test_names_missing_blocking_seat_lists_only_the_blocked_names():
+    cov = evidence_gate.name_coverage(
+        ["AAA", "BBB"],
+        {"tech": ["BBB"], "news": ["AAA"], "earnings": ["BBB"],
+         "smart_money": ["BBB"]},
+        unreadable_by_seat={"tech": ["AAA"]},
+    )
+    gaps = evidence_gate.names_missing_blocking_seat(cov)
+    assert gaps == {"AAA": ["tech"]}
+
+
+def test_names_missing_blocking_seat_never_raises():
+    assert evidence_gate.names_missing_blocking_seat(None) == {}
+    assert evidence_gate.names_missing_blocking_seat({"AAA": object()}) == {}
+
+
+def test_coverage_record_carries_no_numeric_bar_for_the_new_fields():
+    """The per-name half is disclosure; item 220 must not smuggle in a ratio."""
+    cov = evidence_gate.name_coverage(
+        ["AAA"], {"news": ["AAA"]}, unreadable_by_seat={"tech": ["AAA"]},
+    )["AAA"].to_evidence()
+    for value in cov.values():
+        assert not isinstance(value, (int, float)) or isinstance(value, bool)
+
+
+def test_stay_and_entry_both_see_a_lost_technical_row_as_a_missing_seat():
+    """The rule binds on STAYING as well as entering.
+
+    Entry refuses outright; the held side drops the name out of the ranked
+    survivors via the same reason string. Neither reads the missing row as
+    an absent objection. Owner ruling 2026-09-25 keeps the CULL test
+    opposition-only, so a missing row does not cull and this test pins that
+    distinction rather than quietly widening it.
+
+    DO NOT "FIX" THIS BY MAKING A MISSING ROW CULL. Ruled 2026-10-01: an
+    answer nobody could read is NOT opposition, and selling a held name on
+    an absence would be inventing a verdict — the same failure as inventing
+    a number. Dropping the name out of the ranked survivors is the right
+    strength: it loses its claim to be KEPT on conviction without being
+    forced out on silence. Widening the stay test is the owner's call.
+    """
+    from src.risk.rules import own_bar_block_reason, own_bar_opposition_reason
+
+    no_tech: list = []
+    entry = own_bar_block_reason(no_tech, direction="bullish")
+    assert entry is not None and "no technical read" in entry
+    assert own_bar_opposition_reason(no_tech, direction="bullish") is None
+
+
+def test_three_causes_of_a_missing_seat_are_told_apart_by_the_fields():
+    """Asked-and-unreadable, asked-and-silent, and never-asked are distinct.
+
+    A later reader must be able to tell them apart WITHOUT parsing prose:
+    they share one consequence (no answer, so no veto satisfied) but have
+    three different causes and three different fixes, and collapsing them
+    would hide which one is actually happening.
+    """
+    cov = evidence_gate.name_coverage(
+        ["AAA", "BBB", "CCC"],
+        {"news": ["AAA", "BBB", "CCC"], "earnings": ["AAA", "BBB", "CCC"],
+         "smart_money": ["AAA", "BBB", "CCC"]},
+        unreadable_by_seat={"tech": ["AAA"]},
+        asked_no_answer_by_seat={"tech": ["BBB"]},
+    )
+    assert cov["AAA"].unreadable == ["tech"]
+    assert cov["AAA"].asked_no_answer == [] and cov["AAA"].never_asked == []
+    assert cov["BBB"].asked_no_answer == ["tech"]
+    assert cov["BBB"].unreadable == [] and cov["BBB"].never_asked == []
+    assert cov["CCC"].never_asked == ["tech"]
+    assert cov["CCC"].unreadable == [] and cov["CCC"].asked_no_answer == []
+    # All three are the SAME missing veto, whatever the cause.
+    for name in ("AAA", "BBB", "CCC"):
+        assert cov[name].blocking_missing == ["tech"]
+
+
+def test_a_row_that_came_back_outranks_asked_and_silent():
+    cov = evidence_gate.name_coverage(
+        ["AAA"], {"news": ["AAA"]},
+        unreadable_by_seat={"tech": ["AAA"]},
+        asked_no_answer_by_seat={"tech": ["AAA"]},
+    )["AAA"]
+    assert cov.unreadable == ["tech"] and cov.asked_no_answer == []

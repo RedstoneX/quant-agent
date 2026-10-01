@@ -195,7 +195,9 @@ def test_trailing_pass_reads_the_open_not_the_add(db):
     with patch("src.execution.scale_in.pending_protection_symbols",
                return_value=set()), \
          patch("src.risk.trailing.evaluate_trailing_stop") as ev:
-        ev.return_value = SimpleNamespace(proposal=None, code="noop")
+        ev.return_value = SimpleNamespace(
+            proposal=None, code="noop", structural_code=None,
+        )
         p._apply_deterministic_trails([position], run_id="r1")
 
     kwargs = ev.call_args.kwargs

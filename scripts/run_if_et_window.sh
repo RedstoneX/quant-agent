@@ -7,14 +7,14 @@
 # share this script so the system fires at correct US market times regardless
 # of the host's timezone — survives the user flying across continents.
 #
-# Usage: run_if_et_window.sh <earnings_preprocess|morning|intra_check|midday|close|evening>
+# Usage: run_if_et_window.sh <earnings_preprocess|morning|intra_check|intra_safety|midday|close|evening>
 #        run_if_et_window.sh morning --operator-rerun "reason"
 
 set -eu
 
 MODE="${1:-}"
 if [[ -z "$MODE" ]]; then
-    echo "usage: $0 <earnings_preprocess|morning|intra_check|midday|close|evening>" >&2
+    echo "usage: $0 <earnings_preprocess|morning|intra_check|intra_safety|midday|close|evening>" >&2
     exit 2
 fi
 
@@ -72,12 +72,26 @@ TIMEOUT="${TIMEOUT_OVERRIDE:-timeout}"
 LAST_RUN_DIR="${LAST_RUN_DIR_OVERRIDE:-${HOME}/.cache/quant-agent}"
 MIN_GAP_SEC="${MIN_GAP_SEC_OVERRIDE:-3600}"  # don't fire same mode twice within an hour
 SESSION_LOCK_DIR="${LAST_RUN_DIR}/active-session.lock"
-# Stale-lock cleanup ceiling. The launchd outer kill is 1200s (20 min); a
-# process still alive past that is impossible, so anything older than
-# 1800s (30 min) is definitely a crashed-without-cleanup leftover. Keeping
-# this tight matters because a stale lock would otherwise block the next
-# legitimate session for the full ceiling window.
-SESSION_LOCK_MAX_AGE_SEC="${SESSION_LOCK_MAX_AGE_SEC_OVERRIDE:-1800}"
+# Session run ceiling, enforced below by `timeout`. This is the ONE place
+# the number is written; the stale-lock ceiling is derived from it rather
+# than restated, because the two drifting apart is what makes a stale lock
+# either block a legitimate session or clear a live one.
+SESSION_RUN_TIMEOUT_SEC="${SESSION_RUN_TIMEOUT_SEC_OVERRIDE:-1200}"
+SESSION_RUN_KILL_AFTER_SEC="${SESSION_RUN_KILL_AFTER_SEC_OVERRIDE:-30}"
+# Stale-lock cleanup ceiling. DEFECT 9 (adversary round 3): this was a
+# hand-written 1800 sitting directly on the duplicate-stop hazard -- too
+# low and a still-running session's lock is cleared, so a second session
+# starts and both place protective stops on the same shares; too high and
+# a crashed session blocks the next legitimate one for the whole window.
+# It is no longer a number at all. The hard upper bound on a live session
+# is exactly what this script enforces one screen below: SIGTERM at
+# SESSION_RUN_TIMEOUT_SEC, SIGKILL SESSION_RUN_KILL_AFTER_SEC later. A
+# process alive past their sum cannot exist, and nothing shorter is safe.
+# That holds ONLY because the owner stamp is rewritten immediately before
+# `timeout` starts (see FAULT 1 at the run site): age and kill are counted
+# from the same instant. If that re-stamp is ever removed, this derivation
+# becomes too tight by the length of the prelude and must not stand.
+SESSION_LOCK_MAX_AGE_SEC="${SESSION_LOCK_MAX_AGE_SEC_OVERRIDE:-$(( SESSION_RUN_TIMEOUT_SEC + SESSION_RUN_KILL_AFTER_SEC ))}"
 
 mkdir -p "$LAST_RUN_DIR"
 
@@ -107,6 +121,13 @@ case "$MODE" in
     earnings_preprocess) LO=480; HI=555  ;;
     morning)             LO=570; HI=720  ;;
     intra_check)         LO=570; HI=960  ;;
+    # intra_safety is the FREE half of intra_check's preamble on its own unit
+    # (board item 177). Its window is intra_check's window BY CONSTRUCTION —
+    # the same work, the same hours — so these bounds are copied, not chosen.
+    # It is deliberately NOT a src/trading_calendar.py SESSION_WINDOWS mode:
+    # that table feeds src/config.py's expected PAID-session count, and this
+    # mode can never spend.
+    intra_safety)        LO=570; HI=960  ;;
     midday)              LO=780; HI=870  ;;
     close)               LO=930; HI=960  ;;
     evening)             LO=1200; HI=1320 ;;
@@ -126,7 +147,7 @@ fi
 # See the longer note at the session-lock exemption below, and board item 128.
 LAST_FILE="${LAST_RUN_DIR}/last-${MODE}"
 NOW_UNIX="${NOW_UNIX_OVERRIDE:-$(date +%s)}"
-if [[ "$MODE" != "intra_check" && "$OPERATOR_RERUN" -ne 1 && -f "$LAST_FILE" ]]; then
+if [[ "$MODE" != "intra_check" && "$MODE" != "intra_safety" && "$OPERATOR_RERUN" -ne 1 && -f "$LAST_FILE" ]]; then
     LAST_VALUE="$(cat "$LAST_FILE" 2>/dev/null || echo 0)"
     LAST_DATE="${LAST_VALUE%% *}"
     # Primary guard: never fire the same mode twice in the same ET session date.
@@ -161,7 +182,7 @@ LOCK_ACQUIRED=0
 LOCK_OWNER_FILE="${SESSION_LOCK_DIR}/owner"
 
 acquire_session_lock() {
-    if [[ "$MODE" == "intra_check" ]]; then
+    if [[ "$MODE" == "intra_check" || "$MODE" == "intra_safety" ]]; then
         return 0
     fi
 
@@ -277,7 +298,29 @@ ping_healthcheck() {
     curl -fsS --max-time 10 --retry 2 "${HEALTHCHECKS_URL}${suffix}" >/dev/null 2>&1 || true
 }
 
-if "$TIMEOUT" --kill-after=30 1200 "$PYTHON" main.py --mode "$MODE"; then
+# FAULT 1 (adversary round 4). The lock age is compared against the kill
+# this script performs, so the two must be measured from the SAME instant.
+# The lock was stamped with NOW_UNIX, taken near the top of the script --
+# before the environment load, the credential reads and the healthcheck
+# curls -- while `timeout` only starts counting here. A live session's true
+# maximum lock age was therefore the prelude PLUS the kill, which is
+# strictly more than the ceiling, and the next tick would have cleared the
+# lock of a session still running: two sessions, two protective stops on the
+# same shares, and nothing in this desk reconciles a duplicate.
+#
+# The boundary is fixed, not padded. The owner stamp is rewritten with the
+# clock reading at the instant `timeout` starts, so lock age and the kill
+# now count from the same zero and the derived ceiling is exact. No padding
+# number is chosen and nothing is measured by guess. A crash during the
+# prelude still leaves the earlier stamp, which only ever makes the lock
+# look OLDER and so clears sooner -- the safe direction. The PID is
+# refreshed with it so the owner line keeps naming the process that holds
+# the lock.
+if [[ "$LOCK_ACQUIRED" -eq 1 ]]; then
+    echo "${MODE} ${ET_DATE} $(date +%s) $$" > "$LOCK_OWNER_FILE"
+fi
+
+if "$TIMEOUT" --kill-after="$SESSION_RUN_KILL_AFTER_SEC" "$SESSION_RUN_TIMEOUT_SEC" "$PYTHON" main.py --mode "$MODE"; then
     # intra_check is intentionally guard-less (see last-run guard block above) —
     # we don't write the marker for it, so the next 30-min tick can fire freely.
     if [[ "$MODE" != "intra_check" ]]; then

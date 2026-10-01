@@ -100,7 +100,7 @@ already say.
 - **After any doc merge, count item numbers per section.** `docs/WORK.md`
   holds independently numbered lists; the same number legitimately repeats
   across sections but never within one. On a collision, renumber one item —
-  never delete either — and update its `docs/BOARD_NOTES.md` key in the same
+  never delete either — and update its `docs/board_notes/` key in the same
   commit (see "The owner's board" below).
 - **Never contact the owner directly, never create task chips, never spawn
   further subagents.** An unverified agent claim reaching him as an
@@ -185,19 +185,20 @@ The owner reads exactly one page: the status board at `/board`. It is generated
 by `scripts/status_board.py`, which re-derives everything it shows — it records
 nothing of its own. It reads each item's **number, title, status and ordering**
 out of `docs/WORK.md`, and the owner-facing plain-English prose for that item out
-of `docs/BOARD_NOTES.md`, keyed by number (`## item 44`, `## gate item 3`,
+of `docs/board_notes/` -- ONE FILE PER ITEM, e.g. `docs/board_notes/item-044.md`
+(see that directory's README) -- keyed by number (`## item 44`, `## gate item 3`,
 `## decision due YYYY-MM-DD`).
 
 **If you change `docs/WORK.md`, three obligations follow.**
 
 1. **Never renumber an existing item** without updating its key in
-   `docs/BOARD_NOTES.md` in the same commit. The prose is keyed by number, so a
+   `docs/board_notes/` in the same commit. The prose is keyed by number, so a
    renumber silently orphans it and the board renders that item as unexplained.
    The board cannot detect that it lost an explanation — it only knows the key
    did not match.
-2. **A new backlog item or pending decision needs prose in `docs/BOARD_NOTES.md`,
+2. **A new backlog item or pending decision needs prose in `docs/board_notes/`,
    not in `docs/WORK.md`.** `docs/WORK.md` is agent-facing and byte-capped at
-   100,000 by CI; `docs/BOARD_NOTES.md` is owner-facing and uncapped. Follow the
+   100,000 by CI; `docs/board_notes/` is owner-facing and uncapped. Follow the
    shape that file documents: plain language, a concrete worked example, and
    where a ruling is needed, the decision and a recommendation. No file paths, no
    function names, no code identifiers, no pull-request numbers — a mechanical

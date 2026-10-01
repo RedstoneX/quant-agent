@@ -160,33 +160,6 @@ def test_buy_limit_crosses_offer_with_bounded_price_protection():
     assert limit_price <= 100.40
 
 
-def test_funding_is_sized_only_for_preflight_survivors():
-    pipeline = _pipeline(live_price=100.0)
-    sweeper = object.__new__(CashSweeper)
-    sweeper.fund_buys = MagicMock(return_value=0.0)
-    pipeline._sweeper.return_value = sweeper
-    pipeline.broker.submit_order.return_value = {
-        "id": "ord-valid", "status": "accepted",
-    }
-    ctx = _ctx([
-        TradeDecision(
-            action="BUY", symbol="STALE", allocation_pct=10,
-            entry_price=120.0, stop_loss=110.0, take_profit=140.0,
-            reasoning="must fail preflight",
-        ),
-        TradeDecision(
-            action="BUY", symbol="XLE", allocation_pct=10,
-            entry_price=100.0, stop_loss=95.0, take_profit=115.0,
-            reasoning="survivor",
-        ),
-    ])
-
-    ExecutionStage(pipeline=pipeline).run(ctx)
-
-    sweeper.fund_buys.assert_called_once()
-    assert sweeper.fund_buys.call_args.args[1] == 10_000.0
-    assert [s["reason"] for s in ctx.execution_skips] == ["stale_entry"]
-    assert pipeline.broker.submit_order.call_args.kwargs["symbol"] == "XLE"
 
 
 def test_evidence_failure_never_blocks_the_skip_decision():

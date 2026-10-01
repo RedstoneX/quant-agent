@@ -657,10 +657,27 @@ def test_retired_bullet_lines_are_never_edited_or_removed():
     before = {l.strip() for l in r.stdout.splitlines() if bullet_re.match(l.strip())}
     now = {l.strip() for l in work_md.read_text().splitlines() if bullet_re.match(l.strip())}
     changed = sorted(before - now)
-    assert not changed, (
+    # A RE-OPEN is the one lawful removal, and it is not a weakening: the
+    # sibling guard `test_no_retired_number_names_an_item_that_is_still_live`
+    # refuses a number that is listed as retired AND live at once, so an
+    # honestly re-opened item CANNOT keep its retired bullet. The two rules
+    # together are still total — every removal must be paid for by the
+    # number being a live item on the board, which is strictly harder to
+    # fake than leaving the bullet alone. Item 211, 2026-10-01: retired
+    # against a remedy that measurement then showed saves nothing.
+    queue_items, _ = sb.load_funnel_queue(work_md)
+    gate_items, _ = sb.load_pm_gate(work_md)
+    live = {i.rank for i in queue_items} | {i.rank for i in gate_items}
+    unexplained = [
+        line for line in changed
+        if not (set(re.findall(r"\d+", line)) & {str(n) for n in live})
+    ]
+    assert not unexplained, (
         "these retired-numbers bullet line(s) existed before this change and "
-        "are now gone or edited: " + "; ".join(changed) + " — a closure may "
-        "only APPEND a brand new line, never edit or remove an existing one."
+        "are now gone or edited: " + "; ".join(unexplained) + " — a closure may "
+        "only APPEND a brand new line, never edit or remove an existing one. "
+        "The sole exception is a re-open, which must put the number back as a "
+        "live item in the same change."
     )
 
 
@@ -778,7 +795,7 @@ def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
         "file is to the cap, the less room a single change gets before it "
         "must prune first: delete items already written up in "
         "docs/INCIDENT_HISTORY.md (write one up first if it is not), and "
-        "their `## item N` blocks in docs/BOARD_NOTES.md, until the growth "
+        "their `## item N` blocks in docs/board_notes/, until the growth "
         "fits the budget."
     )
 
@@ -912,27 +929,25 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # PER-ITEM budget on docs/WORK.md
 # ---------------------------------------------------------------------------
 #: The board has always been policed by a WHOLE-FILE cap
 #: (`test_work_md_stays_under_a_hundred_thousand_bytes`) plus a shrinking
 #: growth budget. Owner finding, 2026-09-30: that pair punishes the wrong
 #: author. A whole-file cap binds on whoever files the NEXT item, never on
-#: whoever wrote a 12,556-byte one, and the only way past it is deleting
-#: items -- which is exactly how filed work comes to feel dropped. Measured
-#: on main that day: 33 items, median 1,180 bytes, largest 12,556.
+#: whoever wrote an 8,294-byte one, and the only way past it is deleting
+#: items -- which is exactly how filed work comes to feel dropped. The
+#: design the owner wrote for this file is a one-line item plus a pointer,
+#: with the detail in `docs/board_notes/item-NNN.md`. Nothing held the item
+#: itself short, so items grew fat anyway. These checks enforce that half.
 #:
-#: The design the owner wrote for this file is a one-line item plus a
-#: pointer, with the detail in docs/BOARD_NOTES.md. Every item already
-#: carried its pointer, but nothing held the item itself short, so items
-#: grew fat anyway. These checks enforce the per-item half.
-#:
-#: DERIVATION of the budget, so it is not a round number picked by feel:
-#: the whole-file cap divided by a realistic maximum open-item count. The
-#: board carried 33 open items when this was written [measured 2026-09-30];
-#: 40 is that with headroom, and is the number below. Per-item budget is
-#: therefore cap // 40. Raising the divisor (more items) or the cap changes
-#: it mechanically, and no third number has to be justified.
+#: THE DIVISOR BELOW IS A CHOSEN WORKING FIGURE, NOT A MEASURED ONE. It is
+#: not derived from anything and nothing measures it; 25 items were open
+#: when this landed [measured 2026-10-01], and 40 is a round allowance for
+#: growth picked by hand. That is acceptable here only because this number
+#: governs the length of a documentation file and no trade, position, stop
+#: or order whatsoever. Do not copy this pattern into anything that spends.
 _WORK_MD_MAX_OPEN_ITEMS = 40
 
 #: Same shape as `_QUEUE_ITEM_RE`/`_ITEM_OPEN_RE` in scripts/status_board.py:
@@ -940,6 +955,27 @@ _WORK_MD_MAX_OPEN_ITEMS = 40
 #: heading, or to the retired-numbers paragraph that closes the list.
 _WORK_ITEM_HEADING_RE = _re_mod.compile(r"^\*\*(?:~~)?(\d+)\.\s", _re_mod.M)
 _RETIRED_PARA = "**Retired item numbers"
+
+#: Items already over budget when this check landed, with their measured
+#: size on 2026-10-01. Their prose belongs to the authors who filed it and
+#: this PR does not touch a word of it. The check is a RATCHET instead: a
+#: grandfathered item may only ever get SMALLER, and any item not listed
+#: here -- every future one -- must come in under budget from the start.
+#: An entry is deleted outright once its item fits the budget; the test
+#: below fails if one is kept alive after that, so the list cannot rot.
+_WORK_MD_OVERSIZE_ON_ARRIVAL = {
+    "63": 3431, "70": 8294, "75": 3708, "78": 2656, "90": 7548,
+    "177": 5572, "186": 4065, "190": 6372, "201": 5526, "202": 4380,
+    "218": 4005, "220": 3461,
+}
+
+#: Items on the board when this check landed that do not resolve to a note
+#: file of their own [measured 2026-10-01: 9 of 25]. Same ratchet: writing
+#: another author's note is not this check's job, but no NEW item may arrive
+#: without one, and an entry here is deleted the moment its note exists.
+_WORK_MD_POINTERLESS_ON_ARRIVAL = {
+    "186", "188", "210", "211", "218", "220", "221", "222", "223",
+}
 
 
 def _work_md_item_blocks(text):
@@ -964,13 +1000,59 @@ def _work_md_item_budget_bytes():
     return cap // _WORK_MD_MAX_OPEN_ITEMS
 
 
-def _over_budget_items(text, budget):
-    return [(n, len(b)) for n, b in _work_md_item_blocks(text) if len(b) > budget]
+def _over_budget_items(text, budget, allowed=None):
+    """Items over `budget`, minus the grandfathered ones that have not grown."""
+    allowed = _WORK_MD_OVERSIZE_ON_ARRIVAL if allowed is None else allowed
+    out = []
+    for n, b in _work_md_item_blocks(text):
+        if len(b) <= budget:
+            continue
+        if n in allowed and len(b) <= allowed[n]:
+            continue
+        out.append((n, len(b)))
+    return out
 
 
-def _items_missing_their_pointer(text):
-    return [n for n, b in _work_md_item_blocks(text)
-            if "docs/BOARD_NOTES.md" not in b]
+#: How `docs/WORK.md` spells a pointer since the notes became one file per
+#: item: `detail: docs/board_notes/item-177.md`. Zero-padded to three digits,
+#: which is why the number is compared as an int and not as text.
+_NOTE_POINTER_RE = _re_mod.compile(r"docs/board_notes/item-(\d+)\.md")
+
+
+def _notes_present():
+    """The note files `docs/board_notes/` actually holds, by item number.
+
+    The directory listing is the resolution `scripts.status_board.
+    load_board_notes` already uses to turn that directory into notes, and
+    the filename is what `docs/board_notes/README.md` makes authoritative —
+    so a pointer resolves here exactly as it resolves there. Deliberately
+    not a second, stricter rule of my own: two different answers to "does
+    this item have a note" is how a pointer comes to point at nothing while
+    every check stays green.
+    """
+    directory = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
+    if not directory.is_dir():
+        return set()
+    out = set()
+    for path in sorted(directory.glob("item-*.md")):
+        m = _re_mod.fullmatch(r"item-(\d+)\.md", path.name)
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
+def _items_missing_their_note(text, present, allowed=None):
+    """Items whose block carries no pointer, or whose pointer names a note
+    that is not this item's own, or one that is not there at all."""
+    allowed = _WORK_MD_POINTERLESS_ON_ARRIVAL if allowed is None else allowed
+    missing = []
+    for n, b in _work_md_item_blocks(text):
+        if n in allowed:
+            continue
+        targets = {int(x) for x in _NOTE_POINTER_RE.findall(b)}
+        if int(n) not in targets or int(n) not in present:
+            missing.append(n)
+    return missing
 
 
 def _per_item_failure_message(offenders, budget):
@@ -978,20 +1060,20 @@ def _per_item_failure_message(offenders, budget):
     return (
         f"docs/WORK.md item block(s) over the {budget:,}-byte per-item budget: "
         f"{worst}. The budget is the file's own 100,000-byte cap divided by "
-        f"{_WORK_MD_MAX_OPEN_ITEMS}, a realistic maximum number of open items "
-        "(33 were open on 2026-09-30, measured), so the whole board fits under "
-        "the cap without any single item crowding the rest out. "
-        "TO FIX, and do NOT delete anything: move the item's prose into "
-        "`## item N` in docs/BOARD_NOTES.md -- create that heading if it is "
-        "not there -- and leave behind only the bold title line, the DONE WHEN "
-        "checkboxes in short form, and the `detail: docs/BOARD_NOTES.md "
-        "(item N)` pointer. Never raise this number to make room, and never "
-        "retire a live item to get under it."
+        f"{_WORK_MD_MAX_OPEN_ITEMS}, a CHOSEN allowance for open items, not a "
+        "measured one -- it bounds a documentation file and nothing that "
+        "trades. TO FIX, and do NOT delete anything: move the item's prose "
+        "into `docs/board_notes/item-NNN.md` under its `## item N` heading -- "
+        "create that file if it is not there -- and leave behind only the bold "
+        "title line, the DONE WHEN checkboxes in short form, and the "
+        "`detail: docs/board_notes/item-NNN.md` pointer. Never raise this "
+        "number to make room, never shorten somebody else's item to make room "
+        "for yours, and never retire a live item to get under it."
     )
 
 
 def test_every_work_md_item_stays_within_its_per_item_budget():
-    """The real docs/WORK.md, every item block, against the derived budget."""
+    """The real docs/WORK.md, every item block, against the chosen budget."""
     work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     if not work_md.exists():
         return
@@ -1000,17 +1082,44 @@ def test_every_work_md_item_stays_within_its_per_item_budget():
     assert not offenders, _per_item_failure_message(offenders, budget)
 
 
-def test_every_work_md_item_points_at_its_board_notes_block():
-    """An item may be short only because its detail lives somewhere; the
-    pointer is what makes that true, so it is checked, not assumed."""
+def test_the_grandfathered_list_cannot_outlive_the_items_on_it():
+    """A ratchet that never releases is just a permanent exemption."""
     work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     if not work_md.exists():
         return
-    missing = _items_missing_their_pointer(work_md.read_text())
+    budget = _work_md_item_budget_bytes()
+    sizes = {n: len(b) for n, b in _work_md_item_blocks(work_md.read_text())}
+    stale = sorted(n for n, _ in _WORK_MD_OVERSIZE_ON_ARRIVAL.items()
+                   if sizes.get(n, 0) <= budget)
+    assert not stale, (
+        f"item(s) {stale} now fit the {budget:,}-byte per-item budget — delete "
+        "them from _WORK_MD_OVERSIZE_ON_ARRIVAL so the budget binds on them "
+        "from now on."
+    )
+    # Released on exactly the condition the pointer check itself applies,
+    # so the two can never disagree about whether an item is still exempt.
+    still_missing = set(_items_missing_their_note(
+        work_md.read_text(), _notes_present(), allowed=set()))
+    gone = sorted(n for n in _WORK_MD_POINTERLESS_ON_ARRIVAL
+                  if n not in sizes or n not in still_missing)
+    assert not gone, (
+        f"item(s) {gone} now have a note of their own, or have left the "
+        "board — drop them from _WORK_MD_POINTERLESS_ON_ARRIVAL so the "
+        "pointer check binds on them from now on."
+    )
+
+
+def test_every_work_md_item_points_at_its_own_board_note_file():
+    """An item may be short only because its detail lives somewhere; the
+    pointer is what makes that true, so it is resolved, not assumed."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    missing = _items_missing_their_note(work_md.read_text(), _notes_present())
     assert not missing, (
-        f"docs/WORK.md item(s) {missing} carry no pointer to their detail. Add "
-        "a `detail: docs/BOARD_NOTES.md (item N)` line to the block and put the "
-        "prose under `## item N` in docs/BOARD_NOTES.md."
+        f"docs/WORK.md item(s) {missing} do not resolve to a note of their "
+        "own. Add a `detail: docs/board_notes/item-NNN.md` line to the block "
+        "and put the prose in that file under a `## item N` heading."
     )
 
 
@@ -1022,23 +1131,34 @@ def test_the_per_item_check_catches_a_fat_item_and_a_pointerless_one():
     tidy = (
         "**5. A short title.**\n\n"
         "DONE WHEN:\n  - [ ] the thing is measured\n\n"
-        "detail: docs/BOARD_NOTES.md (item 5)\n\n"
+        "detail: docs/board_notes/item-005.md\n\n"
     )
     fat = (
         "**6. A fat title.**\n\n" + ("  - [ ] " + "x" * 200 + "\n") * 40 +
-        "\ndetail: docs/BOARD_NOTES.md (item 6)\n\n"
+        "\ndetail: docs/board_notes/item-006.md\n\n"
     )
     pointerless = "**7. No pointer anywhere.**\n\nDONE WHEN:\n  - [ ] something\n\n"
     text = tidy + fat + pointerless + _RETIRED_PARA + "** never reuse.\n"
+    present = {5, 6}
 
     assert [n for n, _ in _work_md_item_blocks(text)] == ["5", "6", "7"]
-    assert [n for n, _ in _over_budget_items(text, budget)] == ["6"]
-    assert _items_missing_their_pointer(text) == ["7"]
-    assert _over_budget_items(tidy + _RETIRED_PARA, budget) == []
-    message = _per_item_failure_message(_over_budget_items(text, budget), budget)
-    assert "docs/BOARD_NOTES.md" in message and "move the item's prose" in message
+    assert [n for n, _ in _over_budget_items(text, budget, allowed={})] == ["6"]
+    assert _items_missing_their_note(text, present, allowed=set()) == ["7"]
+    # A pointer that resolves to no note file is as bad as no pointer at all.
+    assert _items_missing_their_note(text, {5}, allowed=set()) == ["6", "7"]
+    # The ratchet exempts a grandfathered item, and ONLY while it has not grown.
+    assert _over_budget_items(text, budget, allowed={"6": 10_000}) == []
+    assert [n for n, _ in _over_budget_items(text, budget, allowed={"6": 10})] == ["6"]
+    assert _items_missing_their_note(text, present, allowed={"7"}) == []
+    assert _over_budget_items(tidy + _RETIRED_PARA, budget, allowed={}) == []
+    message = _per_item_failure_message(
+        _over_budget_items(text, budget, allowed={}), budget)
+    assert "docs/board_notes/" in message and "move the item's prose" in message
+    assert "CHOSEN" in message
     # The retired-numbers paragraph is not an item and is never measured.
     assert all(not b.startswith(_RETIRED_PARA) for _, b in _work_md_item_blocks(text))
+
+
 
 
 def test_finished_work_has_somewhere_to_go_that_is_not_deletion():
@@ -1851,7 +1971,7 @@ def test_a_synthetic_finished_item_trips_the_check(tmp_path):
     # The message must tell a reader the whole procedure, not just that
     # something is wrong — this is the one check nobody will know how to
     # act on without being told.
-    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "BOARD_NOTES.md",
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/",
                  "retired"):
         assert step in flagged[0]
 
@@ -1940,14 +2060,14 @@ def test_a_fully_ticked_open_item_trips_the_checkbox_check(tmp_path):
         "DONE WHEN:\n"
         "  - [x] the fix ships\n"
         "  - [x] a test proves it\n"
-        "detail: docs/BOARD_NOTES.md (item 9)\n"
+        "detail: docs/board_notes/ (item 9)\n"
     )
     notes = _board_notes(tmp_path)
     flagged = sb.find_finished_items_still_on_board(work, notes)
     assert len(flagged) == 1
     assert "item 9" in flagged[0]
     assert "DONE WHEN" in flagged[0]
-    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "BOARD_NOTES.md",
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/",
                  "retired"):
         assert step in flagged[0]
 
@@ -1961,7 +2081,7 @@ def test_a_partially_ticked_open_item_does_not_trip_the_checkbox_check(
         "DONE WHEN:\n"
         "  - [x] the fix ships\n"
         "  - [ ] a test proves it\n"
-        "detail: docs/BOARD_NOTES.md (item 9)\n"
+        "detail: docs/board_notes/ (item 9)\n"
     )
     notes = _board_notes(tmp_path)
     assert sb.find_finished_items_still_on_board(work, notes) == []
@@ -1997,7 +2117,7 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
         "DONE WHEN:\n"
         "  - [x] the fix ships\n"
         "  - [x] a test proves it\n"
-        "detail: docs/BOARD_NOTES.md (item 9)\n"
+        "detail: docs/board_notes/ (item 9)\n"
     )
     notes = _board_notes(tmp_path)
     assert sb.find_finished_items_still_on_board(work, notes) == []
@@ -2009,7 +2129,7 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
 #: `find_finished_items_still_on_board`). This is an ALLOWLIST of KNOWN,
 #: pre-existing rot, not a target: retiring one of these items (writing it
 #: up in `docs/INCIDENT_HISTORY.md` and deleting its `docs/WORK.md` /
-#: `docs/BOARD_NOTES.md` blocks, the normal procedure) makes it disappear
+#: `docs/board_notes/` blocks, the normal procedure) makes it disappear
 #: from the live check's output, and this set may SHRINK to match without
 #: anyone treating that as a test failure to chase down — update it in the
 #: same change that retires the item. It must never GROW silently: a NEW
@@ -2030,7 +2150,7 @@ _REF_PREFIX_RE = re.compile(r"^(gate item \d+|item \d+)")
 
 
 def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
-    """The real docs/WORK.md and docs/BOARD_NOTES.md, not a fixture.
+    """The real docs/WORK.md and docs/board_notes/, not a fixture.
 
     Unlike a plain "must find nothing" assertion, this tolerates the KNOWN,
     already-measured backlog rot pinned in
@@ -2044,7 +2164,7 @@ def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
     still fail CI.
     """
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
-    notes = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
+    notes = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
     flagged = sb.find_finished_items_still_on_board(work, notes)
     flagged_refs = set()
     for f in flagged:
@@ -2228,7 +2348,7 @@ def test_pm_gate_items_do_not_leak_into_the_funnel_queue_or_vice_versa(tmp_path)
 
 # The item itself — number, title, status, engineering notes — is still
 # docs/WORK.md's shape. Its prose has moved out to a separate fixture below,
-# standing in for docs/BOARD_NOTES.md, keyed to the item by "## item 1"
+# standing in for docs/board_notes/, keyed to the item by "## item 1"
 # rather than living inside the item's own body.
 _FULL_ITEM = (
     "## THE FUNNEL QUEUE\n\n"
@@ -2255,7 +2375,7 @@ _FULL_ITEM_NOTES = (
 
 
 def _notes(tmp_path, text):
-    """Write `text` as a `docs/BOARD_NOTES.md`-shaped fixture and parse it,
+    """Write `text` as a `docs/board_notes/`-shaped fixture and parse it,
     the same way `render` parses the real file."""
     p = tmp_path / "BOARD_NOTES.md"
     p.write_text(text)
@@ -2275,7 +2395,7 @@ def test_an_item_carries_its_plain_language_example_and_recommendation(tmp_path)
 
 
 def test_a_blank_line_ends_a_block_so_engineering_prose_is_not_swallowed(tmp_path):
-    """The paragraph after the blank line in docs/BOARD_NOTES.md is ordinary
+    """The paragraph after the blank line in docs/board_notes/ is ordinary
     commentary, not a labelled field. If it leaked into the recommendation
     the owner would be shown text nobody wrote as one."""
     notes = _notes(tmp_path, _FULL_ITEM_NOTES)
@@ -2296,7 +2416,7 @@ def test_wrapped_prose_lines_are_joined_not_truncated(tmp_path):
 def test_prose_no_longer_comes_from_work_mds_own_body():
     """The relocation's core guarantee: a plain-language block typed straight
     into a WORK.md item's body must NOT reach the page — only a matching
-    heading in docs/BOARD_NOTES.md does. Without that, this file's own cap
+    heading in docs/board_notes/ does. Without that, this file's own cap
     would be pointless: the prose it was moved to avoid could just come back
     in through the body text instead."""
     body = ("**3. A thing — DEFECT.**\n\n"
@@ -2310,7 +2430,7 @@ def test_prose_no_longer_comes_from_work_mds_own_body():
 
 
 # ---------------------------------------------------------------------------
-# docs/BOARD_NOTES.md — the prose file itself
+# docs/board_notes/ — the prose file itself
 #
 # The key property this file's whole design rests on: an entry is found by
 # the item's NUMBER and SECTION, never by its title, so a rename in
@@ -2350,7 +2470,7 @@ def test_board_notes_with_no_recognised_heading_is_empty(tmp_path):
 
 
 def test_an_item_with_no_matching_note_is_unexplained_not_borrowed(tmp_path):
-    """The whole point of keying by number: an item docs/BOARD_NOTES.md has
+    """The whole point of keying by number: an item docs/board_notes/ has
     never heard of must render as unexplained, never silently inherit
     prose written for a different item."""
     notes = _notes(tmp_path, "## item 7\n\n**Plain language —** for item 7 only.\n")
@@ -2359,9 +2479,9 @@ def test_an_item_with_no_matching_note_is_unexplained_not_borrowed(tmp_path):
 
 
 def test_the_real_board_notes_file_loads_without_error():
-    """docs/BOARD_NOTES.md ships in the repo; whatever it currently holds
+    """docs/board_notes/ ships in the repo; whatever it currently holds
     must parse without raising, exactly like the real backlog."""
-    path = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
+    path = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
     assert path.exists()
     notes = sb.load_board_notes(path)
     assert isinstance(notes, dict)
@@ -3234,10 +3354,18 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     # whole below-bar cull set worst-first. Written up in
     # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md.
     assert 39 not in by_rank
-    for rank in (20,):
-        assert by_rank[rank].in_hand_state == "decided, not yet built", rank
-    for rank in (20,):
-        assert by_rank[rank].bucket == "in_hand", rank
+    # Item 20 used to be pinned here as the live "decided, not yet built"
+    # case. It was retired 2026-10-01: the counting half had already shipped
+    # as a per-name record, and its last criterion -- whether the intraday
+    # technical read may report LOST -- was answered yes, which the code
+    # already did. No live item is in that state now, and pinning whichever
+    # one happens to be is what made this assertion rot twice before (items
+    # 49 and 39 are recorded above for the same reason). The parser
+    # behaviour it pinned is covered synthetically by
+    # `_IN_HAND_STATE_CASES` and
+    # `test_a_dated_status_paragraph_in_the_body_counts_as_a_ruling`, which
+    # cannot rot when the board changes.
+    assert 20 not in by_rank
     # Item 3 used to be pinned here as the "no_action" case (WORKING AS
     # INTENDED, no follow-on). It was written up in
     # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md once
@@ -3353,7 +3481,7 @@ def test_nothing_to_do_says_so_rather_than_inventing_urgency():
 
 def test_a_decision_reads_its_plain_language_block_from_board_notes(tmp_path):
     """The decision's own line in docs/WORK.md carries only the question now
-    — its prose comes from docs/BOARD_NOTES.md, keyed by the decision's due
+    — its prose comes from docs/board_notes/, keyed by the decision's due
     date (`PendingDecision.ref`), because a decision has no number of its
     own to key on."""
     p = tmp_path / "WORK.md"
@@ -3377,7 +3505,7 @@ def test_a_decision_reads_its_plain_language_block_from_board_notes(tmp_path):
 def test_a_decisions_indented_body_no_longer_carries_prose(tmp_path):
     """The relocation's guarantee for decisions too: prose typed straight
     into the indented body under a `DECIDE BY` line must not reach the page
-    without a matching heading in docs/BOARD_NOTES.md."""
+    without a matching heading in docs/board_notes/."""
     p = tmp_path / "WORK.md"
     p.write_text(
         "- [ ] DECIDE BY 2099-01-01 — Which model runs the decision seat?\n"
@@ -3708,14 +3836,14 @@ def test_the_rebuild_trigger_watches_the_backlog():
 
 
 def test_the_rebuild_trigger_also_watches_the_board_notes_file():
-    """The prose the page renders now lives in docs/BOARD_NOTES.md, not
+    """The prose the page renders now lives in docs/board_notes/, not
     docs/WORK.md. An edit to it changes what the board says exactly as much
     as an edit to the backlog does, so it must fire the same rebuild — the
     same defect the WORK.md watch above exists to prevent, on the other
     half of the page's source material."""
     unit = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
             / "quant-agent-status-board.path").read_text()
-    assert "PathChanged=/home/qamc/quant-agent/docs/BOARD_NOTES.md" in unit
+    assert "PathChanged=/home/qamc/quant-agent/docs/board_notes" in unit
 
 
 def test_the_board_service_does_not_point_at_the_retired_timer():
@@ -3841,7 +3969,7 @@ def test_the_real_backlog_flags_only_genuine_self_contradictions():
 # ---------------------------------------------------------------------------
 # The page's own copy must obey the page's own rules.
 #
-# The jargon detector ran only over prose loaded from docs/BOARD_NOTES.md.
+# The jargon detector ran only over prose loaded from docs/board_notes/.
 # Every reader-facing string HARDCODED IN THIS SCRIPT was exempt from it —
 # so the one card written by hand was the one card nothing checked. On
 # 2026-09-11 that card told the owner three finished things had "stopped
@@ -3904,7 +4032,7 @@ def test_a_humanised_identifier_keeps_a_date_readable():
 
 
 def test_no_board_note_is_orphaned_in_the_real_repository():
-    """Every prose entry in the REAL docs/BOARD_NOTES.md must match a real
+    """Every prose entry in the REAL docs/board_notes/ must match a real
     item in the REAL docs/WORK.md.
 
     The keying tests above prove the mechanism. This proves the live files
@@ -3917,7 +4045,7 @@ def test_no_board_note_is_orphaned_in_the_real_repository():
     That is a rule no session should have to remember. This is the check.
     """
     work = sb.REPO_ROOT / "docs" / "WORK.md"
-    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "board_notes")
     queue, _ = sb.load_funnel_queue(work, notes)
     gate, _ = sb.load_pm_gate(work, notes)
     decisions = sb.load_pending_decisions(work, notes=notes)
@@ -3926,7 +4054,7 @@ def test_no_board_note_is_orphaned_in_the_real_repository():
     orphans = sorted(k for k in notes if k not in real
                      and not k.lower().startswith("item n"))
     assert orphans == [], (
-        "docs/BOARD_NOTES.md explains items that no longer exist under those "
+        "docs/board_notes/ explains items that no longer exist under those "
         f"keys in docs/WORK.md: {orphans}. Either the item was renumbered "
         "(update the key in the same commit) or it was archived (remove its "
         "prose). Leaving it strands the explanation and the owner's board "
@@ -3946,7 +4074,7 @@ def test_every_rendered_entry_carries_a_reference_handle():
     fine on the page and only surface as the owner being unable to name it.
     """
     work = sb.REPO_ROOT / "docs" / "WORK.md"
-    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "board_notes")
     queue, _ = sb.load_funnel_queue(work, notes)
     gate, _ = sb.load_pm_gate(work, notes)
     decisions = sb.load_pending_decisions(work, notes=notes)
