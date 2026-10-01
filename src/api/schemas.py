@@ -46,6 +46,11 @@ from src.models import (
 
 class HealthResponse(BaseModel):
     status: str  # "ok" | "degraded" — process can respond while decisions are broken
+    # WHY the status is what it is, assembled from the fields already in
+    # this payload — never a new judgement and never a new severity scale.
+    # None when nothing is wrong. A bare "degraded" makes the reader guess
+    # which sub-field caused it, and a guess is not a status report.
+    reason: str | None = None
     db_reachable: bool
     broker_reachable: bool | None = None  # None = not checked (e.g. no keys)
     paper: bool | None = None  # honest echo of config.alpaca.paper; never fabricated

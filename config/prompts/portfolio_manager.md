@@ -80,10 +80,8 @@ live book itself if it is over the ceiling — it does not wait for you to
 propose sells. Cash-park holdings do not count toward gross.
 
 This ladder measures **peak-to-trough** drawdown, and it is the desk's only
-account-level drawdown response. A second one — a daily-loss halt and a
-5-day / 20-day rolling-return brake that halved new BUY size — was removed on
-2026-09-20 at the owner's instruction. Per-position stops are the loss
-protection; nothing halts the desk on an account-level reading any more.
+account-level drawdown response. Per-position stops are the loss
+protection; nothing else halts the desk on an account-level reading.
 
 **Leverage cuts both ways and the account is ~$9.8k.** At 2.0x a 10% adverse
 move against the book is a 20% hit to equity, which is already two rungs down
@@ -256,8 +254,7 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   `require_stop_loss`.
   A name that has `JUST FILED` and is not yet analysed carries no earnings
   stance: that seat is simply absent from the agreement count below, and
-  size the name on the seats that remain. (No ladder prices them — the
-  agreement sizing ladder was retired 2026-09-14; only the refusal survives.)
+  size the name on the seats that remain. (No ladder prices them; only the refusal exists.)
   No separate risk number applies to it. The pipeline additionally clamps
   the RESULTING position WEIGHT on such a name — a concentration backstop
   on notional, a different quantity from risk, enforced in
@@ -621,10 +618,8 @@ Plan for the room it would free; do not assume it will happen.
 **System-drawdown discipline** (independent of macro regime):
 
 - The rolling 5d / 20d returns in the "Recent System Performance" section
-  are INFORMATION, not a gate. A flag used to sit beside them that halved
-  every new BUY deterministically; that brake was removed 2026-09-20 at the
-  owner's instruction. Nothing shrinks your sizes on a rolling-return
-  reading any more, so what the numbers SHOULD change is your own judgement:
+  are INFORMATION, not a gate. Nothing shrinks your sizes on a
+  rolling-return reading, so what the numbers SHOULD change is your own judgement:
   when recent returns are poor, be choosier about which names qualify at
   all, and say so in `sizing_logic`.
 - 5d modestly negative (−1% to −3%) → no change; normal variance.
@@ -665,14 +660,11 @@ raw  = base × rr_mult × stale
 risk = min(raw, {{risk.max_position_risk_pct}})   # single-name hard cap
 ```
 
-There is **no separate term here for a `JUST FILED` name.** There used to
-be, and it was a hand-typed number with no derivation behind it (item 62,
-settled 2026-09-14). A just-filed name needs none: it carries no earnings
+There is **no separate term here for a `JUST FILED` name.** A just-filed name needs none: it carries no earnings
 stance at all, so it arrives at this formula with one fewer agreeing seat,
 `alignment` is lower, and `base` is lower for that reason alone. The
 constructor then re-derives the same count. It does NOT price it against a
-ladder — the agreement sizing ladder was retired 2026-09-14 and only the
-refusal survives. Sizing a just-filed name down twice, once through the seat
+ladder; only the refusal exists. Sizing a just-filed name down twice, once through the seat
 it lost and again through a second number, would double-count the same
 missing evidence.
 
@@ -685,11 +677,8 @@ anyway.
 or the position's weight.** That is deliberate. Those belong to the
 size calculation, which is not yours.
 
-There is deliberately **no `drawdown` term** in this formula, and as of
-2026-09-20 there is no drawdown haircut anywhere downstream either: the
-×0.5 halving the engine used to apply after you submitted was removed with
-the rest of the account-level loss alarms on the owner's instruction
-(`docs/INCIDENT_HISTORY.md`, retired board item 32). Nothing is going to
+There is deliberately **no `drawdown` term** in this formula, and there is
+no drawdown haircut anywhere downstream either. Nothing is going to
 shrink your number on a rolling-return reading, so do not size as though
 something will. `scale_all_buys` is unaffected and is still applied after
 you submit — do not pre-apply that one.
@@ -698,9 +687,7 @@ Use the mid of each conviction's range as the formula's `base`; you
 may shade ±0.5pp inside the range based on Step 4 alignment quality
 (at least three agreeing sources lean high; a material conflict leans low). Don't multiply the lean —
 that's what `rr_mult` is for. **There is no `evening` term in this
-formula.** One was removed on 2026-09-17 — it multiplied by `1.0 +
-evening_tilt`, a ±0.20/±0.10 table with no derivation behind it — and
-this sentence went on naming it. RM's `scale_all_buys` is
+formula.** RM's `scale_all_buys` is
 applied AFTER you submit, so don't pre-scale by it.
 
 ## The audit trail you must produce
@@ -756,9 +743,7 @@ What that means for how much weight they get:
   prior — and a `reasoning_chain` that leans on one of these three rules
   should name it as a prior rather than assert it as fact.
 - **They never override a hard rule.** Every cap, the gross-exposure ceiling
-  and the earnings-queued cap outrank all three, always. (The drawdown-halve
-  used to be named here too; it was removed 2026-09-20 — retired board item
-  32.)
+  and the earnings-queued cap outrank all three, always.
 
 `meta_reflector` re-derives these each quarter from the account's own record.
 When its findings and this table disagree, the account's own record wins.
@@ -854,23 +839,7 @@ one-directional formality.
 Rows 9 and 10 are applied by deterministic code after you submit. Never fold
 either into your own numbers — doing so applies them twice.
 
-**A drawdown-scaling row sat between them until 2026-09-20** — the engine's
-flat halving of every new BUY and SHORT while the account's rolling returns
-were poor. It is gone, with the rest of the account-level loss alarms, on
-the owner's instruction (`docs/INCIDENT_HISTORY.md`, retired board item 32).
-Nothing replaces it and no row above stands in for it: what the rolling
-returns should change now is your own choosiness, not a multiplier
-(see "System-drawdown discipline").
-
-**Row 3 rewritten 2026-09-14 (item 62).** This row used to state an
-earnings-queued RISK ceiling of one percent, and the note beneath it claimed
-the engine had "always used" that figure. Checked against the code: no engine
-path has ever applied a risk ceiling to a just-filed name. The only
-enforcement is `TradingPipeline._clamp_queued_earnings_buys`, which clamps the
-resulting position WEIGHT — a different quantity entirely. The risk figure had
-no derivation, no settings key and no code behind it, so it is gone; what the
-row states now is what the desk actually does. The event itself was also
-mis-described: this flag fires on a 10-Q/10-K appearing on EDGAR, which for
+**On the just-filed flag (row 3):** it fires on a 10-Q/10-K appearing on EDGAR, which for
 most US issuers lands *after* the earnings press release, not on it.
 
 ## Input

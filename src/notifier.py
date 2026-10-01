@@ -416,7 +416,7 @@ def _new_block(lines: list[str], render, *args, may_glue: bool = False, **kwargs
 
 
 #: An internal status code -> the OUTCOME in plain words, written to read
-#: naturally after a session name: "Pre-market filings \u2014 nothing new
+#: naturally after a session name: "Pre-market filings — nothing new
 #: was filed". Board item 89 clarity defect "internal status codes shown
 #: as-is": a code with its underscores taken out is still a code, so these
 #: are phrases rather than title-cased identifiers.
@@ -452,7 +452,7 @@ _STATUS_LABELS: dict[str, str] = {
     "daily_loss_halted": "stopped for the day after losses (historical)",  # retired-ok
     "kill_switch_halted": "stopped by the manual kill switch",
     "paid_analysis_suspended": "paid thinking is suspended",
-    "evidence_gate_skip": "skipped \u2014 the data was incomplete",
+    "evidence_gate_skip": "skipped — the data was incomplete",
     "intraday_scan_crashed": "the scan for movers crashed",
     "intraday_scan_disabled": "the scan for movers is switched off",
     "intraday_scan_lock_contended": "the scan for movers was delayed (busy)",
@@ -466,7 +466,7 @@ _STATUS_LABELS: dict[str, str] = {
 
 def humanize_status(status: str) -> str:
     """Plain-English rendering of an internal status code for the owner-
-    facing header line \u2014 e.g. "intraday_no_trades" -> "no trade taken".
+    facing header line — e.g. "intraday_no_trades" -> "no trade taken".
 
     A status with no entry in the table above is reported as exactly that:
     an outcome nobody has plain wording for. It is never paraphrased into
@@ -556,7 +556,7 @@ def describe_ai_cost(
     """The AI spend for a run, in words.
 
     Owner review of the live 17 September evening message: "$0.0000" read as
-    broken. It is not \u2014 it is true. `src/cost_table.py` pins the
+    broken. It is not — it is true. `src/cost_table.py` pins the
     free-tier seats at $0.00 as a deliberate price, not as an unpriced
     placeholder. So the honest rendering is a sentence, not four decimal
     places.
@@ -567,7 +567,7 @@ def describe_ai_cost(
     because src/trader_feed.py imports src/notifier.py and not the reverse.
 
     `None` means "the desk could not read what this cost" and says exactly
-    that \u2014 it never renders as zero. Inventing a number in an
+    that — it never renders as zero. Inventing a number in an
     owner-facing message is the worst failure mode on this desk.
     """
     if cost is None:
@@ -577,7 +577,7 @@ def describe_ai_cost(
     except (TypeError, ValueError):
         return f"{label}: not available"
     if value <= 0:
-        return f"{label}: none \u2014 {free_note}"
+        return f"{label}: none — {free_note}"
     if value < 0.01:
         return f"{label}: under one cent"
     return f"{label}: ${value:,.2f}"
@@ -772,6 +772,10 @@ class TelegramNotifier:
         self.token = (token if token is not None else os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
         self.chat_id = (chat_id if chat_id is not None else os.getenv("TELEGRAM_CHAT_ID", "")).strip()
         kill_switch = os.getenv("TELEGRAM_DISABLED", "").strip().lower() in ("1", "true", "yes")
+        # Kept as its own attribute: `enabled` collapses "muted on purpose"
+        # and "no credentials" into one false, and probe() has to report
+        # which of the two it actually is.
+        self.muted = kill_switch
         self.enabled = bool(self.token and self.chat_id) and not kill_switch
         # Tap-through link target for send(). Unlike token/chat_id this is
         # NOT read from the environment — src/config.py::NotificationsConfig
@@ -1169,13 +1173,23 @@ class TelegramNotifier:
             return ProbeResult(
                 False, "rehearsal", "suppressed: QAMC_REHEARSAL=1, nothing sent",
             )
+        if self.muted:
+            # A DELIBERATE mute is not a fault. Only this process can tell
+            # the two apart (it is the one holding the env), so it must say
+            # which it is; reporting a choice the operator made as a broken
+            # channel is a false statement about the desk's state.
+            return ProbeResult(
+                False,
+                "muted",
+                "alerts are muted on purpose: TELEGRAM_DISABLED is set in "
+                "this process — nothing is broken and nothing will be sent",
+            )
         if not self.enabled:
             return ProbeResult(
                 False,
                 "credentials",
                 "this process has no TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID "
-                "(or TELEGRAM_DISABLED is set) — an alert raised here would "
-                "reach nobody",
+                "— an alert raised here would reach nobody",
             )
 
         # link_url="" — never append the Mission Control link to a probe.
@@ -1274,14 +1288,14 @@ class TelegramNotifier:
 #: which is really the heading."
 #:
 #: A standalone alert genuinely CANNOT carry a figure. It fires the instant
-#: a problem is found \u2014 from the credential check, the stop-coverage audit,
-#: a reconciliation mismatch \u2014 on paths that have done no account read, and
+#: a problem is found — from the credential check, the stop-coverage audit,
+#: a reconciliation mismatch — on paths that have done no account read, and
 #: a page about a naked position must never block on a broker round-trip or
 #: be able to fail inside one. So the line says exactly that, in one
 #: sentence, rather than being dropped (an absent block reads as a broken
 #: one) or filled with a fabricated zero.
 _ALERT_NO_PNL_LINE = (
-    "\U0001f4c8 P&L: not available in this alert \u2014 it is sent the moment a "
+    "\U0001f4c8 P&L: not available in this alert — it is sent the moment a "
     "problem is found, before any account is read."
 )
 
@@ -1295,7 +1309,7 @@ def _with_pnl_header(text: str) -> str:
     time it depends on the next author remembering it; a single choke point
     is the only version of it that holds.
 
-    Never raises \u2014 an alerting bug must not be able to break the thing it
+    Never raises — an alerting bug must not be able to break the thing it
     reports on. On any fault the original text goes out unchanged.
     """
     try:
@@ -1665,7 +1679,7 @@ def describe_universe_changes(block: Any) -> list[str]:
     admitted = block.get("admitted_count")
     flagged = block.get("flagged_count")
     size = (
-        f" \u2014 {admitted} screened stock(s) on the list, {flagged} flagged"
+        f" — {admitted} screened stock(s) on the list, {flagged} flagged"
         if isinstance(admitted, int) and isinstance(flagged, int) else ""
     )
     if not events:
@@ -2064,7 +2078,7 @@ def _pnl_lines_for(result: dict | None, mode: str = "") -> list[str]:
     One renderer for the owner's P&L block across BOTH message modules, so
     the figure and its wording can never differ between two messages sent
     minutes apart. Never raises: a P&L-rendering fault must not be able to
-    stop the message it leads \u2014 it degrades to the same honest
+    stop the message it leads — it degrades to the same honest
     "not available" wording the normal path uses for a missing figure.
     """
     if mode == "evening" and isinstance(result, dict):
@@ -2179,20 +2193,20 @@ def format_session_result(
     # The outcome goes IN the title line, in words. Two lines that used to
     # sit under it are gone (owner review, 2026-09-18, extending PR #471's
     # ratified evening standard to every message):
-    #   - "run_id: earnings_preprocess-a745ceda" \u2014 a run identifier
+    #   - "run_id: earnings_preprocess-a745ceda" — a run identifier
     #     means nothing to him and he does not need it. Board item 89
     #     clarity defect "run identifiers", previously fixed in the evening
     #     message only. `run_id` is still read below for the cost lookup;
     #     it is simply never shown.
-    #   - "status: Preprocessed" \u2014 an internal status code with its
+    #   - "status: Preprocessed" — an internal status code with its
     #     underscores taken out is still an internal status code. Board
     #     item 89 clarity defect "internal status codes shown as-is".
     lines: list[str] = [
-        f"{emoji} {severity_prefix}{mode_label(mode)} \u2014 "
+        f"{emoji} {severity_prefix}{mode_label(mode)} — "
         f"{humanize_status(status)}  ({timestamp})",
     ]
 
-    # P&L FIRST, directly under the heading \u2014 owner, 2026-09-18, verbatim:
+    # P&L FIRST, directly under the heading — owner, 2026-09-18, verbatim:
     # "all the P&L information has to go at the very top of every telegram
     # alert, right after the first line, which is really the heading." A
     # REPEAT correction: it kept drifting below whatever block was added
@@ -2203,7 +2217,7 @@ def format_session_result(
     # message uses, so two messages can never state his P&L differently.
     # Imported lazily because `trader_feed` imports this module. A mode
     # that carries no account figures (the pre-open filing reader, a crash
-    # report) renders "not available" plus one sentence saying why \u2014 never
+    # report) renders "not available" plus one sentence saying why — never
     # a dropped block and never a fabricated zero.
     _new_section(lines, *_pnl_lines_for(result, mode))
 
@@ -2277,7 +2291,7 @@ def format_session_result(
             daily_block.append(f"error: {err}")
         _new_section(lines, *daily_block)
 
-    # "elapsed: 3m 5s" \u2014 a raw label the owner called noise. Kept,
+    # "elapsed: 3m 5s" — a raw label the owner called noise. Kept,
     # because a session that suddenly takes four times as long is worth
     # seeing, but as the evening message already renders it.
     _new_section(lines, f"\U0001f9fe took {elapsed_str}")
@@ -3101,11 +3115,11 @@ def _session_cost_line(run_id: str | None) -> str | None:
     if not rows:
         return None
     if any(r[0] is None for r in rows):
-        # Unknown model in the pricing table for at least one call \u2014
+        # Unknown model in the pricing table for at least one call —
         # cannot honestly sum. Say so; never show a partial total as though
         # it were the whole, and never show a fabricated figure.
         return (
-            "\U0001f4b5 AI cost for this run: not available \u2014 one of "
+            "\U0001f4b5 AI cost for this run: not available — one of "
             "the models used has no price on file"
         )
     # The provider-request count that used to sit in brackets here is gone
