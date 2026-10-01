@@ -978,6 +978,26 @@ class TelegramNotifier:
           alert's free text is still rendered as visible text, not markup.
         """
         if not self.enabled:
+            # Item 211 defect 3. The global mute used to drop the message
+            # here, BEFORE anything was written down, so nothing that would
+            # have fired since the desk was muted exists anywhere — neither
+            # the owner nor the desk can see what he has been missing. This
+            # un-mutes nothing and sends nothing; it only means a muted
+            # message leaves a durable trace (type, symbols, timestamp) in
+            # `notifier_sends`, the same table a delivered one lands in.
+            if text and getattr(self, "muted", False):
+                self._safe_record_send(
+                    kind=kind,
+                    status="muted",
+                    run_id=run_id,
+                    text=text,
+                    detail=(
+                        "suppressed by TELEGRAM_DISABLED; symbols: "
+                        + ", ".join(_dedupe_symbols(symbols or []))
+                        if symbols else
+                        "suppressed by TELEGRAM_DISABLED; not sent"
+                    ),
+                )
             return False
         if not text:
             return False

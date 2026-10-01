@@ -2882,3 +2882,42 @@ def test_send_does_not_alter_a_normal_owner_message(monkeypatch):
     assert ok is True
     sent = mock_post.call_args.kwargs["json"]["text"]
     assert plain in sent
+
+
+def test_the_global_mute_records_every_message_it_drops(tmp_path, monkeypatch):
+    """Item 211 defect 3. `TELEGRAM_DISABLED` used to drop the message before
+    anything was written down, so nothing that would have fired while the
+    desk was muted exists anywhere — the owner cannot see what he is missing
+    and neither can the desk. Nothing is un-muted and nothing is sent; a
+    muted message must simply leave a durable trace.
+    """
+    import sqlite3
+
+    from src import notifier as notifier_mod
+
+    db_path = tmp_path / "quant_agent.db"
+    monkeypatch.setattr(notifier_mod, "_DB_PATH", db_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "x")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "y")
+    monkeypatch.setenv("TELEGRAM_DISABLED", "1")
+
+    n = notifier_mod.TelegramNotifier()
+    assert n.muted is True
+    assert n.enabled is False
+
+    assert n.send("AAA has no protective stop", kind="owner_alert", symbols=["AAA"]) is False
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = list(conn.execute(
+            "SELECT kind, status, text, detail, timestamp FROM notifier_sends"
+        ))
+    finally:
+        conn.close()
+    assert len(rows) == 1, "the muted message left no trace"
+    kind, status, text, detail, timestamp = rows[0]
+    assert kind == "owner_alert"
+    assert status == "muted"
+    assert "AAA" in text
+    assert "AAA" in (detail or "")
+    assert timestamp
