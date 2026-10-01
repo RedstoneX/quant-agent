@@ -311,6 +311,13 @@ DONE WHEN:
 detail: docs/BOARD_NOTES.md (item 208)
 
 
+**217. Prompt claims that another part of the desk "handles" something — verify each against the code (filed 2026-10-01 after the risk seat was told a thin reward:risk had been "paid for in size by the constructor"; it had not, and that sentence is corrected).** The sweep was by text search only, so claims phrased differently may remain. Not yet verified: the portfolio-manager prompt's statements that "the constructor will deny it" (immaterial-payoff trades), "the constructor REJECTS the trade outright" (stop on the wrong side of entry), and "the constructor will NOT flip" a held short in one session.
+
+DONE WHEN:
+  - [ ] (a) each constructor claim above is confirmed against the live code or corrected, with a test pinning the wording
+  - [ ] (b) any other seat-prompt sentence of the form "X already handles Y" found by reading the rendered prompts is confirmed or corrected
+detail: docs/BOARD_NOTES.md (item 217)
+
 **216. The short-side gap haircut is applied in TWO places and the constructor's copy is not the one that binds — filed 2026-09-30.**
 
 Execution sizes a position as min(qty_by_alloc, qty_by_risk). The constructor
