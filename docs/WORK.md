@@ -93,7 +93,7 @@ DONE WHEN:
   - [ ] PREREQUISITE FOUND 2026-10-01: the desk's own data cannot settle it because it holds NO sale observations to read — the production evidence store has 521 smart-money observations across 325 analyst rows, ALL buys, zero sales [measured, production DB specialist_evidence, 2026-08-26..2026-09-30] and only 80 trades in total [measured, same DB]; the remaining build is a RECORDING of insider-sale rows (with `holdings_fraction_band`) plus their forward return, found first by tracing why no sale reaches the stored evidence although the parser emits them
   - [x] TRACED 2026-10-01, the prerequisite above is ANSWERED and the cause is not the parser: the parser emits sales and the production observations cache holds 16,019 of them against 2,384 buys [measured, production smart-money observations cache, written 2026-09-30], but `SECForm4Provider.fetch` truncates to `max_observations` (40) under a sort whose FIRST key is `not transient_admission_eligible`, and admission requires `direction == "buy"`, so with more eligible buys than slots NO sale can ever reach the analyst or the evidence store — which is exactly why the store holds 828 observation rows and every one is a buy [measured, production specialist_evidence]
   - [ ] RECORDING BUILT 2026-10-01 and NOT YET PROVEN IN PRODUCTION: every fetch now stashes an `insider_sale_census` (sale count, per-`holdings_fraction_band` counts, and a bounded row sample carrying the reference price and transaction date) and the research stage writes it to `specialist_evidence`; it governs nothing — no gate, no ranking key and no sizing path reads it. It is UNPROVEN, not dead: the write path is exercised by tests but has never run in production, so the next pass MUST measure its row count and newest timestamp before treating it as a route to closure
-  - [ ] the forward-return half is NOT built: the census records the reference price and date a forward return is joined on, never a return, because the return is forward. The join is the remaining build
+  - [x] 2026-10-01, THE JOIN IS BUILT and run: `src/insider_sale_measure.py` joins each census row's reference date to the desk's own daily bars at the two forward windows the desk already measures on (the evening analyst's next-day and five-session scorecard), excluding and counting every row the bars cannot resolve rather than substituting one. Measured over the production sale cache it separates NOTHING: the sourced >50%-of-holdings band's forward return is POSITIVE and the largest of the three bands at both windows, the opposite sign to the published scheme, and the whole resolved set is one 13-month bull-market sample of the 101 names the desk already follows, so it cannot ground a sign either way. Numbers, uncertainties and exclusions in docs/BOARD_NOTES.md (item 63). NOTHING in the signal path changed
   - [ ] until one of those exists a sale stays NEUTRALISED at 0 and no agent picks the boundary number — the standing no-arbitrary-numbers and no-fitting rules settle that, this is not an appetite dial
 detail: docs/BOARD_NOTES.md (item 63)
 
@@ -129,13 +129,6 @@ DONE WHEN:
   - [ ] nothing here is fitted to the desk's own trading record, and nothing ships alone
 detail: docs/BOARD_NOTES.md (item 75)
 
-**76. PM-input shape: the one open piece is whether the PM uses its new macro-audit channel. OPEN, moved out of the PM TEST GATE 2026-09-14.** Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14.
-
-DONE WHEN:
-  - [ ] BLOCKED and cannot close by building — a before/after benchmark of whether the PM actually uses `reasoning_chain.macro_audit` is a paid run, and the owner's 2026-09-15 decision is that no test-environment work happens unless he asks. Same blocker as the model-seat decision line at the top of this file and 18(a); one authorisation would release all three.
-  - [ ] it is not reopened as a prompt-size problem
-detail: docs/BOARD_NOTES.md (item 76)
-
 **78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle.** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank.
 
 DONE WHEN:
@@ -145,7 +138,7 @@ DONE WHEN:
   - [ ] MEASURED AGAIN 2026-10-01 against the live database (specialist_evidence, 13,815 rows total; 327 technical-seat analysis rows since 2026-09-26): condition STILL NOT met, the technical seat returned a blank or `unknown` `thesis_invalid_if` on 53 of 78 stocks (68%) on 2026-09-30, after 134 of 223 on 2026-09-29 and 14 of 26 on 2026-09-28, so the blank rate has not fallen; the portfolio manager emitted a falsifier on all 2 targets it wrote on 2026-09-30, but 2 is too few to demonstrate anything; zero `soft-exit missing after retry` refusals and zero `soft_exit_heal` rows exist, so criteria 2 and 3 are still unevaluable. Do not re-measure until the soft-exit heal outcome row exists.
 detail: docs/BOARD_NOTES.md (item 78)
 
-**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, half shipped 2026-09-18, item stays OPEN.** **Half one, DONE:** every numeric definition site in scope must carry a `config/number_ledger.yaml` entry saying where it came from, or `pytest` fails.
+**90. Unsourced trade-governing numbers — the GATE now exists; re-deriving the numbers does NOT. TIER 1, half shipped 2026-09-18, item stays OPEN.** **Half one, DONE:** every numeric definition site in scope must carry a `config/number_ledger.yaml` entry saying where it came from, or `pytest` fails. **Routing pass 2026-10-01:** the 16-row smart-money reading tranche (ranking tables + truncation caps + the two cluster rows) now carries settlement routes; routeless rows 130 -> 114; the ranking integers were found to cancel algebraically to a pure sort order. See docs/BOARD_NOTES.md item 90.
 
 **2026-09-30 — `risk.min_stop_atr_multiple` (2.5): the value is UNCHANGED, the claim that it was SOURCED is withdrawn, and the reformulation is filed as item 199 rather than refused.** Detail: `docs/BOARD_NOTES.md` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
   - [ ] 2026-09-30, second pass: the floor's VALUE is untouched and the evidence to judge it is now recorded per closed trade (entry price, entry ATR, the entry stop and its basis, and the maximum ADVERSE and FAVOURABLE excursions, alongside the realised outcome and stop-hit category already stored; the ATR multiple is recomputed from those, not stored again), and the pipeline's stale 1.5 fallback is closed at source by reading the declared default instead of a copied literal; the record is for FALSIFICATION only (was the floor ever violated in practice) and may NOT be optimised against, so the next pass reads it rather than re-deriving a multiple. Detail: `docs/BOARD_NOTES.md` ("item 90 — the 2026-09-30 `min_stop_atr_multiple` pass").
@@ -408,14 +401,15 @@ detail: docs/BOARD_NOTES.md (item 219)
 - retired queue: 195
 - retired queue: 109
 - retired queue: 19
-- retired queue: 157
 - retired queue: 196
 - retired queue: 99
-- retired queue: 193
+- retired queue: 157
 - retired queue: 119
-- retired queue: 185
-- retired queue: 214
+- retired queue: 193
 - retired queue: 107
+- retired queue: 185
+- retired queue: 76
+- retired queue: 214
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
