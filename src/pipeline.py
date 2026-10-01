@@ -91,10 +91,8 @@ from src.pipeline_risk_gate import (  # noqa: F401
 # mixin module. `CarryForward` travelled with it because only those bodies
 # construct it and that module may not import this one; it is re-exported here
 # so `from src.pipeline import CarryForward` keeps working.
-from src.pipeline_research_continuity import (  # noqa: F401
-    CarryForward,
-    ResearchContinuityMixin,
-)
+from src.pipeline_research_continuity import CarryForward  # noqa: F401
+from src.pipeline_research_continuity_delegate import ResearchContinuityMixin
 from src.pipeline_intraday import IntradayMixin
 from src.pipeline_prompt_facts import (  # noqa: F401
     PromptFactsMixin,

@@ -1,6 +1,6 @@
 """EventJournal — the port through which the desk records what it did.
 
-Conversion step 6. Two methods, and only two, because those are the two
+Conversion step 6 (two methods) plus step 9's ``insert_agent_log``. The first two are the two
 module-level helpers (``_persist_evidence`` and ``_record_pipeline_event`` in
 ``src/pipeline_stages.py``) that every stage and service reaches for today.
 Later steps hand a ``journal: EventJournal`` to each service's constructor in
@@ -41,3 +41,12 @@ class EventJournal(ABC):
         stage: str, outcome: str, reason: str = "", **details,
     ) -> None:
         """Record one typed lifecycle fact for this run (and symbol). Never raises."""
+
+    @abstractmethod
+    def insert_agent_log(
+        self, *, agent_name: str, run_id: str, input_summary: str,
+        output_summary: str, full_response: str, model: str, tokens_used: int,
+        **fields,
+    ) -> None:
+        """Record one paid model call (``agent_logs``). Unlike the two methods
+        above this MAY raise: its one caller wraps it and logs its own failure."""

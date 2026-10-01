@@ -1,40 +1,23 @@
 """Research continuity: may yesterday's paid research be reused, and can a lost seat be healed?
 
-Step 7 of `docs/PIPELINE_SPLIT_PLAN.md` (board item 210), clusters S + T + U + V.
-Moved VERBATIM out of `src/pipeline.py` as a mixin, so `TradingPipeline` keeps
-every one of these as its own attribute and every test that calls, patches or
-reads them through the class is untouched.
-
-One question is answered here: whether the desk may stand on evidence it has
-already paid for. The change detectors (macro regime, FRED prints, a newer
-material news wire) decide whether a stored answer is still true; the
-carry-forward readers hand the morning's macro, news, earnings and insider
-payloads to an intraday tick with an honest `data_status` rather than a
-silent reuse; the Form-4 backlog alert and the congressional refresh say when
-an evidence lane is behind; and the seat healing path spends at most one paid
-retry to recover a seat that was lost, recording what it did either way.
-
-`CarryForward` travels with it: the dataclass is read and constructed only by
-the moved bodies, and this module may not import `src.pipeline`. It is
-re-exported from `src.pipeline`, so `from src.pipeline import CarryForward`
-keeps working.
-
-Nothing here may import `src.pipeline`: this module is one of its bases.
+Conversion step 9: a standalone `ResearchContinuity` (change detectors, carry-forward
+readers, Form-4 and congressional records, seat healing) built from explicit keyword
+collaborators; `TradingPipeline` reaches it through the delegating mixin in
+`src/pipeline_research_continuity_delegate.py`. `CarryForward` lives here and is
+re-exported from `src.pipeline`. This module may not import `src.pipeline`.
 """
 
 import json as _json
 import logging
 from dataclasses import dataclass
-
 from src.agents.base import agent_log_kwargs
 from src.cost_circuit import PaidAnalysisSuspended
 from src.models import NewsIntelligenceReport
 from src.pipeline_context import RunContext
-from src.pipeline_stages import _persist_evidence
+from src.ports.event_journal import EventJournal
 from src.trading_calendar import et_today
 
-#: The moved code logged under `src.pipeline` before the move and still does;
-#: binding the name rather than `__name__` keeps log records byte-identical.
+#: Logs under `src.pipeline` as before the move, keeping log records identical.
 logger = logging.getLogger("src.pipeline")
 
 
@@ -64,8 +47,25 @@ class CarryForward:
         return self.payload is not None
 
 
-class ResearchContinuityMixin:
-    """Change detection, carry-forward and seat healing for TradingPipeline."""
+class ResearchContinuity:
+    """Collaborators are keyword-only; None means "not wired", as the bodies read it."""
+
+    def __init__(
+        self, *, config, journal: EventJournal, db=None, macro_store=None,
+        news_store=None, macro=None, news_provider=None, earnings_provider=None,
+        smart_money_provider=None, macro_analyst=None, news_analyst=None,
+        tech_analyst=None, load_earnings_analyses=None, require_paid_analysis=None,
+    ) -> None:
+        self.config, self.journal = config, journal
+        self.db = db  # READ-ONLY here (4 reads); every write goes through `journal`
+        self.macro_store, self.news_store, self.macro = macro_store, news_store, macro
+        self.news_provider, self.earnings_provider = news_provider, earnings_provider
+        self.smart_money_provider = smart_money_provider
+        self.macro_analyst, self.news_analyst = macro_analyst, news_analyst  # resolved by name
+        self.tech_analyst = tech_analyst
+        self._load_earnings_analyses = load_earnings_analyses
+        self._require_paid_analysis = require_paid_analysis
+        self._last_news_peek_items: list = []
 
     def _macro_regime_or_print_changed(self, state: dict) -> bool:
         """True when a later snapshot actually changed the regime or a FRED print.
@@ -302,8 +302,8 @@ class ResearchContinuityMixin:
             "watched_drain_ran", "watched_drain_read",
             "watched_drain_deadline_hit", "edgar_coverage", "error",
         )
-        _persist_evidence(
-            getattr(self, "db", None), run_id=run_id,
+        self.journal.persist_evidence(
+            run_id=run_id,
             agent_name="smart_money_refresh", kind="form4_backlog", scope="run",
             evidence_json=_json.dumps(
                 {k: refresh.get(k) for k in keys}, sort_keys=True, default=str,
@@ -322,8 +322,8 @@ class ResearchContinuityMixin:
         if not isinstance(summary, dict):
             return
         import json as _json
-        _persist_evidence(
-            getattr(self, "db", None), run_id=run_id,
+        self.journal.persist_evidence(
+            run_id=run_id,
             agent_name="smart_money_refresh", kind="congressional_refresh",
             scope="run",
             evidence_json=_json.dumps(summary, sort_keys=True, default=str),
@@ -915,8 +915,8 @@ class ResearchContinuityMixin:
         """Durable heal log. Pages only on attempted-and-failed / cap-block."""
         import json as _json
         try:
-            _persist_evidence(
-                self.db, run_id=ctx.run_id, agent_name="seat_heal",
+            self.journal.persist_evidence(
+                run_id=ctx.run_id, agent_name="seat_heal",
                 kind="seat_heal", scope="run",
                 evidence_json=_json.dumps(result.to_evidence(), sort_keys=True),
             )
@@ -958,7 +958,6 @@ class ResearchContinuityMixin:
         succeeded, the same rule `_persist_evidence` and the two re-ask log
         writes above already follow.
         """
-        from src.pipeline_stages import _persist_evidence
         session = getattr(ctx, "session", None) or "intra_check"
         # `news_analyst_{session}` is the ordinary name for the news seat
         # (`_run_news_analysis`); macro logs flat. Match each, don't invent.
@@ -973,7 +972,7 @@ class ResearchContinuityMixin:
             )
         else:
             try:
-                self.db.insert_agent_log(
+                self.journal.insert_agent_log(
                     agent_name=log_name, run_id=ctx.run_id,
                     input_summary=f"seat heal re-ask | {seat} | session={session}",
                     input_message=getattr(call_result, "user_message", "") or "",
@@ -998,8 +997,8 @@ class ResearchContinuityMixin:
         except Exception as e:  # noqa: BLE001
             logger.warning("seat heal: could not serialise %s answer: %s", seat, e)
             return
-        _persist_evidence(
-            self.db, run_id=ctx.run_id, agent_name=agent_name,
+        self.journal.persist_evidence(
+            run_id=ctx.run_id, agent_name=agent_name,
             kind="analysis", scope="run", evidence_json=evidence_json,
         )
 

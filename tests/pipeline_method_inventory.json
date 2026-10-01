@@ -298,7 +298,8 @@
         "CarryForward": [
           "__bool__"
         ],
-        "ResearchContinuityMixin": [
+        "ResearchContinuity": [
+          "__init__",
           "_alert_form4_backlog_before_open",
           "_carry_forward_earnings",
           "_carry_forward_insider",
