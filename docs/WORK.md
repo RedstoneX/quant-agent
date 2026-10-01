@@ -298,6 +298,16 @@ DONE WHEN:
   - [ ] `config/number_ledger.yaml`'s entry for `src.config.RiskConfig.min_stop_atr_multiple` records the outcome, and either its status changes or its note states exactly which population it still governs
 detail: docs/BOARD_NOTES.md (item 199) — item 90's ledger entry carries the retracted arguments so they are not re-proposed
 
+**200. The status board's own file was one change away from blocking every other change — filed 2026-09-30. OPEN: the move is made, the guard against it recurring is not.**
+
+DONE WHEN:
+  - [x] `docs/WORK.md` is back under 70% of its cap by MOVING argument, history and measurement out of open items — not deleting it, not raising the cap — with every moved byte proved verbatim in `docs/BOARD_NOTES.md` by a line-level diff and the rendered owner prose unchanged block-for-block
+  - [x] the cap and the growth budget are named as what they are: both PICKED, not derived (100,000 gave ~5% headroom over a measured 94,801; the 0.5 growth share calls itself provisional), and both allowed to be picked because a documentation size limit governs no money
+  - [ ] the move is REPEATABLE without a human deciding what to carve: nothing yet stops the same items re-accreting history in place, so the next time the cap binds it will again be hand-work
+   — the file passing (say) 80% should say so in the same place the growth-budget failure already speaks, rather than the first warning being a blocked merge
+
+detail: docs/BOARD_NOTES.md (item 200)
+
 **205. The alignment exit the owner ruled for is not built: nothing asks whether structure, ATR and a moving-average cross AGREE the trend is over — filed 2026-09-30, carried out of item 75 when the 2026-09-30 ruling retired that item's target framing. Filed only; deliberately not built in that pass.**
 
 DONE WHEN:
@@ -306,6 +316,12 @@ DONE WHEN:
   - [ ] nothing in the change sends a price target to the broker or makes profit-taking at a target an allowed exit reason, which the owner ruled against on 2026-09-30
   - [ ] the trail constants stay out of scope: they are item 90's half two and item 185's tranche and must not be re-derived here
 detail: docs/BOARD_NOTES.md (item 205)
+
+**206. An 8-K results release is not visible to the exit path — filed 2026-09-30, carried out of item 75 so it is not lost with that item's retirement.** Item 75 held this clause and the 2026-09-30 exit-on-alignment ruling does not touch it: a results release is an instrument fact, not a price target. Nothing on the board owned it after 75 was retired.
+
+DONE WHEN:
+  - [ ] the exit path can see that an 8-K results release has landed for a held name, from the filing feed the desk already consumes rather than a new paid source
+  - [ ] what the exit path DOES with that fact is decided and written down before it is wired, and it never becomes a single-signal exit, which the 2026-09-30 ruling bars
 
 **202. The rehearsal harness is not hermetic — a test that replays a RECORDED session downloads live market data — filed 2026-09-30.** `tests/test_rehearsal_reproduces_cost_ceiling.py::test_the_settled_cost_ceiling_still_suspends_paid_analysis` reaches yfinance for price history on every run and takes ~196s doing it; it FAILS on main today [measured 2026-09-30, `origin/main`, network reachable]. Pre-existing, not caused by the conftest network guard that exposed it. detail: docs/BOARD_NOTES.md (item 202)
 
