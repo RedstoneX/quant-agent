@@ -1207,7 +1207,7 @@ and an SMA cross agree the trend is over, never on a single made-up level.
 The alignment exit on open PR #853 is the candidate replacement for this
 gate. Do not build a replacement under this item, and do not re-derive,
 widen or replace any multiple.
-## item 211
+## item 211 — RETIRED 2026-10-01, both-edge paging deferred to the circuit's own self-clear window, repeat suppression made per-type, and every refusal now readable at /alerts/suppressed
 
 Why the threshold is not a new number. The circuit already answers "how long
 before this stops being a blip": `_auto_clear_transient_latch_locked` refuses
@@ -1232,9 +1232,35 @@ trigger still pages immediately, because there is no window it can expire
 inside. It does not migrate the three existing per-symbol markers in
 `src/coverage_watchdog.py` onto the new generic helper; that is a refactor of
 working code and was left alone so this change cannot alter what they already
-suppress. And it does not put the suppression record on the API — the counts
-are durable in `data/alerting/` and in `llm_circuit_events`, but reading them
-today means reading those, which is the honest state and is filed above.
+suppress. The suppression record IS now on the API, which was the item's last open
+criterion: `GET /alerts/suppressed` returns the `suspend_alert_deferred`
+rows from `llm_circuit_events` alongside the `suppressed_alerts` block from
+BOTH watchdog state files, and reports "could not read it" separately from
+"nothing was suppressed" rather than collapsing the two into an empty list.
+It still does not migrate the three existing per-symbol markers in
+`src/coverage_watchdog.py` onto the generic helper; that is a refactor of
+working code and was left alone so this change cannot alter what they
+already suppress. There is no dashboard tile — the criterion reads
+"API/dashboard" and the API is what shipped.
+
+Correction to the item text as filed. It said `scripts/check_deploy_drift.py`
+claims through `coverage_watchdog.claim_typed_alert`. It does not: it keeps
+its own `drift_alerted_for` marker in `deploy_drift.json`, which is still a
+per-type, per-key, per-day claim but a separate implementation. What it was
+genuinely missing is the recording half — a repeat it declined to send left
+no trace at all — so `record_state` now writes that refusal through
+`_record_suppressed_alert`, into the same state file, where the endpoint
+reads it.
+
+Where the live-risk line is drawn. A live-risk alert is one about a position
+whose protection is gone or never arrived: a stop that failed to place, a
+stop that failed to re-arm after a scale-in, an uncovered position, a broker
+rejection. None of them is ever silenced: the cost circuit's deferral applies
+only to `_SELF_CLEARING_HARD_TRIGGERS` (paid-provider faults), and the typed
+claim helper always releases the FIRST occurrence for a symbol on an ET day,
+holding only a byte-identical repeat of the same fault for the same symbol on
+the same day — and recording even that. Both halves are proved in
+`tests/test_alert_suppression_api.py` and `tests/test_cost_circuit.py`.
 ## item 214
 
 **Filed 2026-09-30 out of item 157's retirement.** Item 157 built the enforced answer format and both OpenAI-wire routes now send a strict `json_schema` response format for `TechAnalystAnswer`. Its first DONE WHEN — a live call confirming the Google route enforces what was sent — is structurally unreachable, not merely undone: the rehearsal identity is not granted the Google credential and production is the only identity that could make the call, so the confirming pytest would spend real money on the shared account. The replacement shipped on 2026-09-23: `_record_answer_hygiene` tags every real answer with the provider that served it and records fenced-markdown and extra-key violations to `parse_telemetry`. That evidence is being collected and has never been read. This item carries the unanswered question, not the build.
