@@ -1089,9 +1089,34 @@ numbers:
       Labels the derived target; does not select it (changed 2026-09-30).
   - id: src.config.RiskConfig.short_gap_risk_multiple
     value: 1.5
-    status: arbitrary
+    status: derived
     site: src/config.py
+    derived_from: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
+    base_value: 1.5
     note: >-
+      The deployed, operator-overridable setting. It holds no literal of its
+      own: its Field default IS the one definition
+      (src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT), so base-drift
+      cannot happen silently and this row is `derived`, not a second
+      arbitrary number. Board item 216, 2026-10-01 — before that date the
+      literal 1.5 was written out four times and applied at three sites.
+  - id: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
+    value: 1.5
+    status: arbitrary
+    site: src/risk/constants.py
+    note: >-
+      MOVED 2026-10-01, board item 216: this is the SAME number, unchanged in
+      value, re-homed from src.config.RiskConfig.short_gap_risk_multiple to
+      the one place that now defines AND applies it. It previously had a
+      second ledger row (src.portfolio_constructor.ConstructorConfig.
+      short_gap_risk_multiple, `derived`); that row is deleted rather than
+      kept in sync, because a mirror kept in sync is the same defect waiting
+      to recur. The literal existed four times and the haircut was APPLIED at
+      three sites; execution ships min(qty_by_alloc, qty_by_risk), so the
+      execution-side copy, not the constructor's, sized a live short whenever
+      the risk leg bound. Both legs now call gap_adjusted_risk_per_share. No
+      sizing changed. The arbitrary count is unchanged: one row replaces one
+      row, and the deleted row was `derived`, never counted as arbitrary.
       Sizing-only haircut on a short's risk-per-share, never applied to stop
       placement: a short gaps through its stop upward with no bound, so the
       same risk allocation opens a SMALLER short than an equivalent long
@@ -2951,22 +2976,6 @@ numbers:
     cost_while_unanswered: >-
       Owner-ratified at 5% on 2026-08-27 but not sourced; it caps every real
       position.
-  - id: src.portfolio_constructor.ConstructorConfig.short_gap_risk_multiple
-    value: 1.5
-    status: derived
-    site: src/portfolio_constructor.py
-    derived_from: src.config.RiskConfig.short_gap_risk_multiple
-    base_value: 1.5
-    note: >-
-      Mirror of src.config.RiskConfig.short_gap_risk_multiple, the deployed
-      value. Recorded as `derived` rather than as a second arbitrary number:
-      it is ONE number with two definition sites, so counting it twice would
-      inflate the arbitrary total the same way this ledger's first version
-      claimed the 0.50% floor existed in one place while listing it in two.
-      Base-drift now fails the build if the pair stops agreeing, which nothing
-      previously checked. CORRECTION 2026-09-18: the first version quoted
-      "until a separate pass re-examines it" as text at this site; that phrase
-      is in docs/, not in src/portfolio_constructor.py.
   - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]
     value: 1.2
     status: arbitrary

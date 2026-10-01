@@ -1302,7 +1302,8 @@ class Database:
         # from "held, and never gapped against".
         #
         # WHY IT EXISTS (item 186): the short-side sizing haircut
-        # (`RiskConfig.short_gap_risk_multiple`, 1.5) is unsourced, and TWO
+        # (`src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT`, 1.5, the one
+        # definition since board item 216) is unsourced, and TWO
         # attempts to read it off the instrument have failed — see the
         # ledger row and docs/BOARD_NOTES.md item 186. Both failed for the
         # same underlying reason: the desk has never recorded what a short

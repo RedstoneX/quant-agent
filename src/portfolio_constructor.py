@@ -48,6 +48,7 @@ from src.models import (
 )
 from src.risk.constants import (
     REWARD_RISK_PARITY,
+    gap_adjusted_risk_per_share,
     reward_risk_floor_applies,
     reward_risk_parity_refuses,
 )
@@ -667,9 +668,15 @@ class ConstructorConfig:
     # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
     # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
     # this before it is converted to a weight, so the same risk allocation
-    # opens a smaller short than an equivalent long. Keep in sync with
-    # `risk.short_gap_risk_multiple`.
-    short_gap_risk_multiple: float = 1.5
+    # opens a smaller short than an equivalent long. Plumbing only: the
+    # value is `risk.short_gap_risk_multiple` and the default literal lives
+    # once, in `src.risk.constants` (board item 216). The haircut itself is
+    # applied by `gap_adjusted_risk_per_share`, never inline. There is
+    # deliberately NO default literal here: this field used to carry its own
+    # copy of the number and its own number-ledger row, and a mirror kept in
+    # sync is the same defect waiting to recur. `None` means "whatever the
+    # one definition says", which is what the helper resolves it to.
+    short_gap_risk_multiple: float | None = None
     # Minimum stop distance, in ATRs. A stop inside ordinary volatility is not
     # a thesis invalidation, it is a coin flip on noise — Phase 3 already
     # established 1.25 ATR as one ordinary day's range for a TRAILING stop,
@@ -2042,13 +2049,14 @@ class PortfolioConstructor:
             # `entry - stop` would corrupt the weight's sign; `abs()` keeps
             # this an unsigned magnitude exactly like the long case (D4).
             risk_per_share = abs(entry - stop)
-            if directions.get(sym) == "short":
-                # D8: gap-risk sizing haircut — SIZING ONLY, never applied
-                # to the stop placed above (already resolved). A short gaps
-                # through its stop with no bound, so the same nominal risk
-                # allocation must open a SMALLER short than an equivalent
-                # long at the same stop distance.
-                risk_per_share *= self.cfg.short_gap_risk_multiple
+            # D8: gap-risk sizing haircut — SIZING ONLY, never applied to
+            # the stop placed above (already resolved). One definition, in
+            # `src.risk.constants` (board item 216); a no-op for a long.
+            risk_per_share = gap_adjusted_risk_per_share(
+                risk_per_share,
+                is_short=directions.get(sym) == "short",
+                multiple=self.cfg.short_gap_risk_multiple,
+            )
             raw_weight = granted * entry / risk_per_share
             plans[sym] = RiskPlan(
                 symbol=sym,
@@ -4286,14 +4294,15 @@ class PortfolioConstructor:
         # D4: unsigned risk-per-share (stop sits ABOVE entry for a short).
         risk_per_share = abs(entry_price - stop_loss)
         # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement
-        # (the stop above was already resolved before this line runs). A
-        # short gaps through its stop upward with no bound, so the same
-        # nominal risk allocation must open a SMALLER short than an
-        # equivalent long at the same stop distance. Paper trading fills
-        # unrealistically through a gap on IEX data with no borrow-cost
-        # model, so this haircut is what keeps the measured size honest
-        # relative to what live capital would actually risk.
-        risk_per_share *= self.cfg.short_gap_risk_multiple
+        # (the stop above was already resolved before this line runs). Paper
+        # trading fills unrealistically through a gap on IEX data with no
+        # borrow-cost model, so this haircut is what keeps the measured size
+        # honest relative to what live capital would actually risk. One
+        # definition, in `src.risk.constants` (board item 216).
+        risk_per_share = gap_adjusted_risk_per_share(
+            risk_per_share, is_short=True,
+            multiple=self.cfg.short_gap_risk_multiple,
+        )
         risk_dollars_allowed = total_value * self.cfg.risk_budget_pct / 100
         cap_note = ""
         if risk_per_share > 0:
