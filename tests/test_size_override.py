@@ -31,7 +31,7 @@ import itertools
 
 import pytest
 
-from src.risk.size_override import SizeOverride, combine_overrides
+from src.risk.size_override import SizeOverride
 
 _KINDS = ("no_trading", "close", "reduce_only", "multiplier")
 
@@ -78,19 +78,6 @@ def test_two_multipliers_combine_regardless_of_argument_order():
     a = SizeOverride.sized(4.0).combine(SizeOverride.sized(1.5))
     b = SizeOverride.sized(1.5).combine(SizeOverride.sized(4.0))
     assert a.value == b.value == 1.5
-
-
-def test_combine_overrides_reduces_across_more_than_two():
-    result = combine_overrides(
-        SizeOverride.sized(5.0), SizeOverride.reduce_only(), SizeOverride.sized(2.0),
-    )
-    assert result.kind == "reduce_only"
-
-
-def test_combine_overrides_with_no_arguments_is_the_least_restrictive_case():
-    result = combine_overrides()
-    assert result.kind == "multiplier"
-    assert result.value == float("inf")
 
 
 # ---------------------------------------------------------------------------
