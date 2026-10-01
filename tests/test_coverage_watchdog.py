@@ -1109,3 +1109,93 @@ def test_item193_summary_and_log_line_name_the_unguarded_position():
     text = cw.unguarded_text([row])
     assert "AAPL" in text and "9.0s" in text
     assert status.should_alert_unguarded is True
+
+
+# ---------------------------------------------------------------------------
+# board item 193 — the session-lock skip is BOUNDED by measured history
+# ---------------------------------------------------------------------------
+
+class _EntryBroker:
+    """Broker double whose only job is to say what entry orders are working."""
+
+    def __init__(self, working):
+        self.working = list(working)
+
+    def get_orders(self, *a, **k):  # pragma: no cover - shape varies
+        return list(self.working)
+
+
+def _lock_held(monkeypatch, held):
+    import src.execution.scale_in as si
+    monkeypatch.setattr(si, "trading_session_lock_held", lambda: held)
+
+
+def test_item193_lock_held_within_measured_bound_still_skips(tmp_path, monkeypatch):
+    """A normal live window is untouched: the skip is the correct behaviour."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    _lock_held(monkeypatch, True)
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
+    now = datetime(2026, 9, 30, 14, 0, 5, tzinfo=timezone.utc)  # 5s < 9s measured
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+def test_item193_lock_held_past_measured_bound_hands_symbol_to_the_sweep(
+    tmp_path, monkeypatch,
+):
+    """Past every window ever measured, the lock is no longer reason to look
+    away: with no entry order working there is nothing to collide with, so the
+    position becomes repairable instead of staying naked indefinitely."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+
+    _lock_held(monkeypatch, True)
+    import src.execution.scale_in as si
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[2.5, 9.0])
+    now = datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc)  # 300s > 9s
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == set()
+
+
+def test_item193_past_bound_but_entry_still_working_keeps_the_skip(
+    tmp_path, monkeypatch,
+):
+    """The collision is real — a stop would be blocked — so the skip stands."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: ["entry-1"])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00", windows=[9.0])
+    now = datetime(2026, 9, 30, 14, 5, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker(["entry-1"]), db, now=now) == {"AAPL"}
+
+
+def test_item193_no_measured_history_leaves_the_old_behaviour_exactly(
+    tmp_path, monkeypatch,
+):
+    """With nothing measured there is no bound, so nothing is called overdue
+    and the lock-held skip behaves exactly as it did before."""
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="2026-09-30 14:00:00")  # no windows
+    now = datetime(2026, 9, 30, 18, 0, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
+
+
+def test_item193_unreadable_write_time_is_never_treated_as_overdue(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    import src.coverage_watchdog as cw
+    import src.execution.scale_in as si
+
+    _lock_held(monkeypatch, True)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda b, s: [])
+    db = _item193_db(tmp_path, created_at="not-a-timestamp", windows=[9.0])
+    now = datetime(2026, 9, 30, 18, 0, 0, tzinfo=timezone.utc)
+    assert cw._scale_in_skip(_EntryBroker([]), db, now=now) == {"AAPL"}
