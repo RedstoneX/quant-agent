@@ -238,7 +238,7 @@ DONE WHEN:
   - [ ] the `fetch_deadline_exceeded` rate is understood and either brought down or shown to recover cleanly inside the existing time ceiling, measured against real runs rather than a healthy mid-morning batch
   - [x] the FRED SERIES half is fixed and live: fair-share reserves plus the pre-open series cache; the deployed box ran 2026-09-30 with no series skipped.
   - [x] the EVENT-CALENDAR half is fixed here: the seven `/fred/release/dates` calls move off the trading path onto the existing pre-open prefetch timer and are served from `data/macro/release_schedule_cache.json` at the open; a release in neither cache nor wire stays a named failure and is never defaulted.
-  - [ ] one clean morning open observed with 7/7 release schedules from cache before this item retires — the fix is deployed-and-unobserved until then.
+  - [ ] ONE morning open (N = 1, the number this item already stated) recorded in the production table `fred_fetch_coverage_runs` with `full_coverage = 1`: all configured series returned, `series_not_attempted` empty, and every configured release returned with `releases_from_cache` equal to `releases_configured`. Check: `SELECT * FROM fred_fetch_coverage_runs ORDER BY id DESC`. Rows exist only from the first open after this deploys; a row with `full_coverage = 0` does not count, and a missing row is not a pass.
 detail: docs/BOARD_NOTES.md (item 187)
 
 **188. The decision seats' last-resort route is now a small free model, and nobody has measured it at those seats — filed 2026-09-30.**
