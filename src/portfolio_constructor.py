@@ -57,6 +57,57 @@ from src.risk.constants import (
 
 logger = logging.getLogger(__name__)
 
+#: BOARD ITEM 222 — the one sentence that answers "how much of one stock may
+#: this desk hold?". Three limits used to claim to answer it; only TWO are
+#: independent, and this constant is the canonical written form of which one
+#: binds. The portfolio manager's sector-preview prompt points here.
+#:
+#: THE THIRD LIMIT IS NOT A LIMIT. `alloc_cap_by_risk` in `_build_buy` /
+#: `_build_short` below reads as a separate notional cap, but it is computed
+#: as `risk_budget_pct x entry / |entry - stop|` — it is the SAME 5%
+#: per-position risk envelope, re-expressed in notional units so it can be
+#: compared against the notional ceiling. It cannot bind on an order the
+#: envelope would not; it is a unit conversion, not a bound.
+#:
+#: So two bounds remain, both in the same unit (percent of total account
+#: equity, raw notional, before the gross multiplier) against the same
+#: denominator (`total_value`), and they cross exactly once — at a stop
+#: distance of `risk_budget_pct / max_position_pct x 100` percent of entry
+#: price. Wider stop: the risk envelope binds. Tighter stop: the ceiling
+#: binds. `single_name_crossover_stop_pct()` below computes that crossover
+#: from the live config rather than restating it.
+#:
+#: MEASURED against the production order record, 2026-09-02..2026-09-30
+#: (38 constructor entry orders carrying a stop; 8 cash-sweep ETF buys are
+#: not constructor-sized and carry no stop, so they are unattributable):
+#: the single-name notional ceiling bound 4 of 38, every one of them at a
+#: stop distance tighter than the crossover. The risk envelope bound 0 of 38
+#: — the largest risk any order requested was 3.0%, under the 5% envelope —
+#: and its notional image bound 0 of 38. The `trade_refusals` table is
+#: EMPTY, so no refusal could be attributed to any limit at all.
+SINGLE_NAME_BINDING_SENTENCE = (
+    "The most the desk may hold in one name is 65% of total account equity "
+    "in notional terms (raw position value / equity, before the gross "
+    "multiplier, less whatever is already held in that name); the 5% "
+    "per-position risk envelope and the constructor's notional risk cap are "
+    "one limit expressed in two units, not two limits, and that limit binds "
+    "before the 65% ceiling only when the stop sits further than 7.69% of "
+    "entry price away."
+)
+
+
+def single_name_crossover_stop_pct(risk_budget_pct: float,
+                                   max_position_pct: float) -> float:
+    """Stop distance, in percent of entry price, where the two bounds cross.
+
+    Below it the notional ceiling binds; above it the risk envelope binds.
+    Derived, not chosen: `risk_budget x entry/|entry-stop| == max_position`
+    rearranges to exactly this. Item 222.
+    """
+    if max_position_pct <= 0:
+        raise ValueError("max_position_pct must be positive")
+    return risk_budget_pct / max_position_pct * 100.0
+
 # Python-stamped named trigger for a funding-trim / size-down. Checkable
 # from the same live-book weight (and risk, when passed) the constructor
 # used. PM thesis free text explains; it cannot create the sell. Do NOT
@@ -4146,6 +4197,10 @@ class PortfolioConstructor:
         # D4: unsigned everywhere — a plain `entry - stop` is negative for a
         # short (whose stop sits above entry), which would corrupt this cap
         # instead of tightening it.
+        # ITEM 222: this is NOT a third, independent notional cap. It is
+        # `risk_budget_pct x entry / |entry - stop|` — the per-position RISK
+        # envelope converted into notional units so it can be compared with
+        # the notional ceiling below. See `SINGLE_NAME_BINDING_SENTENCE`.
         risk_per_share = abs(entry_price - stop_loss)
         # qty_by_risk = risk_dollars_allowed / risk_per_share
         # position_$ = qty_by_risk * entry_price

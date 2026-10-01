@@ -285,3 +285,10 @@ Half one (the gate) shipped 2026-09-18. Half two — reading each number off the
 instrument it is meant to describe — is NOT done: every route here is `state:
 specified`, which means the measurement or recording has been named and nobody has
 run or built it yet. The item retires when those routes close, not when they exist.
+
+
+**Board text moved here 2026-10-01** to bring the item inside the new
+per-item byte budget. The board keeps the title; the running account of
+half one and half two follows, unchanged.
+
+**Half one, DONE:** every numeric definition site in scope must carry a `config/number_ledger.yaml` entry saying where it came from, or `pytest` fails. **Routing pass 2026-10-01:** the 16-row smart-money reading tranche (ranking tables + truncation caps + the two cluster rows) now carries settlement routes; routeless rows 130 -> 114; the ranking integers were found to cancel algebraically to a pure sort order. **Routing pass 2026-10-01, tranche three:** the 16 smart-money admission-screen rows and the 15 agent-result scoring fields now carry routes; routeless rows 114 -> 83. The scoring weights were checked for the sort-key shape and do NOT have it -- they are summed and compared across candidates, so their spacing is load-bearing. **Routing pass 2026-10-01, tranche five:** the 22 routeless rows of the live risk subsystem (exit guard, trailing stops, de-levering ladder, reward-to-risk reference, cluster cap) now carry routes; routeless rows 83 -> 43 after the in-flight tranches land. See docs/board_notes/ item 90. **Routing pass 2026-10-01, tranche seven:** the routeless residue was re-counted at 24 (not the 45 projected) and all 16 remaining `src/config.py` rows now carry routes; routeless rows 24 -> 8, `arbitrary` unchanged at 133. See docs/board_notes/ item 90.
