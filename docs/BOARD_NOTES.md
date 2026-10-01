@@ -532,6 +532,8 @@ So the second DONE WHEN box cannot be closed by reading the record, and the benc
 
 
 
+**Measured from records 2026-10-01 (no paid run).** Read the production database read-only (`/home/qamc/quant-agent/data/quant_agent.db`): 713 `agent_logs` rows, of which 230 belong to the three decision seats (portfolio manager 142, risk manager 56, position reviewer 32). The free `gemini-3.5-flash-lite` route answered exactly 3 of them, one per seat, all marked `fallback` [measured, 3 rows]. All 3 parse as JSON and carry every field the seat's other answers carry; the other 227 rows parse too, with none blank or truncated [measured, 230 rows]. The comparison is impossible: n=1 per seat gives no rate, and the only stored verdict (`status`) records failure of the paid route (14 grounding or agent failures), never whether a free answer would have passed the seat's own gate. Verdict: the records cannot answer this; the item's closing condition is the per-answer acceptance recording, and it stays open.
+
 ## item 190
 
 **Filed 2026-09-30, out of the order-placement gates review.** The desk built a feature to automatically sweep idle cash into a short-term Treasury-bill fund, then turned it off. Turning it off did not remove it: the code that runs it is still wired into every trading session, just switched to do nothing. A one-line flag flip would turn it back on with no further review.
