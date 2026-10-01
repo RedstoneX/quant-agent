@@ -79,6 +79,71 @@ class NetworkBlocked(OSError):
     """A rehearsal tried to open an off-box socket."""
 
 
+class HermeticBreach(RuntimeError):
+    """A replay was not hermetic, and the run is therefore void.
+
+    Board item 202. `NetworkBlocked` is raised at the transport layer, but
+    every HTTP client in this dependency set catches broad exceptions and
+    retries or degrades, so a blocked call used to end as an empty result and
+    a green-looking rehearsal. The journal `no_network` fills is the evidence
+    that survives that swallowing; `assert_hermetic` turns it into a failure.
+    """
+
+
+class MissingRecordedInput(RuntimeError):
+    """A replay needed an input the recording does not contain.
+
+    Deliberately fatal rather than filled in. A replay that substitutes an
+    invented value produces a confident wrong answer, which is worse than no
+    answer at all; the operator is told exactly what was missing so the
+    recording can be extended.
+    """
+
+
+def assert_hermetic(network_attempts, unavailable=None, *, allow_degraded: bool = False) -> str:
+    """Fail loudly unless the replay was genuinely offline and complete.
+
+    Returns the one-line isolation check to record on the report when it
+    passes. Raises `HermeticBreach` for anything that tried to leave the box
+    — unconditionally, with no opt-out, because an outbound attempt means the
+    replay was reading something other than the recording. Raises
+    `MissingRecordedInput` when the recording could not supply something the
+    session asked for, unless the operator explicitly accepted a degraded run.
+    """
+    attempts = list(network_attempts or [])
+    if attempts:
+        raise HermeticBreach(
+            "this replay was NOT hermetic: "
+            + str(len(attempts))
+            + " outbound connection attempt(s) were blocked, so the run read "
+            "something other than the recording and its result is void — "
+            + "; ".join(attempts[:8])
+            + (" ..." if len(attempts) > 8 else "")
+        )
+    missing = list(unavailable or [])
+    if missing and not allow_degraded:
+        raise MissingRecordedInput(
+            "this replay asked for "
+            + str(len(missing))
+            + " input(s) the recording does not contain, and a replay never "
+            "invents a value to fill a gap — extend the recording, or re-run "
+            "with --allow-degraded to accept the gaps as reported: "
+            + "; ".join(missing[:8])
+            + (" ..." if len(missing) > 8 else "")
+        )
+    if missing:
+        return (
+            "no outbound connection was attempted; "
+            + str(len(missing))
+            + " recorded input(s) were missing and the run was explicitly "
+            "accepted as degraded (--allow-degraded) — nothing was invented"
+        )
+    return (
+        "no outbound connection was attempted and every input the session "
+        "asked for came from the recording"
+    )
+
+
 @dataclass
 class Sandbox:
     """A prepared scratch tree that a rehearsal session may write to freely."""

@@ -22,19 +22,78 @@ what would catch it next time.
 
 ---
 
-### 2026-10-01 — item 208(a): reward:risk and net evidence do NOT join the ranking composite (decision)
+### 2026-09-30 — a near-empty balance refused calls the provider offered to serve
 
-**In plain words:** the ranking seat orders ideas by strength plus conviction, summed across seats at the published seat weights. Two more signals were on the table: reward-to-risk and net independent evidence. Decision: neither joins; both keep the job they already do.
+**What happened.** On a near-empty paid balance the provider answered with
+HTTP 402 and its own message naming the answer allowance it WOULD still
+serve: "This request requires more credits, or fewer max_tokens. You
+requested up to 16000 tokens, but can only afford 775." Seven such refusals
+were seen the same day, all against the same 16000 ask, with stated
+affordable allowances of 10125, 5062, 4655, 1622, 1551, 811 and 775.
 
-**Reward:risk stays a within-tier tiebreak only.** It is derived from the trade's target, and the owner ruled on 2026-09-30 that a target is a made-up number (exit on alignment, never on a target). A trend or breakout name has no overhead level, so a score term would need a neutral placeholder, which is another invented number (the item 1(d) finding). As a tiebreak it only reorders names the score already ties.
+**Why it mattered.** The desk always asked for the same fixed allowance and
+never re-asked smaller, so every one of those calls died even though the
+provider had just said what it could serve. With the owner out of credit and
+not topping up, that is the difference between a session running and a
+session not running at all.
 
-**Net evidence stays a gate and a size ceiling only.** It already refuses a name below 1 (rule R5) and sets the agreement ceiling on size; scoring it too would count one piece of evidence in the rank, the gate and the size. The summed seat score already pays for breadth.
+**The fix.** On a credit refusal that NAMES a servable allowance, the seat
+re-asks ONCE at exactly that stated figure, then restores its configured
+ask. No fallback size is invented: a refusal naming no figure fails exactly
+as before and says so in the log.
 
-**Verified against live code (origin/main 2026-10-01):** the composite is `score_verdict` strength plus conviction, weighted by `SEAT_WEIGHT` in `rank_verdicts`; reward:risk is read only in the sort key after the score; net evidence appears only in the R5 gate. The prompt's ranking section states the 1.2/1.0/0.8 weights, and those match the code. Per-seat sizing weights stay refused, unchanged.
+**What was deliberately NOT weakened.** A smaller allowance can cut an answer
+off. Truncation detection is unchanged, so a cut-off answer is still
+discarded unused and the seat still refuses to decide. The technical seat —
+the outlier that asks for a very large allowance because it analyses 25
+symbols per call — is NOT re-batched to fit whatever the balance can afford;
+it re-asks, and if the answer will not fit it fails honestly on truncation.
+Re-cutting the work to fit the wallet would make the analysis depend on the
+balance, which is the opposite of what the desk is for.
 
-**Revisit only on a measurement:** the tie rate of the current four-key sort on real sessions is not measured here (the 9-of-12 figure predates the tiebreaks); if it is high, reopen with that number.
 
-**What would catch it next time.** `tests/test_ranking_composite_inputs.py` fails if reward:risk becomes a score input or stops being a tiebreak. Items 208(b) (provider-console spend cap) and 208(c) (paid benchmark) remain open.
+## Item 198 — the number-ledger ratchet stops being one hand-edited line
+
+**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
+retired a trade-governing number rewrote the SAME physical line — an
+11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
+`src/number_sources.py` carrying the running count AND the entire
+append-only narrative of every past move — mirrored by one assertion message
+in `tests/test_number_sources.py`. Two such branches therefore always
+conflicted, and every conflict was resolved by hand; two were resolved by
+hand on 2026-09-30 alone. This is the same throughput cost the item-aware
+merge driver removed from the three board documents, on the other file every
+parallel branch touches.
+
+**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
+the per-change deltas in `config/number_ledger_history.yaml`, whose 25
+entries are the whole previous narrative reproduced verbatim — `why` from
+the test-side assertion message, `detail` from the source-side comment
+block, both kept because neither was complete on its own and they did not
+agree in granularity. Each change is its own YAML entry, and the file is
+registered `merge=union` in `.gitattributes`, which is a git built-in and
+needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
+record a DELTA and never an absolute count, so union-merged appends sum
+correctly whatever order they land in.
+
+**What still guards the ledger.** The equality is unchanged and is still a
+cross-check between two independently edited files: the live count of
+`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
+of the deltas, so a ledger edit with no history entry fails and a history
+entry with no ledger edit fails. A new test fails any entry that moves the
+count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
+written back as a literal.
+
+**Demonstrated, not asserted.** Two throwaway branches off the new base, each
+sourcing a DIFFERENT ledger row and each appending its own history entry,
+merged with no conflict; the merged tree's arbitrary-row count and computed
+ratchet both read 135 and both entries survived. The same two changes made
+against `origin/main`'s old shape conflicted in `src/number_sources.py` and
+`tests/test_number_sources.py`.
+
+**No behaviour changed.** The computed count is 137, equal to the live count
+of arbitrary rows on the day of the change, and no number was picked, moved
+or added.
 ### 2026-09-30 — ROOT CAUSE of the protective-stop failures: the desk cancels when it only needs to amend
 Owner ruling that produced this entry (Rex, 2026-09-30): "whatever the desk
 wants, there is substantial reason that we've spent a lot of time and resources
@@ -226,48 +285,6 @@ It now exits non-zero and prints no number at all when the open-pull-request rea
 
 **What this does NOT close.** `board-number-advisory`, the CI job that catches a collision between two open pull requests, is still not required to merge, so a collision it does detect still blocks nothing. [measured 2026-09-30, `gh run view` over the last 40 `tests` runs] that job was `success` on all 29 pull-request runs and `skipped` on all 11 `main` runs, so it is not red today for unrelated reasons. Two things would have to change before it could be required: the job's own name is literally `board-number-advisory (not required to merge)` and the required-check context is that name, so it must be renamed first; and the script deliberately exits 0 when the GitHub read fails, so requiring it makes a detected collision blocking without making an unreadable PR list blocking. Making it required is a branch-protection change and was not made here.
 
-## Item 198 — the number-ledger ratchet stops being one hand-edited line
-
-**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
-retired a trade-governing number rewrote the SAME physical line — an
-11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
-`src/number_sources.py` carrying the running count AND the entire
-append-only narrative of every past move — mirrored by one assertion message
-in `tests/test_number_sources.py`. Two such branches therefore always
-conflicted, and every conflict was resolved by hand; two were resolved by
-hand on 2026-09-30 alone. This is the same throughput cost the item-aware
-merge driver removed from the three board documents, on the other file every
-parallel branch touches.
-
-**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
-the per-change deltas in `config/number_ledger_history.yaml`, whose 25
-entries are the whole previous narrative reproduced verbatim — `why` from
-the test-side assertion message, `detail` from the source-side comment
-block, both kept because neither was complete on its own and they did not
-agree in granularity. Each change is its own YAML entry, and the file is
-registered `merge=union` in `.gitattributes`, which is a git built-in and
-needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
-record a DELTA and never an absolute count, so union-merged appends sum
-correctly whatever order they land in.
-
-**What still guards the ledger.** The equality is unchanged and is still a
-cross-check between two independently edited files: the live count of
-`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
-of the deltas, so a ledger edit with no history entry fails and a history
-entry with no ledger edit fails. A new test fails any entry that moves the
-count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
-written back as a literal.
-
-**Demonstrated, not asserted.** Two throwaway branches off the new base, each
-sourcing a DIFFERENT ledger row and each appending its own history entry,
-merged with no conflict; the merged tree's arbitrary-row count and computed
-ratchet both read 135 and both entries survived. The same two changes made
-against `origin/main`'s old shape conflicted in `src/number_sources.py` and
-`tests/test_number_sources.py`.
-
-**No behaviour changed.** The computed count is 137, equal to the live count
-of arbitrary rows on the day of the change, and no number was picked, moved
-or added.
 ### 2026-09-30 — the desk had three backup routes and all three led to the same dead account (item 188, road half FIXED)
 
 **In plain words.** The desk pays one company to reach most of its models. On 2026-09-29 the balance with that company ran out. The desk was built to cope with that: if the first route fails it tries a second, and if that fails a third. But all three routes went through that same company, so all three failed for the same reason, and the whole afternoon's decision-making produced nothing. At the very same minute, the desk's OTHER endpoint — a free one it uses all day for its analyst seats — was answering normally. A healthy road sat unused while every escape hatch queued behind one empty wallet.
@@ -17602,3 +17619,16 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** the scale-in path must cancel the resting protective sell to add to a holding (the broker will not hold a protective sell and a new buy on the same symbol at once). Its own design says a failed rearm is a fail-closed owner page. The page — `src/execution/scale_in.py::alert_rearm_failed` — had ZERO callers, so both real failure paths only wrote a log line: the crash-recovery drain's "rearm FAILED", and `restore_after_failed_add` whose own comment reads "OWNER must be alerted". A position could sit at the broker with nothing standing watch and nobody told.
 
 **Fixed.** Both paths now call it. The alert writes a durable `specialist_evidence` row (`agent_name="scale_in_rearm_failure"`, `position_protected: false`) on EVERY occurrence, so the fault survives Telegram being muted (it is, as of today) and shows on the surface the API/journal already reads; the Telegram page itself is claimed at most once per symbol per trading day through the new `src/coverage_watchdog.py::claim_typed_alert`, the generic form of the existing per-type claim helpers, so one naked position cannot page 44 times. `tests/test_scale_in.py::test_drain_rearm_failure_pages_the_owner` was confirmed to FAIL with the call removed.
+### 2026-10-01 — item 208(a): reward:risk and net evidence do NOT join the ranking composite (decision)
+
+**In plain words:** the ranking seat orders ideas by strength plus conviction, summed across seats at the published seat weights. Two more signals were on the table: reward-to-risk and net independent evidence. Decision: neither joins; both keep the job they already do.
+
+**Reward:risk stays a within-tier tiebreak only.** It is derived from the trade's target, and the owner ruled on 2026-09-30 that a target is a made-up number (exit on alignment, never on a target). A trend or breakout name has no overhead level, so a score term would need a neutral placeholder, which is another invented number (the item 1(d) finding). As a tiebreak it only reorders names the score already ties.
+
+**Net evidence stays a gate and a size ceiling only.** It already refuses a name below 1 (rule R5) and sets the agreement ceiling on size; scoring it too would count one piece of evidence in the rank, the gate and the size. The summed seat score already pays for breadth.
+
+**Verified against live code (origin/main 2026-10-01):** the composite is `score_verdict` strength plus conviction, weighted by `SEAT_WEIGHT` in `rank_verdicts`; reward:risk is read only in the sort key after the score; net evidence appears only in the R5 gate. The prompt's ranking section states the 1.2/1.0/0.8 weights, and those match the code. Per-seat sizing weights stay refused, unchanged.
+
+**Revisit only on a measurement:** the tie rate of the current four-key sort on real sessions is not measured here (the 9-of-12 figure predates the tiebreaks); if it is high, reopen with that number.
+
+**What would catch it next time.** `tests/test_ranking_composite_inputs.py` fails if reward:risk becomes a score input or stops being a tiebreak. Items 208(b) (provider-console spend cap) and 208(c) (paid benchmark) remain open.
