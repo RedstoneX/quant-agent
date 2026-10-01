@@ -3534,7 +3534,30 @@ class TradingPipeline(ProtectionMixin, PromptFactsMixin, DeleverMixin, ExitEngin
         # as well as on ctx because the result dicts are built in dozens of
         # places and the wrappers are the two that see all of them.
         try:
-            self._last_evidence_freshness = verdict.freshness.to_evidence()
+            # Stamp the classification with WHEN and WHICH RUN before it is
+            # persisted. Owner ruling 2026-10-01 (sell what fails the fresh
+            # bar) makes "was this seat read in THIS run?" something a sell
+            # can rest on, and it must be a recorded fact, not an inference
+            # drawn from the shape of the row. Records only — no threshold,
+            # nothing gated. Fail-soft on the prior-read lookup: an unknown
+            # age is reported as unknown, never as fresh.
+            prior = {}
+            try:
+                if getattr(self, "db", None) is not None:
+                    prior = self.db.last_fresh_seat_reads(
+                        seats=list(verdict.freshness.data_status)
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "evidence gate: prior seat-read lookup failed (%s) — "
+                    "carried seats will report an unknown age", exc,
+                )
+            stamped = verdict.freshness.stamped(
+                run_id=getattr(ctx, "run_id", None),
+                mode=str(getattr(ctx, "session", "") or "") or None,
+                prior_reads=prior,
+            )
+            self._last_evidence_freshness = stamped.to_evidence()
             self._last_decision_data_status = dict(verdict.data_status)
             ctx.evidence_freshness = dict(self._last_evidence_freshness)
         except Exception as exc:  # noqa: BLE001 — never break the decision

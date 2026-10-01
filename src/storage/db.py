@@ -5145,6 +5145,64 @@ class Database:
             )
             self.conn.commit()
 
+    def last_fresh_seat_reads(self, seats=None) -> dict:
+        """When was each research seat LAST actually read, and by which run?
+
+        Reads back the stamps the runs already persisted inside
+        `session_reports.payload_json` and `intra_check_reports.payload_json`
+        — the store `evidence_freshness` has always used. No new table and no
+        second mechanism: this is the read side of a recording that already
+        exists.
+
+        Returns `{seat: {"run_id", "mode", "at"}}` for the most recent run in
+        which that seat was `refreshed_this_session`. A seat that has never
+        been recorded fresh is simply absent from the result, which is what
+        lets a carried seat report "age unknown" honestly instead of
+        guessing one.
+
+        Walks rows newest-first and stops as soon as every requested seat has
+        an answer, so the common case touches a handful of rows. No time
+        window and no cutoff: a window would be an invented number.
+        """
+        import json
+
+        wanted = {str(x) for x in seats} if seats else None
+        found: dict[str, dict] = {}
+        rows_sql = (
+            "SELECT payload_json, timestamp FROM ("
+            "  SELECT payload_json, timestamp FROM session_reports"
+            "  UNION ALL"
+            "  SELECT payload_json, timestamp FROM intra_check_reports"
+            ") ORDER BY timestamp DESC"
+        )
+        with self._lock:
+            cursor = self.conn.execute(rows_sql)
+            for row in cursor:
+                try:
+                    payload = json.loads(row[0] or "{}")
+                except (TypeError, ValueError):
+                    continue
+                record = (payload or {}).get("evidence_freshness")
+                if not isinstance(record, dict):
+                    continue
+                stamps = record.get("seat_stamps")
+                if not isinstance(stamps, dict):
+                    continue
+                for seat, entry in stamps.items():
+                    name = str(seat)
+                    if name in found or not isinstance(entry, dict):
+                        continue
+                    if entry.get("state") != "refreshed_this_session":
+                        continue
+                    found[name] = {
+                        "run_id": entry.get("run_id"),
+                        "mode": entry.get("mode"),
+                        "at": entry.get("at") or row[1],
+                    }
+                if wanted and wanted <= set(found):
+                    break
+        return found
+
     def get_session_report(self, mode: str, date: str | None = None) -> dict | None:
         """One stored morning/midday/close report for `mode` — `date`, or
         the most recent one. None when absent or unreadable; see
