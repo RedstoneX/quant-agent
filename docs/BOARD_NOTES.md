@@ -353,7 +353,7 @@ The band's SECOND home is genuinely not redundant and must not be deleted with t
 
 **Moved from WORK.md (2026-09-24) —** Full account of what was built and the gate's own honest limit (it proves a justification was WRITTEN, never that it is TRUE): `docs/INCIDENT_HISTORY.md` (2026-09-18). The counts quoted there are a snapshot, already known stale by the next day — read `config/number_ledger.yaml` directly rather than trusting a number here. **Half two, STILL OPEN:** read each arbitrary entry off its instrument. Each states in the ledger the question that would settle it and what the desk pays meanwhile, which is what makes half two prioritisable rather than a list. `MAX_ARBITRARY_ENTRIES` is an EQUALITY, not a ceiling: as a ceiling it rewarded deleting a row.
 
-## item 99
+## item 99 — RETIRED 2026-10-01, both remaining criteria closed: the technical seat's prompt now names every data block the code sends it (the market-context bullet was missing the consolidation state, liquidity, up/down volume and unfilled-gap lines) and is pinned by `tests/test_tech_prompt_input_contract.py`; the deletion-site check shipped 2026-09-26 as `described_gaps()` and now registers the technical seat's two renderers
 
 **Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces. The desk already bans numbers that were invented rather than read off real data; a number that lives only in a brief is exactly that, and it was invisible because nobody had looked in the briefs. (Filed twice, as items 99 and 105; diffed and collapsed into this one 2026-09-18.)
 **What it found —**
