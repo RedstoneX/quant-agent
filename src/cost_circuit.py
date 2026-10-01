@@ -732,6 +732,21 @@ def ensure_cost_circuit_schema(conn: sqlite3.Connection) -> None:
             "INTEGER NOT NULL DEFAULT 1"
         )
 
+    # Operator resets only became owner-notifiable here; every 'reset' row
+    # already on the books cleared before that, so firing "RESUMED" for them
+    # now would announce recoveries from incidents that ended weeks ago --
+    # the same stale-alert defect the auto_reset backfill above guards
+    # against, and it is marked handled the same way. SQLite's own
+    # `user_version` counter is the one-time hook (nothing else in this
+    # schema reads or writes it, so it is 0 on every existing database);
+    # the backfill therefore runs exactly once per database.
+    if int(conn.execute("PRAGMA user_version").fetchone()[0] or 0) < 1:
+        conn.execute(
+            "UPDATE llm_circuit_events SET recovery_alert_state=1 "
+            "WHERE event_type='reset'"
+        )
+        conn.execute("PRAGMA user_version = 1")
+
     # Migrate a latch created by the original one-state implementation.  Known
     # quota triggers retain their full audit snapshot but cease to masquerade
     # as hard infrastructure incidents.  Unknown codes deliberately remain
@@ -2701,7 +2716,11 @@ class LLMCostCircuitBreaker:
         Item 174: the suspension path reaches the owner (`_notify_if_needed`
         / the sentinel's `_alert`), but `_auto_clear_transient_latch_locked`
         used to write only an `auto_reset` DB event and a log line, so the
-        owner saw "desk suspended" and never "desk back live." This mirrors
+        owner saw "desk suspended" and never "desk back live." The
+        operator's manual `reset` had the identical hole and is carried by
+        this same scan ('reset' rows alongside 'auto_reset'), so a desk
+        restarted by hand announces itself on the same footing as one that
+        recovered on its own. This mirrors
         `_notify_quota_recoveries_if_needed` exactly -- same claim/retry state
         machine, same notifier -- so a crash between the auto-clear and the
         send, or a Telegram outage, leaves the alert pending for the next
@@ -2714,7 +2733,8 @@ class LLMCostCircuitBreaker:
             with self._connect() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
-                    "SELECT * FROM llm_circuit_events WHERE event_type='auto_reset' "
+                    "SELECT * FROM llm_circuit_events "
+                    "WHERE event_type IN ('auto_reset','reset') "
                     "AND (recovery_alert_state=0 OR (recovery_alert_state=-1 AND "
                     "recovery_alert_updated_at <= datetime('now', '-2 minutes'))) "
                     "ORDER BY id LIMIT 1"
@@ -2777,7 +2797,14 @@ class LLMCostCircuitBreaker:
 
     @staticmethod
     def format_auto_reset_alert(event: dict[str, Any]) -> str:
-        code = str(event.get("trigger_code") or "transient provider latch")
+        # A manual reset also clears an inexact day or a durable marker, which
+        # carry no trigger code at all; say so rather than borrowing the
+        # auto path's wording for a latch that may not have existed.
+        code = str(event.get("trigger_code") or "").strip() or (
+            "not recorded"
+            if str(event.get("event_type") or "") == "reset"
+            else "transient provider latch"
+        )
         session_cost = float(event.get("session_cost_usd") or 0.0)
         daily_cost = float(event.get("daily_cost_usd") or 0.0)
         # "When" is read from the event row's own `created_at` (UTC, written by
@@ -2786,14 +2813,30 @@ class LLMCostCircuitBreaker:
         # than the resume it describes.
         resumed_at = str(event.get("created_at") or "").strip()
         when = f"resumed at: {resumed_at} UTC\n" if resumed_at else ""
+        # The two paths share one notification, but the closing line must say
+        # which one actually happened: "no operator reset was needed" is
+        # false of a manual reset, and an owner-facing statement the row
+        # cannot support is a lie, not a rounding.
+        manual = str(event.get("event_type") or "") == "reset"
+        if manual:
+            default_reason = "operator reset"
+            how = (
+                "status: paid analysis is live again after an operator reset. "
+            )
+        else:
+            default_reason = "transient provider latch auto-expired"
+            how = (
+                "status: paid analysis is live again; no operator reset was "
+                "needed. "
+            )
         return (
             "🟢 QAMC PAID ANALYSIS RESUMED\n"
             f"previous suspension: {code}\n"
             f"{when}"
-            f"reason: {event.get('detail') or 'transient provider latch auto-expired'}\n"
+            f"reason: {event.get('detail') or default_reason}\n"
             f"settled spend at resume: {_fmt_settled(session_cost)} this run · "
             f"{_fmt_settled(daily_cost)} today\n"
-            "status: paid analysis is live again; no operator reset was needed. "
+            f"{how}"
             "Session, call-count, attempt, and daily limits remain enforced and "
             "re-latch instantly if real settled spend is over a cap."
         )
@@ -3582,16 +3625,47 @@ class LLMCostCircuitBreaker:
                         "current ET day's accounting is exact; scoped quota "
                         "holds expire only with their budget window"
                     )
+                # Same observability as `_auto_clear_transient_latch_locked`,
+                # and derived the same way: the elapsed figure comes from the
+                # singleton's own `suspended_at` against SQLite's clock, with
+                # no threshold of its own invented here. `suspended_at` is
+                # NULL whenever this reset is clearing an inexact day or a
+                # durable marker with no live suspension, and in that case no
+                # duration is appended at all rather than a zero or a guess.
+                suspended_at = state.get("suspended_at")
+                elapsed_minutes: float | None = None
+                if suspended_at:
+                    elapsed_row = conn.execute(
+                        "SELECT (julianday('now') - julianday(?)) * 1440.0 "
+                        "AS minutes",
+                        (suspended_at,),
+                    ).fetchone()
+                    if elapsed_row is not None and elapsed_row["minutes"] is not None:
+                        elapsed_minutes = float(elapsed_row["minutes"])
+                event_detail = reason
+                if elapsed_minutes is not None:
+                    event_detail = (
+                        f"{reason} [operator reset after a suspension of "
+                        f"{elapsed_minutes:.1f} min, latched at "
+                        f"{suspended_at} UTC]"
+                    )
                 conn.execute(
                     "INSERT INTO llm_circuit_events "
                     "(event_type, trigger_code, detail, run_id, mode, agent_name, attempts, "
-                    "session_cost_usd, daily_cost_usd) VALUES "
-                    "('reset', ?, ?, ?, ?, 'operator', ?, ?, ?)",
+                    "session_cost_usd, daily_cost_usd, suspension_alert_state) VALUES "
+                    "('reset', ?, ?, ?, ?, 'operator', ?, ?, ?, ?)",
                     (
-                        state.get("trigger_code"), reason, run_id, mode,
+                        state.get("trigger_code"), event_detail, run_id, mode,
                         int(state.get("session_attempts") or 0),
                         float(state.get("session_cost_usd") or 0),
                         float(state.get("daily_cost_usd") or 0),
+                        # Item 174 pairing, for the same reason as the auto
+                        # path: the UPDATE below zeroes `alert_state`, so this
+                        # is the last moment it is knowable whether the owner
+                        # ever received the matching "SUSPENDED" note. The
+                        # column DEFAULTs to 1 ("he was told"), which for a
+                        # manual reset was a claim nothing had checked.
+                        int(state.get("alert_state") or 0),
                     ),
                 )
                 updated_state = conn.execute(
@@ -3628,6 +3702,14 @@ class LLMCostCircuitBreaker:
         with self._infrastructure_lock:
             self._infrastructure_error = None
             self._unavailable_sentinel = None
+        # Tell the owner the desk is back, on the same footing as the
+        # automatic path (which fires this from `_notify_if_needed`). Outside
+        # the file lock and the transaction on purpose: the reset is already
+        # durable, and a Telegram outage must not roll it back. The claim /
+        # retry state machine in there makes a second call a no-op, and a row
+        # whose suspension note never reached the owner resolves as unpaired
+        # instead of announcing a recovery from an incident he never heard of.
+        self._notify_auto_resets_if_needed()
 
 
 def activate_paid_call_session(
