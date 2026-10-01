@@ -684,6 +684,24 @@ numbers:
     value: 2.5
     status: arbitrary
     site: src/config.py
+    settles_by:
+      kind: recording
+      state: built
+      where: src/storage/db.py
+      records: >-
+        Per CLOSED trade: entry price, entry ATR, the entry stop and the basis
+        it was computed from, and the maximum ADVERSE and FAVOURABLE excursions
+        (`trades.max_adverse_excursion` and its favourable mirror, written by
+        `src/storage/db.py`), alongside the realised outcome and stop-hit
+        category already stored. The realised ATR multiple is RECOMPUTED from
+        those columns and is deliberately not stored again.
+      closes_when: >-
+        Enough closed trades carry the excursion columns to answer the only
+        question doctrine allows of them -- was the floor ever VIOLATED in
+        practice -- which falsifies the floor or leaves it standing. It may
+        NOT be optimised against: fitting a number to this desk's own trading
+        record is barred outright (docs/OUTCOME.md), and that is how the 1.5
+        was produced in the first place.
     note: >-
       Minimum stop distance in ATRs where no real level backs the stop, a
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
