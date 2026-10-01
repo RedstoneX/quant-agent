@@ -1401,3 +1401,52 @@ class SuppressedAlertsResponse(BaseModel):
     deferred_suspensions: list[DeferredSuspension] = []
     suppression_state_available: bool = False
     suppressed_repeats: dict[str, SuppressedRepeat] = {}
+
+
+class MutedKindCount(BaseModel):
+    """Muted messages of one kind, with its live-risk share kept visible."""
+
+    kind: str
+    count: int = 0
+    live_risk_count: int = 0
+
+
+class MutedDayCount(BaseModel):
+    """Muted messages on one ET day, with its live-risk share kept visible."""
+
+    day: str
+    count: int = 0
+    live_risk_count: int = 0
+
+
+class MutedLiveRiskMessage(BaseModel):
+    """One muted message about a position whose protection was gone."""
+
+    timestamp: str
+    day: str
+    kind: str
+    symbols: list[str] = []
+    headline: str = ""
+
+
+class MutedBacklogResponse(BaseModel):
+    """Item 211 — what the global mute has been swallowing.
+
+    `coverage_complete` is False while the record begins after the mute did;
+    `coverage_gap` says so in the owner's words, so the surface can never
+    present a partial list as the whole period.
+    """
+
+    record_available: bool = False
+    record_begins_at: str = ""
+    mute_began_on: str = ""
+    coverage_complete: bool = False
+    coverage_gap: str = ""
+    total: int = 0
+    live_risk_total: int = 0
+    by_kind: list[MutedKindCount] = []
+    by_day: list[MutedDayCount] = []
+    live_risk: list[MutedLiveRiskMessage] = []
+    oldest: str | None = None
+    newest: str | None = None
+    truncated: bool = False

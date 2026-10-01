@@ -63,6 +63,7 @@ from src.api.schemas import (
     DailyPnlPoint,
     ExposureBreakdown,
     HealthResponse,
+    MutedBacklogResponse,
     SuppressedAlertsResponse,
     LiquidityBreakdown,
     LiveQuote,
@@ -200,6 +201,25 @@ def get_suppressed_alerts(limit: int = 50) -> SuppressedAlertsResponse:
     except Exception:
         return SuppressedAlertsResponse()
     return SuppressedAlertsResponse(**payload)
+
+
+@router.get("/alerts/muted-backlog", response_model=MutedBacklogResponse)
+def get_muted_backlog(limit: int = 200) -> MutedBacklogResponse:
+    """Item 211 — what the global mute has swallowed, for the dashboard.
+
+    A muted desk cannot page the owner about its own muting, so the backlog
+    lives here, where he reads it at his leisure. This endpoint reads the
+    record and nothing else: it does not un-mute, does not send, and does
+    not touch `TELEGRAM_DISABLED` or any other configuration.
+    """
+
+    from src.api.db_reads import get_muted_backlog as _read
+
+    try:
+        payload = _read(limit=limit)
+    except Exception:
+        return MutedBacklogResponse()
+    return MutedBacklogResponse(**payload)
 
 
 @router.get("/health", response_model=HealthResponse)

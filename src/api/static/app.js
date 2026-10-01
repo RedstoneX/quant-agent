@@ -1403,6 +1403,84 @@ document.getElementById("search-input").addEventListener("keydown", (e) => {
 });
 
 /* ---------------------------------------------------------------------- */
+/* Muted alert backlog (item 211)                                          */
+/* ---------------------------------------------------------------------- */
+
+/* Alerts are muted on purpose. This panel exists so the mute is not also a
+ * memory hole: it shows what the desk WOULD have said, grouped by kind and
+ * by day so the owner can judge whether un-muting would flood him, with the
+ * live-risk messages listed one by one and never folded into a total. It
+ * renders the API's own coverage statement verbatim, because the record
+ * began after the mute did and a partial list shown as complete is exactly
+ * the failure this panel was built to end. It cannot un-mute anything.
+ */
+async function loadMutedBacklog() {
+  const body = document.querySelector("#panel-muted [data-body]");
+  try {
+    const data = await fetchJSON("/alerts/muted-backlog?limit=200");
+    const parts = [];
+    if (!data.record_available) {
+      parts.push(el("p", {
+        className: "warn",
+        text: "The muted-message record could not be read, which is not the same as nothing having been muted.",
+      }));
+    }
+    if (!data.coverage_complete && data.coverage_gap) {
+      parts.push(el("p", { className: "warn", text: data.coverage_gap }));
+    }
+    if (data.record_available && !data.total) {
+      parts.push(el("p", {
+        text: "Nothing has been dropped by the mute since the record began. That is a real and complete answer for the period the record covers.",
+      }));
+    } else if (data.total) {
+      parts.push(el("p", {
+        text: `${data.total} muted message${data.total === 1 ? "" : "s"} recorded${data.truncated ? " (showing the most recent 200)" : ""}, ${data.live_risk_total} of them about a position whose protection was gone or never arrived.`,
+      }));
+      parts.push(evidenceSection(
+        `Live-risk messages (${data.live_risk.length})`,
+        [data.live_risk.length ? table(
+          ["When", "Kind", "Symbols", "Message"],
+          data.live_risk.map((m) => el("tr", {}, [
+            el("td", { text: fmtTime(m.timestamp) }),
+            el("td", { text: m.kind }),
+            el("td", { text: (m.symbols || []).join(", ") || "—" }),
+            el("td", { text: m.headline || "—", title: m.headline || "" }),
+          ]))
+        ) : null],
+        "No muted message was about an unprotected position."
+      ));
+      parts.push(evidenceSection(
+        "By kind",
+        [table(["Kind", "Muted", "Of which live-risk"], (data.by_kind || []).map((k) =>
+          el("tr", {}, [
+            el("td", { text: k.kind }),
+            el("td", { text: fmtNum(k.count, 0) }),
+            el("td", { text: fmtNum(k.live_risk_count, 0) }),
+          ])
+        ))],
+        "No muted messages to group."
+      ));
+      parts.push(evidenceSection(
+        "By day (ET)",
+        [table(["Day", "Muted", "Of which live-risk"], (data.by_day || []).map((d) =>
+          el("tr", {}, [
+            el("td", { text: d.day }),
+            el("td", { text: fmtNum(d.count, 0) }),
+            el("td", { text: fmtNum(d.live_risk_count, 0) }),
+          ])
+        ))],
+        "No muted messages to group."
+      ));
+    }
+    body.replaceChildren(...parts);
+    setPanelState("panel-muted", "ok", "ok");
+  } catch (err) {
+    showMessage(body, `Could not load the muted backlog: ${err.message}`, true);
+    setPanelState("panel-muted", "error", "unreachable");
+  }
+}
+
+/* ---------------------------------------------------------------------- */
 /* Orchestration                                                           */
 /* ---------------------------------------------------------------------- */
 
@@ -1412,6 +1490,7 @@ function refreshAll() {
   loadOrders();
   loadTrades();
   loadCandidates();
+  loadMutedBacklog();
   loadHealth();
 }
 
