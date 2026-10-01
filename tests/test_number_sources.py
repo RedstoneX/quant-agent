@@ -403,7 +403,11 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
   # scope: it decides, sizes, prices and exits nothing. The census it bounds
   # is written to `specialist_evidence` as evidence and is read by no gate,
   # no ranking key and no sizing path.
-    assert MAX_UNSCOPED_NUMERIC_SITES == 156, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 157, (
+        "156 -> 157 on 2026-10-01, item 78: +1 for "
+        "src.seat_heal._RESTORE_OBSERVATION_CAP (5000), a memory bound on "
+        "parked heal observations that no gate, ranking key or sizing path "
+        "reads. Previously: "
         "154 -> 155 on 2026-10-01, item 90: +1 for "
         "src.number_sources.MIN_ROUTE_PROSE_CHARS (40), the shortest "
         "`records` / `closes_when` prose a ledger row's `settles_by` "
