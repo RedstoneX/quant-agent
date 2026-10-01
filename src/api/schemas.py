@@ -1299,8 +1299,13 @@ class HoldingTakeProfit(BaseModel):
     plain: str
     #: ALWAYS False today. The automatic take-profit trim was deleted on
     #: 2026-09-12 and no caller passes `take_profit_price` to the broker,
-    #: so no order exists at this price. Kept as an explicit field rather
-    #: than a comment so a future change has to flip it deliberately.
+    #: so no ORDER exists at this price. It is not the same as "the number
+    #: has no effect": on a range trade `src/risk/trailing.py` reads
+    #: whether price has exceeded the target to decide whether the +1R
+    #: ratchet floor constrains the structural trail, which moves a live
+    #: stop. `note` states that effect in the owner's words; this flag
+    #: stays about ORDERS only. Kept as an explicit field rather than a
+    #: comment so a future change has to flip it deliberately.
     acted_on: bool = False
     note: str
     #: The target PINNED AT ENTRY (`trades.initial_take_profit`). `price`

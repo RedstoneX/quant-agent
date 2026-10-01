@@ -106,15 +106,18 @@ DONE WHEN:
   - [x] 2026-09-30, DONE (record truth, no behaviour change): the refusal log asserted the move was inside the band without disclosing that the band width came from a floored/defaulted session count; the durable `exit_blocked_inside_atr_noise_band` row and the exit-refusal row carried only the model's reason. Both now carry a machine-readable `rule=atr_noise_band ...` payload (side, adverse, entry, price, atr14, band multiple, band width, sessions_held, sessions_measured) ahead of the reason. Two `StructuralProtectionCheck` outcomes that reported `noise_band_intact` WITHOUT ever evaluating the band now report `no_adverse_move_from_entry` and `noise_band_unevaluable_no_data`.
 detail: docs/BOARD_NOTES.md (item 70)
 
-**75. The desk has no automatic profit-taking: its target never reaches the broker, a trim for profit is not an allowed exit reason, and the trail sits too loose — OPEN, filed 2026-09-14 after an owner question on ORCL.**
+**75. Automatic profit-taking: the whole-position case is answered by the alignment exit; the residue is the PARTIAL (trim) case and the recorded target's one surviving live effect — OPEN, filed 2026-09-14 after an owner question on ORCL, rewritten 2026-10-01 against the "exit on ALIGNMENT, never on a target" ruling.**
+
+Why it was rewritten. Four of the six original criteria were written before the 2026-09-30 ruling and three of them ask for exactly what the ruling bars (sell all at target; sell half at target; target tightens the trail). They are VOID, not deferred — tracking a target-based rule is only useful if the desk might one day adopt it, and it may not. The third original criterion asked for a ruling on whether a target plus a confirmed breakdown may exit; the 2026-09-30 ruling IS that ruling, and the answer is no. The trail-tightness criterion was already pointed at items 90 and 185 and stays there.
+
+What was checked against live code on 2026-10-01, because the filing's own claims had rotted. The target still reaches no broker (`src/api/holding_why.py` records this and it is still true: no caller passes `take_profit_price` to Alpaca). But the claim that the target gates whether the structural trail runs is now FALSE — `src/risk/trailing.py` removed that gate under item 142 and the structural trail runs for a range trade once it is past the owner-ratified +2R ratchet trigger, target or no target. One live effect survives: whether price has exceeded the target decides whether the +1R lock floor constrains that trail, so a number the desk calls made-up still moves a live stop. That is now said in the owner-facing note rather than contradicted by it.
 
 DONE WHEN:
-  - [ ] each open position's target is drawn on the Mission Control chart (the owner's own request)
-  - [ ] four exit rules are tracked on every trade WITHOUT placing orders — sell all at target; sell half and trail the rest; target tightens the trail instead of selling; today's desk — with the rules fixed before anyone looks at the results and no tuning afterwards
-  - [ ] a ruling is recorded on whether a target plus a CONFIRMED breakdown may exit, and if so profit-taking becomes an allowed SELL reason and a chart breakdown can unlock an exit (today only the news seat emits state changes)
-  - [ ] trail tightness is read off the instrument or a cited source; the six trail constants are item 90's half two and item 185's tranche — do not re-derive them here
-  - [ ] an 8-K results release is visible to the exit path (invisible today)
-  - [ ] nothing here ships alone and nothing is fitted to ORCL — one number changed by itself is the patch this item exists to prevent
+  - [x] the target's one remaining live effect (gating the +1R trail floor on a range trade) is stated wherever the target is shown to the owner, and pinned by a test — done 2026-10-01, `src/api/holding_why.py` + `tests/test_holding_why.py`
+  - [ ] the desk records, for every open position every session, the alignment-exit reading it already computes (how far below the last mark price has closed, in that name's own ATR) EVEN WHEN it does not trigger an exit — the desk today keeps no trace of a position that weakened and recovered, which is the only population a partial could ever be read off
+  - [ ] that record has been read once, and the answer written into `docs/BOARD_NOTES.md` (item 75): either positions do pass through a durable intermediate band of weakening before the trend ends, in which case a trim has something to key off, or they do not, in which case the alignment exit is the whole answer and this item retires
+  - [ ] no trim fraction is chosen before that record exists; two derivations were attempted on 2026-10-01 and both failed, and the reasons are written down in `docs/BOARD_NOTES.md` (item 75) so neither is retried blind
+  - [ ] nothing here is fitted to the desk's own trading record, and nothing ships alone
 detail: docs/BOARD_NOTES.md (item 75)
 
 **76. PM-input shape: the one open piece is whether the PM uses its new macro-audit channel. OPEN, moved out of the PM TEST GATE 2026-09-14.** Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14.
