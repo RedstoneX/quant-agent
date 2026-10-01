@@ -940,7 +940,7 @@ def _tech_buy_analyses(stops: dict[str, float] | None = None):
 
 
 def test_projected_portfolio_flags_sector_overweight(tmp_path):
-    """3 Tech BUYs on top of 30% held Tech, each sized from its OWN stop.
+    """3 Tech BUYs on top of 30% held Tech, and NO projected weight at all.
 
     REWRITTEN for board item 221. This test used to assert 3 x a FLAT 5%
     = 45%, which is exactly the defect: no candidate is ever given a flat
@@ -954,7 +954,7 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
     it at 75) rather than the hardcoded 35 this preview once carried. Set
     to 40 here, and asserted through the config so the two cannot drift.
     """
-    pipeline = _projection_pipeline(target_pct=40.0)
+    pipeline = _projection_pipeline(target_pct=20.0)
     # Existing 30% Tech position
     positions = [
         Position(symbol="MSFT", qty=10, avg_entry=400, current_price=400,
@@ -969,12 +969,17 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
     # `book_exposure` call. Long-only book, so the two agree at 30%.
     assert "Current: 30% invested (capital at work)" in out
     assert "net direction +30%" in out
-    # 30 + 3*65 = 225% Tech, all long-side (spec §12.2 labels the side).
-    assert "Technology long 225%" in out
-    # Each name is shown at ITS OWN size, not a shared constant.
-    assert "NVDA 65%" in out
-    assert "OWN stop distance allows" in out
-    assert "over the 40% concentration target" in out
+    assert "Technology long 30%" in out
+    # The candidate set is described by its SECTOR COMPOSITION, not by a
+    # projected weight.
+    assert "3 BUY-rated candidate(s) on offer, by sector: Technology 3" in out
+    # Each name carries its OWN stop distance and stop-implied ceiling.
+    assert "NVDA stop -5.0% → ≤100%" in out
+    # And the preview says, in the prompt, that it cannot project a weight.
+    assert "CANNOT tell you what these candidates would weigh" in out
+    # Exactly one invested figure: the measured, held one.
+    assert out.count("invested") == 1
+    assert "over the 20% concentration target" in out
     assert "Technology (long)" in out
     mock_get_sector.assert_not_called()
 
@@ -984,9 +989,11 @@ def test_projected_portfolio_does_not_warn_below_the_configured_target(tmp_path)
     keep them small, nothing is flagged — the preview must draw the line the
     rest of the system draws, not one of its own.
 
-    REWRITTEN for item 221: the stops here are WIDE (entry 100 / stop 50),
-    so each candidate's stop-derived size is 5% x 100/50 = 10% rather than
-    the flat 5% this test used to assume. 30 + 3 x 10 = 60%, under 75.
+    REWRITTEN for item 221. The threshold is now applied to the HELD book
+    (30% Tech, under 75), which is measured, instead of to a projected book,
+    which cannot be computed before the PM writes its targets. The wide
+    stops here (entry 100 / stop 50) imply a 10% ceiling per name — a cap on
+    one name, never summed into a projected mix.
     """
     pipeline = _projection_pipeline(target_pct=75.0)
     positions = [
@@ -998,8 +1005,10 @@ def test_projected_portfolio_does_not_warn_below_the_configured_target(tmp_path)
         out = pipeline._build_projected_portfolio(
             positions, _tech_buy_analyses(wide), total_value=10000,
         )
-    assert "Technology long 60%" in out
+    assert "Technology long 30%" in out
     assert "concentration target" not in out
+    # Wide stops imply small ceilings: 5% risk budget x 100/50 = 10%.
+    assert _preview_ceilings(out) == {"NVDA": 10.0, "AMD": 10.0, "AAPL": 10.0}
 
 
 def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
@@ -1008,10 +1017,9 @@ def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
     surface concentration.
 
     Here 30% held Tech LONG and 20% held Tech SHORT: the long line must
-    still read 30 (projecting to 225 with the three BUYs, each sized at the
-    65% single-name ceiling its own entry-100/stop-95 geometry reaches —
-    item 221), and the short must appear as its own 20, not as -20 netted
-    off the long.
+    still read 30, and the short must appear as its own 20, not as -20
+    netted off the long. Item 221: there is no projected line any more, so
+    the held measurement is the whole claim.
     """
     pipeline = _projection_pipeline(target_pct=40.0)
     positions = [
@@ -1024,7 +1032,7 @@ def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
         out = pipeline._build_projected_portfolio(
             positions, _tech_buy_analyses(), total_value=10000,
         )
-    assert "Technology long 225%" in out, "the short must not net off the longs"
+    assert "Technology long 30%" in out, "the short must not net off the longs"
     assert "Technology short 20%" in out
     assert "Technology -" not in out
 
@@ -1042,21 +1050,24 @@ def _sizing_pipeline(target_pct: float = 75.0):
     return pipeline
 
 
-def _preview_sizes(out: str) -> dict[str, float]:
-    """The per-candidate percentages the preview printed, by symbol."""
+def _preview_ceilings(out: str) -> dict[str, float]:
+    """The per-candidate stop-implied CEILINGS the preview printed, by
+    symbol. A ceiling on one name, never a projected weight."""
     import re
     line = next(ln for ln in out.splitlines() if "OWN stop distance" in ln)
-    inner = line[line.rindex("(") + 1:line.rindex(")")]
     return {
         m.group(1): float(m.group(2))
-        for m in re.finditer(r"([A-Z]+) (\d+)%", inner)
+        for m in re.finditer(r"([A-Z]+) stop -[\d.]+% → ≤(\d+)%", line)
     }
 
 
-def test_preview_sizes_each_candidate_exactly_as_the_constructor_would():
+def test_preview_ceiling_is_the_constructors_own_stop_implied_cap():
     """ITEM 221 criterion 1. Deliberately UNEQUAL stop distances; the
-    preview's size for each name must equal the constructor's own
-    stop-derived cap for that name, to the digit."""
+    ceiling the preview states for each name must equal the constructor's
+    own stop-implied cap for that name, to the digit. It is a cap on ONE
+    name — the preview never sums these into a projected mix, because the
+    weight each name actually gets depends on a PM target that does not
+    exist yet."""
     from src.risk.constants import risk_budget_allocation_pct
     stops = {"NVDA": 90.0, "AMD": 85.0, "AAPL": 80.0}
     pipeline = _sizing_pipeline()
@@ -1064,7 +1075,7 @@ def test_preview_sizes_each_candidate_exactly_as_the_constructor_would():
         out = pipeline._build_projected_portfolio(
             [], _tech_buy_analyses(stops), total_value=10000,
         )
-    shown = _preview_sizes(out)
+    shown = _preview_ceilings(out)
     assert set(shown) == {"NVDA", "AMD", "AAPL"}
     for sym, stop in stops.items():
         expected = risk_budget_allocation_pct(
@@ -1078,10 +1089,10 @@ def test_preview_sizes_each_candidate_exactly_as_the_constructor_would():
     assert len(set(shown.values())) == 3
 
 
-def test_preview_size_is_not_independent_of_the_stop():
+def test_preview_ceiling_is_not_independent_of_the_stop():
     """ITEM 221 criterion 2. The same candidate, same entry, same book, only
-    the stop moved: if the preview's size does not move with it, a flat
-    per-candidate size is still in the path somewhere."""
+    the stop moved: if the number the preview states does not move with it,
+    a flat per-candidate size is still in the path somewhere."""
     pipeline = _sizing_pipeline()
     sizes = []
     for stop in (90.0, 80.0):
@@ -1091,13 +1102,33 @@ def test_preview_size_is_not_independent_of_the_stop():
                                         "AAPL": stop}),
                 total_value=10000,
             )
-        sizes.append(_preview_sizes(out)["NVDA"])
+        sizes.append(_preview_ceilings(out)["NVDA"])
     assert sizes[0] != sizes[1], (
-        "the preview's size for a candidate is independent of its stop — "
+        "the preview's number for a candidate is independent of its stop — "
         "the flat per-candidate size is back"
     )
-    # Wider stop, smaller position: the direction matters, not just change.
+    # Wider stop, lower ceiling: the direction matters, not just change.
     assert sizes[1] < sizes[0]
+
+
+def test_preview_claims_no_projected_sector_weight():
+    """ITEM 221, the ruling of 2026-10-01. The preview must not state what
+    the candidate set would WEIGH. It cannot know: the constructor sizes at
+    `min(PM target, stop-implied ceiling, ...)` and the PM's target is made
+    AFTER reading this. A projected mix — flat-sliced or stop-maximised —
+    is a fiction the PM then corrects the real book against."""
+    pipeline = _sizing_pipeline()
+    with patch("src.execution.broker._get_sector"):
+        out = pipeline._build_projected_portfolio(
+            [], _tech_buy_analyses({"NVDA": 90.0, "AMD": 85.0, "AAPL": 80.0}),
+            total_value=10000,
+        )
+    assert "CANNOT tell you what these candidates would weigh" in out
+    assert "If you allocate" not in out
+    assert "→ " not in out.split("Per candidate")[0], (
+        "a projected book line is back"
+    )
+    assert "NOT a weight" in out
 
 
 def test_preview_and_constructor_share_ONE_sizing_definition():

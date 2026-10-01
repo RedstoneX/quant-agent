@@ -7904,27 +7904,40 @@ class TradingPipeline:
 
         BOARD ITEM 221 — every candidate used to be previewed at a FLAT
         `default_buy_pct=5.0`, a per-candidate constant nothing else in the
-        desk used. The constructor sizes each name from its OWN stop
-        distance, so the mix shown here was a book no candidate would ever
-        be given, and the PM trimmed, dropped and reordered names against
-        it. Each candidate is now sized through
-        `risk_budget_allocation_pct` — the SAME helper
-        `PortfolioConstructor._build_buy` caps with — and clamped by the
-        same single-name ceiling the constructor clamps to.
+        desk used, and the projected sector mix was built by summing it.
+        The constructor sizes each name from its OWN stop distance, so the
+        mix shown here was a book no candidate would ever be given.
 
-        What this preview still CANNOT know: the constructor ships
-        `min(PM target delta, risk cap, ...)`, and the PM's target does not
-        exist yet when the preview is built (it is an input TO the PM). So
-        the sizes here are the LARGEST size each candidate's own stop
-        distance permits, which is the binding constraint in the ordinary
-        case, not a prediction of the PM's own asked-for weight.
+        THIS PREVIEW IS STRUCTURALLY INCAPABLE OF PROJECTING REALISED
+        SECTOR WEIGHTS, AND NO LONGER CLAIMS ONE. The constructor ships
+        `min(PM target delta, the name's stop-implied ceiling, its
+        remaining single-name headroom, its sector-crowding scale)`. The PM
+        target delta is the PM's own decision, and this preview is an INPUT
+        to that decision — it is built BEFORE the PM writes a target. So no
+        candidate's eventual weight is knowable here, and every projected
+        mix this function could print would be a guess. Sizing each
+        candidate at the largest size its stop permits is NOT the fix: with
+        the desk's ordinary stop widths that reaches the single-name
+        ceiling and projects sector weights in the hundreds of percent — a
+        more confident fiction than the flat slice, correcting the PM for a
+        concentration that cannot occur.
+
+        What it reports instead is parameter-free and all of it is known at
+        this moment: the held book's measured sector weights, the SECTOR
+        COMPOSITION of the candidate set (which names fall in which sector,
+        and how many), and per candidate its own stop distance and the
+        ceiling that stop implies through `risk_budget_allocation_pct` —
+        the SAME single definition `PortfolioConstructor._build_buy` caps
+        with. A ceiling on one name is a property of that trade; it is not
+        a weight and is never summed into one.
+
+        If you are here to "fix" the preview so it projects a mix again:
+        read the paragraph above first. The number you would need is a
+        decision nobody has made yet.
         """
         from src.execution.broker import _get_sector
         from src.risk.constants import risk_budget_allocation_pct
-        from src.risk.rules import (
-            SECTOR_SIDE_LONG, BookExposure, _effective_multiplier,
-            _gross_multiplier, book_exposure, sector_side_gross,
-        )
+        from src.risk.rules import book_exposure, sector_side_gross
         if total_value <= 0:
             return ""
         buy_candidates = [
@@ -7969,9 +7982,6 @@ class TradingPipeline:
             include_unknown=True,
         )
 
-        proj_net = current_net
-        proj_deployed = current_book.deployed_usd
-        proj_sector = dict(sector_gross)
         unresolved_symbols: list[str] = []
         unsized_symbols: list[str] = []
         # The constructor's own sizing dials, read off the constructor the
@@ -7992,40 +8002,34 @@ class TradingPipeline:
 
         risk_budget_pct = _dial("risk_budget_pct", 5.0)
         max_position_pct = _dial("max_position_pct", 65.0)
-        sized: list[tuple[str, float]] = []
+        by_sector: dict[str, list[str]] = {}
+        per_candidate: list[str] = []
         for a in buy_candidates:
-            # ITEM 221: the candidate's OWN stop distance, through the one
-            # shared definition the constructor caps with. A candidate with
-            # no usable stop geometry is NOT given an assumed size — it is
-            # named as unsized, because inventing one is the defect.
-            alloc_pct = risk_budget_allocation_pct(
-                entry_price=a.entry_price,
+            entry = float(a.entry_price)
+            # The candidate's OWN stop-implied ceiling, through the one
+            # shared definition the constructor caps a long with. It is a
+            # CEILING on this one name, not a weight: nothing here knows
+            # what the PM will ask for, so nothing here may claim a size.
+            ceiling_pct = risk_budget_allocation_pct(
+                entry_price=entry,
                 stop_price=a.stop_loss if a.stop_loss is not None else 0.0,
                 total_value=total_value,
                 risk_budget_pct=risk_budget_pct,
             )
-            if alloc_pct is None or alloc_pct <= 0:
-                unsized_symbols.append(a.symbol)
-                continue
-            # The constructor clamps to the single-name notional ceiling the
-            # risk engine hard-blocks above; mirror it, or the preview shows
-            # a position the engine would drop outright.
-            alloc_pct = min(alloc_pct, max_position_pct)
-            sized.append((a.symbol, alloc_pct))
-            raw = total_value * alloc_pct / 100
-            proj_net += raw * _effective_multiplier(a.symbol)
-            proj_deployed += raw
             sec = _resolve_sector(a.symbol)
             if sec == "Unknown":
                 unresolved_symbols.append(a.symbol)
-            # Every candidate here is BUY-rated, so it lands long-side.
-            key = (sec, SECTOR_SIDE_LONG)
-            proj_sector[key] = proj_sector.get(key, 0.0) + raw * _gross_multiplier(a.symbol)
-        proj_book = BookExposure(
-            equity=total_value, deployed_usd=proj_deployed,
-            net_usd=proj_net, gross_usd=0.0,
-        )
-        proj_invested_pct = proj_book.deployed_pct
+            by_sector.setdefault(sec, []).append(a.symbol)
+            if ceiling_pct is None or ceiling_pct <= 0 or entry <= 0:
+                # No usable stop geometry: NAMED, never back-filled with an
+                # assumed size. Inventing one is the defect this preview had.
+                unsized_symbols.append(a.symbol)
+                continue
+            stop_distance_pct = abs(entry - float(a.stop_loss)) / entry * 100
+            per_candidate.append(
+                f"{a.symbol} stop -{stop_distance_pct:.1f}% "
+                f"→ ≤{ceiling_pct:.0f}%"
+            )
         self._last_symbol_sectors = cached_sectors
 
         def _sector_line(sector_dict: dict[tuple[str, str], float]) -> str:
@@ -8041,58 +8045,77 @@ class TradingPipeline:
             f"- Current: {current_invested_pct:.0f}% invested (capital at work) · "
             f"net direction {current_book.net_pct:+.0f}% · sectors: {_sector_line(sector_gross)}",
         ]
-        if sized:
-            n = len(sized)
-            shown = [f"{sym} {pct:.0f}%" for sym, pct in sized[:8]]
-            tail = f" +{n - 8} more" if n > 8 else ""
+        # Spec §12.2/§12.3 — the concentration target comes from the SAME
+        # `max_sector_pct` the constructor sizes against and the gate
+        # measures against, so the preview cannot warn about a line the rest
+        # of the system does not draw. It is applied to the HELD book, which
+        # is measured; it is no longer applied to a projected book, which
+        # cannot be computed here (see below).
+        target_pct = getattr(
+            getattr(self, "risk_engine", None), "config", None,
+        )
+        target_pct = getattr(target_pct, "max_sector_pct", None) or 75.0
+        overweight = [
+            f"{sec} ({side})" for (sec, side), v in sector_gross.items()
+            if v / total_value * 100 > target_pct and sec != "Unknown"
+        ]
+        if overweight:
             lines.append(
-                f"- If each of {n} BUY-rated candidate(s) is taken at the size its "
-                f"OWN stop distance allows ({risk_budget_pct:.1f}% risk budget, "
-                f"capped at the {max_position_pct:.0f}% single-name ceiling) "
-                f"({', '.join(shown)}{tail}):"
+                f"    ⚠ Held sector sides already over the {target_pct:.0f}% "
+                f"concentration target (each further trade there is scaled "
+                f"down, not refused): {', '.join(sorted(overweight))}"
+            )
+        if buy_candidates:
+            composition = ", ".join(
+                f"{sec} {len(syms)} ({', '.join(syms[:6])}"
+                + (f" +{len(syms) - 6} more" if len(syms) > 6 else "")
+                + ")"
+                for sec, syms in sorted(
+                    by_sector.items(), key=lambda kv: (-len(kv[1]), kv[0]),
+                )
             )
             lines.append(
-                f"    → {proj_invested_pct:.0f}% invested · net direction "
-                f"{proj_book.net_pct:+.0f}% · sectors: {_sector_line(proj_sector)}"
+                f"- {len(buy_candidates)} BUY-rated candidate(s) on offer, "
+                f"by sector: {composition}"
             )
-            # Spec §12.2/§12.3 — this used to carry its own hardcoded `35`,
-            # a fourth sector number unrelated to config and already stale
-            # against the 40 it was shadowing. It now reads the SAME
-            # concentration target the constructor sizes against and the gate
-            # measures against, so the preview cannot warn about a line the
-            # rest of the system does not draw.
-            #
-            # The target, not some band below it, is the meaningful
-            # threshold: at or under it crowding costs a trade nothing
-            # (`sector_size_scale` returns 1.0), so there is nothing
-            # actionable to tell the PM. Above it every further trade in that
-            # sector is shrunk — which is exactly what the PM needs to know
-            # before it writes decisions.
-            target_pct = getattr(
-                getattr(self, "risk_engine", None), "config", None,
-            )
-            target_pct = getattr(target_pct, "max_sector_pct", None) or 75.0
-            overweight = [
-                f"{sec} ({side})" for (sec, side), v in proj_sector.items()
-                if v / total_value * 100 > target_pct and sec != "Unknown"
-            ]
-            if overweight:
+            if per_candidate:
+                n = len(per_candidate)
+                shown = per_candidate[:8]
+                tail = f" +{n - 8} more" if n > 8 else ""
                 lines.append(
-                    f"    ⚠ Sector sides over the {target_pct:.0f}% concentration "
-                    f"target (each further trade there is scaled down, not "
-                    f"refused): {', '.join(sorted(overweight))}"
+                    "- Per candidate, its OWN stop distance and the ceiling "
+                    f"that stop implies at the {risk_budget_pct:.1f}% risk "
+                    f"budget — a cap on ONE name, NOT a weight: "
+                    f"{'; '.join(shown)}{tail}"
+                )
+                lines.append(
+                    f"    (the {max_position_pct:.0f}% single-name notional "
+                    "ceiling binds instead wherever it is the lower of the "
+                    "two)"
                 )
             if unsized_symbols:
                 lines.append(
-                    "    ⚠ No usable stop geometry, so NOT sized into the "
-                    f"projection: {', '.join(dict.fromkeys(unsized_symbols))}"
+                    "    ⚠ No usable stop geometry, so no ceiling can be "
+                    "stated and none is assumed: "
+                    f"{', '.join(dict.fromkeys(unsized_symbols))}"
                 )
             if unresolved_symbols:
                 unique = list(dict.fromkeys(unresolved_symbols))
                 lines.append(
                     "    ⚠ Sector unresolved for: "
-                    f"{', '.join(unique)} — projected mix may understate concentration."
+                    f"{', '.join(unique)} — the composition above may "
+                    "understate how crowded one sector is."
                 )
+            lines.append(
+                "- This preview CANNOT tell you what these candidates would "
+                "weigh as a share of the book, and does not try. The "
+                "constructor sizes each name at min(the target weight YOU "
+                "write, that name's stop-implied ceiling, its remaining "
+                "single-name headroom, its sector-crowding scale) — and your "
+                "targets do not exist yet, because this preview is an INPUT "
+                "to the decision you are about to make. Judge crowding from "
+                "the held weights and the candidate composition above."
+            )
         return "\n".join(lines)
 
     def _build_recent_sells_for_grading(
