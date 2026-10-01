@@ -796,8 +796,18 @@ numbers:
       trades picks the magnitude. Interacts with board item 91, the
       calendar-vs-trading-day defect.
     open_question: >-
-      What is the longest hold over which this desk's own closed trades show a
-      target being reached?
+      BARRED AND REPLACED 2026-10-01 (found by board item 185's sweep; this was
+      the FOURTH copy of a question that can only be answered by a study over
+      this desk's own trade record, which docs/OUTCOME.md forbids). The honest
+      question is not how long a target takes but whether this horizon governs
+      anything at all: Rex's 2026-09-30 ruling is that the desk exits on
+      ALIGNMENT - structure, ATR and an SMA cross agreeing the trend is over -
+      and never on a target, so a ceiling on how far out a target may sit may
+      now be guarding a decision nothing makes. Settle it by reading the live
+      exit path for a surviving consumer, and delete the number if there is
+      none; that reading belongs to board items 75 and 91, which own the
+      target's status and the calendar-vs-trading-day defect. Do not re-derive
+      the magnitude, and do not route 60 to the owner as an appetite dial.
     cost_while_unanswered: >-
       A target 60 sessions out licenses a claim of roughly 8 ATRs of travel
       with nothing measured behind the horizon.
@@ -1099,6 +1109,35 @@ numbers:
       CORRECTION 2026-09-18: the
       first version quoted "until a separate pass re-examines it" as text at
       this site; that phrase is in docs/, not in src/config.py.
+      ITEM 186 PASS 2026-09-30 — TWO DERIVATIONS ATTEMPTED, BOTH WITHDRAWN,
+      NO VALUE CHANGED. The desk sizes shorts today exactly as it did
+      before this pass. Record of the two failures so nobody spends a third
+      attempt on either. (1) WORST HISTORICAL GAP over the fetch lookback:
+      dead because that lookback is a 5-year window chosen for CHART
+      STRUCTURE, and a maximum over a fixed window can only grow until the
+      bar ages out — one old gap would govern every short's size for years
+      and a regime change could not update it. (2) STOP DISTANCE PLUS ONE
+      ATR: dead on algebra, not on data. The entry stop is ITSELF placed at
+      2.5 ATR, so the multiple is (2.5 + 1) / 2.5 = exactly 1.40 for every
+      name — the per-name ATR cancels out. It is a flat haircut in a
+      per-name costume, and LOWER than the 1.5 it claimed to replace.
+      ALSO ESTABLISHED THIS PASS — WHERE THIS NUMBER ACTUALLY BINDS.
+      Execution takes min(qty_by_alloc, qty_by_risk), and the risk-budget
+      path in src/pipeline_stages.py multiplies by this number. So this
+      row, not the constructor's mirror of it, is the one that sizes a live
+      short whenever the risk path is the binding leg. Any future statement
+      that a constructor-side change has "retired" this number is false
+      unless the execution-side read changes with it. That construction /
+      execution split is a latent defect in its own right and is filed as
+      board item 215.
+      WHAT CHANGED INSTEAD: the desk now RECORDS the evidence. Every short
+      it holds accumulates the worst adverse overnight gap actually
+      suffered against it, beside the volatility read and the stop distance
+      already pinned at entry (`trades.max_adverse_overnight_gap`,
+      `overnight_gap_sessions`, joined to `entry_atr` and
+      `initial_stop_loss`). Recording only — no threshold, no gate, no
+      sizing change, and it may NOT be swept for the multiple that would
+      have been optimal, which would be fitting to this desk's history.
     open_question: >-
       NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that risk is
       never a global dial: it is read per name off that instrument's own
@@ -2696,6 +2735,34 @@ numbers:
       (src/risk/constants.py:10-14). It decides whether a cash-only-policy
       ACTION fires on what is arithmetically dust; it does not size, price,
       gate or exit a trade.
+  - id: src.risk.constants.REWARD_RISK_PARITY
+    value: 1.0
+    status: sourced
+    site: src/risk/constants.py
+    source: >-
+      docs/BOARD_NOTES.md:1198 (section "## item 218 — Arithmetically losing
+      geometry is refused (owner ruling 2026-10-01)") records the ruling
+      verbatim, and src/portfolio_constructor.py:517 carries it beside the
+      constant that applies it. Owner ruling 2026-10-01, verbatim: "For now,
+      let's refuse a bad risk
+      reward ratio. See if that improves the desk purchases." He was shown
+      the worked case (buy 100, stop 94, nearest structural level above 104
+      — risking 6 to make 4) and chose refusal over both leaving it alone
+      and shrinking the position. Parity is not a picked number: it is the
+      boundary between arithmetically losing and arithmetically winning
+      geometry, the only line on the scale statable without inventing a
+      value, and any higher figure would be barred as arbitrary. Board item
+      218. CAVEAT RECORDED WITH IT, and accepted by the owner: parity is
+      not mathematically DERIVED. The risk side is a real transactable
+      price; the reward side is the nearest structural level above entry,
+      which is a forecast the desk never actually sells at (it rides a
+      trailing stop out), so the ratio compares one real number against one
+      estimated one.
+    cost_while_unanswered: >-
+      None outstanding; measured effect is recorded instead. Against the
+      production book [measured 2026-10-01, read-only, decision-time
+      initial_stop_loss / initial_take_profit on 33 BUY trades] median
+      reward:risk is 1.24 and eleven buys sit below parity.
   - id: src.risk.constants.REWARD_RISK_FLOOR
     value: 1.5
     status: arbitrary
@@ -3463,9 +3530,23 @@ numbers:
       convention adopted is still a number this desk did not read off
       anything.
     open_question: >-
-      At what R of open profit does moving the stop to breakeven stop costing
-      more in premature exits than it saves in given-back gains, on this
-      desk's own closed trades?
+      BARRED AND REPLACED 2026-10-01 (board item 185). The old question asked
+      what this desk's own closed trades say about the breakeven ratchet; a
+      study over this desk's own trade record is forbidden by docs/OUTCOME.md
+      and item 90 had already deleted the identical shape of question from
+      min_stop_atr_multiple, so this is the third copy and the reason
+      tests/test_no_fitted_open_questions.py now also matches it. The question
+      that can be answered off the instrument instead: does this ratchet ever
+      BIND? The chandelier trail already reads giveback off the name's own
+      ATR(14) every session, so a fixed R ratchet changes an exit only on the
+      bars where it sits tighter than the instrument-read trail, and the
+      honest outcome may be DELETING it as double-counting rather than
+      re-picking it. THE RECORDING THAT SETTLES IT DOES NOT EXIST: verified
+      2026-10-01 against the production database, no table stores a trailing
+      decision's reason code or the candidate levels it chose between, so
+      nothing can say how often the range ratchet, rather than structure or
+      the chandelier, actually set a stop. Build that recording under item
+      142, which owns these three numbers; do not re-derive the multiple.
     cost_while_unanswered: >-
       Every range trade's stop moves on a borrowed convention; too early it
       exits winners at scratch, too late it gives back the bank.
@@ -3484,9 +3565,16 @@ numbers:
       sourced -- ratification records WHO chose the number, not a measurement
       behind it.
     open_question: >-
-      At what R of open profit does moving the stop up to lock gain stop costing
-      more in premature exits than it saves in given-back gains, on this desk's
-      own closed trades?
+      BARRED AND REPLACED 2026-10-01 (board item 185), same reason and same
+      replacement as RANGE_BREAKEVEN_R_MULTIPLE: the old wording promised a
+      study over this desk's own closed trades, which docs/OUTCOME.md forbids.
+      Answerable off the instrument instead: on how many bars does this
+      ratchet sit TIGHTER than the chandelier trail, which already reads
+      giveback off the name's own ATR(14)? If the answer is never, the ratchet
+      is inert and deleting it is the correct outcome. The recording that
+      settles it does not exist - no production table stores a trailing
+      decision's reason code or its rejected candidates (verified 2026-10-01)
+      - and building it belongs to item 142. Do not re-pick the multiple.
     cost_while_unanswered: >-
       The second ratchet fires on a chosen multiple; too early it exits winners
       at the lock for a scratch-plus, too late it gives back the bank on a
@@ -3507,9 +3595,16 @@ numbers:
       2026-09-25 for item 142; ratified is not sourced -- ratification records
       WHO chose the number, not a measurement behind it.
     open_question: >-
-      At what R of open profit does moving the stop up to lock gain stop costing
-      more in premature exits than it saves in given-back gains, on this desk's
-      own closed trades?
+      BARRED AND REPLACED 2026-10-01 (board item 185), same reason and same
+      replacement as RANGE_BREAKEVEN_R_MULTIPLE: the old wording promised a
+      study over this desk's own closed trades, which docs/OUTCOME.md forbids.
+      Answerable off the instrument instead: on how many bars does this
+      ratchet sit TIGHTER than the chandelier trail, which already reads
+      giveback off the name's own ATR(14)? If the answer is never, the ratchet
+      is inert and deleting it is the correct outcome. The recording that
+      settles it does not exist - no production table stores a trailing
+      decision's reason code or its rejected candidates (verified 2026-10-01)
+      - and building it belongs to item 142. Do not re-pick the multiple.
     cost_while_unanswered: >-
       The lock level is a chosen multiple; too high it rarely engages and gives
       back more, too low it caps the trade near scratch on a normal pullback.

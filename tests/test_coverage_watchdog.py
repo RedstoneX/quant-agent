@@ -838,7 +838,10 @@ def test_a_repairing_sweep_run_leaves_a_log_line_and_an_event_row(
     assert len(lines) == 2
     assert lines[0].endswith("(coverage_sweep): started")
     assert "repaired" in lines[1] and "positions checked 1" in lines[1]
-    assert "succeeded 1" in lines[1] and "alert none sent" in lines[1]
+    # Defect 5b, 2026-09-30: a repairing run used to assert "alert none
+    # sent". It now pages, so the assertion is inverted deliberately.
+    assert "succeeded 1" in lines[1] and "alert none sent" not in lines[1]
+    assert "stop-repaired alert" in lines[1]
 
     rows = _sweep_rows(desk_db)
     assert len(rows) == 1
@@ -850,8 +853,14 @@ def test_a_repairing_sweep_run_leaves_a_log_line_and_an_event_row(
     assert row["repairs_succeeded"] == 1
     assert row["repairs_failed"] == 0
     assert row["repaired"][0]["symbol"] == "ORCL"
-    assert row["gaps_found"] == 0                  # re-read after placing
-    assert row["alerts"] == []
+    # Defect 5a: `gaps_found` is what the run FOUND. It read 0 here
+    # because the post-repair re-read rebound the same variable, which is
+    # how a repaired gap was reported as no gap at all.
+    assert row["gaps_found"] == 1
+    assert row["gaps_remaining"] == 0              # re-read after placing
+    # Defect 5b: a repair now pages. (Not delivered in this test — no
+    # notifier is configured — which the line reports honestly.)
+    assert row["alerts"] == ["stop-repaired alert could NOT be delivered"]
     assert row["run_id"] in lines[0]
 
 
@@ -927,6 +936,69 @@ def test_the_sweep_process_writes_to_the_desk_log_file(tmp_path):
         root.setLevel(before_level)
     text = (tmp_path / "quant_agent.log").read_text()
     assert "[INFO] src.coverage_watchdog: COVERAGE SWEEP coverage_sweep-test" in text
+
+
+# ---------------------------------------------------------------------------
+# DEFECT 5 (2026-09-30): the sweep repaired AAPL and reported
+# "gaps 0, ... repairs attempted 1 ... alert none sent".
+# ---------------------------------------------------------------------------
+
+
+def _repaired_status(**kw):
+    from src.coverage_watchdog import CoverageStatus, RepairOutcome
+
+    base = dict(
+        trading_day="2026-09-30",
+        session_ran=True,
+        gaps=[],                 # the POST-repair re-read: nothing left
+        gaps_detected=1,         # what the run actually found
+        repairs=[RepairOutcome(symbol="AAPL", qty=7.33, placed=True)],
+        positions_checked=11,
+    )
+    base.update(kw)
+    return CoverageStatus(**base)
+
+
+def test_summary_reports_the_gap_it_found_not_the_one_left():
+    """5a. `gaps` is rebound to the post-repair re-read, so the count the
+    operator scans read 0 while a repair was attempted. Both numbers now."""
+    from src.coverage_watchdog import sweep_log_line, sweep_summary
+
+    summary = sweep_summary(
+        _repaired_status(), entry="coverage_sweep", run_id="r1",
+    )
+    assert summary["gaps_found"] == 1
+    assert summary["gaps_remaining"] == 0
+    assert summary["repairs_attempted"] == 1
+    line = sweep_log_line(summary)
+    assert "gaps 1 found / 0 still open" in line
+    assert "gaps 0," not in line
+
+
+def test_a_repair_pages_the_owner():
+    """5b. A repair means something upstream failed silently; the last
+    line of defence must not fix it and say nothing."""
+    from src.coverage_watchdog import repair_performed_text
+
+    status = _repaired_status()
+    assert status.should_alert_repair_performed is True
+    text = repair_performed_text(status)
+    assert "AAPL" in text and "PUT BACK" in text
+
+
+def test_a_clean_sweep_still_says_nothing():
+    from src.coverage_watchdog import CoverageStatus
+
+    clean = CoverageStatus(
+        trading_day="2026-09-30", session_ran=True, gaps=[],
+        gaps_detected=0, repairs=[], positions_checked=11,
+    )
+    assert clean.should_alert_repair_performed is False
+
+
+def test_a_repair_already_all_cleared_does_not_page_twice():
+    status = _repaired_status(resolution_notice_symbols=("aapl",))
+    assert status.should_alert_repair_performed is False
 
 
 # ---------------------------------------------------------------------------

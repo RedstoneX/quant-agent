@@ -555,7 +555,40 @@ def iso_week(day: date) -> str:
 
 
 def empty_state() -> dict:
-    return {"admitted": {}, "screened": {}, "removed": {}, "events": []}
+    return {"admitted": {}, "screened": {}, "removed": {},
+            "events": [], "atr_cross_section": []}
+
+
+def record_atr_cross_section(state: dict, *, week: str, today: date,
+                             symbol: str, measured: dict) -> None:
+    """THE RECORDING board item 185 is blocked on.
+
+    The volatility ceiling (`max_atr_fraction`, 1 / the widest reachable stop
+    multiple) is an arithmetic non-degeneracy floor and NOT a statement of how
+    volatile a name this desk is willing to hold. The published form of a
+    volatility eligibility bound is cross-sectional - a quantile of the names
+    actually screened - and this desk has never had a cross-section to take a
+    quantile of, because the screen has never executed. Everything measured so
+    far was measured on names the desk had ALREADY admitted, which says what it
+    held and never what it should have refused.
+
+    So: every screened symbol's ATR(14)/price is persisted here, per run, with
+    the date and the name. Once this file has runs in it the quantile form has
+    a measured distribution behind it and item 185 can close on evidence rather
+    than on another derivation attempt. Nothing reads this back yet; it is a
+    recording, deliberately, and it governs no trade.
+
+    Retention is deliberately unbounded: a cap would be another chosen number,
+    and the distribution is the point.
+    """
+    atr_pct = (measured or {}).get("atr_pct")
+    if atr_pct is None:
+        return
+    runs = state.setdefault("atr_cross_section", [])
+    stamp = today.isoformat()
+    if not runs or runs[-1].get("date") != stamp or runs[-1].get("week") != week:
+        runs.append({"date": stamp, "week": week, "readings": {}})
+    runs[-1]["readings"][symbol] = float(atr_pct)
 
 
 class UniverseStore:
@@ -739,6 +772,10 @@ def run_screen(
             run.passed += 1
         for code in result.failures[:1]:
             run.failures_by_reason[code] = run.failures_by_reason.get(code, 0) + 1
+        record_atr_cross_section(
+            state, week=week, today=today,
+            symbol=result.symbol, measured=result.measured,
+        )
         event = apply_result(state, result, today=today, held=held_set)
         if event is not None:
             run.events.append(event)
