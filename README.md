@@ -596,7 +596,7 @@ quant-agent/
 │   ├── scheduler.py               # APScheduler — only used by --mode live (dev/legacy)
 │                                  #   Production uses systemd timers (Linux) or launchd (macOS).
 │   ├── config.py                  # Pydantic config with API key validation
-│   ├── models.py                  # Data models (ReasoningChain, MacroNarrative, etc.)
+│   ├── models/                    # Data models package (base, analysis, decisions, portfolio, risk_verdicts, macro, news, positions, earnings, smart_money, evening, meta)
 │   ├── agents/                    # 9 daily LLM agents + 1 quarterly meta_reflector
 │   ├── rotation.py                # Opportunity-cost rotation (execution.rotation_enabled)
 │   ├── nominations.py             # Per-seat candidate nomination + capping
