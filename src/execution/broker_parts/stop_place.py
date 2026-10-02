@@ -20,6 +20,7 @@ import time
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
 
+from src.execution.broker_parts.stop_window import UnprotectedWindow, fallback_reason
 from src.execution.broker_parts.stop_amend import (
     _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
 )
@@ -195,8 +196,10 @@ class StopPlacer:
         submit_stop_limit_order=None,
         submit_stop_legs=None,
         restore_stop_orders=None,
+        window_log=None,
     ):
         self.client = client
+        self._window_log = window_log if window_log is not None else []
         self._list_open_stop_orders_by_side = list_open_stop_orders_by_side
         self._list_open_protective_stop_orders = list_open_protective_stop_orders
         self._list_open_sell_stop_orders = list_open_sell_stop_orders
@@ -1150,13 +1153,8 @@ class StopPlacer:
         # absorb tomorrow's mechanical dividend gap, and that is what the
         # allow_lowering=True opt-in is for.
         #
-        # VERIFIED 2026-09-30: NO caller anywhere in src/ passes
-        # allow_lowering=True — grep finds the name only in this file's own
-        # signature and comments. The ex-dividend caller this comment
-        # described does not exist, so every call today takes the
-        # never-loosen branch below. Stated rather than removed because the
-        # parameter is still reachable from tests and from a future caller,
-        # but do not cite the ex-div caller as if it were live.
+        # VERIFIED 2026-09-30: no caller in src/ passes allow_lowering=True, so
+        # every call takes the never-loosen branch; the parameter stays for tests.
         if stop_specs and not allow_lowering:
             if side == "buy":
                 tightest_existing = min(spec["stop_price"] for spec in stop_specs)
@@ -1232,21 +1230,19 @@ class StopPlacer:
         if amended is not _AMEND_NOT_ATTEMPTED:
             return amended
 
+        # Genuinely un-amendable from here: the window is timed and RECORDED.
+        window = UnprotectedWindow(symbol, fallback_reason(stop_specs, abs(float(fresh[0].qty)) if fresh else None), self._window_log)
+
         cancelled_specs: list[dict] = []
         for spec in stop_specs:
             try:
                 self.client.cancel_order_by_id(spec["id"])
                 cancelled_specs.append(spec)
+                window.cancelled(spec["id"])
             except Exception as exc:
                 logger.warning("replace_stop_loss: cancel failed for order %s: %s", spec["id"], exc)
-                # Always restore whatever we already cancelled. The previous
-                # "if no open stops remain" gate was wrong for partial
-                # failures: with [A, B, C], if A and B cancel cleanly and C
-                # fails, the broker now shows [C] — the gate sees something
-                # open and skips restore, leaving A's and B's qty
-                # unprotected. Restore is safe even when C is still live;
-                # at worst we end up with slightly more stops than minimal,
-                # but full original coverage is preserved.
+                # Restore whatever was already cancelled, even if another stop still
+                # rests: at worst that leaves one extra stop, never a gap.
                 if cancelled_specs:
                     restored, _failed = self._restore_stop_orders(symbol, cancelled_specs, side=side)
                     logger.warning(
@@ -1254,6 +1250,7 @@ class StopPlacer:
                         "stop(s) for %s after partial cancel failure",
                         restored, len(cancelled_specs), symbol,
                     )
+                    window.close("cancel_failed_restored" if restored else "cancel_failed_no_stop_confirmed")
                 return None
 
         # Re-read position right before submit — in the sub-second window
@@ -1269,6 +1266,7 @@ class StopPlacer:
                 "NOT restoring old stops (position no longer exists)",
                 symbol,
             )
+            window.close("position_closed")
             return None
         # Order qty is always the unsigned share count — the SIDE parameter
         # carries direction. `fresh_positions[0].qty` is negative for a
@@ -1288,19 +1286,14 @@ class StopPlacer:
                 "stop @ $%.2f across %d leg(s)",
                 symbol, len(cancelled_specs), side, new_stop_price, len(legs),
             )
+            window.close("replaced")
             return order
         except Exception as exc:
             logger.error("replace_stop_loss: failed to submit new stop for %s: %s", symbol, exc)
-            # The Alpaca QueryOrderStatus.OPEN filter INCLUDES transitional
-            # statuses (pending_cancel / pending_replace), so the orders we
-            # just cancelled can still appear in this list for ~1s after the
-            # cancel call returns AND a *different* stop placed by another
-            # path could itself be in pending_cancel. Three things must all
-            # be true for "visible" to count as real protection:
-            #   1. the order's id is NOT in cancelled_specs (PR #75)
-            #   2. the order's status is in an active state, not pending_*
-            #   3. the *sum* of active stop qtys covers the current position
-            # Miss any of those and `cancelled_specs` must be restored.
+            # QueryOrderStatus.OPEN includes pending_cancel/pending_replace, so
+            # "visible" is real protection only if the id is not one we just
+            # cancelled, its status is active, and active qty covers the position;
+            # otherwise `cancelled_specs` must be restored.
 
             def _is_live_protection(order) -> bool:
                 if str(getattr(order, "id", "")) in cancelled_ids:
@@ -1323,15 +1316,13 @@ class StopPlacer:
             visible = self._list_open_protective_stop_orders(symbol, side=side)
             live_stops = [o for o in visible if _is_live_protection(o)]
             covered_qty = sum(_stop_qty(o) for o in live_stops)
-            position_qty = qty  # captured pre-submit above; the position
-                                # cannot have grown between then and now (this
-                                # path doesn't BUY/SELL_SHORT to open), so this
-                                # is an upper bound for required coverage.
+            position_qty = qty  # upper bound: this path never opens shares
             if live_stops and covered_qty >= position_qty:
                 logger.warning(
                     "replace_stop_loss: %d active stop(s) cover %.4f >= position %.4f for %s after submit failure; leaving stop state unchanged",
                     len(live_stops), covered_qty, position_qty, symbol,
                 )
+                window.close("covered_by_other_stop")
                 return None
             if live_stops:
                 logger.warning(
@@ -1344,4 +1335,5 @@ class StopPlacer:
                     "replace_stop_loss: %s has no confirmed stop protection after replacement failure",
                     symbol,
                 )
+            window.close("restored" if restored else "no_stop_confirmed")
             return None

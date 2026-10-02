@@ -183,7 +183,8 @@ class StopAmender:
         )
         return "unknown"
 
-    def _amend_one_stop_price(self, *, symbol: str, spec: dict, new_price: float) -> dict:
+    def _amend_one_stop_price(self, *, symbol: str, spec: dict, new_price: float,
+                              new_qty: int | None = None) -> dict:
         """Amend ONE resting stop's price and report what is KNOWN afterwards.
 
         The single place both the trailing path and the ex-dividend shift
@@ -203,9 +204,18 @@ class StopAmender:
             "old_stop": spec.get("stop_price"), "new_stop": new_price,
             "new_id": None, "outcome": "unknown", "detail": "",
         }
+        request_fields: dict = {"stop_price": new_price}
+        # A stop-LIMIT leg keeps its own limit distance from the trigger.
+        old_limit = spec.get("limit_price")
+        if old_limit and spec.get("stop_price"):
+            new_limit = _quantize_price(new_price + (old_limit - spec["stop_price"]))
+            if new_limit is not None and new_limit > 0:
+                request_fields["limit_price"] = leg["new_limit"] = new_limit
+        if new_qty is not None:
+            request_fields["qty"] = leg["new_qty"] = int(new_qty)
         try:
             replaced = self.client.replace_order_by_id(
-                leg["id"], ReplaceOrderRequest(stop_price=new_price),
+                leg["id"], ReplaceOrderRequest(**request_fields),
             )
         except Exception as exc:  # noqa: BLE001
             if _is_terminal_broker_rejection(exc):
@@ -246,23 +256,20 @@ class StopAmender:
         means. Every rejection here routes to a cancel+resubmit fallback, which
         is the measured-safe outcome for an unrecognised shape.
         """
-        # A bracket/OTO/OCO leg is the one shape the original comment was right
-        # about and the measurement did NOT cover.
-        order_class = getattr(order, "order_class", None)
-        order_class = str(getattr(order_class, "value", order_class) or "").lower()
-        if order_class not in ("", "simple") or getattr(order, "legs", None):
+        # A bracket/OTO PARENT (it carries `legs`) is not a stop. A CHILD stop
+        # leg amends: one `PATCH /orders/{id}` serves every order and the
+        # request model excludes no class, while cancelling a child would also
+        # pull its OCO sibling. UNMEASURED; a refusal leaves the original resting.
+        if getattr(order, "legs", None):
             return False
-        # `order_class` and `legs` sit on the PARENT on Alpaca, so a child leg
-        # can present as class "" with no legs. `parent_id` is populated ON the
-        # child and is what actually establishes parentlessness.
-        if getattr(order, "parent_id", None):
-            return False
-        # A stop-LIMIT carries a limit price too, and the ReplaceOrderRequest
-        # used by both callers amends stop_price ONLY -- the limit would keep
-        # its old level and the buffer between them would drift on every move.
-        # `_submit_stop_limit_order`'s fallback leg produces exactly this shape.
+        # A stop-LIMIT leg amends stop AND limit, so both must be readable.
         otype = getattr(order, "order_type", None) or getattr(order, "type", None)
         otype = str(getattr(otype, "value", otype) or "").lower()
+        if otype == "stop_limit":
+            try:
+                return float(getattr(order, "limit_price", 0) or 0) > 0
+            except (TypeError, ValueError):
+                return False
         return otype == "stop"
 
     def _amend_resting_stop_price(
@@ -282,10 +289,8 @@ class StopAmender:
         when this path does not apply and the caller should run the legacy
         cancel+resubmit fallback.
 
-        A whole-share QUANTITY amend was ALSO measured working on 2026-09-30
-        (3 shares to 2, one open stop); only a FRACTIONAL quantity amend is
-        refused, which is why a coverage-repairing size change still goes to
-        the fallback. A bracket/OTO child is UNMEASURED, not known-unamendable.
+        A whole-share QUANTITY amend was measured working 2026-09-30; a
+        FRACTIONAL one is refused, so only that still takes the fallback.
 
         Measured against the broker on rehearsal account <redacted-rehearsal-account> on
         2026-09-30: `replace_order_by_id(id, ReplaceOrderRequest(stop_price=X))`
@@ -299,19 +304,8 @@ class StopAmender:
             return _AMEND_NOT_ATTEMPTED
         if not all(self._stop_order_amendable_in_place(o) for o in live_orders):
             return _AMEND_NOT_ATTEMPTED
-        # MULTI-LEG (item 201). 9 of the 11 open positions are fractional
-        # [measured 2026-10-01, production quant_agent.db, read-only]. That a
-        # fractional position carries the spec 11.1 hybrid PAIR — a durable GTC
-        # whole-share leg plus a DAY sliver leg — is ASSUMED, not measured: the
-        # production database holds positions, not an order book. What would
-        # settle it: one read of the open orders for a fractional holding. Restricting the atomic path to
-        # exactly ONE resting order therefore left the trailing stop cancelling
-        # and resubmitting on most of the book while the ex-dividend shift no
-        # longer did, which is protection moving in two directions at once.
-        # Each leg keeps its own id, quantity and time-in-force under a
-        # price-only amend, so moving them all to the new trigger does to the
-        # LEVEL exactly what the cancel+resubmit fallback already did, minus
-        # the unprotected window.
+        # MULTI-LEG (item 201): 9 of 11 positions are fractional [measured
+        # 2026-10-01]; that each carries the two-leg pair is ASSUMED.
         try:
             covered = sum(abs(float(spec["qty"])) for spec in stop_specs)
         except (TypeError, ValueError, KeyError):
@@ -321,19 +315,24 @@ class StopAmender:
         # at the position's qty) is the path that repairs it. Compare at the
         # broker's own fractional resolution and SAY why when it does not match,
         # so a persistently-skipped atomic path is visible instead of invisible.
+        new_qty = None
         if abs(covered - position_qty) > 1e-9:
-            logger.info(
-                "replace_stop_loss: %s's %d resting stop(s) cover %s of %s held "
-                "shares, so the in-place amend is skipped and the "
-                "cancel+resubmit path runs to repair coverage.",
-                symbol, len(stop_specs), covered, position_qty,
-            )
-            return _AMEND_NOT_ATTEMPTED
+            # One whole-share leg on a whole-share position: the quantity amend
+            # was measured working (2026-09-30), so repair it in place.
+            if (len(stop_specs) == 1 and covered == int(covered)
+                    and position_qty == int(position_qty) and position_qty >= 1):
+                new_qty = int(position_qty)
+            else:
+                logger.info("replace_stop_loss: %s stops cover %s of %s shares; no "
+                            "in-place amend applies, cancel+resubmit (window "
+                            "recorded)", symbol, covered, position_qty)
+                return _AMEND_NOT_ATTEMPTED
         price = _quantize_price(new_stop_price)
         if price is None or price <= 0:
             return _AMEND_NOT_ATTEMPTED
 
-        legs = [self._amend_one_stop_price(symbol=symbol, spec=spec, new_price=price)
+        legs = [self._amend_one_stop_price(symbol=symbol, spec=spec, new_price=price,
+                                           new_qty=new_qty)
                 for spec in stop_specs]
         amended = [l for l in legs if l["outcome"] == "amended"]
         unknown = [l for l in legs if l["outcome"] == "unknown"]
@@ -398,6 +397,7 @@ class StopAmender:
                         spec={"id": lag["id"], "qty": lag["qty"],
                               "stop_price": lag["old_stop"]},
                         new_price=price,
+                        new_qty=new_qty,
                     )
                     again["retry_of"] = lag["id"]
                     retried[lag["id"]] = again

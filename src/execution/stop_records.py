@@ -246,12 +246,12 @@ def replace_stop_and_record(
 ) -> dict | None:
     """The replacement funnel: broker replace, then archive write-back.
 
-    Callers that used to talk to `AlpacaBroker.replace_stop_loss` directly
-    (deterministic trail, midday TRAIL_STOP) go through here so a successful
-    replace cannot silently leave `trades.stop_loss` on the entry level.
-    A failed or refused replace writes nothing.
+    Callers go through here so a successful replace cannot silently leave
+    `trades.stop_loss` on the entry level. A failed replace writes no level.
     """
     order = broker.replace_stop_loss(symbol, new_stop_price, **kwargs)
+    from src.execution.broker_parts.stop_window import record_unprotected_windows
+    record_unprotected_windows(broker, db, symbol)  # even a failed replace
     if accepted_stop_order(order):
         recorded = write_back_stop_loss(
             db, symbol, new_stop_price,
