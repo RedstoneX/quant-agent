@@ -11,6 +11,7 @@ from fredapi import Fred
 from src.data.fred_publication_days import roll_to_publication_day
 from src.data.macro_series_cache import MacroSeriesCache
 from src.trading_calendar import et_now, et_today
+from src.data.macro_cache_serve import serve_from_cache, serve_last_good
 
 logger = logging.getLogger(__name__)
 
@@ -685,40 +686,20 @@ class MacroDataProvider:
         )
 
     def _serve_from_cache(self, series_id: str, kwargs: dict) -> pd.Series | None:
-        """The cached copy of this series, or None to go to the wire.
-
-        Never used in prefetch mode: the prefetch's whole job is to refresh
-        the cache, so reading it would make the job a no-op after the first
-        successful day.
-        """
+        """Cached copy while still the latest print, else None (never in
+        prefetch mode: the prefetch's job is to refresh the cache)."""
         if self._prefetch_mode:
             return None
-        try:
-            entry = self.series_cache.load(series_id, kwargs)
-        except Exception as e:  # noqa: BLE001 — a broken cache is a miss
-            logger.warning("FRED series cache unusable for %s: %s", series_id, e)
-            return None
-        if entry is None or not MacroSeriesCache.is_usable(entry, et_now()):
-            return None
-        try:
-            rows = entry["observations"]
-            index = pd.DatetimeIndex([pd.Timestamp(d) for d, _ in rows])
-            values = [float("nan") if v is None else float(v) for _, v in rows]
-            series = pd.Series(values, index=index, dtype=float)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "FRED series cache for %s did not parse (%s) — fetching live",
-                series_id, e,
-            )
-            return None
-        if len(series) == 0:
-            return None
-        # Seed the metadata the due-date derivation needs so _record_freshness
-        # below re-derives freshness from FRED's own numbers WITHOUT a second
-        # HTTP call. A cache-served series therefore reports exactly what a
-        # wire-served one would, `overdue` included — nothing is laundered.
-        info = entry.get("info")
-        self._series_info_cache[series_id] = info if isinstance(info, dict) else None
+        return serve_from_cache(self, series_id, kwargs, et_now())
+
+    def _note_stale_last_good(self, series_id, last, failure_reason) -> pd.Series:
+        """Item 187: serve the last-good series after the wire failed. It is
+        recorded as a coverage FAILURE carrying the value's age, so the run
+        is never `complete` and the seat is told the value is old."""
+        series, age_days = last
+        self._note_coverage(series_id, ok=False, reason=(
+            f"stale_last_good_served_age_{age_days}d_after:{failure_reason}"))
+        self._record_freshness(series_id, series)
         return series
 
     def _next_backoff(self, attempt: int, series_id: str | None = None) -> float:
@@ -1121,6 +1102,11 @@ class MacroDataProvider:
 
         if transport_failed:
             self._consecutive_failed_series += 1
+            # Item 187: retries exhausted -> last-good with its age, flagged.
+            last = None if self._prefetch_mode else serve_last_good(
+                self, series_id, kwargs, et_now())
+            if last is not None:
+                return self._note_stale_last_good(series_id, last, failure_reason)
             self._note_coverage(series_id, ok=False, reason=failure_reason)
             self._run_freshness[series_id] = SeriesFreshness(
                 series_id=series_id, status=FRESHNESS_EMPTY,
