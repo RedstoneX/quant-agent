@@ -23,6 +23,16 @@ ExitEngineMixin, RiskGateMixin, AdmissionMixin, ResearchContinuityMixin,
 IntradayMixin, ...)`. A `grep -rn '^class \w*Mixin' src/` returns exactly eight
 mixin class definitions, one per file.
 
+**Five exit-engine pieces now ARE boundaries (2026-10-02).** `src/exits/`
+holds `TargetRevision`, `StructuralProtection`, `ExitSubstantiation`,
+`HoldingDiscipline` and `AlignmentExit`, each a standalone class taking every
+collaborator as a keyword-only constructor argument (the `src/sessions/`
+pattern); `ExitEngineMixin` keeps a thin same-named shim per method. All five
+pass `check_boundary`; `tests/test_exits_boundary.py` is the witness. The trails
+and the AI risk review stayed in the mixin: the former imports the broker seam
+(`src.execution`, a frozen importer list), the latter reads the module-level
+`_reason_cites_hard_trigger` that a test patches on `src.pipeline_exits`.
+
 **Five protection pieces now ARE boundaries (2026-10-02).** `src/protection/`
 holds `OwnerAlerts`, `SellFinalization`, `FillReconciler`, `RepegDrain` and
 `CoverageElection`, each a standalone class taking every collaborator as a
