@@ -1,0 +1,141 @@
+"""Board item 202: every place ``src/`` can reach a provider is a NAMED replay seam.
+
+A replay of a recorded session must be deterministic and free. The runtime wall
+(``ops/rehearsal/network_wall.py``) catches an outbound attempt when it happens;
+this guard catches it when it is WRITTEN. Any source file that imports an HTTP,
+socket or provider-SDK client is an outbound site, and a NEW site — a new file,
+or a new client module inside an existing file — must first be handled in the
+rehearsal: served from a recording by the patch-where-the-client-is-built
+pattern, or refused loudly naming the missing recording (see
+``ops/rehearsal/feed_recording.py``, ``market_recording.py``).
+
+NO STORED BASELINE
+------------------
+The first cut of this guard kept its "before" picture in
+``tests/replay_outbound_sites_baseline.json`` — an AST scan of ``src/`` frozen
+on 2026-10-02 and committed. That is a cached measurement, not policy: nothing
+in it was reasoned about by a human, every entry was produced by the scanner
+below, and every change that touched a listed file had to edit the one shared
+file that every other open change was also editing.
+
+So this stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md). At check time it
+scans the working tree, scans ``origin/main`` separately, and reports the
+DELTA. If ``origin/main`` cannot be read it REFUSES; it never passes by default.
+
+``CLIENT_MODULES`` below is the one thing that IS policy — the list of module
+names that mean "this code can leave the box" — and it stays in code, where it
+is reviewed. It is a definition, not a record of the current state.
+
+Run it directly: ``python -m scripts.replay_outbound_guard``.
+"""
+from __future__ import annotations
+
+import ast
+import sys
+
+from scripts.guard_reference import (
+    ROOT,
+    ReferenceUnavailable,
+    TRUNK,
+    trunk_blobs,
+    working_paths,
+)
+
+SCAN_DIR = "src"
+
+CLIENT_MODULES = {
+    "requests", "httpx", "urllib", "urllib3", "aiohttp", "curl_cffi", "yfinance",
+    "fredapi", "openai", "anthropic", "websockets", "websocket", "http", "smtplib",
+    "ftplib", "telegram", "alpaca", "alpaca_trade_api", "feedparser",
+    "pandas_datareader", "socket", "ssl",
+}
+
+
+def scan_text(text: str) -> set[str]:
+    """Every client module one source file imports, at any nesting depth."""
+    tree = ast.parse(text)
+    hits: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            hits |= {a.name.split(".")[0] for a in node.names} & CLIENT_MODULES
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            root = node.module.split(".")[0]
+            if root in CLIENT_MODULES:
+                hits.add(root)
+    return hits
+
+
+def scanned_paths() -> list[str]:
+    """Tracked ``.py`` files under ``src/`` in the working tree."""
+    return working_paths(f"{SCAN_DIR}/*.py")
+
+
+def working_sites() -> dict[str, set[str]]:
+    """Outbound-client imports per file in this working tree."""
+    out: dict[str, set[str]] = {}
+    for path in scanned_paths():
+        try:
+            hits = scan_text((ROOT / path).read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue  # unparsable source is a different failure, caught elsewhere
+        if hits:
+            out[path] = hits
+    return out
+
+
+def trunk_sites(paths: list[str]) -> dict[str, set[str]]:
+    """The same measurement taken on ``origin/main`` at check time.
+
+    A path absent from the trunk simply has no sites — that is how a new file
+    is recognised. A trunk blob that will not parse is unmeasurable, so the
+    guard refuses rather than treat it as clean.
+    """
+    out: dict[str, set[str]] = {}
+    for path, text in trunk_blobs(paths).items():
+        try:
+            hits = scan_text(text)
+        except SyntaxError as exc:
+            raise ReferenceUnavailable(
+                f"cannot parse {TRUNK}:{path} ({exc}), so this guard cannot measure "
+                f"what that file already imported; it refuses rather than pass."
+            ) from exc
+        if hits:
+            out[path] = hits
+    return out
+
+
+def violations() -> list[str]:
+    """Every file this working tree gave an outbound client the trunk had not."""
+    now = working_sites()
+    before = trunk_sites(scanned_paths())
+    bad: list[str] = []
+    for path, hits in sorted(now.items()):
+        added = sorted(hits - before.get(path, set()))
+        if added:
+            had = sorted(before.get(path, set())) or ["nothing"]
+            bad.append(f"{path}: +{added} (on {TRUNK} this file imported {had})")
+    return bad
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        bad = violations()
+    except ReferenceUnavailable as exc:
+        print(f"REFUSING: {exc}", file=sys.stderr)
+        return 2
+    if bad:
+        print(
+            "NEW outbound-client import(s) in src/ that a replay has no named seam "
+            "for. A replay must be served from a recording or refuse naming the "
+            "missing recording, never reach a live provider (board item 202). "
+            "Handle it in ops/rehearsal first. Added against %s:\n%s"
+            % (TRUNK, "\n".join(bad)),
+            file=sys.stderr,
+        )
+        return 1
+    print(f"replay outbound guard: this tree adds no new outbound site against {TRUNK}.")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(main())

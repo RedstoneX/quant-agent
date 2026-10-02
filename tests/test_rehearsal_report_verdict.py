@@ -274,7 +274,7 @@ _BRIDGE_FUNCTION_NAMES = {
     # seat's answer never arrived, from a shared helper whose status dict
     # lives in `_evidence_gate_skip` — same shape as the entries above, and
     # bridged below so its status is derived rather than hand-listed.
-    "_evidence_gate_skip",
+    "_evidence_gate_skip", "failed_scan_result",
 }
 
 

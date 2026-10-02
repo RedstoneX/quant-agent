@@ -230,7 +230,7 @@ def test_calibration_matches_sell_to_the_true_old_lot(tmp_path):
     db.conn.commit()
     for i, sym in enumerate(("A", "B")):   # filler to clear the >=3 floor
         db.insert_trade(symbol=sym, action="BUY", qty=1, price=100.0,
-                        reasoning="x", run_id="r", fill_status="filled")
+                        reasoning="x", run_id="r", fill_status="filled", stop_loss=90.0)
         db.insert_trade(symbol=sym, action="SELL", qty=1, price=110.0,
                         reasoning="x", run_id="r", fill_status="filled")
     db.insert_trade(symbol="NVDA", action="SELL", qty=100, price=210.0,
@@ -488,13 +488,12 @@ def test_shift_stops_down_leaves_the_stop_resting_when_the_amend_is_refused(mock
 
 @patch("src.execution.broker.TradingClient")
 def test_shift_stops_down_falls_back_for_an_unmeasured_shape(mock_tc_cls):
-    """A stop-LIMIT leg carries a limit price the stop_price-only amend would
-    leave behind, so the whole symbol takes the legacy path — never half one
-    way and half the other."""
+    """An unamendable shape (a bracket PARENT, which carries legs) sends the
+    whole symbol down the legacy path, never half one way and half the other."""
     b, client = _broker(mock_tc_cls)
-    b._list_open_sell_stop_orders = MagicMock(return_value=[
-        _plain_stop("s1", 340.0, qty=10), _stop_order("s2", 350.0, qty=16),
-    ])
+    parent = _stop_order("s2", 350.0, qty=16)
+    parent.legs = [object()]
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 340.0, qty=10), parent])
     b.cancel_snapshotted_stops = MagicMock(return_value=True)
     b._restore_stop_orders = MagicMock(return_value=(2, []))
 

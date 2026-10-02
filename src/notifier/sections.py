@@ -162,6 +162,8 @@ _STATUS_LABELS: dict[str, str] = {
     "paid_analysis_suspended": "paid thinking is suspended",
     "evidence_gate_skip": "skipped — the data was incomplete",
     "intraday_scan_crashed": "the scan for movers crashed",
+    "intraday_scan_out_of_credit":
+        "the scan for movers stopped: the research account is out of credit",
     "intraday_scan_disabled": "the scan for movers is switched off",
     "intraday_scan_lock_contended": "the scan for movers was delayed (busy)",
     "intraday_scan_no_opportunity": "no movers worth looking at",
