@@ -460,7 +460,7 @@ MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
 #: all passed "the column exists" and failed "something writes it" -- the
 #: break-confirmation-margin payload, for one, is built into a prose `detail`
 #: string that the only persisting call throws away.
-_DB_SOURCE_PATH = "src/storage/db.py"
+_DB_SOURCE_PATHS = ("src/storage/db.py", "src/storage/trades/ledger.py")  # the trades write path lifted out (db rebuild instalment 3); schema/analytics never write a row
 
 
 def written_fields(source: str | None = None) -> frozenset[str]:
@@ -475,7 +475,7 @@ def written_fields(source: str | None = None) -> frozenset[str]:
     import ast as _ast
 
     if source is None:
-        source = (REPO_ROOT / _DB_SOURCE_PATH).read_text(encoding="utf-8")
+        source = "\n".join((REPO_ROOT / p).read_text(encoding="utf-8") for p in _DB_SOURCE_PATHS)
     tree = _ast.parse(source)
     migration_only: set[int] = set()
     docstrings: set[int] = set()
@@ -550,7 +550,7 @@ def settlement_route_problem(entry: dict[str, Any]) -> str | None:
             if field not in written:
                 return (
                     f"`settles_by.writes` names {target!r} but nothing in "
-                    f"{_DB_SOURCE_PATH} writes {field!r} -- it appears only "
+                    f"{' + '.join(_DB_SOURCE_PATHS)} writes {field!r} -- it appears only "
                     f"in the migration that creates it, in prose, or not at "
                     f"all. A settlement route pointing at a field nothing "
                     f"writes can never close"
