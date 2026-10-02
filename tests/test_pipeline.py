@@ -830,6 +830,7 @@ def test_pipeline_morning_early_return_still_reconciles_fills():
     pipeline.morning_research_stage = MagicMock()
     pipeline._reconcile_fills = MagicMock()
     pipeline.risk_engine = MagicMock()
+    pipeline.db = MagicMock()  # a real pipeline always owns a db; the reconciler records its outcome on it
 
     def _populate_empty_research(ctx):
         ctx.analyses = []
@@ -3852,6 +3853,7 @@ def test_pipeline_morning_syncs_positions_at_snapshot_and_after_reconcile():
     pipeline._reconcile_fills = MagicMock()
     pipeline._sync_positions_from_broker = MagicMock()
     pipeline.risk_engine = MagicMock()
+    pipeline.db = MagicMock()  # a real pipeline always owns a db; the reconciler records its outcome on it
 
     def _populate_empty_research(ctx):
         ctx.analyses = []
