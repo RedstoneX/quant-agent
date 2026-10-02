@@ -276,12 +276,12 @@ DONE WHEN:
 - [ ] one production session observed where an out-of-credit refusal produces exactly one attempt per seat and the out-of-credit wording reaches Telegram -- fixed-but-unobserved until then
 detail: docs/board_notes/item-226.md
 
-**225. The ledger's file-and-line citations are only checked for existing, so they rot silently and read as verified -- OPEN, filed 2026-10-01.** The guard confirms the line exists, not that it still holds what the row says it holds; 247 rows' worth of citations are exposed, 55 into the pipeline files, and at least three are already wrong by hand-check -- and the coming split of the two largest files will move thousands of lines.
+**225. The ledger's file-and-line citations are only checked for existing, so they rot silently and read as verified -- FIXED 2026-10-02 (rule 7 now resolves `path::Symbol` and `path@`text`` citations and rejects bare `path:line`); filed 2026-10-01.** The guard confirmed the line exists, not that it still holds what the row says it holds; 247 rows' worth of citations are exposed, 55 into the pipeline files, and at least three are already wrong by hand-check -- and the coming split of the two largest files will move thousands of lines.
 
 DONE WHEN:
-- [ ] a test that fails on today's guard proves it now REJECTS a citation whose cited text has changed or moved
-- [ ] every citation either carries the text it points at in a form the guard can compare, or is stated as a symbol the guard resolves, so no citation is unverifiable by construction
-- [ ] the three citations named in the note are corrected and the guard passes with no exemption list
+- [x] a test that fails on today's guard proves it now REJECTS a citation whose cited text has changed or moved
+- [x] every citation either carries the text it points at in a form the guard can compare, or is stated as a symbol the guard resolves, so no citation is unverifiable by construction
+- [x] the three citations named in the note are corrected and the guard passes with no exemption list
 detail: docs/board_notes/item-225.md
 
 **210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards), 1 (prompt facts), 2 (protection), 3 (the de-levering ladder), 4 (the held-position exit engine), 5 (the risk gate), 6 (universe admission), 7 (research continuity — change detectors, carry-forward, Form-4 backlog, seat healing; 1,308 lines moved verbatim) and 10 (the four stage classes) have landed; steps 8, 9, 11 and 12 remain. `src/pipeline.py` is 7,687 lines, down from 21,864 when the plan was written. STEP 5 and STEP 6 LANDED 2026-10-01 (merged with main after step 7); the full landing records are in the item 210 note.
