@@ -892,9 +892,9 @@ def test_frame_drain_is_not_the_ownership_fix():
     """_last_status lets a same-process waiter see an already-seen fill.
     The account owner is the lease, not that dict."""
     from src.execution import broker as broker_mod
-    start_src = inspect.getsource(broker_mod.AlpacaBroker.start_trade_updates)
+    start_src = inspect.getsource(broker_mod.TradeStreamWaits.start_trade_updates)
     wait_src = inspect.getsource(
-        broker_mod.AlpacaBroker._wait_for_order_status_via_stream,
+        broker_mod.TradeStreamWaits._wait_for_order_status_via_stream,
     )
     assert "_acquire_trade_updates_slot" in start_src
     assert "_acquire_trade_updates_slot" in wait_src

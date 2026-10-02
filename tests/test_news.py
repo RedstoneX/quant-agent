@@ -1,4 +1,5 @@
 import json
+import logging
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone
 
@@ -821,7 +822,7 @@ def test_fetch_news_monday_extends_lookback_to_72h(mock_et_now, caplog):
     mock_et_now.return_value = datetime(2026, 5, 11, 9, 30, tzinfo=timezone.utc)
 
     provider = NewsDataProvider(feeds={}, lookback_hours=24)
-    import logging
+    provider._fetch_feed = MagicMock(return_value=[])  # feeds={} means ALL feeds; stay offline
     with caplog.at_level(logging.INFO):
         provider.fetch_news()
 
@@ -837,7 +838,7 @@ def test_fetch_news_tuesday_keeps_default_lookback(mock_et_now, caplog):
     mock_et_now.return_value = datetime(2026, 5, 12, 9, 30, tzinfo=timezone.utc)
 
     provider = NewsDataProvider(feeds={}, lookback_hours=24)
-    import logging
+    provider._fetch_feed = MagicMock(return_value=[])  # feeds={} means ALL feeds; stay offline
     with caplog.at_level(logging.INFO):
         provider.fetch_news()
 
@@ -854,13 +855,13 @@ def test_fetch_news_override_takes_precedence_over_monday_extension(mock_et_now)
     mock_et_now.return_value = datetime(2026, 5, 11, 9, 30, tzinfo=timezone.utc)
 
     provider = NewsDataProvider(feeds={}, lookback_hours=24)
+    provider._fetch_feed = MagicMock(return_value=[])  # feeds={} means ALL feeds; stay offline
     # Override to 6h — much shorter than default and shorter than the
     # Monday extension. Override wins.
     # Indirect test: we capture the cutoff via patching datetime.now.
     with _patch("src.data.news.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 5, 11, 9, 30, tzinfo=timezone.utc)
         mock_dt.min = datetime.min
-        # Stop _fetch_feed from doing real network — empty feeds suffice.
         provider.fetch_news(lookback_hours_override=6)
         # If override worked, datetime.now was called once for the
         # cutoff. The cutoff should be now - 6h, not now - 72h.
@@ -1271,7 +1272,6 @@ def test_persist_parse_failure_disk_error_only_warns_never_raises(tmp_path, monk
     bad_dir = blocker / "parse_failures"
     monkeypatch.setattr(news_analyst_mod, "PARSE_FAILURE_DIR", bad_dir)
 
-    import logging
     with caplog.at_level(logging.WARNING):
         news_analyst_mod._persist_parse_failure(
             agent_name="news_analyst", session="morning",

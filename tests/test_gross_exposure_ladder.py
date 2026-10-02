@@ -473,14 +473,14 @@ def test_the_de_lever_runs_in_the_preamble_before_any_agent_is_called():
     # on 2026-09-18 (see `Database.save_session_report`, same shape
     # `run_evening`/`_run_evening_body` already used); the preamble this
     # test pins now lives in their bodies.
-    for entry_point in (TradingPipeline._run_morning_body,
+    for entry_point in (__import__("src.sessions.morning_session", fromlist=["MorningSession"]).MorningSession.run,
                         TradingPipeline._run_position_review_body):
         source = inspect.getsource(entry_point)
         assert "_enforce_gross_ceiling" in source, (
             f"{entry_point.__name__} must de-lever in its preamble"
         )
 
-    morning = inspect.getsource(TradingPipeline._run_morning_body)
+    morning = inspect.getsource(__import__("src.sessions.morning_session", fromlist=["MorningSession"]).MorningSession.run)
     assert morning.index("_enforce_gross_ceiling") < morning.index("_decision_stage"), (
         "the de-lever must run BEFORE the Portfolio Manager is called, so a "
         "blank or truncated model response cannot skip it"
@@ -879,7 +879,7 @@ def test_trimming_the_held_book_has_exactly_one_owner():
                 (kw.value for kw in node.keywords if kw.arg == "emit_trims"), None,
             )
             disabled = isinstance(emit, ast.Constant) and emit.value is False
-            (sizing_callers if disabled else trim_owners).append(path.name)
+            (sizing_callers if disabled else trim_owners).append(path.relative_to(src).as_posix())
 
     # Item 112 kept this EXACT: one call site, not one module. The conviction
     # de-lever does not call `apply_gross_ceiling` itself — it delegates to
@@ -888,7 +888,7 @@ def test_trimming_the_held_book_has_exactly_one_owner():
     assert trim_owners == ["pipeline_delever.py"], (
         f"exactly one caller may author de-lever orders; found {trim_owners}"
     )
-    assert sizing_callers == ["portfolio_constructor.py"], (
+    assert sizing_callers == ["portfolio_constructor/__init__.py"], (
         f"the sizing gate must pass emit_trims=False; found {sizing_callers}"
     )
 
@@ -3060,9 +3060,9 @@ def test_every_exit_path_registers_its_own_settlement():
     `_finalize_pending_protections`, so registering there covers them by
     construction rather than by remembering to flag each call site."""
     import inspect
-    from src.pipeline import TradingPipeline
+    from src.protection.sell_finalization import SellFinalization
 
-    source = inspect.getsource(TradingPipeline._finalize_pending_protections)
+    source = inspect.getsource(SellFinalization._finalize_pending_protections)
     assert "_register_exit_settlement" in source, (
         "every waited-on exit must register its settlement state centrally"
     )

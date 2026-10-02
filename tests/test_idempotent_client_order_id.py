@@ -100,7 +100,7 @@ def _broker_with(stub):
     return b
 
 
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_entry_timeout_then_retry_leaves_one_order(_d):
     stub = _StubBroker()
     b = _broker_with(stub)
@@ -118,7 +118,7 @@ def test_entry_timeout_then_retry_leaves_one_order(_d):
     assert len(stub.orders) == 2
 
 
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_entry_duplicate_is_not_reported_as_broker_rejection(_d):
     stub = _StubBroker()
     b = _broker_with(stub)
@@ -128,7 +128,7 @@ def test_entry_duplicate_is_not_reported_as_broker_rejection(_d):
     assert again["status"] != "rejected_by_broker"
 
 
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_stop_timeout_then_retry_leaves_one_stop(_d):
     stub = _StubBroker()
     b = _broker_with(stub)
@@ -142,7 +142,7 @@ def test_stop_timeout_then_retry_leaves_one_stop(_d):
     assert len(stub.orders) == 2
 
 
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_duplicate_whose_lookup_fails_raises_not_rejects(_d):
     stub = _StubBroker()
     b = _broker_with(stub)
@@ -153,7 +153,7 @@ def test_duplicate_whose_lookup_fails_raises_not_rejects(_d):
 
 
 # ------------------------------------------------- (c) fields unchanged
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_every_other_request_field_is_unchanged(_d):
     client = MagicMock()
     client.submit_order.return_value = SimpleNamespace(id="o", status="accepted", symbol="BRK.B")
@@ -185,7 +185,7 @@ def test_every_other_request_field_is_unchanged(_d):
     assert reqs[2].client_order_id == f"STP-AAPL-sell-{DAY}-3.0-95.0"
 
 
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_stop_limit_fallback_also_carries_key(_d):
     client = MagicMock()
     unsupported = APIError(json.dumps({"code": 1, "message": "order type stop is not supported for gtc"}),
@@ -246,7 +246,7 @@ def _live_orders(stub: _StubBroker) -> list:
 
 
 @pytest.mark.parametrize("dead", ["pending_cancel", "canceled"])
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_restore_does_not_count_dead_readback_as_protection(_d, dead):
     stub = _stub_holding_dead_stop(dead)
     b = _broker_with(stub)
@@ -263,11 +263,11 @@ def test_restore_does_not_count_dead_readback_as_protection(_d, dead):
 
 
 @pytest.mark.parametrize("dead", ["pending_cancel", "canceled"])
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_stop_leg_retry_does_not_return_dead_readback(_d, dead):
     stub = _stub_holding_dead_stop(dead)
     b = _broker_with(stub)
-    with patch("src.execution.broker.time.sleep"):
+    with patch("src.execution.broker_parts.stop_place.time.sleep"):
         res = b._submit_stop_leg_retrying(
             symbol="AAPL", qty=10, stop_price=95.0, limit_price=None,
             side="sell", leg="GTC",
@@ -282,7 +282,7 @@ def test_stop_leg_retry_does_not_return_dead_readback(_d, dead):
     assert res["status"] in PROTECTIVE_ORDER_ALIVE_STATUSES
 
 
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_superseding_key_is_itself_idempotent(_d):
     """The replacement stop's key differs from the dead one's, but a RETRY
     of the replacement reuses it — one dead order, ONE live order, never
@@ -306,7 +306,7 @@ def test_superseding_key_is_itself_idempotent(_d):
 # B and C both rest. This test asserts what the code DOES, not what the
 # first draft claimed; the limitation is recorded in INCIDENT_HISTORY.md.
 # ---------------------------------------------------------------------------
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_KNOWN_LIMITATION_retry_after_cancel_completes_leaves_two_live_stops(_d):
     stub = _stub_holding_dead_stop("pending_cancel")
     b = _broker_with(stub)
@@ -333,7 +333,7 @@ def test_KNOWN_LIMITATION_retry_after_cancel_completes_leaves_two_live_stops(_d)
 # second sell over shares that are already protected or already sold.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("status", ["pending_replace", "stopped"])
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_amending_or_executing_readback_is_not_superseded(_d, status):
     """Both statuses are still ACTIVE at Alpaca, so the plain key IS refused
     and the read-back reaches the status check. (`calculated` / `filled` are
@@ -347,7 +347,7 @@ def test_amending_or_executing_readback_is_not_superseded(_d, status):
 
 
 @pytest.mark.parametrize("status", ["pending_replace", "stopped", "calculated", "filled"])
-@patch("src.execution.broker._session_date_key", return_value=DAY)
+@patch("src.execution.order_idempotency._session_date_key", return_value=DAY)
 def test_stop_leg_retry_does_not_retry_over_an_executing_stop(_d, status):
     """`_submit_stop_leg_retrying` must not judge an amending / executing /
     executed placement response as a failed attempt: a retry is a fresh
@@ -359,7 +359,7 @@ def test_stop_leg_retry_does_not_retry_over_an_executing_stop(_d, status):
     )
     with patch("src.execution.broker.TradingClient", return_value=client):
         b = AlpacaBroker(api_key="test", secret_key="test", paper=True)
-    with patch("src.execution.broker.time.sleep"):
+    with patch("src.execution.broker_parts.stop_place.time.sleep"):
         res = b._submit_stop_leg_retrying(
             symbol="AAPL", qty=10, stop_price=95.0, limit_price=None,
             side="sell", leg="GTC",

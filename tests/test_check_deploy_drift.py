@@ -221,7 +221,7 @@ def test_unexpected_dirty_file_is_noted_but_not_alerted(tmp_path, capsys):
 # fetch failure degrades quietly
 # ---------------------------------------------------------------------------
 
-def test_fetch_failure_exits_zero_and_does_not_alert(tmp_path, capsys):
+def test_fetch_failure_is_not_clean_exits_nonzero_and_does_not_alert(tmp_path, capsys):
     origin = _make_origin(tmp_path)
     deployed = _make_deployed(tmp_path, origin)
     # Point "origin" at a path that doesn't exist so fetch fails, simulating
@@ -232,10 +232,10 @@ def test_fetch_failure_exits_zero_and_does_not_alert(tmp_path, capsys):
     with patcher:
         code = mod.main(["--deployed-path", str(deployed)])  # fetch enabled
 
-    assert code == 0
+    assert code == 4, "could not check must not look like checked-and-clean"
     notifier.send.assert_not_called()
     err = capsys.readouterr().err
-    assert "fetch failed" in err
+    assert "COULD NOT CHECK" in err and "fetch failed" in err
 
 
 def test_fetch_remote_reports_failure_tuple(tmp_path):
@@ -293,3 +293,42 @@ def test_no_test_leaves_a_drift_snapshot_in_the_repository():
         f"{_cw.DEPLOY_DRIFT_STATE_PATH} was written by a test; point the "
         "writer at a temporary path instead"
     )
+
+
+# ---------------------------------------------------------------------------
+# "could not check" is never "checked and clean"
+# ---------------------------------------------------------------------------
+
+def test_git_error_while_listing_commits_exits_nonzero_not_clean(
+    tmp_path, capsys, monkeypatch,
+):
+    origin = _make_origin(tmp_path)
+    deployed = _make_deployed(tmp_path, origin)
+    _commit(origin, "fix: something new")
+    real = mod._run_git
+
+    def failing(args, *, cwd, timeout=mod.GIT_TIMEOUT_S):
+        if args and args[0] in ("log", "status"):
+            raise mod.GitError("git " + args[0] + " exited 128: unreadable")
+        return real(args, cwd=cwd, timeout=timeout)
+
+    monkeypatch.setattr(mod, "_run_git", failing)
+    code = mod.main(["--deployed-path", str(deployed), "--no-telegram"])
+
+    assert code != 0
+    out = capsys.readouterr()
+    assert "COULD NOT CHECK" in out.err
+    assert "in sync" not in out.out
+
+
+def test_missing_commits_and_dirty_files_raise_instead_of_returning_empty(
+    tmp_path, monkeypatch,
+):
+    def boom(args, *, cwd, timeout=mod.GIT_TIMEOUT_S):
+        raise mod.GitError("unreadable")
+
+    monkeypatch.setattr(mod, "_run_git", boom)
+    with pytest.raises(mod.GitError):
+        mod.get_missing_commits(str(tmp_path), "a" * 40, "b" * 40)
+    with pytest.raises(mod.GitError):
+        mod.get_unexpected_dirty_files(str(tmp_path))

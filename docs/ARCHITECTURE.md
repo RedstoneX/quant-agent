@@ -23,6 +23,35 @@ ExitEngineMixin, RiskGateMixin, AdmissionMixin, ResearchContinuityMixin,
 IntradayMixin, ...)`. A `grep -rn '^class \w*Mixin' src/` returns exactly eight
 mixin class definitions, one per file.
 
+**The broker's in-place stop amend is a boundary (2026-10-02, first broker instalment).** `src/execution/broker_parts/stop_amend.py` holds `StopAmender` (the amend-one-stop, classify-after-dead-replacement and amend-resting-stops bodies, lifted verbatim with the `_quantize_price` / `_is_terminal_broker_rejection` helpers and the `_AMEND_NOT_ATTEMPTED` sentinel); `AlpacaBroker` keeps same-named thin shims and re-exports the helpers so every patch target still resolves. Witness: `tests/test_broker_parts_boundary.py`. `broker.py` is 6,673 lines after it; later instalments follow the same package.
+
+**The broker's stop submission, restore and replacement is a boundary (2026-10-02, second broker instalment).** `src/execution/broker_parts/stop_place.py` holds `StopPlacer` (the retrying stop-submit helpers, `_submit_stop_limit_order` / `_submit_stop_legs` / `_restore_stop_orders`, `shift_stops_down` and `replace_stop_loss`, lifted verbatim with the module helpers and constants those bodies read: `_is_held_for_orders_error`, `_is_unsupported_stop_market_rejection`, `_split_protective_qty`, `_derive_stop_tif`, `_alpaca_symbol`, `_internal_symbol`, `real_broker_order_id`, `_STOP_PLACEMENT_MAX_ATTEMPTS`, `_STOP_PLACEMENT_BACKOFF_S`, `_FRACTIONAL_QTY_EPSILON`, `PROTECTIVE_ORDER_ACTIVE_STATUSES`). `AlpacaBroker` keeps same-named thin shims built per call, passes its own bound cluster methods in so instance-level test doubles still land, and re-exports every moved helper; the number ledger rows for the moved constants point at the new module, and `src/execution/broker_parts` is in both the number-scan scope and the silent-swallow guard. `place_entry_protection` stays on the broker for now: its body imports `src.execution.scale_in`, which reaches back to `AlpacaBroker` for the stop-limit buffer default, so lifting it closes a new import cycle until that default lives below both. `broker.py` is 5,485 lines after it.
+
+**The broker's order desk and its account/calendar reads are boundaries (2026-10-02, third broker instalment).** `src/execution/broker_parts/order_desk.py` holds `OrderDesk` (`submit_order`, `replace_entry_limit`, `cancel_entry_order`, the replacement-chain follow, `wait_for_order_terminal` / `wait_for_order_at_exchange` and the polling waits, the open/filled/recent order reads and `close_position`, lifted verbatim with the module helpers those bodies read: `_outlier_refusal_detail`, `_is_terminal_submission_rejection`, `_PLAIN_PRICE_LABELS`). `src/execution/broker_parts/account_reads.py` holds `AccountReads` (account, activities, asset, shortability/fractionability, portfolio history, trading-calendar and resting-stop-price reads; the four per-process caches are passed in and mutated in place, so they stay the broker's own dicts). The stream-backed waits (`_wait_for_order_status`, `_wait_for_order_status_via_stream` and its `_locked` half) stay on the broker because they read and write the live trade-updates hub, lease slot and warm-up record; the desk reaches them as collaborators. Both factories reuse the `_stop_placer` recursion guard (`_is_broker_class_shim`) so a desk is never handed the broker's shim for a body it already owns. The number ledger rows for the moved defaults point at the new modules; both files are in the silent-swallow guard's scope. `broker.py` is 3,762 lines after it.
+
+**Five exit-engine pieces now ARE boundaries (2026-10-02).** `src/exits/`
+holds `TargetRevision`, `StructuralProtection`, `ExitSubstantiation`,
+`HoldingDiscipline` and `AlignmentExit`, each a standalone class taking every
+collaborator as a keyword-only constructor argument (the `src/sessions/`
+pattern); `ExitEngineMixin` keeps a thin same-named shim per method. All five
+pass `check_boundary`; `tests/test_exits_boundary.py` is the witness. The trails
+and the AI risk review stayed in the mixin: the former imports the broker seam
+(`src.execution`, a frozen importer list), the latter reads the module-level
+`_reason_cites_hard_trigger` that a test patches on `src.pipeline_exits`.
+
+**Five protection pieces now ARE boundaries (2026-10-02).** `src/protection/`
+holds `OwnerAlerts`, `SellFinalization`, `FillReconciler`, `RepegDrain` and
+`CoverageElection`, each a standalone class taking every collaborator as a
+keyword-only constructor argument (the `src/sessions/` pattern);
+`ProtectionMixin` keeps a thin same-named shim per method. All five pass
+`check_boundary`; `tests/test_protection_boundary.py` is the witness. What
+stayed in the mixin: the stop-coverage reconciler, the residual re-protection,
+the restore drain, the ex-dividend handler and the kill-switch wiring (all
+import the broker seam `src.execution`, a frozen importer list; the first two
+also read `_market_is_open_now`/`et_today`, which tests patch on
+`src.pipeline_protection`), and the protected sell with its write-ahead cancel,
+which pass `_last_stop_clear_refusal` between each other through the pipeline.
+
 **No mixin can be constructed alone.** `grep -n 'def __init__'` across
 `src/pipeline_protection.py`, `src/pipeline_exits.py`, `src/pipeline_intraday.py`
 and `src/pipeline_risk_gate.py` returns nothing. None of them defines a
@@ -400,9 +429,15 @@ reaching for `self.db` and the module-level helper.
 **Step 7. `RiskGateMixin` → `RiskGate`.** **MONEY** — this is the gate that sizes
 down and refuses.
 *Measured:* 954 lines, 6 distinct `self.` names, 1 foreign method call.
-*Constructor:* `RiskGate(journal, risk_engine)` — replacing `self.db` (via the
-journal port) and `self.risk_engine`. The one foreign call (`_sweeper`) becomes a
-constructor parameter.
+*Constructor (as built, 2026-10-01):* `RiskGate(*, risk_engine, db, sweeper)`.
+The journal port could NOT replace `self.db` here: the gate's one `db` use is
+`insert_agent_log` (an `agent_logs` row, read back by `scripts/replay_decision.py`),
+which is not on `EventJournal`; routing it through the journal is a body change
+and is left for its own reviewed step. The one foreign call (`_sweeper`) is a
+constructor parameter. `TradingPipeline` keeps a thin delegating `RiskGateMixin`
+(`src/pipeline_risk_gate_mixin.py`) that re-resolves the gate from the live
+collaborators per call, because tests assign `db`/`risk_engine`/`_sweeper` after
+construction.
 *Proof:* standard, plus every refusal and every resize produced over a replayed
 session must match the pre-change output exactly, field by field. Second reviewer
 required.

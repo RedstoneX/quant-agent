@@ -171,9 +171,9 @@ def test_pinned_target_column_is_never_written_by_a_revision():
     """`update_open_take_profit` writes the live target only. If it ever
     touched `initial_take_profit` the pinned denominator would move with the
     revision and the guard would be exposed again."""
-    from src.storage.db import Database
+    from src.storage.trades.ledger import TradeLedger
 
-    src = inspect.getsource(Database.update_open_take_profit)
+    src = inspect.getsource(TradeLedger.update_open_take_profit)
     assert "SET take_profit" in src
     assert "initial_take_profit" not in src.split('"""')[2], (
         "the revision write-back must not touch the pinned entry target"

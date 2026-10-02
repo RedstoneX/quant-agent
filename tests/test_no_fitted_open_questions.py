@@ -141,7 +141,7 @@ def test_the_three_regime_scalers_are_the_rows_this_came_from() -> None:
     question is the one most likely to be answered by someone reaching for the
     desk's own trade history."""
     ids = {
-        f"src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[{i}][1]"
+        f"src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[{i}][1]"
         for i in (0, 1, 2)
     }
     seen = {row["id"] for row in _rows()} & ids

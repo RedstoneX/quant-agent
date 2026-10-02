@@ -263,3 +263,22 @@ def _submit_stop_request_idempotent(
             client_order_id, alpaca_symbol, dead_id, status,
         )
         supersedes = dead_id
+
+
+def _submit_entry_request_idempotent(client, request, *, client_order_id: str,
+                                     side: str, qty, symbol: str):
+    """Submit ONE entry/exit request under its key. A duplicate-key refusal is
+    the guard working: the EXISTING order is read back and returned instead of
+    a second trade. Every other failure propagates to the caller unchanged."""
+    try:
+        return client.submit_order(request)
+    except Exception as exc:  # noqa: BLE001
+        if not _is_duplicate_client_order_id_rejection(exc):
+            raise
+        order = _existing_order_for_client_id(client, client_order_id, exc)
+        logger.info(
+            "Order already exists at broker for %s %s %s (client_order_id=%s) "
+            "— returning the existing order %s instead of submitting a duplicate.",
+            side, qty, symbol, client_order_id, order.id,
+        )
+        return order

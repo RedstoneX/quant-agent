@@ -20,10 +20,12 @@ No bound here is invented. Each cites its source:
     re-applied here to the FINAL quantity x price;
   * sell ceiling — the quantity the broker itself reports held.
 """
+import logging
 import math
 from decimal import Decimal
 
 from alpaca.trading.enums import TimeInForce
+
 
 # Spec §11.1 HYBRID FRACTIONAL STOPS. Measured 2026-09-01 against the live
 # paper account — treat as broker capability, not account state:
@@ -80,6 +82,9 @@ def _split_protective_qty(qty) -> tuple[float, float]:
     return whole, frac
 
 
+logger = logging.getLogger("src.execution.broker")
+
+
 def _derive_stop_tif(qty) -> TimeInForce:
     """The ONLY place a protective stop's time_in_force is decided.
 
@@ -94,32 +99,6 @@ def _derive_stop_tif(qty) -> TimeInForce:
     """
     _whole, frac = _split_protective_qty(qty)
     return TimeInForce.DAY if frac > 0 else TimeInForce.GTC
-
-
-def _quantize_price(price: float | None) -> float | None:
-    """Round to Alpaca's minimum tick size: $0.01 for stocks ≥ $1, $0.0001 below.
-
-    The quote-midpoint in `get_latest_price` can produce sub-penny values like
-    $106.515; submitting that raw triggers Alpaca error 42210000 and the order
-    is rejected. Observed 2026-04-17 morning: UPS BUY @ $106.515 rejected.
-
-    NaN/Inf handling: NaN comparisons all return False, so the original
-    `price <= 0` guard fell through to `round(nan, ...)` = nan. The NaN
-    then propagated all the way to Alpaca's submit_order, which silently
-    broker-rejects the order and corrupts audit logs. Treat NaN/Inf as
-    None (no quotable price) — callers' existing
-    `price is not None and price > 0` checks then skip the order or
-    fall back to market. Zero/negative values are preserved unchanged
-    (pre-existing semantics: caller decides what to do with them).
-    """
-    if price is None:
-        return None
-    import math as _math
-    if not _math.isfinite(price):
-        return None
-    if price <= 0:
-        return price
-    return round(price, 2 if price >= 1.0 else 4)
 
 
 QTY_REJECTED = "rejected_bad_qty"
@@ -185,8 +164,40 @@ def check_order_quantity(
     return None
 
 
-# Plain-English names for the fat-finger guard's owner-facing "detail"
-# text below — never the raw field name a log/audit trail would use.
+def quantity_refusal_live(symbol: str, alpaca_symbol: str, qty, side: str, *,
+                      price: float | None, client, get_fractionability,
+                      get_account, max_position_pct) -> str | None:
+    """Live inputs for the pure quantity gate, each read only when
+    that check applies. Equity: a failed read refuses an entry (gate
+    fails closed). Held qty: a failed read is logged and the sell
+    goes on — an exit must not be blocked by a read outage."""
+    s, fractionable, equity, held = side.lower(), None, None, None
+    if s in ("buy", "sell_short"):
+        if _split_protective_qty(qty)[1] > 0 and get_fractionability is not None:
+            fractionable = get_fractionability(symbol)["fractionable"]
+        if max_position_pct is not None:
+            try:
+                equity = get_account()["portfolio_value"]
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Quantity gate: equity read failed for %s: %s",
+                             symbol, exc)
+    elif s == "sell":
+        try:
+            held = 0.0
+            for pos in (client.get_all_positions() or []):
+                if str(pos.symbol).upper() == alpaca_symbol.upper():
+                    held = max(0.0, float(pos.qty))
+        except Exception as exc:  # noqa: BLE001
+            held = None
+            logger.error("Quantity gate: positions read failed for %s: %s "
+                         "— sell proceeds unchecked.", symbol, exc)
+    return check_order_quantity(
+        qty, side=side, fractionable=fractionable, price=price,
+        equity=equity, max_position_pct=max_position_pct,
+        held_qty=held,
+    )
+
+
 _PLAIN_PRICE_LABELS = {
     "limit_price": "limit price",
     "stop_loss_price": "stop",

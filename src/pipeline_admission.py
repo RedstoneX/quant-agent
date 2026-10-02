@@ -1,38 +1,39 @@
-"""Universe admission: who gets into the research universe.
+"""Universe admission (step 8): `AdmissionService`, built from explicit collaborators.
 
-Step 6 of `docs/PIPELINE_SPLIT_PLAN.md` (board item 210), cluster C. Moved
-verbatim out of `src/pipeline.py` as a mixin, so `TradingPipeline` keeps every
-one of these as its own attribute and every test that calls them is untouched.
-
-One question is answered here: which symbols are allowed to become candidates
-for paid research. The broker-supported filter, the external-nomination gates
-(price, dollar volume, sector), the optional `src/universe_screen.py` screen
-and its admission, the Form-4 currency test, and the transient smart-money
-admission. Only `MorningResearchStage` reaches any of it.
-
-`_get_sector` is imported here from the broker, as `src/pipeline.py` does. A
-test that PATCHES `src.pipeline._get_sector` no longer reaches the two reads in
-this module and must patch `src.pipeline_admission._get_sector` instead (plan
-S5, silent-behaviour risk 1). `src/pipeline.py` still imports and uses it in
-the hard-risk sector cap, so both patch targets are live for their own code.
-
-Nothing here may import `src.pipeline`: this module is one of its bases.
+Never sees a `TradingPipeline` (it reaches this via `pipeline_admission_shell`).
+Patch `_get_sector` HERE, not on `src.pipeline`. Must not import `src.pipeline`.
 """
 
 import logging
+from collections.abc import Callable
 from datetime import date
 
 from src.execution.broker import _get_sector
 from src.models import TechAnalysisResult, TradeDecision
+from src.ports.event_journal import EventJournal
 from src.quantities import avg_dollar_volume
 
-#: The moved code logged under `src.pipeline` before the move and still does;
-#: binding the name rather than `__name__` keeps log records byte-identical.
+#: Logged under `src.pipeline`, as before the move (log records stay identical).
 logger = logging.getLogger("src.pipeline")
 
 
-class AdmissionMixin:
-    """Universe admission for `TradingPipeline`. Never instantiated alone."""
+class AdmissionService:
+    """Universe admission, standalone: no `TradingPipeline` required."""
+
+    def __init__(
+        self, *, config, broker, market, journal: EventJournal,
+        sec_form4_provider=None,
+        constructor_cfg_fn: Callable[[], object | None] = lambda: None,
+    ) -> None:
+        self.config = config
+        self.broker = broker
+        self.market = market
+        self.journal = journal
+        self.sec_form4_provider = sec_form4_provider
+        self._constructor_cfg_fn = constructor_cfg_fn
+
+    def _constructor_cfg_or_none(self):
+        return self._constructor_cfg_fn()
 
     def _filter_supported_symbols(
         self,
@@ -328,7 +329,6 @@ class AdmissionMixin:
         import json as _json
         import time as _time
 
-        from src.pipeline_stages import _persist_evidence
         from src.universe_screen import (
             HISTORY_FETCH_DAYS, ScreenThresholds, UniverseStore, run_screen,
         )
@@ -370,14 +370,14 @@ class AdmissionMixin:
             logger.warning("UNIVERSE_SCREEN pass failed (non-fatal): %s", exc)
             return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
         for event in run.events:
-            _persist_evidence(
-                self.db, run_id=run_id, agent_name="universe_screen",
+            self.journal.persist_evidence(
+                run_id=run_id, agent_name="universe_screen",
                 kind="universe_change", scope="symbol", symbol=event.get("symbol"),
                 evidence_json=_json.dumps(event, sort_keys=True),
             )
         summary = run.summary()
-        _persist_evidence(
-            self.db, run_id=run_id, agent_name="universe_screen",
+        self.journal.persist_evidence(
+            run_id=run_id, agent_name="universe_screen",
             kind="universe_screen_run", scope="run",
             evidence_json=_json.dumps(
                 {k: v for k, v in summary.items() if k != "events"}, sort_keys=True,

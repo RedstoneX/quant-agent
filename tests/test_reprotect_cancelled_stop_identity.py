@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 from src.execution.broker import AlpacaBroker
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _order(order_id, stop_price, status="new", qty=2.43):
@@ -36,8 +37,7 @@ def _order(order_id, stop_price, status="new", qty=2.43):
 
 
 def _pipeline(existing):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock())
     p.broker._list_open_sell_stop_orders.return_value = existing
     p.broker._list_open_protective_stop_orders.return_value = existing
     p.broker._submit_stop_limit_order.return_value = {
@@ -48,6 +48,13 @@ def _pipeline(existing):
     # (leg split, DAY-sliver-first ordering, retry burst) over a mocked
     # `_submit_stop_limit_order`. Binding the real functions rather than
     # stubbing them is what makes these tests able to see defect 4.
+    # Both bodies now live on the standalone StopPlacer and the broker keeps
+    # a same-named shim that builds one. Bind the real factory too, so the
+    # shims below reach the real bodies over this mock's collaborators
+    # instead of a child mock. Same functions, new home -- nothing stubbed.
+    p.broker._stop_placer = functools.partial(
+        AlpacaBroker._stop_placer, p.broker,
+    )
     p.broker._submit_stop_leg_retrying = functools.partial(
         AlpacaBroker._submit_stop_leg_retrying, p.broker,
     )

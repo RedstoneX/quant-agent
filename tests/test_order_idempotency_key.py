@@ -40,7 +40,7 @@ def test_same_intent_same_key_and_each_changed_fact_changes_it():
 
 
 def test_key_contains_no_time_or_randomness():
-    with patch("src.execution.broker.time") as t, patch("src.execution.broker.random") as r:
+    with patch("src.execution.order_idempotency.time", create=True) as t, patch("src.execution.order_idempotency.random", create=True) as r:
         a = _client_order_id(purpose="ENT", **_FIELDS)
         b = _client_order_id(purpose="ENT", **_FIELDS)
     assert a == b

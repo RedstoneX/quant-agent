@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import Position, TechAnalysisResult, TechReasoningChain
-from src.pipeline import TradingPipeline
 from src.pipeline_context import PMFacts
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _pos(symbol, qty, avg, current, sector="Technology") -> Position:
@@ -108,9 +108,7 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
     db.conn.execute("UPDATE agent_logs SET timestamp=datetime('now', '-2 days') WHERE agent_name='risk_manager'")
     db.conn.commit()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.tech_store = MagicMock()
+    pipeline = build_pipeline(db=db, tech_store=MagicMock())
     pipeline.tech_store.get_history.return_value = []
 
     positions = [
