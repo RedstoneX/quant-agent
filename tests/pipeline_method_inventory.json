@@ -361,7 +361,10 @@
       }
     },
     "src/pipeline_research_continuity.py": {
-      "module_functions": [],
+      "module_functions": [
+        "_change_detectors",
+        "_lifted_collab"
+      ],
       "classes": {
         "CarryForward": [
           "__bool__"
