@@ -111,6 +111,13 @@ from src.trader_feed.decision import (  # noqa: F401
     extract_alert_symbols,
     format_coverage_gap_line,
 )
+from src.trader_feed.naked import (  # noqa: F401
+    naked_position_alert,
+    protection_undetermined_alert,
+    send_naked_position_alert,
+    stop_coverage_was_audited,
+    uncovered_stop_gaps,
+)
 from src.trader_feed.evening import (  # noqa: F401
     _FORM_WORDS,
     _RISK_SCALE,

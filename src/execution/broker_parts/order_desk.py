@@ -28,6 +28,11 @@ from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest, Repla
 
 from src.execution.broker_parts.stop_amend import _quantize_price
 from src.execution.broker_parts.stop_place import _alpaca_symbol, _internal_symbol
+from src.execution.order_gates import (  # noqa: F401 (re-exports keep patch targets)
+    _PLAIN_PRICE_LABELS, _outlier_refusal_detail, QTY_REJECTED, quantity_refusal_live,
+)
+from src.execution import order_idempotency as _idem  # session key read via the module so one patch target serves every path
+from src.execution.order_idempotency import _client_order_id, _submit_entry_request_idempotent
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
 
 # Same log channel as before the move: operators and tests filter on the
@@ -35,49 +40,7 @@ from src.execution.stop_records import STOP_USABLE, classify_stop_price
 logger = logging.getLogger("src.execution.broker")
 
 
-_PLAIN_PRICE_LABELS = {
-    "limit_price": "limit price",
-    "stop_loss_price": "stop",
-    "take_profit_price": "target price",
-}
-
-
-def _outlier_refusal_detail(
-    label: str,
-    candidate: float,
-    reference_price: float,
-    *,
-    symbol: str,
-    atr: float | None,
-) -> str:
-    """The owner-facing sentence for a fat-finger refusal.
-
-    A bare deviation percentage is not something a trader can judge: 24% is
-    absurd on a utility and an ordinary couple of sessions on a $7 name. So
-    the sentence puts the stock's OWN normal daily range next to it.
-
-    `atr` is the desk's already-measured ATR(14) for this symbol, handed
-    down by the caller (`src/pipeline_stages.py` reads it off the same
-    analysis the constructor sized from). Nothing is fetched and nothing is
-    estimated here: if the caller has no ATR, the range clause is simply
-    omitted rather than filled with an invented number.
-
-    Plain words only — no field names, no jargon, no "ATR". The owner is
-    not a developer and reads these in a Telegram alert.
-    """
-    deviation_pct = abs(candidate - reference_price) / reference_price * 100
-    sentence = (
-        f"{_PLAIN_PRICE_LABELS.get(label, label)} "
-        f"${candidate:,.2f} is {deviation_pct:.0f}% "
-        f"from price ${reference_price:,.2f}"
-    )
-    if atr is not None and math.isfinite(atr) and atr > 0:
-        atr_pct = atr / reference_price * 100
-        sentence += (
-            f" — {symbol} normally moves about ${atr:,.2f} "
-            f"({atr_pct:.0f}%) in a day"
-        )
-    return sentence
+# `_PLAIN_PRICE_LABELS` / `_outlier_refusal_detail` live in src/execution/order_gates.py (re-exported above).
 
 
 def _is_terminal_submission_rejection(exc: BaseException) -> bool:
@@ -154,8 +117,16 @@ class OrderDesk:
         resolve_replacement_chain=None,
         wait_for_order_status_via_polling=None,
         list_open_entry_orders_checked=None,
+        get_fractionability=None,
+        get_account=None,
+        max_position_pct=None,
     ):
         self.client = client
+        # Live reads for the quantity gate (src/execution/order_gates.py);
+        # `max_position_pct=None` = no notional check (read-only constructions).
+        self._get_fractionability = get_fractionability
+        self._get_account = get_account
+        self._max_position_pct = max_position_pct
         self._kill_switch_active = kill_switch_active
         self._kill_switch_path = kill_switch_path
         self._wait_for_order_status = wait_for_order_status
@@ -936,6 +907,20 @@ class OrderDesk:
                         ),
                     }
 
+        # Quantity gate (src/execution/order_gates.py): the stop PRICE was
+        # refused here, the quantity never was (2026-10-01 audit).
+        qty_refusal = quantity_refusal_live(
+            internal_symbol, alpaca_symbol, qty, side,
+            price=limit_price if (limit_price and limit_price > 0) else reference_price,
+            client=self.client, get_fractionability=self._get_fractionability,
+            get_account=self._get_account, max_position_pct=self._max_position_pct,
+        )
+        if qty_refusal is not None:
+            logger.error("Quantity gate: %s %s %s — %s. Order REJECTED.",
+                         side.upper(), qty, symbol, qty_refusal)
+            return {"id": None, "status": QTY_REJECTED,
+                    "symbol": internal_symbol, "detail": qty_refusal}
+
         # Protective stop for a BUY is placed as a SEPARATE GTC stop-MARKET
         # (guaranteed exit; stop-limit only on the unsupported-combo fallback)
         # AFTER the entry fills — NOT as an OTO leg.
@@ -971,19 +956,30 @@ class OrderDesk:
         use_stop = (stop_loss_price is not None and stop_loss_price > 0
                     and side.lower() in ("buy", "sell_short"))
 
+        # Idempotency key (src/execution/order_idempotency.py): a retried
+        # submission reuses it and the broker refuses the duplicate.
+        client_order_id = _client_order_id(
+            purpose="ENT", symbol=alpaca_symbol, side=side,
+            session_date=_idem._session_date_key(), qty=qty, price=limit_price,
+        )
         if limit_price is not None:
             request = LimitOrderRequest(
                 symbol=alpaca_symbol, qty=qty, side=order_side,
                 time_in_force=TimeInForce.DAY, limit_price=limit_price,
+                client_order_id=client_order_id,
             )
         else:
             request = MarketOrderRequest(
                 symbol=alpaca_symbol, qty=qty, side=order_side,
                 time_in_force=TimeInForce.DAY,
+                client_order_id=client_order_id,
             )
 
         try:
-            order = self.client.submit_order(request)
+            order = _submit_entry_request_idempotent(
+                self.client, request, client_order_id=client_order_id,
+                side=side, qty=qty, symbol=symbol,
+            )
         except Exception as exc:  # noqa: BLE001
             # Owner ruling 2026-09-30 (board item 183): the constructor's
             # flat `min_trade_weight_delta` churn floor is gone, so a

@@ -38,6 +38,7 @@ from src.models import (
 from src.pipeline import TradingPipeline
 from src.risk.exit_guard import HoldingDisciplineClaimCheck
 from src.trading_calendar import et_today
+from tests.pipeline_factory import build_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -69,21 +70,15 @@ def _protection(protected: bool):
 
 
 def _pipeline(*, macro_state=None, protected=True, state_changes=None):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock(), broker=MagicMock(), market=MagicMock(), tech_store=MagicMock(), macro_store=MagicMock(), news_store=MagicMock())
     p.db.get_symbol_last_buy.return_value = {
         "price": 100.0, "stop_loss": 94.0,
         "thesis_invalid_if": "loses the 94 shelf on a close",
         "timestamp": f"{et_today().isoformat()} 14:00:00",
     }
-    p.broker = MagicMock()
     p.broker.get_current_stop_price.return_value = None
-    p.market = MagicMock()
-    p.tech_store = MagicMock()
     p.tech_store.get_history.return_value = []
-    p.macro_store = MagicMock()
     p.macro_store.load_last_state.return_value = macro_state
-    p.news_store = MagicMock()
     p.news_store.recent_state_changes.return_value = state_changes or []
     p._atr_for_symbol = MagicMock(return_value=2.0)
     p._structural_protection_for_holding = MagicMock(

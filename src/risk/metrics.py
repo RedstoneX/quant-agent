@@ -382,6 +382,8 @@ def format_heat_block(
             f"- ⚠️ UNPROTECTED (no stop found — charged at full notional): "
             f"{', '.join(heat.unprotected)}"
         )
+    if getattr(heat, "unreadable", None):
+        lines.append(heat.unreadable_note())
     lines.append("- Per position: symbol | at-risk $ | % equity | R-multiple")
     for p in sorted(heat.per_position, key=lambda x: -x.budget_risk_dollars):
         pct = (p.budget_risk_dollars / heat.equity * 100) if heat.equity > 0 else 0.0

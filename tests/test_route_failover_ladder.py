@@ -50,7 +50,7 @@ class _Notifier:
     def __init__(self):
         self.messages: list[str] = []
 
-    def send(self, message: str) -> bool:
+    def send(self, message: str, **_kwargs) -> bool:
         self.messages.append(message)
         return True
 

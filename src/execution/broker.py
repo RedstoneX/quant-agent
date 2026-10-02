@@ -36,12 +36,14 @@ from src.execution.broker_parts.stop_amend import (  # noqa: F401 (re-exports ke
     StopAmender, _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
 )
 from src.execution.broker_parts.stop_place import (  # noqa: F401 (re-exports keep patch targets)
-    StopPlacer, _STOP_PLACEMENT_MAX_ATTEMPTS, _STOP_PLACEMENT_BACKOFF_S, _FRACTIONAL_QTY_EPSILON, PROTECTIVE_ORDER_ACTIVE_STATUSES, _is_held_for_orders_error, _is_unsupported_stop_market_rejection, _split_protective_qty, _derive_stop_tif, _alpaca_symbol, _internal_symbol, real_broker_order_id,
+    StopPlacer, PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES, PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES, _STOP_PLACEMENT_MAX_ATTEMPTS, _STOP_PLACEMENT_BACKOFF_S, _FRACTIONAL_QTY_EPSILON, PROTECTIVE_ORDER_ACTIVE_STATUSES, _is_held_for_orders_error, _is_unsupported_stop_market_rejection, _split_protective_qty, _derive_stop_tif, _alpaca_symbol, _internal_symbol, real_broker_order_id,
 )
 from src.execution.broker_parts.order_desk import (  # noqa: F401 (re-exports keep patch targets)
     OrderDesk, _PLAIN_PRICE_LABELS, _outlier_refusal_detail, _is_terminal_submission_rejection,
 )
 from src.execution.broker_parts.account_reads import AccountReads
+from src.execution.order_gates import BadOrderQuantity, QTY_REJECTED, check_order_quantity  # noqa: F401 (re-exports keep patch targets)
+from src.execution.order_idempotency import _client_order_id, _is_dead_stop_result, _session_date_key  # noqa: F401 (re-exports keep patch targets)
 from src.execution.broker_parts.trade_stream import (  # noqa: F401 (re-exports keep patch targets)
     TradeStreamAuthRejected, TradeStreamGaveUp, TradeStreamWarmup, _ALPACA_STREAM_AUTH_DEADLINE_S,
     _ALPACA_STREAM_RECONNECT_MAX_S, _ALPACA_STREAM_RECONNECT_MIN_S, _HubWaiter,
@@ -133,18 +135,7 @@ _ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
 
 # `PROTECTIVE_ORDER_ACTIVE_STATUSES` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
-#: Broker order states in which an order has been ACCEPTED BY US to the
-#: broker but is not yet working on the book. Alpaca's own enum names them:
-#: `pending_new` (received, not yet routed) and `accepted_for_bidding`.
-#:
-#: These are deliberately NOT in the set above. That set answers "is this
-#: resting order real protection right now?" and its reader
-#: (`replace_stop_loss`'s failure path) is looking at the AGED order book —
-#: an order that has been sitting there and is still `pending_new` is a
-#: stuck order, not coverage.
-PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES = frozenset(
-    {"pending_new", "accepted_for_bidding"}
-)
+# `PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 #: The set for the OTHER question: "would submitting another stop here
 #: create a SECOND live order against the same shares?"
@@ -202,6 +193,9 @@ class AlpacaBroker:
     #: reads None rather than raising; `_kill_switch_active` already treats
     #: None as "no switch configured", i.e. inert.
     _kill_switch_path: "Path | None" = None
+    #: Set in __init__ (RiskConfig via src/pipeline.py). None = no notional
+    #: check; declared here so an instance built without __init__ reads None.
+    _max_position_pct: "float | None" = None
     #: Called with the facts of every protective stop the kill switch
     #: refuses (see `_submit_stop_limit_order`). The broker holds no
     #: database, so the owner of one wires this — `TradingPipeline` does, to
@@ -223,8 +217,10 @@ class AlpacaBroker:
     def __init__(self, api_key: str, secret_key: str, paper: bool = True,
                  kill_switch_path: str | None = None,
                  trade_updates_lease_path: str | None = None,
-                 fill_stream_enabled: bool = False):
+                 fill_stream_enabled: bool = False,
+                 max_position_pct: float | None = None):
         self.api_key = api_key
+        self._max_position_pct = max_position_pct  # RiskConfig via src/pipeline.py; None = no notional check
         self.secret_key = secret_key
         self._paper = paper
         self.client = TradingClient(api_key, secret_key, paper=paper)
@@ -469,6 +465,9 @@ class AlpacaBroker:
             order_terminal_states=self._ORDER_TERMINAL_STATES,
             order_replaceable_states=self._ORDER_REPLACEABLE_STATES,
             max_replacement_hops=self._MAX_REPLACEMENT_HOPS,
+            get_fractionability=self.get_fractionability,
+            get_account=self.get_account,
+            max_position_pct=self._max_position_pct,
             # Four collaborators below are themselves moved bodies, so the desk
             # already owns them. Passing this broker's same-named shim would
             # overwrite the desk's own method with a function that calls
