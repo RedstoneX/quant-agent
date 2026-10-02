@@ -146,7 +146,7 @@ from src.sentinel_seam.snapshot import UNKNOWN_VERSION, desk_code_version, scrub
 LEAKY = {
     "trading_state": {
         "account_id": "11111111-2222-3333-4444-555555555555",   # by key name
-        "note": "acct PA1TEST2ACCT3 rehearsal",                   # account number by shape
+        "note": "acct PA00000000 rehearsal",                   # account number by shape
         "api_key": "whatever",                                   # by key name
         "log": "sent Bearer abcdefghijklmnop to venue",          # bearer token by shape
         "where": "wal at /home/qamc/data/desk.db",               # filesystem path
@@ -166,7 +166,7 @@ LEAKY = {
 def test_scrubber_redacts_every_identifying_field_and_keeps_the_rest():
     out = scrub_snapshot(LEAKY)
     flat = json.dumps(out)
-    for leak in ("11111111-2222", "PA1TEST2ACCT3", "Bearer abcdefghijklmnop", "/home/qamc",
+    for leak in ("11111111-2222", "PA00000000", "Bearer abcdefghijklmnop", "/home/qamc",
                  "PKTESTTESTTESTTEST12", "A" * 40, "desk-box.internal", "qamc-box.internal",
                  "someone@example.com", "10.0.0.7"):
         assert leak not in flat, leak
