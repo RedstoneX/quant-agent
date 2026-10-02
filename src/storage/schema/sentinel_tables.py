@@ -17,7 +17,7 @@ def ensure_sentinel_tables(*, conn: sqlite3.Connection) -> None:
             side TEXT,
             qty REAL,
             outcome TEXT NOT NULL,            -- submitted | rejected | submit_unknown | cancelled ...
-            client_order_id TEXT,             -- read from the broker payload; NULL until the adapter surfaces it
+            client_order_id TEXT,             -- key the desk SENT; NULL because no submit sets one
             broker_order_id TEXT,
             run_id TEXT,
             reason TEXT,

@@ -123,6 +123,7 @@ from src.sessions.quarterly_meta_session import QuarterlyMetaReflectionSession
 from src.sessions.earnings_preprocess_session import EarningsPreprocessSession
 from src.sessions.morning_session import MorningSession
 from src.storage.db import Database
+from src.sentinel.cancel_attempts import install_cancel_recording
 from src.cost_circuit import (
     LLMCostCircuitBreaker,
     PaidAnalysisSuspended,
@@ -884,9 +885,8 @@ class TradingPipeline(
             # logged now.
             fill_stream_enabled=config.execution.fill_stream_enabled,
         )
-        # Wire the broker as yfinance's fallback so a yfinance outage doesn't
-        # blackout the technical analyst. Alpaca's daily bars cover the same
-        # universe we trade on, so fallback coverage is effectively 100%.
+        install_cancel_recording(broker=self.broker, conn_getter=lambda: getattr(getattr(self, "db", None), "conn", None))  # every cancel is counted
+        # yfinance fallback: Alpaca daily bars cover the same universe, so a yfinance outage doesn't blackout technical.
         self.market.set_fallback_bars(self.broker.get_bars)
         self.db = Database(self._storage_db_path)
         self.db.initialize()

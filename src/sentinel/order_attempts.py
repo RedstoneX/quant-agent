@@ -5,9 +5,10 @@ Why: docs/FUTURE.md's erratic-behaviour breaker needs "orders per minute" and
 what the execution stage already knows at the moment an outcome is known; it
 adds no behaviour and nothing in the desk reads it yet.
 
-The `client_order_id` column is READ from the order payload the broker
-adapter returned (never derived here). On the day this landed the adapter
-did not surface it in that payload, so the column is NULL until it does.
+The `client_order_id` column holds the duplicate-order key the desk SENT with the
+submission, read from the payload (never derived here). The desk sends none today
+(no order request in src/ sets one), so it is NULL on every row: nothing was
+fabricated. Recording a real one means sending it in the submit path first.
 """
 from __future__ import annotations
 
