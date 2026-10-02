@@ -53,8 +53,8 @@ from src.risk.exit_guard import (
     StructuralProtectionCheck,
     claims_bearish_state_change,
     claims_regime_flip,
-    holding_discipline_claim_check,
 )
+from src.exits.pm_claim_check import holding_discipline_claim_check
 from src.rotation import RotationOpportunity, RotationPrecheck, rotation_sell_reason
 from src.storage.db import Database
 

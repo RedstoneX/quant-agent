@@ -128,7 +128,7 @@
  "src/stage_decision.py": 785,
  "src/stage_execution.py": 2162,
  "src/stage_morning_research.py": 1698,
- "src/stage_risk.py": 1423,
+ "src/stage_risk.py": 1421,
  "src/storage/analytics/calibration.py": 957,
  "src/storage/db.py": 2431,
  "src/storage/schema/manager.py": 1114,
