@@ -39,7 +39,25 @@ def test_harness_passes_pipeline_sizing():
 def test_harness_fails_every_composed_mixin(name, module):
     v = check_boundary(module)
     assert not v.passed, f"{name} must not be a boundary"
-    assert 1 in v.failures and 2 in v.failures  # no __init__, foreign self attrs
+    assert 1 in v.failures  # a composed mixin has no __init__
+    if module.endswith("_delegate"):
+        # Converted: the logic moved to a standalone class (its own boundary
+        # test), so the delegate reads no foreign self attrs. Clause 2 must
+        # stay clear here, which proves the logic really left the mixin.
+        assert 2 not in v.failures, v.failures[2]
+        # ...and the logic must have landed somewhere that IS a boundary.
+        # Without this, naming any mixin `*_delegate` would buy the softer
+        # clause-2 assertion for free; requiring the paired standalone to
+        # pass the harness outright is what makes the delegate branch mean
+        # "converted" rather than "renamed".
+        standalone = module[: -len("_delegate")]
+        sv = check_boundary(standalone)
+        assert sv.passed, (
+            f"{module} claims conversion but {standalone} is not a boundary: "
+            f"{sv.failures}"
+        )
+    else:
+        assert 2 in v.failures  # foreign self attrs
 
 
 def test_eight_mixins_are_covered():

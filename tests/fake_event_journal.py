@@ -14,6 +14,7 @@ class InMemoryEventJournal(EventJournal):
     def __init__(self, *, fail: bool = False) -> None:
         self.rows: list[dict] = []
         self.failures: list[dict] = []
+        self.agent_logs: list[dict] = []
         self.fail = fail
 
     def persist_evidence(
@@ -38,3 +39,8 @@ class InMemoryEventJournal(EventJournal):
 
     def events(self, *, kind: str | None = None) -> list[dict]:
         return [r for r in self.rows if kind is None or r["kind"] == kind]
+
+    def insert_agent_log(self, **fields) -> None:
+        if self.fail:
+            raise RuntimeError("agent log write failed")
+        self.agent_logs.append(fields)

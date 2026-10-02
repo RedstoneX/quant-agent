@@ -86,3 +86,7 @@ class DatabaseEventJournal(EventJournal):
             run_id=run_id, decision_id=decision_id, symbol=symbol, stage=stage,
             outcome=outcome, reason=reason, details=details,
         ))
+
+    def insert_agent_log(self, **fields) -> None:
+        """Pass-through to ``Database.insert_agent_log``; raises as it does."""
+        self._db.insert_agent_log(**fields)

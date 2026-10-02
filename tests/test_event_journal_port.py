@@ -43,11 +43,11 @@ def db(tmp_path):
     d.close()
 
 
-def test_port_is_abstract_with_exactly_two_methods():
+def test_port_is_abstract_with_exactly_three_methods():
     with pytest.raises(TypeError):
         EventJournal()  # type: ignore[abstract]
     assert set(EventJournal.__abstractmethods__) == {
-        "persist_evidence", "record_pipeline_event",
+        "persist_evidence", "record_pipeline_event", "insert_agent_log",
     }
 
 
