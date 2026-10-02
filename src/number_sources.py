@@ -158,11 +158,10 @@ as if it covered more:
   * A number outside scope that the sentinel's count ratchet lets through
     because something else in an unscoped file was deleted in the same
     commit.
-  * A `path:line` citation that has DRIFTED. Rule 7 catches a path that does
-    not exist and a line past the end of a file; it cannot tell that line 930
-    of a file that is still 2000 lines long stopped being the line meant. Three
-    of this ledger's own citations drifted by 20-30 lines inside one day of
-    merges and were re-checked by hand. Prefer a URL where one exists.
+  * A citation to a symbol that still exists but no longer means what the row
+    says. Rule 7 resolves `path::Symbol` and `path@`text`` citations and
+    rejects bare `path:line` ones (board item 225); it cannot judge whether
+    the symbol is the right one.
   * A number computed at run time from live inputs, or a `default_factory`
     whose number lives in a function body.
   * Inline literals OUTSIDE rule (e)'s band or shape. Measured 2026-09-19:
@@ -1136,52 +1135,14 @@ def deployed_values(root: Path | None = None) -> dict[str, float]:
 def _is_falsifiable_source(text: str) -> bool:
     if re.search(r"https?://\S+", text):
         return True
-    return bool(re.search(r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml):\d+", text))
+    return bool(
+        re.search(
+            r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml)(?:::[A-Za-z_]|@`)", text
+        )
+    )
 
 
-#: Every repo path, with optional line or line range, mentioned anywhere in an
-#: entry's prose.
-_CITATION_RE = re.compile(
-    r"\b((?:docs|src|config|tests|scripts)/[\w./-]+\.(?:md|py|yaml|yml|json|toml))"
-    r"(?::(\d+)(?:-(\d+))?)?"
-)
-
-
-def broken_citations(
-    ledger: dict[str, dict[str, Any]], root: Path
-) -> list[tuple[str, str, str]]:
-    """Repo citations in the ledger that do not resolve: `(site_id, why, cite)`.
-
-    The cheapest possible defence against the failure that made this rework
-    necessary. It does not read a citation and judge it — nothing can — but a
-    citation pointing at a file that does not exist, or at a line past the end
-    of one, is a claim nobody opened, and that is the whole shape of what went
-    wrong. Caught one on the first run: an invented `docs/FRACTIONAL_TRADING.md`
-    in a source written during this very rework.
-    """
-    out: list[tuple[str, str, str]] = []
-    line_counts: dict[str, int | None] = {}
-    for site_id, entry in ledger.items():
-        text = f"{entry.get('note') or ''} {entry.get('source') or ''}"
-        for match in _CITATION_RE.finditer(text):
-            rel, start, end = match.group(1), match.group(2), match.group(3)
-            if rel not in line_counts:
-                target = root / rel
-                line_counts[rel] = (
-                    len(target.read_text(encoding="utf-8").splitlines())
-                    if target.is_file()
-                    else None
-                )
-            count = line_counts[rel]
-            if count is None:
-                out.append((site_id, "no such file", match.group(0)))
-                continue
-            for lineno in (start, end):
-                if lineno and int(lineno) > count:
-                    out.append(
-                        (site_id, f"line past end of file ({count} lines)", match.group(0))
-                    )
-    return out
+from src.ledger_citations import broken_citations  # noqa: E402,F401  (rule 7)
 
 
 def audit(
