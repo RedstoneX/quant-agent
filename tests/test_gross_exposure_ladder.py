@@ -32,6 +32,7 @@ from src.risk.rules import (
     resolve_gross_ceiling,
 )
 from src.config import RiskConfig
+from tests.pipeline_factory import build_pipeline
 
 
 EQUITY = 10_000.0
@@ -504,14 +505,12 @@ def test_the_preamble_de_lever_submits_sells_with_no_pm_decision_present():
     from src.pipeline import TradingPipeline
     from src.pipeline_context import RunContext
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk = _risk_config()
     pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
-    pipeline.db = MagicMock()
     # A book that fell 16% from its high: the ladder demands 1.0x.
     pipeline.db.get_daily_pnl.return_value = [{"total_value": EQUITY / 0.84}]
-    pipeline.broker = MagicMock()
     pipeline.broker.get_account.return_value = {
         "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
     }
@@ -551,14 +550,12 @@ def test_a_delever_that_fails_to_clear_the_ceiling_is_flagged():
     from src.pipeline import TradingPipeline
     from src.pipeline_context import RunContext
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk = _risk_config()
     pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
-    pipeline.db = MagicMock()
     # A book that fell 16% from its high: the ladder demands 1.0x.
     pipeline.db.get_daily_pnl.return_value = [{"total_value": EQUITY / 0.84}]
-    pipeline.broker = MagicMock()
     # Post-refresh the broker still reports an over-levered book (the sell
     # only partially filled) — 1.5x against a 1.0x ceiling.
     pipeline.broker.get_account.return_value = {
@@ -1219,9 +1216,8 @@ def _pipeline_for_ceiling(**risk_overrides):
     from src.pipeline import TradingPipeline
     from types import SimpleNamespace
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline(db=MagicMock())
     p.config = SimpleNamespace(risk=_risk_config(**risk_overrides))
-    p.db = MagicMock()
     p.db.get_daily_pnl.return_value = []
     return p
 
@@ -1669,12 +1665,10 @@ def _stop_timeline_pipeline(*, allow_margin: bool):
     from src.pipeline import TradingPipeline
 
     events: list[tuple[str, str]] = []
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(cash_sweeper=None, db=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk = _risk_config(allow_margin=allow_margin)
     pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
-    pipeline.cash_sweeper = None
-    pipeline.db = MagicMock()
     # A book that fell 16% from its high: the ladder demands 1.0x.
     pipeline.db.get_daily_pnl.return_value = [{"total_value": EQUITY / 0.84}]
     pipeline._write_ahead_protection_restore = MagicMock(return_value=1)
@@ -1987,8 +1981,7 @@ def test_live_delever_price_crosses_the_correct_side_and_falls_back_to_market():
     from unittest.mock import MagicMock
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
 
     # Full two-sided quote: SELL -> bid, COVER -> ask, reference -> mid.
     pipeline.broker.get_latest_quote.return_value = {
@@ -2387,7 +2380,7 @@ def _delever_pipeline(tmp_path):
     from src.pipeline import TradingPipeline
     from src.storage.db import Database
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = MagicMock()
     db = Database(str(tmp_path / "delever.db"))
     db.initialize()
@@ -2683,15 +2676,13 @@ def _morning_delever_pipeline(drawdown_frac):
     from src.config import CashSweepConfig
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.risk = _risk_config()
     pipeline.config.cash_sweep = CashSweepConfig(enabled=False)
-    pipeline.db = MagicMock()
     pipeline.db.get_daily_pnl.return_value = [
         {"total_value": EQUITY / (1.0 - drawdown_frac)},
     ]
-    pipeline.broker = MagicMock()
     pipeline.broker.get_account.return_value = {
         "cash": 0.0, "portfolio_value": EQUITY, "last_equity": EQUITY,
     }
@@ -3071,8 +3062,7 @@ def test_every_exit_path_registers_its_own_settlement():
 def test_a_non_terminal_wait_registers_and_a_terminal_one_clears():
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline._unsettled_exit_orders = {}
+    pipeline = build_pipeline(_unsettled_exit_orders={})
     pipeline._register_exit_settlement(
         {"order_id": "o-9", "symbol": "nvda", "submitted_qty": 5.0,
          "terminal_status": "new"},
@@ -3138,7 +3128,7 @@ def test_a_sigterm_unwinds_so_the_deferred_ceiling_is_still_paid():
     import signal
     from src.pipeline import SessionTerminated, TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     previous = pipeline._install_sigterm_unwind("test")
     try:
         assert previous is not None or signal.getsignal(signal.SIGTERM) is not None

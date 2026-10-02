@@ -29,6 +29,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.pipeline_factory import build_pipeline, test_config
 from src.config import IntradayScanConfig
 from src.cost_circuit import PaidAnalysisSuspended
 from src.models import MacroNarrative, NewsIntelligenceReport, Position, TechAnalysisResult, TechReasoningChain
@@ -99,42 +100,35 @@ def _todays_news_dump():
 def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
                        move_threshold_pct=3.0, cooldown_hours=3.0,
                        max_candidates=5, cooldown_rows=None, db_path=None):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.config = SimpleNamespace(
-        trading=SimpleNamespace(universe=list(universe), lookback_days=100),
-        # The scan takes an advisory flock next to the DB file; point it at
-        # a per-test temp dir so tests never contend with each other or
-        # write into the repo.
-        storage=SimpleNamespace(
-            db_path=str(db_path or (Path(tempfile.mkdtemp()) / "t.db")),
-        ),
+    # REAL constructor, production settings; the scan's advisory flock gets a per-test temp dir.
+    config = test_config(
+        trading={"universe": list(universe), "lookback_days": 100},
+        storage={"db_path": str(db_path or (Path(tempfile.mkdtemp()) / "t.db"))},
         intraday_scan=IntradayScanConfig(
             enabled=enabled, move_threshold_pct=move_threshold_pct,
             cooldown_hours=cooldown_hours, max_candidates_per_scan=max_candidates,
-        ),
+        ).model_dump(),
     )
-    pipeline.broker = MagicMock()
-    pipeline.broker.get_account.return_value = {
+    broker = MagicMock()
+    broker.get_account.return_value = {
         "cash": 10_000.0, "portfolio_value": 10_100.0, "last_equity": 10_000.0,
         "non_marginable_buying_power": 10_000.0,
     }
-    pipeline.broker.get_positions.return_value = []
-    pipeline.db = MagicMock()
-    pipeline.db.get_trades.return_value = cooldown_rows or []
-    pipeline.market = MagicMock()
-    pipeline.market.get_ohlcv.return_value = [MagicMock()]  # non-empty; compute_indicators is patched
-    pipeline.macro_store = MagicMock()
-    pipeline.macro_store.load_last_state.return_value = _todays_macro_state()
-    pipeline.news_store = MagicMock()
-    pipeline.news_store.load_daily_report.return_value = _todays_news_dump()
-    pipeline.tech_store = MagicMock()
-    pipeline.tech_store.load.return_value = {}
-    pipeline.tech_store.compute_ages.return_value = {}
-    pipeline.tech_analyst = MagicMock()
-    pipeline.decision_stage = MagicMock()
-    pipeline.risk_stage = MagicMock()
-    pipeline.execution_stage = MagicMock()
-    return pipeline
+    broker.get_positions.return_value = []
+    db = MagicMock(**{"get_trades.return_value": cooldown_rows or []})
+    market = MagicMock(**{"get_ohlcv.return_value": [MagicMock()]})  # non-empty; indicators patched
+    macro_store = MagicMock(**{"load_last_state.return_value": _todays_macro_state()})
+    news_store = MagicMock(**{"load_daily_report.return_value": _todays_news_dump()})
+    tech_store = MagicMock(**{"load.return_value": {}, "compute_ages.return_value": {}})
+    return build_pipeline(
+        config, broker=broker, db=db, market=market, macro_store=macro_store,
+        news_store=news_store, tech_store=tech_store,
+        tech_analyst=MagicMock(), decision_stage=MagicMock(),
+        risk_stage=MagicMock(), execution_stage=MagicMock(),
+        sec_form4_provider=MagicMock(name="sec_form4_provider"),
+        earnings_provider=MagicMock(name="earnings_provider"),
+        news_provider=MagicMock(name="news_provider"),
+    )
 
 
 def _snapshot(last, prev, *, trade_at="today"):
@@ -223,7 +217,8 @@ def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     # Intentional skip (earnings not re-fetched) is not a lost answer —
     # the gate must still let the PM run. Empty/failed carry-forward is
     # a different word and is tested separately.
-    assert ctx.data_status["earnings"] == "not_run_intraday"
+    # A real earnings provider with nothing cached reports "chose_not_to_refetch" (was "not_run_intraday").
+    assert ctx.data_status["earnings"] == "chose_not_to_refetch"
     assert ctx.data_status["macro"] == "carried_from_morning"
     assert ctx.data_status["news"] == "carried_from_morning"
     from src import evidence_gate
@@ -518,7 +513,7 @@ def test_run_intra_check_runs_the_scan():
     the old name referred to a daily-loss gate that used to skip the scan;
     that gate and its sibling test are gone, so the name promised a
     distinction this test could no longer draw."""
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
         intraday_scan=IntradayScanConfig(enabled=True),
@@ -560,7 +555,7 @@ def test_run_intra_check_scan_crash_does_not_fail_the_tick():
     that fix); this test only re-asserts the still-non-negotiable half of
     the contract — the tick itself completes as "ok", never as a failure.
     """
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline()
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
         intraday_scan=IntradayScanConfig(enabled=True),
@@ -1186,7 +1181,8 @@ def test_empty_morning_carry_forward_is_advisory_and_is_disclosed(
     assert result["status"] != "evidence_gate_skip"
     assert ctx.data_status["macro"] == "carry_forward_empty"
     assert ctx.data_status["news"] == "carry_forward_empty"
-    assert ctx.data_status["earnings"] == "not_run_intraday"
+    # A real earnings provider with nothing cached reports "chose_not_to_refetch" (was "not_run_intraday").
+    assert ctx.data_status["earnings"] == "chose_not_to_refetch"
     p.decision_stage.run.assert_called()
     write_status.assert_not_called()
     # The loss is not silent: it is in the decision's own durable freshness

@@ -172,6 +172,17 @@ def main():
         except Exception as exc:
             logger.warning("pricing refresh failed at startup: %s", exc)
 
+        # Owner command panel (instalment 1): point the broker door at the
+        # intent record and resolve anything raised while the desk was down.
+        if watchdog_db_path:
+            from src.execution import owner_flags_gate
+            from src.owner_intents import intake
+            owner_flags_gate.configure(watchdog_db_path)
+            try:
+                intake(watchdog_db_path)
+            except Exception as exc:  # noqa: BLE001 - a failed pickup never stops startup
+                logger.error("owner intent pickup failed at startup: %s", exc)
+
         if args.mode == "live":
             # The blocking scheduler runs forever in the normal case and
             # never reaches the finally block below. Per-session Telegram
