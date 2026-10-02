@@ -7048,18 +7048,18 @@ numbers:
       production passes event_risk.horizon_days (src/stage_risk.py:412).
       A further inline `or 10` fallback sits at
       src/agents/macro_analyst.py:37, which no rule sees.
-  - id: src.agents.portfolio_manager.ranking.CandidateRankingMixin.candidate_eligibility(rr_floor)
+  - id: src.agents.portfolio_manager.candidate_ranking.CandidateRanking.candidate_eligibility(rr_floor)
     value: 1.5
     status: derived
-    site: src/agents/portfolio_manager/ranking.py
+    site: src/agents/portfolio_manager/candidate_ranking.py
     derived_from: src.risk.constants.REWARD_RISK_FLOOR
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager/ranking.py:26-34 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager/ranking.py:332-337).
+      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(max_portfolio_risk_pct)
     value: 25
     status: derived
@@ -7079,10 +7079,10 @@ numbers:
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager/ranking.py:26-34 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager/ranking.py:332-337).
+      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(starter_risk_pct)
     value: 0.5
     status: derived
@@ -7092,18 +7092,18 @@ numbers:
     note: >-
       Parameter default bound to the imported STARTER_POSITION_RISK_PCT
       (src/agents/portfolio_manager/__init__.py:1253-1308).
-  - id: src.agents.portfolio_manager.ranking.CandidateRankingMixin.rank_candidates(rr_floor)
+  - id: src.agents.portfolio_manager.candidate_ranking.CandidateRanking.rank_candidates(rr_floor)
     value: 1.5
     status: derived
-    site: src/agents/portfolio_manager/ranking.py
+    site: src/agents/portfolio_manager/candidate_ranking.py
     derived_from: src.risk.constants.REWARD_RISK_FLOOR
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager/ranking.py:26-34 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager/ranking.py:332-337).
+      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
   - id: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     value: 0.03
     status: arbitrary
