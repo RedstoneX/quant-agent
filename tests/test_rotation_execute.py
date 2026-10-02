@@ -478,7 +478,7 @@ def test_held_symbol_bought_today_is_never_rotated(tmp_path):
     pipeline, db, probe = _pipeline(tmp_path)
     db.insert_trade(
         symbol="OLD", action="BUY", qty=10.0, price=100.0, reasoning="entry",
-        run_id="run-0", broker_order_id="ord-b", fill_status="filled",
+        run_id="run-0", broker_order_id="ord-b", fill_status="filled", stop_loss=90.0,
     )
     ctx = _ctx()
     decision = _decision(_buy_new())

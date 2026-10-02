@@ -648,3 +648,38 @@ request: upward dependency edges remaining, two-way import pairs remaining
 (8 today, measured), and test files importing `TradingPipeline` (115 of 330
 today, measured). If a step does not move at least one of them, it was not a
 conversion step.
+
+---
+
+## 8. The Sentinel seams
+
+`docs/FUTURE.md` specifies a separate watchdog ("Sentinel") on another
+provider's host, built only after the desk is operational. Its two seams go in
+during the rebuild so that build is a connection, not surgery.
+
+**Inbound — a flag, never a call.** Already built: the broker layer refuses
+every order while the file at `RiskConfig.kill_switch_path` exists
+(`src/execution/broker.py::_kill_switch_active`, existence check only, no
+content read). Not yet built: a second, exits-only flag — today the one flag
+halts entries AND exits alike, so "freeze new trades but let protection act"
+has no inbound expression.
+
+**Outward — the signed snapshot** (`src/sentinel_seam/`, L4, imports nothing
+from `src`). `build_snapshot` is a pure function of PASSED-IN state: schema
+version, heartbeat, desk code version (git short SHA, else package version,
+else the literal "unknown"), trading state, expected positions, expected
+protections, risk state, last reconciliation, recent trades, cost spent.
+`scrub_snapshot` runs before signing and removes account identifiers, keys
+and tokens, filesystem paths, hostnames, e-mail and IP addresses, by key name
+and by value shape; the committed test feeds it one of each. `sign_snapshot`
+seals the scrubbed body with HMAC-SHA256 under a key from
+`QAMC_SNAPSHOT_SIGNING_KEY`; with no key the block reads
+`{"scheme": "unsigned", "value": null}` — explicit, never a fake seal.
+`SnapshotPublisher` takes every collaborator keyword-only and drops the JSON
+atomically to a local path.
+
+**Deliberately NOT built yet:** the push to the drop point (no network call),
+any schedule or daemon, the Sentinel reader, the external dashboard, the
+exits-only flag, and the composition-root call that gathers live state and
+calls `publish()` — wiring that touches the session scheduler, so the seam
+ships unwired.

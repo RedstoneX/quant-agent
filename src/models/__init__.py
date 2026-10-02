@@ -138,3 +138,8 @@ from src.models.meta import (
     PromptLearning,
     QuarterlyMetaReflection,
 )
+
+# Board item 78: a later blank write must not erase a stated falsifier.
+from src.models.soft_exit_guard import install as _install_soft_exit_guard
+for _guarded in (TargetPosition, TradeDecision):
+    _install_soft_exit_guard(_guarded)

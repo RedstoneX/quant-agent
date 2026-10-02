@@ -87,7 +87,7 @@ def _spec(db, *, order_id="ord-1", limit_price=100.10, qty=10):
     row_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=qty, price=limit_price,
         reasoning="repeg test", run_id="run-x", broker_order_id=order_id,
-        fill_status="submitted",
+        fill_status="submitted", stop_loss=90.0,
     )
     return {
         "symbol": "NVDA", "order_id": order_id, "stop_price": 95.0,
@@ -504,7 +504,7 @@ def test_crash_between_replace_and_record_is_recovered(db):
     """SIGKILL after the PATCH landed: the WAL row is all that survives."""
     row_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted",
+        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
     )
     db.insert_pending_repeg(
         trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
@@ -521,7 +521,7 @@ def test_crash_between_replace_and_record_is_recovered(db):
 def test_crash_where_the_patch_never_landed_clears_cleanly(db):
     row_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted",
+        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
     )
     db.insert_pending_repeg(
         trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
@@ -538,7 +538,7 @@ def test_crash_where_the_patch_never_landed_clears_cleanly(db):
 def test_drain_leaves_the_row_when_the_broker_cannot_be_read(db):
     row_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted",
+        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
     )
     db.insert_pending_repeg(
         trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
@@ -556,7 +556,7 @@ def test_drain_recovers_a_crash_after_the_id_was_known(db):
     """Crash between `resolve_pending_repeg` and the trades-row repoint."""
     row_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted",
+        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
     )
     db.insert_pending_repeg(
         trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
@@ -572,7 +572,7 @@ def test_drain_recovers_a_crash_after_the_id_was_known(db):
 def test_drain_is_idempotent(db):
     row_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="crash",
-        run_id="run-x", broker_order_id="ord-1", fill_status="submitted",
+        run_id="run-x", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
     )
     db.insert_pending_repeg(
         trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
@@ -592,7 +592,7 @@ def test_drain_does_not_clobber_a_newer_repeg(db):
     """A stale WAL row replayed after the chain moved on must be inert."""
     row_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.10, reasoning="stale",
-        run_id="run-x", broker_order_id="ord-3", fill_status="submitted",
+        run_id="run-x", broker_order_id="ord-3", fill_status="submitted", stop_loss=90.0,
     )
     db.insert_pending_repeg(
         trade_row_id=row_id, symbol="NVDA", old_order_id="ord-1",
@@ -618,7 +618,7 @@ def test_drain_is_a_noop_with_an_empty_queue(db):
 def test_repoint_is_guarded_on_the_old_id(db):
     row_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=1, price=1.0, reasoning="r",
-        run_id="run-x", broker_order_id="ord-1",
+        run_id="run-x", broker_order_id="ord-1", stop_loss=90.0,
     )
     assert db.repoint_trade_broker_order_id(
         row_id, old_order_id="ord-1", new_order_id="ord-2") == 1
