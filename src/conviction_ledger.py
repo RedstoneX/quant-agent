@@ -47,7 +47,7 @@ own declared conviction (high 1.0 / medium 0.6 / low 0.3). **Owner decision,
    declared confidence predicts anything. Multiplying its credit by its own
    confidence assumes that answer and bakes it into the measurement. This desk
    has already seen high-conviction trades underperform low-conviction ones at
-   small sample (see `_CONVICTION_OUTCOME_MIN_N` in `src/storage/db.py`);
+   small sample (see `_CONVICTION_OUTCOME_MIN_N` in `src/storage/analytics/calibration.py`);
    under weighting that finding would have been hidden inside the score.
 2. ~~**It double-counts.** A confident call already earns a larger position
    through the §9.4 agreement ceiling (retired 2026-09-14), and a larger position already produces
@@ -64,7 +64,7 @@ own declared conviction (high 1.0 / medium 0.6 / low 0.3). **Owner decision,
 a measurement that multiplies a seat's credit by that seat's own confidence
 assumes the answer it exists to discover. There is now also a second, harder
 reason — there is no sample to derive a weight FROM. Deriving one needs
-`_CONVICTION_OUTCOME_MIN_N` (20, `src/storage/db.py`) resolved calls per seat;
+`_CONVICTION_OUTCOME_MIN_N` (20, `src/storage/analytics/calibration.py`) resolved calls per seat;
 the book has 7 closed equity round-trips and every one carries conviction NULL.
 So: no conviction weighting, for one valid reason plus insufficient sample.
 

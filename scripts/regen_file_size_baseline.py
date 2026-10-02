@@ -56,7 +56,12 @@ def main(argv: list[str]) -> int:
             refused.append(f"GREW   {path}: {prev} -> {n} (kept {prev})")
             result[path] = prev
         elif prev is None and old and not allow_growth:
-            refused.append(f"NEW    {path}: {n} lines (not recorded)")
+            refused.append(
+                f"NEW    {path}: {n} lines (not recorded). This is NOT a size "
+                f"limit -- FLOOR={FLOOR} only decides which files are tracked "
+                f"at all, and a new file may be any size up to the {CEILING}"
+                f"-line ceiling. Re-run with --allow-growth to record it."
+            )
         else:
             result[path] = n
     for path in sorted(set(old) | set(result)):

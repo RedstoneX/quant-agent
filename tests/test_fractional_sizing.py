@@ -1304,12 +1304,9 @@ def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
     pipeline.broker._submit_stop_limit_order.return_value = {
         "id": "leg", "status": "accepted",
     }
-    pipeline.broker._submit_stop_leg_retrying = functools.partial(
-        AlpacaBroker._submit_stop_leg_retrying, pipeline.broker,
-    )
-    pipeline.broker._submit_protective_stop_retrying = functools.partial(
-        AlpacaBroker._submit_protective_stop_retrying, pipeline.broker,
-    )
+    pipeline.broker._stop_placer = functools.partial(AlpacaBroker._stop_placer, pipeline.broker)
+    pipeline.broker._submit_stop_leg_retrying = functools.partial(AlpacaBroker._submit_stop_leg_retrying, pipeline.broker)
+    pipeline.broker._submit_protective_stop_retrying = functools.partial(AlpacaBroker._submit_protective_stop_retrying, pipeline.broker)
 
     cancelled = [{"id": "s1", "qty": 12.3456, "stop_price": 90.0,
                   "limit_price": 88.0}]

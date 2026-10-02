@@ -44,12 +44,21 @@ BASELINE_PATH = ROOT / "tests" / "silent_swallow_baseline.json"
 #: priority: the broker adapter, then the stages that act on its answers.
 MONEY_MODULES: tuple[str, ...] = (
     "src/execution/broker.py",            # every broker call
+    "src/execution/broker_parts/stop_amend.py",  # lifted from broker.py (instalment 1)
+    "src/execution/broker_parts/stop_place.py",  # lifted from broker.py (instalment 2)
+    "src/execution/broker_parts/order_desk.py",  # lifted from broker.py (instalment 3)
+    "src/execution/broker_parts/account_reads.py",  # lifted from broker.py (instalment 3)
     "src/execution/stop_repair.py",       # re-places missing stops
     "src/execution/stop_records.py",      # what the desk believes its stops are
     "src/execution/scale_in.py",          # adds to positions
     "src/execution/cash_sweep.py",        # moves cash
     "src/execution/exit_path_records.py", # the record an exit leaves behind
     "src/pipeline_protection.py",         # protective stops
+    "src/protection/owner_alerts.py",         # protective stops (lifted 2026-10-02)
+    "src/protection/sell_finalization.py",    # protective stops (lifted 2026-10-02)
+    "src/protection/fill_reconciler.py",      # protective stops (lifted 2026-10-02)
+    "src/protection/repeg_drain.py",          # protective stops (lifted 2026-10-02)
+    "src/protection/coverage_election.py",    # protective stops (lifted 2026-10-02)
     "src/pipeline_exits.py",              # sells
     "src/pipeline_entry_orders.py",       # buys
     "src/pipeline_delever.py",            # forced reductions

@@ -11,7 +11,7 @@
     "src.api.broker_reads",
     "src.conviction_ledger",
     "src.coverage_watchdog",
-    "src.notifier",
+    "src.notifier.costs",
     "src.pipeline",
     "src.pipeline_admission",
     "src.pipeline_entry_orders",

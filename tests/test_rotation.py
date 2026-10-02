@@ -397,8 +397,8 @@ import src.portfolio_constructor as portfolio_constructor_module
 from src.models import PortfolioDecision, TradeDecision
 
 
-def _module_source_path(module) -> pathlib.Path:
-    return pathlib.Path(inspect.getsourcefile(module))
+def _package_source(module) -> str:  # every *.py of the package, so no mixin hides
+    return "\n".join(p.read_text() for p in sorted(pathlib.Path(inspect.getsourcefile(module)).parent.glob("*.py")))
 
 
 def _imports_rotation(source: str) -> bool:
@@ -422,7 +422,7 @@ def test_portfolio_constructor_module_never_imports_rotation():
     a rotation close must reach it as a plain target, indistinguishable
     from a PM-authored one. A PR wiring rotation INTO construction would
     start here, and this fails the moment it does."""
-    source = _module_source_path(portfolio_constructor_module).read_text()
+    source = _package_source(portfolio_constructor_module)
     assert not _imports_rotation(source), (
         "src/portfolio_constructor.py must not import src.rotation — a "
         "rotation close is an ordinary zero-size target and the constructor "
@@ -435,7 +435,7 @@ def test_portfolio_constructor_construct_orders_never_references_rotation_by_nam
     inside a function body, or a same-module symbol literally named after
     rotation, would show up in the source text of the constructor's own
     module — catches the failure mode without depending on import style."""
-    source = _module_source_path(portfolio_constructor_module).read_text()
+    source = _package_source(portfolio_constructor_module)
     assert "rotation" not in source.lower(), (
         "src/portfolio_constructor.py source must not mention rotation at "
         "all — the constructor is the real order-execution path and must "

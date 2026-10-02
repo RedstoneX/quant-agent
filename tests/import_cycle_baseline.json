@@ -2,84 +2,20 @@
  "_comment": "Import-cycle edges that existed when the guard was introduced. This list may only SHRINK: run `PYTHONPATH=. .venv/bin/python -m scripts.import_graph --shrink-baseline` after breaking a cycle. Never add an edge here; break the cycle instead.",
  "edges": [
   [
-   "src.agents.base",
-   "src.cost_circuit"
-  ],
-  [
-   "src.agents.base",
-   "src.refusal_signature"
-  ],
-  [
-   "src.alert_watchdog",
-   "src.notifier"
-  ],
-  [
-   "src.api.db_reads",
-   "src.alert_watchdog"
-  ],
-  [
-   "src.api.db_reads",
-   "src.api.deps"
-  ],
-  [
-   "src.api.db_reads",
-   "src.log_health"
-  ],
-  [
-   "src.api.deps",
-   "src.config"
-  ],
-  [
-   "src.config",
-   "src.agents.base"
-  ],
-  [
-   "src.config",
-   "src.credentials"
-  ],
-  [
    "src.config",
    "src.live_capital_preflight"
   ],
   [
-   "src.conviction_ledger",
-   "src.execution.stop_records"
-  ],
-  [
-   "src.conviction_ledger",
-   "src.risk.rules"
-  ],
-  [
-   "src.cost_circuit",
-   "src.notifier"
-  ],
-  [
    "src.coverage_watchdog",
    "src.execution.scale_in"
-  ],
-  [
-   "src.coverage_watchdog",
-   "src.execution.stop_records"
   ],
   [
    "src.coverage_watchdog",
    "src.execution.stop_repair"
   ],
   [
-   "src.credentials",
-   "src.notifier"
-  ],
-  [
    "src.execution.broker",
    "src.execution.scale_in"
-  ],
-  [
-   "src.execution.broker",
-   "src.execution.stop_records"
-  ],
-  [
-   "src.execution.broker",
-   "src.notifier"
   ],
   [
    "src.execution.scale_in",
@@ -90,60 +26,16 @@
    "src.execution.broker"
   ],
   [
-   "src.execution.scale_in",
-   "src.execution.stop_records"
-  ],
-  [
-   "src.execution.scale_in",
-   "src.notifier"
-  ],
-  [
-   "src.execution.stop_records",
-   "src.notifier"
-  ],
-  [
    "src.execution.stop_repair",
    "src.execution.broker"
-  ],
-  [
-   "src.execution.stop_repair",
-   "src.execution.stop_records"
   ],
   [
    "src.live_capital_preflight",
    "src.config"
   ],
   [
-   "src.log_health",
-   "src.notifier"
-  ],
-  [
-   "src.models",
+   "src.models.base",
    "src.seat_heal"
-  ],
-  [
-   "src.notifier",
-   "src.api.deps"
-  ],
-  [
-   "src.notifier",
-   "src.config"
-  ],
-  [
-   "src.notifier",
-   "src.execution.broker"
-  ],
-  [
-   "src.notifier",
-   "src.storage.db"
-  ],
-  [
-   "src.notifier",
-   "src.trader_feed"
-  ],
-  [
-   "src.notifier",
-   "src.universe_screen"
   ],
   [
    "src.pipeline_sizing",
@@ -154,48 +46,8 @@
    "src.pipeline_sizing"
   ],
   [
-   "src.portfolio_constructor",
-   "src.execution.broker"
-  ],
-  [
-   "src.portfolio_constructor",
-   "src.risk.rules"
-  ],
-  [
-   "src.refusal_signature",
-   "src.coverage_watchdog"
-  ],
-  [
-   "src.risk.rules",
-   "src.config"
-  ],
-  [
-   "src.risk.rules",
-   "src.execution.broker"
-  ],
-  [
    "src.seat_heal",
-   "src.models"
-  ],
-  [
-   "src.storage.db",
-   "src.conviction_ledger"
-  ],
-  [
-   "src.storage.db",
-   "src.cost_circuit"
-  ],
-  [
-   "src.trader_feed",
-   "src.api.db_reads"
-  ],
-  [
-   "src.trader_feed",
-   "src.notifier"
-  ],
-  [
-   "src.universe_screen",
-   "src.portfolio_constructor"
+   "src.models.base"
   ]
  ]
 }

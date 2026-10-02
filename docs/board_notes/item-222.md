@@ -87,8 +87,8 @@ Both surviving bounds are already percent-of-equity notional against
 `alloc_cap_by_risk` and is now commented as a unit conversion rather than a
 bound. All three ledger rows
 (`src.config.RiskConfig.max_position_risk_pct`,
-`src.portfolio_constructor.ConstructorConfig.risk_budget_pct`,
-`src.portfolio_constructor.ConstructorConfig.max_position_pct`) now state the
+`src.portfolio_constructor.config.ConstructorConfig.risk_budget_pct`,
+`src.portfolio_constructor.config.ConstructorConfig.max_position_pct`) now state the
 sentence above. Two false claims were removed from them while doing it:
 
 - The two risk-envelope rows carried "a 20%-notional cap has been limiting
