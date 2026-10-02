@@ -11,9 +11,10 @@ DONE WHEN:
 
 ---
 
-## STATUS 2026-10-02 -- built and proven in test; NOT yet classified POPULATING
+## STATUS 2026-10-02 -- built, proven in test, classified POPULATING
 
-The recording shipped in #958: `PortfolioConstructor` keeps `last_order_sectors`, `_record_realised_sector_weights` (src/pipeline_entry_orders.py) is called once from `DecisionStage` (src/stage_decision.py) right after `construct_orders`, and writes the `realised_sector_weights` table through `Database.record_realised_sector_weights`.
+The recording shipped in #958: `PortfolioConstructor` keeps `last_order_sectors`, `_record_realised_sector_weights` (src/pipeline_entry_orders.py) is called once from `DecisionStage` (src/stage_decision.py) right after `construct_orders`, and writes the `realised_sector_weights` table through `Database.record_realised_sector_weights` (one row per run, unique on run id).
 
-- Proven in test: a real `construct_orders` run, the real helper and a real store, row read back with real weights (`test_a_real_construct_orders_run_lands_a_populated_row_in_the_store`).
-- UNPROVEN against a real session: the only database on this box (`data/quant_agent.db`, read-only look 2026-10-02) has no `realised_sector_weights` table, because no session has run since the table was added. The box stays unticked until a real session leaves a row with `entry_orders_built` above zero.
+- POPULATING: the live store holds 3 rows [measured 2026-10-02 by the orchestrator against the production database at the desk user's data directory; not independently re-read by the author of this note].
+- Verified in code and test by the author: one row per run, `(sector, side)` weights, the named call site, and a real `construct_orders` run landing a populated row in a real store (`test_a_real_construct_orders_run_lands_a_populated_row_in_the_store`).
+- An earlier version of this note called the item UNPROVEN because the author read a different database file (the checkout's copy, not the live one); that was wrong and is corrected here.
