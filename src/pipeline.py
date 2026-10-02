@@ -140,7 +140,6 @@ from src.models import (
 
 logger = logging.getLogger(__name__)
 
-
 class SessionTerminated(BaseException):
     """The wrapper's `timeout` sent SIGTERM; unwind so `finally` blocks run.
 
@@ -2379,8 +2378,9 @@ class TradingPipeline(
         ).run()
     def _evening_stop_proximity(self, positions) -> list[dict]:
         """Thin shim: builds the standalone session and runs it (body moved to src/sessions/evening_stop_proximity_session.py)."""
+        from src.execution.stop_read import read_stop
         return EveningStopProximitySession(
-            atr_for_symbol=self._collab("_atr_for_symbol"),
+            stop_reader=read_stop, db=self.db, atr_for_symbol=self._collab("_atr_for_symbol"),
             sweep_symbol=self._collab("_sweep_symbol"),
             broker=self._collab("broker"),
         ).run(positions)

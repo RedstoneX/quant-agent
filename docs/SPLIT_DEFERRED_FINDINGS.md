@@ -54,12 +54,24 @@ Nearly every caller discards the return value of the owner-alert send, so a
 failed delivery is indistinguishable from a successful one. Fix: make the
 callers honour the result, and prove a failed send is visible somewhere.
 
-## A broker read error reads as "no stop to adjust"
+## A broker read error reads as "no stop to adjust" -- FIXED
 
-The current-stop-price read returns nothing on ANY error, and the protection
-path treats nothing as "there is no stop here" and skips. A transient read
-failure therefore silently skips a stop adjustment on a live position. Fix:
-separate "no stop" from "could not tell", and make the second one loud.
+The stop read used to return nothing on ANY error, and the protection path
+read nothing as "no stop" and skipped. Now there are three answers (found,
+none, unreadable) in `src/execution/stop_read.py`, and unreadable is
+escalated (owner ruling 2026-10-02): two retries with a short pause, then the
+broker's full open-orders list, then the protection paths (ex-dividend shift
+and deterministic trail) re-place the stop through coverage repair, which is
+idempotent because the order key has landed; a stop that really was there may
+be duplicated, which the owner accepted. A durable row and an owner alert say
+what the desk actually did (placed, tried and failed, or only reported).
+Reporting-only reads (prompt, evening proximity, reconcile) place nothing. The
+prompt states "stop could not be read, do NOT treat as unprotected". A
+non-numeric broker answer is unreadable: the real read only returns a number or
+nothing, so anything else is a broken answer. Proven through the ex-dividend
+caller: every read failing places the stop once; failing twice then
+succeeding places nothing. All seven callers use it; the watchdog reconcile now
+passes the database it was already given.
 
 ## The cost circuit is eleven mixins, not eleven modules
 
