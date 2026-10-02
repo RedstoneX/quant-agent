@@ -255,7 +255,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # defines no module-level numeric constant (see the docstring note this
     # entry used to require); scoping it adds nothing today but stops a
     # future one arriving unseen.
-    "src/execution/broker.py",
+    "src/execution/broker.py", "src/execution/broker_parts",
     "src/execution/stop_repair.py",
     "src/coverage_watchdog.py",
     # The pipeline's own decision/execution glue. The de-lever and midday
