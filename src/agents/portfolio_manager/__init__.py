@@ -1805,7 +1805,7 @@ _SUBMODULES = (
     "src.agents.portfolio_manager.prompt_evidence",
     "src.agents.portfolio_manager.ranking",
     "src.agents.portfolio_manager.rotation_section",
-    "src.agents.portfolio_manager.grounding",
+    "src.agents.portfolio_manager.grounding", "src.agents.portfolio_manager.decision_grounding",
 )
 _PRISTINE: dict[str, object] = {}
 
