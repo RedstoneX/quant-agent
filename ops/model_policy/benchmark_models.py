@@ -51,6 +51,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.agents.llm_providers import _is_google_model  # noqa: E402
 from ops.model_policy.scenarios import (  # noqa: E402
     Check, DEFAULT_SCENARIOS, Scenario, SCENARIOS, SCENARIOS_BY_KEY, refusal_reason,
 )
@@ -79,6 +80,15 @@ def parse_benchmark_model(model: str) -> tuple[str, str]:
     """
     if model.startswith(GOOGLE_DIRECT_PREFIX):
         return model[len(GOOGLE_DIRECT_PREFIX):], "google"
+    # A BARE Google id ("gemini-3.5-flash-lite") has no "vendor/" segment, so
+    # it cannot be an OpenRouter id at all — OpenRouter's are always
+    # "vendor/model". Routing it to OpenRouter could only ever 404 after
+    # opening a paid connection. Send it where it actually lives, Google
+    # direct, and let it file under its bare id — which is the id
+    # config/settings.yaml carries for a Google-direct seat and the one
+    # `test_decision_seats_run_a_model_measured_at_that_seat` looks up.
+    if "/" not in model and _is_google_model(model):
+        return model, "google"
     return model, "openrouter"
 
 BASELINE_MODEL = "openai/gpt-5.5"
