@@ -160,7 +160,7 @@ def test_read_failing_twice_then_succeeding_places_no_duplicate(_no_sleep):
     broker = MagicMock()
     broker.get_current_stop_price.side_effect = [RuntimeError("a"), RuntimeError("b"), 9.5]
     establish = MagicMock()
-    with patch(ALERT, return_value=True) as alert,:
+    with patch(ALERT, return_value=True) as alert:
         r = stop_read.read_stop(broker, "ZZZT", db=MagicMock(), establish=establish)
     assert r.found and r.price == 9.5
     establish.assert_not_called()
