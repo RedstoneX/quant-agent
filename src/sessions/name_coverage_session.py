@@ -93,11 +93,14 @@ class NameCoverageRecordSession:
             )
             for name, coverage in coverage_by_name.items():
                 record = coverage.to_evidence()
+                # `symbol` is the call's own first argument and `_record`
+                # fixes the stage itself; passing either again raised
+                # "multiple values" TypeErrors (symbol, then stage).
+                record.pop("symbol", None)
                 _record(
                     name,
                     "recorded",
                     record.pop("summary"),
-                    stage="evidence_gate",
                     gate="name_coverage",
                     **record,
                 )
@@ -126,5 +129,10 @@ class NameCoverageRecordSession:
                         if unreadable_by_seat["tech"] else ""
                     ),
                 )
-        except Exception as exc:  # noqa: BLE001 — never break the decision
-            logger.warning("evidence gate: name coverage write failed: %s", exc)
+        except Exception:  # noqa: BLE001 — never break the decision
+            # Stays broad on purpose: this runs on the trading path and a
+            # forensic record may not stop it. It is no longer QUIET: the
+            # traceback is logged at ERROR so a programming fault (the
+            # duplicate-symbol TypeError hid here as one warning line) is
+            # unmistakable. Rows landing is proven by a store-level test.
+            logger.exception("evidence gate: name coverage write failed")
