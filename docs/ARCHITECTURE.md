@@ -689,3 +689,29 @@ any schedule or daemon, the Sentinel reader, the external dashboard, the
 exits-only flag, and the composition-root call that gathers live state and
 calls `publish()` — wiring that touches the session scheduler, so the seam
 ships unwired.
+
+## 9. Sentinel seams (recorded, read by nothing yet)
+
+Two durable records exist so the future off-box watchdog (docs/FUTURE.md,
+"Sentinel" and the erratic-behaviour breaker) has something to read. Neither
+adds behaviour; both record what already happens. Nothing in the desk reads
+either of them yet.
+
+- **Order attempts** (`src/sentinel/order_attempts.py`, table `order_attempts`):
+  one row per attempt the execution stage already reports through its `order`
+  lifecycle event -- time, side, symbol, quantity, outcome (submitted / rejected /
+  submit_unknown), broker order id, run id, and the deterministic client order
+  id read from the broker payload. That id is NULL until the adapter surfaces
+  it in the dict it returns (it does not today). Cancels issued inside
+  `src/execution/` never reach this funnel, so a wrapper on the trading client
+  (`src/sentinel/cancel_attempts.py`, installed by the pipeline) writes one row
+  per broker cancel instead -- `cancelled`, or `cancel_failed` with the error text.
+- **Last reconciliation** (`src/sentinel/reconciliation.py`, table
+  `reconciliation_runs`): one row per reconciler run, written at the return
+  site of the stop-coverage, recorded-stop-level, orphan-submit and stop-out
+  reconcilers with the result they already return. A reader gets three distinct
+  answers -- `agreed`, `disagreed`, `not_run` -- and the third is never
+  collapsed into either of the others.
+
+Both tables are created by one appended, idempotent migration step
+(`src/storage/schema/sentinel_tables.py`).
