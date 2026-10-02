@@ -63,6 +63,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Refuse early when the runner is short of disk: at 100% everything fails
+      # at once and looks like a code problem. Thresholds live in the script.
+      - name: Disk guard
+        run: python3 scripts/disk_guard.py --scratch /tmp
+
       # Version comes from .python-version (the single place it's written;
       # see tests/conftest.py for the matching local-side check) rather than
       # a literal here, so this and the other setup-python step below can't

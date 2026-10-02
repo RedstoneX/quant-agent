@@ -38,8 +38,8 @@ methods, and tests/conftest.py refuses outbound HTTP anyway.
     pipeline = build_pipeline(broker=my_broker)
     pipeline = build_pipeline(db=MagicMock(), _atr_for_symbol=lambda s: 1.0)
 
-tests/test_pipeline_new_ratchet.py counts the files still using ``__new__``;
-that number may only go down.
+tests/test_pipeline_new_ratchet.py counts the ``__new__`` sites here and on
+``origin/main``; that number may only go down.
 """
 from __future__ import annotations
 

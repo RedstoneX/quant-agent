@@ -26,6 +26,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from ops.rehearsal.replay import SESSION_RUN_PREFIX as REPLAY_PREFIX
+from src.intraday_scan_outcome import OUT_OF_CREDIT_PLAIN
 
 # --------------------------------------------------------------- phrasebook
 
@@ -33,10 +34,7 @@ from ops.rehearsal.replay import SESSION_RUN_PREFIX as REPLAY_PREFIX
 # the morning worked.
 STATUS_PLAIN = {
     "executed": "The session ran all the way through and submitted orders.",
-    "no_orders": (
-        "The session ran all the way through, but in the end nothing was "
-        "submitted."
-    ),
+    "no_orders": "The session ran all the way through, but in the end nothing was submitted.",
     "no_trades": (
         "The session ran all the way through. The portfolio manager looked at "
         "the book and decided to propose no trades."
@@ -307,7 +305,7 @@ STATUS_PLAIN = {
         "The session ran all the way through and analyzed the new "
         "earnings filings it found."
     ),
-}
+} | OUT_OF_CREDIT_PLAIN
 
 # Why an approved BUY died at the last moment, in the execution stage.
 SKIP_PLAIN = {

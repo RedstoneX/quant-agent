@@ -42,7 +42,7 @@ def test_concurrent_api_reads_do_not_block_or_corrupt_trading_writes(tmp_path, m
             try:
                 writer.insert_trade(
                     symbol="AAPL", action="BUY", qty=1, price=100.0 + i,
-                    reasoning="concurrency test", run_id=f"run-{i:06d}",
+                    reasoning="concurrency test", run_id=f"run-{i:06d}", stop_loss=90.0,
                 )
             except sqlite3.OperationalError as exc:
                 write_errors.append(exc)
