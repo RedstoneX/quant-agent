@@ -153,3 +153,76 @@ def test_broker_factories_never_hand_the_desk_its_own_shim():
     assert reads._shortable_cache is broker._shortable_cache
     assert reads._fractionable_cache is broker._fractionable_cache
     assert reads.client is broker.client
+
+
+# --- fourth (final) instalment: trade_stream + market_data -----------------
+
+def test_trade_stream_waits_is_constructible_from_stubs():
+    from src.execution.broker_parts.trade_stream import TradeStreamWaits
+    _build(TradeStreamWaits)
+    params = inspect.signature(TradeStreamWaits).parameters
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+def test_trade_stream_module_passes_the_boundary_check():
+    verdict = check_boundary("src.execution.broker_parts.trade_stream")
+    # Clause 1 names exactly the two value classes whose __init__ the AST
+    # cannot see: a @dataclass (generated) and an Exception (inherited).
+    # They moved verbatim; nothing else may fail.
+    assert set(verdict.failures) <= {1}, verdict.failures
+    assert set(verdict.failures.get(1, [])) == {
+        "TradeStreamWarmup: no __init__", "TradeStreamGaveUp: no __init__",
+    }, verdict.failures
+
+
+def test_market_data_is_constructible_from_stubs():
+    from src.execution.broker_parts.market_data import MarketData
+    _build(MarketData)
+    params = inspect.signature(MarketData).parameters
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+def test_market_data_module_passes_the_boundary_check():
+    verdict = check_boundary("src.execution.broker_parts.market_data")
+    # Clause 1 names exactly the frozen @dataclass `LivePrice`, whose __init__
+    # is generated; it moved verbatim. Nothing else may fail.
+    assert set(verdict.failures) <= {1}, verdict.failures
+    assert verdict.failures.get(1) == ["LivePrice: no __init__"], verdict.failures
+
+
+def test_moved_stream_and_market_names_still_resolve_on_the_broker_module():
+    import src.execution.broker as broker_module
+    from src.execution.broker_parts import market_data, trade_stream
+    assert broker_module._TradeUpdatesHub is trade_stream._TradeUpdatesHub
+    assert broker_module._STREAM_ATTEMPT_BUDGET is trade_stream._STREAM_ATTEMPT_BUDGET
+    assert broker_module._install_trading_stream_reconnect_guard is trade_stream._install_trading_stream_reconnect_guard
+    assert broker_module.LivePrice is market_data.LivePrice
+    assert broker_module._install_http_timeout is market_data._install_http_timeout
+
+
+def test_patch_on_the_broker_module_reaches_the_moved_body(monkeypatch):
+    """`monkeypatch.setattr("src.execution.broker.TradingStream", ...)` must still
+    be what the moved stream code sees, and the flags the stream code rebinds
+    with `global` must read through from the part."""
+    import src.execution.broker as broker_module
+    from src.execution.broker_parts import trade_stream
+    sentinel = object()
+    monkeypatch.setattr("src.execution.broker.TradingStream", sentinel)
+    assert trade_stream.TradingStream is sentinel
+    monkeypatch.setattr(broker_module, "_stream_auth_deprecation_logged", True)
+    assert trade_stream._stream_auth_deprecation_logged is True
+    assert broker_module._stream_auth_deprecation_logged is True
+    assert "_stream_auth_deprecation_logged" not in vars(broker_module)
+
+
+def test_market_data_state_is_the_broker_itself():
+    """`_data_client` is created lazily, after construction; the per-call object
+    reads and writes it on the broker (`state`), so the lazy client persists."""
+    from src.execution.broker_parts.market_data import MarketData
+    class Host:
+        _data_client = None
+    host = Host()
+    md = _build(MarketData, state=host)
+    assert md._data_client is None
+    md._data_client = "client"
+    assert host._data_client == "client"

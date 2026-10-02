@@ -5346,10 +5346,10 @@ numbers:
   # --- 2026-09-19, board item 130: src/execution/broker.py, src/coverage_watchdog.py,
   # src/pipeline.py and src/agents brought into scope. 47 new sites, 0 in
   # src/execution/stop_repair.py. No value changed. ---
-  - id: src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S
+  - id: src.execution.broker_parts.trade_stream._ALPACA_STREAM_RECONNECT_MIN_S
     value: 1.0
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Fallback reconnect floor for the trade_updates fill-notification
       socket, used only when the installed alpaca-py TradingStream does not
@@ -5359,20 +5359,20 @@ numbers:
       notification socket retries, never whether or how much to trade; the
       bounded REST fill-confirmation path is unaffected when this socket is
       off entirely.
-  - id: src.execution.broker._ALPACA_STREAM_RECONNECT_MAX_S
+  - id: src.execution.broker_parts.trade_stream._ALPACA_STREAM_RECONNECT_MAX_S
     value: 30.0
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Fallback reconnect ceiling for the same trade_updates socket, same
       alpaca-py default (site-packages/alpaca/trading/stream.py:54,
       alpaca-py 0.43.5). Same reasoning as
       src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S: bounds an
       optional notification socket's retry speed, not a trade decision.
-  - id: src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION
+  - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_SESSION
     value: 6
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Handshake-attempt ceiling for one trade_updates session, derived from
       the equal-jitter curve run off the reconnect min/max above (1, 2, 4,
@@ -5382,10 +5382,10 @@ numbers:
       (src/execution/broker.py:218-242); none of the three decides, sizes,
       prices or exits a trade -- the bounded REST fill path is unchanged and
       is what runs when this ceiling fires.
-  - id: src.execution.broker._STREAM_ATTEMPT_CEILING_PER_DAY
+  - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY
     value: 200
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Handshake-attempt ceiling per process per day for the same socket,
       set to Alpaca's own published account-wide rate limit of 200
@@ -5393,19 +5393,19 @@ numbers:
       against measured 56 and 50 attempts on 2026-09-16/17). Same
       not-trade-governing reasoning as
       src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
-  - id: src.execution.broker._STREAM_RATE_LIMIT_STAND_DOWN_S
+  - id: src.execution.broker_parts.trade_stream._STREAM_RATE_LIMIT_STAND_DOWN_S
     value: 60.0
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Stand-down after the broker answers HTTP 429 on the same socket, set
       to Alpaca's published one-minute rate-limit window
       (src/execution/broker.py:267-274). Same not-trade-governing reasoning
       as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
-  - id: src.execution.broker._BROKER_HTTP_TIMEOUT
+  - id: src.execution.broker_parts.market_data._BROKER_HTTP_TIMEOUT
     value: 30.0
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/market_data.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It
       decides how long the desk waits or how much it fetches, never whether
@@ -7166,13 +7166,13 @@ numbers:
       (src/execution/broker_parts/order_desk.py:1070-1108), so a broker-side cycle cannot spin
       forever. Decides how far a lookup walks, not whether or how much to
       trade.
-  - id: src.execution.broker.AlpacaBroker._wait_for_order_status_via_stream(poll_interval)
+  - id: src.execution.broker_parts.trade_stream.TradeStreamWaits._wait_for_order_status_via_stream(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3011). Same class as
+      (src/execution/broker_parts/trade_stream.py:1538). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.execution.broker_parts.order_desk.OrderDesk._wait_for_order_terminal_via_stream(poll_interval)
@@ -7207,12 +7207,12 @@ numbers:
       in as few round trips as possible; a smaller value would still be
       correct, a larger one is rejected by the API, so 100 is the API's own
       ceiling rather than a desk choice.
-  - id: src.execution.broker.AlpacaBroker.get_bars(lookback_days)
+  - id: src.execution.broker_parts.market_data.MarketData.get_bars(lookback_days)
     value: 120
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker.py:2392): the one caller passes the
+      Dead default (src/execution/broker_parts/market_data.py:184): the one caller passes the
       window explicitly.
   - id: src.execution.broker_parts.account_reads.AccountReads.get_recent_daily_closes(lookback_days)
     value: 10
@@ -7221,12 +7221,12 @@ numbers:
     note: >-
       Dead default (src/execution/broker_parts/account_reads.py:390): every caller passes the
       window explicitly.
-  - id: src.execution.broker.AlpacaBroker.get_top_movers(n)
+  - id: src.execution.broker_parts.market_data.MarketData.get_top_movers(n)
     value: 15
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker.py:2320): the one caller passes the
+      Dead default (src/execution/broker_parts/market_data.py:112): the one caller passes the
       count explicitly.
   - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_at_exchange(poll_interval)
     value: 1
@@ -7264,13 +7264,13 @@ numbers:
       (src/execution/broker_parts/order_desk.py:608). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker._TradeUpdatesHub.wait(poll_interval)
+  - id: src.execution.broker_parts.trade_stream._TradeUpdatesHub.wait(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:567). Same class as
+      (src/execution/broker_parts/trade_stream.py:486). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.pipeline.TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT
