@@ -1,7 +1,0 @@
-{
- "_comment": "Test files that build TradingPipeline via __new__ (skipping the real constructor) when the guard was introduced. This list may only SHRINK: migrate a file to tests/pipeline_factory.py::build_pipeline, then run `PYTHONPATH=. .venv/bin/python -m scripts.pipeline_new_guard --shrink-baseline`. Never add a file here.",
- "files": [
-  "tests/pipeline_factory.py",
-  "tests/test_shorts_emergency_close.py"
- ]
-}

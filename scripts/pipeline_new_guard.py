@@ -1,4 +1,4 @@
-"""Ratchet: test files that build TradingPipeline with ``__new__`` may only shrink.
+"""Ratchet with no stored baseline: ``__new__``-built pipelines may only shrink.
 
 ``TradingPipeline.__new__(TradingPipeline)`` skips the constructor, so every
 service the constructor wires is missing or disconnected; that half-built
@@ -6,60 +6,97 @@ object is why each service pulled out of src/pipeline.py had to leave a
 delegating mixin behind. The honest way is tests/pipeline_factory.py's
 ``build_pipeline(...)``, which runs the real ``__init__`` with stand-ins.
 
-Baseline in tests/pipeline_new_baseline.json: the files still doing it when
-the guard landed (2026-10-01). Migrate a file, then run
-``PYTHONPATH=. .venv/bin/python -m scripts.pipeline_new_guard --shrink-baseline``.
+The old version kept the offender list in ``tests/pipeline_new_baseline.json``,
+a single shared file every open change had to edit. Per
+docs/GUARDS_WITHOUT_STORED_STATE.md this stores nothing: at check time it counts
+the ``__new__`` sites in the working tree, counts them again on ``origin/main``,
+and reports the DELTA. If ``origin/main`` cannot be read it REFUSES; it never
+passes by default.
+
+Run it directly: ``PYTHONPATH=. .venv/bin/python -m scripts.pipeline_new_guard``.
 """
 from __future__ import annotations
 
-import json
 import re
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-BASELINE_PATH = ROOT / "tests" / "pipeline_new_baseline.json"
+from scripts.guard_reference import (
+    ROOT,
+    ReferenceUnavailable,
+    TRUNK,
+    trunk_blobs,
+    working_paths,
+)
+
 PATTERN = re.compile(r"TradingPipeline\.__new__\s*\(|__new__\s*\(\s*TradingPipeline\b")
 
+FIX = (
+    "Fix: `from tests.pipeline_factory import build_pipeline` and call "
+    "`build_pipeline(db=..., broker=..., ...)`; it runs the real __init__ with your "
+    "stand-ins wired at the constructor site."
+)
 
-def violations() -> dict[str, int]:
-    """{tests/relative/path.py: count of __new__ pipeline constructions}."""
+
+def _count(text: str) -> int:
+    return len(PATTERN.findall(text))
+
+
+def test_paths() -> list[str]:
+    """Every tracked .py file under tests/ in the working tree."""
+    return [p for p in working_paths("tests/") if p.endswith(".py")]
+
+
+def working_sites() -> dict[str, int]:
+    """{path: count of __new__ pipeline constructions} in the working tree."""
     found: dict[str, int] = {}
-    for path in sorted((ROOT / "tests").rglob("*.py")):
-        n = len(PATTERN.findall(path.read_text()))
+    for path in test_paths():
+        n = _count((ROOT / path).read_text(encoding="utf-8", errors="replace"))
         if n:
-            found[path.relative_to(ROOT).as_posix()] = n
+            found[path] = n
     return found
 
 
-def load_baseline() -> set[str]:
-    if not BASELINE_PATH.exists():
-        return set()
-    return set(json.loads(BASELINE_PATH.read_text())["files"])
+def trunk_sites(paths: list[str]) -> dict[str, int]:
+    """Count of __new__ sites in each given path on ``origin/main``; absent paths omitted."""
+    return {p: _count(t) for p, t in trunk_blobs(sorted(paths)).items()}
 
 
-def _write(files: set[str]) -> None:
-    BASELINE_PATH.write_text(json.dumps({
-        "_comment": (
-            "Test files that build TradingPipeline via __new__ (skipping the real "
-            "constructor) when the guard was introduced. This list may only SHRINK: "
-            "migrate a file to tests/pipeline_factory.py::build_pipeline, then run "
-            "`PYTHONPATH=. .venv/bin/python -m scripts.pipeline_new_guard --shrink-baseline`. "
-            "Never add a file here."),
-        "files": sorted(files),
-    }, indent=1) + "\n")
+def violations() -> list[str]:
+    """Every file this working tree made worse than ``origin/main``, as deltas."""
+    now = working_sites()
+    before = trunk_sites(test_paths())
+    bad: list[str] = []
+    for path, n in sorted(now.items()):
+        was = before.get(path)
+        if was is None:
+            bad.append(
+                f"{path}: NEW test file with {n} TradingPipeline.__new__ site(s); "
+                f"it is not on {TRUNK}, so none are grandfathered. {FIX}"
+            )
+        elif n > was:
+            bad.append(
+                f"{path}: TradingPipeline.__new__ sites grew from {was} to {n} "
+                f"(+{n - was}) against {TRUNK}. {FIX}"
+            )
+    return bad
 
 
-def shrink_baseline() -> None:
-    """Rewrite the baseline to the intersection with today's offenders. Never grows it."""
-    _write(load_baseline() & set(violations()))
+def main(argv: list[str] | None = None) -> int:
+    try:
+        bad = violations()
+    except ReferenceUnavailable as exc:
+        print(f"REFUSING: {exc}", file=sys.stderr)
+        return 2
+    if bad:
+        print(
+            "Constructor-skipping pipeline builds grew against %s:\n%s"
+            % (TRUNK, "\n".join(bad)),
+            file=sys.stderr,
+        )
+        return 1
+    print(f"__new__-pipeline ratchet: no test file gained a site against {TRUNK}.")
+    return 0
 
 
-if __name__ == "__main__":
-    if "--shrink-baseline" in sys.argv:
-        shrink_baseline()
-    elif "--seed-baseline" in sys.argv:  # one-time seeding only; the test forbids growth by review
-        _write(set(violations()))
-    else:
-        for path, n in violations().items():
-            print(f"{path}: {n}")
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(main())

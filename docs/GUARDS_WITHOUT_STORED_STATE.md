@@ -56,7 +56,7 @@ refuses.
 | ~~`tests/file_size_baseline.json`~~ | DONE — deleted with `scripts/regen_file_size_baseline.py` and `test_regen_baseline_cannot_drop_a_trunk_file`; replaced by `scripts/file_size_guard.py` + `scripts/guard_reference.py`, which measure the working tree and `origin/main` at check time |
 | `tests/import_cycle_baseline.json` | `test_import_layering`, `scripts/import_graph` |
 | `tests/import_layers.json` | `scripts/import_graph` |
-| `tests/pipeline_new_baseline.json` | `test_pipeline_new_ratchet`, `scripts/pipeline_new_guard` |
+| ~~`tests/pipeline_new_baseline.json`~~ | DONE — deleted; `scripts/pipeline_new_guard.py` now counts `TradingPipeline.__new__` sites in the working tree and on `origin/main` at check time and reports the delta |
 | ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now scans the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on the per-file delta |
 
 All five are also read by `tests/test_baseline_merge_driver.py` and
