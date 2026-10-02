@@ -51,7 +51,6 @@
   "src/pipeline_exits.py::ExitEngineMixin._symbols_already_trimmed_today#1",
   "src/pipeline_exits.py::ExitEngineMixin._trail_tightened_recently#1",
   "src/pipeline_protection.py::ProtectionMixin._drain_pending_protection_restores#1",
-  "src/pipeline_protection.py::ProtectionMixin._reconcile_stop_coverage#1",
   "src/pipeline_protection.py::ProtectionMixin._submit_protected_sell#1",
   "src/pipeline_protection.py::ProtectionMixin._submit_protected_sell#2",
   "src/pipeline_rotation_exec.py::_apply_rotation_execution._sellable_this_run#1",

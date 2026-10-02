@@ -40,6 +40,8 @@ import json as _json
 import logging
 import math
 
+from src.protection.coverage_book_read import read_positions_with_retry
+from src.protection.coverage_book_read import unverified_book_sweep
 from src.execution.broker import AlpacaBroker, _split_protective_qty
 from src.models import TradeDecision
 from src.pipeline_context import RunContext
@@ -298,18 +300,16 @@ class ProtectionMixin:
         separates NO STOP AT ALL from STOP MIS-SIZED (guard 3).
         """
         try:
-            positions = self.broker.get_positions()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("coverage reconcile: get_positions failed: %s", exc)
-            return []
-        if not isinstance(positions, list):
-            return []
-        try:
             pending_syms = {
                 r.get("symbol") for r in self.db.get_pending_protection_restores()
             }
         except Exception:  # noqa: BLE001
             pending_syms = set()
+        # A failed positions read used to `return []`, which every caller
+        # reads as all-clear. See src/protection/coverage_book_read.py.
+        positions, read_error = read_positions_with_retry(self.broker)
+        if positions is None:
+            return unverified_book_sweep(self, read_error or "", pending_syms)
 
         # Spec §11.1 hybrid fractional stops. Read ONCE per pass, not per
         # position: every gap in this sweep must be judged against the same
