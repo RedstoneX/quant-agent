@@ -358,6 +358,7 @@ detail: docs/board_notes/item-219.md
 - retired queue: 190
 - retired queue: 211
 - retired queue: 17
+- retired queue: 203
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
