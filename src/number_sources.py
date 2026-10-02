@@ -85,7 +85,7 @@ Rules (c)-(e) were added 2026-09-19 because (a)/(b) left live trade numbers
 invisible: the queued-earnings weight cap and the correlated-cluster cap were
 parameter defaults, the 3% stop-limit buffer was a class attribute, and board
 item 138's 0.5%/1% order-price buffers were inline arithmetic. (c)-(e) apply
-only to scoped modules, not to `src/config.py`'s named classes and not to the
+only to scoped modules, not to `src/config/__init__.py`'s named classes and not to the
 unscoped sentinel, whose count stays defined as module-level constants.
 
 Why (e) is a band and not "every literal". Every literal operand of
@@ -189,6 +189,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from src.feature_flags import config_modules  # where the config lives
 
 #: Repository root, resolved from this file rather than the cwd so the check
 #: behaves the same under pytest, a git hook and a direct run.
@@ -208,7 +209,7 @@ SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 #: A directory entry covers every `.py` under it.
 SCOPED_PATHS: tuple[str, ...] = (
     "src/risk",
-    "src/portfolio_constructor.py",
+    "src/portfolio_constructor",
     "src/rotation.py",
     "src/nominations.py",
     "src/evidence_gate.py",
@@ -254,7 +255,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # defines no module-level numeric constant (see the docstring note this
     # entry used to require); scoping it adds nothing today but stops a
     # future one arriving unseen.
-    "src/execution/broker.py",
+    "src/execution/broker.py", "src/execution/broker_parts",
     "src/execution/stop_repair.py",
     "src/coverage_watchdog.py",
     # The pipeline's own decision/execution glue. The de-lever and midday
@@ -277,7 +278,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
     # scoped.
     "src/pipeline_admission.py",
-    "src/pipeline_prompt_facts.py",
+    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py",
     # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
     # application moved here out of `src/pipeline.py`.
     "src/pipeline_risk_gate.py",
@@ -302,7 +303,7 @@ SCOPED_PATHS: tuple[str, ...] = (
 #: Matched by SUFFIX, so a new `FooConfig` is covered the day it is written.
 CONFIG_CLASS_SUFFIX = "Config"
 
-#: `src/config.py` holds every seat's settings in one file, most of them
+#: `src/config/__init__.py` holds every seat's settings in one file, most of them
 #: nothing to do with a trade (LLM cost circuits, Telegram retries, evolution
 #: bookkeeping). Scoping the whole file would bury the signal, so the
 #: trade-governing classes are named. Same suffix rule applies inside them.
@@ -318,7 +319,6 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
     "EventRiskConfig",
     "UniverseScreenConfig",
 )
-SCOPED_CONFIG_MODULE = "src/config.py"
 
 #: Zero alone is excluded as a definition site: it is the empty/neutral
 #: default on a result field and the bottom of an ordinal scale, and no
@@ -460,7 +460,7 @@ MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
 #: all passed "the column exists" and failed "something writes it" -- the
 #: break-confirmation-margin payload, for one, is built into a prose `detail`
 #: string that the only persisting call throws away.
-_DB_SOURCE_PATH = "src/storage/db.py"
+_DB_SOURCE_PATHS = ("src/storage/db.py", "src/storage/trades/ledger.py")  # the trades write path lifted out (db rebuild instalment 3); schema/analytics never write a row
 
 
 def written_fields(source: str | None = None) -> frozenset[str]:
@@ -475,7 +475,7 @@ def written_fields(source: str | None = None) -> frozenset[str]:
     import ast as _ast
 
     if source is None:
-        source = (REPO_ROOT / _DB_SOURCE_PATH).read_text(encoding="utf-8")
+        source = "\n".join((REPO_ROOT / p).read_text(encoding="utf-8") for p in _DB_SOURCE_PATHS)
     tree = _ast.parse(source)
     migration_only: set[int] = set()
     docstrings: set[int] = set()
@@ -550,7 +550,7 @@ def settlement_route_problem(entry: dict[str, Any]) -> str | None:
             if field not in written:
                 return (
                     f"`settles_by.writes` names {target!r} but nothing in "
-                    f"{_DB_SOURCE_PATH} writes {field!r} -- it appears only "
+                    f"{' + '.join(_DB_SOURCE_PATHS)} writes {field!r} -- it appears only "
                     f"in the migration that creates it, in prose, or not at "
                     f"all. A settlement route pointing at a field nothing "
                     f"writes can never close"
@@ -810,11 +810,13 @@ def _scan_module(
 
     `config_classes` None means "any class whose name ends in `Config`" — the
     rule for a scoped module. A tuple means only those names, which is how
-    `src/config.py` is handled without pulling in the LLM and Telegram
+    `src/config/__init__.py` is handled without pulling in the LLM and Telegram
     settings that share the file.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     module = rel[: -len(".py")].replace("/", ".")
+    if module.endswith(".__init__"):
+        module = module[: -len(".__init__")]  # the package IS the module
     sites: list[NumberSite] = []
 
     local = _module_constants(tree)
@@ -940,7 +942,7 @@ def _scan_extended_shapes(
 ) -> list[NumberSite]:
     """Rules (c), (d) and (e): the shapes rules (a)/(b) cannot see.
 
-    Applied only inside a scoped module — never to `src/config.py`'s named
+    Applied only inside a scoped module — never to `src/config/__init__.py`'s named
     classes and never to the unscoped sentinel, whose count is defined as
     module-level constants and would otherwise jump for no reason.
     """
@@ -1046,12 +1048,9 @@ def collect_sites(repo_root: Path | None = None) -> list[NumberSite]:
             _scan_module(file_path, str(file_path.relative_to(root)), None, root)
         )
 
-    config_module = root / SCOPED_CONFIG_MODULE
-    if not config_module.is_file():
-        raise FileNotFoundError(f"missing {SCOPED_CONFIG_MODULE}")
-    sites.extend(
-        _scan_module(config_module, SCOPED_CONFIG_MODULE, SCOPED_CONFIG_CLASSES, root)
-    )
+    for config_module in config_modules(root):  # src/config/__init__.py or src/config/*
+        rel = str(config_module.relative_to(root))
+        sites.extend(_scan_module(config_module, rel, SCOPED_CONFIG_CLASSES, root))
 
     return sorted(sites, key=lambda s: s.site_id)
 
@@ -1067,7 +1066,7 @@ def collect_unscoped_sites(repo_root: Path | None = None) -> list[NumberSite]:
     """
     root = repo_root or REPO_ROOT
     in_scope = {p.resolve() for p in _scoped_files(root)}
-    in_scope.add((root / SCOPED_CONFIG_MODULE).resolve())
+    in_scope.update(p.resolve() for p in config_modules(root))
 
     sites: list[NumberSite] = []
     for file_path in sorted((root / "src").rglob("*.py")):
@@ -1105,8 +1104,8 @@ def _appconfig_sections(root: Path) -> dict[str, str]:
     Read rather than hardcoded: the mapping IS the field name on `AppConfig`,
     so a renamed section cannot desynchronise this check from the loader.
     """
-    tree = ast.parse((root / SCOPED_CONFIG_MODULE).read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
+    trees = [ast.parse(p.read_text(encoding="utf-8")) for p in config_modules(root)]
+    for node in (n for t in trees for n in ast.walk(t)):
         if not isinstance(node, ast.ClassDef) or node.name != "AppConfig":
             continue
         out: dict[str, str] = {}

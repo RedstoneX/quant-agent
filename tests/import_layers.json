@@ -11,22 +11,18 @@
     "src.api.broker_reads",
     "src.conviction_ledger",
     "src.coverage_watchdog",
-    "src.notifier",
+    "src.notifier.costs",
     "src.pipeline",
-    "src.pipeline_admission",
     "src.pipeline_entry_orders",
     "src.pipeline_exits",
     "src.pipeline_prompt_facts",
     "src.pipeline_protection",
-    "src.pipeline_risk_gate",
     "src.pipeline_stages",
-    "src.portfolio_constructor",
-    "src.risk.rules",
     "src.stage_decision",
     "src.stage_execution",
     "src.stage_risk"
    ],
-   "why": "src.execution is the broker seam (it can move real money); 17 modules reach it today and that set must not widen."
+   "why": "src.execution is the broker seam (it can move real money); 13 modules reach it today and that set must not widen."
   }
  ]
 }

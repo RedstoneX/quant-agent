@@ -1,0 +1,592 @@
+"""Telegram delivery: the TelegramNotifier class.
+
+Moved verbatim from the former src/notifier.py; the package re-exports it.
+"""
+
+from __future__ import annotations
+
+import html
+import os
+import requests
+from typing import Any
+
+from src.notifier.base import (
+    ProbeResult,
+    _DB_PATH,
+    _REHEARSAL_MODE,
+    _clip_text,
+    _redact_malformed_numbers,
+    logger,
+)
+from src.notifier.sections import (
+    _redact_raw_exception_text,
+)
+from src.notifier.markup import (
+    _close_open_markup,
+    _dedupe_symbols,
+    _escape_with_markup,
+    _linkify_symbols,
+)
+
+class TelegramNotifier:
+    """Best-effort Telegram Bot API notifier.
+
+    Reads `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` from the
+    environment at construction. If either is missing, `enabled`
+    stays False and every `send` call is a no-op.
+
+    `TELEGRAM_DISABLED=1` overrides the env-var path so an operator
+    can mute notifications without unsetting the bot creds.
+    """
+
+    API_URL = "https://api.telegram.org/bot{token}/sendMessage"
+    API_BASE = "https://api.telegram.org/bot{token}"
+    HTTP_TIMEOUT_S = 5.0
+    #: Sent by `probe()` and deleted a moment later. Written to be
+    #: self-explanatory on the off chance the delete fails and the operator
+    #: reads it — an unexplained robot message in the alert channel is
+    #: exactly the kind of thing that teaches someone to mute the channel.
+    PROBE_TEXT = (
+        "QAMC alerting self-test. This is the scheduled check that the alert "
+        "channel still works; it deletes itself a second later. If you are "
+        "reading it, only the delete failed — the channel is fine."
+    )
+    # Telegram hard limit is 4096; leave room for a truncation marker.
+    MAX_MESSAGE_CHARS = 4000
+    DEFAULT_LINK_LABEL = "🔗 Open Mission Control"
+
+    def __init__(
+        self,
+        token: str | None = None,
+        chat_id: str | None = None,
+        mission_control_url: str | None = None,
+    ):
+        self.token = (token if token is not None else os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
+        self.chat_id = (chat_id if chat_id is not None else os.getenv("TELEGRAM_CHAT_ID", "")).strip()
+        kill_switch = os.getenv("TELEGRAM_DISABLED", "").strip().lower() in ("1", "true", "yes")
+        # Kept as its own attribute: `enabled` collapses "muted on purpose"
+        # and "no credentials" into one false, and probe() has to report
+        # which of the two it actually is.
+        self.muted = kill_switch
+        self.enabled = bool(self.token and self.chat_id) and not kill_switch
+        # Tap-through link target for send(). Unlike token/chat_id this is
+        # NOT read from the environment — src/config.py::NotificationsConfig
+        # (config/settings.yaml: notifications.mission_control_url) is the
+        # source of truth, so it arrives as a constructor arg from a caller
+        # holding a resolved AppConfig (main.py, TradingScheduler). An
+        # empty/unset value means send() appends no link — never a broken
+        # one. str(...) guards against a non-str default sneaking through
+        # (e.g. a test double); production always passes a validated str.
+        self.mission_control_url = str(mission_control_url or "").strip()
+        if not self.enabled:
+            if kill_switch:
+                logger.info("TelegramNotifier: disabled via TELEGRAM_DISABLED env var")
+            else:
+                logger.info(
+                    "TelegramNotifier: disabled (set TELEGRAM_BOT_TOKEN + "
+                    "TELEGRAM_CHAT_ID env vars to enable)"
+                )
+
+    def _redact(self, value: object) -> str:
+        """Strip the bot token AND chat id out of anything headed for the
+        log or the durable send record (see `_record_send`).
+
+        `requests` embeds the full request URL in HTTPError /
+        ConnectionError messages, and ours is
+        `https://api.telegram.org/bot<TOKEN>/sendMessage` — so logging
+        the raw exception wrote the bot token into quant_agent.log (and
+        the systemd journal) on every Telegram failure. A wrong or
+        rotated token is the most likely failure, i.e. the token leaked
+        exactly when the operator was most likely to share the log.
+
+        The chat id is stripped too (2026-09-18, `_record_send`): it is not
+        a secret the way the token is, but it is a stable per-operator
+        identifier with no reason to sit in a table a future export or
+        support conversation might carry, so it gets the same treatment
+        for free here rather than a second bespoke check at the call site.
+
+        Non-raising on purpose: this runs INSIDE the `except` blocks
+        below, and `logger.warning("%s", exc)` used to defer `str(exc)`
+        to logging (which absorbs its own formatting errors). Calling
+        str() eagerly here would otherwise hand an exception with a
+        broken __str__ a brand-new path out of a notifier that must
+        never raise into trading.
+        """
+        try:
+            text = str(value)
+            if self.token:
+                text = text.replace(self.token, "<redacted>")
+            if self.chat_id:
+                text = text.replace(self.chat_id, "<redacted>")
+            return text
+        except Exception:  # noqa: BLE001
+            return "<unprintable error>"
+
+    def _record_send(
+        self,
+        *,
+        kind: str,
+        status: str,
+        text: str,
+        detail: str | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        """Durably record one outgoing-message attempt (sent/failed/
+        suppressed) so "what did the desk try to tell the owner, and did
+        it arrive" has a single answer that does not depend on the next
+        message happening to land.
+
+        Table, not a log line (see this file's module docstring for why
+        `send()` never logged a success): `session_reports` /
+        `intra_check_reports` / `evening_reports` (src/storage/db.py) are
+        this project's established home for a run's long, rendered text —
+        never the application log, which is grepped/tailed for operational
+        health and would drown in 4000-char message bodies. This table
+        follows the same shape (payload text + timestamp + a key to find
+        it by) rather than inventing a new convention.
+
+        Same-protection guarantee as the rest of this class: this is
+        called from inside `send()`/`send_document()`'s own try/except
+        (or, for the failure path, adds one more try/except around
+        itself), so a recording bug — a locked DB file, a full disk, a
+        schema mismatch — degrades to a `logger.warning` and the message
+        still sends and the caller still gets its True/False. Recording
+        must never be the reason a send looks like it failed, or the
+        reason a real failure looks like it succeeded.
+
+        Redaction: `text` and `detail` both go through `self._redact`
+        before they touch SQLite. `text` should never carry the token or
+        chat id (they live in the URL/payload, not the message body), but
+        redacting here anyway costs nothing and means one place — not
+        every call site — is responsible for the guarantee tested by
+        `test_record_send_output_never_contains_token_or_chat_id`.
+        """
+        try:
+            import sqlite3
+
+            safe_text = self._redact(text if text is not None else "")
+            safe_detail = self._redact(detail) if detail is not None else None
+            # Belt and suspenders: production's data/ dir always exists by
+            # the time this fires (Database() has already created it), but
+            # a notifier call can in principle be the very first thing a
+            # fresh checkout does (e.g. the live-scheduler startup ping in
+            # main.py, before TradingPipeline/Database is constructed) —
+            # don't let a missing directory be the reason recording fails.
+            _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS notifier_sends (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        kind TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        run_id TEXT,
+                        text TEXT NOT NULL,
+                        detail TEXT,
+                        timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_notifier_sends_kind_ts "
+                    "ON notifier_sends(kind, timestamp)"
+                )
+                conn.execute(
+                    "INSERT INTO notifier_sends "
+                    "(kind, status, run_id, text, detail) VALUES (?, ?, ?, ?, ?)",
+                    (kind, status, run_id, safe_text, safe_detail),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001
+            # Never let a recording failure look like — or cause — a send
+            # failure. See docstring above.
+            logger.warning("notifier: failed to record send (%s/%s): %s", kind, status, exc)
+
+    def _safe_record_send(self, **kwargs) -> None:
+        """Call `_record_send`, wrapped in its own try/except.
+
+        `_record_send` already guards every DB failure it can anticipate
+        internally, but `send()`/`send_document()` call it from inside
+        their own control flow (the success path, and — for failures —
+        an `except` block that must not itself raise). Doubly-defensive
+        on purpose, same reasoning main.py gives for wrapping its own
+        `notifier.send()` call a second time: a bug inside the recording
+        path that `_record_send` did not anticipate must still be unable
+        to reach the caller of `send()`/`send_document()`, which is the
+        one guarantee this whole feature is not allowed to weaken.
+        """
+        try:
+            self._record_send(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("notifier: _record_send raised unexpectedly: %s", exc)
+
+    def send(
+        self,
+        text: str,
+        link_url: str | None = None,
+        link_label: str | None = None,
+        symbols: list[str] | None = None,
+        preserve_structural_markup: bool = False,
+        kind: str = "generic",
+        run_id: str | None = None,
+    ) -> bool:
+        """Fire-and-forget send. Returns True on success.
+
+        `kind` and `run_id` (2026-09-18) label the durable record this
+        call leaves behind (see `_record_send`) — `kind` is a short,
+        caller-chosen tag ("morning", "owner_alert", ...; default
+        "generic" for the many existing callers that have no reason to
+        care), `run_id` ties it back to `agent_logs`/`session_reports`
+        when a run produced this message. Neither changes delivery.
+
+        - No-op when not enabled (returns False).
+        - Escapes `text` and sends with `parse_mode="HTML"` — a stray
+          underscore/asterisk/`<`/`&` in a ticker or a rationale must not
+          corrupt the message or get the whole send rejected by Telegram.
+        - Appends a tap-through `<a href>` link when one is available:
+          `link_url` if given, else `self.mission_control_url` (from
+          config). Neither set → no link, ever — never a broken one.
+        - `symbols`, when given, wraps each matching ticker mentioned in
+          `text` with its own tap-through link (see `_linkify_symbols`) —
+          best-effort: if adding links would push the message over budget,
+          it degrades to plain text rather than risk truncating markup.
+        - Auto-truncates messages over MAX_MESSAGE_CHARS on a sentence/word
+          boundary (see `_clip_text`) rather than mid-word.
+        - Any HTTP / network / Telegram-side error is logged and
+          swallowed: trading must never fail because a notifier is
+          unreachable.
+        - `preserve_structural_markup=False` (default): `text` is fully
+          escaped — the historical, safe contract every existing caller
+          relies on (cost-circuit alerts, `send_owner_alert`, scripts/*,
+          none of which ever intend a literal '<' as a tag). Pass True
+          ONLY for text built by src/trader_feed.py's formatters, which
+          embed a fixed, small set of literal structural tags (`<b>`,
+          `<blockquote expandable>`) on purpose — see
+          `_escape_with_markup`'s docstring. This is opt-in, per call, not
+          a global default, so a coincidental literal "<b>" in some other
+          alert's free text is still rendered as visible text, not markup.
+        """
+        if not self.enabled:
+            # Item 211 defect 3. The global mute used to drop the message
+            # here, BEFORE anything was written down, so nothing that would
+            # have fired since the desk was muted exists anywhere — neither
+            # the owner nor the desk can see what he has been missing. This
+            # un-mutes nothing and sends nothing; it only means a muted
+            # message leaves a durable trace (type, symbols, timestamp) in
+            # `notifier_sends`, the same table a delivered one lands in.
+            if text and getattr(self, "muted", False):
+                self._safe_record_send(
+                    kind=kind,
+                    status="muted",
+                    run_id=run_id,
+                    text=text,
+                    detail=(
+                        "suppressed by TELEGRAM_DISABLED; symbols: "
+                        + ", ".join(_dedupe_symbols(symbols or []))
+                        if symbols else
+                        "suppressed by TELEGRAM_DISABLED; not sent"
+                    ),
+                )
+            return False
+        if not text:
+            return False
+        # Single chokepoint for every owner-facing message this notifier
+        # sends, regardless of which of the ~20 upstream formatters (PM
+        # rationale, risk-manager reasoning, evening outlook, key thesis,
+        # ...) produced the free-text prose it came from — see
+        # `_redact_malformed_numbers`'s docstring for why here rather than
+        # at each of those call sites, and for the deliberate distinction
+        # from the REJECTED prompt-text scanner (board item 99).
+        text = _redact_malformed_numbers(text)
+        # Board item 89 defect 5: a genuine raw exception/internal-error
+        # string (e.g. a `reason=f"... raised: {exc}"` built upstream) must
+        # never reach the owner verbatim, even though internal STATUS CODES
+        # are already plain English. Same chokepoint as the guard above —
+        # see `_redact_raw_exception_text`'s docstring.
+        text = _redact_raw_exception_text(text)
+        if _REHEARSAL_MODE:
+            # A rehearsal replays a real session, so it raises real alerts —
+            # "PAID ANALYSIS SUSPENDED", "STOP COVERAGE REPAIRED", trade
+            # notifications. Delivered unmarked to the operator's normal chat
+            # they are indistinguishable from production, which is worse than
+            # useless: it teaches him to distrust the channel that exists to
+            # tell him something is wrong.
+            #
+            # Refusing outright is the wrong answer too — what a rehearsal
+            # WOULD have sent is evidence, and the harness captures it for the
+            # report. So this suppresses delivery and says so, rather than
+            # silently dropping.
+            logger.info(
+                "REHEARSAL: suppressed operator alert (%d chars): %s",
+                len(text), text.splitlines()[0][:120] if text else "",
+            )
+            self._safe_record_send(kind=kind, status="suppressed", text=text, run_id=run_id)
+            return False
+
+        payload = self._build_payload(
+            text, link_url, link_label, symbols,
+            preserve_structural_markup=preserve_structural_markup,
+        )
+        # 2026-09-24: `notifier_sends` used to record the ORIGINAL `text`
+        # here on both branches below, but `_build_payload` may have
+        # truncated it (`MAX_MESSAGE_CHARS`, see `_clip_text` above) before
+        # it went on the wire. The stored record then differed from what
+        # Telegram actually delivered, with no marker that a truncation
+        # happened at all. `payload["text"]` is the exact string sent, so
+        # recording it (rather than `text`) makes the record match delivery.
+        delivered_text = payload["text"]
+
+        try:
+            response = requests.post(
+                self.API_URL.format(token=self.token),
+                json=payload,
+                timeout=self.HTTP_TIMEOUT_S,
+            )
+            response.raise_for_status()
+            self._safe_record_send(
+                kind=kind, status="sent", text=delivered_text, run_id=run_id,
+            )
+            return True
+        except Exception as exc:
+            # Catch broadly on purpose — TelegramNotifier is a
+            # best-effort side channel. A 429 rate-limit, a 5xx, a
+            # connection reset, a DNS failure, a bad token — none of
+            # those should bubble up and crash the trading session.
+            logger.warning("Telegram notify failed: %s", self._redact(exc))
+            self._safe_record_send(
+                kind=kind, status="failed", text=delivered_text,
+                detail=self._redact(exc), run_id=run_id,
+            )
+            return False
+
+    def _api_url(self, method: str) -> str:
+        """Bot API endpoint for `method` (sendMessage, deleteMessage, ...)."""
+        return f"{self.API_BASE.format(token=self.token)}/{method}"
+
+    def _build_payload(
+        self,
+        text: str,
+        link_url: str | None = None,
+        link_label: str | None = None,
+        symbols: list[str] | None = None,
+        preserve_structural_markup: bool = False,
+    ) -> dict[str, Any]:
+        """The exact JSON body `send()` puts on the wire.
+
+        Factored out so `probe()` can transmit a body built by this same
+        code rather than one of its own. A probe that assembled its own
+        payload would prove that *some* request reaches Telegram while
+        leaving the real message shape — HTML parse mode, escaping, the
+        length budget — untested, which is how a self-test ends up passing
+        while the thing it stands in for is broken.
+        """
+        # HTML over MarkdownV2: PM/tech rationale is full of tickers with
+        # underscores, "*" bullets, parentheticals, and "%" — MarkdownV2
+        # demands escaping ~18 characters or Telegram rejects the entire
+        # message ("can't parse entities"); HTML needs exactly '&','<','>'.
+        # Escaping BEFORE the length check matters too: an unescaped '&'
+        # costs 5 chars once escaped ('&amp;'), so measuring the pre-escape
+        # length risks shipping something past Telegram's real 4096 cap.
+        # `_escape_with_markup`, not a bare `html.escape`, ONLY when the
+        # caller opted in (`preserve_structural_markup=True` — see
+        # `send()`'s docstring): src/trader_feed.py embeds a fixed, small
+        # set of literal structural tags (`<b>`, `<blockquote expandable>`)
+        # in its plain text on purpose; no other caller does, and every
+        # other caller must keep the historical "always fully escape"
+        # contract.
+        escaped = (
+            _escape_with_markup(text) if preserve_structural_markup
+            else html.escape(text)
+        )
+
+        resolved_url = link_url if link_url is not None else self.mission_control_url
+        link_html = ""
+        if resolved_url:
+            label = link_label if link_label is not None else self.DEFAULT_LINK_LABEL
+            # quote=True: this value sits inside href="...", not message
+            # body text — needs '"' escaped too, not just '&','<','>'.
+            safe_url = html.escape(resolved_url, quote=True)
+            safe_label = html.escape(label)
+            link_html = f'\n\n<a href="{safe_url}">{safe_label}</a>'
+
+        budget = max(0, self.MAX_MESSAGE_CHARS - len(link_html))
+
+        # Symbol links are strictly best-effort. `_clip_text` only
+        # guarantees it never splits an HTML *entity* (`&amp;` has no
+        # whitespace inside it); an anchor tag does (`<a href="...">` has a
+        # space right after "a"), so clipping *linked* text risks shipping
+        # `<a hre` — broken markup Telegram then rejects outright ("can't
+        # parse entities"), losing the whole alert over a ticker link. So:
+        # try the linked text first, but if it doesn't fit budget, fall
+        # back to the plain (safely truncatable) escaped text instead of
+        # truncating the linked one — symbol links disappear, the alert
+        # still ships.
+        linked = _linkify_symbols(escaped, symbols) if symbols else escaped
+        if len(linked) <= budget:
+            body = linked
+        elif len(escaped) > budget:
+            # `_clip_text` never splits an HTML entity: it only ever cuts on
+            # whitespace, and an entity like '&amp;' has none inside it — so
+            # the boundary search always lands on a word start/end, keeping
+            # any entity in the kept text whole. This is the last-resort
+            # safety net for the rare aggregate message still oversized
+            # after every field-level clip below already ran — not the
+            # primary fix, which is raising those per-field limits.
+            body = _close_open_markup(_clip_text(escaped, budget, marker="\n[...truncated]"))
+        else:
+            body = escaped
+        final_text = body + link_html
+
+        return {
+            "chat_id": self.chat_id,
+            "text": final_text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+
+    @staticmethod
+    def _json_body(response: Any) -> dict[str, Any]:
+        """Telegram's JSON body, or {} if it did not send parseable JSON."""
+        try:
+            body = response.json()
+        except Exception:  # noqa: BLE001 - a proxy error page is not JSON
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    def probe(self, text: str | None = None) -> ProbeResult:
+        """Prove the alert channel works, by using it.
+
+        WHY THIS IS NOT AN ENV-VAR CHECK. "Are the credentials set" answers
+        a question nobody has. The failures that actually silence this desk
+        are a token that is set but revoked, a chat id that is set but wrong
+        or deleted, a bot the operator blocked, and an egress rule that
+        drops api.telegram.org. Every one of those passes a variable check
+        and fails a send. So this sends.
+
+        WHY IT IS STILL QUIET. The message goes out with
+        `disable_notification` (delivered, no buzz) and is deleted
+        immediately afterwards, so proving the channel does not spend the
+        operator's attention. The Bot API lets a bot delete its own message
+        for 48h, so the delete is reliable; when it is not, `residue` says
+        so and the message itself explains what it is.
+
+        Returns a ProbeResult rather than a bool: an operator needs to know
+        WHICH of the four failures he has, and they need four different
+        repairs.
+        """
+        if _REHEARSAL_MODE:
+            # A rehearsal must not transmit. Reported as not-ok with its own
+            # stage so a caller can tell "we did not check" apart from "we
+            # checked and it is broken" — collapsing those two is the exact
+            # defect this whole probe exists to remove.
+            return ProbeResult(
+                False, "rehearsal", "suppressed: QAMC_REHEARSAL=1, nothing sent",
+            )
+        if self.muted:
+            # A DELIBERATE mute is not a fault. Only this process can tell
+            # the two apart (it is the one holding the env), so it must say
+            # which it is; reporting a choice the operator made as a broken
+            # channel is a false statement about the desk's state.
+            return ProbeResult(
+                False,
+                "muted",
+                "alerts are muted on purpose: TELEGRAM_DISABLED is set in "
+                "this process — nothing is broken and nothing will be sent",
+            )
+        if not self.enabled:
+            return ProbeResult(
+                False,
+                "credentials",
+                "this process has no TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID "
+                "— an alert raised here would reach nobody",
+            )
+
+        # link_url="" — never append the Mission Control link to a probe.
+        payload = self._build_payload(text or self.PROBE_TEXT, link_url="")
+        # Delivered silently: the operator's phone must not buzz daily for
+        # this. Deletion below removes it from the chat entirely.
+        payload["disable_notification"] = True
+
+        try:
+            response = requests.post(
+                self.API_URL.format(token=self.token),
+                json=payload,
+                timeout=self.HTTP_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ProbeResult(False, "transport", self._redact(exc))
+
+        body = self._json_body(response)
+        if response.status_code >= 400 or not body.get("ok"):
+            # Telegram reports refusals as HTTP 4xx with a `description`
+            # ("Unauthorized", "chat not found", "bot was blocked by the
+            # user"). Carry the description through — it names the repair.
+            detail = body.get("description") or f"HTTP {response.status_code}"
+            return ProbeResult(False, "api", self._redact(detail))
+
+        result = body.get("result")
+        message_id = result.get("message_id") if isinstance(result, dict) else None
+        if message_id is None:
+            # Accepted but unidentifiable. The send worked, so the channel is
+            # proved; we simply cannot clean up after ourselves.
+            return ProbeResult(
+                True,
+                "delivered",
+                "Telegram accepted the probe but returned no message_id",
+                residue=True,
+            )
+
+        deleted, delete_detail = self._delete_message(message_id)
+        return ProbeResult(True, "delivered", delete_detail, residue=not deleted)
+
+    def _delete_message(self, message_id: int) -> tuple[bool, str]:
+        """Best-effort removal of a message this bot sent. Never raises."""
+        try:
+            response = requests.post(
+                self._api_url("deleteMessage"),
+                json={"chat_id": self.chat_id, "message_id": message_id},
+                timeout=self.HTTP_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return False, f"delete failed: {self._redact(exc)}"
+        body = self._json_body(response)
+        if response.status_code >= 400 or not body.get("ok"):
+            detail = body.get("description") or f"HTTP {response.status_code}"
+            return False, f"delete refused: {self._redact(detail)}"
+        return True, ""
+
+    def send_document(
+        self, csv_bytes: bytes, filename: str, caption: str = "",
+        kind: str = "document", run_id: str | None = None,
+    ) -> bool:
+        """Send a file (e.g. CSV) via Telegram sendDocument. Best-effort.
+
+        Recorded the same way `send()` is (see `_record_send`): the
+        document's bytes are never stored (they are the P&L CSV, not
+        text meant for the "what did we tell the owner" question), only
+        `caption` — the text that actually appears in the chat next to
+        it — plus `filename` so the record still says what went out.
+        """
+        if not self.enabled:
+            return False
+        recorded_text = f"[document: {filename}] {caption}".strip()
+        try:
+            response = requests.post(
+                f"https://api.telegram.org/bot{self.token}/sendDocument",
+                data={"chat_id": self.chat_id, "caption": caption},
+                files={"document": (filename, csv_bytes, "text/csv")},
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            self._safe_record_send(kind=kind, status="sent", text=recorded_text, run_id=run_id)
+            return True
+        except Exception as exc:
+            logger.warning("Telegram send_document failed: %s", self._redact(exc))
+            self._safe_record_send(
+                kind=kind, status="failed", text=recorded_text,
+                detail=self._redact(exc), run_id=run_id,
+            )
+            return False
