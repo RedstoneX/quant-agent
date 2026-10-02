@@ -69,7 +69,12 @@ Same class, same treatment, after the five land:
 - the known-leaks list in `tests/test_no_silent_patch_targets.py`
 - `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`
 - ~~the offender baseline in `tests/test_no_local_day_as_exchange_day.py`~~ DONE — the hardcoded `_BASELINE` is deleted; `scripts/local_day_guard.py` scans the working tree and `origin/main` at check time and fails on the delta
-- `tests/replay_outbound_sites_baseline.json`
+- ~~`tests/replay_outbound_sites_baseline.json`~~ DONE — judged a cached
+  measurement (an AST scan of `src/` frozen on 2026-10-02, no human
+  reasoning in any entry), so it is never created; `scripts/replay_outbound_guard.py`
+  scans `src/` in the working tree and on `origin/main` at check time and
+  reports the delta. The policy half — the list of module names that mean
+  "this can leave the box" — stays in code, where it is reviewed.
 - the unscoped-number ceiling in the number-sources guard
 
 Not in this class: `config/number_ledger.yaml`. That is real content — the
