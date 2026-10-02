@@ -28,6 +28,18 @@ _BANNERS = {
 }
 
 
+# Rehearsal-report wording for the new status (ops/rehearsal/report.py merges
+# it into STATUS_PLAIN; that file is at its shrink-only size cap).
+OUT_OF_CREDIT_PLAIN = {
+    "intraday_scan_out_of_credit": (
+        "The intra-session check's opportunity scan stopped because the "
+        "paid research account has no credit left, so it found nothing. "
+        "This is not a fault in the desk. The deterministic loss check that "
+        "runs before it already completed normally."
+    ),
+}
+
+
 def scan_failure_banner(status: str) -> str:
     """The owner-feed sentence for a failed-scan status."""
     return _BANNERS[status]
