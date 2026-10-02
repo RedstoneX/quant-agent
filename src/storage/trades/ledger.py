@@ -28,6 +28,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from src.storage.analytics.calibration import _POSITION_OPEN_ACTIONS, _is_filled_trail_stop
+from src.stop_price_classification import entry_stop_for_insert
 from src.util.time import UTC
 
 logger = logging.getLogger(__name__)
@@ -578,11 +579,7 @@ class TradeLedger:
             )
             exit_category = _categorize_exit_reason(action, reasoning, fill_status, None)
             decision_link_status = _resolve_decision_id_status(action, decision_id)
-            try:
-                stop_at_insert = float(stop_loss or 0)
-            except (TypeError, ValueError):
-                stop_at_insert = 0.0
-            initial_stop_loss = stop_at_insert if stop_at_insert > 0 else None
+            initial_stop_loss = entry_stop_for_insert(action, symbol, stop_loss, _POSITION_OPEN_ACTIONS)
             # Pin the entry target the same way, and for the same reason the
             # `initial_take_profit` migration note gives: `take_profit` is
             # mutable now that a structural event can trigger a
@@ -1872,14 +1869,14 @@ class TradeLedger:
         except (TypeError, ValueError):
             return False
         if not target > 0:
-            _log.error(
+            logger.error(
                 "update_open_take_profit refused a non-positive target for "
                 "%s: %r", symbol, new_target,
             )
             return False
         act = (action or "").strip().upper()
         if act and act not in ("BUY", "SHORT"):
-            _log.error(
+            logger.error(
                 "update_open_take_profit refused unknown action %r for %s",
                 action, symbol,
             )

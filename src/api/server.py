@@ -45,6 +45,7 @@ from src.api.routes_evidence import router as evidence_router
 from src.api.routes_history import router as history_router
 from src.api.routes_journal import router as journal_router
 from src.api.routes_live import router as live_router
+from src.api.routes_pruning import router as pruning_router
 from src.api.routes_research import router as research_router
 from src.api.routes_scorecard import router as scorecard_router
 from src import inflight
@@ -253,6 +254,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(_GetOnlyMiddleware)
     app.include_router(live_router, tags=["live"])
+    app.include_router(pruning_router, tags=["pruning"])
     app.include_router(history_router, tags=["history"])
     app.include_router(evidence_router, tags=["evidence"])
     app.include_router(journal_router, tags=["journal"])

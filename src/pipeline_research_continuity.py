@@ -28,9 +28,11 @@ from dataclasses import dataclass
 
 from src.agents.base import agent_log_kwargs
 from src.cost_circuit import PaidAnalysisSuspended
+from src.cost_circuit.parts.shim_guard import _is_class_shim
 from src.models import NewsIntelligenceReport
 from src.pipeline_context import RunContext
 from src.pipeline_stages import _persist_evidence
+from src.research_continuity.change_detectors import ResearchChangeDetectors
 from src.trading_calendar import et_today
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -64,230 +66,73 @@ class CarryForward:
         return self.payload is not None
 
 
+def _lifted_collab(host, name: str):
+    """The host's replacement for a lifted body, or None when the host only has
+    the mixin's own shim for it (passing that back would recurse)."""
+    fn = getattr(host, name, None)
+    if fn is None or _is_class_shim(fn, name, ResearchContinuityMixin):
+        return None
+    return fn
+
+
+def _change_detectors(host) -> ResearchChangeDetectors:
+    """Standalone change detectors over the host's CURRENT collaborators (bodies
+    moved to src/research_continuity/change_detectors.py). Built per call so a
+    collaborator rebound after construction is what the body sees; a module
+    function rather than a method so a test that binds one shim onto a bare
+    object with `__get__` still reaches the moved code. The peek-items slot is
+    read and written on the host, where `_peeked_news_wire_text` always found it."""
+    return ResearchChangeDetectors(
+        macro_store=getattr(host, "macro_store", None),
+        macro=getattr(host, "macro", None),
+        news_provider=getattr(host, "news_provider", None),
+        news_store=getattr(host, "news_store", None),
+        config=getattr(host, "config", None),
+        peek_items_get=lambda: getattr(host, "_last_news_peek_items", None),
+        peek_items_set=lambda items: setattr(host, "_last_news_peek_items", items),
+        macro_history_regime_changed=_lifted_collab(host, "_macro_history_regime_changed"),
+        macro_series_prints_changed=_lifted_collab(host, "_macro_series_prints_changed"),
+        live_macro_series_prints=_lifted_collab(host, "_live_macro_series_prints"),
+        watched_research_symbols=_lifted_collab(host, "_watched_research_symbols"),
+        peek_news_headlines=_lifted_collab(host, "_peek_news_headlines"),
+    )
+
+
 class ResearchContinuityMixin:
     """Change detection, carry-forward and seat healing for TradingPipeline."""
 
-    def _macro_regime_or_print_changed(self, state: dict) -> bool:
-        """True when a later snapshot actually changed the regime or a FRED print.
+    # --- lifted to src/research_continuity/change_detectors.py (ResearchChangeDetectors); thin shims follow ---
+    def _macro_regime_or_print_changed(self, *args, **kwargs):
+        """Thin shim (body moved to src/research_continuity/change_detectors.py)."""
+        return _change_detectors(self)._macro_regime_or_print_changed(*args, **kwargs)
 
-        Calendar age is not expiry — macro is reusable across days until a
-        real regime/print change. A failed detector is not a change.
-        Print change is a change in the actual series values/observation
-        dates, not a change in the regime label string.
-        """
-        if not isinstance(state, dict):
-            return False
-        stored_regime = str(state.get("regime") or "").strip()
-        if not stored_regime:
-            return False
-        try:
-            if self._macro_history_regime_changed(state, stored_regime):
-                return True
-        except Exception:  # noqa: BLE001 — failed detector is not a change
-            pass
-        try:
-            if self._macro_series_prints_changed(state):
-                return True
-        except Exception:  # noqa: BLE001
-            pass
-        return False
+    def _macro_history_regime_changed(self, *args, **kwargs):
+        """Thin shim (body moved to src/research_continuity/change_detectors.py)."""
+        return _change_detectors(self)._macro_history_regime_changed(*args, **kwargs)
 
-    def _macro_history_regime_changed(self, state: dict, stored_regime: str) -> bool:
-        """True when a newer dated history snapshot carries a different regime."""
-        store = getattr(self, "macro_store", None)
-        load = getattr(store, "load_history", None)
-        if not callable(load):
-            return False
-        history = load(days=2) or []
-        if not isinstance(history, list) or not history:
-            return False
-        latest = history[-1]
-        if not isinstance(latest, dict):
-            return False
-        latest_regime = str(latest.get("regime") or "").strip()
-        latest_date = str(latest.get("date") or "").strip()[:10]
-        stored_date = str(state.get("date") or state.get("as_of") or "").strip()[:10]
-        if latest_date and stored_date and latest_date > stored_date and latest_regime and latest_regime != stored_regime:
-            return True
-        return False
+    def _live_macro_series_prints(self, *args, **kwargs):
+        """Thin shim (body moved to src/research_continuity/change_detectors.py)."""
+        return _change_detectors(self)._live_macro_series_prints(*args, **kwargs)
 
-    def _live_macro_series_prints(self) -> dict | None:
-        """Fetch current FRED prints. None on a failed or missing provider.
+    def _macro_series_prints_changed(self, *args, **kwargs):
+        """Thin shim (body moved to src/research_continuity/change_detectors.py)."""
+        return _change_detectors(self)._macro_series_prints_changed(*args, **kwargs)
 
-        Restores ``last_coverage`` / ``_run_freshness`` afterwards —
-        ``get_macro_summary`` mutates both, and this peek must not overwrite
-        the morning side-channel a later reader still needs.
-        """
-        from src.data.macro_store import series_prints_from_summary
-        provider = getattr(self, "macro", None)
-        getter = getattr(provider, "get_macro_summary", None)
-        if not callable(getter):
-            return None
-        had_coverage = hasattr(provider, "last_coverage")
-        had_freshness = hasattr(provider, "_run_freshness")
-        previous_coverage = getattr(provider, "last_coverage", None)
-        previous_freshness = getattr(provider, "_run_freshness", None)
-        summary = None
-        freshness = None
-        try:
-            try:
-                summary = getter()
-                freshness = getattr(provider, "_run_freshness", None)
-            except Exception:  # noqa: BLE001 — failed fetch ≠ print change
-                return None
-            if not isinstance(summary, dict) or not summary:
-                return None
-            return series_prints_from_summary(summary, freshness=freshness)
-        finally:
-            if had_coverage:
-                provider.last_coverage = previous_coverage
-            if had_freshness:
-                provider._run_freshness = previous_freshness
+    def _watched_research_symbols(self, *args, **kwargs):
+        """Thin shim (body moved to src/research_continuity/change_detectors.py)."""
+        return _change_detectors(self)._watched_research_symbols(*args, **kwargs)
 
-    def _macro_series_prints_changed(self, state: dict) -> bool:
-        """True when live FRED prints differ from the stored fingerprint.
+    def _peek_news_headlines(self, *args, **kwargs):
+        """Thin shim (body moved to src/research_continuity/change_detectors.py)."""
+        return _change_detectors(self)._peek_news_headlines(*args, **kwargs)
 
-        A snapshot that never recorded prints cannot claim a change —
-        that would expire every pre-fingerprint last_state and invent
-        churn. Failed live fetch is not a change.
-        """
-        from src.data.macro_store import series_prints_changed
-        stored = state.get("series_prints")
-        if not isinstance(stored, dict) or not (
-            stored.get("values") or stored.get("observations")
-        ):
-            return False
-        live = self._live_macro_series_prints()
-        if not live:
-            return False
-        return series_prints_changed(stored, live)
+    def _peeked_news_wire_text(self, *args, **kwargs):
+        """Thin shim (body moved to src/research_continuity/change_detectors.py)."""
+        return _change_detectors(self)._peeked_news_wire_text(*args, **kwargs)
 
-    def _watched_research_symbols(self, ctx=None, report=None) -> list[str]:
-        """Tickers this desk is actually watching. Empty if none are known.
-
-        Form 4 / news peeks must not scan the whole listed market or treat
-        an unrelated wire as a change to remembered research.
-        """
-        out: set[str] = set()
-        trading = getattr(getattr(self, "config", None), "trading", None)
-        for raw in getattr(trading, "universe", None) or []:
-            text = str(raw or "").strip().upper()
-            if text:
-                out.add(text)
-        stock_news = getattr(report, "stock_news", None) if report is not None else None
-        if isinstance(report, dict):
-            stock_news = report.get("stock_news")
-        if isinstance(stock_news, dict):
-            for raw in stock_news:
-                text = str(raw or "").strip().upper()
-                if text:
-                    out.add(text)
-        if ctx is not None:
-            for finding in getattr(ctx, "smart_money_findings", None) or []:
-                symbol = getattr(finding, "symbol", None)
-                if symbol is None and isinstance(finding, dict):
-                    symbol = finding.get("symbol")
-                text = str(symbol or "").strip().upper()
-                if text:
-                    out.add(text)
-        return sorted(out)
-
-    def _peek_news_headlines(self, report) -> list[str]:
-        """Live RSS titles for mechanical wire-expiry. Failed fetch → [].
-
-        General wires only — do not pass the universe as a per-symbol
-        fetch. That cap preserves caller order and morning's order is
-        positions-first; an alphabetical universe peek would query a
-        different 15 names and invent new titles.
-        """
-        from src.evidence_kind import headline_mentions_symbols
-        self._last_news_peek_items = []
-        provider = getattr(self, "news_provider", None)
-        fetch = getattr(provider, "fetch_news", None)
-        if not callable(fetch):
-            return []
-        watched = self._watched_research_symbols(report=report)
-        if not watched:
-            return []
-        try:
-            try:
-                items, _coverage = fetch(symbols=None)
-            except TypeError:
-                items, _coverage = fetch()
-        except Exception:  # noqa: BLE001 — failed fetch ≠ supersede
-            return []
-        # Keep what we just paid for. The expiry compare only needs titles,
-        # but discarding the wire body meant the tick proved its remembered
-        # news was superseded and then had nothing to re-ask with.
-        self._last_news_peek_items = list(items or [])
-        titles: list[str] = []
-        for item in items or []:
-            title = getattr(item, "title", None)
-            summary = getattr(item, "summary", None)
-            if isinstance(item, dict):
-                if title is None:
-                    title = item.get("title") or item.get("headline")
-                if summary is None:
-                    summary = item.get("summary")
-            text = str(title or "").strip()
-            if not text:
-                continue
-            search = f"{text} {summary or ''}"
-            if not headline_mentions_symbols(search, watched):
-                continue
-            titles.append(text)
-        return titles
-
-    def _peeked_news_wire_text(self) -> str:
-        """The wire text the expiry peek already fetched, formatted for the
-        news analyst. Empty when the peek returned nothing.
-
-        No second fetch and no new window: this is the same fetch that
-        proved the remembered report superseded. A failed or empty peek
-        stays empty so the seat expires and is lost — a fetch that got
-        nothing must never be dressed up as fresh news.
-        """
-        items = list(getattr(self, "_last_news_peek_items", None) or [])
-        if not items:
-            return ""
-        provider = getattr(self, "news_provider", None)
-        fmt = getattr(provider, "format_for_prompt", None)
-        if not callable(fmt):
-            return ""
-        try:
-            text = fmt(items, max_items=self.config.news.max_prompt_items)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Intraday scan: wire text for news heal failed: %s", e)
-            return ""
-        return text if isinstance(text, str) and text.strip() else ""
-
-    def _news_has_newer_material_wire(self, report) -> bool:
-        """Best-effort mechanical headline compare. Failed fetch ≠ supersede.
-
-        Only a new title that names a watched ticker is a wire change
-        (the peek already drops unnamed general-wire titles). A sliding
-        24h RSS window always grows unrelated headlines; treating those
-        as expiry would freeze the midday tick, which cannot re-pay the
-        news seat.
-        """
-        from src.evidence_kind import covered_news_headlines, newer_material_wire
-        covered = set(covered_news_headlines(report))
-        load_raw = getattr(getattr(self, "news_store", None), "load_raw_headlines", None)
-        if callable(load_raw):
-            try:
-                for item in load_raw() or []:
-                    if not isinstance(item, dict):
-                        continue
-                    text = str(item.get("title") or item.get("headline") or "").strip()
-                    if text:
-                        covered.add(text)
-            except Exception:  # noqa: BLE001
-                pass
-        try:
-            fetched = self._peek_news_headlines(report) or []
-        except Exception:  # noqa: BLE001
-            return False
-        return newer_material_wire(frozenset(covered), fetched)
+    def _news_has_newer_material_wire(self, *args, **kwargs):
+        """Thin shim (body moved to src/research_continuity/change_detectors.py)."""
+        return _change_detectors(self)._news_has_newer_material_wire(*args, **kwargs)
 
     def _record_form4_backlog(self, run_id: str, refresh: dict) -> None:
         """Persist the pre-market Form 4 backlog and coverage. Never raises."""

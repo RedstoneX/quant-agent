@@ -1258,7 +1258,7 @@ class AlpacaBroker:
             kill_switch_active=self._kill_switch_active,
             kill_switch_path=self._kill_switch_path,
             protective_stop_block_recorder=self.protective_stop_block_recorder,
-            stop_limit_buffer_pct=self.STOP_LIMIT_BUFFER_PCT,
+            stop_limit_buffer_pct=self.STOP_LIMIT_BUFFER_PCT, window_log=self.__dict__.setdefault("_unprotected_windows", []),
             # Six collaborators below are themselves moved bodies, so the
             # placer already owns them. Passing this broker's same-named shim
             # would overwrite the placer's own method with a function that
@@ -1458,9 +1458,9 @@ class AlpacaBroker:
         """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
         return self._stop_amender()._classify_after_dead_replacement(symbol=symbol, spec=spec, new_price=new_price, leg=leg)
 
-    def _amend_one_stop_price(self, *, symbol: str, spec: dict, new_price: float) -> dict:
+    def _amend_one_stop_price(self, **kw) -> dict:
         """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
-        return self._stop_amender()._amend_one_stop_price(symbol=symbol, spec=spec, new_price=new_price)
+        return self._stop_amender()._amend_one_stop_price(**kw)
 
     _stop_order_amendable_in_place = staticmethod(StopAmender._stop_order_amendable_in_place)
 

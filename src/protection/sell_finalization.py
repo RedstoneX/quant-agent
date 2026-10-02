@@ -284,7 +284,7 @@ class SellFinalization:
                 order_word, symbol, status or "?",
             )
             try:
-                self.broker.client.cancel_order_by_id(order_id)
+                if not self.broker.cancel_entry_order(order_id): raise RuntimeError("lingering order not cancelled (failed, or refused by an owner flag)")
                 # Cancel propagates fast; a tighter 5s wait is enough.
                 self.broker.wait_for_order_terminal(order_id, timeout_seconds=5.0)
             except Exception as exc:
