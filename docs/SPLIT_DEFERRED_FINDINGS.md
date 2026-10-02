@@ -48,7 +48,7 @@ catch stays, deliberately -- this runs on the trading path and a forensic
 record may not stop it -- but it now logs the full traceback at error level,
 and the store-level test is what keeps this class from hiding again.
 
-## Owner alerts are sent and the result thrown away -- FIXED
+## Owner alerts are sent and the result thrown away
 
 Nearly every caller discards the return value of the owner-alert send, so a
 failed delivery is indistinguishable from a successful one. Fix: make the
