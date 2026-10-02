@@ -42,6 +42,7 @@ import math
 
 from src.protection.coverage_book_read import read_positions_with_retry
 from src.protection.coverage_book_read import unverified_book_sweep
+from src.sentinel.reconciliation import record_reconciliation
 from src.execution.broker import AlpacaBroker, _split_protective_qty
 from src.models import TradeDecision
 from src.pipeline_context import RunContext
@@ -801,7 +802,6 @@ class ProtectionMixin:
         if repaired_symbols:
             try:
                 from src.coverage_watchdog import clear_awaiting_first_print
-
                 # The gap is closed, so the name is no longer waiting on a
                 # print and must not be reported after the close as though
                 # it had waited all session.
@@ -834,10 +834,10 @@ class ProtectionMixin:
                 skip_symbols=pending_syms, db=self.db,
             )
             mismatches = write_back_live_protective_stops(self.db, mismatches)
-            report_stop_level_mismatches(mismatches)
+            report_stop_level_mismatches(record_reconciliation(db=self.db, kind="recorded_stop_levels", result=mismatches))
         except Exception as exc:  # noqa: BLE001
             logger.error("stop-level reconcile failed: %s", exc)
-        return gaps
+        return record_reconciliation(db=self.db, kind="stop_coverage", result=gaps)
 
     def _elected_unfilled_stop_row(self, *args, **kwargs):
         """Thin shim -> CoverageElection (src/protection/coverage_election.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
