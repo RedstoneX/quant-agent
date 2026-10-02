@@ -37,7 +37,8 @@ from alpaca.trading.enums import OrderSide
 from src.execution.broker import AlpacaBroker
 from src.risk.trailing import (
     CHANDELIER_ATR_MULTIPLE,
-    MIN_RATCHET_PCT,
+    MIN_RATCHET_TICKS,
+    min_ratchet_floor,
     compute_trailing_stop,
 )
 from tests.pipeline_factory import build_pipeline

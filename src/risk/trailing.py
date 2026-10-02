@@ -69,9 +69,9 @@ above the lowest low since entry where structure is unclear.)
 Invariants, all of them enforced below:
   - **Ratchet toward less risk only.** Up for a long, down for a short. A
     stop never moves the wrong way. Ever.
-  - A move must clear the existing stop by `MIN_RATCHET_PCT` to be worth an
-    order at all — otherwise every session nudges the stop a few cents and the
-    cooldown is doing all the work.
+  - A move must clear the existing stop by `MIN_RATCHET_TICKS` venue ticks —
+    the smallest price increment the venue will accept — to be a different
+    stop at all. Anything smaller is the same price after quantization.
   - A new stop is never placed inside `NOISE_BAND_ATR_MULTIPLE` ATRs of
     current price. That is the same floor the discretionary path already
     clamps to, applied at the source instead of after the fact.
@@ -99,7 +99,9 @@ __all__ = [
     "TrailEvaluation",
     "compute_trailing_stop",
     "evaluate_trailing_stop",
-    "MIN_RATCHET_PCT",
+    "MIN_RATCHET_TICKS",
+    "venue_tick",
+    "min_ratchet_floor",
     "CHANDELIER_ATR_MULTIPLE",
     "NOISE_BAND_ATR_MULTIPLE",
     "PIVOT_WINDOW",
@@ -155,13 +157,17 @@ __all__ = [
 #: That rejection is CONTINGENT, and the contingency is recorded so nobody
 #: re-derives it. Open PR 806 (`fix/atomic-stop-amend`) adds
 #: `_amend_resting_stop_price` to `src/execution/broker.py`, making a price
-#: amend atomic with no unprotected instant. It is NOT on main (verified
-#: 2026-09-30), which is why this constant is unchanged. If it lands, the
+#: amend atomic with no unprotected instant. IT LANDED: it is on main
+#: (`src/execution/broker.py::_amend_resting_stop_price` and
+#: `src/execution/broker_parts/stop_amend.py`, verified against origin/main
+#: on 2026-10-02), so the contingency recorded here has FIRED and the
+#: percentage floor is retired by the replacement defined below. If it
+#: lands, the
 #: only cost defending this gate is gone and the honest floor becomes one
 #: venue tick (SEC Rule 612 / Alpaca's $0.01-at-or-above-$1, $0.0001-below
 #: split, already carried by `_quantize_price` and `_prices_match`) -- a
 #: reading off the instrument instead of a picked percentage. See the
-#: `src.risk.trailing.MIN_RATCHET_PCT` entry in `config/number_ledger.yaml`.
+#: `src.risk.trailing.MIN_RATCHET_TICKS` entry in `config/number_ledger.yaml`.
 #:
 #: What the same pass DID settle is the redundancy question the ledger left
 #: open. On THIS deterministic path there are two gates, not three: the
@@ -171,7 +177,74 @@ __all__ = [
 #: redundant — all seven reconstructed refusals sat OUTSIDE the 1.25-ATR
 #: noise band, so the noise band would have admitted every one of them and
 #: this gate is doing independent work.
-MIN_RATCHET_PCT = 2.0
+#: ---------------------------------------------------------------------
+#: RETIRED 2026-10-02 (owner ruling: ratchet stops on smaller moves, lock
+#: gains in sooner). Everything above is HISTORY, kept because it records
+#: why the 2% floor survived three earlier passes. The single cost that
+#: defended it -- the cancel-then-resubmit window in which the position
+#: carries no protective order -- no longer exists, so the gate has nothing
+#: left to defend and is replaced by the only floor that is READ OFF THE
+#: INSTRUMENT rather than chosen.
+#:
+#: WHAT REPLACES IT: one venue tick. Two prices less than one tick apart
+#: are not two prices -- the venue quantizes them to the same stop, so an
+#: amend to a sub-tick "improvement" cannot improve protection by
+#: construction. That is a property of the instrument (SEC Rule 612 /
+#: Alpaca's published $0.01-at-or-above-$1, $0.0001-below split, the same
+#: split `broker_parts/stop_amend.py::_quantize_price` and
+#: `execution/stop_records.py::_prices_match` already carry), not an
+#: appetite.
+#:
+#: WHY NOT "no minimum at all": tested and rejected on the instrument, not
+#: on taste. With no floor at all a proposal one hundredth of a cent above
+#: the live stop quantizes to the SAME stop price, so the desk would amend
+#: a resting order to the price it already rests at -- a null amend that
+#: spends a broker call and an owner-visible "stop moved" line for a stop
+#: that did not move.
+#:
+#: WHY NOT a smaller percentage (0.5%, 1%): identical failure to the 2.0 it
+#: would replace -- a picked constant, and one that still asks for a
+#: ratchet three times larger on one name than another when expressed in
+#: each name's own ATR (measured 2026-09-30, above).
+#:
+#: THE COSTS THE RULING ASKED ABOUT, measured in this repo rather than
+#: assumed. (1) MONEY: zero -- US equity orders at this broker are
+#: commission-free and an amend crosses no spread and prints no fill
+#: (established above). (2) RATE LIMIT: nothing on the stop path counts or
+#: budgets requests; the only 429 handling in `src/execution` is the
+#: trade-stream reconnect (`broker_parts/trade_stream.py`), and the
+#: deterministic trail is evaluated once per session per position, so the
+#: amend count is bounded at one per position per session whatever this
+#: floor is -- a floor cannot reduce a bound of one. (3) REJECTION: an
+#: amend the venue cannot apply returns the amender's sentinel and the
+#: caller falls back; no record in this repo measures an amend-rejection
+#: rate, so none is quoted here. (4) OWNER NOISE: real, and exactly what
+#: the tick floor removes -- the only amends it suppresses are the ones
+#: that change no price.
+MIN_RATCHET_TICKS = 1
+
+#: Alpaca's published stock tick, the same split
+#: `execution/stop_records.py` and `broker_parts/stop_amend.py` carry.
+#: Duplicated rather than imported because `src.risk` does not depend on
+#: `src.execution`.
+_TICK_AT_OR_ABOVE_DOLLAR = 0.01
+_TICK_BELOW_DOLLAR = 0.0001
+
+
+def venue_tick(price: float) -> float:
+    """The smallest price increment the venue accepts at this price."""
+    return _TICK_AT_OR_ABOVE_DOLLAR if price >= 1.0 else _TICK_BELOW_DOLLAR
+
+
+def min_ratchet_floor(stop: float, *, is_short: bool = False,
+                      min_ratchet_ticks: int = MIN_RATCHET_TICKS) -> float:
+    """The nearest stop price that is a DIFFERENT stop from `stop`.
+
+    Toward less risk only: up for a long, down for a short. A long's
+    proposal must sit at or above this; a short's at or below it.
+    """
+    step = venue_tick(stop) * max(int(min_ratchet_ticks), 1)
+    return stop - step if is_short else stop + step
 
 #: Chandelier distance below the highest high since entry, used only where
 #: structure is unclear. 3x ATR is the conventional setting and is deliberately
@@ -498,7 +571,7 @@ def _range_breakeven_ratchet(
     Fails closed: with no `initial_stop` (the ENTRY stop, never the live one
     a prior trail may have already moved), R cannot be measured, so this
     proposes nothing rather than guessing at the risk that was taken.
-    Deliberately skips the ordinary `min_ratchet_pct` / noise-band invariants
+    Deliberately skips the ordinary minimum-ratchet / noise-band invariants
     below — this move is not a structural ratchet being tuned to avoid
     churn, it is a one-time, always-worthwhile transition from "full initial
     risk" to "no risk", regardless of how small the percentage move to
@@ -564,7 +637,7 @@ def _range_second_ratchet(
     Mirrors `_range_breakeven_ratchet` exactly: fails closed with no
     `initial_stop` (the ENTRY stop, never the live one a prior trail moved) so
     R cannot be guessed; measures R the same way (`abs(entry - initial_stop)`);
-    and skips the ordinary `min_ratchet_pct` / noise-band invariants because
+    and skips the ordinary minimum-ratchet / noise-band invariants because
     this is a one-time step-up in protection, not a structural trail being
     tuned against churn. The `stop < candidate < cur` guard (mirrored for a
     short) is what enforces NEVER LOOSEN A STOP: the +1R lock is proposed only
@@ -625,7 +698,7 @@ def compute_trailing_stop(
     reference_target: float | None,
     bars=None,
     atr: float | None = None,
-    min_ratchet_pct: float = MIN_RATCHET_PCT,
+    min_ratchet_ticks: int = MIN_RATCHET_TICKS,
     qty: float = 1.0,
     initial_stop: float | None = None,
     structural_ceiling: bool | None = None,
@@ -659,7 +732,7 @@ def compute_trailing_stop(
         symbol=symbol, setup_type=setup_type, entry=entry,
         current_price=current_price, current_stop=current_stop,
         reference_target=reference_target, bars=bars, atr=atr,
-        min_ratchet_pct=min_ratchet_pct, qty=qty, initial_stop=initial_stop,
+        min_ratchet_ticks=min_ratchet_ticks, qty=qty, initial_stop=initial_stop,
         structural_ceiling=structural_ceiling,
     ).proposal
 
@@ -674,7 +747,7 @@ def evaluate_trailing_stop(
     reference_target: float | None,
     bars=None,
     atr: float | None = None,
-    min_ratchet_pct: float = MIN_RATCHET_PCT,
+    min_ratchet_ticks: int = MIN_RATCHET_TICKS,
     qty: float | None = None,  # None reads as a long — see `is_short` below
     initial_stop: float | None = None,
     structural_ceiling: bool | None = None,
@@ -751,10 +824,16 @@ def evaluate_trailing_stop(
         once this says yes, because the alternative is placing a stop inside
         the very daily-noise band the structural leg was just refused for.
         Returns the refusal code, or None when the level is placeable."""
+        floor = min_ratchet_floor(stop, is_short=is_short,
+                                  min_ratchet_ticks=min_ratchet_ticks)
+        # Half-a-tick tolerance is the float<->Decimal round-trip this repo
+        # already allows in `_prices_match`, not a threshold: a level that
+        # quantizes ONTO the floor is a real one-tick improvement.
+        _slack = venue_tick(stop) / 2.0
         if is_short:
-            if level >= stop * (1 - min_ratchet_pct / 100.0):
+            if level > floor + _slack:
                 return TRAIL_CODE_BELOW_MIN_RATCHET
-        elif level <= stop * (1 + min_ratchet_pct / 100.0):
+        elif level < floor - _slack:
             return TRAIL_CODE_BELOW_MIN_RATCHET
         if atr_f is not None and atr_f > 0:
             if is_short:
