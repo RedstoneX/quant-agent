@@ -56,3 +56,13 @@ left open on purpose.
 **Not claimed.** No production session has yet been observed emitting these
 stamps; the round trip is proven against a real database file in
 `tests/test_seat_read_freshness_stamp.py`, not against production.
+
+## Rehearsal assessment, 2026-10-02
+
+Evidence kind: OFFLINE REHEARSAL runs of 2026-10-02 against a snapshot of the production database. These are NOT production sessions and no box was ticked on them.
+Observed runs (ops/rehearsal/run.py, replay pinned automatically, sudo-user snapshot, production file byte-identical after each):
+- morning: VERDICT FAIL and "REHEARSAL VOID -- HermeticBreach": the harness blocked outbound connections to the FRED host because no FRED or news feed is recorded on this box (board item 202); 0/15 macro series and 0/20 news feeds returned data; the recording holds ONE portfolio_manager answer and the session asked twice, so every route raised "all 1 recorded response(s) were already replayed" and the session raised in the decision stage.
+- midday: VERDICT PASS but "REHEARSAL VOID -- HermeticBreach" (outbound attempts to the FRED host and the Yahoo client blocked).
+- intra_check: first run VOID (101 inputs absent from the recording); re-run with --allow-degraded completed, VERDICT PASS, not void, 0 trades, 8.4s, $0.00.
+Row read back from the rehearsal intra_check report (sandbox database): run_id rehearsal-intra_check-20261002, evidence_freshness = None. The tick found no candidates, so no seat was read and no stamp was written; the two preceding real intra_check rows (2026-10-01) also carry none.
+Last box (production session with a carried seat reporting a real age and a refreshed seat reporting this run's id): NEEDS-REAL-SESSION. The only session type that writes the stamp is one that actually reads seats; morning and midday are void offline until FRED and news feeds are recorded (item 202), and even a clean replay would stamp a rehearsal run id over replayed answers, which is not an observation of the desk. Box left open.
