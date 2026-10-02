@@ -119,7 +119,7 @@
   "src/stage_execution.py": 2162,
   "src/stage_morning_research.py": 1698,
   "src/stage_risk.py": 1423,
-  "src/storage/db.py": 5189,
+  "src/storage/db.py": 4338,
   "src/trader_feed/common.py": 1298,
   "src/trader_feed/decision.py": 862,
   "src/trader_feed/evening.py": 933,
