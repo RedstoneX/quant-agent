@@ -971,39 +971,6 @@ def _record_realised_sector_weights(
     except Exception as exc:  # noqa: BLE001
         logger.warning("realised sector-weight recording failed: %s", exc)
 
-def _record_realised_risk_budget(pipeline, ctx, total_value) -> None:
-    """One durable row per run with the REALISED total at-risk and the
-    per-cluster shares of it that the risk-budget allocator actually used.
-
-    Board item 186 (2026-10-02). RECORDING ONLY: nothing may read this back
-    into a sizing, ordering or refusal decision, and it may never be swept
-    for the ceiling that would have performed best — see the
-    `realised_risk_budget` note in `src/storage/schema/manager.py`.
-
-    Called from the same point as the realised sector weights, immediately
-    after `construct_orders` returned, because the allocator runs inside it
-    and the constructor stashes its OWN output there. Recording the
-    allocator's result rather than recomputing it is deliberate: a second
-    computation could disagree with the one that rationed the orders, and
-    then the row would describe a book that never existed. Never raises.
-    """
-    try:
-        db = getattr(pipeline, "db", None)
-        if db is None or not hasattr(db, "record_realised_risk_budget"):
-            return
-        constructor = getattr(pipeline, "portfolio_constructor", None)
-        cfg = getattr(constructor, "cfg", None)
-        db.record_realised_risk_budget(
-            allocation=getattr(constructor, "last_risk_allocation", None),
-            existing_pct=getattr(constructor, "last_existing_risk_pct", None),
-            equity=total_value,
-            cluster_share_pct=getattr(cfg, "max_cluster_risk_share_pct", None),
-            run_id=getattr(ctx, "run_id", None),
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("realised risk-budget recording failed: %s", exc)
-
-
 def _apply_repeg(
     pipeline, ctx, *, symbol, order_id: str, trade_row_id, target: float,
     requested_qty, ceiling: float, ask: float | None = None,

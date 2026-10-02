@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.pipeline_risk_budget_recording import _record_realised_concentration
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     FAULT_NO_PRICE,
     FAULT_STALE_PRICE,
@@ -35,8 +36,6 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     _record_constructor_drops,
     _record_constructor_side_flips,
     _record_pipeline_event,
-    _record_realised_risk_budget,
-    _record_realised_sector_weights,
     _record_rotation_precheck,
     _record_seat_stances,
     _record_soft_exit_heals,
@@ -753,10 +752,9 @@ class DecisionStage:
         if data_faults:
             _alert_unmeasurable_symbols(data_faults)
         _record_constructor_side_flips(pipeline, ctx)
-        _record_realised_sector_weights(
+        _record_realised_concentration(
             pipeline, ctx, portfolio_decision, total_value,
         )
-        _record_realised_risk_budget(pipeline, ctx, total_value)
         logger.info(
             "Constructor: %d targets → %d decisions "
             "(%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",

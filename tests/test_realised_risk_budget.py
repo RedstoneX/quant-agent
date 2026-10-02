@@ -17,12 +17,17 @@ import pytest
 
 from src.risk.budget import RiskRequest, allocate_risk_budget
 from src.storage.db import Database
+from src.storage.risk_budget_record import (
+    ensure_table,
+    record_realised_risk_budget,
+)
 
 
 @pytest.fixture()
 def db(tmp_path):
     d = Database(str(tmp_path / "t.db"))
     d.initialize()
+    ensure_table(d.conn)
     return d
 
 
@@ -38,7 +43,6 @@ def _allocation():
     return allocate_risk_budget(
         [RiskRequest("AAA", 5.0), RiskRequest("BBB", 5.0),
          RiskRequest("CCC", 5.0)],
-        existing_pct={"AAA": 0.0, "BBB": 0.0, "CCC": 0.0},
         clusters=[["AAA", "BBB"]],
         ceiling_pct=25.0,
         cluster_share_pct=40.0,
@@ -48,9 +52,9 @@ def _allocation():
 
 def test_a_real_allocator_run_is_recorded_with_its_cluster_shares(db):
     alloc = _allocation()
-    assert db.record_realised_risk_budget(
+    assert record_realised_risk_budget(
+        db,
         allocation=alloc,
-        existing_pct={"AAA": 1.0, "BBB": 2.5},
         equity=100_000.0,
         cluster_share_pct=40.0,
         run_id="run-1",
@@ -62,9 +66,12 @@ def test_a_real_allocator_run_is_recorded_with_its_cluster_shares(db):
     assert row["equity"] == 100_000.0
     assert row["ceiling_pct"] == 25.0
     assert row["cluster_share_pct"] == 40.0
-    # The HELD book's risk is recorded separately from what this session
-    # committed — the ceiling is spent by positions that already exist.
-    assert row["held_risk_pct"] == pytest.approx(3.5)
+    # At-risk carried by held names no request touched, read off the
+    # allocator's own "held + granted" arithmetic — not a second estimate.
+    granted = sum(g.granted_pct for g in alloc.grants.values())
+    assert row["held_only_pct"] == pytest.approx(
+        alloc.committed_pct - granted
+    )
     assert row["committed_pct"] == pytest.approx(alloc.committed_pct)
     clusters = json.loads(row["cluster_shares_json"])
     assert clusters, "a run with a cluster must record that cluster"
@@ -93,36 +100,39 @@ def test_an_unknown_book_records_unknown_and_not_zero(db):
     That is the state the ceilings go UNENFORCED in, so it must be visible as
     unknown — a row of zeros would read as a book with no concentration.
     """
-    assert db.record_realised_risk_budget(
-        allocation=None, existing_pct=None, equity=100_000.0,
+    assert record_realised_risk_budget(
+        db,
+        allocation=None, equity=100_000.0,
         cluster_share_pct=40.0, run_id="run-2",
     ) is True
     row = _rows(db)[0]
     assert row["allocator_ran"] == 0
     assert row["committed_pct"] is None
     assert row["cluster_shares_json"] is None
-    assert row["held_risk_pct"] is None
+    assert row["held_only_pct"] is None
     assert row["rationed_names"] is None
     assert row["equity"] == 100_000.0
 
 
 def test_the_recording_is_idempotent_per_run(db):
     for _ in range(2):
-        db.record_realised_risk_budget(
-            allocation=_allocation(), existing_pct={}, equity=1.0,
+        record_realised_risk_budget(
+            db,
+            allocation=_allocation(), equity=1.0,
             cluster_share_pct=40.0, run_id="run-3",
         )
     assert len(_rows(db)) == 1
 
 
-def test_an_empty_held_book_is_zero_not_unknown(db):
-    """`{}` is a book that was READ and holds no risk; None is a book that
-    could not be read. The row must not collapse the two."""
-    db.record_realised_risk_budget(
-        allocation=_allocation(), existing_pct={}, equity=1.0,
+def test_a_fully_granted_book_carries_no_untouched_held_risk(db):
+    """Every name in this run was requested, so nothing is held-only: the
+    figure must be 0.0 and not silently absent."""
+    record_realised_risk_budget(
+        db,
+        allocation=_allocation(), equity=1.0,
         cluster_share_pct=40.0, run_id="run-4",
     )
-    assert _rows(db)[0]["held_risk_pct"] == 0.0
+    assert _rows(db)[0]["held_only_pct"] == pytest.approx(0.0)
 
 
 def test_the_decision_stage_calls_the_recorder():
@@ -134,6 +144,9 @@ def test_the_decision_stage_calls_the_recorder():
     """
     import inspect
 
-    from src import stage_decision
+    from src import pipeline_risk_budget_recording, stage_decision
     src = inspect.getsource(stage_decision)
-    assert "_record_realised_risk_budget(pipeline, ctx, total_value)" in src
+    both = inspect.getsource(pipeline_risk_budget_recording)
+    assert "_record_realised_sector_weights(" in both
+    assert "_record_realised_risk_budget(pipeline, ctx, total_value)" in both
+    assert "_record_realised_concentration(" in src

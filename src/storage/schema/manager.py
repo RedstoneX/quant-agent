@@ -722,55 +722,6 @@ class DatabaseSchema:
             "CREATE INDEX IF NOT EXISTS idx_realised_sector_weights_date "
             "ON realised_sector_weights (session_date)"
         )
-        # BOARD ITEM 186 — the recording the number ledger names as the
-        # only thing that can ever settle `max_portfolio_risk_pct` (25) and
-        # `max_cluster_risk_share_pct` (40). Both are owner-ratified appetite
-        # with no measurement behind them, and under the owner's 2026-09-30
-        # ruling ("risk is never a global dial") no replacement value may be
-        # picked. What is left is to WRITE DOWN what the book's realised
-        # total at-risk and per-cluster concentration actually are, session
-        # by session, so the ceilings stop being unobservable.
-        #
-        # RECORDING ONLY. Nothing may read this back into a sizing, ordering
-        # or refusal decision, and it may NEVER be swept for the ceiling that
-        # would have performed best — that is fitting a number to this
-        # desk's own record, which `docs/OUTCOME.md` bars.
-        #
-        # UNIT: `committed_pct` and the cluster shares are PERCENT OF EQUITY
-        # AT RISK (sum of per-name loss-if-stopped / equity), not notional
-        # weight. `cluster_shares_json` additionally carries each cluster's
-        # share OF THE COMMITTED TOTAL, which is the quantity the 40% ceiling
-        # is written in.
-        #
-        # UNKNOWN STAYS NULL. When the held book's existing risk could not be
-        # read the allocator is not run at all (ceilings go unenforced, see
-        # `_book_risk_inputs`), and this row is written with `committed_pct`
-        # NULL and `allocator_ran` 0 — the fact that concentration is
-        # UNKNOWN, which is not the same fact as a book with none.
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS realised_risk_budget (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                run_id TEXT,
-                session_date TEXT,
-                allocator_ran INTEGER NOT NULL,
-                equity REAL,
-                committed_pct REAL,
-                ceiling_pct REAL,
-                cluster_share_pct REAL,
-                held_risk_pct REAL,
-                cluster_shares_json TEXT,
-                grants_json TEXT,
-                rationed_names INTEGER,
-                UNIQUE (run_id)
-            )
-            """
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_realised_risk_budget_date "
-            "ON realised_risk_budget (session_date)"
-        )
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")

@@ -199,15 +199,6 @@ class PortfolioConstructor(_StopMixin, _OrderBuildMixin):
         # are different facts. Reset per call; `pipeline_stages` persists
         # the realised weights from the FINISHED order list.
         self.last_order_sectors: dict[str, str | None] = {}
-        # Board item 186 RECORDING. The risk-budget allocation this run
-        # actually computed, stashed verbatim so the recorder can write
-        # the realised total at-risk and per-cluster shares without
-        # recomputing them (a second computation could disagree with the
-        # one that sized the orders). None means NOT COMPUTED — a book
-        # whose existing risk was unknown — which is not the same fact as
-        # a book carrying zero risk, so it is never defaulted to empty.
-        self.last_risk_allocation = None
-        self.last_existing_risk_pct: dict[str, float] | None = None
 
     def drain_data_faults(self) -> dict[str, dict[str, str]]:
         """Return every data fault recorded since the last drain, and clear.
@@ -429,8 +420,6 @@ class PortfolioConstructor(_StopMixin, _OrderBuildMixin):
         logger.addHandler(capture)
         self.last_side_flips = {}
         self.last_order_sectors = {}
-        self.last_risk_allocation = None
-        self.last_existing_risk_pct = None
         try:
             return self._construct_orders_impl(*args, **kwargs)
         finally:
@@ -1189,7 +1178,7 @@ class PortfolioConstructor(_StopMixin, _OrderBuildMixin):
         # clusters present) must degrade the SAME way as a total one: ceilings
         # unenforced, per-position sizing still applies. See
         # `_book_risk_inputs` in `src/pipeline_stages.py`.
-        allocation = allocate_risk_budget(
+        allocation = self.last_risk_allocation = allocate_risk_budget(
             requests,
             existing_pct=existing_risk_pct,
             clusters=clusters,
@@ -1201,14 +1190,6 @@ class PortfolioConstructor(_StopMixin, _OrderBuildMixin):
             # allocator scores nothing and this module scores nothing.
             priority=ranking,
         ) if existing_risk_pct is not None else None
-        # Board item 186 RECORDING ONLY — nothing reads this back into a
-        # sizing, ordering or refusal decision. It is the allocator's own
-        # output, captured after the fact, so what is recorded is what
-        # rationed the orders rather than a reconstruction of it.
-        self.last_risk_allocation = allocation
-        self.last_existing_risk_pct = (
-            dict(existing_risk_pct) if existing_risk_pct is not None else None
-        )
 
         plans: dict[str, RiskPlan] = {}
         for sym in closes:

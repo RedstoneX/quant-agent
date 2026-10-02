@@ -37,7 +37,6 @@ from src.storage.analytics.calibration import (  # re-export mirror: defined the
     _POSITION_OPEN_ACTIONS,
     _is_filled_trail_stop,
 )
-from src.storage.risk_budget_record import shape_risk_budget_row
 from src.util.time import ET, UTC, et_today
 
 logger = logging.getLogger(__name__)
@@ -552,59 +551,6 @@ class Database:
         except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
             logger.warning(
                 "realised sector weights for run %s were not recorded (%s)",
-                run_id, e,
-            )
-            return False
-
-    def record_realised_risk_budget(
-        self, *, allocation, existing_pct, equity, cluster_share_pct=None,
-        run_id: str | None = None, session_date: str | None = None,
-    ) -> bool:
-        """Record what the book's REALISED total at-risk and per-cluster
-        concentration were this session.
-
-        BOARD ITEM 186 RECORDING, RECORDING ONLY, and it decides nothing.
-        Read the `realised_risk_budget` note in
-        `src/storage/schema/manager.py` for the unit, the NULL discipline and
-        the hard bar on its use. The payload is shaped by
-        `src.storage.risk_budget_record.shape_risk_budget_row`, which is pure
-        and takes the allocator's OWN output, so the figures are what
-        rationed the orders and cannot disagree with the sizing they
-        describe. Idempotent per run (UNIQUE on `run_id`).
-        """
-        payload = shape_risk_budget_row(
-            allocation=allocation, existing_pct=existing_pct, equity=equity,
-            cluster_share_pct=cluster_share_pct,
-        )
-        try:
-            with self._lock:
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO realised_risk_budget ("
-                    "  timestamp, run_id, session_date, allocator_ran,"
-                    "  equity, committed_pct, ceiling_pct, cluster_share_pct,"
-                    "  held_risk_pct, cluster_shares_json, grants_json,"
-                    "  rationed_names"
-                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        self._sqlite_utc_timestamp(datetime.now(UTC)),
-                        run_id or None,
-                        session_date or str(et_today()),
-                        payload["allocator_ran"],
-                        payload["equity"],
-                        payload["committed_pct"],
-                        payload["ceiling_pct"],
-                        payload["cluster_share_pct"],
-                        payload["held_risk_pct"],
-                        payload["cluster_shares_json"],
-                        payload["grants_json"],
-                        payload["rationed_names"],
-                    ),
-                )
-                self.conn.commit()
-            return True
-        except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
-            logger.warning(
-                "realised risk budget for run %s was not recorded (%s)",
                 run_id, e,
             )
             return False
