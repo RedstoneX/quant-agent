@@ -47,6 +47,9 @@ class _PipelineDatabaseJournal(EventJournal):
     def record_pipeline_event(self, **kwargs) -> None:
         self._journal().record_pipeline_event(**kwargs)
 
+    def insert_agent_log(self, **fields) -> None:
+        self._journal().insert_agent_log(**fields)
+
 
 class AdmissionMixin:
     """Thin delegating shell: `TradingPipeline` keeps every name it always had.

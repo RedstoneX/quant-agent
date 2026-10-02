@@ -126,6 +126,7 @@
         "_PipelineDatabaseJournal": [
           "__init__",
           "_journal",
+          "insert_agent_log",
           "persist_evidence",
           "record_pipeline_event"
         ]
