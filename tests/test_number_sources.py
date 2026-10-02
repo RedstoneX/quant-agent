@@ -403,7 +403,7 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
   # scope: it decides, sizes, prices and exits nothing. The census it bounds
   # is written to `specialist_evidence` as evidence and is read by no gate,
   # no ranking key and no sizing path.
-    assert MAX_UNSCOPED_NUMERIC_SITES == 157, (
+    assert MAX_UNSCOPED_NUMERIC_SITES == 158, ("157 -> 158 on 2026-10-02: +1 for src.sentinel_seam.snapshot.SNAPSHOT_SCHEMA_VERSION (1), the format tag on the outward Sentinel snapshot so a reader on another host can refuse a shape it does not understand. It labels a payload; no gate, ranking key, sizing path, stop or exit reads it. Previously: "
         "156 -> 157 on 2026-10-01, item 78: +1 for "
         "src.seat_heal._RESTORE_OBSERVATION_CAP (5000), a memory bound on "
         "parked heal observations that no gate, ranking key or sizing path "
