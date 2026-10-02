@@ -715,7 +715,7 @@ provider attempts, session call count, or session/ET-day spend. Current
 limits are **$0.90 per session** and **$2.75 per ET day**, checked against
 real settled spend only, plus `max_calls_per_session` (40, a runaway-loop
 backstop) and a provider-attempt cap per logical call computed in code
-(`provider_attempt_budget()`, `src/agents/base.py`) rather than pinned here.
+(`provider_attempt_budget()`, `src/agents/llm_attempts.py`) rather than pinned here.
 **2026-09-02, the cost-circuit rewrite:** the per-mode session cap, the
 separate per-session retry/repair-attempt limit, and the cost-reservation
 layer they existed to manage were all deliberately deleted — see

@@ -20,7 +20,7 @@
  "scripts/status_board.py": 3463,
  "scripts/weekly_review.py": 506,
  "scripts/work_queue.py": 785,
- "src/agents/base.py": 3599,
+ "src/agents/base.py": 2413,
  "src/agents/earnings_analyst.py": 405,
  "src/agents/evening_analyst.py": 733,
  "src/agents/macro_analyst.py": 454,
