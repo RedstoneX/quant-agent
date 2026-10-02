@@ -82,8 +82,11 @@ which cannot be built or exercised on their own. Smaller files, not
 boundaries. Fix: convert them the way the sessions, exits, protection, broker
 and storage packages were done, and add witness tests.
 
-STILL OPEN, measured 2026-10-02: 11 `_Breaker*Mixin` classes are still
-composed into `LLMCostCircuitBreaker` in `src/cost_circuit/breaker.py`.
+PARTLY CLOSED 2026-10-02 (fourth instalment): formats, wording, state and holds
+are now HELD instances on `LLMCostCircuitBreaker` (`_hold_parts`), their four
+shim modules deleted. STILL OPEN: 7 `_Breaker*Mixin` classes (latch, retry,
+session, notify, admission, settlement, operator) are still inherited by
+`LLMCostCircuitBreaker` in `src/cost_circuit/breaker.py`.
 
 VERDICT 2026-10-02 (isolation pass): REPRODUCED (structural debt, not a runtime fault). `class LLMCostCircuitBreaker(_BreakerLatchMixin, ... _BreakerOperatorMixin)` in `src/cost_circuit/breaker.py` lists 11 mixin bases, one per `src/cost_circuit/breaker_*.py` (11 files hold exactly one `_Breaker*Mixin` each). Rebuild size: large -- 11 pieces each need explicit dependencies and a witness test; no behaviour change intended.
 
