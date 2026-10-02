@@ -13,9 +13,11 @@ JSON baselines, just written in Python. Every change that touched a listed file
 had to edit it, so unrelated changes jammed each other.
 
 So this stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md). At check time it
-counts offenders per file and kind in the working tree, counts them again on
-``origin/main``, and reports the DELTA — "this change adds a new offender".
-If ``origin/main`` cannot be read it REFUSES; it never passes by default.
+names every offending site in the working tree — file, kind, enclosing scope
+and the call's own source text — names them again on ``origin/main``, and fails
+on any IDENTITY the tree holds more copies of than the trunk. Never a total:
+removing one offender and adding a different one must still fail. If
+``origin/main`` cannot be read it REFUSES; it never passes by default.
 
 WHAT IS FORBIDDEN
 -----------------
@@ -49,9 +51,15 @@ from scripts.guard_reference import (
     ROOT,
     ReferenceUnavailable,
     TRUNK,
+    added_sites,
+    enclosing_scopes,
+    site_identity,
     trunk_blobs,
     working_paths,
 )
+
+#: One offending site: (path, kind, enclosing scope, source text of the site).
+Site = tuple[str, str, str, str]
 
 SCAN_DIRS = ("src", "tests")
 
@@ -104,18 +112,24 @@ def _reads_clock(expr: ast.AST) -> bool:
 
 def scan_text(path: str, text: str) -> list[tuple[str, int]]:
     """Every (kind, line) offence in one module's source."""
+    return [(kind, line) for kind, line, _scope, _src in scan_sites(path, text)]
+
+
+def scan_sites(path: str, text: str) -> list[tuple[str, int, str, str]]:
+    """Every (kind, line, enclosing scope, source text) offence in one module."""
     tree = ast.parse(text)
-    found: list[tuple[str, int]] = []
+    scopes = enclosing_scopes(tree)
+    found: list[tuple[str, int, str, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             kind = _classify_call(node)
             if kind:
-                found.append((kind, node.lineno))
+                found.append((kind, node.lineno, *site_identity(node, scopes)))
     if path.split("/", 1)[0] == "tests":
         for node in tree.body:  # module level only
             if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None \
                     and _reads_clock(node.value):
-                found.append(("import_time_stamp", node.lineno))
+                found.append(("import_time_stamp", node.lineno, *site_identity(node, scopes)))
     return found
 
 
@@ -127,53 +141,58 @@ def scanned_paths() -> list[str]:
     return sorted(p for p in paths if p != SELF)
 
 
-def working_offences() -> dict[tuple[str, str], list[int]]:
-    """Offences per (path, kind) in the working tree, with their line numbers."""
-    out: dict[tuple[str, str], list[int]] = {}
+def working_offences() -> dict[Site, list[int]]:
+    """Every offending site in the working tree, with the lines it occurs on."""
+    out: dict[Site, list[int]] = {}
     for path in scanned_paths():
         try:
             text = (ROOT / path).read_text(encoding="utf-8", errors="replace")
-            found = scan_text(path, text)
+            found = scan_sites(path, text)
         except SyntaxError:
             continue  # unparsable source is a different failure, caught elsewhere
-        for kind, line in found:
-            out.setdefault((path, kind), []).append(line)
+        for kind, line, scope, src in found:
+            out.setdefault((path, kind, scope, src), []).append(line)
     return out
 
 
-def trunk_offences(paths: list[str]) -> dict[tuple[str, str], int]:
-    """How many offences of each kind each path already had on ``origin/main``.
+def trunk_offences(paths: list[str]) -> dict[Site, int]:
+    """How many copies of each offending site ``origin/main`` already holds.
 
     A path absent from the trunk simply has none — that is how a new file is
     recognised. A trunk blob that will not parse is unmeasurable, so the guard
     refuses rather than treat it as clean.
     """
-    counts: dict[tuple[str, str], int] = {}
+    counts: dict[Site, int] = {}
     for path, text in trunk_blobs(paths).items():
         try:
-            found = scan_text(path, text)
+            found = scan_sites(path, text)
         except SyntaxError as exc:
             raise ReferenceUnavailable(
                 f"cannot parse {TRUNK}:{path} ({exc}), so this guard cannot measure "
                 f"what that file already contained; it refuses rather than pass."
             ) from exc
-        for kind, _line in found:
-            counts[(path, kind)] = counts.get((path, kind), 0) + 1
+        for kind, _line, scope, src in found:
+            key = (path, kind, scope, src)
+            counts[key] = counts.get(key, 0) + 1
     return counts
 
 
 def violations() -> list[str]:
-    """Every (path, kind) this working tree made worse than ``origin/main``."""
+    """Every offending site this working tree holds that ``origin/main`` does not.
+
+    Identity, not total: a site is (path, kind, enclosing scope, source text),
+    so removing one offender never licenses adding a different one.
+    """
     now = working_offences()
     before = trunk_offences(scanned_paths())
     bad: list[str] = []
-    for (path, kind), lines in sorted(now.items()):
-        was = before.get((path, kind), 0)
-        if len(lines) > was:
-            bad.append(
-                f"{path} [{kind}]: {len(lines)} on this branch vs {was} on {TRUNK} "
-                f"(+{len(lines) - was}); offending lines {sorted(lines)}"
-            )
+    for (path, kind, scope, src), n, was in added_sites(
+        {site: len(lines) for site, lines in now.items()}, before
+    ):
+        bad.append(
+            f"{path} [{kind}] in {scope}: `{src}` x{n} on this branch vs x{was} on "
+            f"{TRUNK} (+{n - was}); offending lines {sorted(now[(path, kind, scope, src)])}"
+        )
     return bad
 
 
