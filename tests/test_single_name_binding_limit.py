@@ -28,7 +28,8 @@ from src.portfolio_constructor import (
 )
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-CONSTRUCTOR = REPO / "src" / "portfolio_constructor" / "orders.py"
+# The sizing bodies moved VERBATIM to order_builders.py (2026-10-02); orders.py keeps thin shims.
+CONSTRUCTOR = REPO / "src" / "portfolio_constructor" / "order_builders.py"
 SETTINGS = REPO / "config" / "settings.yaml"
 LEDGER = REPO / "config" / "number_ledger.yaml"
 

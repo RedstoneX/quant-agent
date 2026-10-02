@@ -39,6 +39,8 @@ and the AI risk review stayed in the mixin: the former imports the broker seam
 (`src.execution`, a frozen importer list), the latter reads the module-level
 `_reason_cites_hard_trigger` that a test patches on `src.pipeline_exits`.
 
+**The portfolio constructor's order builders ARE a boundary (2026-10-02, first constructor instalment).** `src/portfolio_constructor/order_builders.py` holds `OrderBuilders` (`_build_buy`, `_build_short`, `_build_sell`, `_build_cover`, `_hold_decision`, lifted verbatim), each collaborator (`cfg`, `_derive_target`, `_resolve_entry_and_stop`, `_apply_sector_dial`, `_note_refusal`, `shipped_stop_rule`, `shipped_stop_level_basis`, `_target_note`) a keyword-only constructor argument; `_OrderBuildMixin` keeps same-named thin shims built per call, and no collaborator is itself a lifted method so the shim cannot recurse. The constructor was already under the size ceiling: this is a boundary job, not a size job. Witness: `tests/test_portfolio_constructor_boundary.py`; the drop-path guard skips thin shims so it scans the moved bodies, not the shims. Still to lift: the stop resolution cluster (`_StopMixin`) and the risk-plan / sector-dial / weights methods on `PortfolioConstructor` itself.
+
 **Five protection pieces now ARE boundaries (2026-10-02).** `src/protection/`
 holds `OwnerAlerts`, `SellFinalization`, `FillReconciler`, `RepegDrain` and
 `CoverageElection`, each a standalone class taking every collaborator as a
