@@ -696,11 +696,18 @@ class DatabaseSchema:
         # (`reducing_orders_built`) so the row never implies the session
         # built only entries.
         #
-        # UNKNOWN STAYS NULL. A session that built no entry orders writes
-        # `weights_json` NULL with `entry_orders_built` 0 — the fact that
-        # nothing was built, which is not the same fact as a book with zero
-        # concentration. A name whose sector the desk could not determine
-        # is recorded with `sector` null inside the JSON, never as "other".
+        # UNKNOWN SECTOR STAYS NULL inside the JSON: a name whose sector
+        # the desk could not determine is recorded with `sector` null,
+        # never as "other".
+        #
+        # `weights_json` ITSELF IS NEVER NULL. A session that built no
+        # entry orders writes `[]` with `entry_orders_built` 0 — the fact
+        # that nothing was built, which is still not the same fact as a
+        # book with zero concentration, but which can no longer be
+        # confused with a recorder that failed to write its content. A
+        # NULL here was indistinguishable from a contentless row, so a
+        # count-based check read "populating" while the content was
+        # missing. NOT NULL makes that shape unwritable.
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS realised_sector_weights (
@@ -708,7 +715,7 @@ class DatabaseSchema:
                 timestamp TEXT NOT NULL,
                 run_id TEXT,
                 session_date TEXT,
-                weights_json TEXT,
+                weights_json TEXT NOT NULL,
                 denominator TEXT NOT NULL,
                 total_value REAL,
                 entry_orders_built INTEGER,
@@ -722,6 +729,59 @@ class DatabaseSchema:
             "CREATE INDEX IF NOT EXISTS idx_realised_sector_weights_date "
             "ON realised_sector_weights (session_date)"
         )
+
+        # Databases created before `weights_json` became NOT NULL may hold
+        # contentless rows. Backfill them to `[]` — a run with
+        # `entry_orders_built` 0 built nothing, which is exactly what `[]`
+        # says — and rebuild the table so the constraint actually holds
+        # going forward. SQLite cannot ALTER a column's nullability.
+        try:
+            cols = self.conn.execute(
+                "PRAGMA table_info(realised_sector_weights)"
+            ).fetchall()
+            nullable = any(
+                c[1] == "weights_json" and not c[3] for c in cols
+            )
+        except sqlite3.DatabaseError:
+            nullable = False
+        if nullable:
+            self.conn.execute(
+                "UPDATE realised_sector_weights SET weights_json = '[]' "
+                "WHERE weights_json IS NULL"
+            )
+            self.conn.execute(
+                """
+                CREATE TABLE realised_sector_weights__new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    run_id TEXT,
+                    session_date TEXT,
+                    weights_json TEXT NOT NULL,
+                    denominator TEXT NOT NULL,
+                    total_value REAL,
+                    entry_orders_built INTEGER,
+                    reducing_orders_built INTEGER,
+                    unknown_sector_orders INTEGER,
+                    UNIQUE (run_id)
+                )
+                """
+            )
+            self.conn.execute(
+                "INSERT INTO realised_sector_weights__new "
+                "SELECT id, timestamp, run_id, session_date, weights_json, "
+                "denominator, total_value, entry_orders_built, "
+                "reducing_orders_built, unknown_sector_orders "
+                "FROM realised_sector_weights"
+            )
+            self.conn.execute("DROP TABLE realised_sector_weights")
+            self.conn.execute(
+                "ALTER TABLE realised_sector_weights__new "
+                "RENAME TO realised_sector_weights"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_realised_sector_weights_date "
+                "ON realised_sector_weights (session_date)"
+            )
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
