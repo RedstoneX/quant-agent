@@ -58,7 +58,7 @@
 | broker.get_intraday_snapshots | 4 |
 | broker.cancel_open_entry_orders | 4 |
 
-**Public surface:** 19 distinct methods/attributes referenced from src/.
+**Public surface:** 48 distinct names accessed on a `broker` handle from src/ [measured by AST over every `src/**/*.py`, counting attribute access on `broker` and `*.broker`]. An earlier count of 19 in this document was wrong: it missed every access reached through an intermediate attribute, and the rebuild must honour the larger surface.
 
 ---
 
@@ -113,4 +113,4 @@
 | self.db.insert_pending_protection_restore | 2 |
 | self.db.get_pending_protection_restores | 2 |
 
-**Public surface:** 20 distinct methods referenced from src/ (via self.db.*).
+**Public surface:** 67 distinct names accessed on a `db` handle from src/ [measured by AST, same method as the broker above]. An earlier count of 20 was wrong for the same reason.

@@ -26,3 +26,11 @@ Come back to these after both oversized files are done.
   smaller files, no real boundaries. The size win is real and the move was
   proven verbatim, so it stands; the boundary work is a separate piece. Written
   down 2026-10-02 rather than claimed as done.
+- **The midnight clock bug is still live and is now blocking split work.** Seven
+  tests fail for the sixteen minutes between 00:00 and 00:16 Eastern because
+  they compare an exchange day against the runner's local day. VERIFIED again
+  2026-10-02 at 00:11 ET, when a split branch went red on exactly those seven
+  and they passed on a re-run outside the window. This is the third instance of
+  this class in the repo. It costs a false red on every change that happens to
+  run in that window. Parked: out of scope for the split, but it should be the
+  first bug fixed afterwards because it wastes a full CI round every time.
