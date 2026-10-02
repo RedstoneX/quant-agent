@@ -941,7 +941,7 @@ def test_fractional_sell_helpers_preserve_position_size():
 
 def test_evening_return_pct_handles_zero_last_equity():
     """Evening must not divide-by-zero when last_equity is 0 (brand-new account)."""
-    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock(), _run_news_update=MagicMock(return_value=(None, None)), _load_earnings_analyses=MagicMock(return_value=([], [])))
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
 
@@ -964,7 +964,7 @@ def test_evening_return_pct_handles_zero_last_equity():
 
 def test_evening_daily_pnl_uses_last_equity():
     """daily_pnl = total_value - last_equity (includes realized fills)."""
-    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock(), _run_news_update=MagicMock(return_value=(None, None)), _load_earnings_analyses=MagicMock(return_value=([], [])))
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
 
@@ -1878,7 +1878,7 @@ def test_pm_prompt_example_reasoning_chain_parses_with_premortem():
 def _evening_pipeline_with_closes(closes):
     """Minimal run_evening harness (mirrors the evening tests above) with a
     real get_recent_daily_closes payload so the backfill loop executes."""
-    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
+    pipeline = build_pipeline(news_provider=MagicMock(), news_analyst=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock(), broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
     pipeline.config = MagicMock()
     pipeline.config.llm.evening_analyst_model = "test-model"
     pipeline.broker.is_trading_day.return_value = True

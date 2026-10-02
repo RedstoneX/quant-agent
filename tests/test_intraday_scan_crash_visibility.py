@@ -72,7 +72,7 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
     the early-return paths under test are the genuine production code
     paths, not a stubbed return value.
     """
-    p = build_pipeline(broker=MagicMock(), db=MagicMock(), market=MagicMock(), macro_store=MagicMock(), news_store=MagicMock(), tech_store=MagicMock(), tech_analyst=MagicMock(), decision_stage=MagicMock(), risk_stage=MagicMock(), execution_stage=MagicMock(), risk_engine=MagicMock())
+    p = build_pipeline(news_provider=MagicMock(), news_analyst=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock(), broker=MagicMock(), db=MagicMock(), market=MagicMock(), macro_store=MagicMock(), news_store=MagicMock(), tech_store=MagicMock(), tech_analyst=MagicMock(), decision_stage=MagicMock(), risk_stage=MagicMock(), execution_stage=MagicMock(), risk_engine=MagicMock())
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=list(universe), lookback_days=100),
         storage=SimpleNamespace(
