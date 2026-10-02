@@ -25,7 +25,7 @@ from src.cost_circuit.parts.episode_wording import EpisodeWording
 from src.cost_circuit.parts.owner_notify import OwnerNotify
 from src.cost_circuit.parts.quota_holds import QuotaHolds
 from src.cost_circuit.parts.shim_guard import _is_class_shim
-from src.cost_circuit.breaker_state import _BreakerStateMixin
+from src.cost_circuit.breaker import LLMCostCircuitBreaker
 from tests.boundary_harness import check_boundary
 
 
@@ -107,8 +107,8 @@ def test_shim_guard_sees_through_bound_methods_and_partials():
 
 def test_state_statics_run_with_nothing_behind_them():
     assert CircuitState._scope_key("day", day="d", run_id="r", mode="m") == \
-        _BreakerStateMixin._scope_key("day", day="d", run_id="r", mode="m")
-    assert _BreakerStateMixin._totals is not None
+        LLMCostCircuitBreaker._scope_key("day", day="d", run_id="r", mode="m")
+    assert LLMCostCircuitBreaker._totals is CircuitState._totals
 
 
 def test_holds_uses_its_own_trip_unless_swapped():
@@ -140,20 +140,64 @@ def test_admission_reads_the_sentinel_live_not_snapshotted():
     adm._run_with_infra_retry.assert_not_called()
 
 
-def test_shims_build_the_state_part_per_call_and_see_a_swapped_body():
-    from src.cost_circuit.breaker_holds import _BreakerHoldsMixin
+def _real_breaker():
+    from types import SimpleNamespace
 
-    class Host(_BreakerStateMixin, _BreakerHoldsMixin):
-        config = object()
-        _context = staticmethod(lambda: ("r", "m"))
-        _emergency_latch_path = None
+    class _Notifier:
+        enabled = True
 
-    host = Host()
-    assert host._circuit_state()._state_row.__func__ is CircuitState._state_row
-    assert host._quota_holds()._trip_locked.__func__ is QuotaHolds._trip_locked
-    host._trip_locked = MagicMock(name="swapped_trip")
-    assert host._quota_holds()._trip_locked is host._trip_locked
-    assert not _is_class_shim(host._trip_locked, "_trip_locked", _BreakerHoldsMixin)
+        def send(self, _message, **_kwargs):
+            return True
+
+    cfg = SimpleNamespace(
+        enabled=True, session_cost_limit_usd=10.0, daily_cost_limit_usd=20.0,
+        max_calls_per_session=1000, max_provider_attempts_per_call=2,
+        input_chars_per_token=3.5,
+    )
+    return LLMCostCircuitBreaker(":memory:", cfg, _Notifier())
+
+
+def test_breaker_holds_the_four_parts_instead_of_inheriting_them():
+    """Composition, not inheritance: the breaker owns one instance of each
+    converted part and every same-named method delegates to it. No shim
+    mixin for these four remains in the MRO or on disk."""
+    import importlib
+    import src.cost_circuit.breaker as breaker_mod
+
+    for gone in ("breaker_formats", "breaker_wording", "breaker_state", "breaker_holds"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(f"src.cost_circuit.{gone}")
+    assert all("Formats" not in b.__name__ and "Wording" not in b.__name__
+               and "State" not in b.__name__ and "Holds" not in b.__name__
+               for b in LLMCostCircuitBreaker.__mro__)
+    assert "AlertFormats" in breaker_mod.__dict__ and "QuotaHolds" in breaker_mod.__dict__
+
+    breaker = _real_breaker()
+    assert breaker._unavailable_sentinel is None
+    assert isinstance(breaker._alert_formats, AlertFormats)
+    assert isinstance(breaker._episode_wording, EpisodeWording)
+    assert isinstance(breaker._circuit_state, CircuitState)
+    assert isinstance(breaker._quota_holds, QuotaHolds)
+    # The held QuotaHolds reads state through the held CircuitState, not the breaker.
+    assert breaker._quota_holds._state_row.__self__ is breaker._circuit_state
+    assert breaker._quota_holds._trip_locked.__func__ is QuotaHolds._trip_locked
+    assert breaker._circuit_state._context.__self__ is breaker
+    # Delegation reaches the instance: swapping a body on the held part is what runs.
+    breaker._quota_holds._trip_locked = MagicMock(name="swapped_trip", return_value="tripped")
+    assert breaker._trip_locked(None, scope="day") == "tripped"
+    breaker._episode_wording._self_clear_window_minutes = lambda: 42.0
+    assert breaker._self_clear_window_minutes() == 42.0
+
+
+def test_fail_closed_sentinel_still_holds_the_four_parts():
+    from types import SimpleNamespace
+    breaker = LLMCostCircuitBreaker.fail_closed(
+        ":memory:", SimpleNamespace(enabled=True), RuntimeError("boom"),
+        notifier=MagicMock(enabled=True),
+    )
+    assert breaker._unavailable_sentinel is not None
+    assert isinstance(breaker._circuit_state, CircuitState)
+    assert isinstance(breaker._quota_holds, QuotaHolds)
 
 
 def test_latch_sync_writes_the_sentinel_through_to_the_host_under_its_own_lock():

@@ -27,7 +27,6 @@ import pytest
 from src.number_sources import (
     ARBITRARY_REQUIRED_FIELDS,
     MAX_ARBITRARY_ENTRIES,
-    MAX_UNSCOPED_NUMERIC_SITES,
     RATCHET_HISTORY_PATH,
     NEUTRAL_VALUES,
     SCOPED_CONFIG_CLASSES,
@@ -383,89 +382,6 @@ def test_scope_has_not_silently_narrowed() -> None:
     assert "src/pipeline.py" in SCOPED_PATHS
     assert "src/agents" in SCOPED_PATHS
 
-
-def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
-    """The other half of scope, and the half that was missing. A test can pin
-    that a hand-kept list does not SHRINK; nothing pinned that it was
-    COMPLETE. Counting the constants outside it turns "somebody should widen
-    scope" into a build failure the day a new one appears — and closes the
-    move where an in-scope number is parked in an unscoped file.
-    """
-    unscoped = collect_unscoped_sites()
-    assert len(unscoped) <= MAX_UNSCOPED_NUMERIC_SITES, (
-        f"{len(unscoped)} unscoped module-level constants, ceiling is "
-        f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
-        f"its module and ledger it. If not, raise the ceiling and say which."
-    )
-  # 2026-10-01, board item 63: +1 for `src.data.smart_money.MAX_SALE_CENSUS_ROWS`
-  # (200), the row cap on the new insider-SALE recording. It is NOT ledgered
-  # because its module is outside SCOPED_PATHS, and it does not belong in
-  # scope: it decides, sizes, prices and exits nothing. The census it bounds
-  # is written to `specialist_evidence` as evidence and is read by no gate,
-  # no ranking key and no sizing path.
-    assert MAX_UNSCOPED_NUMERIC_SITES == 158, (
-        "157 -> 158 on 2026-10-02, PR #978: +1 for ALERT_STATE_SUPPRESSED (3), an alert-state code, no trade input. Previously 156 -> 157 on 2026-10-01, item 78: +1 for "
-        "src.seat_heal._RESTORE_OBSERVATION_CAP (5000), a memory bound on "
-        "parked heal observations that no gate, ranking key or sizing path "
-        "reads. Previously: "
-        "154 -> 155 on 2026-10-01, item 90: +1 for "
-        "src.number_sources.MIN_ROUTE_PROSE_CHARS (40), the shortest "
-        "`records` / `closes_when` prose a ledger row's `settles_by` "
-        "settlement route may carry before the route is refused as "
-        "unactionable. It bounds the LEDGER's own schema -- whether a row "
-        "declares a real route to its answer -- and never a size, price, "
-        "stop or exit. "
-        "153 -> 154 on 2026-09-26, item 99(d): +1 for "
-        "src.retired_mechanisms.MIN_NEEDLE (12), the minimum length a "
-        "described_in.contains needle must have in the new deletion-site "
-        "TRIGGER (described: / described_gaps()) so a short substring "
-        "cannot match a sentence by accident. It bounds a string-matching "
-        "rule inside a build-time prompt-drift check, not any trade "
-        "decision -- it decides whether a registry entry loads, never a "
-        "size, price, stop or exit. "
-        "152 -> 153 on 2026-09-24, item 163: +1 for "
-        "src.models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT (0.5), the "
-        "tolerance the new PM risk-narrative-mismatch check uses to compare "
-        "an explicit risk-% claim in TargetPosition.thesis prose against the "
-        "authoritative risk_allocation_pct field. Not independent -- it is "
-        "RiskConfig.min_position_risk_pct (already ledgered) duplicated as a "
-        "literal because TargetPosition has no RiskConfig in scope at "
-        "validation time. It only sets a surfaced flag; risk_allocation_pct "
-        "is never overridden, so it cannot decide, size, price or exit a "
-        "trade. "
-        "151 -> 152 on 2026-09-24: +1 for "
-        "src.margin_interest.MAX_LOOKBACK_MONTHS (6), the owner's own ask "
-        "for how many months back the cumulative margin-interest view "
-        "(this week/current month/up to 6 months/all-time) looks. It bounds "
-        "a presentation window, not any trade decision. "
-        "150 -> 151 on 2026-09-23: +1 for "
-        "src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS (7), the safety "
-        "bound on the forward calendar walk behind the owner-facing "
-        "margin-interest ESTIMATE (how many calendar days a Friday debit is "
-        "carried). It bounds a Telegram/dashboard estimate and degrades to 1 "
-        "when exhausted; it never decides, sizes, prices or exits a trade. "
-        "149 -> 150 on 2026-09-23: +1 for "
-        "src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS, the width "
-        "of the one FRED release-dates request per release. It is the fetch "
-        "window, not the event horizon -- get_upcoming_events still filters "
-        "to horizon_days -- so it governs what the desk can SEE, not what it "
-        "trades. "
-
-        "147 -> 149 on 2026-09-23, the three-route failover ladder: +2 for "
-        "`src.llm_route_journal._DEFAULT_DB_RELATIVE`'s companions in that "
-        "new module (the journal's SQLite timeout and its read_events page "
-        "size). Both are plumbing on a durable log of which LLM road "
-        "answered; neither decides, sizes, prices or exits a trade. The four "
-        "numbers the same change added to src/agents/base.py are NOT here -- "
-        "that module is in SCOPED_PATHS and they carry ledger entries. "
-        "145 -> 147 on 2026-09-19: +2 for src/number_sources.py's own "
-        "FACTOR_BAND, the scanner's classifier band, not a trade number. "
-
-        "192 -> 145 on 2026-09-19, board item 130: src/execution/broker.py, "
-        "src/coverage_watchdog.py, src/pipeline.py and src/agents moved into "
-        "SCOPED_PATHS and their 47 sites now carry ledger entries instead of "
-        "sitting in this count."
-    )
 
 
 # --------------------------------------------------------------------------

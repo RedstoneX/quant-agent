@@ -56,6 +56,7 @@ from src.risk.constants import (
 )
 
 from src.portfolio_constructor.config import logger  # the package logger, named as before the split
+from src.portfolio_constructor.stop_width import stop_atr_multiple
 from src.portfolio_constructor.config import (
     STOP_RULE_LEVEL_HONOURED,
     STOP_RULE_ABSOLUTE_FLOOR,
@@ -107,18 +108,7 @@ class StopGeometry:
         2026-09-10.) Both ends are pinned to real measurements;
         see `ConstructorConfig.stop_atr_setup_scale` for the derivation.
         """
-        multiple = self.cfg.min_stop_atr_multiple
-        setup = (getattr(analysis, "setup_type", None) or "").strip().lower()
-        for key, scale in self.cfg.stop_atr_setup_scale:
-            if setup == key:
-                multiple *= scale
-                break
-        tape = (regime or "").strip().lower()
-        for key, scale in self.cfg.stop_atr_regime_scale:
-            if tape == key:
-                multiple *= scale
-                break
-        return multiple
+        return stop_atr_multiple(self.cfg, analysis, regime)
 
     def _level_backing_stop(
         self,
