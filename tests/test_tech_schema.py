@@ -47,7 +47,7 @@ from src.models import (
 _DESK_FILLED_FIELDS = {
     "atr_14", "computed_levels", "computed_level_touches", "levels_coverage",
     "signal_bar_low", "signal_bar_high", "bars_available", "signal_age_days",
-    "computed_level_bars", "computed_level_zones",
+    "computed_level_bars", "computed_level_zones", "input_fingerprint", "read_state",
 }
 
 _VALID_ITEM = {

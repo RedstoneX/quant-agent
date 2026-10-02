@@ -77,7 +77,7 @@
  "src/live_capital_preflight.py": 432,
  "src/log_health.py": 1169,
  "src/margin_interest.py": 910,
- "src/models/analysis.py": 890,
+ "src/models/analysis.py": 889,
  "src/models/base.py": 890,
  "src/models/evening.py": 489,
  "src/models/portfolio.py": 565,
