@@ -78,7 +78,7 @@ def test_the_ratified_minimum_risk_floor_is_in_scope_at_every_site() -> None:
     entry that named it said the number existed in exactly one place.
     """
     ids = {site.site_id for site in collect_sites()}
-    assert "src.portfolio_constructor.ConstructorConfig.min_risk_pct" in ids
+    assert "src.portfolio_constructor.config.ConstructorConfig.min_risk_pct" in ids
     assert "src.risk.constants.STARTER_POSITION_RISK_PCT" in ids
     assert "src.config.RiskConfig.min_position_risk_pct" in ids
 
@@ -114,8 +114,8 @@ def test_one_atr_is_not_treated_as_an_identity() -> None:
     assert -1.0 not in NEUTRAL_VALUES
     ids = {site.site_id for site in collect_sites()}
     assert "src.config.RiskConfig.absolute_min_stop_atr_multiple" in ids
-    assert "src.portfolio_constructor.ConstructorConfig.absolute_min_stop_atr_multiple" in ids
-    assert "src.config.CashSweepConfig.reserve_pct" in ids
+    assert "src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple" in ids
+    assert "src.config.CashReserveConfig.pct" in ids
     assert "src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE" in ids
 
 
@@ -125,8 +125,8 @@ def test_stop_width_scalers_inside_a_tuple_are_sites() -> None:
     that only reads top-level defaults would not see them.
     """
     ids = {site.site_id for site in collect_sites()}
-    assert "src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[1][1]" in ids
-    assert "src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]" in ids
+    assert "src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[1][1]" in ids
+    assert "src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[0][1]" in ids
 
 
 def test_result_dataclasses_are_not_sites() -> None:
@@ -242,7 +242,7 @@ def test_the_arbitrary_count_counts_numbers_not_rows() -> None:
     """
     ledger = load_ledger()
     mirrors = {
-        "src.portfolio_constructor.ConstructorConfig.min_stop_atr_multiple":
+        "src.portfolio_constructor.config.ConstructorConfig.min_stop_atr_multiple":
             "src.config.RiskConfig.min_stop_atr_multiple",
         "src.pipeline_stages.MAX_ENTRY_SLIPPAGE_BPS":
             "src.config.ExecutionConfig.max_entry_slippage_bps",
@@ -269,7 +269,7 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
     ledger = load_ledger()
 
     stop_buffer = "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT"
-    exit_offset = "src.pipeline_stages.ExecutionStage._run_session:factor[0]"
+    exit_offset = "src.stage_execution.ExecutionStage._run_session:factor[0]"
 
     # The two canonical bases: arbitrary, with their unchanged values.
     assert ledger[stop_buffer]["status"] == "arbitrary", stop_buffer
@@ -279,14 +279,14 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
 
     # Every other order-price site at these values derives from the base above.
     derived_from_base = {
-        "src.pipeline.TradingPipeline._force_delever:factor[0]": stop_buffer,
-        "src.pipeline_stages.ExecutionStage._run_session:factor[1]": exit_offset,
-        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[1]": exit_offset,
-        "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]": exit_offset,
-        "src.pipeline_stages._projected_post_sale_cash:factor[0]": exit_offset,
-        "src.pipeline_stages._projected_post_sale_cash:factor[1]": exit_offset,
-        "src.pipeline_stages._projected_post_sale_book:factor[0]": exit_offset,
-        "src.pipeline_stages._projected_post_sale_book:factor[1]": exit_offset,
+        "src.pipeline_delever.DeleverMixin._force_delever:factor[0]": stop_buffer,
+        "src.stage_execution.ExecutionStage._run_session:factor[1]": exit_offset,
+        "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]": exit_offset,
+        "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]": exit_offset,
+        "src.pipeline_rotation_exec._projected_post_sale_cash:factor[0]": exit_offset,
+        "src.pipeline_rotation_exec._projected_post_sale_cash:factor[1]": exit_offset,
+        "src.pipeline_rotation_exec._projected_post_sale_book:factor[0]": exit_offset,
+        "src.pipeline_rotation_exec._projected_post_sale_book:factor[1]": exit_offset,
     }
     for site_id, base in derived_from_base.items():
         assert ledger[site_id]["status"] == "derived", site_id
@@ -373,7 +373,7 @@ def test_scope_has_not_silently_narrowed() -> None:
     for name in SCOPED_CONFIG_CLASSES:
         assert hasattr(config_module, name), f"{name} left src/config.py"
     assert "src/risk" in SCOPED_PATHS
-    assert "src/portfolio_constructor.py" in SCOPED_PATHS
+    assert "src/portfolio_constructor" in SCOPED_PATHS
     assert "src/data/technical.py" in SCOPED_PATHS
     assert "src/data/levels.py" in SCOPED_PATHS
     # Board item 130: broker.py IS the broker order.
@@ -397,7 +397,24 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 154, (
+  # 2026-10-01, board item 63: +1 for `src.data.smart_money.MAX_SALE_CENSUS_ROWS`
+  # (200), the row cap on the new insider-SALE recording. It is NOT ledgered
+  # because its module is outside SCOPED_PATHS, and it does not belong in
+  # scope: it decides, sizes, prices and exits nothing. The census it bounds
+  # is written to `specialist_evidence` as evidence and is read by no gate,
+  # no ranking key and no sizing path.
+    assert MAX_UNSCOPED_NUMERIC_SITES == 157, (
+        "156 -> 157 on 2026-10-01, item 78: +1 for "
+        "src.seat_heal._RESTORE_OBSERVATION_CAP (5000), a memory bound on "
+        "parked heal observations that no gate, ranking key or sizing path "
+        "reads. Previously: "
+        "154 -> 155 on 2026-10-01, item 90: +1 for "
+        "src.number_sources.MIN_ROUTE_PROSE_CHARS (40), the shortest "
+        "`records` / `closes_when` prose a ledger row's `settles_by` "
+        "settlement route may carry before the route is refused as "
+        "unactionable. It bounds the LEDGER's own schema -- whether a row "
+        "declares a real route to its answer -- and never a size, price, "
+        "stop or exit. "
         "153 -> 154 on 2026-09-26, item 99(d): +1 for "
         "src.retired_mechanisms.MIN_NEEDLE (12), the minimum length a "
         "described_in.contains needle must have in the new deletion-site "
@@ -756,7 +773,17 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     """
     ids = {site.site_id for site in collect_sites()}
     # (c) parameter defaults.
-    assert "src.pipeline.TradingPipeline._clamp_queued_earnings_buys(max_pct)" in ids
+    # `_clamp_queued_earnings_buys(max_pct)` was rule (c)'s original example
+    # and is GONE: board item 186 (2026-10-01) deleted the 5%-of-book clamp
+    # rather than re-deriving it — an unread filing refuses the BUY. Rule (c)
+    # is pinned on the other parameter default it found, so the shape stays
+    # covered and a new one still cannot arrive unseen.
+    assert not any(
+        i.startswith(
+            "src.pipeline_risk_gate.RiskGate._refuse_queued_earnings_buys"
+        )
+        for i in ids
+    )
     assert "src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)" in ids
     # (d) class attributes.
     assert "src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT" in ids
@@ -769,10 +796,10 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # proceeds haircut: the sweep-sizing cushion that used to sit ahead of it
     # was reformulated away on 2026-09-30 (board item 182), which renumbered
     # the haircut factor[1] -> factor[0]. One site still proves rule (e).
-    assert "src.pipeline.TradingPipeline._force_delever:factor[0]" in ids
+    assert "src.pipeline_delever.DeleverMixin._force_delever:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" not in ids
-    assert "src.pipeline_stages.ExecutionStage._run_session:factor[0]" in ids
-    assert "src.pipeline.TradingPipeline._midday_execute_llm_actions:factor[2]" in ids
+    assert "src.stage_execution.ExecutionStage._run_session:factor[0]" in ids
+    assert "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]" in ids
 
 
 def test_a_parameter_default_is_a_site() -> None:
@@ -868,3 +895,145 @@ def test_the_new_shapes_do_not_leak_into_the_unscoped_sentinel() -> None:
         "def f(a=5.0):\n    return a * 0.99\n\n\nclass K:\n    B = 3\n"
     )
     assert collect_unscoped_sites(root) == []
+
+
+def test_item_90_classification_partitions_the_whole_ledger() -> None:
+    """Item 90's three states, produced FROM the ledger rather than by hand.
+
+    The item's closing condition is that every trade-governing number sits in
+    one of exactly three states: sourced or measured; ratified as a structural
+    bound with the reason recorded; or unsourceable today with a NAMED
+    recording that would settle it. Anything in none of the three is the
+    remaining work. Hand-reading 329 rows to find out is exactly the kind of
+    check this desk has watched slip, so the classification is mechanical and
+    every row lands in exactly one bucket.
+    """
+    from src.number_sources import classification, load_ledger
+
+    ledger = load_ledger()
+    buckets = classification(ledger)
+    flat = [site_id for group in buckets.values() for site_id in group]
+    assert sorted(flat) == sorted(ledger), (
+        "the classification must cover every ledger row exactly once; a row "
+        "that falls through it is a trade number in no known state."
+    )
+    assert len(flat) == len(set(flat))
+
+
+def test_the_settlement_route_ratchet_equals_its_own_record() -> None:
+    """Same shape, and the same reason, as `MAX_ARBITRARY_ENTRIES`.
+
+    A count kept as a hand-edited literal drifts from its own record, and a
+    count kept as a ceiling rewards deleting the row instead of answering it.
+    """
+    from src.number_sources import (
+        MAX_ROUTELESS_ARBITRARY,
+        ROUTE_RATCHET_HISTORY_PATH,
+        classification,
+        load_ledger,
+        load_ratchet_history,
+    )
+
+    history = load_ratchet_history(ROUTE_RATCHET_HISTORY_PATH)
+    assert history, "the route ratchet's history may never be emptied"
+    assert MAX_ROUTELESS_ARBITRARY == sum(int(c["delta"]) for c in history)
+    for change in history:
+        assert len(str(change.get("why", "")).split()) >= 12, (
+            "every delta states which row gained a route and what the "
+            "recording is; a bare number is how the old ceiling was gamed."
+        )
+    assert len(classification(load_ledger())["unclassified"]) == (
+        MAX_ROUTELESS_ARBITRARY
+    )
+
+
+def test_a_settlement_route_that_cannot_be_acted_on_is_refused() -> None:
+    """A malformed route reads as an answer and is not one, so it is worse
+    than an honest blank: it takes the row out of the outstanding count."""
+    from src.number_sources import settlement_route_problem
+
+    good = {
+        "kind": "recording",
+        "state": "built",
+        "where": "src/storage/db.py",
+        "records": "the per-closed-trade entry stop, its basis and the "
+        "maximum adverse excursion reached before the exit",
+        "closes_when": "enough closed trades carry the columns to show "
+        "whether the floor was ever violated in practice",
+        # A BUILT recording also has to name fields the storage layer really
+        # writes (2026-10-01): three recordings were found collecting nothing
+        # while their columns existed, so "built" now has to be falsifiable.
+        "writes": ["trades.entry_atr", "trades.max_adverse_excursion"],
+    }
+    assert settlement_route_problem({"settles_by": good}) is None
+    for field in ("writes",):
+        broken = dict(good)
+        broken.pop(field)
+        assert field in str(settlement_route_problem({"settles_by": broken}))
+    dead = dict(good)
+    dead["writes"] = ["trades.nothing_in_the_code_ever_writes_this"]
+    assert "nothing in" in str(settlement_route_problem({"settles_by": dead}))
+    assert settlement_route_problem({}) == "no `settles_by` block"
+    assert "not a mapping" in str(settlement_route_problem({"settles_by": "soon"}))
+    for field in ("kind", "state", "where", "records", "closes_when"):
+        broken = dict(good)
+        broken.pop(field)
+        assert field in str(settlement_route_problem({"settles_by": broken}))
+    for field, value in (("kind", "vibes"), ("state", "someday")):
+        broken = dict(good)
+        broken[field] = value
+        assert "expected one of" in str(
+            settlement_route_problem({"settles_by": broken})
+        )
+    for field in ("records", "closes_when"):
+        broken = dict(good)
+        broken[field] = "later"
+        assert "not a route" in str(settlement_route_problem({"settles_by": broken}))
+
+
+def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
+    """Item 186's aggregate ceilings, guarded against their own failure mode.
+
+    These four rows are the ceilings that ration the whole book: total
+    at-risk, the terminal sector bound and its constructor mirror, and the
+    share one correlation cluster may hold. Twice now the item has tried to
+    close them by asking the owner what concentration he accepts, and the
+    owner ruled on 2026-09-30 that risk is read per name and never set as a
+    global dial, so that question may not come back. What each row owes
+    instead is a recording. This fails the build if one loses its settlement
+    route or starts asking the owner for a value again.
+    """
+    from src.number_sources import load_ledger, settlement_route_problem
+
+    ledger = load_ledger()
+    ceilings = (
+        "src.config.RiskConfig.max_portfolio_risk_pct",
+        "src.config.RiskConfig.SECTOR_HARD_CEILING_MAX",
+        "src.config.RiskConfig.max_cluster_risk_share_pct",
+        "src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct",
+    )
+    for site_id in ceilings:
+        entry = ledger[site_id]
+        assert settlement_route_problem(entry) is None, (
+            f"{site_id} is a book-wide ceiling with no actionable recording: "
+            f"{settlement_route_problem(entry)}"
+        )
+        assert entry["settles_by"]["kind"] == "recording", (
+            f"{site_id} cannot settle by anything but a recording: there is "
+            "no instrument a book-wide ceiling could be read off."
+        )
+        question = str(entry.get("open_question", ""))
+        assert "WITHDRAWN" in question, (
+            f"{site_id} must say its appetite question is withdrawn, not "
+            "leave it standing as though the owner still owes an answer."
+        )
+        lowered = question.lower()
+        for phrase in ("the owner accept", "does the owner"):
+            start = 0
+            while (hit := lowered.find(phrase, start)) != -1:
+                assert "withdrawn" in lowered[hit:hit + 160], (
+                    f"{site_id} asks the owner for a concentration he "
+                    "accepts without marking it withdrawn, which his "
+                    "2026-09-30 ruling on global risk dials bars."
+                )
+                start = hit + 1

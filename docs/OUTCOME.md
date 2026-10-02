@@ -132,8 +132,11 @@ recording where the number came from. 324 sites are in scope (179 before
 `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents`, 226 before
 the scanner learned the same day to see function-parameter defaults,
 numeric attributes on any class, and near-one inline price/size multipliers
-such as `price * 0.995`); 146 distinct numbers are recorded as having
-nothing behind them.
+such as `price * 0.995`); 136 distinct numbers are recorded as having
+nothing behind them [measured 2026-10-01 from the ledger itself, the figure
+the ratchet test enforces]. The 146 this file carried was stale long before
+board item 186: the live count was 137 before that item deleted the
+queued-earnings clamp's 5 and 136 after.
 
 **What the mechanism actually does, stated exactly, because an authority file
 must not claim more than the code does.** It is a COVERAGE and CONSISTENCY

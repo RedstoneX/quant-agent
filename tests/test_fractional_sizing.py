@@ -40,11 +40,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import functools
+
 from src.execution.broker import AlpacaBroker
 from src.models import PortfolioDecision, ReasoningChain, TradeDecision
 from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
 from src.pipeline_stages import ExecutionStage, _size_shares
+from tests.pipeline_factory import build_pipeline
 
 
 # ==========================================================================
@@ -998,7 +1001,7 @@ def _priced(symbol: str, qty: float, price: float = 900.0) -> MagicMock:
 
 
 def _sweep(pipeline, *, market_open: bool):
-    with patch("src.pipeline._market_is_open_now", return_value=market_open):
+    with patch("src.pipeline_protection._market_is_open_now", return_value=market_open):
         return TradingPipeline._reconcile_stop_coverage(pipeline)
 
 
@@ -1212,7 +1215,7 @@ def test_market_hours_check_fails_toward_open():
 
     broker = MagicMock()
     broker.get_session_close.side_effect = RuntimeError("calendar down")
-    with patch("src.pipeline.et_now", side_effect=RuntimeError("clock down")):
+    with patch("src.pipeline_protection.et_now", side_effect=RuntimeError("clock down")):
         assert _market_is_open_now(broker) is True
 
 
@@ -1227,7 +1230,7 @@ def test_market_hours_check_respects_an_early_close():
     broker = MagicMock()
     broker.get_session_close.return_value = datetime(2026, 11, 27, 13, 0, tzinfo=ET)
     now = datetime(2026, 11, 27, 13, 30, tzinfo=ET)
-    with patch("src.pipeline.et_now", return_value=now):
+    with patch("src.pipeline_protection.et_now", return_value=now):
         assert _market_is_open_now(broker) is False
 
 
@@ -1292,10 +1295,22 @@ def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
     """Same hazard on the partial-exit path: trimming 5 shares off 12.3456
     leaves a 7.3456 residual, and re-protecting it with one fractional order
     would leave the whole residual DAY-only."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker._list_open_sell_stop_orders.return_value = []
     pipeline._format_qty = lambda q: str(q)
+    pipeline.db = None
+    # Reprotect submits through the desk's ONE protective submit, so bind
+    # the real thing over a mocked raw order call: that is what actually
+    # exercises the whole-share/sliver leg split this test is about.
+    pipeline.broker._submit_stop_limit_order.return_value = {
+        "id": "leg", "status": "accepted",
+    }
+    pipeline.broker._submit_stop_leg_retrying = functools.partial(
+        AlpacaBroker._submit_stop_leg_retrying, pipeline.broker,
+    )
+    pipeline.broker._submit_protective_stop_retrying = functools.partial(
+        AlpacaBroker._submit_protective_stop_retrying, pipeline.broker,
+    )
 
     cancelled = [{"id": "s1", "qty": 12.3456, "stop_price": 90.0,
                   "limit_price": 88.0}]
@@ -1307,8 +1322,11 @@ def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
         c.kwargs["qty"]
         for c in pipeline.broker._submit_stop_limit_order.call_args_list
     ]
-    assert qtys[0] == 7.0
-    assert qtys[1] == pytest.approx(0.3456)
+    # DAY sliver FIRST, then the whole-share GTC leg: MEASURED 2026-09-16
+    # (BRK-B) the GTC hold reserved the position and Alpaca refused the
+    # sub-share DAY remainder with held_for_orders when it went second.
+    assert qtys[0] == pytest.approx(0.3456)
+    assert qtys[1] == 7.0
 
 
 def test_a_hybrid_pair_is_all_or_nothing_when_a_leg_is_rejected():

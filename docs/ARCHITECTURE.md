@@ -1,0 +1,613 @@
+# Target architecture and the route to it
+
+Status: design document. No production code changes, no behaviour change.
+Measured against `origin/main` at commit `ceef89b0`, 2026-10-01.
+
+Every structural number below was produced by a grep or an AST pass run against
+that commit; the method is named next to the number. Numbers without a stated
+method do not appear in this document.
+
+---
+
+## 0. What was measured, and where the brief was wrong
+
+The brief that commissioned this document made six structural claims. Four hold,
+two do not. Correcting them matters, because the conversion order in section 4
+depends on which pieces are actually entangled.
+
+### 0.1 Confirmed
+
+**One class, eight mixins.** `src/pipeline.py:446` declares
+`class TradingPipeline(ProtectionMixin, PromptFactsMixin, DeleverMixin,
+ExitEngineMixin, RiskGateMixin, AdmissionMixin, ResearchContinuityMixin,
+IntradayMixin, ...)`. A `grep -rn '^class \w*Mixin' src/` returns exactly eight
+mixin class definitions, one per file.
+
+**No mixin can be constructed alone.** `grep -n 'def __init__'` across
+`src/pipeline_protection.py`, `src/pipeline_exits.py`, `src/pipeline_intraday.py`
+and `src/pipeline_risk_gate.py` returns nothing. None of them defines a
+constructor; each is a bag of methods that only becomes live once mixed into
+`TradingPipeline`, whose `__init__` sets the attributes they read.
+
+**Every test needs the whole desk.** `grep -rl TradingPipeline tests/` matches
+115 of 330 test files. Only 4 test files mention `Mixin` at all.
+
+**A two-way import exists between `pipeline_stages` and `pipeline_sizing`** — and
+seven more besides. An AST pass over every `ImportFrom` node under `src/`
+(module-level and function-level) found 8 mutually-importing module pairs:
+
+| A | B |
+|---|---|
+| `src.config` | `src.live_capital_preflight` |
+| `src.coverage_watchdog` | `src.execution.scale_in` |
+| `src.execution.broker` | `src.execution.scale_in` |
+| `src.execution.broker` | `src.notifier` |
+| `src.models` | `src.seat_heal` |
+| `src.notifier` | `src.trader_feed` |
+| `src.pipeline` | `src.pipeline_stages` |
+| `src.pipeline_sizing` | `src.pipeline_stages` |
+
+**25 tracked Python files exceed 2,561 lines.** `git ls-files '*.py' | xargs wc -l`
+returns exactly 25 such files. The largest is `src/execution/broker.py` at 7,046
+lines, then `src/storage/db.py` (6,270), `src/models.py` (5,265),
+`src/pipeline.py` (5,004), `src/portfolio_constructor.py` (4,649). Ten of the 25
+are test files.
+
+**Hub symbols with no owner.** From the same AST pass, counting distinct importing
+modules per imported symbol:
+
+| Symbol | Distinct importers |
+|---|---|
+| `src.util.time.et_today` | 15 |
+| `src.models.TradeDecision` | 14 |
+| `src.trading_calendar.et_today` | 13 |
+| `src.models.NewsIntelligenceReport` | 12 |
+| `src.agents.base.BaseAgent` | 11 |
+| `src.models.TechAnalysisResult` | 11 |
+| `src.cost_circuit.PaidAnalysisSuspended` | 9 |
+| `src.config.AppConfig` | 9 |
+| `src.data.market.MarketDataProvider` | 9 |
+| `src.pipeline_stages._record_pipeline_event` | 8 |
+| `src.pipeline_stages._persist_evidence` | 7 |
+| `src.pipeline.TradingPipeline` | 7 |
+| `src.execution.broker._get_sector` | 6 |
+
+Two of these deserve naming now. `et_today` exists **twice**, in
+`src.util.time` (15 importers) and in `src.trading_calendar` (13 importers): the
+single most-imported name in the codebase is ambiguous at the import site.
+`_record_pipeline_event` and `_persist_evidence` are private-by-name helpers in
+`pipeline_stages` imported by 8 and 7 other modules respectively — a de facto
+public journal API wearing an underscore.
+
+### 0.2 Wrong, as measured
+
+**The `self.` counts in the brief do not reproduce.** The brief says
+`pipeline_protection.py` makes 71 `self.` references and `pipeline_exits.py` 60.
+Measured two ways:
+
+| File | Raw `self.` occurrences (`grep -c`) | Distinct attribute names (AST) |
+|---|---|---|
+| `src/pipeline_protection.py` | 161 | 39 |
+| `src/pipeline_exits.py` | 124 | 35 |
+
+Neither figure is 71 or 60. The raw counts are roughly twice what the brief
+states; the distinct-name counts are roughly half. The brief's numbers are not
+reproducible from this commit by either method and should not be quoted again.
+
+**"Every piece reaches into every other's state" is overstated.** An AST pass
+that classifies each `self.<attr>` as either (a) a method defined on another
+mixin or on `TradingPipeline`, or (b) a data attribute, gives:
+
+| Mixin file | Distinct `self.` names | Methods owned by another mixin | Data/collaborator attributes |
+|---|---|---|---|
+| `pipeline_risk_gate.py` | 6 | 1 | 3 (`db`, `risk_engine`, one constant) |
+| `pipeline_admission.py` | 10 | 1 | 4 (`broker`, `config`, `db`, `market`) |
+| `pipeline_delever.py` | 20 | 8 | 3 (`broker`, `config`, `db`) |
+| `pipeline_prompt_facts.py` | 26 | 3 | 10 |
+| `pipeline_research_continuity.py` | 27 | 1 | 6 |
+| `pipeline_exits.py` | 35 | 13 | 9 |
+| `pipeline_protection.py` | 39 | 4 | 6 |
+| `pipeline_intraday.py` | 61 | 28 | 15 |
+| `pipeline.py` (the residue) | 133 | 47 | 40 |
+
+Four of the eight mixins make **one to four** calls into another mixin's methods.
+Their coupling is overwhelmingly to four injectable collaborators already
+constructed in `TradingPipeline.__init__` — `broker`, `db`, `market`, `config`.
+Only `pipeline_exits` (13) and `pipeline_intraday` (28) are genuinely entangled
+with their siblings. This is the single most important correction in this
+document: the problem is **not uniform**, so the conversion is not uniform
+either. Roughly half the surface is cheap and the other half is not, and the
+plan in section 4 is ordered on exactly that measurement.
+
+**"`src/execution/broker.py` was never in any plan"** — not verified here.
+`docs/PIPELINE_SPLIT_PLAN.md` mentions the word "broker" 11 times; a grep for the
+path `execution/broker` in that file returns nothing. That is weak evidence, not
+proof that it was never planned, and nothing in this document rests on it.
+
+### 0.3 A finding the brief did not contain
+
+**The domain-rules layer already imports upward, at runtime.** Two deferred
+imports inside function bodies:
+
+- `src/risk/rules.py:2298` — `from src.execution.broker import _get_sector, _sector_resolution_status_for`
+- `src/risk/exit_guard.py:1695` — `from src.agents.portfolio_manager import PortfolioManagerAgent`
+
+Function-level imports do not show up in a module-header scan, which is why this
+kind of violation survives. The risk rules — the layer that is supposed to know
+nothing of plumbing — reach into the broker adapter and into an LLM-backed agent.
+Any dependency check that only reads the top of the file will declare this clean.
+The check specified in section 7 walks the AST for exactly this reason.
+
+**The split so far is partly notional.** `src/stage_decision.py`,
+`src/stage_execution.py` and `src/stage_risk.py` have 1, 2 and 3 distinct `self.`
+attributes, and in each case the attribute is `self._pipeline`. These files hold
+a class that stores the pipeline and calls back into it. `src/stage_risk.py:4`
+says the class body "is byte-for-byte the text that used to live in" the
+pipeline. They moved text, not dependencies. `src/pipeline_stages.py:99-104`
+builds a re-export mirror (`**{n: _pipeline_sizing for n in vars(...)}`) so that
+old import paths keep resolving. That mirror is the mechanism by which the
+two-way import in the table above exists. These are honest transitional devices,
+but they are the reason the owner is right that the split so far is cosmetic:
+a file boundary that preserves every original import path has not moved a
+dependency.
+
+---
+
+## 1. The layers
+
+Derived from what this system actually does — read evidence, form a judgement per
+name, size and gate it against risk doctrine, place and protect orders at a
+venue, and record and narrate all of it — not from a generic template. Seven
+layers, numbered by depth. **A module may import only from a strictly lower
+number.** Equal-number imports are allowed only within the same package and only
+where stated.
+
+```
+  L6  Surfaces        api routes, status board, dashboard, notifier rendering
+       |
+  L5  Composition     TradingPipeline, scheduler, api/deps  <- the ONLY layer
+       |                                                       that names an L3
+  L4  Services        protection, exits, admission, delever, prompt facts,
+       |              research continuity, intraday, rotation execution
+       |
+  L3  Adapters        broker (Alpaca), storage/db, telegram, market/news/
+       |              earnings/macro providers, agents (Anthropic seats)
+       |
+  L2  Ports           the interfaces an adapter must satisfy
+       |
+  L1  Doctrine        risk rules, sizing arithmetic, exit triggers, stop geometry
+       |
+  L0  Kernel          time and calendar, units, value types, constants
+```
+
+The two rules the owner asked for, stated precisely:
+
+- **Domain rules know nothing of plumbing.** L1 may import L0 and nothing else.
+  No `src.storage`, no `src.notifier`, no `src.execution`, no `src.agents`, at
+  module level or inside a function body.
+- **Plumbing knows nothing of the broker or the LLM providers.** L4 Services may
+  import L0, L1 and L2, and may **not** import any L3 module. A service that
+  needs to sell receives an object satisfying the order port; it never imports
+  `src.execution.broker`. A service that needs a seat's judgement receives an
+  object satisfying the seat port; it never imports `src.agents.*`.
+
+L5 Composition is the single place where a concrete adapter is named and handed
+to a service. That is what makes the rule enforceable: there is exactly one file
+to read to know what the desk is actually wired to.
+
+---
+
+## 2. What belongs in each layer, with real examples
+
+### L0 Kernel
+**Belongs.** Exchange-time arithmetic, the trading calendar, pure value types,
+named constants.
+*Here today:* `src/util/time.py`, `src/trading_calendar.py`, `src/models.py`
+(47 importing modules, measured), `src/risk/constants.py` (14).
+
+**Must never be here.** Anything that reads a file, a socket, a database or an
+environment variable. Any type whose construction requires a live account.
+*Violation to fix:* `src.models` and `src.seat_heal` import each other (AST pass).
+A value-type module must not depend on a healing routine; the shared type belongs
+in `models`, the behaviour in L4.
+*Violation to fix:* `et_today` is defined in two L0 modules with 15 and 13
+importers. One must become a re-export of the other, with the duplicate removed.
+
+### L1 Doctrine
+**Belongs.** Decisions expressible as a function of numbers and value types:
+gross-exposure limits, gap-adjusted risk per share, stop geometry, the
+alignment-exit test, share rounding and fractional eligibility.
+*Here today:* `src/risk/rules.py`, `src/risk/constants.py`,
+`src/risk/exit_trigger.py`, `src/risk/trailing.py`, `src/pipeline_sizing.py`
+(426 lines, **0** `self.` references measured — already pure, already a correct
+L1 module, and the best evidence that this layering is reachable).
+
+**Must never be here.** A broker call, a database handle, an LLM call, a
+notifier, wall-clock `now()` taken implicitly rather than passed in.
+*Violations measured:* `src/risk/rules.py:2298` imports `_get_sector` from the
+broker adapter; `src/risk/exit_guard.py:1695` imports `PortfolioManagerAgent`.
+Both are L1→L3 and both are illegal under this rule.
+
+### L2 Ports
+**Belongs.** Narrow interfaces, defined in terms of L0 types: an order port
+(place, amend, cancel, read positions), a ledger port (append an event, persist
+evidence, read recent decisions), a quote port, an evidence-provider port, a seat
+port, an announcement port. Protocols or ABCs, no logic.
+*Here today:* nothing. This layer must be created, one port at a time, as each
+service in section 4 is converted. It is not a big-bang deliverable.
+
+**Must never be here.** Any implementation. Any import of `src.execution`,
+`src.storage`, `src.agents`, `src.data`. A port that mentions Alpaca, SQLite,
+Telegram or Anthropic by name is not a port.
+
+### L3 Adapters
+**Belongs.** One module per outside system, each implementing one port: the
+Alpaca venue client, the SQLite ledger, the Telegram sender, each market/news/
+earnings/macro provider, each analyst seat.
+*Here today:* `src/execution/broker.py` (7,046 lines), `src/storage/db.py`
+(6,270), `src/notifier.py` (3,984), `src/data/*` (24 files), `src/agents/*`
+(14 files).
+
+**Must never be here.** Doctrine. A sizing rule or a gating threshold living
+inside the broker adapter is in the wrong layer; so is reference data that no
+venue is needed to compute — `src.execution.broker._get_sector` has 6 distinct
+importers (measured), none of which wants a broker session.
+**Adapters must not import each other.** Measured violations:
+`src.execution.broker` ↔ `src.notifier` and `src.execution.broker` ↔
+`src.execution.scale_in`.
+
+### L4 Services
+**Belongs.** Stateful collaborators that combine doctrine, evidence and seats to
+produce a decision or an order intent: protection, exits, admission, delever,
+prompt facts, research continuity, intraday, rotation execution. Each has an
+explicit constructor. Each is one noun with one job.
+*Here today:* the eight mixins, which are this layer wearing the wrong shape.
+
+**Must never be here.** An import of any L3 module — that is the rule's whole
+content. Also never: a reference to `TradingPipeline`, by import, by type hint,
+or by `self._pipeline`. `src/stage_decision.py`, `src/stage_execution.py` and
+`src/stage_risk.py` each hold `self._pipeline` (measured) and therefore sit in
+L4's position without meeting L4's rule.
+
+### L5 Composition
+**Belongs.** Construction and sequencing only: build each adapter, hand it to the
+services that declared that port, run the stages in order, handle the session
+lifecycle. The only layer permitted to name a concrete adapter.
+*Here today:* `src/pipeline.py` (5,004 lines; 133 distinct `self.` names, 40 of
+them collaborator attributes, measured), `src/scheduler.py`, `src/api/deps.py`.
+
+**Must never be here.** Any rule anyone could want to test on its own. The
+success measure for this layer is that it shrinks until it is almost entirely
+wiring.
+
+### L6 Surfaces
+**Belongs.** `src/api/*`, `scripts/status_board.py`, the dashboard, the rendering
+half of `src/notifier.py`. Read state, render it, accept a command and pass it
+down.
+
+**Must never be here.** A decision. A surface that decides is a service that got
+lost.
+
+---
+
+## 3. The definition of a boundary
+
+> **A boundary exists where a piece can be constructed and exercised on its own,
+> without building a `TradingPipeline`.**
+
+Stated as a test that can fail, applied to every module proposed below. A module
+`M` passes only if all five hold:
+
+1. **It has a constructor.** `M`'s class defines `__init__`, and every
+   collaborator it uses is a parameter of that constructor. Measured today: none
+   of the four mixins checked defines `__init__`.
+2. **It has no `self` attribute that is not set in that constructor.** Checked by
+   AST: the set of `self.<attr>` reads is a subset of the attributes assigned in
+   `__init__` plus the methods defined on `M` itself. Today
+   `pipeline_intraday.py` reads 28 methods it does not define (measured); that is
+   the failure this clause catches.
+3. **It does not import `src.pipeline`**, at module level or inside any function
+   body, and does not accept a `TradingPipeline` as a parameter under any name.
+4. **It imports no module from a layer at or above its own**, by the AST walk in
+   section 7 — which inspects function-bodied imports, because the two live L1
+   violations in section 0.3 are both function-bodied.
+5. **At least one test constructs `M` with explicit stand-ins for its declared
+   ports and exercises its public entry point, and that test file does not import
+   `TradingPipeline`.** This is the clause that makes the other four worth
+   having, and the only one that cannot be satisfied by rearranging text.
+
+Clause 5 is the falsifier. A module that passes 1–4 but has no such test has not
+been proven separable; it has only been asserted to be. 115 of 330 test files
+import `TradingPipeline` today (measured) — that ratio is the honest scoreboard
+for this whole programme, and it should be reported after every step.
+
+---
+
+## 4. The conversion route
+
+Fifteen steps. Ordered by measured entanglement — fewest cross-mixin method calls
+and fewest collaborator attributes first — so that the cheap steps build the
+ports the expensive steps will need. Each step is independently shippable,
+independently revertible, and leaves the desk working if the next step never
+happens.
+
+Every step's equivalence proof has the same shape unless stated otherwise:
+the extracted methods move **byte-for-byte**; the old call site becomes a
+delegation to the new object constructed in `TradingPipeline.__init__`; the
+existing test suite for that area runs unchanged and green; and one new test
+constructs the new object alone under clause 5 of section 3. A step that cannot
+move its code byte-for-byte is not this step — it is a rewrite, and it needs its
+own review.
+
+**MONEY** marks a step that touches order placement, stop losses or position
+sizing. Those steps need a second reviewer, an explicit before/after diff of
+every order field, and a dry-run against the rehearsal account before merge. They
+are deliberately placed late, behind the ports the cheap steps create.
+
+### Phase A — make the rule checkable (no code moves)
+
+**Step 1. Layer manifest and dependency check.**
+*Moves:* nothing. Adds a manifest mapping each `src/` module to a layer number,
+and a script that AST-walks every `ImportFrom` including function-bodied ones and
+reports upward edges. Ships in report-only mode: it prints the current violations
+and exits zero.
+*Constructor:* n/a.
+*Proof:* the script's first run output is committed as the baseline. It must
+reproduce the 8 two-way pairs and the 2 L1 violations in section 0 exactly. If it
+does not, the manifest is wrong and the step is not done.
+
+**Step 2. Boundary-test harness.**
+*Moves:* nothing. Adds the clause 1–5 checker from section 3 as a test helper, and
+the running count of test files importing `TradingPipeline` (115 today) as a
+reported metric with a ratchet that may only go down.
+*Proof:* the harness passes `src/pipeline_sizing.py` (0 `self.` references,
+measured) and fails every mixin. A harness that passes something it should fail
+is not yet a harness.
+
+### Phase B — fix the layer violations that are already there (small, high value)
+
+**Step 3. De-duplicate `et_today`.**
+*Moves:* one of the two definitions becomes a re-export; the 28 importing modules
+(15 + 13, measured) are left untouched in this step.
+*Proof:* the dependency check from step 1 shows one fewer duplicated kernel
+symbol; no behaviour test changes.
+
+**Step 4. Pull `_get_sector` out of the broker adapter.** **MONEY-adjacent** —
+sector resolution feeds the exposure ladder.
+*Moves:* `_get_sector` and `_sector_resolution_status_for` from
+`src/execution/broker.py` to an L0 reference-data module. The broker re-exports
+them for one release.
+*Constructor:* n/a — these are pure lookups.
+*Proof:* the illegal L1→L3 import at `src/risk/rules.py:2298` disappears from the
+step-1 report. All 6 measured importers resolve to the new module.
+
+**Step 5. Break `src/risk/exit_guard.py` → `src/agents/portfolio_manager`.**
+*Moves:* the agent is no longer imported at `exit_guard.py:1695`; whatever it is
+used for becomes a parameter the caller supplies.
+*Proof:* the second L1 violation disappears from the step-1 report; exit-guard
+tests run with a stand-in in place of the agent.
+
+**Step 6. Promote the journal helpers to a port.**
+*Moves:* `_record_pipeline_event` (8 importers) and `_persist_evidence` (7)
+become the two methods of an L2 `EventJournal` port, with the current
+`pipeline_stages` functions as its L3 implementation.
+*Constructor:* every later service takes `journal: EventJournal` instead of
+reaching for `self.db` and the module-level helper.
+*Proof:* recorded events for one full session are byte-identical before and after.
+
+### Phase C — the cheap services (measured 1 cross-mixin call each)
+
+**Step 7. `RiskGateMixin` → `RiskGate`.** **MONEY** — this is the gate that sizes
+down and refuses.
+*Measured:* 954 lines, 6 distinct `self.` names, 1 foreign method call.
+*Constructor (as built, 2026-10-01):* `RiskGate(*, risk_engine, db, sweeper)`.
+The journal port could NOT replace `self.db` here: the gate's one `db` use is
+`insert_agent_log` (an `agent_logs` row, read back by `scripts/replay_decision.py`),
+which is not on `EventJournal`; routing it through the journal is a body change
+and is left for its own reviewed step. The one foreign call (`_sweeper`) is a
+constructor parameter. `TradingPipeline` keeps a thin delegating `RiskGateMixin`
+(`src/pipeline_risk_gate_mixin.py`) that re-resolves the gate from the live
+collaborators per call, because tests assign `db`/`risk_engine`/`_sweeper` after
+construction.
+*Proof:* standard, plus every refusal and every resize produced over a replayed
+session must match the pre-change output exactly, field by field. Second reviewer
+required.
+
+**Step 8. `AdmissionMixin` → `AdmissionService`.**
+*Measured:* 546 lines, 10 distinct `self.` names, 1 foreign call, collaborators
+`broker`, `config`, `db`, `market`.
+*Constructor:* `AdmissionService(config, positions: PositionsPort, journal,
+quotes: QuotePort)`.
+*Proof:* standard. The admitted-symbol set for a replayed session is identical.
+
+**Step 9. `ResearchContinuityMixin` → `ResearchContinuity`.**
+*Measured:* 1,377 lines, 27 distinct `self.` names, 1 foreign call, collaborators
+`config`, `db`, `macro_store`, `news_store`.
+*Constructor:* `ResearchContinuity(config, journal, macro_store, news_store)`.
+*Proof:* standard.
+
+### Phase D — the large but shallow services
+
+**Step 10. `PromptFactsMixin` → `PromptFacts`.** Large.
+*Measured:* 3,614 lines, 26 distinct `self.` names, 3 foreign calls, **10**
+collaborator attributes (`broker`, `config`, `db`, `earnings_provider`,
+`macro_store`, `market`, `news_store`, `tech_store`, and two caches).
+*Constructor:* ten parameters is too many for one object. This step is therefore
+two: first move it behind a constructor taking all ten unchanged, then split it
+along the fact families it already serves. Do not attempt both at once.
+*Proof:* the rendered prompt facts for a replayed session are byte-identical.
+That is a strong, cheap proof and it is the reason this step is safe despite its
+size.
+
+**Step 11. `DeleverMixin` → `DeleverService`.** **MONEY** — places sell orders.
+*Measured:* 1,282 lines, 20 distinct `self.` names, 8 foreign calls (including
+`_submit_protected_sell`, `_full_sell_qty`, `_sweep_symbol`), 3 collaborators.
+*Constructor:* `DeleverService(config, orders: OrderPort, journal, protection:
+ProtectionService, sweeper)`. The 8 foreign calls split: the order-shaped ones
+become the protection collaborator, the rest become injected helpers.
+*Proof:* standard, plus a replayed delever session must emit the identical order
+intents — symbol, side, quantity, type, limit, time-in-force — with placement
+suppressed. Second reviewer and a rehearsal-account dry run required.
+
+### Phase E — the money core
+
+**Step 12. `ProtectionMixin` → `ProtectionService`.** **MONEY**, largest money
+step.
+*Measured:* 4,438 lines (the 7th-largest tracked Python file), 39 distinct
+`self.` names, 4 foreign calls, collaborators `broker`, `db`, `market`.
+*Constructor:* `ProtectionService(orders: OrderPort, positions: PositionsPort,
+journal, quotes: QuotePort, clock)`. Only 4 foreign calls (`_format_qty`,
+`_record_exit_refusal`, `_retired_cash_park_symbol`, `_sweeper`) — shallow for its
+size, which is why it precedes exits.
+*Proof:* standard, plus a replay in which every stop amendment, cancellation and
+resubmission is captured and compared field-by-field, and an explicit check that
+no stop moves in a direction it could not move before. Second reviewer and a
+rehearsal-account dry run required. Do not combine with any other step.
+
+**Step 13. `ExitEngineMixin` → `ExitEngine`.** **MONEY**, deeply entangled.
+*Measured:* 3,754 lines, 35 distinct `self.` names, **13** foreign method calls,
+9 collaborators including `portfolio_constructor`, `position_reviewer` and
+`risk_manager`.
+*Constructor:* `ExitEngine(protection: ProtectionService, orders, positions,
+journal, quotes, reviewer: SeatPort, risk: SeatPort, constructor_cfg, clock)`.
+Step 12 must land first, because 5 of the 13 foreign calls resolve to protection.
+*Proof:* standard, plus every exit decision and every resulting order intent over
+a replayed session compared field-by-field, and the alignment-exit verdict
+compared per name. Second reviewer and a rehearsal-account dry run required.
+
+**Step 14. `IntradayMixin` → `IntradaySession`.** Largest step overall.
+*Measured:* 1,310 lines but **61** distinct `self.` names and **28** foreign
+method calls — the most entangled piece in the codebase by both measures, three
+times the next worst. Its 15 collaborators include `decision_stage`,
+`execution_stage` and `risk_stage`.
+*Constructor:* cannot be written today. After steps 7–13, 24 of its 28 foreign
+calls resolve to objects that by then have constructors, and the remainder are
+session-lifecycle concerns that belong in L5. This step is **mostly deletion**:
+it becomes a thin L5 sequencer over services that already exist, which is why it
+must be last and why attempting it early would be the single most expensive
+mistake available.
+*Proof:* a full replayed intraday session produces an identical event journal.
+
+### Phase F — the leftovers
+
+**Step 15. Retire the `self._pipeline` wrappers and add the size backstop.**
+*Moves:* `src/stage_decision.py`, `src/stage_execution.py`, `src/stage_risk.py`
+hold only `self._pipeline` (measured: 1, 2 and 3 distinct attributes). Once their
+bodies' dependencies are injected by steps 7–14, the wrapper is deleted, not
+converted. Also retires the `pipeline_stages` re-export mirror at
+`src/pipeline_stages.py:99-104`, which closes the measured
+`pipeline_sizing ↔ pipeline_stages` cycle.
+*Proof:* the step-1 report shows zero two-way pairs involving pipeline modules;
+no import path outside `src/` changes.
+
+---
+
+## 5. The honest cost
+
+**Fifteen steps.** Three are large: **step 14 (intraday)**, **step 12
+(protection)** and **step 13 (exits)** — by the measured entanglement figures,
+28, 4-but-4,438-lines, and 13 foreign calls respectively. Step 10 (prompt facts,
+3,614 lines) is large in volume but shallow in coupling, and is explicitly split
+into two sub-steps rather than pretended to be one.
+
+Five steps are **MONEY**: 7, 11, 12, 13, and 4 by adjacency. Step 14 inherits
+money exposure from everything beneath it. That is a third of the programme under
+stronger review, and it is not compressible: the money code is where the
+entanglement is, because that is where the desk's actual behaviour lives.
+
+What this plan does **not** promise:
+
+- It does not shrink the codebase. Extracting a service with an explicit
+  constructor and a port adds lines before it removes them. Total line count will
+  rise through phases C and D and only fall at step 14 and step 15.
+- It does not fix the four largest files. `broker.py` (7,046), `db.py` (6,270),
+  `models.py` (5,265) and `portfolio_constructor.py` (4,649) are untouched by all
+  fifteen steps. Section 6 says why.
+- It does not reach a clean dependency graph at any intermediate step. Phases
+  A–E leave known violations standing on purpose; the step-1 report is a
+  decreasing count, not a passing check, until step 15.
+- Steps 12, 13 and 14 cannot be parallelised — 13 depends on 12, and 14 on both.
+  That serial chain is the real schedule, and it sits entirely inside the money
+  code.
+- The 115-of-330 test files that import `TradingPipeline` do not all disappear.
+  Many test the sequencing, which is legitimately L5 work.
+
+---
+
+## 6. What will not be converted, and why
+
+**`src/execution/broker.py` (7,046 lines).** It is one adapter for one venue, and
+venue code is cohesive by nature: session, auth, retry, rate limiting, order
+field translation. Splitting it produces several modules that all need the same
+session object, which is the mixin failure again in a new costume. Two carve-outs
+only, both already named: `_get_sector` (step 4, 6 importers, needs no session)
+and the `broker ↔ notifier` and `broker ↔ scale_in` cycles (measured), which are
+layer violations rather than size problems. The remaining bulk stays.
+
+**`src/storage/db.py` (6,270 lines).** One adapter behind one ledger port.
+Splitting the SQL risks silent schema drift between halves, and the benefit is
+cosmetic: nothing becomes independently testable that a ledger port does not
+already make testable. The port is the boundary; the file size is not.
+
+**`src/models.py` (5,265 lines, 47 importing modules).** Value types belong
+together — that is what makes them importable from everywhere without creating a
+cycle. The one real defect is the measured `models ↔ seat_heal` cycle, fixed by
+moving behaviour out of `models`, not by splitting `models`.
+
+**`src/portfolio_constructor.py` (4,649 lines) and `src/cost_circuit.py`
+(4,300).** Each is already a single collaborator with a constructor, used by the
+pipeline rather than mixed into it. They are large, not glued. They fail no
+clause of section 3. Size alone is not a reason to touch working money code.
+
+**The stage wrappers are deleted, not converted** (step 15). Converting a
+delegation shim produces a better delegation shim.
+
+**The LLM seats' prompt text.** Prompt text is behaviour. Moving it during a
+structural change makes the equivalence proof — identical output on a replayed
+session — impossible to interpret. It is out of scope for all fifteen steps.
+
+**The test files over 2,561 lines** (10 of the 25 measured). They get rewritten
+as a consequence of steps 7–14, not as a target.
+
+---
+
+## 7. How this prevents regrowth
+
+The mechanism is the dependency rule and the boundary test. File-size limits are
+a backstop and nothing more.
+
+**The dependency check (step 1) is the primary guard.** It AST-walks every
+`ImportFrom` in `src/`, including imports inside function bodies, maps both ends
+to a layer in the manifest, and fails on any upward edge. Function-bodied imports
+are the whole point: both live L1 violations in section 0.3 are deferred imports
+inside functions, invisible to any header scan, and the second-oldest trick for
+re-creating a cycle after someone breaks it. The check runs in CI on every pull
+request. A new module with no manifest entry fails; that is deliberate, because
+the alternative is a layer assignment nobody ever made.
+
+**The boundary test (step 2) is the guard that cannot be gamed.** Clauses 1–4 are
+structural and a determined author can satisfy them while changing nothing real.
+Clause 5 — a test that constructs the module with stand-ins and never imports
+`TradingPipeline` — cannot be satisfied by rearranging text. The count of test
+files importing `TradingPipeline` (115 of 330 today, measured) is reported on
+every run and ratchets downward only.
+
+**Why this catches what the last attempt did not.** The split so far produced
+`stage_decision.py`, `stage_execution.py` and `stage_risk.py`, which hold nothing
+but `self._pipeline` (measured), and a re-export mirror at
+`src/pipeline_stages.py:99-104` that preserves every original import path. Both
+pass any file-size rule. Both fail clause 3 of the boundary test on the first
+run. That is the difference between the two mechanisms, and it is why the
+file-size ceiling is listed last.
+
+**The backstop.** A file-size ceiling in CI, set above the current largest
+exempted file so it never blocks the work in section 6, and lowered only when a
+step actually reduces the maximum. A ceiling that fires constantly gets
+suppressed; a ceiling that fires once a year gets read. It exists to catch a new
+5,000-line file, not to force the old ones apart.
+
+**The reporting discipline.** After every step, three numbers go in the pull
+request: upward dependency edges remaining, two-way import pairs remaining
+(8 today, measured), and test files importing `TradingPipeline` (115 of 330
+today, measured). If a step does not move at least one of them, it was not a
+conversion step.

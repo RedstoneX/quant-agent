@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from src.models import (
+from src.models.base import (
     SECTOR_DIRECTIONS,
     SECTOR_STANCE_TO_DIRECTION,
     _ALLOWED_SECTORS,
@@ -113,6 +113,48 @@ class HealResult:
         }
 
 
+#: ITEM 78 RECORDING, RECORDING ONLY. Every call of
+#: `restore_stated_soft_exits` appends one observation here; the pipeline
+#: drains it once per run and writes the rows to
+#: `soft_exit_heal_restores`. Nothing reads this buffer back into a
+#: trading decision and it may never be swept for a threshold.
+#:
+#: WHY IT IS A BUFFER: the mechanical restore runs inside a Pydantic
+#: `model_validator`, which has no run id, no session and no database
+#: handle. Passing one in would make a validator depend on storage, so the
+#: observation is parked here and written where that context exists.
+_RESTORE_OBSERVATION_CAP = 5000
+_restore_observations: list[dict] = []
+_restore_observations_dropped = 0
+
+
+def _note_restore_observation(obs: dict) -> None:
+    """Park one mechanical-restore observation. Never raises."""
+    global _restore_observations_dropped
+    try:
+        if len(_restore_observations) >= _RESTORE_OBSERVATION_CAP:
+            _restore_observations_dropped += 1
+            return
+        _restore_observations.append(obs)
+    except Exception:  # noqa: BLE001 — a recording never blocks a trade
+        pass
+
+
+def drain_restore_observations() -> tuple[list[dict], int]:
+    """Take and clear the parked observations plus the dropped count.
+
+    Returns `(observations, dropped_since_last_drain)`. The dropped count
+    is reported rather than silently lost, so a reader of the rows knows
+    its own denominator is short.
+    """
+    global _restore_observations_dropped
+    out = list(_restore_observations)
+    dropped = _restore_observations_dropped
+    _restore_observations.clear()
+    _restore_observations_dropped = 0
+    return out, dropped
+
+
 def restore_stated_soft_exits(values: dict, raw: dict | None) -> tuple[dict, list[str]]:
     """Put back a stated thesis_invalid_if / catalyst that a null-wipe dropped.
 
@@ -126,6 +168,19 @@ def restore_stated_soft_exits(values: dict, raw: dict | None) -> tuple[dict, lis
         return values, []
     restored: list[str] = []
     out = dict(values)
+    # ITEM 78 RECORDING, RECORDING ONLY. Was the canonical falsifier blank
+    # when this heal ran, and did the heal fill it? Unknown stays None: a
+    # payload with no `symbol` key records a NULL symbol rather than a
+    # guessed one, and `source` is NULL unless something was actually
+    # restored.
+    _sym = values.get("symbol")
+    _sym = _sym.strip().upper() if isinstance(_sym, str) and _sym.strip() else None
+    _before = out.get("thesis_invalid_if")
+    _blank_found = (
+        _before is None
+        or _before == ""
+        or (isinstance(_before, str) and _before.strip().lower() in ("", "unknown"))
+    )
     for field_name in ("thesis_invalid_if", "catalyst"):
         raw_val = raw.get(field_name)
         if not isinstance(raw_val, str) or not raw_val.strip():
@@ -143,6 +198,19 @@ def restore_stated_soft_exits(values: dict, raw: dict | None) -> tuple[dict, lis
         ):
             out[field_name] = raw_val
             restored.append(field_name)
+    _note_restore_observation(
+        {
+            "symbol": _sym,
+            "blank_found": bool(_blank_found),
+            "healed": "thesis_invalid_if" in restored,
+            # The ONLY source this path can ever have: the sentence the
+            # model itself already wrote on the raw payload. Never a
+            # substituted or invented value.
+            "source": (
+                "raw_model_output" if "thesis_invalid_if" in restored else None
+            ),
+        }
+    )
     return out, restored
 
 
@@ -154,7 +222,7 @@ def merge_retry_falsifiers(original_targets: list, retry_targets: list) -> tuple
     unmeasurable-range exception already gated in Python. Returns
     (targets, symbols filled).
     """
-    from src.models import stated_soft_exit
+    from src.models.base import stated_soft_exit
 
     if not original_targets:
         return original_targets, []

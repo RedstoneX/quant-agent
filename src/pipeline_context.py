@@ -108,6 +108,15 @@ class RunContext:
     fomc_coverage: "FOMCCoverage | None" = None
     news_intel: "NewsIntelligenceReport | None" = None
     analyses: list = field(default_factory=list)  # list[TechAnalysisResult]
+    #: {symbol: why} — the technical seat returned a row for this name and
+    #: the row could not be read. Board item 220. Distinct from a name the
+    #: seat was never asked about: both are "no answer", but only this one
+    #: had an answer and lost it, and the owner-facing record must say which.
+    tech_unreadable: dict = field(default_factory=dict)
+    #: Symbols the technical seat WAS asked about and that produced nothing
+    #: usable at all — no row to call unreadable. The third of the three
+    #: causes, kept apart from `tech_unreadable` and from "never asked".
+    tech_unanswered: set = field(default_factory=set)
     earnings_results: list[dict] = field(default_factory=list)
     smart_money_observations: list = field(default_factory=list)
     smart_money_findings: list = field(default_factory=list)
@@ -116,6 +125,10 @@ class RunContext:
     # admission. Never written back to config.trading.universe and never
     # authored by an LLM.
     admitted_symbols: set[str] = field(default_factory=set)
+    #: {symbol: [blocking seats that did not answer about it]} — the per-name
+    #: reading of `evidence_gate.BLOCKING_SEATS`, written by
+    #: `_record_name_coverage`. Board item 220.
+    name_coverage_blocking_gaps: dict = field(default_factory=dict)
     smart_money_admissions: dict[str, dict] = field(default_factory=dict)
     # Conviction ledger (spec §9.5): {SYMBOL: {seat: {"conviction", "observation"}}}
     # for every raw nomination this run produced, seat names already
@@ -326,7 +339,7 @@ class RunContext:
     # inside the already-approved ceiling is a safety net only, not the
     # product. Repeg stays off. Submit deadline is the sum of programmed
     # waits (auth reconnect-max if the socket was not started during Risk,
-    # plus the ratified funding timeouts when fund_buys runs).
+    # plus the ratified funding timeouts when a funding sale runs).
     desk_latency_stall: bool = False
     catch_up_used: dict[str, bool] = field(default_factory=dict)
     entry_submit_budget_s: float = 0.0
@@ -435,11 +448,11 @@ class PMFacts:
     # when there was no book to measure.
     invested_target_pct: float | None = None
     deployment_gap_pp: float | None = None  # invested - target (negative = under)
-    # Tolerance band for the ⚠️ section below: the desk's own sourced cash
-    # reserve (`cash_sweep.reserve_pct`), not an invented number — see
+    # Tolerance band for the ⚠️ section below: the owner-set advisory
+    # band (`deployment_gap.band_pct`), not an invented number — see
     # `src.risk.rules.deployment_gap_band_pct`. None only when the pipeline
     # never set it (e.g. a bare `PMFacts()` in a test); render() then falls
-    # back to `CashSweepConfig`'s own declared default rather than a number
+    # back to `DeploymentGapConfig`'s own declared default rather than a number
     # invented here.
     deployment_gap_band_pct: float | None = None
 
@@ -624,8 +637,8 @@ class PMFacts:
         # not by a prompt nudge to trim.
         band = self.deployment_gap_band_pct
         if band is None:
-            from src.config import CashSweepConfig
-            band = CashSweepConfig.model_fields["reserve_pct"].get_default()
+            from src.config import DeploymentGapConfig
+            band = DeploymentGapConfig.model_fields["band_pct"].get_default()
         # 2026-09-18 fix: the not-under branch used to read
         # "invested=109.4% vs mandate=100% (gap +9pp)". On 2026-09-17 the PM
         # cited that line, alongside the (separately fixed) "no margin" cash

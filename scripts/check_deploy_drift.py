@@ -5,53 +5,41 @@ Deterministic and read-only. No LLM call, no daemon, no new alert path.
 
 The problem this closes: QAMC is deployed by hand to a detached-HEAD git
 checkout (`/home/qamc/quant-agent`). A merge to `origin/main` can be
-recorded as "deployed" in docs/chat without the box ever being
-`git checkout`'d onto it. Nothing compared RUNNING vs MERGED, so the gap
-was silent for hours. This script is that comparison.
+recorded as "deployed" without the box ever being `git checkout`'d onto
+it. This script compares RUNNING vs MERGED.
 
 What it does:
-  1. `git fetch origin main` in the deployed checkout — updates the
-     remote-tracking ref only. Never touches the working tree or HEAD,
-     so it cannot disturb a running trading session.
-  2. Compares the checkout's HEAD against the freshly fetched
-     `origin/main`.
-  3. If the checkout is behind, prints the count and the subject line of
-     every missing commit, sends one Telegram alert via the existing
-     `TelegramNotifier` (same class `scripts/cost_circuit.py` and the
-     shutdown/hold alerts use — no new sender), and exits non-zero.
-  4. If it's in sync, prints one line and exits 0. No Telegram push.
+  1. `git fetch origin main` in the deployed checkout (remote-tracking
+     ref only; never touches the working tree or HEAD).
+  2. Compares the checkout's HEAD against the fetched `origin/main`.
+  3. If behind, prints the count and subject of every missing commit,
+     sends one Telegram alert via the existing `TelegramNotifier`, and
+     exits non-zero.
+  4. If in sync, prints one line and exits 0. No Telegram push.
 
 Expected, non-alarming states (must NOT be reported as drift):
   - Detached HEAD. That's how deploys work here; this script never
     compares branch names, only commit reachability.
-  - A dirty `config/settings.yaml`. The box carries an intentional
-    tracked config delta. Working-tree dirtiness plays no part in the
-    drift computation (commit-only comparison), but a dirty file
-    *other than* `config/settings.yaml` is surfaced as an informational
-    note so an operator notices an unexpected local edit — it still
-    does not affect the exit code or trigger an alert.
-  - Network / fetch failure. Degrades quietly: prints a warning to
-    stderr and exits 0. A box that can't reach GitHub right now is not
-    evidence it's behind, and alerting on every transient egress blip
-    would train operators to ignore the channel.
+  - A dirty `config/settings.yaml` (intentional tracked config delta).
+    A dirty file *other than* that is surfaced as an informational note
+    only; it does not affect the exit code or trigger an alert.
+  - Network / fetch failure: NOT drift, no Telegram alert, but NOT clean
+    either; exits 4 naming what could not be read.
 
-Usage:
-    scripts/check_deploy_drift.py
-    scripts/check_deploy_drift.py --deployed-path /home/qamc/quant-agent
-    scripts/check_deploy_drift.py --no-telegram   # print only, no push
-    scripts/check_deploy_drift.py --no-fetch      # use existing refs (tests)
+Usage: scripts/check_deploy_drift.py [--deployed-path P] [--no-telegram] [--no-fetch]
 
 Exit codes:
-    0  in sync, or the check could not run (fetch/network failure)
+    0  checked, and in sync
     1  deployed checkout is behind origin/main
-    3  deployed checkout HEAD could not be determined (not a git repo,
-       path missing, etc.) — an operator problem, not a drift finding
+    3  deployed HEAD unreadable (not a git repo, missing, no permission)
+    4  check could not complete (fetch failed, ref unresolved, git error)
 """
 from __future__ import annotations
 
 import argparse
 import subprocess
 import sys
+from datetime import date, datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,9 +50,7 @@ if str(PROJECT_ROOT) not in sys.path:
 DEFAULT_DEPLOYED_PATH = "/home/qamc/quant-agent"
 DEFAULT_REMOTE_REF = "origin/main"
 GIT_TIMEOUT_S = 20
-# The one file this box is expected to carry a local edit for. See the
-# module docstring — this is not a security allowlist, just noise
-# suppression for a known, intentional delta.
+# The one file this box intentionally carries a local edit for (noise suppression).
 EXPECTED_DIRTY_FILES = {"config/settings.yaml"}
 
 
@@ -79,6 +65,7 @@ class DriftReport:
     remote_sha: str | None = None
     fetch_ok: bool = False
     fetch_error: str | None = None
+    check_error: str | None = None  # a git read failed mid-check
     behind_count: int = 0
     missing_commits: list[tuple[str, str]] = field(default_factory=list)
     unexpected_dirty_files: list[str] = field(default_factory=list)
@@ -86,7 +73,11 @@ class DriftReport:
     @property
     def checked(self) -> bool:
         """False when we couldn't determine drift at all (no fetch, no HEAD)."""
-        return self.head_sha is not None and self.remote_sha is not None
+        return (
+            self.head_sha is not None
+            and self.remote_sha is not None
+            and self.check_error is None
+        )
 
     @property
     def is_behind(self) -> bool:
@@ -149,7 +140,8 @@ def get_missing_commits(
 ) -> list[tuple[str, str]]:
     """Commits reachable from remote_sha but not from head_sha, oldest first.
 
-    Empty when head_sha == remote_sha or head_sha is already ahead/equal.
+    Empty when head_sha == remote_sha or already ahead. Raises GitError
+    if git fails (never "no missing commits").
     """
     if head_sha == remote_sha:
         return []
@@ -169,16 +161,10 @@ def get_missing_commits(
 def get_unexpected_dirty_files(deployed_path: str) -> list[str]:
     """Working-tree files with local modifications, excluding the known delta.
 
-    Informational only — never affects the drift verdict or exit code.
+    Raises GitError if git fails (never "no dirty files").
     """
-    try:
-        # `-uno`: untracked files are not local modifications. Rotated logs
-        # and caches always sit in a live runtime directory, and reporting
-        # them every run is exactly how an operator learns to ignore this
-        # channel.
-        out = _run_git(["status", "--porcelain", "-uno"], cwd=deployed_path)
-    except GitError:
-        return []
+    # `-uno`: untracked files (rotated logs, caches) are not modifications.
+    out = _run_git(["status", "--porcelain", "-uno"], cwd=deployed_path)
     dirty = []
     for line in out.splitlines():
         if not line.strip():
@@ -211,11 +197,14 @@ def build_report(
     if report.remote_sha is None:
         return report
 
-    report.missing_commits = get_missing_commits(
-        deployed_path, report.head_sha, report.remote_sha,
-    )
-    report.behind_count = len(report.missing_commits)
-    report.unexpected_dirty_files = get_unexpected_dirty_files(deployed_path)
+    try:
+        report.missing_commits = get_missing_commits(
+            deployed_path, report.head_sha, report.remote_sha,
+        )
+        report.behind_count = len(report.missing_commits)
+        report.unexpected_dirty_files = get_unexpected_dirty_files(deployed_path)
+    except GitError as exc:
+        report.check_error = str(exc)
     return report
 
 
@@ -232,6 +221,82 @@ def format_alert(report: DriftReport, remote_ref: str) -> str:
     for sha, subject in report.missing_commits:
         lines.append(f"  {sha[:10]}  {subject}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# durable state — the board reads this, and it is what stops the alert
+# repeating unchanged
+# ---------------------------------------------------------------------------
+
+def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
+                 state_path=None, today: date | None = None) -> bool:
+    """Write the drift snapshot where /health can read it.
+
+    Written on EVERY run so the board can tell "checked and clean" from
+    "never checked". Reuses `save_state` from `src.coverage_watchdog`.
+    """
+    from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state, save_state
+
+    target = state_path or DEPLOY_DRIFT_STATE_PATH
+    day = (today or datetime.now(timezone.utc).date()).isoformat()
+    state = load_state(target)
+    if report.head_sha is None or report.remote_sha is None:
+        status = "unknown"
+    elif report.check_error is not None:
+        status = "unknown"
+    elif report.is_behind:
+        status = "behind"
+    else:
+        status = "in_sync"
+    state["deploy_drift"] = {
+        "status": status,
+        "behind_count": report.behind_count,
+        "head_sha": report.head_sha,
+        "remote_sha": report.remote_sha,
+        "remote_ref": remote_ref,
+        "deployed_path": report.deployed_path,
+        "fetch_ok": report.fetch_ok,
+        "missing_commits": [
+            {"sha": sha, "subject": subject}
+            for sha, subject in report.missing_commits
+        ],
+        "unexpected_dirty_files": list(report.unexpected_dirty_files),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if alerted:
+        state["drift_alerted_for"] = {"day": day, "remote_sha": report.remote_sha}
+    elif report.is_behind and report.remote_sha:
+        # Item 211. This run found the SAME drift and deliberately said
+        # nothing. Silence that leaves no trace is indistinguishable from
+        # "nothing happened", so the refusal is recorded in the same state
+        # file, through the same helper the typed-alert claim uses, and is
+        # readable at /alerts/suppressed.
+        from src.coverage_watchdog import _record_suppressed_alert
+
+        _record_suppressed_alert(
+            state, "deploy_drift", day, [report.remote_sha],
+        )
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return save_state(state, target)
+
+
+def already_alerted(report: "DriftReport", *, state_path=None,
+                    today: date | None = None) -> bool:
+    """True when this exact drift (same day, same origin/main tip) was already
+    pushed. Five identical "QAMC deploy drift" messages went out in one day and
+    changed nothing; a message that repeats unchanged is noise, and the board
+    carries the state for as long as it lasts."""
+    from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state
+
+    target = state_path or DEPLOY_DRIFT_STATE_PATH
+    day = (today or datetime.now(timezone.utc).date()).isoformat()
+    prior = load_state(target).get("drift_alerted_for") or {}
+    return bool(
+        isinstance(prior, dict)
+        and prior.get("day") == day
+        and prior.get("remote_sha")
+        and prior.get("remote_sha") == report.remote_sha
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -263,19 +328,31 @@ def main(argv: list[str] | None = None) -> int:
 
     if not report.fetch_ok:
         print(
-            f"check_deploy_drift: fetch failed, skipping this check "
-            f"({report.fetch_error})",
+            f"check_deploy_drift: COULD NOT CHECK — fetch failed in "
+            f"{args.deployed_path} ({report.fetch_error}); this is not a "
+            f"clean result",
             file=sys.stderr,
         )
-        return 0
+        return 4
 
     if report.remote_sha is None:
         print(
-            f"check_deploy_drift: could not resolve {args.remote_ref} "
-            f"after fetch — skipping this check",
+            f"check_deploy_drift: COULD NOT CHECK — could not resolve "
+            f"{args.remote_ref} in {args.deployed_path}; this is not a "
+            f"clean result",
             file=sys.stderr,
         )
-        return 0
+        return 4
+
+    if report.check_error is not None:
+        print(
+            f"check_deploy_drift: COULD NOT CHECK — a git read failed in "
+            f"{args.deployed_path} ({report.check_error}); this is not a "
+            f"clean result",
+            file=sys.stderr,
+        )
+        record_state(report, args.remote_ref, alerted=False)
+        return 4
 
     if report.unexpected_dirty_files:
         print(
@@ -287,23 +364,42 @@ def main(argv: list[str] | None = None) -> int:
     if not report.is_behind:
         print(f"check_deploy_drift: in sync with {args.remote_ref} "
               f"({report.head_sha[:10]})")
+        record_state(report, args.remote_ref, alerted=False)
         return 0
 
     message = format_alert(report, args.remote_ref)
     print(message)
 
-    if not args.no_telegram:
+    # The board is the primary surface. It is written FIRST and
+    # unconditionally, because alerts can be (and currently are) muted, and a
+    # drift nobody can see is the failure this whole check exists to stop.
+    sent = False
+    repeat = already_alerted(report)
+    if not args.no_telegram and not repeat:
         from src.notifier import TelegramNotifier
 
         notifier = TelegramNotifier()
         if notifier.enabled:
             notifier.send(message)
+            sent = True
         else:
             print(
                 "check_deploy_drift: Telegram not configured; alert printed "
                 "above only",
                 file=sys.stderr,
             )
+    elif repeat:
+        print(
+            "check_deploy_drift: same drift already alerted today — not "
+            "repeating the message; the state is on /health until it clears",
+            file=sys.stderr,
+        )
+    if not record_state(report, args.remote_ref, alerted=sent or repeat):
+        print(
+            "check_deploy_drift: WARNING could not write the drift state "
+            "file — /health will not show this drift",
+            file=sys.stderr,
+        )
 
     return 1
 

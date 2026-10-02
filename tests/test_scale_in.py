@@ -28,8 +28,6 @@ from src.execution.scale_in import (
     pending_protection_symbols,
     prepare_long_add,
     prepare_short_add,
-    scale_in_symbols_to_skip,
-    short_add_is_blocked,
 )
 from src.models import PortfolioDecision, Position, ReasoningChain, TradeDecision
 from src.pipeline import TradingPipeline
@@ -134,12 +132,6 @@ def _shortable(pipeline):
 
 def test_repeg_enabled_stays_false():
     assert ExecutionConfig().repeg_enabled is False
-
-
-def test_short_add_is_blocked_only_when_already_short():
-    assert short_add_is_blocked([_cop_position(qty=-8)], "COP") is True
-    assert short_add_is_blocked([_cop_position(qty=8)], "COP") is False
-    assert short_add_is_blocked([], "COP") is False
 
 
 def test_most_protective_long_stop_is_the_highest_trigger():
@@ -1021,19 +1013,6 @@ def test_pending_protection_symbols_includes_scale_in_wal(tmp_path):
     db.close()
 
 
-def test_scale_in_symbols_to_skip_when_an_entry_is_still_working():
-    db = MagicMock()
-    db.get_pending_protection_restores.return_value = [
-        {"symbol": "COP", "sell_order_id": WAL_SCALE_IN_SENTINEL},
-    ]
-    broker = MagicMock()
-    broker.list_open_entry_order_ids.return_value = ["buy-1"]
-    with patch(
-        "src.execution.scale_in.trading_session_lock_held", return_value=False,
-    ):
-        assert scale_in_symbols_to_skip(broker, db) == {"COP"}
-
-
 # --------------------------------------------------------------------------
 # D7 emergency cover: a NON-RAISING broker rejection is still a FAILED cover
 # --------------------------------------------------------------------------
@@ -1117,17 +1096,21 @@ def test_emergency_cover_source_guards_its_submit_result():
     import pathlib
 
     import src.pipeline_stages as stages_mod
+    import src.stage_execution as stage_execution_mod
 
-    src = pathlib.Path(stages_mod.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
+    # item 210 step 10 moved ExecutionStage (which owns the D7 block) into
+    # src/stage_execution.py. Scan both modules so the guard still has to
+    # be found somewhere in the executable product code.
     blocks = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Try):
-            continue
-        segment = ast.get_source_segment(src, node) or ""
-        if '"EMERGENCY_COVER"' in segment and "submit_order" in segment:
-            blocks.append((node, segment))
+    for mod in (stages_mod, stage_execution_mod):
+        src = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try):
+                continue
+            segment = ast.get_source_segment(src, node) or ""
+            if '"EMERGENCY_COVER"' in segment and "submit_order" in segment:
+                blocks.append((node, segment))
     assert blocks, "the D7 EMERGENCY_COVER submit block has disappeared"
     # Enclosing `try`s match too (the whole protection phase is wrapped);
     # the INNERMOST match is the cover's own guard, so take the shortest.
@@ -1273,3 +1256,172 @@ def test_window_event_says_so_when_the_rearm_did_not_land():
     assert reason == "rearm_did_not_land"
     # Price unknowable -> the notional is None, never a fabricated 0.
     assert details["exposed_notional"] is None
+
+
+# --- The rearm-failure owner alert must stay WIRED --------------------------
+# It was defined and never called: a position left naked by a failed rearm
+# was logged and nothing else. These fail if the call is removed again.
+
+
+class _RecordingDB:
+    def __init__(self):
+        self.evidence = []
+
+    def insert_specialist_evidence(self, **kw):
+        self.evidence.append(kw)
+
+
+class _DrainBroker:
+    """Leftover entry already gone; position held; rearm refuses."""
+
+    def __init__(self):
+        self.symbol_qty = 5.0
+
+    def get_open_orders(self, *a, **k):
+        return []
+
+    def cancel_entry_order(self, order_id):  # pragma: no cover - not reached
+        return True
+
+    def get_position(self, symbol):
+        return {"qty": self.symbol_qty}
+
+    def snapshot_protective_stops(self, symbol, side="sell"):
+        return True, []
+
+    def place_protective_stop(self, *a, **k):
+        return None
+
+    def submit_stop_order(self, *a, **k):
+        return None
+
+
+def _patch_alert(monkeypatch):
+    from src.execution import scale_in as si
+    seen = []
+    monkeypatch.setattr(
+        si, "alert_rearm_failed",
+        lambda **kw: seen.append(kw), raising=True,
+    )
+    return seen
+
+
+def test_drain_rearm_failure_pages_the_owner(monkeypatch, tmp_path):
+    from src.execution import scale_in as si
+
+    seen = _patch_alert(monkeypatch)
+    monkeypatch.setattr(si, "list_open_entry_ids", lambda broker, symbol: [])
+    monkeypatch.setattr(si, "broker_position_qty", lambda broker, symbol: 5.0)
+    monkeypatch.setattr(
+        si, "rearm_full_position_stop",
+        lambda *a, **k: None, raising=True,
+    )
+    db = _RecordingDB()
+    ok = si.drain_scale_in_row(
+        _DrainBroker(), db,
+        {
+            "id": 1, "symbol": "ABC", "position_qty_before_sell": 5.0,
+            "specs_json": '[{"stop_price": 10.0, "qty": 5}]',
+        },
+    )
+    assert ok is False
+    assert seen and seen[0]["symbol"] == "ABC", (
+        "a failed crash-recovery rearm must page the owner"
+    )
+
+
+def test_failed_add_unrestored_stop_pages_the_owner(monkeypatch):
+    from src.execution import scale_in as si
+
+    seen = _patch_alert(monkeypatch)
+    monkeypatch.setattr(si, "restore_cancelled_stops", lambda *a, **k: False)
+    monkeypatch.setattr(si, "discharge_scale_in_wal", lambda *a, **k: None)
+    prep = si.LongAddPrep(
+        is_scale_in=True, cancelled=True, wal_row_id=7,
+        specs=[{"stop_price": 10.0, "qty": 3}], held_qty_before=3.0,
+    )
+    si.restore_after_failed_add(object(), _RecordingDB(), prep, "ABC")
+    assert seen and seen[0]["symbol"] == "ABC", (
+        "an unrestorable protective sell must page the owner"
+    )
+
+
+def test_rearm_alert_records_durably_and_pages_once_per_day(monkeypatch, tmp_path):
+    """Muted Telegram must not lose the fault, and one fault must not
+    become 44 pages."""
+    from src.execution import scale_in as si
+    from src import coverage_watchdog as cw
+
+    state = tmp_path / "watchdog.json"
+    monkeypatch.setattr(
+        si, "record_rearm_failure", si.record_rearm_failure, raising=True,
+    )
+    real_claim = cw.claim_typed_alert
+    monkeypatch.setattr(
+        cw, "claim_typed_alert",
+        lambda kind, syms, **k: real_claim(kind, syms, path=state),
+    )
+    sent = []
+    import src.notifier as notifier
+    monkeypatch.setattr(
+        notifier, "send_owner_alert",
+        lambda body, **k: sent.append(body), raising=False,
+    )
+
+    db = _RecordingDB()
+    for _ in range(3):
+        si.alert_rearm_failed(
+            symbol="ABC", qty=5.0, stop_price=10.0, order_id="o1", db=db,
+        )
+
+    assert len(db.evidence) == 3, "every occurrence is recorded durably"
+    assert db.evidence[0]["symbol"] == "ABC"
+    assert db.evidence[0]["agent_name"] == si.REARM_FAILURE_AGENT_NAME
+    assert len(sent) == 1, "at most one page per symbol per trading day"
+
+
+# ---------------------------------------------------------------------------
+# board item 193 — an in-place QUANTITY amend cannot replace the cancel
+# ---------------------------------------------------------------------------
+
+def test_scale_in_never_amends_a_resting_stop_and_survives_42210000(tmp_path):
+    """The cancel is forced by the broker's order model, not by our sequencing.
+
+    A resting protective SELL and a working BUY collide on the same symbol, so
+    the stop must come off. The obvious alternative — leave it resting and
+    amend its QUANTITY in place after the add — is refused by this broker on a
+    FRACTIONAL order (code 42210000), and scale-in adds are routinely
+    fractional. This pins both halves: the path never reaches for
+    `replace_order_by_id`, and a broker that refuses every quantity amend
+    changes nothing about the cancel-confirm sequence.
+    """
+    db = _db(tmp_path)
+    broker = MagicMock()
+    broker.snapshot_protective_stops.return_value = (
+        True, [{"id": "stop-1", "qty": 10.5, "stop_price": 88.0}],
+    )
+    broker.cancel_snapshotted_stops.return_value = True
+    broker.wait_for_order_terminal.return_value = "canceled"
+
+    def _refuse_quantity_amend(*a, **k):
+        raise RuntimeError(
+            "{'code':42210000,'message':'qty is not modifiable on a "
+            "fractional order'}",
+        )
+
+    broker.replace_order_by_id.side_effect = _refuse_quantity_amend
+
+    prep = prepare_long_add(
+        broker=broker, db=db, symbol="COP",
+        positions=[_cop_position()], intended_stop=90.0,
+    )
+    # The amend was never attempted — so the 42210000 refusal above can never
+    # be reached, and the original stop is never left in an unknown state.
+    broker.replace_order_by_id.assert_not_called()
+    # The cancel-confirm sequence is unchanged and the window is opened on
+    # purpose, with the write-ahead row standing behind a crash.
+    assert prep.cancelled is True
+    assert prep.skip_reason is None
+    assert prep.cancel_confirmed_at is not None
+    broker.cancel_snapshotted_stops.assert_called_once()
+    db.close()

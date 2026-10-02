@@ -813,7 +813,6 @@ from src.data.event_calendar import (  # noqa: E402 — grouped with its own tes
     FOMC_MEASURED_STALE_CACHE,
     FOMC_SOURCE_HTML,
     FOMC_SOURCE_JSON,
-    FOMC_STATUSES,
     FOMC_UNAVAILABLE_DEADLINE_EXCEEDED,
     FOMC_UNAVAILABLE_FETCH_FAILED,
     FOMCCalendarParseError,
@@ -1205,22 +1204,6 @@ def test_the_reassuring_sentence_needs_a_schedule_that_spans_the_whole_horizon()
     )
     assert "None. The published FOMC schedule spans the next 10 calendar days" in rendered
     assert "Next scheduled meeting beyond this horizon" in rendered
-
-
-def test_every_fomc_status_is_in_the_declared_vocabulary(tmp_path):
-    """The `pace_status` contract: a figure exists only under a `measured`
-    status, and every absence has a NAME rather than being a bare None."""
-    # Four values, not five: there is deliberately no "answered but published
-    # nothing" status, because both parse boundaries raise rather than return
-    # an empty list, so no code path can produce one. A status nothing can
-    # produce is a status nobody can trust.
-    assert set(FOMC_STATUSES) == {
-        FOMC_MEASURED, FOMC_MEASURED_STALE_CACHE,
-        FOMC_UNAVAILABLE_FETCH_FAILED, FOMC_UNAVAILABLE_DEADLINE_EXCEEDED,
-    }
-    provider = _fomc_provider(tmp_path, json_body=None, html_body=None)
-    provider.get_meetings(horizon_days=10)
-    assert provider.last_coverage.status in FOMC_STATUSES
 
 
 # --- caching ----------------------------------------------------------------
@@ -1615,6 +1598,12 @@ def test_a_shorter_fetched_schedule_does_not_overwrite_a_longer_cached_one(tmp_p
 import json as _json
 from datetime import date as _date, timedelta as _timedelta
 
+# The provider dates everything by the EXCHANGE day (`et_today`), not by
+# the runner's local day. Between 00:00 and 04:00 UTC the two differ, and a
+# cache written with the local date then looks like it was fetched TOMORROW,
+# which the provider correctly rejects. These tests must speak the
+# provider's calendar or they fail for four hours every night.
+from src.trading_calendar import et_today as _today  # noqa: E402
 from src.data.event_calendar import (  # noqa: E402
     MacroEventCalendarProvider as _Provider,
     MacroRelease as _Release,
@@ -1625,10 +1614,9 @@ _ONE = (_Release(10, "CPI", "inflation print"),)
 
 
 def _provider(tmp_path, **kw):
-    return _Provider(
-        api_key="k", releases=_ONE,
-        schedule_cache_path=str(tmp_path / "rs.json"), **kw,
-    )
+    p = _Provider(api_key="k", releases=_ONE, schedule_cache_path=str(tmp_path / "rs.json"), **kw)
+    p._fetch_release_dates = lambda *a, **k: ([], None)  # offline unless the test says otherwise
+    return p
 
 
 def _write_cache(tmp_path, dates, fetched_on):
@@ -1645,7 +1633,7 @@ def _write_cache(tmp_path, dates, fetched_on):
 def test_a_cached_schedule_answers_without_touching_the_wire(tmp_path):
     p = _provider(tmp_path)
     p._fetch_release_dates = lambda *a, **k: pytest.fail("went to the wire")
-    _write_cache(tmp_path, [_date.today() + _timedelta(days=3)], _date.today())
+    _write_cache(tmp_path, [_today() + _timedelta(days=3)], _today())
     events = p.get_upcoming_events(horizon_days=10)
     assert [e.label for e in events] == ["CPI"]
     assert p.last_coverage.complete
@@ -1655,7 +1643,7 @@ def test_a_cached_schedule_answers_without_touching_the_wire(tmp_path):
 def test_a_cache_served_release_is_stated_as_cached_never_as_a_live_read(tmp_path):
     p = _provider(tmp_path)
     p._fetch_release_dates = lambda *a, **k: ([], "unreachable")
-    _write_cache(tmp_path, [_date.today() + _timedelta(days=3)], _date.today())
+    _write_cache(tmp_path, [_today() + _timedelta(days=3)], _today())
     text = p.get_upcoming_events(horizon_days=10) and p.last_coverage.describe()
     assert "SERVED FROM THE PRE-OPEN SCHEDULE CACHE" in text
     assert "CPI" in text
@@ -1663,8 +1651,8 @@ def test_a_cache_served_release_is_stated_as_cached_never_as_a_live_read(tmp_pat
 
 def test_a_schedule_too_old_or_too_short_is_a_miss_not_a_near_enough_hit(tmp_path):
     for dates, fetched_on in (
-        ([_date.today() + _timedelta(days=3)], _date.today() - _timedelta(days=99)),
-        ([_date.today() - _timedelta(days=1)], _date.today()),
+        ([_today() + _timedelta(days=3)], _today() - _timedelta(days=99)),
+        ([_today() - _timedelta(days=1)], _today()),
     ):
         p = _provider(tmp_path)
         calls = []
@@ -1686,7 +1674,7 @@ def test_a_release_in_neither_cache_nor_wire_is_reported_missing_never_defaulted
 
 
 def test_only_the_prefetch_writes_the_cache(tmp_path):
-    dates = [_date.today() + _timedelta(days=3)]
+    dates = [_today() + _timedelta(days=3)]
     p = _provider(tmp_path)
     p._fetch_release_dates = lambda *a, **k: (dates, None)
     p.get_upcoming_events(horizon_days=10)
@@ -1701,10 +1689,10 @@ def test_only_the_prefetch_writes_the_cache(tmp_path):
 
 
 def test_the_prefetch_never_reads_the_cache_so_it_cannot_become_a_no_op(tmp_path):
-    _write_cache(tmp_path, [_date.today() + _timedelta(days=3)], _date.today())
+    _write_cache(tmp_path, [_today() + _timedelta(days=3)], _today())
     p = _provider(tmp_path)
     calls = []
-    fresh = [_date.today() + _timedelta(days=4)]
+    fresh = [_today() + _timedelta(days=4)]
     p._fetch_release_dates = lambda *a, **k: (calls.append(1), (fresh, None))[1]
     p.prefetch_release_schedules()
     assert calls, "the prefetch must always go to the wire"

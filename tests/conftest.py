@@ -1,7 +1,10 @@
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+from tests.network_guard import _no_sockets_leave_the_box, offline_calendars  # noqa: F401,E501
 
 # Add src to path so tests can import from src.*
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -55,7 +58,7 @@ _check_interpreter_matches_ci()
 
 
 @pytest.fixture(autouse=True)
-def _isolate_cwd(tmp_path, monkeypatch):
+def _isolate_cwd(tmp_path, monkeypatch, request):
     """Every test runs in its own tmp cwd so stores with relative data_dir defaults
     (NewsStore/MacroStore → 'data/news', 'data/macro') don't write to the real repo
     during the test suite.
@@ -77,6 +80,27 @@ def _isolate_cwd(tmp_path, monkeypatch):
     import requests
 
     def _no_network(*args, **kwargs):
+        # Journal the attempt BEFORE raising. Raising alone is invisible to a
+        # run: a test that CATCHES this error looks exactly like a test that
+        # never called out, so "no test reached the network" could never be
+        # measured, only assumed (board item 202, criterion one). Set
+        # QAMC_NETWORK_JOURNAL to a file path and every blocked attempt lands
+        # there with the test that made it, whether or not the test swallows
+        # the error. Unset (the default, and CI) this costs one env lookup.
+        _journal = os.environ.get("QAMC_NETWORK_JOURNAL")
+        if _journal:
+            _target = ""
+            for _arg in args:
+                if isinstance(_arg, str) and "//" in _arg:
+                    _target = _arg
+                    break
+            else:
+                _target = str(kwargs.get("url", ""))
+            try:
+                with open(_journal, "a", encoding="utf-8") as _fh:
+                    _fh.write(f"{request.node.nodeid}\t{_target}\n")
+            except OSError:
+                pass  # journalling must never change what the suite does
         raise requests.ConnectionError(
             "outbound HTTP disabled in tests (conftest autouse); "
             "patch requests.get in the test if you need it"
@@ -154,6 +178,10 @@ def _isolate_cwd(tmp_path, monkeypatch):
     # assertions. Tests that exercise relay routing set them via monkeypatch.
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENAI_CA_BUNDLE", raising=False)
+    # Same reason, one line down the stack: with a key present the morning
+    # message goes to openrouter.ai for the balance line (measured 2026-10-01,
+    # two tests in test_universe_screen.py). Tests about that line set it.
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
     # Most unit tests exercise an agent in isolation with a fully mocked SDK
     # and no real provider request. Production defaults fail closed when an
@@ -219,3 +247,54 @@ def _isolate_cwd(tmp_path, monkeypatch):
     llm_route_journal._reset_schema_cache_for_tests()
     monkeypatch.setenv("QUANT_AGENT_DB_PATH", str(tmp_path / "route" / "quant_agent.db"))
     (tmp_path / "route").mkdir(parents=True, exist_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_alerting_state(tmp_path, monkeypatch):
+    """Point the alerting state files at this test's tmp dir.
+
+    `src/coverage_watchdog.py` keeps per-symbol, per-trading-day alert claims
+    in `data/alerting/coverage_heartbeat.json` under ABSOLUTE paths computed
+    from `__file__`, so `_isolate_cwd` above does not cover them. Once
+    `TradingPipeline._alert_owner_no_stop` started claiming on that file,
+    the first test to escalate a naked position burned the claim for the
+    symbol for the whole trading day and every later test -- and every later
+    RUN that same day -- got silence instead of the alert it asserted. Four
+    tests in tests/test_fractional_sizing.py failed that way, with the
+    CRITICAL "NO STOP AT ALL" log present and `send_owner_alert` never
+    called: real suppression logic, fed by state the suite never meant to
+    share.
+
+    This is a hermeticity fix, not a relaxation: the production dedup is
+    unchanged and still suppresses a same-day repeat for the same symbol.
+    An autouse fixture rather than another per-test monkeypatch because the
+    per-test pattern is exactly what was forgotten here; tests that patch
+    these paths themselves still win inside their own body.
+
+    It also stops the suite writing into THIS checkout's `data/alerting/`.
+    That is a development-checkout concern only: `STATE_PATH` is built from
+    `Path(__file__).resolve().parent.parent`, so it is relative to whichever
+    checkout the module is imported from. Production runs from its own
+    checkout with its own `data/alerting/`, and no live desk alert claim was
+    ever reachable from running this suite.
+    """
+    alerting = tmp_path / "alerting"
+    alerting.mkdir(exist_ok=True)
+    import src.coverage_watchdog as _cw
+
+    heartbeat = alerting / "coverage_heartbeat.json"
+    drift = alerting / "deploy_drift.json"
+    monkeypatch.setattr(_cw, "STATE_PATH", heartbeat)
+    monkeypatch.setattr(_cw, "DEPLOY_DRIFT_STATE_PATH", drift)
+
+    # The reading side moves with the writing side, or the isolation itself
+    # would break the invariant that pins them together
+    # (tests/test_alert_suppression_api.py). `src.api.db_reads` spells the
+    # paths as literals because it may not import trading modules, so
+    # redirecting only the watchdog would leave the endpoint reading this
+    # checkout's real files while the writer wrote to tmp — the exact drift
+    # that pin exists to catch, introduced by the fixture meant to prevent
+    # pollution.
+    import src.api.db_reads as _db_reads
+
+    monkeypatch.setattr(_db_reads, "SUPPRESSION_STATE_PATHS", (heartbeat, drift))

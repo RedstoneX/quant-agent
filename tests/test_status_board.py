@@ -22,7 +22,42 @@ import pytest
 
 from src.api.server import _freshness_banner
 
-_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "status_board.py"
+_REPO = Path(__file__).resolve().parents[1]
+
+
+def _find_status_board_script() -> Path:
+    """Locate the generator by NAME, not by a hard-coded directory.
+
+    Moving the script into a package (or out of `scripts/`) used to break
+    every test in this file with an unrelated-looking import error. The
+    search is repo-wide but excludes the test tree and virtualenvs, and the
+    canary below fails loudly if it ever matches nothing or more than one.
+    """
+    skip = {".git", ".venv", "venv", "node_modules", "tests", "__pycache__"}
+    hits = [
+        path
+        for path in sorted(_REPO.rglob("status_board.py"))
+        if not (set(path.relative_to(_REPO).parts) & skip)
+    ]
+    assert hits, (
+        "no status_board.py anywhere in the repo: the board generator these "
+        "tests guard has been renamed or deleted, and every test here would "
+        "otherwise fail with a misleading missing-file error"
+    )
+    assert len(hits) == 1, f"ambiguous status_board.py candidates: {hits}"
+    return hits[0]
+
+
+_SCRIPT = _find_status_board_script()
+
+
+def test_the_status_board_script_was_found_and_is_the_real_generator():
+    """Canary: a resolution that silently found the wrong file is worse than none."""
+    assert _SCRIPT.is_file()
+    text = _SCRIPT.read_text()
+    assert "def check_rule" in text, (
+        f"resolved {_SCRIPT} as the board generator but it has no check_rule()"
+    )
 
 
 def _load():
@@ -40,6 +75,8 @@ sb = _load()
 # --------------------------------------------------------------------------
 # a bent ruler is not a broken system
 # --------------------------------------------------------------------------
+import re as _re_mod
+
 
 def test_prose_where_a_test_name_belongs_is_unknown_not_failure():
     """The bug the first real run found.
@@ -655,10 +692,27 @@ def test_retired_bullet_lines_are_never_edited_or_removed():
     before = {l.strip() for l in r.stdout.splitlines() if bullet_re.match(l.strip())}
     now = {l.strip() for l in work_md.read_text().splitlines() if bullet_re.match(l.strip())}
     changed = sorted(before - now)
-    assert not changed, (
+    # A RE-OPEN is the one lawful removal, and it is not a weakening: the
+    # sibling guard `test_no_retired_number_names_an_item_that_is_still_live`
+    # refuses a number that is listed as retired AND live at once, so an
+    # honestly re-opened item CANNOT keep its retired bullet. The two rules
+    # together are still total — every removal must be paid for by the
+    # number being a live item on the board, which is strictly harder to
+    # fake than leaving the bullet alone. Item 211, 2026-10-01: retired
+    # against a remedy that measurement then showed saves nothing.
+    queue_items, _ = sb.load_funnel_queue(work_md)
+    gate_items, _ = sb.load_pm_gate(work_md)
+    live = {i.rank for i in queue_items} | {i.rank for i in gate_items}
+    unexplained = [
+        line for line in changed
+        if not (set(re.findall(r"\d+", line)) & {str(n) for n in live})
+    ]
+    assert not unexplained, (
         "these retired-numbers bullet line(s) existed before this change and "
-        "are now gone or edited: " + "; ".join(changed) + " — a closure may "
-        "only APPEND a brand new line, never edit or remove an existing one."
+        "are now gone or edited: " + "; ".join(unexplained) + " — a closure may "
+        "only APPEND a brand new line, never edit or remove an existing one. "
+        "The sole exception is a re-open, which must put the number back as a "
+        "live item in the same change."
     )
 
 
@@ -776,7 +830,7 @@ def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
         "file is to the cap, the less room a single change gets before it "
         "must prune first: delete items already written up in "
         "docs/INCIDENT_HISTORY.md (write one up first if it is not), and "
-        "their `## item N` blocks in docs/BOARD_NOTES.md, until the growth "
+        "their `## item N` blocks in docs/board_notes/, until the growth "
         "fits the budget."
     )
 
@@ -907,6 +961,237 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
         "the file is over the cap, so the prune that fixes this can always "
         "merge."
     )
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# PER-ITEM budget on docs/WORK.md
+# ---------------------------------------------------------------------------
+#: The board has always been policed by a WHOLE-FILE cap
+#: (`test_work_md_stays_under_a_hundred_thousand_bytes`) plus a shrinking
+#: growth budget. Owner finding, 2026-09-30: that pair punishes the wrong
+#: author. A whole-file cap binds on whoever files the NEXT item, never on
+#: whoever wrote an 8,294-byte one, and the only way past it is deleting
+#: items -- which is exactly how filed work comes to feel dropped. The
+#: design the owner wrote for this file is a one-line item plus a pointer,
+#: with the detail in `docs/board_notes/item-NNN.md`. Nothing held the item
+#: itself short, so items grew fat anyway. These checks enforce that half.
+#:
+#: THE DIVISOR BELOW IS A CHOSEN WORKING FIGURE, NOT A MEASURED ONE. It is
+#: not derived from anything and nothing measures it; 25 items were open
+#: when this landed [measured 2026-10-01], and 40 is a round allowance for
+#: growth picked by hand. That is acceptable here only because this number
+#: governs the length of a documentation file and no trade, position, stop
+#: or order whatsoever. Do not copy this pattern into anything that spends.
+_WORK_MD_MAX_OPEN_ITEMS = 40
+
+#: Same shape as `_QUEUE_ITEM_RE`/`_ITEM_OPEN_RE` in scripts/status_board.py:
+#: an item block starts at its bold `**N. ` heading and runs to the next
+#: heading, or to the retired-numbers paragraph that closes the list.
+_WORK_ITEM_HEADING_RE = _re_mod.compile(r"^\*\*(?:~~)?(\d+)\.\s", _re_mod.M)
+_RETIRED_PARA = "**Retired item numbers"
+
+#: Items already over budget when this check landed, with their measured
+#: size on 2026-10-01. Their prose belongs to the authors who filed it and
+#: this PR does not touch a word of it. The check is a RATCHET instead: a
+#: grandfathered item may only ever get SMALLER, and any item not listed
+#: here -- every future one -- must come in under budget from the start.
+#: An entry is deleted outright once its item fits the budget; the test
+#: below fails if one is kept alive after that, so the list cannot rot.
+_WORK_MD_OVERSIZE_ON_ARRIVAL = {
+    "63": 3431, "70": 8294, "75": 3708, "90": 7548, "177": 5572, "186": 4065, "201": 5526, "218": 4005,
+}
+
+#: Items on the board when this check landed that do not resolve to a note
+#: file of their own [measured 2026-10-01: 9 of 25]. Same ratchet: writing
+#: another author's note is not this check's job, but no NEW item may arrive
+#: without one, and an entry here is deleted the moment its note exists.
+_WORK_MD_POINTERLESS_ON_ARRIVAL = {
+    "186", "188", "210", "218",
+}
+
+
+def _work_md_item_blocks(text):
+    """`[(number, block_text)]` for every numbered item block in `text`."""
+    stop = text.find(_RETIRED_PARA)
+    if stop == -1:
+        stop = len(text)
+    heads = [m for m in _WORK_ITEM_HEADING_RE.finditer(text) if m.start() < stop]
+    blocks = []
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else stop
+        blocks.append((m.group(1), text[m.start():end].rstrip() + "\n"))
+    return blocks
+
+
+def _work_md_item_budget_bytes():
+    from scripts.check_board_hygiene import read_cap_bytes
+
+    repo = Path(__file__).resolve().parents[1]
+    cap, error = read_cap_bytes(repo)
+    assert error is None, error
+    return cap // _WORK_MD_MAX_OPEN_ITEMS
+
+
+def _over_budget_items(text, budget, allowed=None):
+    """Items over `budget`, minus the grandfathered ones that have not grown."""
+    allowed = _WORK_MD_OVERSIZE_ON_ARRIVAL if allowed is None else allowed
+    out = []
+    for n, b in _work_md_item_blocks(text):
+        if len(b) <= budget:
+            continue
+        if n in allowed and len(b) <= allowed[n]:
+            continue
+        out.append((n, len(b)))
+    return out
+
+
+#: How `docs/WORK.md` spells a pointer since the notes became one file per
+#: item: `detail: docs/board_notes/item-177.md`. Zero-padded to three digits,
+#: which is why the number is compared as an int and not as text.
+_NOTE_POINTER_RE = _re_mod.compile(r"docs/board_notes/item-(\d+)\.md")
+
+
+def _notes_present():
+    """The note files `docs/board_notes/` actually holds, by item number.
+
+    The directory listing is the resolution `scripts.status_board.
+    load_board_notes` already uses to turn that directory into notes, and
+    the filename is what `docs/board_notes/README.md` makes authoritative —
+    so a pointer resolves here exactly as it resolves there. Deliberately
+    not a second, stricter rule of my own: two different answers to "does
+    this item have a note" is how a pointer comes to point at nothing while
+    every check stays green.
+    """
+    directory = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
+    if not directory.is_dir():
+        return set()
+    out = set()
+    for path in sorted(directory.glob("item-*.md")):
+        m = _re_mod.fullmatch(r"item-(\d+)\.md", path.name)
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
+def _items_missing_their_note(text, present, allowed=None):
+    """Items whose block carries no pointer, or whose pointer names a note
+    that is not this item's own, or one that is not there at all."""
+    allowed = _WORK_MD_POINTERLESS_ON_ARRIVAL if allowed is None else allowed
+    missing = []
+    for n, b in _work_md_item_blocks(text):
+        if n in allowed:
+            continue
+        targets = {int(x) for x in _NOTE_POINTER_RE.findall(b)}
+        if int(n) not in targets or int(n) not in present:
+            missing.append(n)
+    return missing
+
+
+def _per_item_failure_message(offenders, budget):
+    worst = ", ".join(f"item {n} ({size:,} bytes)" for n, size in offenders)
+    return (
+        f"docs/WORK.md item block(s) over the {budget:,}-byte per-item budget: "
+        f"{worst}. The budget is the file's own 100,000-byte cap divided by "
+        f"{_WORK_MD_MAX_OPEN_ITEMS}, a CHOSEN allowance for open items, not a "
+        "measured one -- it bounds a documentation file and nothing that "
+        "trades. TO FIX, and do NOT delete anything: move the item's prose "
+        "into `docs/board_notes/item-NNN.md` under its `## item N` heading -- "
+        "create that file if it is not there -- and leave behind only the bold "
+        "title line, the DONE WHEN checkboxes in short form, and the "
+        "`detail: docs/board_notes/item-NNN.md` pointer. Never raise this "
+        "number to make room, never shorten somebody else's item to make room "
+        "for yours, and never retire a live item to get under it."
+    )
+
+
+def test_every_work_md_item_stays_within_its_per_item_budget():
+    """The real docs/WORK.md, every item block, against the chosen budget."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    budget = _work_md_item_budget_bytes()
+    offenders = _over_budget_items(work_md.read_text(), budget)
+    assert not offenders, _per_item_failure_message(offenders, budget)
+
+
+def test_the_grandfathered_list_cannot_outlive_the_items_on_it():
+    """A ratchet that never releases is just a permanent exemption."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    budget = _work_md_item_budget_bytes()
+    sizes = {n: len(b) for n, b in _work_md_item_blocks(work_md.read_text())}
+    stale = sorted(n for n, _ in _WORK_MD_OVERSIZE_ON_ARRIVAL.items()
+                   if sizes.get(n, 0) <= budget)
+    assert not stale, (
+        f"item(s) {stale} now fit the {budget:,}-byte per-item budget — delete "
+        "them from _WORK_MD_OVERSIZE_ON_ARRIVAL so the budget binds on them "
+        "from now on."
+    )
+    # Released on exactly the condition the pointer check itself applies,
+    # so the two can never disagree about whether an item is still exempt.
+    still_missing = set(_items_missing_their_note(
+        work_md.read_text(), _notes_present(), allowed=set()))
+    gone = sorted(n for n in _WORK_MD_POINTERLESS_ON_ARRIVAL
+                  if n not in sizes or n not in still_missing)
+    assert not gone, (
+        f"item(s) {gone} now have a note of their own, or have left the "
+        "board — drop them from _WORK_MD_POINTERLESS_ON_ARRIVAL so the "
+        "pointer check binds on them from now on."
+    )
+
+
+def test_every_work_md_item_points_at_its_own_board_note_file():
+    """An item may be short only because its detail lives somewhere; the
+    pointer is what makes that true, so it is resolved, not assumed."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    missing = _items_missing_their_note(work_md.read_text(), _notes_present())
+    assert not missing, (
+        f"docs/WORK.md item(s) {missing} do not resolve to a note of their "
+        "own. Add a `detail: docs/board_notes/item-NNN.md` line to the block "
+        "and put the prose in that file under a `## item N` heading."
+    )
+
+
+def test_the_per_item_check_catches_a_fat_item_and_a_pointerless_one():
+    """Verifies the checker itself against a SIMULATED over-budget item, so
+    it is not merely passing because today's file happens to be tidy."""
+    budget = _work_md_item_budget_bytes()
+    assert budget > 0
+    tidy = (
+        "**5. A short title.**\n\n"
+        "DONE WHEN:\n  - [ ] the thing is measured\n\n"
+        "detail: docs/board_notes/item-005.md\n\n"
+    )
+    fat = (
+        "**6. A fat title.**\n\n" + ("  - [ ] " + "x" * 200 + "\n") * 40 +
+        "\ndetail: docs/board_notes/item-006.md\n\n"
+    )
+    pointerless = "**7. No pointer anywhere.**\n\nDONE WHEN:\n  - [ ] something\n\n"
+    text = tidy + fat + pointerless + _RETIRED_PARA + "** never reuse.\n"
+    present = {5, 6}
+
+    assert [n for n, _ in _work_md_item_blocks(text)] == ["5", "6", "7"]
+    assert [n for n, _ in _over_budget_items(text, budget, allowed={})] == ["6"]
+    assert _items_missing_their_note(text, present, allowed=set()) == ["7"]
+    # A pointer that resolves to no note file is as bad as no pointer at all.
+    assert _items_missing_their_note(text, {5}, allowed=set()) == ["6", "7"]
+    # The ratchet exempts a grandfathered item, and ONLY while it has not grown.
+    assert _over_budget_items(text, budget, allowed={"6": 10_000}) == []
+    assert [n for n, _ in _over_budget_items(text, budget, allowed={"6": 10})] == ["6"]
+    assert _items_missing_their_note(text, present, allowed={"7"}) == []
+    assert _over_budget_items(tidy + _RETIRED_PARA, budget, allowed={}) == []
+    message = _per_item_failure_message(
+        _over_budget_items(text, budget, allowed={}), budget)
+    assert "docs/board_notes/" in message and "move the item's prose" in message
+    assert "CHOSEN" in message
+    # The retired-numbers paragraph is not an item and is never measured.
+    assert all(not b.startswith(_RETIRED_PARA) for _, b in _work_md_item_blocks(text))
+
+
 
 
 def test_finished_work_has_somewhere_to_go_that_is_not_deletion():
@@ -1719,7 +2004,7 @@ def test_a_synthetic_finished_item_trips_the_check(tmp_path):
     # The message must tell a reader the whole procedure, not just that
     # something is wrong — this is the one check nobody will know how to
     # act on without being told.
-    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "BOARD_NOTES.md",
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/",
                  "retired"):
         assert step in flagged[0]
 
@@ -1808,14 +2093,14 @@ def test_a_fully_ticked_open_item_trips_the_checkbox_check(tmp_path):
         "DONE WHEN:\n"
         "  - [x] the fix ships\n"
         "  - [x] a test proves it\n"
-        "detail: docs/BOARD_NOTES.md (item 9)\n"
+        "detail: docs/board_notes/ (item 9)\n"
     )
     notes = _board_notes(tmp_path)
     flagged = sb.find_finished_items_still_on_board(work, notes)
     assert len(flagged) == 1
     assert "item 9" in flagged[0]
     assert "DONE WHEN" in flagged[0]
-    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "BOARD_NOTES.md",
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "docs/board_notes/",
                  "retired"):
         assert step in flagged[0]
 
@@ -1829,7 +2114,7 @@ def test_a_partially_ticked_open_item_does_not_trip_the_checkbox_check(
         "DONE WHEN:\n"
         "  - [x] the fix ships\n"
         "  - [ ] a test proves it\n"
-        "detail: docs/BOARD_NOTES.md (item 9)\n"
+        "detail: docs/board_notes/ (item 9)\n"
     )
     notes = _board_notes(tmp_path)
     assert sb.find_finished_items_still_on_board(work, notes) == []
@@ -1865,7 +2150,7 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
         "DONE WHEN:\n"
         "  - [x] the fix ships\n"
         "  - [x] a test proves it\n"
-        "detail: docs/BOARD_NOTES.md (item 9)\n"
+        "detail: docs/board_notes/ (item 9)\n"
     )
     notes = _board_notes(tmp_path)
     assert sb.find_finished_items_still_on_board(work, notes) == []
@@ -1877,7 +2162,7 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
 #: `find_finished_items_still_on_board`). This is an ALLOWLIST of KNOWN,
 #: pre-existing rot, not a target: retiring one of these items (writing it
 #: up in `docs/INCIDENT_HISTORY.md` and deleting its `docs/WORK.md` /
-#: `docs/BOARD_NOTES.md` blocks, the normal procedure) makes it disappear
+#: `docs/board_notes/` blocks, the normal procedure) makes it disappear
 #: from the live check's output, and this set may SHRINK to match without
 #: anyone treating that as a test failure to chase down — update it in the
 #: same change that retires the item. It must never GROW silently: a NEW
@@ -1898,7 +2183,7 @@ _REF_PREFIX_RE = re.compile(r"^(gate item \d+|item \d+)")
 
 
 def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
-    """The real docs/WORK.md and docs/BOARD_NOTES.md, not a fixture.
+    """The real docs/WORK.md and docs/board_notes/, not a fixture.
 
     Unlike a plain "must find nothing" assertion, this tolerates the KNOWN,
     already-measured backlog rot pinned in
@@ -1912,7 +2197,7 @@ def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
     still fail CI.
     """
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
-    notes = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
+    notes = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
     flagged = sb.find_finished_items_still_on_board(work, notes)
     flagged_refs = set()
     for f in flagged:
@@ -2096,7 +2381,7 @@ def test_pm_gate_items_do_not_leak_into_the_funnel_queue_or_vice_versa(tmp_path)
 
 # The item itself — number, title, status, engineering notes — is still
 # docs/WORK.md's shape. Its prose has moved out to a separate fixture below,
-# standing in for docs/BOARD_NOTES.md, keyed to the item by "## item 1"
+# standing in for docs/board_notes/, keyed to the item by "## item 1"
 # rather than living inside the item's own body.
 _FULL_ITEM = (
     "## THE FUNNEL QUEUE\n\n"
@@ -2123,7 +2408,7 @@ _FULL_ITEM_NOTES = (
 
 
 def _notes(tmp_path, text):
-    """Write `text` as a `docs/BOARD_NOTES.md`-shaped fixture and parse it,
+    """Write `text` as a `docs/board_notes/`-shaped fixture and parse it,
     the same way `render` parses the real file."""
     p = tmp_path / "BOARD_NOTES.md"
     p.write_text(text)
@@ -2143,7 +2428,7 @@ def test_an_item_carries_its_plain_language_example_and_recommendation(tmp_path)
 
 
 def test_a_blank_line_ends_a_block_so_engineering_prose_is_not_swallowed(tmp_path):
-    """The paragraph after the blank line in docs/BOARD_NOTES.md is ordinary
+    """The paragraph after the blank line in docs/board_notes/ is ordinary
     commentary, not a labelled field. If it leaked into the recommendation
     the owner would be shown text nobody wrote as one."""
     notes = _notes(tmp_path, _FULL_ITEM_NOTES)
@@ -2164,7 +2449,7 @@ def test_wrapped_prose_lines_are_joined_not_truncated(tmp_path):
 def test_prose_no_longer_comes_from_work_mds_own_body():
     """The relocation's core guarantee: a plain-language block typed straight
     into a WORK.md item's body must NOT reach the page — only a matching
-    heading in docs/BOARD_NOTES.md does. Without that, this file's own cap
+    heading in docs/board_notes/ does. Without that, this file's own cap
     would be pointless: the prose it was moved to avoid could just come back
     in through the body text instead."""
     body = ("**3. A thing — DEFECT.**\n\n"
@@ -2178,7 +2463,7 @@ def test_prose_no_longer_comes_from_work_mds_own_body():
 
 
 # ---------------------------------------------------------------------------
-# docs/BOARD_NOTES.md — the prose file itself
+# docs/board_notes/ — the prose file itself
 #
 # The key property this file's whole design rests on: an entry is found by
 # the item's NUMBER and SECTION, never by its title, so a rename in
@@ -2218,7 +2503,7 @@ def test_board_notes_with_no_recognised_heading_is_empty(tmp_path):
 
 
 def test_an_item_with_no_matching_note_is_unexplained_not_borrowed(tmp_path):
-    """The whole point of keying by number: an item docs/BOARD_NOTES.md has
+    """The whole point of keying by number: an item docs/board_notes/ has
     never heard of must render as unexplained, never silently inherit
     prose written for a different item."""
     notes = _notes(tmp_path, "## item 7\n\n**Plain language —** for item 7 only.\n")
@@ -2227,9 +2512,9 @@ def test_an_item_with_no_matching_note_is_unexplained_not_borrowed(tmp_path):
 
 
 def test_the_real_board_notes_file_loads_without_error():
-    """docs/BOARD_NOTES.md ships in the repo; whatever it currently holds
+    """docs/board_notes/ ships in the repo; whatever it currently holds
     must parse without raising, exactly like the real backlog."""
-    path = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
+    path = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
     assert path.exists()
     notes = sb.load_board_notes(path)
     assert isinstance(notes, dict)
@@ -2490,11 +2775,12 @@ def test_the_board_reports_a_self_contradicting_item_to_the_owner_itself():
     him as FINISHED, with the untidy line stated, rather than being filed as
     live work (which is the déjà vu) or silently as signed off."""
     it = sb.QueueItem(25, "A protected-position rule", "", "", None, False,
-                      headline="A protected-position rule — DONE 2026-09-04.")
+                      headline="A protected-position rule — DONE 2026-09-04.",
+                      raw_body="DONE WHEN: - [x] the rule ships")
     assert it.claims_closure is True
     assert it.bucket == "finished_unmarked"
     out = sb._render_finished_unmarked([it])
-    assert "finished according to its own note" in out
+    assert "DONE WHEN boxes is ticked" in out
     assert "not ticked it off" in out
     assert "item 25" in out
 
@@ -2634,7 +2920,8 @@ def test_a_bare_closure_word_is_still_read_when_it_is_not_a_cross_reference():
     number appears nearby — only a number IMMEDIATELY followed by its own
     parenthetical status is a cross-reference."""
     it = sb.QueueItem(1, "t", "", "", None, False,
-                      headline="A thing — FIXED, see item 12 for detail.")
+                      headline="A thing — FIXED, see item 12 for detail.",
+                      raw_body="DONE WHEN: - [x] done")
     assert it.closure_claim == "finished"
     assert it.claims_closure is True
 
@@ -2665,7 +2952,8 @@ def test_widening_the_renderer_did_not_widen_the_build_failing_check(tmp_path):
 
     # A newly-recognised word does NOT fail the build...
     p = tmp_path / "WORK.md"
-    p.write_text("## THE FUNNEL QUEUE\n\n**4. A thing — SHIPPED 2026-09-04.**\n")
+    p.write_text("## THE FUNNEL QUEUE\n\n**4. A thing — SHIPPED 2026-09-04.**\n"
+                 "\nDONE WHEN: - [x] it ships\n")
     assert sb.find_closed_items_not_marked_done(p) == []
     # ...while the page still shows it as finished rather than as live work.
     items = sb._parse_numbered_items(p.read_text().split(sb._QUEUE_HEADING, 1)[1])
@@ -3060,7 +3348,8 @@ def test_finished_and_partly_done_both_outrank_in_hand():
     outstanding work on a mostly-finished item stays in the running order,
     labelled — the existing tests pin that and this one must not undo it."""
     shipped = sb.QueueItem(1, "t", "", "", None, False,
-                           headline="A thing — SHIPPED 2026-09-04, owner-requested.")
+                           headline="A thing — SHIPPED 2026-09-04, owner-requested.",
+                           raw_body="DONE WHEN: - [x] shipped")
     assert shipped.bucket == "finished_unmarked"
     partial = sb.QueueItem(1, "t", "", "", None, False,
                            headline="A thing — PARTIALLY FIXED, rest IN FLIGHT.")
@@ -3102,10 +3391,18 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     # whole below-bar cull set worst-first. Written up in
     # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md.
     assert 39 not in by_rank
-    for rank in (20,):
-        assert by_rank[rank].in_hand_state == "decided, not yet built", rank
-    for rank in (20,):
-        assert by_rank[rank].bucket == "in_hand", rank
+    # Item 20 used to be pinned here as the live "decided, not yet built"
+    # case. It was retired 2026-10-01: the counting half had already shipped
+    # as a per-name record, and its last criterion -- whether the intraday
+    # technical read may report LOST -- was answered yes, which the code
+    # already did. No live item is in that state now, and pinning whichever
+    # one happens to be is what made this assertion rot twice before (items
+    # 49 and 39 are recorded above for the same reason). The parser
+    # behaviour it pinned is covered synthetically by
+    # `_IN_HAND_STATE_CASES` and
+    # `test_a_dated_status_paragraph_in_the_body_counts_as_a_ruling`, which
+    # cannot rot when the board changes.
+    assert 20 not in by_rank
     # Item 3 used to be pinned here as the "no_action" case (WORKING AS
     # INTENDED, no follow-on). It was written up in
     # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md once
@@ -3221,7 +3518,7 @@ def test_nothing_to_do_says_so_rather_than_inventing_urgency():
 
 def test_a_decision_reads_its_plain_language_block_from_board_notes(tmp_path):
     """The decision's own line in docs/WORK.md carries only the question now
-    — its prose comes from docs/BOARD_NOTES.md, keyed by the decision's due
+    — its prose comes from docs/board_notes/, keyed by the decision's due
     date (`PendingDecision.ref`), because a decision has no number of its
     own to key on."""
     p = tmp_path / "WORK.md"
@@ -3245,7 +3542,7 @@ def test_a_decision_reads_its_plain_language_block_from_board_notes(tmp_path):
 def test_a_decisions_indented_body_no_longer_carries_prose(tmp_path):
     """The relocation's guarantee for decisions too: prose typed straight
     into the indented body under a `DECIDE BY` line must not reach the page
-    without a matching heading in docs/BOARD_NOTES.md."""
+    without a matching heading in docs/board_notes/."""
     p = tmp_path / "WORK.md"
     p.write_text(
         "- [ ] DECIDE BY 2099-01-01 — Which model runs the decision seat?\n"
@@ -3576,14 +3873,14 @@ def test_the_rebuild_trigger_watches_the_backlog():
 
 
 def test_the_rebuild_trigger_also_watches_the_board_notes_file():
-    """The prose the page renders now lives in docs/BOARD_NOTES.md, not
+    """The prose the page renders now lives in docs/board_notes/, not
     docs/WORK.md. An edit to it changes what the board says exactly as much
     as an edit to the backlog does, so it must fire the same rebuild — the
     same defect the WORK.md watch above exists to prevent, on the other
     half of the page's source material."""
     unit = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
             / "quant-agent-status-board.path").read_text()
-    assert "PathChanged=/home/qamc/quant-agent/docs/BOARD_NOTES.md" in unit
+    assert "PathChanged=/home/qamc/quant-agent/docs/board_notes" in unit
 
 
 def test_the_board_service_does_not_point_at_the_retired_timer():
@@ -3684,7 +3981,7 @@ def test_a_description_is_not_read_as_a_closure_claim(headline, expected):
     Only the STATUS half of a headline — after the last em dash — is a claim
     about where the item stands, and a negated status is not a claim at all."""
     it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
-    assert it.claims_closure is expected
+    assert (it.closure_claim == "finished") is expected
 
 
 def test_the_real_backlog_flags_only_genuine_self_contradictions():
@@ -3709,7 +4006,7 @@ def test_the_real_backlog_flags_only_genuine_self_contradictions():
 # ---------------------------------------------------------------------------
 # The page's own copy must obey the page's own rules.
 #
-# The jargon detector ran only over prose loaded from docs/BOARD_NOTES.md.
+# The jargon detector ran only over prose loaded from docs/board_notes/.
 # Every reader-facing string HARDCODED IN THIS SCRIPT was exempt from it —
 # so the one card written by hand was the one card nothing checked. On
 # 2026-09-11 that card told the owner three finished things had "stopped
@@ -3772,7 +4069,7 @@ def test_a_humanised_identifier_keeps_a_date_readable():
 
 
 def test_no_board_note_is_orphaned_in_the_real_repository():
-    """Every prose entry in the REAL docs/BOARD_NOTES.md must match a real
+    """Every prose entry in the REAL docs/board_notes/ must match a real
     item in the REAL docs/WORK.md.
 
     The keying tests above prove the mechanism. This proves the live files
@@ -3785,7 +4082,7 @@ def test_no_board_note_is_orphaned_in_the_real_repository():
     That is a rule no session should have to remember. This is the check.
     """
     work = sb.REPO_ROOT / "docs" / "WORK.md"
-    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "board_notes")
     queue, _ = sb.load_funnel_queue(work, notes)
     gate, _ = sb.load_pm_gate(work, notes)
     decisions = sb.load_pending_decisions(work, notes=notes)
@@ -3794,7 +4091,7 @@ def test_no_board_note_is_orphaned_in_the_real_repository():
     orphans = sorted(k for k in notes if k not in real
                      and not k.lower().startswith("item n"))
     assert orphans == [], (
-        "docs/BOARD_NOTES.md explains items that no longer exist under those "
+        "docs/board_notes/ explains items that no longer exist under those "
         f"keys in docs/WORK.md: {orphans}. Either the item was renumbered "
         "(update the key in the same commit) or it was archived (remove its "
         "prose). Leaving it strands the explanation and the owner's board "
@@ -3814,7 +4111,7 @@ def test_every_rendered_entry_carries_a_reference_handle():
     fine on the page and only surface as the owner being unable to name it.
     """
     work = sb.REPO_ROOT / "docs" / "WORK.md"
-    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "board_notes")
     queue, _ = sb.load_funnel_queue(work, notes)
     gate, _ = sb.load_pm_gate(work, notes)
     decisions = sb.load_pending_decisions(work, notes=notes)
@@ -4047,6 +4344,7 @@ def test_finished_and_parked_work_is_behind_one_closed_disclosure_with_counts(tm
         "**3. Reviewed thing — FIXED, pending review.**\n\n"
         "**~~4. Signed off thing — FIXED 2026-09-03.~~**\n\n"
         "**5. Shipped thing — SHIPPED 2026-09-10.**\n\n"
+        "DONE WHEN: - [x] it shipped\n\n"
         "**6. Live thing — DEFECT.**\n\n"
         "### Re-measure gate\n"
     )
@@ -4211,3 +4509,133 @@ def test_the_retired_line_carries_no_per_item_reason():
           "### entry and leave only the number here. Every retirement that "
           "writes prose on this line blocks every other retirement in flight."
     )
+
+
+#: Item 187's real headline, 2026-10-01. Every closure word in its status
+#: tail belongs to item 175; the one clause that is about item 187 says the
+#: opposite. Read naively, a live item was reported as finished.
+_ITEM_187_REAL_HEADLINE = (
+    "FRED fetch reliability — the chronic fetch_deadline_exceeded failure "
+    "— filed 2026-09-25, carried out of item 175's retirement. Item 175's "
+    "weekend/holiday overdue-date roll shipped and was retired; this is "
+    "the separate, still-open half."
+)
+
+
+def test_another_items_closure_cited_in_prose_is_not_this_items_status():
+    """Regression for the real item 187: the closure words sit in a clause
+    whose SUBJECT is item 175, not this item."""
+    it = sb.QueueItem(187, "t", "", "", None, False,
+                      headline=_ITEM_187_REAL_HEADLINE)
+    assert it.closure_claim == ""
+    assert it.claims_closure is False
+    assert it.bucket != "finished_unmarked"
+
+
+def test_a_half_shipped_item_is_part_done_not_finished():
+    """Regression for the real item 90: "HALF SHIPPED ... ITEM STAYS OPEN"
+    is a partial statement, read as full closure before the fix."""
+    it = sb.QueueItem(90, "t", "", "", None, False,
+                      headline="Unsourced numbers — TIER 1, half shipped "
+                               "2026-09-18, item stays OPEN.")
+    assert it.closure_claim == "part_done"
+    assert it.claims_closure is False
+
+
+def test_a_self_closure_still_flags_even_when_another_item_is_named():
+    """The guard must not go silent: a real self-closure whose clause
+    happens to end by naming another item is still a closure claim."""
+    it = sb.QueueItem(5, "t", "", "", None, False,
+                      headline="A thing — SHIPPED 2026-09-04, superseding "
+                               "item 12.")
+    assert it.closure_claim == "finished"
+    # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
+    # prose closure is a HINT and no longer classifies on its own. The
+    # vocabulary must still RECOGNISE this sentence, which is what this
+    # test was written to protect; the bucket assertion moved to the
+    # box-based tests above.
+
+
+def test_an_item_quoting_its_own_number_still_claims_closure():
+    """A reference to the item's OWN number is not a cross-reference."""
+    it = sb.QueueItem(42, "t", "", "", None, False,
+                      headline="A thing — item 42 SHIPPED 2026-09-04.")
+    assert it.closure_claim == "finished"
+    # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
+    # prose closure is a HINT and no longer classifies on its own. The
+    # vocabulary must still RECOGNISE this sentence, which is what this
+    # test was written to protect; the bucket assertion moved to the
+    # box-based tests above.
+
+
+def test_a_plain_self_closure_still_flags():
+    """The case the marker exists for must keep firing."""
+    it = sb.QueueItem(7, "t", "", "", None, False,
+                      headline="A thing — SHIPPED 2026-09-04.")
+    assert it.closure_claim == "finished"
+    # 2026-10-01: the finished signal now reads the DONE WHEN boxes, so a
+    # prose closure is a HINT and no longer classifies on its own. The
+    # vocabulary must still RECOGNISE this sentence, which is what this
+    # test was written to protect; the bucket assertion moved to the
+    # box-based tests above.
+
+
+# ---------------------------------------------------------------------------
+# The finished-but-still-listed signal reads BOXES, not prose.
+# Owner ruling 2026-10-01, after two false alarms in one night: an item whose
+# headline mentioned ANOTHER item's completion was reported finished with zero
+# of its ten DONE WHEN boxes ticked.
+# ---------------------------------------------------------------------------
+
+
+def _boxed(headline, body, rank=1):
+    return sb.QueueItem(rank, "t", "", "", None, False,
+                        headline=headline, raw_body=body)
+
+
+def test_every_box_ticked_and_still_listed_is_flagged():
+    """The signal must still fire, or it is useless."""
+    it = _boxed("A thing — DEFECT, nobody rewrote the headline.",
+                "DONE WHEN: - [x] one - [x] two")
+    assert it.box_state == "finished"
+    assert it.claims_closure is True
+    assert it.bucket == "finished_unmarked"
+
+
+def test_an_outstanding_box_is_never_finished_whatever_the_prose_says():
+    """The exact false alarm: prose says finished, the boxes say otherwise."""
+    it = _boxed("A thing — FIXED 2026-09-30, see the history.",
+                "DONE WHEN: - [x] one - [ ] two")
+    assert it.box_state == "outstanding"
+    assert it.claims_closure is False
+    assert it.bucket != "finished_unmarked"
+
+
+def test_an_item_with_no_boxes_is_not_finished_the_empty_set_trap():
+    """Zero outstanding out of zero boxes is not done — it is unstructured."""
+    it = _boxed("A thing — SHIPPED 2026-09-10.", "no criteria written here")
+    assert it.box_state == "none"
+    assert it.claims_closure is False
+    assert it.bucket != "finished_unmarked"
+    # The prose hint is still READ — it just never classifies on its own.
+    assert it.closure_claim == "finished"
+
+
+def test_prose_disagreeing_with_the_boxes_is_surfaced_both_ways():
+    disputed = _boxed("A thing — FIXED 2026-09-30.",
+                      "DONE WHEN: - [x] one - [ ] two")
+    assert disputed.closure_disputed is True
+    assert "boxes are still open" in disputed.closure_disagreement
+    silent = _boxed("A thing — DEFECT.", "DONE WHEN: - [x] one")
+    assert silent.closure_disputed is False
+    assert "does not say so" in silent.closure_disagreement
+    out = sb._render_finished_unmarked([silent], [disputed])
+    assert out.count("one of the two is wrong") == 2
+
+
+def test_a_struck_through_item_is_never_flagged_however_its_boxes_read():
+    it = sb.QueueItem(1, "t", "", "", None, True, headline="A thing — FIXED.",
+                      raw_body="DONE WHEN: - [x] one")
+    assert it.claims_closure is False
+    assert it.closure_disagreement == ""
+    assert it.bucket == "resolved"

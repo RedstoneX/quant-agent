@@ -40,6 +40,7 @@ from src.risk.trailing import (
     MIN_RATCHET_PCT,
     compute_trailing_stop,
 )
+from tests.pipeline_factory import build_pipeline
 
 
 # ==========================================================================
@@ -209,17 +210,19 @@ def test_trailing_short_noise_band():
     ) is None
 
 
-def test_trailing_short_range_setup_gate():
-    """Mirror of the Type A gate: a range short does not trail until price
-    falls PAST the defended target below it."""
+def test_trailing_short_range_setup_trails_from_entry():
+    """Mirror of item 212: the target gate is gone, so a range short trails on
+    structure whether or not price has fallen past the defended target."""
     mbars = _mirror_bars(_rising_with_higher_lows(), _AXIS)
-    # current_price mirrors 118.0 (has NOT exceeded target 130 in the long
-    # case, i.e. has not fallen past the mirrored target here).
-    assert compute_trailing_stop(
+    # current_price mirrors 118.0 — short of the mirrored target, and still
+    # trailed, which is exactly what item 212 changed.
+    early = compute_trailing_stop(
         symbol="SSS", setup_type="range", entry=_mirror(100.0, _AXIS),
         current_price=_mirror(118.0, _AXIS), current_stop=_mirror(95.0, _AXIS),
         reference_target=_mirror(130.0, _AXIS), bars=mbars, atr=2.0, qty=-1.0,
-    ) is None
+    )
+    assert early is not None
+    assert early.new_stop == _mirror(110.0, _AXIS)
     # current_price mirrors 125.0 (past the mirrored target 120) — trails.
     proposal = compute_trailing_stop(
         symbol="SSS", setup_type="range", entry=_mirror(100.0, _AXIS),
@@ -541,9 +544,7 @@ def test_replace_stop_loss_no_position_returns_none_unchanged(mock_tc_cls):
 
 def _pipeline_for_reconcile(positions, snapshot_side_effect):
     from src.pipeline import TradingPipeline
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
-    pipe.db = MagicMock()
+    pipe = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipe.db.get_pending_protection_restores.return_value = []
     pipe.broker.get_positions.return_value = positions
     pipe.broker.snapshot_protective_stops.side_effect = snapshot_side_effect

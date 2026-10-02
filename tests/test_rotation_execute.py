@@ -260,19 +260,21 @@ def test_nothing_surfaced_means_nothing_happens(tmp_path):
     assert _events(db) == []
 
 
-def test_structurally_protected_holding_is_surfaced_not_sold(tmp_path):
-    """docs/WORK.md item 25: a position whose thesis level is intact is
-    protected from a plain, no-real-trigger sale. Opportunity cost is not
-    one of the three real triggers, so the rotation stops here."""
+def test_structurally_protected_below_bar_holding_is_still_sold(tmp_path):
+    """OWNER RULING 2026-10-01. Item 25 protects a still-ELIGIBLE,
+    thesis-intact position; a name in `blocked` is not still-eligible, and
+    failing the fresh-entry bar is now itself the real trigger. Intact
+    protection is measured and reported, and no longer vetoes."""
     pipeline, db, probe = _pipeline(tmp_path, protected=True)
     probe.basis, probe.detail = "structural_level_intact", "close 101 vs level 100"
     ctx = _ctx()
     decision = _decision(_buy_new())
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
-    assert [t.symbol for t in decision.targets] == ["NEW"]
-    assert ctx.rotation is None
+    assert [t.symbol for t in decision.targets] == ["NEW", "OLD"]
+    assert ctx.rotation is not None
+    assert ctx.rotation["protection_basis"] == "structural_level_intact"
     (_, payload), = _rotation_events(db)
-    assert payload["reason"] == "held_symbol_structurally_protected"
+    assert payload["reason"].startswith("ROTATION (deterministic")
     assert payload["protection_basis"] == "structural_level_intact"
 
 
@@ -335,8 +337,10 @@ def _multi_opportunity() -> RotationOpportunity:
 
 
 def test_protected_worst_advances_to_the_next_worst_below_bar_holding(tmp_path):
-    """>=2 holdings below the bar, the worst structurally protected: the tier
-    must cull the NEXT-worst rather than abandon the whole rotation."""
+    """>=2 holdings below the bar: the WORST is culled. Since 2026-10-01
+    intact protection no longer skips it, so the walk stops at the first
+    name — the advance-to-next-worst machinery remains for the guards that
+    DO still skip (in flight, bought today, PM already targeting)."""
     pipeline, db, _ = _pipeline(tmp_path, precheck=_precheck(_multi_opportunity()))
     probe = _PerSymbolProbe({"WORST": True, "NEXT": False})
     pipeline._structural_protection_for_holding = probe
@@ -346,36 +350,28 @@ def test_protected_worst_advances_to_the_next_worst_below_bar_holding(tmp_path):
 
     _apply_rotation_execution(pipeline, ctx, decision, positions, MULTI_HISTORY)
 
-    # The NEXT-worst is the one closed; the protected WORST is left alone.
-    assert [t.symbol for t in decision.targets] == ["NEW", "NEXT"]
+    assert [t.symbol for t in decision.targets] == ["NEW", "WORST"]
     assert ctx.rotation is not None
-    assert ctx.rotation["held_symbol"] == "NEXT"
+    assert ctx.rotation["held_symbol"] == "WORST"
     assert ctx.rotation["new_symbol"] == "NEW"
-    assert ctx.rotation["held_reasons"] == list(NEXT_REASONS)
     close = decision.targets[1]
     assert close.is_close and close.risk_allocation_pct == 0.0
-    assert close.thesis.startswith("ROTATION (deterministic, src/rotation.py): NEXT")
-    assert close.thesis_invalid_if == "closes below 100"
+    assert close.thesis.startswith("ROTATION (deterministic, src/rotation.py): WORST")
 
-    # Both names were protection-checked, worst first, then next-worst.
-    assert [c["symbol"] for c in probe.calls] == ["WORST", "NEXT"]
+    assert [c["symbol"] for c in probe.calls] == ["WORST"]
 
-    # The protected worst is recorded as skipped; the next-worst as proposed.
     events = _rotation_events(db)
-    skipped = {
-        sym: e for sym, e in events
-        if e["outcome"] == "skipped"
-        and e["reason"] == "held_symbol_structurally_protected"
-    }
+    assert not any(
+        e["reason"] == "held_symbol_structurally_protected" for _, e in events
+    )
     proposed = [(sym, e) for sym, e in events if e["outcome"] == "proposed"]
-    assert list(skipped) == ["WORST"]
-    assert skipped["WORST"]["protection_basis"] == "structural_level_intact"
-    assert len(proposed) == 1 and proposed[0][0] == "NEXT"
+    assert len(proposed) == 1 and proposed[0][0] == "WORST"
 
 
 def test_rotation_abandoned_only_when_every_below_bar_holding_is_protected(tmp_path):
-    """All below-bar holdings structurally protected: nothing is sold, and
-    every one is recorded as skipped under its own name."""
+    """Every below-bar holding structurally protected. Before 2026-10-01
+    nothing was sold; under the ruling the worst is sold anyway, because
+    intact protection is no longer a precondition on this tier."""
     pipeline, db, _ = _pipeline(tmp_path, precheck=_precheck(_multi_opportunity()))
     probe = _PerSymbolProbe({"WORST": True, "NEXT": True})
     pipeline._structural_protection_for_holding = probe
@@ -385,41 +381,42 @@ def test_rotation_abandoned_only_when_every_below_bar_holding_is_protected(tmp_p
 
     _apply_rotation_execution(pipeline, ctx, decision, positions, MULTI_HISTORY)
 
-    assert [t.symbol for t in decision.targets] == ["NEW"]
-    assert ctx.rotation is None
+    assert [t.symbol for t in decision.targets] == ["NEW", "WORST"]
+    assert ctx.rotation is not None
     events = _rotation_events(db)
-    skipped = sorted(
-        sym for sym, e in events
-        if e["outcome"] == "skipped"
-        and e["reason"] == "held_symbol_structurally_protected"
+    assert not any(
+        e["reason"] == "held_symbol_structurally_protected" for _, e in events
     )
-    assert skipped == ["NEXT", "WORST"]
-    assert not any(e["outcome"] == "proposed" for _, e in events)
+    assert [sym for sym, e in events if e["outcome"] == "proposed"] == ["WORST"]
 
 
 # ---------------------------------------------------------------------------
 # The desk never invents the buy leg and never overrides the PM on the held name
 # ---------------------------------------------------------------------------
 
-def test_not_rotated_when_pm_did_not_target_the_new_candidate(tmp_path):
+def test_sold_even_when_the_pm_targeted_no_new_candidate(tmp_path):
+    """MEASURED: this tier fired 8 times (24-25 Sep) and died 8 of 8 at this
+    precondition, circularly — the prompt told the model there was no room
+    to buy, so it never wrote the buy, so the sell was never proposed. The
+    sale no longer depends on the buy."""
     pipeline, db, probe = _pipeline(tmp_path)
     ctx = _ctx()
     other = TargetPosition(symbol="OTHER", risk_allocation_pct=1.0, thesis="x")
     decision = _decision(other)
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
-    assert [t.symbol for t in decision.targets] == ["OTHER"]
-    assert probe.calls == []
+    assert [t.symbol for t in decision.targets] == ["OTHER", "OLD"]
+    assert [c["symbol"] for c in probe.calls] == ["OLD"]
     (_, payload), = _rotation_events(db)
-    assert payload["reason"] == "pm_did_not_target_new_candidate"
+    assert payload["reason"].startswith("ROTATION (deterministic")
 
 
-def test_a_zero_size_pm_target_for_the_new_name_does_not_count_as_wanting_it(tmp_path):
+def test_a_zero_size_pm_target_for_the_new_name_no_longer_blocks_the_cull(tmp_path):
     pipeline, db, _ = _pipeline(tmp_path)
     ctx = _ctx()
     decision = _decision(TargetPosition(symbol="NEW", risk_allocation_pct=0.0, thesis="x"))
     _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
     (_, payload), = _rotation_events(db)
-    assert payload["reason"] == "pm_did_not_target_new_candidate"
+    assert payload["reason"].startswith("ROTATION (deterministic")
 
 
 def test_not_rotated_when_pm_already_targets_the_held_symbol(tmp_path):
@@ -555,8 +552,9 @@ def test_reason_names_every_measured_fact():
     assert "OLD" in reason and "NEW" in reason
     assert "R5 net evidence -1 if long" in reason
     assert "structural_level_broken" in reason
-    assert "closed beyond it" in reason
-    assert "0.20%" in reason and "25.00%" in reason and "0.50%" in reason
+    assert "structural level 100.0" in reason
+    assert "stopped earning its place" in reason
+    assert "2026-10-01" in reason
     assert "score 1.80" in reason
     # `_build_sell` appends " (thesis_invalid_if: ...)" and then truncates
     # the whole reasoning at 500 — the measured clauses must all survive.
@@ -621,7 +619,8 @@ def test_injected_close_becomes_an_ordinary_full_sell_through_the_real_builder(t
     assert isinstance(trade, TradeDecision)
     assert trade.action == "SELL" and trade.allocation_pct == 100.0
     assert trade.reasoning.startswith("ROTATION (deterministic")
-    assert "free room for NEW" in trade.reasoning, "measured clauses survive truncation"
+    assert "stopped earning its place" in trade.reasoning, \
+        "measured clauses survive truncation"
     assert trade.thesis_invalid_if == "closes below 100"
 
 
@@ -1115,14 +1114,274 @@ def test_the_sale_reason_names_the_limit_that_actually_bound():
         headroom_pct=14.50, ceiling_pct=25.0, floor_pct=0.5,
         binding=("funding",), entry_budget_usd=92.20, min_order_usd=500.0,
     )
-    assert "$92 deployable, under the $500 minimum order." in reason
+    # Since the 2026-10-01 ruling the categorical sale does not rest on the
+    # book being constrained at all, so it states no capital claim — which
+    # is the strongest possible form of "no false arithmetic claim".
     assert "under the 0.50% minimum" not in reason
-    # An unthreaded caller still gets the legacy sentence byte-for-byte.
-    legacy = rotation_sell_reason(
-        _opportunity(),
-        protection_basis="structural_level_broken",
-        protection_detail=BROKEN_DETAIL,
-        headroom_pct=0.20, ceiling_pct=25.0, floor_pct=0.5,
+    assert "deployable" not in reason
+    assert "stopped earning its place" in reason
+
+
+# ---------------------------------------------------------------------------
+# OWNER RULING 2026-10-01 — a below-bar holding with NO replacement candidate.
+# `evaluate_rotation` now reaches the categorical tier BEFORE the "nothing
+# better was found" refusal, so `new_symbol` is None on exactly this case.
+# Every reader on the execution path has to tolerate it; the first one used
+# to crash with AttributeError before the sale was even proposed.
+# ---------------------------------------------------------------------------
+
+def _opportunity_no_replacement() -> RotationOpportunity:
+    return RotationOpportunity(
+        new_symbol=None, new_score=None, held_symbol="OLD", held_score=None,
+        tier="ineligible_hold", reasons=HELD_REASONS,
     )
-    assert "Headroom 0.20% of the 25.00% risk ceiling, under the 0.50% " \
-           "minimum." in legacy
+
+
+def test_below_bar_holding_with_no_replacement_candidate_is_sold(tmp_path):
+    pipeline, db, probe = _pipeline(
+        tmp_path, precheck=_precheck(_opportunity_no_replacement()),
+    )
+    ctx = _ctx()
+    decision = _decision()
+    _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
+
+    assert [t.symbol for t in decision.targets] == ["OLD"]
+    close = decision.targets[0]
+    assert close.is_close and close.risk_allocation_pct == 0.0
+    assert ctx.rotation["held_symbol"] == "OLD"
+    assert ctx.rotation["new_symbol"] is None
+    assert ctx.rotation["new_score"] is None
+
+    (symbol, payload), = _rotation_events(db)
+    assert symbol == "OLD"
+    assert payload["outcome"] == "proposed"
+    assert payload["new_symbol"] is None
+
+
+def test_the_owner_alert_for_a_replacementless_cull_is_true_and_renders(
+    tmp_path, monkeypatch,
+):
+    """The sale must reach the owner WITH its real reason, and must not
+    claim it freed room for a replacement that does not exist."""
+    from src import notifier as _notifier
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(
+        tmp_path, precheck=_precheck(_opportunity_no_replacement()),
+    )
+    ctx = _ctx()
+    decision = _decision()
+    _apply_rotation_execution(pipeline, ctx, decision, [_pos()], HISTORY)
+
+    sent: list = []
+    monkeypatch.setattr(
+        _notifier, "send_owner_alert",
+        lambda text, symbols=None: sent.append((text, symbols)) or True,
+    )
+    _ps._alert_rotation_executed(
+        rotation=ctx.rotation, qty=10.0, limit_price=95.0, order_id="o-1",
+    )
+    (text, symbols), = sent
+    assert symbols == ["OLD"]
+    assert "None" not in text
+    assert "free room for" not in text
+    assert "NO replacement" in text
+    assert HELD_REASONS[0] in text
+
+
+def test_no_replacement_leg_is_recorded_and_never_paged_as_a_missing_buy(
+    tmp_path, monkeypatch,
+):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(
+        tmp_path, precheck=_precheck(_opportunity_no_replacement()),
+    )
+    ctx = _ctx()
+    _apply_rotation_execution(pipeline, ctx, _decision(), [_pos()], HISTORY)
+    ctx.rotation["sell_order_id"] = "o-1"
+
+    paged: list = []
+    monkeypatch.setattr(
+        _ps, "_alert_rotation_buy_leg_missing",
+        lambda **kw: paged.append(kw),
+    )
+    _ps._record_rotation_buy_leg_outcome(pipeline, ctx, [])
+    assert paged == []
+    outcomes = [p["outcome"] for _, p in _rotation_events(db)]
+    assert "no_replacement_leg" in outcomes
+    assert "buy_not_submitted" not in outcomes
+
+
+# ---------------------------------------------------------------------------
+# BUY-side anti-churn: the mirror of `held_symbol_bought_today`.
+# ---------------------------------------------------------------------------
+
+def test_a_name_sold_today_below_the_bar_is_not_bought_back_the_same_day(
+    tmp_path,
+):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+    _ps._record_pipeline_event(
+        pipeline, ctx, "OLD", "rotation", "sell_submitted", "because",
+    )
+    buys = [
+        TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="back in"),
+        TargetPosition(symbol="NEW", risk_allocation_pct=2.0, thesis="fine"),
+    ]
+    kept = _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys)
+    assert [d.symbol for d in kept] == ["NEW"]
+    assert [s["reason"] for s in ctx.execution_skips] == [
+        "sold_today_below_entry_bar",
+    ]
+
+
+def test_the_rebuy_guard_fails_open_when_it_cannot_read_its_own_record(
+    tmp_path,
+):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+
+    def _boom():
+        raise RuntimeError("db gone")
+
+    pipeline.db = SimpleNamespace(get_rotation_sell_symbols_today=_boom)
+    buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
+    assert _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys) == buys
+
+
+def test_a_rotation_sale_from_another_day_does_not_block_the_buy(tmp_path):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+    _ps._record_pipeline_event(
+        pipeline, ctx, "OLD", "rotation", "sell_submitted", "because",
+    )
+    db.conn.execute(
+        "UPDATE specialist_evidence SET timestamp = '2020-01-02T15:00:00+00:00'",
+    )
+    db.conn.commit()
+    buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
+    assert [d.symbol
+            for d in _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys)
+            ] == ["OLD"]
+
+
+# ---------------------------------------------------------------------------
+# The PROMPT side of the replacementless case. Three tests above exercise the
+# replacementless execution path and none of them rendered the prompt, which
+# is why `_render_rotation_section` kept crashing on `new_score=None` inside
+# `build_user_message`, BEFORE the decision stage was ever reached.
+# ---------------------------------------------------------------------------
+
+def _render_replacementless(*, execute_enabled: bool) -> str:
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    return PortfolioManagerAgent._render_rotation_section(
+        ranked=[],
+        blocked={},
+        held_symbols={"OLD"},
+        existing_risk_pct={"OLD": 2.0},
+        ceiling_pct=25.0,
+        precheck=_precheck(_opportunity_no_replacement()),
+        execute_enabled=execute_enabled,
+    )
+
+
+@pytest.mark.parametrize("execute_enabled", [False, True])
+def test_the_prompt_renders_for_a_below_bar_holding_with_no_replacement(
+    execute_enabled,
+):
+    """Crashed with `TypeError: unsupported format string passed to
+    NoneType.__format__` before the fix, on both switch settings."""
+    text = _render_replacementless(execute_enabled=execute_enabled)
+    assert "OLD" in text
+    assert "None" not in text
+    assert HELD_REASONS[0] in text
+
+
+def test_the_categorical_prompt_states_what_the_code_actually_does():
+    """OWNER RULING 2026-10-01 removed BOTH preconditions this paragraph
+    used to assert. Prompt text is code that can rot."""
+    text = _render_replacementless(execute_enabled=True)
+    assert "AUTOMATIC ROTATION IS ENABLED" in text
+    assert "None" not in text
+    # The two REMOVED conditions must not be asserted any more.
+    assert "protection has already broken" not in text
+    assert "if you include a BUY target" not in text.lower()
+    # The two that remain in the code must still be stated.
+    assert "not bought today" in text
+    assert "in flight" in text
+
+
+# ---------------------------------------------------------------------------
+# A fail-open anti-churn guard must leave a trace somebody can count.
+# ---------------------------------------------------------------------------
+
+def _failed_open(db) -> list:
+    return [
+        (sym, payload) for sym, payload in _rotation_events(db)
+        if payload["outcome"] == "rebuy_guard_failed_open"
+    ]
+
+
+def test_an_unreadable_anti_churn_record_leaves_a_durable_reason(
+    tmp_path, monkeypatch,
+):
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+
+    def _boom():
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(
+        pipeline.db, "get_rotation_sell_symbols_today", _boom,
+    )
+    real_db = pipeline.db
+    buys = [TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t")]
+    # Fail-open behaviour is UNCHANGED: the buy still proceeds.
+    assert _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys) == buys
+
+    (symbol, payload), = _failed_open(real_db)
+    assert symbol == "OLD"
+    assert payload["failure"] == "record_unreadable"
+    assert "could not read" in payload["reason"]
+
+
+def test_a_lost_anti_churn_write_leaves_a_durable_reason(tmp_path):
+    """`_persist_evidence` swallows write failures, so the `sell_submitted`
+    row can be LOST as well as unreadable. Same silent hole, other half.
+
+    2026-10-01: the session's own rotation result proves the name was sold
+    today, so the guard now CLOSES on that fact instead of only recording
+    itself open. The durable row stays, and still says what happened.
+    """
+    from src import pipeline_stages as _ps
+
+    pipeline, db, probe = _pipeline(tmp_path)
+    ctx = _ctx()
+    # A rotation sale WAS submitted this session, but no durable record of
+    # it can be read back — the write was lost.
+    ctx.rotation = {"held_symbol": "OLD", "sell_order_id": "o-1"}
+    buys = [
+        TargetPosition(symbol="OLD", risk_allocation_pct=2.0, thesis="t"),
+        TargetPosition(symbol="FRESH", risk_allocation_pct=2.0, thesis="t"),
+    ]
+    kept = _ps._drop_buys_sold_today_below_bar(pipeline, ctx, buys)
+    # The same-day re-buy is STOPPED; every other buy is untouched.
+    assert [d.symbol for d in kept] == ["FRESH"]
+
+    (symbol, payload), = [
+        (sym, p) for sym, p in _rotation_events(db)
+        if p["outcome"] == "rebuy_guard_closed_from_session_fact"
+    ]
+    assert symbol == "OLD"
+    assert payload["failure"] == "record_unwritten"
+    assert "still stopped" in payload["reason"]

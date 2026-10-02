@@ -293,6 +293,7 @@ def _record_answer_hygiene(raw_text: str, rows: list, provider: str) -> None:
     review, 2026-09-23).
     """
     model_name = f"TechAnalystAnswer[{provider or 'unknown'}]"
+    parse_telemetry.record_hygiene_observation(model_name)
     if _FENCED_MARKDOWN_RE.search(raw_text):
         parse_telemetry.record_hygiene_violation(model_name, "fenced_markdown")
     for row in rows:
@@ -623,6 +624,23 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
           flag divergence in reasoning_chain.support_resistance — does NOT
           override the technical call.
         """
+        #: {symbol: why} for symbols whose row came back from the model but
+        #: could NOT be read (schema-invalid, unquoted property name, wrong
+        #: shape). Reset on every batch. Board item 220: the desk used to
+        #: drop these rows and carry on, which left the technical seat's
+        #: silence about that name indistinguishable from the seat having
+        #: looked and found nothing to object to. The seat is the timing
+        #: VETO, so "no objection recorded" must never be readable as
+        #: agreement; this is the raw input to the per-name coverage record.
+        self.last_unreadable: dict[str, str] = {}
+        #: Symbols that WERE submitted and resolved to nothing usable without
+        #: an unreadable row to blame — absent from every answer. Distinct
+        #: from `last_unreadable` (a row came back and could not be read) and
+        #: distinct again from a name this seat was never asked about, which
+        #: appears in neither. Three different causes, three different fixes;
+        #: a later reader must be able to tell them apart from the fields
+        #: alone, never from prose (board item 220).
+        self.last_unanswered: set[str] = set()
         if not symbols_data:
             return {}, None
 
@@ -633,11 +651,22 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             benchmark_pool,
         )
         if len(chunks) <= 1:
-            return self._analyze_chunk(
+            single_unusable: dict[str, str] = {}
+            single_out, single_result = self._analyze_chunk(
                 symbols_data, prior_ratings, valuations,
                 prior_macro_regime, prior_macro_outlook, intraday_context,
                 benchmark_pool=benchmark_pool,
+                _malformed_sink=single_unusable,
             )
+            self.last_unreadable = {
+                sym: why for sym, why in single_unusable.items()
+                if single_out.get(sym) is None
+            }
+            self.last_unanswered = {
+                sym for sym, a in single_out.items()
+                if a is None and sym not in self.last_unreadable
+            }
+            return single_out, single_result
 
         merged: dict[str, TechAnalysisResult | None] = {}
         result_parts: list[tuple[str, AgentResult]] = []
@@ -709,6 +738,15 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             item.get("symbol") for item in symbols_data
             if merged.get(item.get("symbol")) is None
         ]
+        self.last_unreadable = {
+            sym: why for sym, why in unusable.items()
+            if merged.get(sym) is None
+        }
+        self.last_unanswered = {
+            str(item.get("symbol")) for item in symbols_data
+            if merged.get(item.get("symbol")) is None
+            and item.get("symbol") not in self.last_unreadable
+        }
         if final_missing:
             logger.error(
                 "Tech batch: %d symbol(s) unresolved after the single shared "
@@ -957,6 +995,9 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # `TechAnalysisResult.computed_level_touches` and
         # docs/RESEARCH_FINDINGS.md §7.
         computed_level_touches_by_sym: dict[str, dict[float, int]] = {}
+        computed_level_bars_by_sym: dict[
+            str, dict[float, list[tuple[float, float]]]
+        ] = {}
         # What the bar history WAS, recorded beside the levels it did or did
         # not produce (2026-09-12). Without it an empty `computed_levels`
         # from a dead feed and one from a chart with no repeated turning
@@ -983,6 +1024,9 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 computed_levels_by_sym[sym] = sorted(lv.price for lv in all_levels)
                 computed_level_touches_by_sym[sym] = {
                     lv.price: lv.touches for lv in all_levels
+                }
+                computed_level_bars_by_sym[sym] = {
+                    lv.price: list(lv.pivot_bars) for lv in all_levels
                 }
                 last = bars[-1]
                 signal_bar_by_sym[sym] = (
@@ -1043,6 +1087,9 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     )
                     analysis.computed_level_touches = (
                         computed_level_touches_by_sym.get(analysis.symbol, {})
+                    )
+                    analysis.computed_level_bars = (
+                        computed_level_bars_by_sym.get(analysis.symbol, {})
                     )
                     # A submitted symbol with no entry here had no bars dict
                     # at all; that is the no-bars fault, not "unknown".

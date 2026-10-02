@@ -180,11 +180,12 @@ def test_provably_false_bearish_state_change_claim_blocks_the_intraday_exit(run_
 
 def test_the_morning_path_is_not_the_only_importer_any_more():
     """Pins the defect's shape directly: the fact-checker used to be reachable
-    from `pipeline_stages` alone. `src/pipeline.py` — which backs midday and
-    close — must now reach it too."""
+    from `pipeline_stages` alone. The midday/close executor — moved to
+    `src/pipeline_exits.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md — must
+    now reach it too."""
     import inspect
 
-    import src.pipeline as pipeline_module
+    import src.pipeline_exits as pipeline_module
 
     source = inspect.getsource(pipeline_module)
     assert "holding_discipline_claim_check" in source
@@ -205,7 +206,7 @@ def test_midday_and_close_share_the_one_executor_this_gate_lives_in():
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_midday)
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_close)
     assert "_run_position_review_body" in inspect.getsource(TradingPipeline.run_position_review)
-    review_src = inspect.getsource(TradingPipeline._run_position_review_body)
+    review_src = inspect.getsource(__import__("src.sessions.position_review_session", fromlist=["PositionReviewSession"]).PositionReviewSession.run)
     assert review_src.count("_midday_execute_llm_actions(") == 1
 
 

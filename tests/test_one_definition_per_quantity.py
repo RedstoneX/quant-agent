@@ -196,8 +196,8 @@ THE_MEASURED_BOOK = [
 def test_pm_and_risk_gate_report_the_same_invested_pct():
     """The exact book that produced +10pp OVER for PM and -50pp UNDER for RM.
 
-    The advisory only speaks when the book is more than the cash-reserve
-    band (`cash_sweep.reserve_pct`) UNDER the target, so the comparison is
+    The advisory only speaks when the book is more than the advisory
+    band (`deployment_gap.band_pct`) UNDER the target, so the comparison is
     made at the 100% fully-invested mandate
     (2026-09-17), which this 70% book is 30pp under. `target=60` is covered by
     the test below, where the whole point is that the advisory now stays
@@ -434,3 +434,115 @@ def test_pnl_pct_is_none_not_zero_when_unknowable():
     fresh = _pos("NEWCO", 0, 0.0, 100.0)
     assert unrealized_pnl_pct(fresh) is None
     assert unrealized_pnl_pct(object()) is None
+
+
+# ==========================================================================
+# 4. The short-side gap-risk haircut — board item 216
+# ==========================================================================
+#
+# Execution ships `min(qty_by_alloc, qty_by_risk)`. The constructor haircut
+# the allocation leg (twice, in two functions) and `_qty_by_risk_budget` in
+# `src/pipeline_stages.py` haircut the risk leg with its own copy of the
+# multiply and its own fallback literal. Whenever the risk leg was the
+# binding one — the ordinary case, not an exotic one — the number that sized
+# the live short was the execution-side copy, not the one a reader finds in
+# the constructor. The three copies happened to hold the same value, so they
+# agreed by configuration rather than by construction, and a change to any
+# one of them was silently a half-change.
+#
+# The single source is `src.risk.constants.gap_adjusted_risk_per_share`,
+# whose default is `SHORT_GAP_RISK_MULTIPLE_DEFAULT`. The VALUE is unchanged
+# (board item 186 owns whether 1.5 is right); only the number of places that
+# apply it changed.
+
+_HAIRCUT_NAMES = {"short_gap_risk_multiple", "gap_multiple"}
+
+
+def _multiplies_by_the_haircut(node) -> bool:
+    """Does this node multiply something by the short gap-risk multiple?"""
+    if isinstance(node, ast.AugAssign) and isinstance(node.op, ast.Mult):
+        operands = [node.value]
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+        operands = [node.left, node.right]
+    else:
+        return False
+    for operand in operands:
+        if isinstance(operand, ast.Attribute) and operand.attr in _HAIRCUT_NAMES:
+            return True
+        if isinstance(operand, ast.Name) and operand.id in _HAIRCUT_NAMES:
+            return True
+        if isinstance(operand, ast.Name) and operand.id == (
+            "SHORT_GAP_RISK_MULTIPLE_DEFAULT"
+        ):
+            return True
+    return False
+
+
+def test_no_second_application_of_the_short_gap_haircut():
+    """Exactly ONE place under src/ multiplies by the short gap multiple.
+
+    That place is `src.risk.constants.gap_adjusted_risk_per_share`. Any other
+    module that reapplies the multiple inline is a second definition of a
+    quantity that sizes live short positions, and this test fails on it.
+    Fixing the new call site is not the fix — route it through the helper.
+    """
+    offenders = []
+    for path, _source, tree in _shared_ast_cache.parse_tree(SRC):
+        for node in ast.walk(tree):
+            if _multiplies_by_the_haircut(node):
+                offenders.append(f"{path}:{getattr(node, 'lineno', '?')}")
+    assert len(offenders) == 1, (
+        "the short-side gap-risk haircut must be applied in exactly one "
+        "place (src.risk.constants.gap_adjusted_risk_per_share); found: "
+        f"{offenders}"
+    )
+    assert offenders[0].startswith(str(SRC / "risk" / "constants.py")), offenders
+
+
+def test_the_haircut_default_literal_exists_once():
+    """One literal for the value, in `src.risk.constants`.
+
+    It used to be written out four times — `RiskConfig`, `ConstructorConfig`,
+    the pipeline's config read and the execution-time risk-budget read — so
+    three of them could drift from the deployed one without anything failing.
+    """
+    from src.risk.constants import SHORT_GAP_RISK_MULTIPLE_DEFAULT
+
+    hits = []
+    for path, _source, tree in _shared_ast_cache.parse_tree(SRC):
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Constant)
+                and node.value.value == SHORT_GAP_RISK_MULTIPLE_DEFAULT
+                and any(
+                    isinstance(t, ast.Name)
+                    and t.id == "SHORT_GAP_RISK_MULTIPLE_DEFAULT"
+                    for t in node.targets
+                )
+            ):
+                hits.append(path)
+    assert [str(h) for h in hits] == [str(SRC / "risk" / "constants.py")], hits
+
+
+def test_both_sizing_legs_read_the_same_haircut():
+    """The allocation leg and the execution risk leg cannot disagree.
+
+    Both call the one helper, so feeding the same configured multiple to
+    both produces the same haircut risk-per-share. A long is untouched.
+    """
+    from src.risk.constants import (
+        SHORT_GAP_RISK_MULTIPLE_DEFAULT,
+        gap_adjusted_risk_per_share,
+    )
+
+    assert gap_adjusted_risk_per_share(10.0, is_short=False, multiple=2.0) == 10.0
+    assert gap_adjusted_risk_per_share(10.0, is_short=True, multiple=2.0) == 20.0
+    # An unreadable config (a MagicMock attribute, most often) falls back to
+    # the deployed default at BOTH legs, not to 1.0 and not to two answers.
+    assert gap_adjusted_risk_per_share(
+        10.0, is_short=True, multiple=MagicMock(),
+    ) == 10.0 * SHORT_GAP_RISK_MULTIPLE_DEFAULT
+    assert gap_adjusted_risk_per_share(10.0, is_short=True, multiple=None) == (
+        10.0 * SHORT_GAP_RISK_MULTIPLE_DEFAULT
+    )

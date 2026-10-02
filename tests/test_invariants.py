@@ -543,7 +543,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     p.execution_stage = MagicMock()
 
     ctx = RunContext.start("intra_check")
-    with patch("src.pipeline.compute_indicators", return_value=MagicMock()):
+    with patch("src.pipeline_intraday.compute_indicators", return_value=MagicMock()):
         result = p._run_intraday_opportunity_scan(ctx)
 
     assert result["status"] == "hard_risk_block"
@@ -593,3 +593,46 @@ def test_invariant_intraday_scan_adds_no_shorting_or_margin_path():
         assert forbidden not in src, f"intraday scan must not reference {forbidden}"
     # Candidates come from the configured universe only — no ad-hoc symbols.
     assert "self.config.trading.universe" in src
+
+
+def test_no_test_file_defines_the_same_test_twice():
+    """A duplicate test name silently shadows the earlier copy.
+
+    Found 2026-10-01: `tests/test_rr_gates_retired.py` defined
+    `test_risk_seat_not_told_thin_ratio_was_paid_for_in_size` twice, so one
+    copy never ran. Nothing failed and nothing warned — the protection was
+    simply absent while the suite reported green, which is the same shape as
+    a recording that records nothing. Python rebinds the name, pytest
+    collects only the survivor, and a copy-paste during an edit is all it
+    takes. This reads the abstract syntax tree rather than the collected
+    suite, because the whole point is to see the definition pytest will
+    throw away.
+    """
+    import ast
+    import collections
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    duplicates = []
+    for path in sorted(root.glob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text())
+        except SyntaxError:  # a file that cannot parse fails elsewhere
+            continue
+        counts = collections.Counter(
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test_")
+        )
+        duplicates.extend(
+            f"{path.name}: {name} defined {count} times"
+            for name, count in sorted(counts.items())
+            if count > 1
+        )
+
+    assert not duplicates, (
+        "these test names are defined more than once in one file, so every "
+        "copy but the last is collected by nobody and guards nothing: "
+        + "; ".join(duplicates)
+    )

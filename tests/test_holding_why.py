@@ -148,6 +148,45 @@ def test_rsg_take_profit_is_shown_as_a_reference_that_nothing_acts_on(rsg):
     assert "Nothing sells at this price" in tp["note"]
 
 
+def test_take_profit_note_says_the_target_now_governs_nothing(rsg):
+    """Item 75, rewritten 2026-10-01 after item 212 (#928) removed the
+    target's last live effect — it used to decide whether the Type A
+    structural trail kept the +1R locked-in floor underneath it, and that
+    gate is gone. `reference_target` is now passed to
+    `src.risk.trailing.evaluate_trailing_stop` and never read in its body.
+    The note must therefore claim no live effect, must not leave the
+    number looking meaningless (the desk still records it as evidence),
+    and must not revive the old floor claim.
+
+    This pins the STRING, so it catches the wording it knows and would not
+    catch the same claim returning in different words.
+    """
+    note = rsg["readable"]["take_profit"]["note"]
+    assert "no stop moves because of it" in note
+    assert "governs nothing at all" in note
+    assert "recorded expectation" in note
+    assert "evidence" in note
+    # The removed gate may be described as history, never as current.
+    assert "That gate has been removed" in note
+
+
+def test_no_owner_facing_surface_claims_a_live_effect_for_the_target():
+    """Every surface the owner reads — the holding card's note and the
+    reviewer's per-position target line — must be free of the retired
+    "soft, you manage exit" and live-floor claims."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    banned = ("soft — you manage exit", "soft - you manage exit")
+    for rel in ("src/api/holding_why.py", "src/agents/position_reviewer.py"):
+        text = (root / rel).read_text(encoding="utf-8")
+        for phrase in banned:
+            assert phrase not in text, f"{rel} still says {phrase!r}"
+    assert "nothing exits, caps or trails on it" in (
+        root / "src/agents/position_reviewer.py"
+    ).read_text(encoding="utf-8")
+
+
 def test_rsg_horizon_is_the_pinned_plan_and_says_nothing_acts_on_it(rsg):
     horizon = rsg["readable"]["horizon"]
     assert horizon["sessions"] == 12

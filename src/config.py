@@ -12,7 +12,10 @@ from src.agents.base import (
     resolve_provider,
 )
 from src.trading_calendar import SESSION_WINDOWS
-from src.risk.constants import STARTER_POSITION_RISK_PCT
+from src.risk.constants import (
+    SHORT_GAP_RISK_MULTIPLE_DEFAULT,
+    STARTER_POSITION_RISK_PCT,
+)
 
 
 class ApiKeysConfig(BaseModel):
@@ -966,7 +969,9 @@ class RiskConfig(BaseModel):
     # daily-bar history this desk does not keep. The number ledger carries
     # the routed owner-appetite question; 1.5 means a short opens at
     # two-thirds the size of a long carrying the same stated risk.
-    short_gap_risk_multiple: float = Field(default=1.5, gt=1.0, le=3.0)
+    short_gap_risk_multiple: float = Field(
+        default=SHORT_GAP_RISK_MULTIPLE_DEFAULT, gt=1.0, le=3.0,
+    )
     # --- Kill switch (2026-09-02 operational safety guard) ---------------
     # A file whose mere EXISTENCE halts every order this desk would place —
     # entries, exits, covers, and protective-stop placement/replacement
@@ -1220,18 +1225,6 @@ class CashSweepConfig(BaseModel):
     anything with real market beta breaks the cash-equivalence assumption
     that justifies every exemption listed above."""
 
-    reserve_pct: float = Field(default=1.0, ge=0, le=20)
-    """% of equity kept as raw cash (fees, slippage, partial fills).
-    Excess above the reserve is parked.
-
-    Deliberately left at 1.0. An earlier pass in the 2026-08-19 tranche
-    raised this to 5.0 as a workaround for BUYs being skipped for lack of
-    cash — that was treating a symptom. Alpaca credits `cash` as soon as a
-    SELL fills, so a filled SGOV liquidation funds an equity BUY in the
-    same session; the real fix is confirming that fill before the BUY
-    phase (see `CashSweeper.fund_buys`), not starving the sweep of the
-    idle cash it exists to put to work."""
-
     min_order_usd: float = Field(default=500.0, ge=0)
     """Don't churn sub-$500 parking orders — spread + noise beat the
     few cents of yield."""
@@ -1243,6 +1236,26 @@ class CashSweepConfig(BaseModel):
         if not v:
             raise ValueError("cash_sweep.symbol must be a non-empty ticker")
         return v
+
+
+class CashReserveConfig(BaseModel):
+    """The raw-cash reserve band the /account liquidity view reports.
+
+    RELOCATED 2026-10-01 (board item 190) out of `CashSweepConfig`, value
+    unchanged. It was never part of the retired cash sweep's own machinery:
+    `src.api.routes_live._compute_liquidity` reads it on every /account
+    request to report `reserve_usd` and `cash_above_reserve`, and that
+    reader outlives the sweep. Kept here so retiring the rest of the sweep
+    cannot delete a live display band by association.
+    """
+
+    pct: float = Field(default=1.0, ge=0, le=20)
+    """% of equity reported as held back as raw cash for fees, slippage and
+    partial fills. Deliberately 1.0 — an earlier pass in the 2026-08-19
+    tranche raised it to 5.0 as a workaround for BUYs being skipped for lack
+    of cash, which treated a symptom and was put back. Still `arbitrary` in
+    config/number_ledger.yaml; relocation changed its home, not its value or
+    its honesty label."""
 
 
 class IntradayScanConfig(BaseModel):
@@ -2173,6 +2186,15 @@ class MacroConfig(BaseModel):
         return self
 
 
+class DeploymentGapConfig(BaseModel):
+    """Settings for the `deployment_gap` advisory (PM facts + pre-trade)."""
+    band_pct: float = Field(default=1.0, ge=0, le=20)
+    """Tolerance band, percentage points under 100% invested. Moved here
+    from `cash_sweep.reserve_pct` (board item 190 step 1) so the advisory no
+    longer depends on the retiring sweep feature. VALUE UNCHANGED (1.0).
+    Owner-appetite, not measured: see the ledger row."""
+
+
 class EventRiskConfig(BaseModel):
     """Scheduled-event lookups that ground the Risk Manager's mandatory
     `event_risk` check (`src/data/event_calendar.py`).
@@ -2276,6 +2298,8 @@ class AppConfig(BaseModel):
     # Optional section — a settings.yaml without it gets a disabled sweeper
     # (enabled=False default), so older configs keep working unchanged.
     cash_sweep: CashSweepConfig = Field(default_factory=CashSweepConfig)
+    deployment_gap: DeploymentGapConfig = Field(default_factory=DeploymentGapConfig)
+    cash_reserve: CashReserveConfig = Field(default_factory=CashReserveConfig)
     # Optional section — a settings.yaml without it gets the scan disabled
     # (enabled=False default), so intra_check's existing behavior is
     # unchanged unless explicitly opted in.

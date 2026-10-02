@@ -46,6 +46,7 @@ import pytest
 
 from src import coverage_watchdog, notifier, trader_feed
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 _NOW = datetime(2026, 9, 23, 14, 30, tzinfo=timezone.utc)
 
@@ -59,9 +60,7 @@ def state_path(tmp_path, monkeypatch):
 
 def _pipe(positions, snapshot, *, market_open=False):
     """A pipeline stub whose ONLY live parts are the reconciler under test."""
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
-    pipe.db = MagicMock()
+    pipe = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipe.db.get_pending_protection_restores.return_value = []
     pipe.broker.get_positions.return_value = positions
     pipe.broker.snapshot_protective_stops.side_effect = snapshot
@@ -82,7 +81,7 @@ def _run(pipe, *, market_open=False):
         alerts.append((text, list(symbols or [])))
         return True
 
-    with patch("src.pipeline._market_is_open_now", return_value=market_open), \
+    with patch("src.pipeline_protection._market_is_open_now", return_value=market_open), \
          patch.object(TradingPipeline, "_sweeper", return_value=None), \
          patch.object(
              TradingPipeline, "_retired_cash_park_symbol", return_value=None,
@@ -675,9 +674,7 @@ def test_no_stop_at_all_outranks_stop_unreadable_in_every_renderer():
 # ===========================================================================
 
 def _exit_pipe():
-    pipe = TradingPipeline.__new__(TradingPipeline)
-    pipe.broker = MagicMock()
-    pipe.db = MagicMock()
+    pipe = build_pipeline(broker=MagicMock(), db=MagicMock())
     return pipe
 
 

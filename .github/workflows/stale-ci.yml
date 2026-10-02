@@ -1,0 +1,69 @@
+name: stale-ci
+
+# A pull request whose head commit has no test run is invisible: the branch
+# still shows the PREVIOUS commit's result, auto-merge never fires, and
+# nothing notices. That happened to roughly six finished changes in one day.
+# This job asks the only question that matters — does every open PR's head
+# commit have a test run? — starts one where it is missing, and goes RED in
+# the Actions tab when it found any. Red in Actions is the visible surface;
+# it does not depend on a message being delivered, and desk alerts are muted.
+on:
+  schedule:
+    # Every 30 minutes. The test suite itself runs in about two minutes, so a
+    # stall is caught well inside the window in which somebody would still
+    # have been waiting on the change.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+# Never let two sweeps overlap; a second one would dispatch duplicate runs
+# for the same stale commits.
+concurrency:
+  group: stale-ci
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write        # needed to dispatch test.yml on a stalled branch
+  pull-requests: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # No dependencies: the script shells out to the `gh` CLI, which is
+      # preinstalled on the runner.
+      - name: Sweep open PRs for a head commit with no test run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/check_stale_ci.py --repo "$GITHUB_REPOSITORY"
+
+  # The neighbouring blind spot, and the larger one. Branch protection reads
+  # a pull request's own `pytest` check and does not require the branch to be
+  # current with main first (`strict: false`), so two independently-green
+  # changes can merge into a red main -- and nothing reads the run main
+  # produces afterwards. On 2026-10-01 main sat red while every open PR
+  # showed green. This job asks the only question that closes that gap: did
+  # main's own newest completed push run pass? It goes RED in the Actions tab
+  # when the answer is no, and writes the failing commit, its subject and how
+  # long the branch has been red into the run summary, so the record is
+  # legible on its own without a Telegram message nobody will receive.
+  main-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Is main's own test run red?
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/check_main_red.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --branch "${{ github.event.repository.default_branch }}"

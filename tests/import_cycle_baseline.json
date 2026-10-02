@@ -1,0 +1,53 @@
+{
+ "_comment": "Import-cycle edges that existed when the guard was introduced. This list may only SHRINK: run `PYTHONPATH=. .venv/bin/python -m scripts.import_graph --shrink-baseline` after breaking a cycle. Never add an edge here; break the cycle instead.",
+ "edges": [
+  [
+   "src.config",
+   "src.live_capital_preflight"
+  ],
+  [
+   "src.coverage_watchdog",
+   "src.execution.scale_in"
+  ],
+  [
+   "src.coverage_watchdog",
+   "src.execution.stop_repair"
+  ],
+  [
+   "src.execution.broker",
+   "src.execution.scale_in"
+  ],
+  [
+   "src.execution.scale_in",
+   "src.coverage_watchdog"
+  ],
+  [
+   "src.execution.scale_in",
+   "src.execution.broker"
+  ],
+  [
+   "src.execution.stop_repair",
+   "src.execution.broker"
+  ],
+  [
+   "src.live_capital_preflight",
+   "src.config"
+  ],
+  [
+   "src.models.base",
+   "src.seat_heal"
+  ],
+  [
+   "src.pipeline_sizing",
+   "src.pipeline_stages"
+  ],
+  [
+   "src.pipeline_stages",
+   "src.pipeline_sizing"
+  ],
+  [
+   "src.seat_heal",
+   "src.models.base"
+  ]
+ ]
+}

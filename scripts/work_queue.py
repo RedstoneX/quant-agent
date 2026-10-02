@@ -141,7 +141,9 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -217,6 +219,13 @@ class Queue:
     #: Decisions the owner owes an answer on. Never actionable by me, and
     #: listed separately because their handle is a date, not a number.
     decisions: list[PendingDecision] = field(default_factory=list)
+    #: Where the board that produced all of the above was read FROM, in a
+    #: short phrase meant to be shown. The board is shared state, not a
+    #: property of whichever branch a session happens to sit on, so a
+    #: reader who is not told the source cannot tell a current answer from
+    #: a stale one — and a confidently stale answer is the defect this
+    #: field exists to make impossible.
+    source: str = "unknown"
 
     @property
     def next_item(self) -> QueueItem | None:
@@ -230,6 +239,7 @@ class Queue:
                                  for i in self.waiting_external],
             "blocked_on_owner": [{"ref": i.ref, "title": i.title}
                                  for i in self.blocked_on_owner],
+            "source": self.source,
             "unreadable": list(self.unreadable),
             "decisions": [{"ref": d.ref, "question": d.question,
                            "days_left": d.days_left} for d in self.decisions],
@@ -256,6 +266,49 @@ def classify(items: list[QueueItem]) -> dict[str, list[QueueItem]]:
     return out
 
 
+#: The ref the board is read from by default. The backlog is SHARED state
+#: edited by several sessions at once; the authoritative copy is the one
+#: everybody merges into, not the working tree, which on a long-lived
+#: shared checkout can sit many commits behind without anyone noticing.
+BOARD_REF = "origin/main"
+
+
+def _git_board(ref: str, dest: Path) -> tuple[Path, Path]:
+    """Write `docs/WORK.md` and `docs/board_notes/` AT `ref` into `dest`.
+
+    Returns the two paths the parser expects — real files on disk, because
+    every loader below takes a `Path` and reads it, and a git ref is not a
+    filesystem. Raises on any failure; the only caller treats that as "fall
+    back to the working tree and say why".
+
+    Deliberately does NOT fetch. This runs on every stop, and a hook that
+    touches the network every time a turn ends is a cost, a hang and an
+    outage waiting to happen. Reading a ref that is itself behind is a
+    smaller and much more visible problem than that.
+    """
+
+    def git(*args: str) -> bytes:
+        return subprocess.run(("git", "-C", str(REPO_ROOT), *args),
+                              check=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, timeout=20).stdout
+
+    work_md = dest / "WORK.md"
+    work_md.write_bytes(git("show", f"{ref}:docs/WORK.md"))
+
+    notes_dir = dest / "board_notes"
+    notes_dir.mkdir()
+    # One file per item (see docs/board_notes/README.md), so the ref read has
+    # to reproduce the whole DIRECTORY — a single-file read here would
+    # silently drop every note and leave the queue unexplained.
+    listing = git("ls-tree", "--name-only", "-z", f"{ref}:docs/board_notes")
+    for name in listing.decode().split("\0"):
+        if not name.endswith(".md"):
+            continue
+        (notes_dir / name).write_bytes(
+            git("show", f"{ref}:docs/board_notes/{name}"))
+    return work_md, notes_dir
+
+
 def build_queue(work_md: Path | None = None,
                 board_notes: Path | None = None) -> Queue:
     """Read the backlog and sort it. Never raises on a malformed backlog.
@@ -265,8 +318,31 @@ def build_queue(work_md: Path | None = None,
     broken edit must produce "I could not read it", never a stack trace and
     never a silently empty queue that reads as "all done".
     """
-    work_md = work_md or (REPO_ROOT / "docs" / "WORK.md")
-    board_notes = board_notes or (REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    if work_md is None and board_notes is None:
+        with tempfile.TemporaryDirectory(prefix="work-queue-board-") as tmp:
+            try:
+                ref_work_md, ref_notes = _git_board(BOARD_REF, Path(tmp))
+            except Exception as exc:  # noqa: BLE001 - never block a session
+                fallback = _build_queue_from(
+                    REPO_ROOT / "docs" / "WORK.md",
+                    REPO_ROOT / "docs" / "board_notes")
+                fallback.source = (
+                    f"this checkout's working tree — {BOARD_REF} could not be "
+                    f"read ({type(exc).__name__}), so this board may be behind")
+                return fallback
+            queue = _build_queue_from(ref_work_md, ref_notes)
+            queue.source = f"{BOARD_REF} (shared board)"
+            return queue
+
+    queue = _build_queue_from(
+        work_md or (REPO_ROOT / "docs" / "WORK.md"),
+        board_notes or (REPO_ROOT / "docs" / "board_notes"))
+    queue.source = "the paths this run was given"
+    return queue
+
+
+def _build_queue_from(work_md: Path, board_notes: Path) -> Queue:
+    """Parse one board, wherever its two paths came from. Never raises."""
     queue = Queue()
 
     try:
@@ -635,7 +711,8 @@ def run_hook(raw: str, **kw: Any) -> int:
         "promise": "You said you were doing this and the turn did nothing",
         "adversary": "A closure has not been argued against",
     }.get(decision.kind, "Next in the backlog, oldest first")
-    print(f"{lead}: {decision.reason}", file=sys.stderr)
+    print(f"{lead}: {decision.reason} [board read from: "
+          f"{queue.source}]", file=sys.stderr)
     return BLOCK_EXIT
 
 
@@ -645,6 +722,8 @@ def run_hook(raw: str, **kw: Any) -> int:
 
 def render(queue: Queue) -> str:
     lines: list[str] = []
+    lines.append(f"Board read from: {queue.source}")
+    lines.append("")
     if queue.unreadable:
         lines.append("COULD NOT READ")
         lines.extend(f"  {p}" for p in queue.unreadable)

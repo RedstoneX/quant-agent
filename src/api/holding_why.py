@@ -60,12 +60,21 @@ from typing import Any
 #: no caller anywhere passes `take_profit_price` to the broker; and
 #: "taking profits" / "TARGET_BREACH" are deliberately absent from the
 #: list of reasons that can justify an exit (`src/pipeline.py`).
+#: Re-checked 2026-10-01 after item 212 (#928): `reference_target` is now
+#: passed into `src.risk.trailing.evaluate_trailing_stop` and never read
+#: in its body, so the target has NO remaining live effect anywhere.
 NOTHING_ACTS_ON_TARGET = (
-    "Nothing sells at this price. It is a reference the desk recorded at "
-    "entry, not an instruction. Since 12 September 2026 the trailing stop "
-    "is the only automatic exit, and reaching a profit target is not by "
-    "itself an accepted reason to sell. The number is not revisited after "
-    "entry."
+    "Nothing sells at this price, and no stop moves because of it. It is "
+    "a recorded expectation \u2014 what the analysis thought the move was "
+    "worth when the position was opened \u2014 and not an instruction. "
+    "Since 12 September 2026 the trailing stop is the only automatic "
+    "exit, and reaching a profit target is not by itself an accepted "
+    "reason to sell. Until 1 October 2026 this number did one live thing: "
+    "on a range trade it decided whether the trailing stop kept a "
+    "locked-in floor underneath it. That gate has been removed, so the "
+    "number now governs nothing at all. It is kept because it is "
+    "evidence: progress and pace on this page are measured against it, "
+    "and a later review can ask what the desk expected and when."
 )
 
 #: Also verbatim. `expected_horizon_sessions` is written only on the entry

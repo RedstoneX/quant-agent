@@ -7,7 +7,7 @@ independently. Nothing reconciled the compound. Two fixes, still in force:
 
   1. PMFacts carries invested_target_pct + deployment_gap_pp and renders a
      ⚠️ DEPLOYMENT GAP section (more than the cash-reserve band under —
-     `cash_sweep.reserve_pct`, see `src.risk.rules.deployment_gap_band_pct`)
+     `deployment_gap.band_pct`, see `src.risk.rules.deployment_gap_band_pct`)
      that the PM prompt requires be answered in the cash_target step.
   2. The `deployment_gap` advisory must NOT tell RM to scale_all_buys down.
 
@@ -42,7 +42,7 @@ def test_pm_facts_render_deployment_gap_when_under():
 
 
 def test_pm_facts_render_near_mandate_still_asks_for_residual_cash_reason():
-    """-0.5pp is inside the default cash-reserve band (`reserve_pct`=1.0,
+    """-0.5pp is inside the default cash-reserve band (`deployment_gap.band_pct`=1.0,
     unset here so PMFacts falls back to CashSweepConfig's own default)."""
     f = PMFacts()
     f.invested_pct = 99.5
@@ -172,7 +172,7 @@ def test_advisory_never_scales_down_for_being_above_target():
     # AAPL is put in a different sector than the held NVDA (Technology) so
     # the unrelated sector-crowding gate doesn't hard-block the BUY and mask
     # what this test is actually about — the deployment-gap advisory.
-    with patch("src.pipeline._get_sector", return_value="Other"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Other"), patch(
         "src.execution.broker._get_sector", return_value="Other"
     ):
         for target in (DESK_INVESTED_TARGET_PCT, 50.0):
@@ -184,9 +184,9 @@ def test_advisory_never_scales_down_for_being_above_target():
 
 def test_within_band_below_mandate_is_quiet():
     """`pipeline` (built via `_engine_pipeline()`) carries no `.config`, so
-    the band falls back to `CashSweepConfig`'s own declared `reserve_pct`
-    default (1.0) — the desk's sourced cash reserve, not an invented
-    number. 99.3% invested is within that reserve of the 100% mandate."""
+    the band falls back to `DeploymentGapConfig`'s own declared `band_pct`
+    default (1.0), not an invented
+    number. 99.3% invested is within that band of the 100% mandate."""
     pipeline = _engine_pipeline()
     positions = [Position(symbol="NVDA", qty=100, avg_entry=800,
                           current_price=993, market_value=99_300,

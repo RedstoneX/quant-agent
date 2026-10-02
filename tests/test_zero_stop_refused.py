@@ -21,6 +21,7 @@ from src.execution.stop_records import (
     STOP_ABSENT, STOP_UNUSABLE, STOP_USABLE, classify_stop_price,
 )
 from src.execution.stop_repair import repair_stop_coverage
+from tests.pipeline_factory import build_pipeline
 
 
 @pytest.mark.parametrize("value", [None, "", "   "])
@@ -158,8 +159,7 @@ def test_reprotect_keeps_the_recovery_intent_when_no_price_is_usable():
     retry it."""
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     assert pipeline._reprotect_residual_after_partial_sell(
         "X", 4.0, [{"id": "a", "stop_price": 0.0}, {"id": "b"}],
     ) is False
@@ -171,10 +171,9 @@ def test_reprotect_still_places_the_most_protective_usable_stop():
     extreme is the HIGHEST trigger."""
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker._list_open_sell_stop_orders.return_value = []
-    pipeline.broker._submit_stop_limit_order.return_value = {"id": "s1"}
+    pipeline.broker._submit_protective_stop_retrying.return_value = {"id": "s1"}
     pipeline.db = None
     assert pipeline._reprotect_residual_after_partial_sell(
         "X", 4.0,
@@ -182,6 +181,6 @@ def test_reprotect_still_places_the_most_protective_usable_stop():
          {"id": "b", "stop_price": 90.0},
          {"id": "c", "stop_price": 95.0}],
     ) is True
-    kwargs = pipeline.broker._submit_stop_limit_order.call_args.kwargs
+    kwargs = pipeline.broker._submit_protective_stop_retrying.call_args.kwargs
     assert kwargs["stop_price"] == 95.0
     assert math.isfinite(kwargs["stop_price"])

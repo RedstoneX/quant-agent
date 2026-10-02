@@ -465,7 +465,7 @@ def test_a_collision_refusal_says_exactly_what_differs(tmp_path):
 
 @pytest.mark.parametrize("kind,tree_path", [
     ("work", "docs/WORK.md"),
-    ("notes", "docs/BOARD_NOTES.md"),
+    ("notes", "docs/board_notes/item-001.md"),
     ("history", "docs/INCIDENT_HISTORY.md"),
 ])
 def test_a_clean_merge_of_every_document_still_exits_zero_unmarked(

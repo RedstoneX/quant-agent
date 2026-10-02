@@ -211,7 +211,7 @@ SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 #: A directory entry covers every `.py` under it.
 SCOPED_PATHS: tuple[str, ...] = (
     "src/risk",
-    "src/portfolio_constructor.py",
+    "src/portfolio_constructor",
     "src/rotation.py",
     "src/nominations.py",
     "src/evidence_gate.py",
@@ -230,6 +230,20 @@ SCOPED_PATHS: tuple[str, ...] = (
     # Decides whether an APPROVED trade is actually sent
     # (`MAX_ENTRY_SLIPPAGE_BPS`), and carries the sizing fallback.
     "src/pipeline_stages.py",
+    # 2026-10-01, board item 210 step 10: the four stage classes moved out of
+    # `src/pipeline_stages.py` verbatim. Same code, same scope -- these paths
+    # keep their numbers inside the ledger instead of dropping out silently.
+    "src/stage_morning_research.py",
+    "src/stage_decision.py",
+    "src/stage_risk.py",
+    "src/stage_execution.py",
+    "src/pipeline_sizing.py",
+    "src/pipeline_earnings_quality.py",
+    # 2026-10-01, board item 210 step 12: the rotation-EXECUTION block and
+    # the entry order-placement/re-peg block moved out of
+    # `src/pipeline_stages.py` verbatim. Same code, same scope.
+    "src/pipeline_rotation_exec.py",
+    "src/pipeline_entry_orders.py",
     "src/execution/cash_sweep.py",
     "src/execution/stop_records.py",
     # 2026-09-19, board item 130: `broker.py` IS the broker order -- the
@@ -243,11 +257,35 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/execution/broker.py",
     "src/execution/stop_repair.py",
     "src/coverage_watchdog.py",
-    # The pipeline's own decision/execution glue. `_clamp_queued_earnings_
-    # buys`' `max_pct=5.0` is a function-parameter default and the de-lever
-    # and midday order-price buffers are inline multipliers; rules (c) and
-    # (e) see them since 2026-09-19.
+    # The pipeline's own decision/execution glue. The de-lever and midday
+    # order-price buffers are inline multipliers and rule (e) has seen them
+    # since 2026-09-19; rule (c) (function-parameter defaults) was added the
+    # same day for `_clamp_queued_earnings_buys`' `max_pct=5.0`, which no
+    # longer exists — that gate refuses the BUY instead of sizing it (board
+    # item 186, 2026-10-01) — and the rule stays because the shape recurs.
     "src/pipeline.py",
+    "src/pipeline_delever.py",
+    # The held-position exit engine and the exit-trigger vocabulary -- moved
+    # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
+    # Every trail multiple and every exit threshold it carries stays scoped.
+    "src/pipeline_exits.py",
+    # The intra-check session and the intraday opportunity scan -- moved here
+    # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
+    "src/pipeline_intraday.py",
+    # 2026-10-01, board item 210 step 6: the universe-admission cluster --
+    # the external-nomination gates, the screen and its admission -- moved
+    # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
+    # scoped.
+    "src/pipeline_admission.py",
+    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py",
+    # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
+    # application moved here out of `src/pipeline.py`.
+    "src/pipeline_risk_gate.py",
+    # 2026-10-01, board item 210 step 2: the protection cluster -- stop
+    # coverage, repair, protected sells, write-ahead restore, the fill and
+    # stop-out reconcilers -- moved here out of `src/pipeline.py`. Scoped at
+    # its new address so its numbers stay under the guard.
+    "src/pipeline_protection.py",
     # Every seat's prompt-construction and LLM-call code -- the path from
     # evidence to a seat's verdict the scope rule names. Most of what lives
     # here is LLM plumbing (timeouts, retries, token budgets) that is
@@ -272,6 +310,8 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
     "RiskConfig",
     "ExecutionConfig",
     "CashSweepConfig",
+    "CashReserveConfig",
+    "DeploymentGapConfig",
     "IntradayScanConfig",
     "SmartMoneyConfig",
     "NominationConfig",
@@ -290,7 +330,7 @@ SCOPED_CONFIG_MODULE = "src/config.py"
 #: `absolute_min_stop_atr_multiple = 1.0` (in both `RiskConfig` and
 #: `ConstructorConfig`), `min_target_atr_multiple = 1.0`,
 #: `breakout_projection_atr_multiple = 1.0`, `NOISE_BAND_ATR_MULTIPLE = 1.0`
-#: and `CashSweepConfig.reserve_pct = 1.0`. One ATR is not an identity — it
+#: and `CashReserveConfig.pct = 1.0`. One ATR is not an identity — it
 #: is the hard floor under every stop this desk sets.
 NEUTRAL_VALUES: frozenset[float] = frozenset({0.0})
 
@@ -360,12 +400,218 @@ def arbitrary_ratchet(path: Path | None = None) -> int:
 
 MAX_ARBITRARY_ENTRIES = arbitrary_ratchet()
 
+#: Item 90's three states. A trade-governing number must sit in exactly one
+#: of them: (1) SOURCED OR MEASURED -- the `sourced`, `derived` and
+#: `instrument` statuses; (2) RATIFIED AS A STRUCTURAL BOUND with the reason
+#: recorded -- also carried by `sourced`, whose `source` is then the
+#: ratification; (3) UNSOURCEABLE TODAY, with a named RECORDING already built
+#: or specified that would settle it, and that recording as its closing
+#: condition -- an `arbitrary` row carrying `settles_by`.
+#:
+#: The fourth state is the defect: an `arbitrary` row with no `settles_by`,
+#: i.e. a live number nothing in this desk will ever answer. Before this
+#: block existed the schema could not tell state 3 from the defect, so the
+#: classification could only be produced by hand-reading 135 rows -- and
+#: anything that relies on remembering to re-read them slips.
+SETTLEMENT_ROUTE_KINDS: frozenset[str] = frozenset(
+    {"recording", "ratified-bound", "measurement"}
+)
+
+#: `built` = the recording exists and is accumulating now. `specified` = it is
+#: written down in enough detail to build, and `where` points at that writing.
+SETTLEMENT_ROUTE_STATES: frozenset[str] = frozenset({"built", "specified"})
+
+#: Fields a `settles_by` block must carry. `records` says WHAT is written
+#: down; `closes_when` says what reading it would have to show for the row to
+#: leave `arbitrary`. A route with no closing condition is a wish.
+SETTLEMENT_ROUTE_FIELDS: tuple[str, ...] = (
+    "kind",
+    "state",
+    "where",
+    "records",
+    "closes_when",
+)
+
+#: Shortest `records` / `closes_when` worth the name. A one-word route is the
+#: same failure as the one-word `note` the arbitrary schema already bars.
+MIN_ROUTE_PROSE_CHARS = 40
+
+ROUTE_RATCHET_HISTORY_PATH = REPO_ROOT / "config" / "number_ledger_route_history.yaml"
+
+
+def routeless_ratchet(path: Path | None = None) -> int:
+    """`MAX_ROUTELESS_ARBITRARY`, computed. Never hand-maintained."""
+    return sum(
+        int(change["delta"])
+        for change in load_ratchet_history(path or ROUTE_RATCHET_HISTORY_PATH)
+    )
+
+
+#: Ratchet, checked for EQUALITY, exactly like `MAX_ARBITRARY_ENTRIES`: the
+#: number of `arbitrary` rows that are in NONE of item 90's three states.
+MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
+
+
+#: Fields `src/storage/db.py` actually WRITES, as opposed to merely creating.
+#: A settlement route whose state is `built` has to name where its evidence
+#: lands, and this is what makes that claim falsifiable: the named field must
+#: be used by executable code in the storage layer, NOT merely declared by the
+#: `_ensure_column` migration. The three dead recordings found on 2026-10-01
+#: all passed "the column exists" and failed "something writes it" -- the
+#: break-confirmation-margin payload, for one, is built into a prose `detail`
+#: string that the only persisting call throws away.
+_DB_SOURCE_PATH = "src/storage/db.py"
+
+
+def written_fields(source: str | None = None) -> frozenset[str]:
+    """Every field name the storage layer writes, read out of its own AST.
+
+    A name counts when it appears as a string constant in EXECUTABLE code --
+    an SQL column list, a `(column, value)` update pair, a persisted payload
+    key. It does NOT count when its only appearance is the `_ensure_column`
+    migration that creates it (a column nothing writes is exactly the defect)
+    or a docstring/comment mentioning it.
+    """
+    import ast as _ast
+
+    if source is None:
+        source = (REPO_ROOT / _DB_SOURCE_PATH).read_text(encoding="utf-8")
+    tree = _ast.parse(source)
+    migration_only: set[int] = set()
+    docstrings: set[int] = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Call):
+            fname = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if fname == "_ensure_column":
+                for arg in node.args[1:]:
+                    if isinstance(arg, _ast.Constant) and isinstance(arg.value, str):
+                        migration_only.add(id(arg))
+        if isinstance(node, _ast.Expr) and isinstance(node.value, _ast.Constant):
+            if isinstance(node.value.value, str):
+                docstrings.add(id(node.value))
+    found: set[str] = set()
+    ident = re.compile(r"^[a-z_][a-z0-9_]*$")
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Constant) or not isinstance(node.value, str):
+            continue
+        if id(node) in migration_only or id(node) in docstrings:
+            continue
+        text = node.value
+        for token in re.split(r"[\s,()=?]+", text):
+            token = token.strip().strip("'\"")
+            if ident.match(token):
+                found.add(token)
+    return frozenset(found)
+
+
+def settlement_route_problem(entry: dict[str, Any]) -> str | None:
+    """Why this entry's `settles_by` is not a route, or None if it is one."""
+    route = entry.get("settles_by")
+    if route is None:
+        return "no `settles_by` block"
+    if not isinstance(route, dict):
+        return "`settles_by` is not a mapping"
+    missing = [f for f in SETTLEMENT_ROUTE_FIELDS if not str(route.get(f, "")).strip()]
+    if missing:
+        return f"`settles_by` is missing {', '.join(missing)}"
+    if route["kind"] not in SETTLEMENT_ROUTE_KINDS:
+        return (
+            f"`settles_by.kind` is {route['kind']!r}; "
+            f"expected one of {sorted(SETTLEMENT_ROUTE_KINDS)}"
+        )
+    if route["state"] not in SETTLEMENT_ROUTE_STATES:
+        return (
+            f"`settles_by.state` is {route['state']!r}; "
+            f"expected one of {sorted(SETTLEMENT_ROUTE_STATES)}"
+        )
+    for field in ("records", "closes_when"):
+        if len(str(route[field]).strip()) < MIN_ROUTE_PROSE_CHARS:
+            return (
+                f"`settles_by.{field}` is under {MIN_ROUTE_PROSE_CHARS} "
+                f"characters, which is not a route anybody can act on"
+            )
+    if route["state"] == "built":
+        writes = route.get("writes")
+        if not isinstance(writes, list) or not writes:
+            return (
+                "`settles_by.state` is `built` but the route names no "
+                "`writes:` list. A BUILT recording has to say which fields "
+                "carry its evidence, or nobody can tell a recording that is "
+                "collecting from one that is silently collecting nothing"
+            )
+        written = written_fields()
+        for target in writes:
+            if not isinstance(target, str) or "." not in target:
+                return (
+                    f"`settles_by.writes` entry {target!r} is not a "
+                    f"`<table-or-kind>.<field>` name"
+                )
+            field = target.rsplit(".", 1)[1].strip()
+            if field not in written:
+                return (
+                    f"`settles_by.writes` names {target!r} but nothing in "
+                    f"{_DB_SOURCE_PATH} writes {field!r} -- it appears only "
+                    f"in the migration that creates it, in prose, or not at "
+                    f"all. A settlement route pointing at a field nothing "
+                    f"writes can never close"
+                )
+    return None
+
+
+def classification(
+    ledger: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Item 90's classification, produced FROM the ledger, never by hand.
+
+    Keys: `sourced_or_measured`, `ratified_bound`, `recording_named`,
+    `unclassified` and `not_trade_governing`. `unclassified` is the remaining
+    work: live numbers in none of the three states.
+    """
+    out: dict[str, list[str]] = {
+        "sourced_or_measured": [],
+        "ratified_bound": [],
+        "recording_named": [],
+        "unclassified": [],
+        "not_trade_governing": [],
+    }
+    for site_id, entry in sorted(ledger.items()):
+        status = entry.get("status")
+        if status == "not-trade-governing":
+            out["not_trade_governing"].append(site_id)
+        elif status in {"derived", "instrument", "measurement"}:
+            out["sourced_or_measured"].append(site_id)
+        elif status == "sourced":
+            text = str(entry.get("source", "")).lower()
+            key = "ratified_bound" if "ratif" in text else "sourced_or_measured"
+            out[key].append(site_id)
+        elif status == "arbitrary":
+            key = (
+                "unclassified"
+                if settlement_route_problem(entry)
+                else "recording_named"
+            )
+            out[key].append(site_id)
+    return out
+
+
 #: Sentinel for the scope rule. Module-level numeric constants found by this
 #: same scanner in `src/**.py` files that are NOT in scope. Measured, not
 #: chosen. The build fails if it RISES, so a trade number cannot be parked
 #: outside scope silently. Raising it is a reviewed line that says a new
 #: unscoped constant was looked at and is not trade-governing.
-MAX_UNSCOPED_NUMERIC_SITES = 154  # 2026-09-26, item 99(d): +1 for `src.retired_mechanisms.MIN_NEEDLE` (12), the minimum length a `described_in.contains` needle must have in the new deletion-site TRIGGER (`described:` / `described_gaps()`) so a short substring cannot match a sentence by accident. It bounds a STRING-MATCHING rule inside a build-time prompt-drift check, not any trade decision -- it decides whether a registry entry loads, never a size, price, stop or exit. Was 153  # 2026-09-24, item 163: +1 for `src.models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT` (0.5), the tolerance the new PM risk-narrative-mismatch check uses to compare an explicit risk-% claim in `TargetPosition.thesis` prose against the authoritative `risk_allocation_pct` field. Not an independent number -- it is `RiskConfig.min_position_risk_pct` (config/settings.yaml:659, already ledgered) duplicated as a literal because `TargetPosition` is an LLM-output model with no `RiskConfig` in scope at validation time. It only sets a durable, surfaced FLAG when prose and field disagree; `risk_allocation_pct` remains authoritative for sizing and is never overridden, so this cannot decide, size, price or exit a trade. Was 152  # 2026-09-24: +1 for `src.margin_interest.MAX_LOOKBACK_MONTHS` (6), the owner's own ask for how many months back the cumulative margin-interest view looks (this-week/current-month/up-to-6-months/all-time, replacing the old per-day/per-year cockpit and Telegram figures). It bounds how far back a PRESENTATION bucket looks, not any trade decision -- `overnight_debit_balance`/`estimate_daily_interest`, the actual interest math, are unchanged. Was 151  # 2026-09-23: +1 for `src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS` (7), the safety bound on the forward calendar walk that counts how many calendar days of margin interest the owner-facing ESTIMATE line will show (a Friday debit is carried 3 days). It bounds a Telegram/dashboard estimate and degrades to 1 when exhausted; it never decides, sizes, prices or exits a trade. Was 150  # 2026-09-23: +1 for `src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS` (120), the width of the single `/fred/release/dates` request per configured release. It is a FETCH window, not a horizon: `get_upcoming_events` still filters to `horizon_days` before anything reaches a seat, so this number cannot decide, size, price or exit a trade -- it only decides whether the desk can SEE a monthly release's published schedule at all. At the previous 10-day width three of four major releases came back empty and were mislabelled as source failures (measured against the live FRED API 2026-09-23; the measurement is recorded at the constant). Was 149  # 2026-09-23: +2 for the new `src/llm_route_journal.py` (the SQLite connect timeout and the `read_events` default page size). That module is a durable log of which LLM road answered a call and what that road lists at; neither number decides, sizes, prices or exits a trade. The four numbers the same change added to `src/agents/base.py` are absent from this count because that module is in SCOPED_PATHS and each one carries a config/number_ledger.yaml entry. Was 147  # 2026-09-19: +2, and they are this module's own `FACTOR_BAND` (0.5, 2.0) -- the classifier band rule (e) uses to tell a price/size margin from a unit conversion. It governs what the gate sees, not any trade. Was 145  # 2026-09-19, board item 130: -47. `src/execution/broker.py`, `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents` moved from unscoped to SCOPED_PATHS (192 -> 145) and every one of their 47 structural sites now carries a ledger entry instead of sitting in this count; none was deleted or reclassified to make the number fall. Was 192  # 2026-09-18: +3 for the trade_updates reconnect ceilings in `src/execution/broker.py` — `_STREAM_ATTEMPT_CEILING_PER_SESSION` (6, the attempt at which alpaca-py's own 1s/30s equal-jitter curve saturates), `_STREAM_ATTEMPT_CEILING_PER_DAY` (200, one minute of Alpaca's published 200-requests-per-minute account allowance, cross-checked against the measured 56 and 50 attempts of 2026-09-16/17) and `_STREAM_RATE_LIMIT_STAND_DOWN_S` (60, the published rate-limit window a 429 must sit out). They bound a fill-NOTIFICATION socket's retry loop after it logged 32,896 handshakes and 32,666 HTTP 429s on 2026-09-15; none of them decides, sizes, prices or exits a trade — the bounded REST fill path is unchanged and is what runs when they fire.  # was 189 (+1 for `src/trader_feed.py::_COMPANY_NAME_CAP`, presentation only).
+# 2026-10-01, board item 63: +1 for `src.data.smart_money.MAX_SALE_CENSUS_ROWS`
+# (200), the row cap on the new insider-SALE recording. It is NOT ledgered
+# because its module is outside SCOPED_PATHS, and it does not belong in
+# scope: it decides, sizes, prices and exits nothing. The census it bounds
+# is written to `specialist_evidence` as evidence and is read by no gate,
+# no ranking key and no sizing path.
+MAX_UNSCOPED_NUMERIC_SITES = 157  # 2026-10-01, item 78: +1 for
+# `src.seat_heal._RESTORE_OBSERVATION_CAP` (5000), the most parked heal
+# observations held in memory before the oldest are dropped and the loss
+# counted on the drained row. It bounds MEMORY, never a size, price or
+# verdict: nothing reads it into a trading decision, and a smaller or
+# larger cap changes only how many observations a run can carry.
+# PREVIOUSLY 156  # 2026-10-01, item 90: +1 for `src.number_sources.MIN_ROUTE_PROSE_CHARS` (40), the shortest `records`/`closes_when` prose a `settles_by` route may carry; it governs this LEDGER's schema, not a trade. Prior: # 2026-09-26, item 99(d): +1 for `src.retired_mechanisms.MIN_NEEDLE` (12), the minimum length a `described_in.contains` needle must have in the new deletion-site TRIGGER (`described:` / `described_gaps()`) so a short substring cannot match a sentence by accident. It bounds a STRING-MATCHING rule inside a build-time prompt-drift check, not any trade decision -- it decides whether a registry entry loads, never a size, price, stop or exit. Was 153  # 2026-09-24, item 163: +1 for `src.models.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT` (0.5), the tolerance the new PM risk-narrative-mismatch check uses to compare an explicit risk-% claim in `TargetPosition.thesis` prose against the authoritative `risk_allocation_pct` field. Not an independent number -- it is `RiskConfig.min_position_risk_pct` (config/settings.yaml:659, already ledgered) duplicated as a literal because `TargetPosition` is an LLM-output model with no `RiskConfig` in scope at validation time. It only sets a durable, surfaced FLAG when prose and field disagree; `risk_allocation_pct` remains authoritative for sizing and is never overridden, so this cannot decide, size, price or exit a trade. Was 152  # 2026-09-24: +1 for `src.margin_interest.MAX_LOOKBACK_MONTHS` (6), the owner's own ask for how many months back the cumulative margin-interest view looks (this-week/current-month/up-to-6-months/all-time, replacing the old per-day/per-year cockpit and Telegram figures). It bounds how far back a PRESENTATION bucket looks, not any trade decision -- `overnight_debit_balance`/`estimate_daily_interest`, the actual interest math, are unchanged. Was 151  # 2026-09-23: +1 for `src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS` (7), the safety bound on the forward calendar walk that counts how many calendar days of margin interest the owner-facing ESTIMATE line will show (a Friday debit is carried 3 days). It bounds a Telegram/dashboard estimate and degrades to 1 when exhausted; it never decides, sizes, prices or exits a trade. Was 150  # 2026-09-23: +1 for `src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS` (120), the width of the single `/fred/release/dates` request per configured release. It is a FETCH window, not a horizon: `get_upcoming_events` still filters to `horizon_days` before anything reaches a seat, so this number cannot decide, size, price or exit a trade -- it only decides whether the desk can SEE a monthly release's published schedule at all. At the previous 10-day width three of four major releases came back empty and were mislabelled as source failures (measured against the live FRED API 2026-09-23; the measurement is recorded at the constant). Was 149  # 2026-09-23: +2 for the new `src/llm_route_journal.py` (the SQLite connect timeout and the `read_events` default page size). That module is a durable log of which LLM road answered a call and what that road lists at; neither number decides, sizes, prices or exits a trade. The four numbers the same change added to `src/agents/base.py` are absent from this count because that module is in SCOPED_PATHS and each one carries a config/number_ledger.yaml entry. Was 147  # 2026-09-19: +2, and they are this module's own `FACTOR_BAND` (0.5, 2.0) -- the classifier band rule (e) uses to tell a price/size margin from a unit conversion. It governs what the gate sees, not any trade. Was 145  # 2026-09-19, board item 130: -47. `src/execution/broker.py`, `src/coverage_watchdog.py`, `src/pipeline.py` and `src/agents` moved from unscoped to SCOPED_PATHS (192 -> 145) and every one of their 47 structural sites now carries a ledger entry instead of sitting in this count; none was deleted or reclassified to make the number fall. Was 192  # 2026-09-18: +3 for the trade_updates reconnect ceilings in `src/execution/broker.py` — `_STREAM_ATTEMPT_CEILING_PER_SESSION` (6, the attempt at which alpaca-py's own 1s/30s equal-jitter curve saturates), `_STREAM_ATTEMPT_CEILING_PER_DAY` (200, one minute of Alpaca's published 200-requests-per-minute account allowance, cross-checked against the measured 56 and 50 attempts of 2026-09-16/17) and `_STREAM_RATE_LIMIT_STAND_DOWN_S` (60, the published rate-limit window a 429 must sit out). They bound a fill-NOTIFICATION socket's retry loop after it logged 32,896 handshakes and 32,666 HTTP 429s on 2026-09-15; none of them decides, sizes, prices or exits a trade — the bounded REST fill path is unchanged and is what runs when they fire.  # was 189 (+1 for `src/trader_feed.py::_COMPANY_NAME_CAP`, presentation only).
 
 #: Paths under `src/` the unscoped sentinel does not count: generated code and
 #: vendored trees have no author to ask.
@@ -1175,6 +1421,59 @@ def audit(
                 f"leave the ledger without saying so. Adding an unsourced "
                 f"trade-governing number is an owner decision "
                 f"(docs/OUTCOME.md).",
+            )
+        )
+
+    # 8. SETTLEMENT ROUTE, board item 90's half two. An `arbitrary` row is
+    #    only tolerable as item 90's state 3 -- unsourceable today, with a
+    #    named recording that WOULD settle it. A malformed route is a hard
+    #    failure (it reads as an answer and is not one); a missing route is
+    #    counted and ratcheted, because 135 of them exist and deleting them
+    #    is not the fix.
+    routeless: list[str] = []
+    for site_id, entry in sorted(ledger.items()):
+        if entry.get("status") != "arbitrary":
+            if entry.get("settles_by") is not None:
+                problems.append(
+                    LedgerProblem(
+                        "settlement-route",
+                        site_id,
+                        "carries `settles_by` but is not `arbitrary`. A route "
+                        "to an answer is for a number that has none; a sourced "
+                        "number states its source instead.",
+                    )
+                )
+            continue
+        why = settlement_route_problem(entry)
+        if why is None:
+            continue
+        if entry.get("settles_by") is None:
+            routeless.append(site_id)
+            continue
+        problems.append(
+            LedgerProblem(
+                "settlement-route",
+                site_id,
+                f"{why}. Either make the route real or remove it: a route "
+                f"that cannot be acted on is worse than an honest blank, "
+                f"because the count stops showing the work as outstanding.",
+            )
+        )
+    if len(routeless) != MAX_ROUTELESS_ARBITRARY:
+        direction = (
+            "rises to" if len(routeless) > MAX_ROUTELESS_ARBITRARY else "falls to"
+        )
+        problems.append(
+            LedgerProblem(
+                "route-ratchet",
+                "<ledger>",
+                f"the count of `arbitrary` rows with no `settles_by` route "
+                f"{direction} {len(routeless)} but MAX_ROUTELESS_ARBITRARY is "
+                f"{MAX_ROUTELESS_ARBITRARY}. This is an equality, not a "
+                f"ceiling, and it is not editable by hand: APPEND one entry "
+                f"to config/number_ledger_route_history.yaml with the delta "
+                f"and a `why` saying which row gained a route and what that "
+                f"recording is. See board item 90.",
             )
         )
 

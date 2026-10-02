@@ -92,12 +92,12 @@ def _book_as_api_payload() -> dict:
     }
 
 
-def _pipeline(reserve_pct: float = RESERVE_PCT) -> TradingPipeline:
+def _pipeline() -> TradingPipeline:
     p = TradingPipeline.__new__(TradingPipeline)
     p.config = SimpleNamespace(
         cash_sweep=CashSweepConfig(
             enabled=True, symbol=SWEEP_SYMBOL,
-            reserve_pct=reserve_pct, min_order_usd=500.0,
+            min_order_usd=500.0,
         ),
         risk=RiskConfig(
             max_position_pct=20, max_total_position_pct=90,
@@ -119,7 +119,7 @@ def api_routes(monkeypatch):
 
     monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: True)
     monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: SWEEP_SYMBOL)
-    monkeypatch.setattr(routes_live, "get_cash_sweep_reserve_pct", lambda: RESERVE_PCT)
+    monkeypatch.setattr(routes_live, "get_cash_reserve_pct", lambda: RESERVE_PCT)
     monkeypatch.setattr(routes_live, "read_positions", _book_as_api_payload)
     return routes_live
 
@@ -161,9 +161,13 @@ def test_total_liquidity_is_an_alias_not_a_second_computation(api_routes):
 
 
 def test_sweep_reserve_formula_is_written_exactly_once():
-    """`portfolio_value * reserve_pct / 100` existed in three files."""
-    engine_reserve = _pipeline().cash_sweeper.reserve_usd(EQUITY)
-    assert engine_reserve == pytest.approx(5_900.0)
+    """`portfolio_value * reserve_pct / 100` existed in three files.
+
+    The band moved out of `CashSweepConfig` to `CashReserveConfig.pct`
+    2026-10-01 (board item 190) and the sweeper's own `reserve_usd` wrapper
+    went with the retired feature; the shared arithmetic did not move."""
+    from src.quantities import sweep_reserve_usd as _reserve
+    assert _reserve(EQUITY, RESERVE_PCT) == pytest.approx(5_900.0)
 
     offenders = []
     for path in _python_sources():
@@ -330,7 +334,7 @@ def test_all_three_call_sites_measure_the_same_dollar_volume(monkeypatch):
     )
     p.market = MagicMock()
     p.market.get_ohlcv = MagicMock(return_value=bars)
-    monkeypatch.setattr(pipeline_mod, "_get_sector", lambda s: "Technology")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Technology")
     ok, reason, facts = p._evaluate_external_admission_gates("FAKE")
     assert ok, reason
     assert facts["avg_dollar_volume_20d_usd"] == pytest.approx(expected_usd)
@@ -459,3 +463,30 @@ def _python_sources() -> list[Path]:
             if "__pycache__" not in p.parts
         )
     return out
+
+
+def test_disabled_sweep_does_not_inflate_the_dashboard_deployable(monkeypatch):
+    """Board item 190: with the sweep RETIRED, the parked vehicle is not
+    deployable — `CashSweeper.fund_buys` returns 0.0 on its first line and
+    nothing else converts it to cash for the BUY phase, so the engine's
+    `_compute_deployable_cash` adds 0.0. The /account view used to add it
+    anyway, which would have read above the figure the PM sizes against.
+    Latent only: no cash-equivalent position is held today."""
+    from src.api import routes_live
+
+    monkeypatch.setattr(routes_live, "get_cash_sweep_enabled", lambda: False)
+    monkeypatch.setattr(routes_live, "get_cash_sweep_symbol", lambda: SWEEP_SYMBOL)
+    monkeypatch.setattr(routes_live, "get_cash_reserve_pct", lambda: RESERVE_PCT)
+    monkeypatch.setattr(routes_live, "read_positions", _book_as_api_payload)
+
+    pipeline = _pipeline()
+    pipeline.config.cash_sweep.enabled = False
+    engine = pipeline._compute_deployable_cash(CASH, BOOK)
+
+    liq = routes_live._compute_liquidity(CASH, EQUITY)
+
+    assert engine == pytest.approx(CASH)
+    assert liq.sweep_parked_value > 0, "the vehicle is still reported as held"
+    assert liq.deployable_cash == pytest.approx(engine), (
+        "a retired sweep's parked vehicle must not be counted as deployable"
+    )

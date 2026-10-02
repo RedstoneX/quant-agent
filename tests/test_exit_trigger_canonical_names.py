@@ -26,13 +26,14 @@ below rather than left to whatever the code happens to do.
 
 import pytest
 
-from src.pipeline import _HARD_TRIGGER_KEYWORDS, _reason_cites_hard_trigger
+from src.pipeline_exits import _HARD_TRIGGER_KEYWORDS, _reason_cites_hard_trigger
 from src.risk.exit_refusal import classify_trigger_reason
 from src.risk.exit_trigger import (
     CANONICAL_NAME_NOT_MATCHED_IN_PROSE,
     CANONICAL_TRIGGER_NAMES,
     EVENT_TRIGGERS,
     NO_VERIFIER_EXISTS,
+    VERIFIED_ON_CHART,
     ExitTrigger,
     TRIGGER_PHRASES,
     derive_trigger_from_reason,
@@ -152,7 +153,15 @@ def test_every_sanctioned_trigger_is_classifiable_by_its_canonical_name_in_prose
     """...except the members on the EXPLICIT, NAMED exclusion list, and for
     those this test asserts the exclusion holds rather than skipping it."""
     reason = f"{trigger.value}: recorded today, see the evidence field"
-    if trigger in CANONICAL_NAME_NOT_MATCHED_IN_PROSE:
+    if trigger in CANONICAL_NAME_NOT_MATCHED_IN_PROSE or trigger in VERIFIED_ON_CHART:
+        # A CHART-VERIFIED TRIGGER IS DELIBERATELY NOT NAMABLE IN PROSE.
+        # `_reason_cites_hard_trigger` is a BYPASS: it waves a reason past
+        # the SELL/REDUCE noise band and past the TRAIL_STOP ratchet
+        # cooldown and 1.25xATR clamp, and the trail path runs no chart
+        # check at all. Letting the alignment exit's own name buy that
+        # bypass would mean model prose alone loosened a live stop. It
+        # stays classifiable via the STRUCTURED field (asserted above),
+        # which is the path the desk actually fills.
         assert _classify(reason) == "unnamed"
     else:
         assert _classify(reason) == "named"
@@ -177,14 +186,35 @@ def test_the_honest_decline_never_passes_the_gate():
     assert _classify("stalling", trigger="cannot_substantiate") == "unnamed"
 
 
-def test_canonical_names_reached_the_phrase_tuple_and_nothing_else_did():
-    """The gate's vocabulary is the enum's, not a second hand-kept list."""
+#: THE SINGLE COPY OF THIS INVARIANT. It lived here AND, unsubtracted and
+#: therefore stale, in `tests/test_exit_trigger_substantiation.py`; the
+#: chart-verified carve-out was added to this copy only and the other copy
+#: failed the next branch that touched the vocabulary. Two hand-kept copies
+#: of one rule is how that happens, so there is now one function and the
+#: other file imports it. Do not inline it back.
+def assert_trigger_vocabulary_matches_executor_gate() -> None:
+    """`TRIGGER_PHRASES` is a REGROUPING of `pipeline._HARD_TRIGGER_KEYWORDS`,
+    never a second list -- except for the CHART-VERIFIED names, which are
+    namable in the phrase table but must never be hard-trigger keywords,
+    because a keyword is a bypass bought with prose alone."""
+    from src.pipeline_exits import _CHART_VERIFIED_TRIGGER_NAMES
+
     for name in CANONICAL_TRIGGER_NAMES:
+        if name in _CHART_VERIFIED_TRIGGER_NAMES:
+            continue  # see the prose-exclusion note above: a bypass, not a name
         assert name in _HARD_TRIGGER_KEYWORDS
     assert "earnings" not in _HARD_TRIGGER_KEYWORDS
     assert "cannot_substantiate" not in _HARD_TRIGGER_KEYWORDS
-    grouped = {p for phrases in TRIGGER_PHRASES.values() for p in phrases}
+    assert not (_CHART_VERIFIED_TRIGGER_NAMES & set(_HARD_TRIGGER_KEYWORDS))
+    grouped = {
+        p for phrases in TRIGGER_PHRASES.values() for p in phrases
+    } - _CHART_VERIFIED_TRIGGER_NAMES
     assert grouped == set(_HARD_TRIGGER_KEYWORDS)
+
+
+def test_canonical_names_reached_the_phrase_tuple_and_nothing_else_did():
+    """The gate's vocabulary is the enum's, not a second hand-kept list."""
+    assert_trigger_vocabulary_matches_executor_gate()
 
 
 @pytest.mark.parametrize("trigger", list(ExitTrigger), ids=lambda t: t.value)
@@ -204,7 +234,7 @@ def test_every_trigger_is_recorded_as_verifiable_or_explicitly_not(trigger):
     `NO_VERIFIER_EXISTS` is a legitimate answer and records the gap; being
     in neither is not an answer at all.
     """
-    in_event = trigger in EVENT_TRIGGERS
+    in_event = trigger in EVENT_TRIGGERS or trigger in VERIFIED_ON_CHART
     in_none = trigger in NO_VERIFIER_EXISTS
     assert in_event != in_none, (
         f"{trigger.value} is in "
@@ -282,7 +312,7 @@ def test_clamp_bypass_divergence_is_pinned_per_trigger():
     )
     # Triggers whose phrases agree with themselves, either way.
     coherent = {t.value for t in TRIGGER_PHRASES} - split
-    assert coherent == {"thesis_invalid", "earnings"}
+    assert coherent == {"thesis_invalid", "earnings", "trend_alignment_over"}
 
 
 def test_no_soft_signal_was_admitted_by_the_widening():

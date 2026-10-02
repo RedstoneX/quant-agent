@@ -32,7 +32,7 @@ import pytest
 from src.models import Position, TargetPosition, TechAnalysisResult
 from src.portfolio_constructor import PortfolioConstructor
 
-_SOURCE = Path(__file__).resolve().parent.parent / "src" / "portfolio_constructor.py"
+_SOURCE = Path(__file__).resolve().parent.parent / "src" / "portfolio_constructor"
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "constructor_drop_paths_archive.json"
 
 
@@ -241,8 +241,29 @@ _CANNOT_END_A_CANDIDATE = {
     "_derive_structural_stop_no_atr": "returns a structural stop or None; the no-ATR caller files any refusal",
     "_reward_risk_at": "arithmetic",
     "_note_refusal": "the recorder itself",
+    "_parity_verdict": (
+        "returns (refuse, ratio, standdown) — pure geometry, reward against "
+        "risk between real levels; the caller drops the candidate and files "
+        "the reason with _note_refusal (owner ruling 2026-10-01, item 218)"
+    ),
+    "_note_parity_standdown": "the recorder itself — files why the gate stood down",
+    "_record_parity_refusal": (
+        "durable row in trade_refusals for an already-decided refusal; "
+        "writes a record, never a verdict"
+    ),
+    "_record_subfloor_risk_target": (
+        "board item 223 recording only — a durable row for a positive "
+        "sub-floor PM risk request; it was ruled on the risk route "
+        "2026-10-01 that such a "
+        "target is NOT refused and NOT resized, so this writes a record and "
+        "the candidate continues down the path it was already on"
+    ),
     "_note_data_fault": "the recorder itself",
     "shipped_stop_rule": "names the rule on an order already built",
+    "shipped_stop_level_basis": (
+        "item 55 recording only — describes the level behind a stop on an order "
+        "already built, and no caller reads it back into a decision"
+    ),
 }
 
 #: The drop sites that legitimately file nothing THEMSELVES, each with the
@@ -252,16 +273,15 @@ _CANNOT_END_A_CANDIDATE = {
 _DELEGATION_MARKER = "# drop-reason:"
 
 
-def _class_node():
-    tree = ast.parse(_SOURCE.read_text())
-    return next(
-        n for n in tree.body
-        if isinstance(n, ast.ClassDef) and n.name == "PortfolioConstructor"
-    )
+def _class_nodes():
+    out = [(n, t.splitlines()) for p in sorted(_SOURCE.glob("*.py")) for t in [p.read_text()]
+           for n in ast.parse(t).body if isinstance(n, ast.ClassDef) and n.name in {"PortfolioConstructor", "_StopMixin", "_OrderBuildMixin"}]
+    assert len(out) == 3, [n.name for n, _ in out]  # the class body + its two mixins
+    return out
 
 
-def _methods():
-    return {n.name: n for n in _class_node().body if isinstance(n, ast.FunctionDef)}
+def _methods(lines=False):
+    return {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body if isinstance(n, ast.FunctionDef)}
 
 
 def _drop_sites(fn):
@@ -378,7 +398,7 @@ def test_every_drop_site_in_the_constructor_files_a_reason():
     previous passes at this defect each shipped a list of sites believed
     complete, and each was wrong about a site nobody had thought of.
     """
-    source_lines = _SOURCE.read_text().splitlines()
+    lines_by_method = _methods(lines=True)
     methods = _methods()
     silent = []
     checked = 0
@@ -386,8 +406,8 @@ def test_every_drop_site_in_the_constructor_files_a_reason():
         fn = methods[name]
         for site in _drop_sites(fn):
             checked += 1
-            if not _files_a_reason(fn, site, source_lines):
-                silent.append(f"{name}:{site.lineno}: {source_lines[site.lineno - 1].strip()}")
+            if not _files_a_reason(fn, site, lines_by_method[name]):
+                silent.append(f"{name}:{site.lineno}: {lines_by_method[name][site.lineno - 1].strip()}")
     assert silent == [], (
         "drop sites with no structured reason and no `# drop-reason:` marker "
         "saying who files one:\n  " + "\n  ".join(silent)

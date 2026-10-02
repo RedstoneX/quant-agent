@@ -46,6 +46,11 @@ from src.models import (
 
 class HealthResponse(BaseModel):
     status: str  # "ok" | "degraded" — process can respond while decisions are broken
+    # WHY the status is what it is, assembled from the fields already in
+    # this payload — never a new judgement and never a new severity scale.
+    # None when nothing is wrong. A bare "degraded" makes the reader guess
+    # which sub-field caused it, and a guess is not a status report.
+    reason: str | None = None
     db_reachable: bool
     broker_reachable: bool | None = None  # None = not checked (e.g. no keys)
     paper: bool | None = None  # honest echo of config.alpaca.paper; never fabricated
@@ -59,6 +64,12 @@ class HealthResponse(BaseModel):
     # of ok / broken / stale / unknown — "unknown" means no check has been
     # recorded, which is deliberately NOT the same as healthy.
     alert_channel: dict | None = None
+    # Is the code running here the code that was merged? Written by
+    # scripts/check_deploy_drift.py on its timer, never inferred here.
+    # `status` is one of in_sync / behind / unknown. Telegram alerts can be
+    # muted and a repeated message changed nothing five times in one day, so
+    # the drift state must live on the board the desk already looks at.
+    deploy_drift: dict | None = None
     timestamp: str
 
 
@@ -95,7 +106,7 @@ class LiquidityBreakdown(BaseModel):
     sweep_symbol: str | None = None
     raw_cash: float | None = None            # broker cash, includes the reserve
     sweep_parked_value: float | None = None  # market value of the held sweep vehicle, 0 if none
-    reserve_usd: float | None = None         # sweep MECHANIC: reserve_pct% of portfolio_value
+    reserve_usd: float | None = None         # cash_reserve.pct% of portfolio_value
     # raw_cash + sweep_parked_value — what the engine can actually deploy
     # without borrowing, because fund_buys sells the sweep vehicle on demand.
     deployable_cash: float | None = None
@@ -658,6 +669,12 @@ class RunDetailResponse(BaseModel):
     # MISSION_CONTROL_API.md). Computed from `agent_logs`, never fabricated —
     # a run with no such row (the ordinary case) reports False.
     hard_risk_block_recorded: bool = False
+    # Board item 219. The pruning/rotation pass, in the SAME sentences the
+    # Telegram session message uses (`src.rotation.owner_precheck_lines` +
+    # `pruning_pass_lines`), read off the same durable `rotation`/`precheck`
+    # row. Empty only when no such row exists for this run. There is no
+    # second reporting path: both surfaces render this one list.
+    rotation_lines: list[str] = []
 
 
 class DecisionDetailResponse(BaseModel):
@@ -1228,10 +1245,6 @@ class AnalystScorecardResponse(BaseModel):
 # Generic error envelope (used by exception handlers, not returned inline)
 # ---------------------------------------------------------------------------
 
-class ErrorResponse(BaseModel):
-    detail: str
-
-
 # --- holding "why do we hold this" view (2026-09-18) -------------------
 # Assembled by `src.api.holding_why.build_holding_why` from what is
 # already stored; see that module for every wording rule. The models are
@@ -1292,8 +1305,13 @@ class HoldingTakeProfit(BaseModel):
     plain: str
     #: ALWAYS False today. The automatic take-profit trim was deleted on
     #: 2026-09-12 and no caller passes `take_profit_price` to the broker,
-    #: so no order exists at this price. Kept as an explicit field rather
-    #: than a comment so a future change has to flip it deliberately.
+    #: so no ORDER exists at this price. It is not the same as "the number
+    #: has no effect": on a range trade `src/risk/trailing.py` reads
+    #: whether price has exceeded the target to decide whether the +1R
+    #: ratchet floor constrains the structural trail, which moves a live
+    #: stop. `note` states that effect in the owner's words; this flag
+    #: stays about ORDERS only. Kept as an explicit field rather than a
+    #: comment so a future change has to flip it deliberately.
     acted_on: bool = False
     note: str
     #: The target PINNED AT ENTRY (`trades.initial_take_profit`). `price`
@@ -1347,3 +1365,87 @@ class HoldingWhyResponse(BaseModel):
     #: Accession numbers, internal flags, broker-eligibility JSON, run
     #: identifiers — everything deliberately kept out of `readable`.
     raw_evidence: dict = {}
+
+
+class DeferredSuspension(BaseModel):
+    """One owner page the cost circuit held back (item 211)."""
+
+    trigger_code: str | None = None
+    detail: str | None = None
+    run_id: str | None = None
+    created_at: str | None = None
+
+
+class SuppressedRepeatEvent(BaseModel):
+    key: str | None = None
+    day: str | None = None
+
+
+class SuppressedRepeat(BaseModel):
+    """Repeat alerts of ONE type the watchdog declined to resend today."""
+
+    day: str | None = None
+    count: int = 0
+    events: list[SuppressedRepeatEvent] = []
+
+
+class SuppressedAlertsResponse(BaseModel):
+    """Item 211 — the suppression record, readable without Telegram.
+
+    `*_available` is False when the underlying record could not be read at
+    all, which is a different fact from "nothing was suppressed" and is
+    reported as such rather than as an empty list.
+    """
+
+    deferred_available: bool = False
+    deferred_suspensions: list[DeferredSuspension] = []
+    suppression_state_available: bool = False
+    suppressed_repeats: dict[str, SuppressedRepeat] = {}
+
+
+class MutedKindCount(BaseModel):
+    """Muted messages of one kind, with its live-risk share kept visible."""
+
+    kind: str
+    count: int = 0
+    live_risk_count: int = 0
+
+
+class MutedDayCount(BaseModel):
+    """Muted messages on one ET day, with its live-risk share kept visible."""
+
+    day: str
+    count: int = 0
+    live_risk_count: int = 0
+
+
+class MutedLiveRiskMessage(BaseModel):
+    """One muted message about a position whose protection was gone."""
+
+    timestamp: str
+    day: str
+    kind: str
+    symbols: list[str] = []
+    headline: str = ""
+
+
+class MutedBacklogResponse(BaseModel):
+    """Item 211 — what the global mute has been swallowing.
+
+    `coverage_complete` is False while the record begins after the mute did;
+    `coverage_gap` says so in the owner's words, so the surface can never
+    present a partial list as the whole period.
+    """
+
+    record_available: bool = False
+    record_begins_at: str = ""
+    mute_began_on: str = ""
+    coverage_complete: bool = False
+    coverage_gap: str = ""
+    total: int = 0
+    live_risk_total: int = 0
+    by_kind: list[MutedKindCount] = []
+    by_day: list[MutedDayCount] = []
+    live_risk: list[MutedLiveRiskMessage] = []
+    oldest: str | None = None
+    newest: str | None = None

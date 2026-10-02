@@ -20,6 +20,26 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import src.coverage_watchdog as _cw
+
+
+@pytest.fixture(autouse=True)
+def _drift_state_is_never_the_real_one(tmp_path, monkeypatch):
+    """Keep `main()` out of the repository's own alerting state.
+
+    `main()` persists its verdict through `src.coverage_watchdog`'s shared
+    state file, which the /health route READS. Without this, running this
+    module writes a fabricated "behind" snapshot — built from this file's
+    throwaway repositories — into `data/alerting/deploy_drift.json`, and
+    every later test that asks /health for the desk's status gets back
+    `degraded`. That is order-dependent and it reddened the whole merge
+    queue on 2026-10-01.
+    """
+    monkeypatch.setattr(
+        _cw, "DEPLOY_DRIFT_STATE_PATH", tmp_path / "deploy_drift.json"
+    )
+
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = PROJECT_ROOT / "scripts" / "check_deploy_drift.py"
 
@@ -201,7 +221,7 @@ def test_unexpected_dirty_file_is_noted_but_not_alerted(tmp_path, capsys):
 # fetch failure degrades quietly
 # ---------------------------------------------------------------------------
 
-def test_fetch_failure_exits_zero_and_does_not_alert(tmp_path, capsys):
+def test_fetch_failure_is_not_clean_exits_nonzero_and_does_not_alert(tmp_path, capsys):
     origin = _make_origin(tmp_path)
     deployed = _make_deployed(tmp_path, origin)
     # Point "origin" at a path that doesn't exist so fetch fails, simulating
@@ -212,10 +232,10 @@ def test_fetch_failure_exits_zero_and_does_not_alert(tmp_path, capsys):
     with patcher:
         code = mod.main(["--deployed-path", str(deployed)])  # fetch enabled
 
-    assert code == 0
+    assert code == 4, "could not check must not look like checked-and-clean"
     notifier.send.assert_not_called()
     err = capsys.readouterr().err
-    assert "fetch failed" in err
+    assert "COULD NOT CHECK" in err and "fetch failed" in err
 
 
 def test_fetch_remote_reports_failure_tuple(tmp_path):
@@ -259,3 +279,56 @@ def test_no_telegram_flag_skips_send_even_when_behind(tmp_path, capsys):
     notifier.send.assert_not_called()
     out = capsys.readouterr().out
     assert "fix: something merged" in out
+
+
+def test_no_test_leaves_a_drift_snapshot_in_the_repository():
+    """The repository's own alerting state is not a test artefact.
+
+    A fabricated snapshot left here answers /health for every later test in
+    the same run, and the status it fabricates is `behind`, which degrades
+    the whole board. This is the mechanical guard: the file must not exist
+    once this module has run.
+    """
+    assert not _cw.DEPLOY_DRIFT_STATE_PATH.exists(), (
+        f"{_cw.DEPLOY_DRIFT_STATE_PATH} was written by a test; point the "
+        "writer at a temporary path instead"
+    )
+
+
+# ---------------------------------------------------------------------------
+# "could not check" is never "checked and clean"
+# ---------------------------------------------------------------------------
+
+def test_git_error_while_listing_commits_exits_nonzero_not_clean(
+    tmp_path, capsys, monkeypatch,
+):
+    origin = _make_origin(tmp_path)
+    deployed = _make_deployed(tmp_path, origin)
+    _commit(origin, "fix: something new")
+    real = mod._run_git
+
+    def failing(args, *, cwd, timeout=mod.GIT_TIMEOUT_S):
+        if args and args[0] in ("log", "status"):
+            raise mod.GitError("git " + args[0] + " exited 128: unreadable")
+        return real(args, cwd=cwd, timeout=timeout)
+
+    monkeypatch.setattr(mod, "_run_git", failing)
+    code = mod.main(["--deployed-path", str(deployed), "--no-telegram"])
+
+    assert code != 0
+    out = capsys.readouterr()
+    assert "COULD NOT CHECK" in out.err
+    assert "in sync" not in out.out
+
+
+def test_missing_commits_and_dirty_files_raise_instead_of_returning_empty(
+    tmp_path, monkeypatch,
+):
+    def boom(args, *, cwd, timeout=mod.GIT_TIMEOUT_S):
+        raise mod.GitError("unreadable")
+
+    monkeypatch.setattr(mod, "_run_git", boom)
+    with pytest.raises(mod.GitError):
+        mod.get_missing_commits(str(tmp_path), "a" * 40, "b" * 40)
+    with pytest.raises(mod.GitError):
+        mod.get_unexpected_dirty_files(str(tmp_path))

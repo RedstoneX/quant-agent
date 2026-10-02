@@ -60,6 +60,7 @@ could not tell you", so the limitation travels with the result.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
 import uuid
@@ -611,3 +612,63 @@ def blocked_market_data(record: list[str]):
             return {}
 
     return RehearsalMarketData()
+
+
+@contextlib.contextmanager
+def recorded_sector_lookup(record: list[str], recording: dict | None):
+    """Serve `broker._get_sector` from the recording, never from yfinance.
+
+    Board item 202, criterion 2. `_get_sector` builds its OWN live market-data
+    access — `yf.Ticker(symbol).info` — so swapping `pipeline.market` for the
+    recording never touched it. Behind the rehearsal's network wall every one
+    of those calls still went out, was blocked, and was RETRIED by yfinance's
+    crumb/cookie machinery one symbol at a time: ~188s of a rehearsal spent
+    failing to reach Yahoo [measured 2026-10-01], plus one journalled outbound
+    attempt that (correctly) voids the run.
+
+    Patching the `yf` name inside `src.execution.broker` is deliberate: it is
+    the single place the live client is built, so the ETF table, the cache,
+    the timeout and the honest "Unknown" degradation above it stay REAL, and
+    no importer of `_get_sector` (`src.pipeline` binds it at import time) can
+    route around the patch.
+
+    Nothing is invented. A symbol the recording carries is answered from the
+    recording; a symbol it does not is recorded in `record` as a missing
+    recorded input — which `assert_hermetic` turns into a loud stop — and the
+    lookup takes the same path a yfinance outage takes, which the sector gate
+    already surfaces to the owner as "Unknown".
+    """
+    from src.execution import broker as _broker_module
+
+    sectors = {
+        str(k).upper(): v
+        for k, v in dict((recording or {}).get("sectors") or {}).items()
+        if v
+    }
+
+    class _OfflineTicker:
+        def __init__(self, symbol: str):
+            self._symbol = str(symbol or "").upper()
+
+        @property
+        def info(self) -> dict:
+            recorded = sectors.get(self._symbol)
+            if recorded:
+                return {"sector": recorded}
+            note = (
+                f"sector for {self._symbol} (not in the market recording; "
+                "capture one that includes sectors)"
+            )
+            if note not in record:
+                record.append(note)
+            return {}
+
+    original = _broker_module.yf
+    _broker_module.yf = SimpleNamespace(Ticker=_OfflineTicker)
+    try:
+        yield (
+            "sector lookups are served from the recording "
+            f"({len(sectors)} symbols) and can no longer reach yfinance"
+        )
+    finally:
+        _broker_module.yf = original

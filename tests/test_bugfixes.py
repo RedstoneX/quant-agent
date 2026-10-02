@@ -329,7 +329,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_sector_buy():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Technology"), patch(
+    with patch("src.pipeline_risk_gate._get_sector", return_value="Technology"), patch(
         "src.execution.broker._get_sector", return_value="Technology"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -367,7 +367,7 @@ def test_pipeline_hard_risk_filter_no_longer_vetoes_at_the_sector_target():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Technology"), patch(
+    with patch("src.pipeline_risk_gate._get_sector", return_value="Technology"), patch(
         "src.execution.broker._get_sector", return_value="Technology"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -399,7 +399,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_symbol_buy():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="ETF"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="ETF"), patch(
         "src.execution.broker._get_sector", return_value="ETF"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -499,7 +499,7 @@ def test_transient_admission_requires_sec_purchase_broker_and_market_quality(mon
         "exchange": "nyse",
     }
     pipeline.market = MagicMock()
-    monkeypatch.setattr("src.pipeline._get_sector", lambda _symbol: "Utilities")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: "Utilities")
     pipeline.market.get_ohlcv.return_value = [
         OHLCV(
             date=date.today() - timedelta(days=30 - i), open=100, high=102,
@@ -553,7 +553,7 @@ def test_transient_admission_rejects_unresolved_sector(monkeypatch):
         )
         for i in range(30)
     ]
-    monkeypatch.setattr("src.pipeline._get_sector", lambda _symbol: "Unknown")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: "Unknown")
     observations = [SimpleNamespace(
         symbol="VST", transaction_code="P", admission_eligible=True,
         transaction_value_usd=500_000, accession_number="0001-26-000001",
@@ -573,7 +573,7 @@ def test_morning_prefilter_requires_real_macd_histogram_crossover(monkeypatch):
         atr_14=10.0, volume_change_pct=0.0,
     )
     monkeypatch.setattr(
-        "src.pipeline.compute_indicators",
+        "src.pipeline_risk_gate.compute_indicators",
         lambda _symbol, _bars: TechnicalIndicators(
             symbol="SPY", macd_hist=0.2,
         ),
@@ -593,7 +593,7 @@ def test_morning_prefilter_accepts_macd_histogram_sign_change(monkeypatch):
         atr_14=10.0, volume_change_pct=0.0,
     )
     monkeypatch.setattr(
-        "src.pipeline.compute_indicators",
+        "src.pipeline_risk_gate.compute_indicators",
         lambda _symbol, _bars: TechnicalIndicators(
             symbol="SPY", macd_hist=-0.2,
         ),
@@ -613,7 +613,7 @@ def test_morning_prefilter_rejects_unchanged_zero_macd_histogram(monkeypatch):
         atr_14=10.0, volume_change_pct=0.0,
     )
     monkeypatch.setattr(
-        "src.pipeline.compute_indicators",
+        "src.pipeline_risk_gate.compute_indicators",
         lambda _symbol, _bars: TechnicalIndicators(
             symbol="SPY", macd_hist=0.0,
         ),
@@ -1232,7 +1232,7 @@ def test_hedge_nets_out_for_total_exposure():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -1262,7 +1262,7 @@ def test_same_direction_longs_sum_for_total_exposure():
         ),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -1356,7 +1356,7 @@ def test_macro_position_guidance_no_longer_carries_an_invested_number():
 
 def test_deployment_gap_emits_advisory_violation():
     """When projected invested is UNDER the fully-invested mandate by more
-    than the cash-reserve band (`cash_sweep.reserve_pct`), a non-blocking
+    than the advisory band (`deployment_gap.band_pct`), a non-blocking
     violation is emitted."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
@@ -1367,7 +1367,7 @@ def test_deployment_gap_emits_advisory_violation():
         TradeDecision(action="BUY", symbol="SPY", allocation_pct=40,
                       entry_price=500, stop_loss=480, take_profit=530, reasoning="aggressive"),
     ]
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
@@ -1382,7 +1382,7 @@ def test_deployment_gap_emits_advisory_violation():
 
 def test_deployment_gap_skipped_when_within_tolerance():
     """`pipeline.config` is unset (bare `__new__`), so the band falls back
-    to `CashSweepConfig`'s own declared `reserve_pct` default (1.0)."""
+    to `DeploymentGapConfig`'s own declared `band_pct` default (1.0)."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40, max_total_position_pct=90,
@@ -1392,7 +1392,7 @@ def test_deployment_gap_skipped_when_within_tolerance():
     held = [Position(symbol="SPY", qty=199, avg_entry=500, current_price=500,
                      market_value=99_500, unrealized_pnl=0.0,
                      unrealized_intraday_pnl=0.0, sector="Broad")]
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         _, violations, _ = pipeline._filter_hard_risk_decisions(

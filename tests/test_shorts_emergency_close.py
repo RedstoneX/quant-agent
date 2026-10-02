@@ -416,8 +416,12 @@ def test_midday_review_loop_guard_source_still_reads_qty_le_0():
     though the loop itself is too deep inside run_midday to exercise
     cheaply end to end here."""
     import inspect
-    from src.pipeline import TradingPipeline
-    source = inspect.getsource(TradingPipeline)
+    from src.pipeline_exits import ExitEngineMixin
+    # The executor moved to `ExitEngineMixin` in step 4 of
+    # docs/PIPELINE_SPLIT_PLAN.md; `getsource(TradingPipeline)` returns only
+    # the class body left in `src/pipeline.py`, so the scan reads the mixin
+    # that now owns `_midday_execute_llm_actions`.
+    source = inspect.getsource(ExitEngineMixin)
     assert 'if not existing or existing[0].qty <= 0:' in source, (
         "the midday review loop's short-refusing guard must still be present verbatim"
     )
@@ -436,8 +440,9 @@ def test_reprotect_residual_picks_highest_stop_for_a_long_unchanged():
         {"id": "hi", "qty": 51, "stop_price": 248.5},
     ]
     pipe._reprotect_residual_after_partial_sell("AMZN", 41.0, cancelled)
-    pipe.broker._submit_stop_limit_order.assert_called_once_with(
-        symbol="AMZN", qty=41.0, stop_price=248.5,
+    pipe.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="AMZN", qty=41.0, stop_price=248.5, limit_price=None,
+        side="sell",
     )
 
 
@@ -456,8 +461,9 @@ def test_reprotect_residual_picks_lowest_stop_for_a_short():
     pipe._reprotect_residual_after_partial_sell(
         "AMZN", 41.0, cancelled, side="buy",
     )
-    pipe.broker._submit_stop_limit_order.assert_called_once_with(
-        symbol="AMZN", qty=41.0, stop_price=252.5, side="buy",
+    pipe.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="AMZN", qty=41.0, stop_price=252.5, limit_price=None,
+        side="buy",
     )
 
 

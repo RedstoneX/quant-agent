@@ -715,9 +715,15 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             broadcast_here = sorted(s for s in (broadcast or ()) if s in sources)
             if broadcast_here:
                 notes.append(
-                    f"{', '.join(broadcast_here)} stance is the market-wide "
-                    "outlook, not a read on this name's sector — it cannot "
-                    "count FOR the trade; it still counts against one it opposes"
+                    # Item 18, 2026-09-30: the reason this note exists is
+                    # IDENTICAL on every line that carries it, so it is
+                    # stated ONCE under the section instead of ~110 times.
+                    # What stays per line is the only per-line fact: WHICH
+                    # source was broadcast. Prior wording repeated 130-odd
+                    # characters of explanation per symbol, measured at 14.9%
+                    # of the whole briefing.
+                    f"{', '.join(broadcast_here)} stance broadcast — "
+                    "one-sided, see note below"
                 )
             stale_note = f"; {'; '.join(notes)}" if notes else ""
             # The ALIGNED side drops both; the OPPOSED side drops only the
@@ -1606,10 +1612,10 @@ Overall sentiment: {news_intel.format_market_sentiment()} (confidence: {news_int
         )
 
         reserve_line = (
-            f"\n  (of which ${reserve_balance:,.2f} is parked in the "
-            f"cash-equivalent sweep vehicle and is auto-liquidated before "
-            f"any BUY executes — already included in Cash Balance above, "
-            f"do not add it again)"
+            f"\n  (a further ${reserve_balance:,.2f} is parked in the "
+            f"cash-equivalent sweep vehicle; the desk does NOT sell it to "
+            f"fund a BUY, and it is NOT part of the Cash Balance above — "
+            f"do not size against it)"
             if reserve_balance > 0 else ""
         )
         # 2026-09-17 fix: this used to hardcode "no margin" regardless of
@@ -1705,6 +1711,11 @@ what you write in provenance — is a GO/NO-GO, not a size dial. A source whose
 stance is marked stale is in neither count: an old filing is still worth
 reading, but it has not confirmed anything about today, and it has not
 contradicted anything either.
+
+A source marked `broadcast` above is one-sided, and the rule is the same for
+every name that carries the mark: that stance is the market-wide outlook, not
+a read on this name's sector, so it cannot count FOR the trade — it still
+counts AGAINST one it opposes.
 
 A seat arguing the OTHER way SUBTRACTS from the net.
 **A net score of zero or below produces NO ORDER AT ALL** — not a small
@@ -2326,12 +2337,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         Capacity section does not.
         """
         held_below = holdings_below_entry_bar(blocked, held_symbols)
+        # Board item 219. What the pass looked at, kept verbatim so the
+        # owner's report states a measured count rather than an inference.
+        held_examined = tuple(sorted(
+            str(s).strip().upper() for s in held_symbols if str(s).strip()
+        ))
         if existing_risk_pct is None:
             return RotationPrecheck(
                 opportunity=None, headroom_pct=0.0, ceiling_pct=ceiling_pct,
                 floor_pct=STARTER_POSITION_RISK_PCT, telemetry_available=False,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
-                held_below_entry_bar=held_below,
+                held_below_entry_bar=held_below, held_examined=held_examined,
             )
         headroom_pct = allocate_risk_budget(
             [], existing_pct=existing_risk_pct, clusters=None,
@@ -2355,7 +2371,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 floor_pct=STARTER_POSITION_RISK_PCT,
                 entry_budget_usd=entry_budget_usd, min_order_usd=min_order_usd,
             ),
-            held_below_entry_bar=held_below,
+            held_below_entry_bar=held_below, held_examined=held_examined,
         )
 
     @staticmethod
@@ -2388,7 +2404,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             parts.append(
                 f"only ${budget:,.2f} still deployable for new entries (the §11.2 "
                 "ladder-and-cash budget execution sizes entries against), "
-                f"under the ${floor:,.0f} minimum order worth placing — so "
+                "below the smallest order the desk will place — so "
                 "no new position can be funded at all without freeing "
                 "capital first"
                 if isinstance(budget, (int, float))
@@ -2465,8 +2481,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     f"{headroom_pct:.2f}% risk headroom left against the "
                     f"{ceiling_pct:.2f}% ceiling, and "
                     f"${precheck.entry_budget_usd:,.2f} is still deployable "
-                    f"for new entries against a ${precheck.min_order_usd:,.0f} "
-                    "minimum order — real room exists on every constraint, "
+                    "for new entries, above the smallest order the desk will "
+                    "place — real room exists on every constraint, "
                     "so there is nothing to rotate for."
                 )
             # Adversary review 2026-09-23: do NOT tell a seat that can sell
@@ -2484,10 +2500,26 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             lines.append(
                 f"{opportunity.held_symbol} is currently held but would "
                 f"NOT be bought today — it fails this desk's own entry "
-                f"rules ({reasons}). {opportunity.new_symbol} ranks "
-                f"{opportunity.new_score:.2f} and clears every rule, but "
-                "there is no room to buy it without freeing capital first."
+                f"rules ({reasons})."
             )
+            # OWNER RULING 2026-10-01: this tier is now reached with NO
+            # replacement candidate, so `new_symbol`/`new_score` are None on
+            # exactly the case this feature exists to create. Never format
+            # them unguarded — that crashed `build_user_message` before the
+            # decision stage was reached.
+            if opportunity.new_symbol and opportunity.new_score is not None:
+                lines.append(
+                    f"{opportunity.new_symbol} ranks "
+                    f"{opportunity.new_score:.2f} and clears every rule, but "
+                    "there is no room to buy it without freeing capital "
+                    "first."
+                )
+            else:
+                lines.append(
+                    "Nothing un-held ranked well enough to buy this session, "
+                    "so there is no replacement candidate. This holding is "
+                    "weighed on its own merits, not against anything else."
+                )
         else:
             # `docs/INCIDENT_HISTORY.md` 2026-09-14: the composite score
             # is a weighted sum
@@ -2549,13 +2581,26 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "still needs the same substantive justification any other "
                 "exit does — this note is not one."
             )
-        else:
+        elif opportunity.new_symbol:
             lines.append(
                 "This is a comparison, not an instruction: it names the "
                 "weakest thing currently using the room and the strongest "
                 "thing there is no room for. Trimming or exiting "
                 f"{opportunity.held_symbol} to fund "
                 f"{opportunity.new_symbol} is one reasonable call; doing "
+                "nothing is another. Either way, an edit to a held "
+                "position needs the same substantive justification any "
+                "other exit does — this note is not one."
+            )
+        else:
+            # OWNER RULING 2026-10-01: the categorical tier is reached with
+            # no replacement, so there is nothing to "fund" and no second
+            # name to compare against.
+            lines.append(
+                "This is an observation, not an instruction: it names a "
+                "holding the desk would not buy today, with no replacement "
+                "to fund. Exiting "
+                f"{opportunity.held_symbol} is one reasonable call; doing "
                 "nothing is another. Either way, an edit to a held "
                 "position needs the same substantive justification any "
                 "other exit does — this note is not one."
@@ -2599,16 +2644,31 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # Phase 14b. Wording only — the act itself is decided in
             # `DecisionStage._apply_rotation_execution` from the desk's own
             # data, after this prompt returns.
+            # OWNER RULING 2026-10-01. This paragraph describes the code in
+            # `DecisionStage._apply_rotation_execution` and nothing beyond
+            # it. Two conditions this text used to state were REMOVED by
+            # that ruling: the close no longer requires that the holding's
+            # structural protection has broken, and it no longer requires a
+            # replacement BUY. Do not reinstate either in prose.
+            replacement_clause = (
+                f"If you include a BUY target for {opportunity.new_symbol}, "
+                "size it for the room this close would free"
+                if opportunity.new_symbol else
+                "Nothing un-held ranked well enough to buy this session, so "
+                "there is no replacement to size for and the freed room "
+                "simply stays in the book"
+            )
             lines.append(
                 "AUTOMATIC ROTATION IS ENABLED for this categorical case: "
-                f"if you include a BUY target for {opportunity.new_symbol} "
-                f"and do not yourself close {opportunity.held_symbol}, the "
-                f"desk will propose a full close of {opportunity.held_symbol} "
-                "on its own — but ONLY if its structural protection has "
-                "already broken under the holding-discipline check, it was "
-                "not bought today and nothing is in flight on it. That "
-                "proposal then goes through the Risk Manager like any other "
-                "exit. Size your plan for the room it would free; do not "
+                f"if you do not yourself close {opportunity.held_symbol}, "
+                "the desk will propose a full close of it on its own, "
+                "because a holding that would not be bought today has "
+                "stopped earning its place. That is so whether or not its "
+                "structural protection is still intact, and whether or not "
+                "a replacement is bought. The only remaining conditions are "
+                "that the name was not bought today and that nothing is in "
+                f"flight on it. {replacement_clause}. That proposal then "
+                "goes through the Risk Manager like any other exit; do not "
                 "assume it will happen."
             )
         return "\n".join(lines)
@@ -2616,6 +2676,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     @staticmethod
     def _semantic_failure(result, status: str, error: object):
         result.semantic_status = status
+        # Board item 188 (recording only): the gate's own word, so the
+        # agent_logs row says WHICH way the answer was unusable rather than
+        # only that the seat produced no decision.
+        result.gate_reason = status
         result.semantic_error = str(error)
         return None, result
 

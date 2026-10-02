@@ -11,22 +11,17 @@ Ceiling enforced by `tests/file_size_baseline.json` is 2,561 lines.
 16 files in `src/` exceeded it when this started. Re-measured against
 origin/main 2026-10-02 03:0x: **14 remain, 21,663 lines above ceiling.**
 
-| lines | file | approach |
-|------:|------|----------|
-| 7046 | src/execution/broker.py | REBUILD behind its interface |
-| 6270 | src/storage/db.py | REBUILD behind its interface |
-| 4649 | src/portfolio_constructor.py | split (in flight) |
-| 4438 | src/pipeline_protection.py | split |
-| 4300 | src/cost_circuit.py | split (money path — adversary pass required) |
-| 4187 | src/trader_feed.py | split (in flight) |
-| 4034 | src/agents/portfolio_manager.py | split |
-| 3832 | src/pipeline.py | morning, earnings-prep and setup bodies remain |
-| 3754 | src/pipeline_exits.py | extract ExitEngine |
-| 3614 | src/pipeline_prompt_facts.py | split |
-| 3599 | src/agents/base.py | split (in flight) |
-| 2610 | src/config.py | split |
-| 2598 | src/coverage_watchdog.py | split |
-| 2586 | src/risk/exit_guard.py | split |
+| lines | file |
+|------:|------|
+| 7046 | src/execution/broker.py |
+| 6270 | src/storage/db.py |
+| 4438 | src/pipeline_protection.py |
+| 4034 | src/agents/portfolio_manager.py |
+| 3832 | src/pipeline.py |
+| 3754 | src/pipeline_exits.py |
+| 2610 | src/config.py |
+
+Re-measured 2026-10-02: **7 files remain, 14057 lines above ceiling** (from 16 files / 26,951 lines).
 
 DONE: `src/models.py` 5,265 -> package, largest 890. `src/notifier.py` 3,984
 -> package, largest 592. `src/pipeline.py` 4,993 -> 3,832 by moving the

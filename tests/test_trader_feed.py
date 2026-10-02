@@ -1590,7 +1590,7 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
 # re-parses that same file and fails the build the moment the two disagree.
 
 _INTRA_CHECK_TIMER = (
-    Path(trader_feed.__file__).resolve().parent.parent
+    Path(trader_feed.__file__).resolve().parent.parent.parent
     / "scripts" / "systemd" / "quant-agent-intra_check.timer"
 )
 
@@ -2659,20 +2659,6 @@ def test_intraday_skip_banner_carries_no_machine_text(tmp_path, monkeypatch):
     assert banner == "🟡 <b>DECISION SKIPPED — NOTHING WAS TRADED</b>"
 
 
-def test_looked_at_says_a_missing_reason_in_words(tmp_path, monkeypatch):
-    """`PM passed — no reason recorded` read as a status code."""
-    _make_db(tmp_path, monkeypatch)
-    lines: list[str] = []
-    trader_feed._append_looked_at(
-        lines,
-        [{"symbol": "MP", "rating": "neutral", "conviction": "low"}],
-        {}, None,
-    )
-    body = "\n".join(lines)
-    assert "no reason recorded" not in body
-    assert "the desk did not record why" in body
-
-
 def test_no_trade_fallback_avoids_internal_phrasing(tmp_path, monkeypatch):
     """`detailed PM evidence unavailable` is internal phrasing."""
     _make_db(tmp_path, monkeypatch)
@@ -2875,7 +2861,13 @@ def test_full_book_is_reported_as_a_normal_state_not_an_error(
     tmp_path, monkeypatch,
 ):
     db = _make_db(tmp_path, monkeypatch)
-    _rotation_row(db, "run-full", "full_nothing_outranked_a_holding")
+    # The book really is full here, so the binding limit is recorded —
+    # the message now asserts fullness from THAT, not from the outcome name,
+    # because an outcome can also be reached on an unconstrained book.
+    _rotation_row(
+        db, "run-full", "full_nothing_outranked_a_holding",
+        binding="risk_headroom",
+    )
     msg = _morning(db, "run-full", monkeypatch)
     assert "the book is FULL" in msg
     assert "This is a normal state, not a fault." in msg

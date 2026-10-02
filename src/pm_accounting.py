@@ -187,16 +187,6 @@ def plain_reason(code: str) -> str:
     )
 
 
-def plain_sentence(symbol: str, code: str, detail: str = "") -> str:
-    """One complete owner-facing line for a candidate that was not taken."""
-    sym = str(symbol or "?").strip().upper()
-    line = f"{sym} was not taken because {plain_reason(code)}."
-    detail = str(detail or "").strip()
-    if detail:
-        line = f"{line} The desk's own words: {detail}"
-    return line
-
-
 # ---------------------------------------------------------------------------
 # the accounting itself
 # ---------------------------------------------------------------------------

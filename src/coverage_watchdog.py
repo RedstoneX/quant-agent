@@ -125,6 +125,19 @@ from typing import Any
 
 from src.silence_watchdog import KNOWN_MODES, SLACK_MINUTES
 from src.trading_calendar import ET, SESSION_WINDOWS
+from src.coverage_watchdog_text import (  # noqa: F401 -- re-exported, lifted verbatim
+    exit_declined_text,
+    unreadable_stop_text,
+    alert_text,
+    repair_failure_text,
+    repair_resolution_text,
+    repair_performed_text,
+    status_line,
+    SWEEP_LOG_NAME,
+    SWEEP_AGENT_NAME,
+    sweep_summary,
+    sweep_log_line,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +147,17 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
 #: On-box record, gitignored like its siblings under data/alerting/.
 STATE_PATH = (
     Path(__file__).resolve().parent.parent / "data" / "alerting" / "coverage_heartbeat.json"
+)
+
+#: Deploy-drift snapshot, written by scripts/check_deploy_drift.py and read
+#: by the /health API so a checkout that is behind origin/main is VISIBLE on
+#: the desk's own board, not only in a Telegram message. Alerts can be muted;
+#: the board cannot. It lives beside the other alerting state and is read and
+#: written with the same `load_state`/`save_state` helpers, so the per-day
+#: dedup that stops a repeating alert is the one already in use here rather
+#: than a fourth private implementation.
+DEPLOY_DRIFT_STATE_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "alerting" / "deploy_drift.json"
 )
 
 TABLE = "alert_channel_checks"
@@ -291,6 +315,20 @@ class CoverageStatus:
     #: Empty is the ordinary case: a repair the owner was never alarmed
     #: about produces no all-clear.
     resolution_notice_symbols: tuple[str, ...] = ()
+    #: How many gaps this run DETECTED, before any repair.
+    #:
+    #: 2026-09-30: the sweep repaired AAPL and reported "gaps 0, repairs
+    #: attempted 1". It was not two code paths disagreeing — detection and
+    #: the repair trigger read the same list. It is one variable doing two
+    #: jobs: after a successful placement `check_coverage` RE-READS the
+    #: broker and rebinds `gaps` to what is STILL uncovered, so `gaps`
+    #: silently changes meaning from "found" to "left" and the summary
+    #: counted the second. An operator scans the gap count, so the line
+    #: concealed the very event it was reporting. Both numbers are kept
+    #: now: this one is what was found, `gaps` is what remains.
+    #: None means the status was assembled by hand rather than by
+    #: `check_coverage`; readers fall back to len(gaps).
+    gaps_detected: int | None = None
     #: Board item 193. Positions this run DELIBERATELY did not check because
     #: a live scale-in holds their protective stop cancelled on purpose.
     #: Deliberately NOT folded into `gaps`: a gap is a defect the sweep tries
@@ -323,6 +361,30 @@ class CoverageStatus:
     @property
     def repaired(self) -> list[RepairOutcome]:
         return [r for r in self.repairs if r.placed]
+
+    @property
+    def should_alert_repair_performed(self) -> bool:
+        """A repair actually happened and the owner has not been told.
+
+        2026-09-30: the sweep put AAPL's stop back after the position had
+        been unprotected for 13m22s and reported "alert none sent". A
+        COVERAGE REPAIRED event is never routine — it means something
+        upstream failed silently, and the last line of defence is the only
+        thing that noticed. It pages, on the same owner channel as every
+        other message this unit sends.
+
+        Suppressed when `resolution_notice_symbols` already covers every
+        repaired name: that is the all-clear for a gap he was ALREADY
+        paged about, and two messages about one event is the noise that
+        makes him stop reading them. A run that repairs nothing stays
+        silent exactly as before.
+        """
+        if not self.repaired:
+            return False
+        told = {str(s).strip().upper() for s in self.resolution_notice_symbols}
+        return any(
+            str(r.symbol).strip().upper() not in told for r in self.repaired
+        )
 
     @property
     def repairs_awaiting_print(self) -> list[RepairOutcome]:
@@ -361,6 +423,11 @@ class CoverageStatus:
     @property
     def should_alert(self) -> bool:
         return self.is_exposed and not self.already_alerted_for_day
+
+    #: `already_alerted_for_day` is keyed per SYMBOL per day (item 211
+    #: defect 2): it is true only when EVERY currently-uncovered position
+    #: has already been reported today, so a second name going naked later
+    #: the same day still pages.
 
     @property
     def should_alert_repair_failure(self) -> bool:
@@ -815,6 +882,7 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raw = {}
     raw.setdefault("alerted_for_day", None)
+    raw.setdefault("exposure_alerted_symbols", None)
     # Kept as a truthful record of the last day a placement-failure alert
     # went out, and still written; it is no longer what SUPPRESSES one.
     # Suppression reads `repair_failure_alerted_symbols` below, which is
@@ -876,6 +944,26 @@ def repair_failure_alert_day(now: datetime | None = None) -> str:
     paths must agree on the key or the shared marker is no marker at all.
     """
     return (now or _utc_now()).astimezone(ET).date().isoformat()
+
+
+def _exposure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
+    """Which UNPROTECTED positions the owner was already paged about today.
+
+    Item 211 defect 2, a live-risk hole. "This position is unprotected" was
+    deduped on a bare per-DAY marker while both of its siblings
+    (placement-failure, unreadable-stop) dedupe per symbol per day. A
+    SECOND name going naked later the same day was therefore silenced
+    completely — the exact trap `should_alert_repair_failure` was written
+    to avoid, one level down. Same shape, same discipline.
+    """
+    raw = state.get("exposure_alerted_symbols")
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
 
 
 def _repair_failure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
@@ -1166,9 +1254,8 @@ def claim_elected_unfilled_alert(
     """Reserve today's elected-but-unfilled alert for `symbols` and return
     the ones NOT already alerted today, in the order given.
 
-    Same contract as `claim_repair_failure_alert`, including that an
-    unwritable state file errs towards telling the owner twice rather than
-    not at all.
+    Same contract as `claim_repair_failure_alert`. The caller MUST call
+    `release_elected_unfilled_alert` if the send then fails.
     """
     day = repair_failure_alert_day(now)
     state = load_state(path)
@@ -1310,6 +1397,45 @@ def claim_unreadable_stop_alert(
 # exactly the swallowing this family of keys exists to prevent, and the two
 # happen together by construction.
 
+def release_typed_alert(
+    kind: str, symbols: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> None:
+    """Give back today's `kind` claim for `symbols`.
+
+    `claim_typed_alert` reserves the symbol BEFORE the message is handed to
+    the notifier, which is the right order -- two processes finding the same
+    condition at the same moment must not both send. But the reservation is
+    saved whether or not the send lands, so a muted or failed delivery used
+    to burn the symbol's one page for the whole trading day and the owner
+    was never told at all. `send_owner_alert` reports whether it landed;
+    when it did not, the caller hands the claim back here so the next
+    attempt -- the 30-minute watchdog, the next session entry -- can try
+    again. Never raises: an alerting bug must not break the path it reports
+    on. Releasing a claim that is not held is a no-op.
+    """
+    key = str(kind).strip() or "unspecified"
+    try:
+        day = repair_failure_alert_day(now)
+        state = load_state(path)
+        already = _typed_alerted_symbols(state, day, key)
+        giving_back = {
+            str(raw).strip().upper() for raw in symbols if str(raw).strip()
+        }
+        remaining = already - giving_back
+        if remaining == already:
+            return
+        state[f"typed_alerted_symbols::{key}"] = {
+            "day": day, "symbols": sorted(remaining),
+        }
+        save_state(state, path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "release_typed_alert(%s) failed: %s — the claim stays held and "
+            "today's page for those symbols will not be retried", key, exc,
+        )
+
+
 def _exit_declined_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
     raw = state.get("exit_declined_alerted_symbols")
     if not isinstance(raw, dict) or raw.get("day") != day:
@@ -1350,57 +1476,31 @@ def claim_exit_declined_alert(
     return fresh
 
 
-def exit_declined_text(symbol: str, *, side: str, why: str) -> str:
-    """The owner message for an exit the desk decided on and did not place.
+def _scale_in_row_age_seconds(created_at: Any, moment: datetime) -> float | None:
+    """Approximate seconds since a scale-in write-ahead row was written.
 
-    Two marks, not three: the position still has whatever protection it had
-    a moment ago, so this is not the unbounded-loss tier. It is above a
-    warning because the desk's own decision to get out did not happen.
+    The write-ahead row's `created_at` is a DATABASE WRITE time, not the
+    broker's cancel acknowledgement, so this is an approximation of how
+    long protection has been down and is labelled as one everywhere it is
+    used. The exact figure is the `unprotected_window_closed` event the
+    session files at rearm. `None` when the stamp cannot be read — an
+    unreadable stamp must never be treated as a long window.
     """
-    return (
-        "🛑🛑 EXIT NOT PLACED\n"
-        f"The desk decided to {side.upper()} {symbol} and did not submit "
-        f"the order, because {why}.\n"
-        "Nothing was sold, resized or cancelled, and any protective stop "
-        "that was already resting is still resting. The desk re-attempts on "
-        "its next scheduled pass; if you want out now, place the order at "
-        "the broker by hand.\n"
-        "THIS ALERT is sent at most once per symbol per trading day."
-    )
+    text = str(created_at or "")
+    if not text:
+        return None
+    try:
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:  # noqa: BLE001
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return round(max(0.0, (moment - stamp).total_seconds()), 1)
 
 
-def unreadable_stop_text(rows: Iterable[UnreadableStop]) -> str:
-    """The owner message for stops that could not be READ. Board item 172.
-
-    Says the unknown as an unknown. It does not claim the positions are
-    naked and it does not reassure that they are covered, because the whole
-    point is that neither was established. Severity in the leading words,
-    never colour alone (`src/notifier.py` convention).
-    """
-    rows = list(rows)
-    detail = "\n".join(
-        f"  {r.symbol}: holding {r.held_qty:.4f}"
-        f"{' (short)' if r.is_short else ''} — {r.reason}"
-        for r in rows
-    )
-    return (
-        "🛑🛑 PROTECTIVE STOP UNREADABLE\n"
-        f"The broker could not be asked whether {len(rows)} held "
-        "position(s) have a protective stop. This is NOT a report that they "
-        "are unprotected — it is a report that the desk does not know, and "
-        "cannot find out, which of the two is true.\n"
-        f"{detail}\n"
-        "Per-position stops are the desk's only loss protection, so an "
-        "unanswerable question about one is worth a look now: check the "
-        "position's open orders at the broker directly and place a stop by "
-        "hand if none is standing. Nothing has been sold, resized or "
-        "cancelled. THIS ALERT is sent at most once per symbol per trading "
-        "day; the condition itself keeps showing in the session messages "
-        "for as long as it lasts, the same way a missing stop does."
-    )
-
-
-def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
+def _scale_in_skip(
+    broker: Any, db_path: str | Path | None, *, now: datetime | None = None,
+) -> set[str]:
     """Symbols mid scale-in that this watchdog must not report or repair.
 
     A live cancel-confirm-buy window looks uncovered on purpose. Adding a
@@ -1408,26 +1508,113 @@ def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
     cleared. Crash recovery belongs to the session drain; this only
     stays out of the way while a session lock is held or a DAY add is
     still working.
+
+    Board item 193. The session-lock arm of that skip used to be
+    UNBOUNDED: while the wrapper's lock directory existed, every symbol
+    holding a scale-in write-ahead row was skipped for as long as the row
+    survived. A session that cancelled the protective stop and then hung
+    or died WITHOUT releasing the lock therefore left the WHOLE held
+    position naked, with the one watchdog that could re-protect it
+    deliberately looking away, indefinitely. The window is a property of
+    the broker's order model and cannot be removed — a resting protective
+    SELL and a working BUY collide on the same symbol, and the quantity
+    amend that would otherwise resize the resting stop in place is refused
+    by this broker on a fractional order (42210000), which scale-in adds
+    routinely are — but the SKIP does not have to be unbounded.
+
+    So the lock-held skip is now bounded by the desk's OWN MEASUREMENT: the
+    longest unprotected window it has ever closed and recorded
+    (`measured_window_bound_seconds`). Nothing here is a chosen number.
+      * Within that bound, or with no measured history at all, behaviour is
+        exactly as before — skip, because this is a normal live window.
+      * Past that bound, the symbol is no longer taken on the lock's word.
+        It falls back to the same collision test the crash path already
+        uses: a WORKING entry order still rests, so a stop would collide and
+        the skip stands; nothing rests, so the collision that justified the
+        skip is gone and the sweep is allowed to re-protect the position.
+
+    The residual risk is deliberate and is the conservative side of the
+    trade: if a live session is merely slower than every window ever
+    measured and has not yet submitted its add, the sweep may place a stop
+    that then blocks the add, and the add's own failure path restores from
+    the write-ahead row. An add refused with the position protected is a
+    better outcome than a position left naked with no watchdog.
     """
     try:
         from src.execution.scale_in import (
             list_open_entry_ids, pending_scale_in_symbols_from_path,
             trading_session_lock_held,
         )
-        symbols = pending_scale_in_symbols_from_path(
-            db_path if db_path is not None else DB_PATH,
-        )
+        path = db_path if db_path is not None else DB_PATH
+        symbols = pending_scale_in_symbols_from_path(path)
     except Exception:  # noqa: BLE001
         return set()
     if not symbols:
         return set()
     if trading_session_lock_held():
-        return set(symbols)
+        stale = _scale_in_symbols_past_measured_bound(path, symbols, now=now)
+        if not stale:
+            return set(symbols)
+        skip = set(symbols) - stale
+        for symbol in sorted(stale):
+            if list_open_entry_ids(broker, symbol):
+                # The collision is real: a working entry order still rests,
+                # so a protective stop here would be blocked anyway.
+                skip.add(symbol)
+                logger.warning(
+                    "scale-in %s has been unprotected for longer than the "
+                    "longest window this desk has ever measured, but a "
+                    "working entry order still rests on it — the sweep still "
+                    "cannot place a stop without colliding with it",
+                    symbol,
+                )
+            else:
+                logger.error(
+                    "scale-in %s has been unprotected for longer than the "
+                    "longest window this desk has ever measured and NO entry "
+                    "order is working on it — the session lock is no longer "
+                    "reason enough to look away, handing it to the coverage "
+                    "sweep to re-protect",
+                    symbol,
+                )
+        return skip
     skip: set[str] = set()
     for symbol in symbols:
         if list_open_entry_ids(broker, symbol):
             skip.add(symbol)
     return skip
+
+
+def _scale_in_symbols_past_measured_bound(
+    db_path: str | Path | None, symbols: set[str], *,
+    now: datetime | None = None,
+) -> set[str]:
+    """Of `symbols`, those whose window is older than every measured one.
+
+    Empty — meaning "treat them all as normal live windows" — whenever the
+    desk has no measured history to compare against, whenever the rows
+    cannot be read, and for any row whose write time cannot be parsed. Each
+    of those is a case where calling a window overdue would be an invented
+    figure rather than a measured one.
+    """
+    bound, observations = measured_window_bound_seconds(db_path)
+    if bound is None or observations <= 0:
+        return set()
+    try:
+        from src.execution.scale_in import pending_scale_in_rows_from_path
+        rows = pending_scale_in_rows_from_path(db_path)
+    except Exception:  # noqa: BLE001
+        return set()
+    moment = now or _utc_now()
+    stale: set[str] = set()
+    for row in rows or []:
+        symbol = str(row.get("symbol") or "").strip()
+        if not symbol or symbol not in symbols:
+            continue
+        age = _scale_in_row_age_seconds(row.get("created_at"), moment)
+        if age is not None and age > bound:
+            stale.add(symbol)
+    return stale
 
 
 def measured_window_bound_seconds(
@@ -1580,7 +1767,6 @@ def _unguarded_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
     }
 
 
-
 # ---------------------------------------------------------------------------
 # the broker-write lock shared with intra_check (board item 127)
 # ---------------------------------------------------------------------------
@@ -1704,6 +1890,9 @@ def check_coverage(
     # it defers to a session, and the next tick re-reads the broker.
     from src.execution.scale_in import trading_session_lock_held
     session_active = trading_session_lock_held()
+    # Counted HERE, before the repair block below can rebind `gaps` to the
+    # post-repair re-read. See `CoverageStatus.gaps_detected`.
+    gaps_detected = len(gaps)
     repair_deferred = ""
     if gaps and market_open and last_buy is not None and not session_active:
         with repair_lock(db_path) as held:
@@ -1852,6 +2041,11 @@ def check_coverage(
     # the marker is written inside this function, so a caller that re-claimed
     # would find this run's own marker and silence the message it wrote.
     already_unguarded = _unguarded_alerted_symbols(state, failure_day)
+    # Item 211 defect 2: per symbol per day, like both siblings.
+    exposure_symbols = {
+        str(g.symbol).strip().upper() for g in gaps if str(g.symbol).strip()
+    }
+    already_exposed = _exposure_alerted_symbols(state, day.isoformat())
     unguarded_fresh = [
         r for r in unguarded
         if r.over_bound and str(r.symbol).strip().upper() not in already_unguarded
@@ -1861,9 +2055,12 @@ def check_coverage(
         trading_day=day.isoformat(),
         session_ran=ran,
         gaps=gaps,
+        gaps_detected=gaps_detected,
         broker_error=broker_error,
         db_error=db_error,
-        already_alerted_for_day=(state.get("alerted_for_day") == day.isoformat()),
+        already_alerted_for_day=bool(exposure_symbols) and all(
+            sym in already_exposed for sym in exposure_symbols
+        ),
         repairs=repairs,
         market_open=market_open,
         market_reason=market_reason,
@@ -1892,6 +2089,10 @@ def check_coverage(
     )
     if status.should_alert:
         state["alerted_for_day"] = day.isoformat()
+        state["exposure_alerted_symbols"] = {
+            "day": day.isoformat(),
+            "symbols": sorted(already_exposed | exposure_symbols),
+        }
     if status.should_alert_repair_failure:
         _record_repair_failure_alert(state, failure_day, failing_symbols)
     if status.should_alert_unguarded:
@@ -1924,159 +2125,6 @@ def check_coverage(
     return status
 
 
-def alert_text(status: CoverageStatus) -> str:
-    """Severity in the leading word, never colour alone (`src/notifier.py`
-    convention)."""
-    lines = []
-    for g in status.gaps:
-        dollars = f"${g.unprotected_value:,.2f}" if g.unprotected_value else "value unknown"
-        lines.append(
-            f"  {g.symbol}: holding {g.held_qty:.4f}, stop covers {g.covered_qty:.4f}, "
-            f"{g.uncovered_qty:.4f} share(s) with NO stop ({dollars})"
-        )
-    reason = (
-        "the database could not be read, so a session cannot be proven"
-        if status.session_ran is None
-        else "no scheduled session completed during that session"
-    )
-    if status.market_open:
-        what_happens = (
-            "The market is OPEN and the automatic re-placement did NOT close "
-            f"this gap ({status.market_reason}). Nothing was sold, resized or "
-            "cancelled — the only action this check can take is adding a "
-            "protective stop, and it could not.\n\n"
-        )
-    else:
-        what_happens = (
-            f"The market is shut right now ({status.market_reason}), so no "
-            "stop can be placed at this moment. The coverage sweep will put "
-            "a DAY stop back over the remainder at the open, automatically, "
-            "whether or not the desk is switched on.\n\n"
-            "THE PART THAT IS NOT FIXED, AND CANNOT BE: a sub-share remainder "
-            "is unprotected OVERNIGHT no matter what. This broker accepts "
-            "fractional orders only as DAY orders, so every stop over a "
-            "remainder stops existing at 16:00 ET. Re-placing it each session "
-            "restores intraday protection and does nothing at all for a gap "
-            "down before the open. The only ways to remove that exposure are "
-            "to hold whole shares or not to hold the remainder.\n\n"
-        )
-    return (
-        "🔴 UNPROTECTED SHARES, AND THE DESK IS NOT RUNNING\n"
-        f"{len(status.gaps)} position(s) at the broker have protective-stop "
-        "coverage short of what is held, and the session sweep that is "
-        f"supposed to re-place it did not run on {status.trading_day} "
-        f"({reason}).\n"
-        + "\n".join(lines) + "\n"
-        f"Total with no stop: ${status.unprotected_total:,.2f}.\n\n"
-        + what_happens +
-        "Your options: resume the desk, place the missing stop by hand "
-        "(fractional stops must be DAY orders), or close the uncovered "
-        "remainder. Nothing has been sold, resized or cancelled. This "
-        "message repeats at most once per trading day while the condition "
-        "holds."
-    )
-
-
-def repair_failure_text(status: CoverageStatus) -> str:
-    """The alarm for a placement that was attempted and did NOT land.
-
-    Separate from the exposure alert and on its own once-a-day marker: a
-    failure to put the stop back is the state item 53 exists to make
-    impossible to miss, and it must not be swallowed by an earlier report
-    that merely described the same shares as uncovered.
-    """
-    lines = [
-        f"  {r.symbol}: {r.qty:.4f} share(s) still with no stop — {r.detail}"
-        for r in status.repair_failures
-    ]
-    return (
-        "🔴 COULD NOT PUT THE PROTECTIVE STOP BACK\n"
-        f"The coverage sweep found {len(status.repair_failures)} position(s) "
-        "short of stop coverage during OPEN market hours and tried to place "
-        "the missing protective stop. It did not land.\n"
-        + "\n".join(lines) + "\n\n"
-        "These shares are unprotected right now, during the session, which "
-        "is not the expected overnight lapse. Nothing was sold, resized or "
-        "cancelled. Place the stop by hand or close the position. This "
-        "message repeats at most once per trading day."
-    )
-
-
-def repair_resolution_text(symbols: Iterable[str]) -> str:
-    """The retraction of `repair_failure_text`, in one place so the alarm
-    and its all-clear cannot describe the same event two ways.
-
-    Shared with the live session's coverage reconcile
-    (`TradingPipeline._alert_owner_repair_resolved`), which can find the
-    repair in a process this unit knows nothing about, exactly as the alarm
-    itself is shared.
-    """
-    names = ", ".join(sorted(str(s).strip().upper() for s in symbols if str(s).strip()))
-    count = len([s for s in symbols if str(s).strip()])
-    return (
-        "✅ THE PROTECTIVE STOP IS BACK\n"
-        f"Earlier today the desk told you it could not put the protective "
-        f"stop back on {count} position(s) and asked you to place it by "
-        f"hand. It has now placed that stop itself: {names}.\n"
-        "Nothing needs doing. If you already placed one by hand there will "
-        "be two stops on that position — check the broker and cancel the "
-        "duplicate. This clears the earlier red alert for these positions "
-        "only."
-    )
-
-
-def status_line(status: CoverageStatus) -> str:
-    """One journal line for the heartbeat unit."""
-    if status.broker_error:
-        return f"coverage_watchdog: could NOT check the broker ({status.broker_error})"
-    placed = ""
-    if status.repaired:
-        placed = (
-            "; RE-PLACED " + ", ".join(
-                f"{r.symbol} {r.qty:.4f}" for r in status.repaired
-            ) + " (DAY over any sub-share part — lapses at the close again)"
-        )
-    if status.repair_failures:
-        placed += "; FAILED to place " + ", ".join(
-            f"{r.symbol} {r.qty:.4f}" for r in status.repair_failures
-        )
-    # Board item 172. Appended to EVERY branch below, including the clean
-    # one: a pass that could not read one symbol's stops has not checked
-    # every held position, and a line saying it has would be false.
-    if status.unreadable:
-        placed += "; COULD NOT READ the stops of " + ", ".join(
-            r.symbol for r in status.unreadable
-        )
-    if not status.gaps:
-        if status.unreadable:
-            return (
-                f"coverage_watchdog: {len(status.unreadable)} position(s) "
-                "UNREADABLE; every position that could be read is fully "
-                "stop-covered" + placed
-            )
-        return (
-            "coverage_watchdog: OK — every held position is fully stop-covered"
-            + placed
-        )
-    if status.session_ran:
-        return (
-            f"coverage_watchdog: {len(status.gaps)} position(s) short-covered "
-            f"(${status.unprotected_total:,.2f}) but a session ran on "
-            f"{status.trading_day}; the sweep owns it, not alerting" + placed
-        )
-    if status.already_alerted_for_day:
-        return (
-            f"coverage_watchdog: STILL EXPOSED (${status.unprotected_total:,.2f}) "
-            f"with no session on {status.trading_day}; already alerted for "
-            "that day" + placed
-        )
-    return (
-        f"coverage_watchdog: EXPOSED — {len(status.gaps)} position(s), "
-        f"${status.unprotected_total:,.2f} with no stop and no session on "
-        f"{status.trading_day} [{status.market_reason}]" + placed
-    )
-
-
 # ---------------------------------------------------------------------------
 # the durable record of every run (board item 131)
 # ---------------------------------------------------------------------------
@@ -2090,136 +2138,6 @@ def status_line(status: CoverageStatus) -> str:
 # `kind='pipeline_event'`, `scope='run'` — the shape
 # `_record_pipeline_event` and the de-lever shortfall record use). Observability
 # only: nothing reads either to decide anything.
-
-#: The log prefix a reader greps for. One name for both entry points.
-SWEEP_LOG_NAME = "COVERAGE SWEEP"
-#: `agent_name` on the evidence row — distinct from 'pipeline' so the
-#: dashboard's per-session feed never mistakes a sweep for a session.
-SWEEP_AGENT_NAME = "coverage_sweep"
-
-
-def sweep_summary(
-    status: CoverageStatus | None, *, entry: str, run_id: str,
-    alerts: Iterable[str] = (), error: str | None = None,
-) -> dict[str, Any]:
-    """Everything one run did, as one flat dict. `status` None means the run
-    could not get as far as a check (`error` says why)."""
-    if status is None:
-        return {
-            "stage": "coverage_sweep", "outcome": "could_not_run",
-            "reason": error or "", "entry": entry, "run_id": run_id,
-        }
-    if status.broker_error:
-        outcome = "could_not_check"
-    elif status.repair_failures:
-        outcome = "repair_failed"
-    # Board item 172, ranked ABOVE 'repaired', 'clean' and 'gaps_left'. A
-    # pass that could not read a position's stops did not establish that
-    # position's coverage, and 'clean' is the one word that must never
-    # describe a run holding an unanswered question about loss protection.
-    elif status.unreadable:
-        outcome = "unreadable_stops"
-    elif status.repaired:
-        outcome = "repaired"
-    elif not status.gaps:
-        outcome = "clean"
-    elif status.repair_deferred:
-        outcome = "repair_deferred"
-    else:
-        outcome = "gaps_left"
-    return {
-        "stage": "coverage_sweep",
-        "outcome": outcome,
-        "reason": status.repair_deferred or status.market_reason or "",
-        "entry": entry,
-        "run_id": run_id,
-        "trading_day": status.trading_day,
-        "session_ran": status.session_ran,
-        "market_open": status.market_open,
-        "positions_checked": status.positions_checked,
-        "gaps_found": len(status.gaps),
-        "gap_symbols": [g.symbol for g in status.gaps],
-        "unprotected_usd": status.unprotected_total,
-        "repairs_attempted": len(status.repairs),
-        "repairs_succeeded": len(status.repaired),
-        "repairs_failed": len(status.repair_failures),
-        "repaired": [
-            {"symbol": r.symbol, "qty": r.qty} for r in status.repaired
-        ],
-        "failed": [
-            {"symbol": r.symbol, "qty": r.qty, "detail": r.detail}
-            for r in status.repair_failures
-        ],
-        "repair_deferred": status.repair_deferred,
-        "broker_error": status.broker_error,
-        "db_error": status.db_error,
-        # Board item 172. `positions_checked` counts positions the sweep
-        # LOOKED at, which includes the ones it could not read, so the two
-        # numbers together say how much of the book was actually settled.
-        "unreadable_count": len(status.unreadable),
-        "unreadable_symbols": [r.symbol for r in status.unreadable],
-        # Board item 193. A skipped symbol used to be absent from this
-        # record entirely, so "is anything unguarded right now" had no
-        # answer anywhere. These four keys are that answer, and they are
-        # observability: nothing decides on them.
-        "unguarded_count": len(status.unguarded),
-        "unguarded": [
-            {
-                "symbol": r.symbol, "held_qty": r.held_qty,
-                "is_short": r.is_short, "since_utc": r.since_utc,
-                "approx_seconds_open": r.seconds_open,
-                "measured_bound_seconds": r.bound_seconds,
-                "bound_observations": r.bound_observations,
-                "over_measured_bound": r.over_bound,
-            }
-            for r in status.unguarded
-        ],
-        "unguarded_over_bound": [r.symbol for r in status.unguarded_over_bound],
-        "alerts": list(alerts),
-    }
-
-
-def sweep_log_line(summary: dict[str, Any]) -> str:
-    """The one greppable line per run."""
-    if summary.get("outcome") == "could_not_run":
-        return (
-            f"{SWEEP_LOG_NAME} {summary.get('run_id')} ({summary.get('entry')}): "
-            f"could_not_run — {summary.get('reason')}"
-        )
-    alerts = summary.get("alerts") or []
-    return (
-        f"{SWEEP_LOG_NAME} {summary.get('run_id')} ({summary.get('entry')}): "
-        f"{summary.get('outcome')} — positions checked "
-        f"{summary.get('positions_checked')}, gaps {summary.get('gaps_found')}, "
-        f"repairs attempted {summary.get('repairs_attempted')} / succeeded "
-        f"{summary.get('repairs_succeeded')} / failed "
-        f"{summary.get('repairs_failed')}, alert "
-        f"{'; '.join(alerts) if alerts else 'none sent'}"
-        + (f", deferred: {summary['repair_deferred']}" if summary.get("repair_deferred") else "")
-        + (f", broker error: {summary['broker_error']}" if summary.get("broker_error") else "")
-        + (
-            ", UNREADABLE stops: "
-            + ", ".join(summary.get("unreadable_symbols") or [])
-            if summary.get("unreadable_count") else ""
-        )
-        # Board item 193: printed on EVERY run that has one, not only when
-        # it is over the bound. A deliberate unguarded window that never
-        # appears in the line is the silence this item was filed about.
-        + (
-            ", DELIBERATELY UNGUARDED (mid scale-in): "
-            + ", ".join(
-                f"{row.get('symbol')} ~"
-                + (
-                    f"{float(row['approx_seconds_open']):.0f}s"
-                    if row.get("approx_seconds_open") is not None
-                    else "age unknown"
-                )
-                + (" OVER LONGEST MEASURED" if row.get("over_measured_bound") else "")
-                for row in (summary.get("unguarded") or [])
-            )
-            if summary.get("unguarded_count") else ""
-        )
-    )
 
 
 def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
@@ -2237,3 +2155,91 @@ def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
     except Exception as exc:  # noqa: BLE001 — a record is never trading authority
         logger.warning("%s: could not write the run record: %s", SWEEP_LOG_NAME, exc)
         return False
+
+
+# --- Generic per-symbol, per-trading-day alert claim -------------------------
+# Same state file, same trading-day key and the same claim-before-send
+# discipline as `claim_repair_failure_alert`, but keyed by an arbitrary
+# `kind` so a new fail-closed page does not need its own pair of helpers.
+# Callers that page the owner about a per-symbol condition use this; the
+# older named helpers keep their own keys so their history is unaffected.
+
+def _typed_alerted_symbols(
+    state: dict[str, Any], day: str, kind: str,
+) -> set[str]:
+    raw = state.get(f"typed_alerted_symbols::{kind}")
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
+
+
+#: How many suppression records to retain per alert type. Bounds the state
+#: file; the running `count` is never truncated, only the per-event list.
+_SUPPRESSION_LOG_LIMIT = 50
+
+
+def _record_suppressed_alert(
+    state: dict[str, Any], kind: str, day: str, keys: Iterable[str],
+) -> None:
+    """Durably note an alert this helper declined to resend (item 211).
+
+    Nothing is silently dropped: the owner not being paged a second time is
+    a presentation decision, and the underlying fact still has to be
+    readable afterwards or the desk has stopped reporting its true state.
+    """
+    log = state.get("suppressed_alerts")
+    if not isinstance(log, dict):
+        log = {}
+    entry = log.get(kind)
+    if not isinstance(entry, dict) or entry.get("day") != day:
+        entry = {"day": day, "count": 0, "events": []}
+    events = entry.get("events")
+    if not isinstance(events, list):
+        events = []
+    for key in keys:
+        entry["count"] = int(entry.get("count") or 0) + 1
+        events.append({"key": key, "day": day})
+    entry["events"] = events[-_SUPPRESSION_LOG_LIMIT:]
+    log[kind] = entry
+    state["suppressed_alerts"] = log
+
+
+def claim_typed_alert(
+    kind: str, symbols: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Reserve today's `kind` alert for `symbols`; return those NOT yet
+    alerted today, in the order given.
+
+    Same contract as `claim_repair_failure_alert`, including that a state
+    file that cannot be read errs towards telling the owner twice over not
+    at all.
+    """
+    key = str(kind).strip() or "unspecified"
+    day = repair_failure_alert_day(now)
+    state = load_state(path)
+    already = _typed_alerted_symbols(state, day, key)
+    fresh = [
+        sym for sym in dict.fromkeys(
+            str(raw).strip().upper() for raw in symbols if str(raw).strip()
+        )
+        if sym not in already
+    ]
+    stale = [sym for sym in dict.fromkeys(
+        str(raw).strip().upper() for raw in symbols if str(raw).strip()
+    ) if sym in already]
+    if stale:
+        _record_suppressed_alert(state, key, day, stale)
+    if not fresh:
+        if stale:
+            save_state(state, path)
+        return []
+    state[f"typed_alerted_symbols::{key}"] = {
+        "day": day, "symbols": sorted(already | set(fresh)),
+    }
+    save_state(state, path)
+    return fresh

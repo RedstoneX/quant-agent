@@ -553,6 +553,41 @@ def _hang_for_the_socket_timeout(_series_id, **_kwargs):
     raise TimeoutError("The read operation timed out")
 
 
+class _FakeMonotonic:
+    """A monotonic clock the module under test consults instead of the wall.
+
+    `src.data.macro` reads exactly two things from `time`: `monotonic()` for
+    its deadline arithmetic and `sleep()` for retry backoff. Substituting
+    this object for the module's `time` makes the whole budget calculation
+    virtual, so the result is arithmetic about deadlines rather than a race
+    against a loaded CI runner. `tests/desk_clock.freeze_desk_day` is the
+    precedent but does not fit here: it pins a module's `_now_utc()` — the
+    desk's CALENDAR day — and this budget is a monotonic DURATION with no
+    calendar in it, so there is no `_now_utc` to freeze.
+    """
+
+    def __init__(self, start: float = 10_000.0):
+        self._t = float(start)
+
+    def monotonic(self) -> float:
+        return self._t
+
+    def sleep(self, seconds) -> None:
+        self._t += max(0.0, float(seconds))
+
+
+def _hang_against(clock):
+    """The hang helper above, spending the FAKE clock instead of the real one."""
+
+    def _hang(_series_id, **_kwargs):
+        import socket as _socket
+        timeout = _socket.getdefaulttimeout()
+        clock.sleep(timeout if timeout else 0.01)
+        raise TimeoutError("The read operation timed out")
+
+    return _hang
+
+
 @patch("src.data.macro.Fred")
 def test_every_required_series_is_attempted_even_when_every_call_hangs(mock_fred_cls):
     """THE reproduction for board item 119. Every configured series must
@@ -565,14 +600,17 @@ def test_every_required_series_is_attempted_even_when_every_call_hangs(mock_fred
     production shape, where ICSA and BAMLC0A0CM (the last two) were skipped
     13 times each and the first five were never skipped once.
 
-    Scaled down 60x from the shipped 90 s so the test costs ~1.5 s of real
-    clock; the policy under test is a ratio, not an absolute.
+    Scaled down 60x from the shipped 90 s; the policy under test is a ratio,
+    not an absolute. The budget is spent on a virtual monotonic clock, so the
+    test costs no real clock at all and cannot be reddened by a loaded runner
+    — the thing being asserted is deadline arithmetic, not wall time.
     """
     from src.data.macro import CONFIGURED_SERIES
 
+    clock = _FakeMonotonic()
     mock = MagicMock()
-    mock.get_series.side_effect = _hang_for_the_socket_timeout
-    mock.get_series_info.side_effect = _hang_for_the_socket_timeout
+    mock.get_series.side_effect = _hang_against(clock)
+    mock.get_series_info.side_effect = _hang_against(clock)
     mock_fred_cls.return_value = mock
 
     provider = MacroDataProvider(
@@ -585,9 +623,10 @@ def test_every_required_series_is_attempted_even_when_every_call_hangs(mock_fred
         breaker_after_failed_series=1,
         total_fetch_deadline_s=1.5,
     )
-    start = time.monotonic()
-    provider.get_macro_summary()
-    elapsed = time.monotonic() - start
+    with patch("src.data.macro.time", clock):
+        start = clock.monotonic()
+        provider.get_macro_summary()
+        spent = clock.monotonic() - start
 
     asked = {call.args[0] for call in mock.get_series.call_args_list}
     assert asked == set(CONFIGURED_SERIES), (
@@ -595,10 +634,16 @@ def test_every_required_series_is_attempted_even_when_every_call_hangs(mock_fred
         f"never asked: {sorted(set(CONFIGURED_SERIES) - asked)}"
     )
     # And the ceiling still holds — the guarantee is fairness INSIDE the
-    # existing budget, not a longer one. 3x slack for a loaded runner,
-    # matching the existing wall-clock test's tolerance.
-    assert elapsed <= 4.5, (
-        f"fair-share fetch took {elapsed:.2f}s against a 1.5s ceiling"
+    # existing budget, not a longer one. This is the budget the code BELIEVES
+    # it spent, read off the same clock the code does its deadline arithmetic
+    # on, so it is the ceiling itself and not a wall-clock allowance padded
+    # for machine load.
+    # The epsilon absorbs float accumulation from summing ~30 allowances on
+    # the virtual clock (measured 5.5e-12 s of drift); it is arithmetic
+    # error, not a tolerance for machine load.
+    assert spent <= provider.total_fetch_deadline_s + 1e-6, (
+        f"fair-share fetch spent {spent:.6f}s of budget against a "
+        f"{provider.total_fetch_deadline_s}s ceiling"
     )
 
 

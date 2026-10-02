@@ -256,7 +256,7 @@ def _run_risk_stage_capturing_review(ctx, *, position_history=None,
     pipeline.db = MagicMock()
     pipeline._sweeper = MagicMock(return_value=None)
     pipeline._filter_supported_symbols = MagicMock(return_value=(decisions, []))
-    pipeline._clamp_queued_earnings_buys = MagicMock(return_value=decisions)
+    pipeline._refuse_queued_earnings_buys = MagicMock(return_value=decisions)
     pipeline._filter_hard_risk_decisions = MagicMock(
         return_value=(decisions, [], []),
     )
@@ -538,7 +538,13 @@ def test_f4_decision_stage_logs_all_nine_fields(caplog) -> None:
             "a", "b", "c", "d", "e", "f", "g",
             "" or "[MISSING]", "" or "[MISSING]", "" or "[MISSING]",
         )
-    source = Path(ps.__file__).read_text()
+    # `DecisionStage` moved to `src/stage_decision.py` verbatim (item 210,
+    # step 10); the log line travelled with it.
+    from src import stage_decision as _stage_decision
+
+    source = (
+        Path(ps.__file__).read_text() + Path(_stage_decision.__file__).read_text()
+    )
     # Every field the schema lets default to "" must appear here, or the log
     # cannot tell a performed audit step from a skipped one. `macro_audit`
     # joined them 2026-09-14 (item 18e).
@@ -697,7 +703,7 @@ def test_f7b_schema_comment_matches_the_corrected_meaning() -> None:
     """The schema still described `valuation_context` as 'is the market
     pricing this fairly' — the exact question the seat cannot answer, left
     contradicting the prompt that had just been corrected."""
-    src = (_REPO_ROOT / "src" / "models.py").read_text()
+    src = (_REPO_ROOT / "src" / "models" / "earnings.py").read_text()
     assert "# is the market pricing this fairly given the above?" not in src, (
         "the trailing schema comment still defines valuation_context as a "
         "price judgement, contradicting the prompt"

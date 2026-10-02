@@ -7,7 +7,7 @@ resolves to "Unknown" — and `RiskRuleEngine.check`'s sector-concentration
 rule (rule 5, spec §12.2/§10.3) used to read `new_sector != "Unknown"` as
 "skip this check entirely", i.e. EXEMPT from BOTH the soft concentration
 target (`max_sector_pct`, advisory) and the absolute hard ceiling
-(`max_sector_hard_pct`, a real HARD BLOCK — see `src.pipeline.HARD_BLOCK_RULES`).
+(`max_sector_hard_pct`, a real HARD BLOCK — see `src.pipeline_risk_gate.HARD_BLOCK_RULES`).
 Symmetrically, a HELD position stamped sector="Unknown" the same way was
 excluded by `sector_side_gross`'s default (`include_unknown=False`) and
 vanished from every sector's exposure. With margin arriving at 2.0x, a
@@ -34,8 +34,9 @@ import pytest
 
 from src.config import RiskConfig
 from src.models import Position, TradeDecision
-from src.pipeline import HARD_BLOCK_RULES
+from src.pipeline_risk_gate import HARD_BLOCK_RULES
 from src.risk.rules import RiskRuleEngine
+from tests.pipeline_factory import build_pipeline
 
 
 def _engine(**overrides) -> RiskRuleEngine:
@@ -321,14 +322,13 @@ def test_normal_resolution_under_cap_produces_zero_violations():
 def test_pending_sector_investment_pools_unknown_across_the_batch():
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = _engine(max_sector_pct=10.0, max_sector_hard_pct=15.0)
+    pipeline = build_pipeline(risk_engine=_engine(max_sector_pct=10.0, max_sector_hard_pct=15.0))
     decisions = [
         _buy("FIRST", allocation_pct=8.0),
         _buy("SECOND", allocation_pct=8.0),
     ]
 
-    with patch("src.pipeline._get_sector", return_value="Unknown"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Unknown"), patch(
         "src.execution.broker._get_sector", return_value="Unknown"
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(

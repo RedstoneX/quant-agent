@@ -18,6 +18,8 @@ from src.agents.base import (
     LLMStreamErrorChunk,
     LLMStreamInterruptedError,
 )
+import src.cost_circuit
+from tests.desk_clock import freeze_desk_day
 from src.cost_circuit import (
     LLMCostCircuitBreaker,
     OptionalPaidAnalysisRetrySkipped,
@@ -30,6 +32,7 @@ from src.cost_circuit import (
 )
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 class _Notifier:
@@ -81,9 +84,8 @@ def _db_path(tmp_path):
 
 
 def test_pipeline_attaches_breaker_to_every_paid_agent():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
     circuit = object()
-    pipeline.cost_circuit = circuit
+    pipeline = build_pipeline(cost_circuit=circuit)
     names = (
         "tech_analyst", "news_analyst", "macro_analyst",
         "earnings_analyst", "smart_money_analyst", "portfolio_manager",
@@ -261,6 +263,10 @@ def test_base_agent_third_provider_attempt_is_blocked_before_network(tmp_path, m
     # SHOULD be made to look at.
     state = circuit.status()
     assert state["trigger_code"] == "failed_call_unknown_cost"
+    # Item 208: the quota hold pages at once (it needs an operator); the
+    # transient latch waits out its own self-clear window first.
+    assert len(notifier.messages) == 1
+    _age_latch_past_self_clear_window(circuit)
     assert len(notifier.messages) == 2
     assert "no provable-zero-cost telemetry" in notifier.messages[1]
 
@@ -293,6 +299,10 @@ def test_failed_call_with_ambiguous_cost_latches_without_inventing_a_charge(tmp_
     # costs the ledger nothing invented, only certainty.
     assert state["current_session_cost_usd"] == 0
     assert state["current_daily_cost_usd"] == 0
+    # Item 208: recorded immediately, sent only once it outlives the
+    # circuit's own self-clear window.
+    assert notifier.messages == []
+    _age_latch_past_self_clear_window(circuit)
     assert "no provable-zero-cost telemetry" in notifier.messages[0]
 
 
@@ -359,16 +369,54 @@ def _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservatio
     assert row == ("active", 0.0, 1)
 
 
-def _assert_charged_and_tripped(circuit, notifier, reservation):
+def _age_latch_past_self_clear_window(circuit):
+    """Item 208: make a self-clearing latch DURABLE for test purposes.
+
+    The owner is no longer paged the instant a transient provider fault
+    latches -- only once the latch has outlived the circuit's own
+    `transient_latch_cooldown_minutes` self-clear window without expiring.
+    Tests that assert the owner-facing text therefore have to get the latch
+    to that point, and this backdates `suspended_at` rather than sleeping.
+    """
+    with circuit._connect() as conn:
+        conn.execute(
+            "UPDATE llm_circuit_state SET suspended_at="
+            "datetime('now', '-1 day') WHERE singleton=1"
+        )
+        conn.commit()
+    circuit._notify_if_needed()
+
+
+def _assert_charged_and_tripped(circuit, notifier, reservation,
+                                expected_code="failed_call_unknown_cost"):
     state = circuit.status()
     assert state["suspended"] is True
-    assert state["trigger_code"] == "failed_call_unknown_cost"
+    assert state["trigger_code"] == expected_code
+    # Item 208: a transient latch inside its own self-clear window is
+    # RECORDED, not sent -- announcing both edges of a fault that clears
+    # itself in minutes is what produced 44 of the 107 messages the owner
+    # received over 26-29 Sep. The suspension itself is in force either way.
+    assert notifier.messages == []
+    with circuit._connect() as conn:
+        deferred = conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events "
+            "WHERE event_type='suspend_alert_deferred'"
+        ).fetchone()[0]
+    assert deferred == 1, "a held alert must still be written down"
+    _age_latch_past_self_clear_window(circuit)
     # Item 14 (2026-09-02): no reservation exists to convert into a dollar
     # charge any more -- an ambiguous failure marks the ledger inexact
     # instead of booking a guessed amount.
     assert state["current_session_cost_usd"] == 0
     assert state["current_daily_cost_usd"] == 0
-    assert "no provable-zero-cost telemetry" in notifier.messages[0]
+    # The owner-facing sentence must match the recorded cause: an
+    # out-of-credit suspension says so, everything else keeps the
+    # unproven-cost wording (item 226).
+    expected_phrase = (
+        "out of credit" if expected_code == "provider_out_of_credit"
+        else "no provable-zero-cost telemetry"
+    )
+    assert expected_phrase in notifier.messages[0]
 
 
 @pytest.mark.parametrize("status_code", [429, 400, 401, 403, 404])
@@ -2003,11 +2051,17 @@ def _age_latch(path: str, minutes: float) -> None:
     same clock that wrote the stamp, so moving the stamp is the honest way
     to simulate waiting.
     """
+    # Against the circuit's own clock, not the OS clock. When a test has
+    # frozen the desk's day the two are the same instant; when it has not,
+    # this is `datetime.now(timezone.utc)` and the stamp is what SQLite
+    # would have written anyway.
+    stamp = (
+        src.cost_circuit._now_utc() - timedelta(minutes=minutes)
+    ).strftime("%Y-%m-%d %H:%M:%S")
     with sqlite3.connect(path) as conn:
         conn.execute(
-            "UPDATE llm_circuit_state SET suspended_at="
-            "datetime('now', ?) WHERE singleton=1",
-            (f"-{minutes} minutes",),
+            "UPDATE llm_circuit_state SET suspended_at=? WHERE singleton=1",
+            (stamp,),
         )
 
 
@@ -2027,14 +2081,7 @@ def _freeze_et_day(monkeypatch) -> None:
     real clock on purpose: the cooldown check measures elapsed wall time
     against that same clock, so only the ET-day bucketing needs pinning.
     """
-    real_today = datetime.now(timezone.utc).astimezone(_ET).date()
-    safe_instant = datetime(
-        real_today.year, real_today.month, real_today.day, 12, 0, tzinfo=_ET,
-    )
-    frozen = _et_day_and_utc_bounds(safe_instant.astimezone(timezone.utc))
-    monkeypatch.setattr(
-        "src.cost_circuit._et_day_and_utc_bounds", lambda now=None: frozen,
-    )
+    freeze_desk_day(monkeypatch, src.cost_circuit)
 
 
 def _utc_stamp_on_et_day(et_day: str) -> str:
@@ -2156,7 +2203,14 @@ def test_status_codes_outside_the_allow_list_stay_ambiguous(tmp_path, status_cod
     reservation = _authorize_and_fail(circuit, error, run_id=f"run-amb-{status_code}")
 
     assert _is_known_zero_cost_failure(error) is False
-    _assert_charged_and_tripped(circuit, notifier, reservation)
+    # Item 226: a 402 is still ambiguous cost and still trips -- the
+    # accounting did not move -- but the desk now NAMES the cause instead
+    # of reporting an unbounded-cost mystery it can actually explain.
+    _assert_charged_and_tripped(
+        circuit, notifier, reservation,
+        expected_code=("provider_out_of_credit" if status_code == 402
+                       else "failed_call_unknown_cost"),
+    )
 
 
 def test_missing_and_non_integer_status_codes_stay_ambiguous(tmp_path):
@@ -2227,9 +2281,18 @@ def test_all_pre_send_503_attempts_are_free(tmp_path):
 # --------------------------- Defect B ---------------------------------
 
 
-def _latch_on_failed_call(path, notifier=None, config=None, run_id="run-latched"):
+def _latch_on_failed_call(
+    path, notifier=None, config=None, run_id="run-latched", durable=True,
+):
     """Drive the circuit into the real `failed_call_unknown_cost` latch by
-    the only route that produces it: an ambiguous failed provider call."""
+    the only route that produces it: an ambiguous failed provider call.
+
+    `durable=True` also carries the latch past the circuit's own self-clear
+    window and runs the notify pass, which is item 208's precondition for
+    the owner hearing about it at all: a transient latch that expires inside
+    that window is one recorded episode and no message. Every item-174 test
+    below is about what the owner READS, so all of them need a latch that
+    has earned a page."""
     circuit = LLMCostCircuitBreaker(
         path, config or _cooldown_config(), notifier or _Notifier(),
     )
@@ -2237,6 +2300,8 @@ def _latch_on_failed_call(path, notifier=None, config=None, run_id="run-latched"
         circuit, _StatusCodeError(500, "ambiguous"), run_id=run_id,
     )
     assert circuit.status()["trigger_code"] == "failed_call_unknown_cost"
+    if durable:
+        _age_latch_past_self_clear_window(circuit)
     return circuit
 
 
@@ -3294,6 +3359,126 @@ def test_smart_money_cache_hit_reports_zero_cost_not_unknown():
     assert result.cost_usd == 0.0
 
 
+# ============================================================================
+# Item 211 (2026-09-30): a self-clearing fault is ONE episode, not two pages
+# ============================================================================
+
+
+def test_a_latch_that_self_clears_inside_its_window_pages_nobody(
+    tmp_path, monkeypatch,
+):
+    """The weekend defect, end to end.
+
+    22 SUSPENDED and 22 RESUMED messages over 26-29 Sep were one provider
+    fault flapping [measured, production `notifier_sends`]. A latch that
+    expires inside the circuit's own self-clear window must now produce no
+    owner message at either edge -- and must still be fully recorded.
+    """
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = _latch_on_failed_call(path, notifier=notifier, durable=False)
+
+    assert notifier.messages == []
+
+    _age_latch(path, 16)
+    assert circuit.status()["suspended"] is False
+
+    # Neither edge reached him.
+    assert notifier.messages == []
+
+    # But the desk can still say exactly what happened.
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        kinds = [
+            row["event_type"] for row in conn.execute(
+                "SELECT event_type FROM llm_circuit_events ORDER BY id"
+            )
+        ]
+    assert "suspend_alert_deferred" in kinds
+    assert "auto_reset" in kinds
+
+
+def test_the_deferral_is_written_once_per_latch_not_once_per_check(
+    tmp_path, monkeypatch,
+):
+    """Moving the noise into the database would not be a fix."""
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    circuit = _latch_on_failed_call(path, durable=False)
+
+    for _ in range(5):
+        circuit.status()
+
+    with sqlite3.connect(path) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM llm_circuit_events "
+            "WHERE event_type='suspend_alert_deferred'"
+        ).fetchone()[0]
+    assert count == 1
+
+
+def test_the_durable_page_and_the_resume_both_carry_the_episode(
+    tmp_path, monkeypatch,
+):
+    """Duration and flap count, on both edges of a DURABLE episode."""
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = _latch_on_failed_call(path, notifier=notifier)
+
+    suspended = next(m for m in notifier.messages if "SUSPENDED" in m)
+    assert "episode:" in suspended
+    assert "self-clear window" in suspended
+
+    _age_latch(path, 16)
+    circuit.status()
+    resumed = next(m for m in notifier.messages if "RESUMED" in m)
+    assert "episode:" in resumed
+    assert "self-cleared" in resumed
+
+
+def test_a_trigger_needing_an_operator_is_never_held(tmp_path, monkeypatch):
+    """Deferring is only ever right where the circuit itself might clear the
+    latch. A code outside `_SELF_CLEARING_HARD_TRIGGERS` has no window to
+    expire inside, so holding its alert would only delay a page that has to
+    happen -- and an unreadable or missing stamp errs the same way."""
+    from src.cost_circuit import _SELF_CLEARING_HARD_TRIGGERS
+
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    circuit = LLMCostCircuitBreaker(path, _cooldown_config(), _Notifier())
+    fresh = "2999-01-01 00:00:00"
+
+    with circuit._connect() as conn:
+        for code in ("operator_manual", "daily_cost_limit", "", None):
+            assert code not in _SELF_CLEARING_HARD_TRIGGERS
+            assert circuit._suspension_still_inside_self_clear_window_locked(
+                conn, {"trigger_code": code, "suspended_at": fresh},
+            ) is False
+        # A self-clearing code with no usable stamp also refuses to hold.
+        assert circuit._suspension_still_inside_self_clear_window_locked(
+            conn, {"trigger_code": "failed_call_unknown_cost",
+                   "suspended_at": None},
+        ) is False
+        # An unparseable stamp is not something to hold an alert on either.
+        assert circuit._suspension_still_inside_self_clear_window_locked(
+            conn, {"trigger_code": "failed_call_unknown_cost",
+                   "suspended_at": "not-a-timestamp"},
+        ) is False
+        # ...but the same code, stamped a moment ago, IS held.
+        now_stamp = conn.execute("SELECT datetime('now') AS t").fetchone()["t"]
+        assert circuit._suspension_still_inside_self_clear_window_locked(
+            conn, {"trigger_code": "failed_call_unknown_cost",
+                   "suspended_at": now_stamp},
+        ) is True
+        # And once it has outlived the window, it is not.
+        assert circuit._suspension_still_inside_self_clear_window_locked(
+            conn, {"trigger_code": "failed_call_unknown_cost",
+                   "suspended_at": "2000-01-01 00:00:00"},
+        ) is False
+
+
 class _MutedNotifier(_Notifier):
     """A notification transport the operator deliberately switched off."""
 
@@ -3330,3 +3515,117 @@ def test_no_durable_record_surface_still_latches(tmp_path):
 
     with pytest.raises(PaidAnalysisSuspended):
         circuit.require_paid_analysis("analysis")
+
+
+def test_operator_reset_records_duration_and_tells_the_owner(tmp_path):
+    """A manual reset must be as observable as the automatic one: the event
+    row carries how long the suspension lasted and the suspension's own alert
+    state, and the owner gets the resume note he gets for an auto-clear."""
+
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = _latch_on_failed_call(path, notifier=notifier)
+    # Short of the auto-clear cooldown, so this is the operator path and the
+    # elapsed figure is a real backdated interval rather than ~0.
+    _age_latch(path, 7)
+    assert any("SUSPENDED" in m for m in notifier.messages)
+
+    circuit.reset("operator verified the provider fault and cleared it")
+
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = dict(conn.execute(
+            "SELECT * FROM llm_circuit_events WHERE event_type='reset'"
+        ).fetchone())
+    assert "operator reset after a suspension of" in row["detail"]
+    assert "7." in row["detail"] or "6." in row["detail"]
+    # Captured before the UPDATE zeroed it, so the pairing rule is answered
+    # from what was true, not from the column default.
+    assert row["suspension_alert_state"] == 1
+    assert row["recovery_alert_state"] == 1
+
+    resumed = [m for m in notifier.messages if "RESUMED" in m]
+    assert len(resumed) == 1
+    assert "after an operator reset" in resumed[0]
+    assert "no operator reset was needed" not in resumed[0]
+    assert "operator reset after a suspension of" in resumed[0]
+
+    # Idempotent: a second boundary must not re-announce the same reset.
+    circuit._notify_auto_resets_if_needed()
+    assert len([m for m in notifier.messages if "RESUMED" in m]) == 1
+
+
+def test_pre_existing_operator_resets_are_not_re_announced(tmp_path):
+    """Resets already on the books cleared before this alert existed; the
+    one-time backfill marks them handled so no stale 'RESUMED' burst fires."""
+
+    path = _db_path(tmp_path)
+    with sqlite3.connect(path) as conn:
+        # Simulate a database written before this change: the row is pending
+        # (0) and the schema counter has not been stamped.
+        conn.execute(
+            "INSERT INTO llm_circuit_events "
+            "(event_type, detail, run_id, mode, agent_name, attempts, "
+            "session_cost_usd, daily_cost_usd, recovery_alert_state) VALUES "
+            "('reset', 'old operator reset', 'r', 'operator', 'operator', "
+            "0, 0, 0, 0)"
+        )
+        conn.execute("PRAGMA user_version = 0")
+
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(path, _cooldown_config(), notifier)
+    circuit._notify_auto_resets_if_needed()
+    assert not [m for m in notifier.messages if "RESUMED" in m]
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT recovery_alert_state FROM llm_circuit_events "
+            "WHERE event_type='reset'"
+        ).fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+def test_a_relatch_of_the_same_fault_in_one_episode_pages_the_owner_once(
+    tmp_path, monkeypatch,
+):
+    """Item 211 defect 1. The first coalescing attempt keyed suppression to
+    the self-clear WINDOW, which is a duration and the wrong quantity: on
+    production data all 22 suspension episodes of 26-30 Sep ran 24 to 253
+    minutes, so not one was inside its window and all 44 messages still
+    paged [measured, production `llm_circuit_events`].
+
+    Suppression now spans the EPISODE — one trigger code inside one ET
+    budget day, the boundary `_episode_facts_locked` already reports on.
+    The owner is told once when the fault starts; a re-latch of the same
+    unresolved fault is not a second incident. No duration is invented.
+
+    Fails on the old behaviour: the second durable latch sent a second
+    "SUSPENDED" note.
+    """
+    _freeze_et_day(monkeypatch)
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+
+    # First latch of the day: durable, so it earns its page.
+    circuit = _latch_on_failed_call(path, notifier=notifier, durable=True)
+    assert len([m for m in notifier.messages if "SUSPENDED" in m]) == 1
+    _age_latch(path, 16)
+    assert circuit.status()["suspended"] is False
+    assert len([m for m in notifier.messages if "RESUMED" in m]) == 1
+
+    # Same fault latches again, same budget day, and outlasts its window
+    # exactly as every real episode did.
+    circuit = _latch_on_failed_call(path, notifier=notifier, durable=True)
+    assert len([m for m in notifier.messages if "SUSPENDED" in m]) == 1, (
+        "a re-latch of one unresolved fault must not page the owner twice"
+    )
+
+    # Nothing vanished: the suppression is on the record.
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        held = [
+            row["detail"] for row in conn.execute(
+                "SELECT detail FROM llm_circuit_events "
+                "WHERE event_type='suspend_alert_deferred'"
+            )
+        ]
+    assert any("already paged him in this ET budget day" in d for d in held)

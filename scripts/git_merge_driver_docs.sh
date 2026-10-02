@@ -63,7 +63,7 @@ TREE_PATH=$4
 
 case "${TREE_PATH}" in
   docs/WORK.md) KIND=work ;;
-  docs/BOARD_NOTES.md) KIND=notes ;;
+  docs/board_notes/*.md) KIND=notes ;;
   docs/INCIDENT_HISTORY.md) KIND=history ;;
   *)
     echo "git_merge_driver_docs.sh: no resolver kind for '${TREE_PATH}'" >&2

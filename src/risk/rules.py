@@ -525,6 +525,56 @@ def agreement_refuses_trade(score: int) -> bool:
     return score <= 0
 
 
+# --- Missing evidence: a filing the desk never read -------------------------
+#
+# NOT THE CONVICTION BAR, AND DELIBERATELY NOT ROUTED THROUGH IT (board item
+# 186, 2026-10-01). The R7 bar below grades what the seats SAID: one
+# supportive seat with a real directional thesis, no seat opposed, the chart
+# confirming. A queued-but-unread filing is none of those things — it is a
+# seat that was never asked, and `agreement_refuses_trade` above names
+# exactly that distinction ("the seats disagreed" vs "the seats had nothing
+# to look at") as the confusion it exists to avoid. Treating an unread filing
+# as a conviction failure would also borrow `OWN_BAR_REASON_PREFIX`, which
+# `src/rotation.py` STRING-MATCHES to classify HELD names as ineligible to
+# hold, so it would silently change behaviour on positions the desk already
+# owns. This route is MISSING EVIDENCE, it carries its own prefix, and
+# nothing matches that prefix anywhere.
+
+#: The reason prefix for an entry refused because evidence the desk meant to
+#: have was not fetched. Matched by nothing — deliberately.
+UNREAD_FILING_REASON_PREFIX = "Unread filing"
+
+
+def unread_filing_block_reason(symbol: str) -> str:
+    """The one refusal string for a BUY whose just-filed report was never read.
+
+    WHAT THE TRIGGER ACTUALLY MEANS, because it changes the argument. The
+    `queued=True` placeholder is set in exactly one place (`src/pipeline.py`,
+    the session-time earnings fetch): a filing that turns up as NEW at
+    decision time, i.e. one the pre-market preprocess did not pick up and
+    analyse. It marks an OPERATIONS FAILURE — a step of this desk's own
+    pipeline did not run or did not finish in time — not a market event and
+    not a seat's verdict.
+
+    So this refusal is argued on evidence, not on conviction: the desk meant
+    to read that report before deciding, it did not, and it declines to buy
+    into the gap rather than buying on an incomplete picture. Holding is
+    untouched; this refuses an ENTRY only.
+
+    This replaced the 5%-of-book weight clamp (board item 186, 2026-10-01).
+    That 5 had no source and two derivations failed, and the owner ruled on
+    2026-09-30 that such a constant is a defect to remove rather than an
+    appetite to answer — so the condition was reformulated and the number
+    deleted instead of re-derived.
+    """
+    return (
+        f"{UNREAD_FILING_REASON_PREFIX} \u2014 {symbol.strip().upper()}: a "
+        "just-filed report reached this session unread because the pre-market "
+        "preprocess did not analyse it, so the desk is deciding without "
+        "evidence it meant to have; entry refused until it is read"
+    )
+
+
 # --- Owner mandate 2026-09-25 — the ROLE-BASED conviction bar (R7) ---------
 #
 # "Earn the right to ENTER and to STAY." A name clears this bar only when a
@@ -868,12 +918,35 @@ GROSS_LADDER: tuple[tuple[float, float], ...] = (
 #: reason string below names the rung the ladder is ACTUALLY on, and only
 #: claims the floor when the book is at the floor.
 #:
-#: STATUS: still `arbitrary`, still ledgered, and its open question — "at
-#: what drawdown must the owner be told, independently of what the ladder
-#: does to exposure?" — is still unanswered. Deduplicating it against an
-#: arbitrary table would not have sourced it either; a number does not become
-#: non-arbitrary by being set equal to another arbitrary number.
-GROSS_LADDER_ALERT_PCT = -20.0
+#: SOURCED 2026-09-30 (board item 182). The value is no longer the desk's own
+#: round number. It is the depreciation-notification threshold published in
+#: Article 62(1) of Commission Delegated Regulation (EU) 2017/565 (the MiFID
+#: Org Regulation), reproduced in the FCA Handbook as COBS 16A.4.3UK: a firm
+#: managing a portfolio "shall inform the client where the overall value of
+#: the portfolio ... depreciates by 10 % and thereafter at multiples of 10 %,
+#: no later than the end of the business day in which the threshold is
+#: exceeded". That rule answers THIS question and no other one this desk
+#: could find: at what loss must the person whose money it is be told, quite
+#: apart from anything the manager does to the book. It is therefore adopted
+#: as the trigger, and the alert moves from -20% to -10%.
+#:
+#: HONEST DIFFERENCES, stated rather than papered over. (a) The regulation
+#: measures depreciation against the value at the START of the reporting
+#: period; this desk measures peak-to-trough drawdown. Peak-to-trough is
+#: always at least as deep as period-start depreciation, so alerting on it at
+#: -10% fires no later than the regulation would, never later. (b) The
+#: regulation is a RETAIL investor-protection rule and the UK FCA revoked
+#: COBS 16A.4.3UK with effect from 23 October 2025; the revocation was a
+#: firm-burden decision, not a finding that 10% is the wrong number, and the
+#: EU Article 62 text stands. It is cited here as published practice, not as
+#: a rule this desk is subject to. (c) The desk re-alerts on every session
+#: past the threshold, which is more often than "thereafter at multiples of
+#: 10%" requires; the regulation is a floor on loudness and this clears it.
+#:
+#: This direction is the one the 2026-09-30 revert argued for: the change
+#: makes the desk LOUDER. It cannot introduce silence anywhere, because the
+#: trigger is monotone and -10% is shallower than the old -20%.
+GROSS_LADDER_ALERT_PCT = -10.0
 
 #: Name of the deterministic hard-block rule this ceiling raises. Listed in
 #: `HARD_BLOCK_RULES` (below in this file) — one string, two places.
@@ -1041,8 +1114,7 @@ def resolve_gross_ceiling(
         # claiming the floor at a drawdown that is merely past the alert.
         deepest = min(threshold for threshold, _ in GROSS_LADDER)
         reason += (
-            f" This is past the {abs(GROSS_LADDER_ALERT_PCT):.0f}% level at "
-            f"which the owner is told."
+            f" Past the {abs(GROSS_LADDER_ALERT_PCT):.0f}% owner-alert level."
         )
         floor_x = min(
             rung_x for threshold, rung_x in GROSS_LADDER if threshold == deepest
@@ -1334,24 +1406,20 @@ DESK_INVESTED_TARGET_PCT = 100.0
 def deployment_gap_band_pct(config) -> float:
     """The tolerance band for the `deployment_gap` advisory.
 
-    Previously a flat 15pp with no source (owner rule: no arbitrary
-    numbers). The only cash slice the desk has actually sourced and the
-    owner accepted is the sweep reserve (`cash_sweep.reserve_pct` —
-    deliberately-parked cash for fees/slippage, see `CashSweepConfig`).
-    Reusing it means a book short of 100% by no more than the reserve is
-    exactly at the fully-invested mandate, not "under" it; a book short by
-    more than the reserve has real idle cash and the advisory should say
-    so. No new constant — this tracks whatever the owner sets there.
+    Reads `deployment_gap.band_pct` (value 1.0, carried over
+    unchanged from the retiring `cash_sweep.reserve_pct`, board item 190
+    step 1). A book short of 100% by no more than the band is at the
+    fully-invested mandate; short by more has real idle cash and the
+    advisory says so.
 
     `config` is the pipeline's top-level config (or None — several ~58
     tests build `TradingPipeline` via `__new__` without one); a missing
-    `cash_sweep` block falls back to `CashSweepConfig`'s own declared
-    default rather than a number invented here.
+    value falls back to the field's own declared default.
     """
-    from src.config import CashSweepConfig
-    pct = getattr(getattr(config, "cash_sweep", None), "reserve_pct", None)
+    from src.config import DeploymentGapConfig
+    pct = getattr(getattr(config, "deployment_gap", None), "band_pct", None)
     if pct is None:
-        pct = CashSweepConfig.model_fields["reserve_pct"].get_default()
+        pct = DeploymentGapConfig.model_fields["band_pct"].get_default()
     return float(pct)
 
 

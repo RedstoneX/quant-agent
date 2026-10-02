@@ -214,7 +214,7 @@ def test_the_session_sweep_passes_the_resting_orders_to_the_record(tmp_path):
     resting = [{"id": "s1", "qty": 10.0, "stop_price": 158.0}]
     p.broker.snapshot_protective_stops.return_value = (True, resting)
     p.cash_sweeper = None
-    with patch("src.pipeline._market_is_open_now", return_value=False):
+    with patch("src.pipeline_protection._market_is_open_now", return_value=False):
         gaps = p._reconcile_stop_coverage()
     assert gaps and gaps[0]["repaired"] is False
     rows = _rows(db, STOP_REPAIR_REFUSAL_KIND)

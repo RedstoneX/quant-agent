@@ -4,7 +4,7 @@
 **Why this exists** (`docs/WORK.md` item 68). Every branch that closes a board
 item edits the same three documents, so every parallel branch collides there.
 The resolver that was in use lived in a session scratchpad and applied one
-fixed rule to `docs/WORK.md` and `docs/BOARD_NOTES.md`: take the UNION OF THE
+fixed rule to `docs/WORK.md` and `docs/board_notes/`: take the UNION OF THE
 DELETIONS. That rule is right when each side deleted a DIFFERENT item and
 wrong in every other case, and it cannot tell the two apart. It destroyed live
 board items three times in one day, and every one of those failures left valid
@@ -69,9 +69,23 @@ WORK_MD_BYTE_CAP = 100_000
 #: treats as append-only.
 KIND_BY_PATH = {
     "docs/WORK.md": "work",
-    "docs/BOARD_NOTES.md": "notes",
     "docs/INCIDENT_HISTORY.md": "history",
 }
+
+#: The board notes are one file per item under this directory (see
+#: docs/board_notes/README.md). Every one of them merges by the `notes`
+#: rule, so the kind is looked up by prefix rather than by exact path.
+BOARD_NOTES_DIR = "docs/board_notes"
+
+
+def kind_for_path(path: str) -> str | None:
+    """The resolver kind for a repository path, or None if it has none."""
+    if path in KIND_BY_PATH:
+        return KIND_BY_PATH[path]
+    if path.startswith(BOARD_NOTES_DIR + "/") and path.endswith(".md") \
+            and not path.endswith("/README.md"):
+        return "notes"
+    return None
 
 #: Git writes these only at the start of a line.
 CONFLICT_MARKERS = ("<<<<<<< ", "||||||| ", ">>>>>>> ")
@@ -433,6 +447,94 @@ def _git_merge_file(base: str, ours: str, theirs: str,
         return proc.stdout, proc.returncode == 0
 
 
+def _conflict_hunks(diff3: str):
+    """Split git's --diff3 output into ('text', chunk) and ('hunk', (o,b,t))."""
+    out = []
+    plain: list[str] = []
+    lines = diff3.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("<<<<<<< "):
+            o: list[str] = []
+            b: list[str] = []
+            t: list[str] = []
+            cur = o
+            i += 1
+            while i < len(lines) and not lines[i].startswith(">>>>>>> "):
+                if lines[i].startswith("||||||| "):
+                    cur = b
+                elif lines[i].startswith("======="):
+                    cur = t
+                else:
+                    cur.append(lines[i])
+                i += 1
+            i += 1  # step over the >>>>>>> line
+            out.append(("text", "".join(plain)))
+            plain = []
+            out.append(("hunk", ("".join(o), "".join(b), "".join(t))))
+        else:
+            plain.append(lines[i])
+            i += 1
+    out.append(("text", "".join(plain)))
+    return out
+
+
+def _unique_lines(side: str, base: str) -> list[str]:
+    base_lines = set(base.splitlines())
+    return [ln for ln in side.splitlines() if ln.strip() and ln not in base_lines]
+
+
+def merge_block(base: str, ours: str, theirs: str) -> str | None:
+    """Three-way merge one keyed block, or None if it cannot be done safely.
+
+    `merge_keyed` used to refuse the moment the two sides' text for one key
+    differed at all, while `merge_text` — doing the same job for unkeyed
+    prose — first asked git for a line-level three-way merge. That asymmetry
+    is what blocked the PR queue: a board note is one block that grows by
+    APPENDING an UPDATE paragraph, so two branches that each append their own
+    paragraph, touching nothing the other touched, were reported as a NUMBER
+    COLLISION and sent for a hand renumber that nothing about them needed.
+
+    Two rules, in order, and neither may drop a line:
+
+      * whatever git's own line-level merge resolves cleanly is taken as-is;
+      * a hunk git could not resolve is taken from BOTH sides, ours then
+        theirs, but ONLY when its base side is EMPTY — that is, when each
+        side purely INSERTED text at the same point and neither changed nor
+        removed anything the other relied on. Any hunk whose base side has
+        content is a real two-sided edit of the same lines, and that still
+        refuses.
+
+    Finally every line either side added relative to the base must appear in
+    the result, or the merge is discarded. Losing a line silently is the one
+    outcome worse than refusing.
+    """
+    merged, clean = _git_merge_file(base, ours, theirs)
+    if not clean:
+        parts = _conflict_hunks(merged)
+        rebuilt: list[str] = []
+        for kind, payload in parts:
+            if kind == "text":
+                rebuilt.append(payload)
+                continue
+            o, b, t = payload
+            if b.strip():
+                return None  # a genuine two-sided edit of the same lines
+            rebuilt.append(o)
+            if not o.endswith("\n") and o:
+                rebuilt.append("\n")
+            rebuilt.append(t)
+        merged = "".join(rebuilt)
+    if any(merged.startswith(m) or ("\n" + m) in merged
+           for m in CONFLICT_MARKERS) or "\n=======\n" in merged:
+        return None
+    for side in (ours, theirs):
+        for ln in _unique_lines(side, base):
+            if ln not in merged:
+                return None
+    return merged
+
+
 def merge_keyed(base: dict, ours: dict, theirs: dict,
                 base_order: list, ours_order: list, theirs_order: list,
                 what: str, append_only: bool = False):
@@ -458,13 +560,15 @@ def merge_keyed(base: dict, ours: dict, theirs: dict,
                 merged[k] = theirs[k]
             elif in_b and same_text(theirs[k], base[k]):
                 merged[k] = ours[k]
+            elif in_b and (blended := merge_block(base[k], ours[k], theirs[k])) is not None:
+                merged[k] = blended
             else:
                 raise Refusal(
                     f"NUMBER COLLISION on {what} {k!r}: the two sides carry "
                     "DIFFERENT text under the same identifier, and the "
                     "difference is not whitespace. This tool will not pick "
                     "one silently, and it will not renumber either: an item "
-                    "number is quoted from docs/BOARD_NOTES.md, from "
+                    "number is quoted from docs/board_notes/, from "
                     "docs/INCIDENT_HISTORY.md, from the retired-numbers line "
                     "and from PR titles, so renumbering one here would break "
                     "every reference to it somewhere this tool cannot see.\n"
@@ -770,7 +874,7 @@ def _assert_no_conflict_markers(text: str, what: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# docs/BOARD_NOTES.md
+# docs/board_notes/
 # ---------------------------------------------------------------------------
 
 
@@ -819,7 +923,7 @@ def resolve_notes(base: str, ours: str, theirs: str) -> str:
                                 b_order, o_order, t_order,
                                 what="board note")
     text = pre + "".join(blocks[k] for k in order)
-    _assert_no_conflict_markers(text, "docs/BOARD_NOTES.md")
+    _assert_no_conflict_markers(text, "a docs/board_notes/ file")
 
     got = parse_notes(text)[1]
     if set(got) != set(blocks):
@@ -841,7 +945,7 @@ def assert_notes_agree_with_work(work_text: str, notes_text: str) -> None:
     sb = status_board()
     with tempfile.TemporaryDirectory() as td:
         w = Path(td) / "WORK.md"
-        n = Path(td) / "BOARD_NOTES.md"
+        n = Path(td) / "board_notes.md"
         w.write_text(work_text)
         n.write_text(notes_text)
         notes = sb.load_board_notes(n)
@@ -1233,7 +1337,7 @@ def _conflicted_paths() -> list[str]:
     proc = subprocess.run(["git", "diff", "--name-only", "--diff-filter=U"],
                           capture_output=True, text=True, cwd=REPO_ROOT,
                           check=True)
-    return [p for p in proc.stdout.split() if p in KIND_BY_PATH]
+    return [p for p in proc.stdout.split() if kind_for_path(p)]
 
 
 def _from_index(apply: bool) -> int:
@@ -1256,7 +1360,7 @@ def _from_index(apply: bool) -> int:
                 "this tool exists to fix."
             )
         try:
-            merged[path] = RESOLVERS[KIND_BY_PATH[path]](base, ours, theirs)
+            merged[path] = RESOLVERS[kind_for_path(path)](base, ours, theirs)
         except Refusal as exc:
             # Same obligation as the merge-driver path: git has already put the
             # OURS copy in the worktree, so a refusal that writes nothing leaves
@@ -1271,13 +1375,28 @@ def _from_index(apply: bool) -> int:
             raise
 
     work = merged.get("docs/WORK.md")
-    notes = merged.get("docs/BOARD_NOTES.md")
-    if work is None and notes is not None:
+    # The notes are a directory now: the cross-check needs ALL of them, so
+    # every file this call merged is overlaid on what is on disk.
+    notes_paths = sorted(p for p in merged if kind_for_path(p) == "notes")
+    d = REPO_ROOT / BOARD_NOTES_DIR
+    notes = None
+    if work is not None or notes_paths:
+        parts = []
+        on_disk = sorted(d.glob("*.md")) if d.is_dir() else []
+        seen = set()
+        for p in on_disk:
+            rel = f"{BOARD_NOTES_DIR}/{p.name}"
+            seen.add(rel)
+            if p.name == "README.md":
+                continue
+            parts.append(merged.get(rel, p.read_text()))
+        for rel in notes_paths:
+            if rel not in seen:
+                parts.append(merged[rel])
+        notes = "".join(parts)
+    if work is None and notes_paths:
         p = REPO_ROOT / "docs" / "WORK.md"
         work = p.read_text() if p.exists() else None
-    if notes is None and work is not None:
-        p = REPO_ROOT / "docs" / "BOARD_NOTES.md"
-        notes = p.read_text() if p.exists() else None
     if work is not None and notes is not None:
         try:
             assert_notes_agree_with_work(work, notes)

@@ -360,7 +360,7 @@ def test_disabled_lock_and_no_opportunity_all_classify_as_healthy():
 # ------------------------------------------------------- ran, nothing found
 
 
-@patch("src.pipeline.compute_indicators")
+@patch("src.pipeline_intraday.compute_indicators")
 def test_normal_scan_with_no_opportunities_stays_healthy(
     mock_compute_indicators, tmp_path, monkeypatch,
 ):

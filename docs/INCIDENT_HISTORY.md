@@ -22,6 +22,283 @@ what would catch it next time.
 
 ---
 
+### 2026-09-30 — a near-empty balance refused calls the provider offered to serve
+
+**What happened.** On a near-empty paid balance the provider answered with
+HTTP 402 and its own message naming the answer allowance it WOULD still
+serve: "This request requires more credits, or fewer max_tokens. You
+requested up to 16000 tokens, but can only afford 775." Seven such refusals
+were seen the same day, all against the same 16000 ask, with stated
+affordable allowances of 10125, 5062, 4655, 1622, 1551, 811 and 775.
+
+**Why it mattered.** The desk always asked for the same fixed allowance and
+never re-asked smaller, so every one of those calls died even though the
+provider had just said what it could serve. With the owner out of credit and
+not topping up, that is the difference between a session running and a
+session not running at all.
+
+**The fix.** On a credit refusal that NAMES a servable allowance, the seat
+re-asks ONCE at exactly that stated figure, then restores its configured
+ask. No fallback size is invented: a refusal naming no figure fails exactly
+as before and says so in the log.
+
+**What was deliberately NOT weakened.** A smaller allowance can cut an answer
+off. Truncation detection is unchanged, so a cut-off answer is still
+discarded unused and the seat still refuses to decide. The technical seat —
+the outlier that asks for a very large allowance because it analyses 25
+symbols per call — is NOT re-batched to fit whatever the balance can afford;
+it re-asks, and if the answer will not fit it fails honestly on truncation.
+Re-cutting the work to fit the wallet would make the analysis depend on the
+balance, which is the opposite of what the desk is for.
+
+
+### 2026-10-01 — "still protected by a level" now means what the code means, and always says how wide the level is
+
+**In one line:** the desk could tell the owner a position was still protected
+by a structural level whose measured zone was a fifth of the price wide, so
+the price his stop actually sat at could already have failed while he read a
+reassuring word; the claim is now narrowed to the bound the code already
+enforces, and every sentence that makes it carries the level's measured span.
+
+**The symptom.** A level's zone is the combined traded range of the bars that
+drew it (board item 55). Measured 2026-09-30 over this desk's own 704 levels,
+that span runs from 0.53% of price to 22.11%. Inside a zone that wide, "the
+level is intact" and "the price where the stop rests is intact" are two
+different statements, and the desk reported the first while the owner read the
+second. On the live book the same day, three of eleven positions were in
+exactly that position (the measurements are in `docs/board_notes/item-215.md`).
+
+**THE RULING (owner, 2026-10-01).** The claim is narrowed, and it is narrowed
+by a rule that already exists rather than by a new width cutoff. A stop counts
+as level-backed only when the level's measured zone is STRICTLY NARROWER than
+the trade's own stop distance — the level must be more precise than the thing
+it is backing. "Still protected by a level" means exactly that, everywhere the
+desk says it; anywhere the words were used more loosely than the code, the
+words are corrected to the code, never the other way round.
+
+**Why that bound and not a width cutoff.** Any "a zone wider than X% is too
+wide" rule needs an X nobody measured, which is the made-up-number failure
+this desk has ruled against repeatedly. The stop-distance bound needs nothing
+invented: the stop distance is `abs(entry - stop)`, already decided before the
+question is asked, and it is a property of the trade rather than a constant,
+so there is nothing to sweep and nothing to ratify. Because the stop-to-level
+gap can never exceed the zone span, the bound also guarantees the thing the
+owner assumed all along — the level a stop claims to rest on is never further
+from the stop than the stop is from the entry.
+
+**VERIFIED, not taken on trust.** The bound is really there and really
+enforced in both places that answer the question:
+
+  * `src/data/levels.py`, `stop_rests_on_level` (definition at lines 147-230):
+    returns False unless the span of the pivot bars that drew the level is
+    strictly less than `stop_distance`, and False when `stop_distance` is
+    missing, non-finite or non-positive. It also requires the stop to lie
+    inside at least one of those bars' high-low ranges. Entry sizing reaches
+    it through `PortfolioConstructor._level_backing_stop`
+    (`src/portfolio_constructor.py` lines 2585-2690), which passes
+    `stop_distance=abs(entry_price - stop_loss)` and skips the level
+    otherwise, so the stop falls through to the ordinary ATR floor.
+  * `src/risk/exit_guard.py` lines 1950-2016, the holding-side level match:
+    the same test restated inline (the module imports nothing), computing
+    `stop_distance = abs(entry_price - stop_loss)`, skipping the level when
+    that is non-finite or non-positive, and skipping it when
+    `max(high) - min(low)` over the bar ranges is `>=` the stop distance.
+
+Both are strict `>=`-rejects on the span, so equality fails closed, and both
+fail closed on missing bar data. The ruling therefore describes the code as it
+stands rather than asking for new behaviour, and nothing about when the desk
+buys, sells or moves a stop changes with this entry.
+
+**What changed in what the desk SAYS.** Every claim that a level is backing
+the stop now carries that level's MEASURED zone — its low, its high, the span
+and the span as a percentage of the level price — through one helper,
+`level_zone_span_phrase` in `src/risk/exit_guard.py`, used by both
+`structural_level_intact` outcomes. That text is what every downstream owner
+surface quotes: the persisted per-symbol protection record, the holding-
+discipline log line, and the rotation sell reason that reaches Telegram. No
+"wide" or "tight" word is used anywhere, because either would need a cutoff
+nobody sourced. Where the span was never recorded, the sentence says it is NOT
+RECORDED rather than substituting a percentage-of-price stand-in.
+
+**Findings from the sweep for looser claims.**
+
+  * No surface was found claiming level backing on a LOOSER test than the code
+    applies. The desk has exactly one level-match implementation per side
+    (constructor, exit guard), both carrying the bound, and every owner-facing
+    sentence is built from their output rather than from a second judgement.
+  * The dashboard makes no level-backed claim at all. Its only "protected"
+    wording, in the holding explanation, is about the broker-resident stop
+    order and names no level; the level data is not in scope at that point, so
+    nothing there can carry a span and nothing was computed as a substitute.
+    That is stated here rather than silently left as an unexplained gap.
+  * The buy-time stop rule that records a level-honoured stop never reaches
+    Telegram or the API in words; it is a stored field, read by the
+    falsification record only.
+
+**What would catch it again.** `tests/test_structural_protection.py` pins both
+the span text and the NOT-RECORDED wording on the intact claim, so a future
+edit that drops the span from an owner-facing protection sentence fails.
+
+## Item 198 — the number-ledger ratchet stops being one hand-edited line
+
+**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
+retired a trade-governing number rewrote the SAME physical line — an
+11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
+`src/number_sources.py` carrying the running count AND the entire
+append-only narrative of every past move — mirrored by one assertion message
+in `tests/test_number_sources.py`. Two such branches therefore always
+conflicted, and every conflict was resolved by hand; two were resolved by
+hand on 2026-09-30 alone. This is the same throughput cost the item-aware
+merge driver removed from the three board documents, on the other file every
+parallel branch touches.
+
+**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
+the per-change deltas in `config/number_ledger_history.yaml`, whose 25
+entries are the whole previous narrative reproduced verbatim — `why` from
+the test-side assertion message, `detail` from the source-side comment
+block, both kept because neither was complete on its own and they did not
+agree in granularity. Each change is its own YAML entry, and the file is
+registered `merge=union` in `.gitattributes`, which is a git built-in and
+needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
+record a DELTA and never an absolute count, so union-merged appends sum
+correctly whatever order they land in.
+
+**What still guards the ledger.** The equality is unchanged and is still a
+cross-check between two independently edited files: the live count of
+`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
+of the deltas, so a ledger edit with no history entry fails and a history
+entry with no ledger edit fails. A new test fails any entry that moves the
+count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
+written back as a literal.
+
+**Demonstrated, not asserted.** Two throwaway branches off the new base, each
+sourcing a DIFFERENT ledger row and each appending its own history entry,
+merged with no conflict; the merged tree's arbitrary-row count and computed
+ratchet both read 135 and both entries survived. The same two changes made
+against `origin/main`'s old shape conflicted in `src/number_sources.py` and
+`tests/test_number_sources.py`.
+
+**No behaviour changed.** The computed count is 137, equal to the live count
+of arbitrary rows on the day of the change, and no number was picked, moved
+or added.
+### 2026-09-30 — the coverage sweep repaired a naked position and its own summary concealed it
+
+`COVERAGE SWEEP ... repaired — positions checked 11, gaps 0, repairs attempted 1 / succeeded 1 / failed 0, alert none sent`. The repair itself was correct: it named AAPL, saw all 7.33 shares uncovered, replaced the stop at the recorded $323.74, and used the right hybrid shape with the DAY sub-share leg placed first. Its reporting was wrong twice.
+
+**`gaps 0` while `repairs attempted 1` is a display defect, NOT two code paths disagreeing.** Detection and the repair trigger read the same list. After a successful placement `check_coverage` RE-READS the broker and rebinds the same `gaps` variable to what is STILL uncovered - so the name silently changes meaning from "found" to "left" mid-function, and the summary counted the second. One variable doing two jobs. The gap count is the number an operator scans for, so the line actively concealed the event it was reporting. `gaps_detected` is now captured before the repair block can rebind anything, and the log line prints both: `gaps 1 found / 0 still open`.
+
+**`alert none sent` on a repair.** The last line of defence put a stop back on a position that had been unprotected for 13 minutes 22 seconds and told nobody. A COVERAGE REPAIRED event is never routine - for the sweep to find a gap at all, something earlier (an entry, a trailing ratchet, a re-protect after a partial exit) failed without saying so. It now pages on the same owner channel every other message from this unit uses; no second channel was invented. A sweep that repairs nothing stays silent exactly as before, and a repair already covered by the existing all-clear does not page twice.
+### 2026-09-30 — ROOT CAUSE of the protective-stop failures: the desk cancels when it only needs to amend
+Owner ruling that produced this entry (Rex, 2026-09-30): "whatever the desk
+wants, there is substantial reason that we've spent a lot of time and resources
+making sure what the desk wants is the correct plan of action. Do not fight
+against it then. So there's two fundamental core issues here. Either the desk
+is wrong or there's a problem with placing the stops or there's a problem with
+the whole mechanism of stops. That's root cause. Your proposing a patch or a
+half-assed solution."
+He was right. The work to that point had been compensation for a broken
+mechanism. Two findings, both measured against the broker on the REHEARSAL
+account <redacted-rehearsal-account> — never production.
+### Finding 1 — the desk does not confirm a cancel before acting on it
+It DOES pace placement: `_STOP_PLACEMENT_MAX_ATTEMPTS = 3` with
+`_STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)` (`src/execution/broker.py:1358-1359`),
+and entry submits poll `get_order_by_id` on an interval. That part is correct
+and is NOT the defect.
+It does NOT confirm a CANCEL. There is no wait-for-cancel-confirmed step
+anywhere in the codebase. In the live incident earlier the same day the desk
+cancelled a position's protective stops and asked the broker 486ms later
+whether a stop already existed. Alpaca's cancel is asynchronous, the dead order
+was still listed, the check concluded the position was protected, skipped
+placing a stop and deleted its own write-ahead recovery row. The position held
+no stop for 13m22s.
+Measured, and this is what makes the stale read dangerous rather than merely
+untidy: immediately after a cancel Alpaca still lists the dead stop with status
+`new` — not `pending_cancel`, not `canceled` — and **accepts a second stop
+submitted in that window**. So the alternative failure is two live stops on one
+long, which nothing in this desk reconciles (`src/coverage_watchdog.py` never
+cancels or modifies).
+**Do NOT fix this by adding a sleep after the cancel.** See finding 2.
+### Finding 2 — the cancel is not needed at all
+`src/execution/broker.py::replace_stop_loss` (~line 6158) states: "Alpaca's OTO
+stop-loss leg cannot be edited in place, so we cancel + resubmit. Because that
+sequence is not atomic, this method snapshots existing stops and best-effort
+restores them if the replacement submit fails."
+**That claim is false for the desk's protective stops.** Measured 2026-09-30:
+| Case | Result |
+|---|---|
+| Amend a resting stop's PRICE | Works. Old order -> `REPLACED`, new id issued, **exactly one open stop on the symbol at every instant**. |
+| Amend REFUSED (invalid price) | Original stop stays resting, unchanged, still `new`, one open stop. **Safe failure.** |
+| Amend QUANTITY (3 -> 2 shares) | Works. One open stop throughout. |
+| Amend PRICE on a FRACTIONAL (3.5-share, DAY) stop | Works. Fractional qty preserved, one open stop. |
+| Amend QUANTITY on a FRACTIONAL stop | **REFUSED BY THE BROKER.** `{"code":42210000,"message":"cannot replace qty in fractional stop order"}`. Original stop stayed resting, unchanged, one open stop — safe failure again. |
+The capability was never in doubt: the codebase already calls
+`replace_order_by_id` for entry limits at `src/execution/broker.py:4942`. Only
+the comment was wrong.
+So the split is PRICE versus QUANTITY, not whole-share versus fractional:
+- **PRICE amends work on everything** — whole-share and fractional alike. The
+  trailing stop, which only ever moves a price, is therefore fully covered and
+  never needs to cancel anything again.
+- **QUANTITY amends work on whole-share stops only.** On a fractional stop the
+  broker itself refuses with code 42210000, "cannot replace qty in fractional
+  stop order". This is a BROKER limit, not the SDK's int-typed `qty` noted at
+  `src/execution/broker.py:4913` — that typing refuses a fractional NEW qty
+  client-side, and the broker then refuses an integer one as well.
+What that means for a partial sell, which is the path that produced the live
+incident: the desk's hybrid protective shape is a whole-share GTC leg plus a
+fractional DAY sliver. **The whole-share leg can be qty-amended in place. The
+fractional sliver cannot** and still needs cancel-then-resubmit, so the naked
+window survives for that leg alone and must be handled deliberately — place the
+replacement sliver BEFORE cancelling the old one where the shares allow it, and
+never leave the whole-share leg resting as the only protection while the sliver
+is absent.
+In both refusal cases measured, the original stop stayed resting untouched, so
+the failure mode is safe.
+### Why amending is the correct mechanism, not merely the tidier one
+- There is no window in which the position is unprotected, because nothing is
+  ever removed. The 13-minute exposure is not shortened, it is impossible.
+- A duplicate stop cannot arise, because no second order is ever submitted.
+- **Failure is safe by default.** A refused amend leaves the existing stop
+  resting. Cancel-then-resubmit fails the other way round: it destroys
+  protection first and discovers the refusal afterwards.
+- The snapshot / rollback machinery in `replace_stop_loss`, and the
+  cancelled-order-id bookkeeping in the reprotect path in `src/pipeline.py`,
+  exist ONLY to survive a non-atomic sequence that does not need to happen.
+### Still unmeasured
+One case only: an OTO / bracket stop LEG. The false comment may have been true
+for legs specifically and then over-generalised to all stops. Until it is
+measured, cancel-then-resubmit stays as the fallback for that case and for any
+symbol carrying more than one resting protective stop.
+### Order of work
+1. Move protective-stop PRICE changes onto `replace_order_by_id`; keep
+   cancel+resubmit as the fallback for the unmeasured cases.
+2. On a refused amend, do NOT fall back to cancel+resubmit — the original is
+   still resting and protection is intact. Falling back re-opens the window.
+3. Measure the bracket-leg case.
+4. Only then delete the compensating machinery, rather than continuing to
+   harden it.
+### 2026-09-30 — RULING: exit on ALIGNMENT, never on a target
+Owner ruling, recorded here because it had no record of its own. Its only trace
+in the repository was a comment inside the exit code [verified 2026-09-30:
+`grep -c alignment docs/INCIDENT_HISTORY.md` returned 0], which is one refactor
+away from being lost.
+**The ruling.** A price target is a made-up number and the desk must not use
+one. The desk sells a winner only when structure, volatility and a moving-average
+cross AGREE the trend is over. Never on one signal alone. Never at a pre-set
+price.
+**What it supersedes.** Board item 75 asked for the opposite — send a target to
+the broker, and make profit-taking an allowed sell reason. Building either is
+now the defect, so item 75 was retired rather than built, and the surviving
+clause (the trail being too loose) is already carried by other open items.
+**What it requires that does not exist.** VERIFIED 2026-09-30: there is **no
+moving-average-cross exit condition anywhere in `src/`** — a search for
+`sma_cross`, `ema_cross`, `golden_cross`, `death_cross`, `crossed_below` and
+`crossed_above` across every Python file returns nothing. So the exit the owner
+ruled for is not built, and until it is, the desk has no sanctioned way to sell
+a winner other than the trailing stop.
+**Consistent with standing doctrine.** [[qamc-no-fitting-only-reading]] and the
+stops-and-exits rule: exits read live from the instrument in front of you —
+its volatility, its levels, its trend — never fitted to past trades and never a
+fixed number. A target is the exact thing that rule bars.
 ### 2026-09-30 — the desk was turning away approved trades because one exchange's price display was wrong (item 183, the ask-skip half FIXED)
 
 **In one line:** eight times, the desk decided not to buy a stock it had already approved, on the grounds that the price had run away from it — and every one of those eight times the price had not moved at all; the desk was reading a broken price display from a single small exchange.
@@ -102,48 +379,6 @@ It now exits non-zero and prints no number at all when the open-pull-request rea
 
 **What this does NOT close.** `board-number-advisory`, the CI job that catches a collision between two open pull requests, is still not required to merge, so a collision it does detect still blocks nothing. [measured 2026-09-30, `gh run view` over the last 40 `tests` runs] that job was `success` on all 29 pull-request runs and `skipped` on all 11 `main` runs, so it is not red today for unrelated reasons. Two things would have to change before it could be required: the job's own name is literally `board-number-advisory (not required to merge)` and the required-check context is that name, so it must be renamed first; and the script deliberately exits 0 when the GitHub read fails, so requiring it makes a detected collision blocking without making an unreadable PR list blocking. Making it required is a branch-protection change and was not made here.
 
-## Item 198 — the number-ledger ratchet stops being one hand-edited line
-
-**RETIRED 2026-09-30, shipped in the same change.** Every pull request that
-retired a trade-governing number rewrote the SAME physical line — an
-11,853-character `MAX_ARBITRARY_ENTRIES` assignment in
-`src/number_sources.py` carrying the running count AND the entire
-append-only narrative of every past move — mirrored by one assertion message
-in `tests/test_number_sources.py`. Two such branches therefore always
-conflicted, and every conflict was resolved by hand; two were resolved by
-hand on 2026-09-30 alone. This is the same throughput cost the item-aware
-merge driver removed from the three board documents, on the other file every
-parallel branch touches.
-
-**What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
-the per-change deltas in `config/number_ledger_history.yaml`, whose 25
-entries are the whole previous narrative reproduced verbatim — `why` from
-the test-side assertion message, `detail` from the source-side comment
-block, both kept because neither was complete on its own and they did not
-agree in granularity. Each change is its own YAML entry, and the file is
-registered `merge=union` in `.gitattributes`, which is a git built-in and
-needs no per-clone `git config` (unlike the `docsmerge` driver). Entries
-record a DELTA and never an absolute count, so union-merged appends sum
-correctly whatever order they land in.
-
-**What still guards the ledger.** The equality is unchanged and is still a
-cross-check between two independently edited files: the live count of
-`status: arbitrary` rows in `config/number_ledger.yaml` must equal the sum
-of the deltas, so a ledger edit with no history entry fails and a history
-entry with no ledger edit fails. A new test fails any entry that moves the
-count without a `why`, and another fails if `MAX_ARBITRARY_ENTRIES` is ever
-written back as a literal.
-
-**Demonstrated, not asserted.** Two throwaway branches off the new base, each
-sourcing a DIFFERENT ledger row and each appending its own history entry,
-merged with no conflict; the merged tree's arbitrary-row count and computed
-ratchet both read 135 and both entries survived. The same two changes made
-against `origin/main`'s old shape conflicted in `src/number_sources.py` and
-`tests/test_number_sources.py`.
-
-**No behaviour changed.** The computed count is 137, equal to the live count
-of arbitrary rows on the day of the change, and no number was picked, moved
-or added.
 ### 2026-09-30 — the desk had three backup routes and all three led to the same dead account (item 188, road half FIXED)
 
 **In plain words.** The desk pays one company to reach most of its models. On 2026-09-29 the balance with that company ran out. The desk was built to cope with that: if the first route fails it tries a second, and if that fails a third. But all three routes went through that same company, so all three failed for the same reason, and the whole afternoon's decision-making produced nothing. At the very same minute, the desk's OTHER endpoint — a free one it uses all day for its analyst seats — was answering normally. A healthy road sat unused while every escape hatch queued behind one empty wallet.
@@ -17473,3 +17708,214 @@ Not fixed and not needed: the gate's substantive requirements (a `Response-N: CH
 **In plain words:** the owner muted Telegram (`TELEGRAM_DISABLED`, no code change) and the mandatory paid-analysis circuit refused to start, latching durably at 2026-09-30T15:45:42Z with "mandatory cost-circuit Telegram alerts are not configured/enabled". Every session since returned `paid_analysis_suspended` — no paid analysis at all for hours. The circuit's real requirement is that a mandatory alert is durably recorded and visible to the owner, which the `.llm-circuit-unavailable` sidecar already provides and which `src/api/db_reads.py::get_llm_circuit_health()` already surfaces to the dashboard as `decision_path_status=degraded_cost_circuit_unavailable`. The precondition now checks that that record can be written; a muted transport downgrades to a warning and cannot suspend trading, while having nowhere at all to deliver or record still fails closed.
 
 **Verified on main.** `src/cost_circuit.py::_durable_alert_surface_ok` gates the startup check; `tests/test_cost_circuit.py::test_muted_transport_does_not_suspend_paid_analysis` fails on the previous code and `test_no_durable_record_surface_still_latches` keeps the genuine latch. Clearing the existing production latch requires `scripts/cost_circuit.py reset` AFTER this deploy, because the reset path itself builds a breaker and would re-latch on the old precondition.
+### 2026-09-30 — the scale-in "stop did not go back on" owner alert existed and was never called
+
+**In plain words:** the scale-in path must cancel the resting protective sell to add to a holding (the broker will not hold a protective sell and a new buy on the same symbol at once). Its own design says a failed rearm is a fail-closed owner page. The page — `src/execution/scale_in.py::alert_rearm_failed` — had ZERO callers, so both real failure paths only wrote a log line: the crash-recovery drain's "rearm FAILED", and `restore_after_failed_add` whose own comment reads "OWNER must be alerted". A position could sit at the broker with nothing standing watch and nobody told.
+
+**Fixed.** Both paths now call it. The alert writes a durable `specialist_evidence` row (`agent_name="scale_in_rearm_failure"`, `position_protected: false`) on EVERY occurrence, so the fault survives Telegram being muted (it is, as of today) and shows on the surface the API/journal already reads; the Telegram page itself is claimed at most once per symbol per trading day through the new `src/coverage_watchdog.py::claim_typed_alert`, the generic form of the existing per-type claim helpers, so one naked position cannot page 44 times. `tests/test_scale_in.py::test_drain_rearm_failure_pages_the_owner` was confirmed to FAIL with the call removed.
+### 2026-10-01 — item 208(a): reward:risk and net evidence do NOT join the ranking composite (decision)
+
+**In plain words:** the ranking seat orders ideas by strength plus conviction, summed across seats at the published seat weights. Two more signals were on the table: reward-to-risk and net independent evidence. Decision: neither joins; both keep the job they already do.
+
+**Reward:risk stays a within-tier tiebreak only.** It is derived from the trade's target, and the owner ruled on 2026-09-30 that a target is a made-up number (exit on alignment, never on a target). A trend or breakout name has no overhead level, so a score term would need a neutral placeholder, which is another invented number (the item 1(d) finding). As a tiebreak it only reorders names the score already ties.
+
+**Net evidence stays a gate and a size ceiling only.** It already refuses a name below 1 (rule R5) and sets the agreement ceiling on size; scoring it too would count one piece of evidence in the rank, the gate and the size. The summed seat score already pays for breadth.
+
+**Verified against live code (origin/main 2026-10-01):** the composite is `score_verdict` strength plus conviction, weighted by `SEAT_WEIGHT` in `rank_verdicts`; reward:risk is read only in the sort key after the score; net evidence appears only in the R5 gate. The prompt's ranking section states the 1.2/1.0/0.8 weights, and those match the code. Per-seat sizing weights stay refused, unchanged.
+
+**Revisit only on a measurement:** the tie rate of the current four-key sort on real sessions is not measured here (the 9-of-12 figure predates the tiebreaks); if it is high, reopen with that number.
+
+**What would catch it next time.** `tests/test_ranking_composite_inputs.py` fails if reward:risk becomes a score input or stops being a tiebreak. Items 208(b) (provider-console spend cap) and 208(c) (paid benchmark) remain open.
+
+### 2026-10-01 — DECISION: the Type A take-profit gate on the structural trail is removed (item 212)
+
+A range (Type A) position's structural and chandelier trail used to be gated
+behind the recorded take-profit target. The target is an unsourced number, it
+never reaches the broker as an order, and a target rationale cannot authorise
+a sale — so gating this trail was the only live behaviour the target had, and
+between entry and the target the position was protected by its original entry
+stop alone.
+
+DECIDED: remove the gate. A Type A position now runs the same structural /
+chandelier trail as Type B from entry. The two owner-ratified R-multiple
+ratchets (+1R breakeven, +2R lock-at-+1R) are unchanged and still run first;
+whichever leg proposes the TIGHTER stop is placed. No multiple was widened,
+no replacement gate was built, and no new constant was introduced. What
+closes a range position remains the alignment exit — sell when structure, ATR
+and an SMA cross agree the trend is over — never the target.
+
+Why now: the alignment exit is merged and deployed, so the owner's ratified
+answer to "when do we sell" exists in code. PR #857's earlier attempt to move
+the gate to +2R was reverted as strictly worse on live data; this change does
+not move the gate, it deletes it.
+
+MEASURED, 2026-10-01: all 20 filled range BUYs in the production record were
+replayed day by day over daily bars from each entry date, gated against
+ungated; 18 replayed (two are for a symbol absent from the bar set). Zero
+positions stopped out earlier under the ungated trail and zero stopped out
+that did not before; three ended with a tighter stop and none of the three
+was stopped out as a result. Separately, by construction the trail cannot
+loosen a stop: every candidate must sit strictly between the live stop and
+current price, must clear the minimum-ratchet and noise-band invariants, and
+is re-checked after rounding.
+
+### 2026-10-01 addendum — four defects fixed before the change shipped (item 212)
+
+Review of the first patch found four defects, all fixed on the same branch.
+(1) MISSING DATA PRODUCED AN ACTION: with no bars the chandelier took its
+extreme from CURRENT PRICE, making the stop a pure price-follower on an
+entry-day position and on every bar-fetch failure; an empty bar set now
+refuses with `no_bars_since_entry`. (2) Four ratchet tests had been quieted by
+removing their ATR, which is what hid (1); all are restored to the ATR they
+had and the code satisfies them. (3) The structural leg's refusal reason had
+become unrecordable for any range name; it now travels on the evaluation as
+`structural_code` and is written as the detail of the trail-state row. (4)
+Preferring the tighter R-ratchet level over an ACCEPTED structural candidate
+could place a stop inside the noise band the structural leg honours, so that
+override must now clear the same minimum-ratchet and noise-band invariants;
+the ratchets' own unconditional path is untouched.
+
+The replay was re-run against the fixed code: same result, zero positions
+stopped out earlier and two ending with a tighter stop. The sample's power
+is stated in the board note — zero events in 18 positions bounds the harm
+rate at only about 15%, so this is the expected result, not proof of safety.
+
+### 2026-10-01 second addendum — three of the four fixes did not hold (item 212)
+
+(1) The missing-data refusal caught only a zero-length bar set; the caller
+filters bars to since-entry, so a position entered today still produced a
+chandelier read off one print. The minimum is now derived from the window the
+structure leg already needs (`PIVOT_WINDOW * 2 + 1`), both legs refuse below
+it, and the reason is recorded. (2) The noise-band and minimum-ratchet
+invariants bound only on the override branch, so a structural candidate
+refused as inside-the-band handed the decision to an unchecked ratchet level;
+they are now one function that every leg able to place a stop must clear.
+(3) The structural reason was dropped on the success branch and the recorder
+deduped on the primary code alone; it is now carried on both branches and is
+part of the dedupe identity. The four item-82 regime tests had also gone
+vacuous — every regime asserted the same structural answer — and are joined
+by one that discriminates on what still differs: with no usable structural
+candidate a range keeps its ratified R-ratchets and a breakout has none.
+
+This is also the answer to the gate's REAL rationale, which was never the
+target number but that trailing a range trade early stops it out inside its
+own range, permanently. A stop may no longer be placed inside the daily-noise
+band by any leg, so that tightening cannot happen. The replay cannot speak to
+it: it counts stop-outs over 18 positions in one market stretch, and the cost
+of a permanent tightening shows up on a later down-leg.
+
+### 2026-10-01 — DECISION CLOSED OUT: what a range position is protected by between entry and its old target, and what the desk gives up (item 208)
+
+Item 208 carried two leftovers asking for a recorded decision on what enables
+a range position's structural trail once the alignment exit shipped, and for
+proof that the answer is live. The decision itself is the entry above
+(2026-10-01, item 212): the take-profit gate is removed, not replaced. This
+entry records the two things that one did not — what the desk GIVES UP, and
+how the claim was verified against live code rather than against the board.
+
+**VERIFIED LIVE, 2026-10-01, on this branch.** In `src/risk/trailing.py`,
+`evaluate_trailing_stop` takes `reference_target` but no longer reads it
+anywhere in its body; it is a dead pass-through kept only for the call
+signature. The Type A branch runs the two R-multiple ratchets first, and then
+falls through to the SAME structural-pivot and chandelier candidate set as
+Type B, built from bars since entry. The one live call site is
+`src/pipeline.py::_apply_deterministic_trails`, which passes every position's
+`setup_type` without excluding range names. So between entry and its old
+target a range position is protected by: its entry stop, plus the +1R
+breakeven ratchet, plus the +2R lock-at-+1R ratchet, plus — new — a
+structural trail that follows the most recent confirmed higher low, with a
+chandelier level read off the instrument's own ATR where no pivot qualifies.
+Every one of those reads off the instrument. None of them is a chosen level.
+
+**WHAT THE DESK GIVES UP.** The test deleted with the gate said it plainly: a
+range trade that trails early is stopped out inside the very range it was
+bought to traverse. That risk is real and the desk is now taking it. Before
+this change a range position could not be trailed out of its range at all,
+because nothing followed price; now it can. The desk has traded "never
+stopped out early, always gives back the whole move on a reversal" for
+"follows price, and can be shaken out by a swing the range would have
+survived." That is a worse outcome in one specific case — a wide, slow range
+where price makes a lower swing on the way to the other side — and a better
+one in the case the 2026-09-04 audit named as the single largest
+asymmetric-downside rule on the book.
+
+**HOW THE REPLACEMENT ADDRESSES IT.** Not with another gate. No leg may place
+a stop inside one ordinary day's noise, measured as a multiple of the
+instrument's own ATR rather than as a chosen distance — so an ordinary
+intra-range wiggle cannot reach the stop, by construction. Both legs are held
+to that test and to the minimum-ratchet test: a ratchet level that the
+structural leg's refusal would otherwise have handed straight to the broker
+is now band-checked too, which was the exact hole the old gate had been
+covering. And a trail cannot be read off too few bars: below a minimum bar
+count derived from the pivot window — the same window the structure leg needs
+to confirm its first pivot — both legs refuse outright with a recorded
+reason, rather than following today's print. Replay evidence is in the entry
+above: 18 of the 20 filled range BUYs in the production record replayed day
+by day, zero stopped out earlier under the ungated trail.
+
+**WHAT WOULD SHOW IT FAILING.** A range position stopped out by a
+`rule=trail` / `TRAIL_STOP`-sourced stop while price was still inside the
+entry-to-old-target band, and the name then traversing to that old level
+without the desk on board. One such case is evidence; a pattern of them means
+the noise band is too narrow for range names and the gate was carrying more
+weight than this decision credits it with. The trail-state records
+(`specialist_evidence`, `kind='trail_state'`) already name why each position
+did or did not trail, so the refusal reasons are on the record and the
+question can be answered from data rather than impression.
+
+**Correction shipped with this entry.** The module docstring of
+`src/risk/trailing.py` still described the removed gate as the live rule and
+called it "unchanged"; its Type A section is corrected here. Prose only — no
+number, no threshold and no behaviour changed. A comment at the
+`_apply_deterministic_trails` call site still reasons about a revised target
+crossing a range trade between the ratchets and the structural trail; that
+reasoning is now moot because the target is not read. It predates this task
+and was left alone.
+
+## Shared-file contention measured, 2026-10-01 — the README and the number ledger
+
+A change-frequency count over the last 300 commits on `main` made
+`README.md` (35%) and `config/number_ledger.yaml` (32%) look like forced
+contention: files every change must edit, so unrelated changes collide over
+the paperwork. Both were replayed against real history before anything was
+built, and the frequency did not survive the replay.
+
+The replay takes every pair of real commits touching one file within a
+four-commit window, puts both changes on the older one's parent as a common
+base — the second change rebased block by block, so it is the change that
+actually landed, not a constructed one — and three-way merges them.
+`README.md`: 110 replayable pairs, 23 conflicts, and **zero** of the 23 lay
+entirely inside the repository-layout block. The layout block is the thing a
+new module must edit, so the module-tree hypothesis was the obvious one; it
+is wrong. Every real conflict was two changes rewriting the same prose
+section. `config/number_ledger.yaml`: 110 pairs, 20 conflicts, of which 17
+were two changes editing the SAME ledger entry and 3 were different entries.
+Splitting the ledger into one file per entry therefore removes at most 3 of
+20 real collisions, and the 17 are genuine disagreement that must keep
+conflicting. The split was measured and NOT shipped on that evidence.
+
+`merge=union` via `.gitattributes` was rejected outright: 57 of the last 97
+commits touching the ledger remove lines, so entries are rewritten routinely
+and union merge would silently duplicate them rather than conflict.
+
+Deriving the ledger from the code — the justification living at each
+number's definition site, with the file generated — was assessed and is not
+reachable as one change here. Of 336 entries, 79 have an id that is not a
+named definition at all (a multiplier literal inside an expression, or a
+function-parameter default) and has nothing to attach an annotation to; 18
+sit in `src/pipeline.py` and `src/pipeline_stages.py`, which the item-210
+split is rewriting; and 102 cite a path other than their own site, so
+attaching the entry to its own definition does not stop the citation going
+stale, because what rots is the cited target. The one part of the ledger
+that genuinely is a copy of the code — the `value` field — is already
+checked against the live literal by `src/number_sources.py` (its check 2,
+VALUE), so that duplication is mechanically pinned today.
+
+What did ship is the one derivation the evidence supports:
+`scripts/readme_tree.py` derives the layout block's paths from the tree and
+`tests/test_readme_module_tree.py` fails if the README names a path that
+does not exist. It is one-directional by design — the block is a curated
+tour with a hand-written description per module, and no generator can invent
+those — so a module on disk the block does not mention is not a defect,
+while a renamed or deleted one named in the README is. It is a rot guard,
+not a contention fix, and is reported as such.

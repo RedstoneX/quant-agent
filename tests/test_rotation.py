@@ -397,8 +397,8 @@ import src.portfolio_constructor as portfolio_constructor_module
 from src.models import PortfolioDecision, TradeDecision
 
 
-def _module_source_path(module) -> pathlib.Path:
-    return pathlib.Path(inspect.getsourcefile(module))
+def _package_source(module) -> str:  # every *.py of the package, so no mixin hides
+    return "\n".join(p.read_text() for p in sorted(pathlib.Path(inspect.getsourcefile(module)).parent.glob("*.py")))
 
 
 def _imports_rotation(source: str) -> bool:
@@ -422,7 +422,7 @@ def test_portfolio_constructor_module_never_imports_rotation():
     a rotation close must reach it as a plain target, indistinguishable
     from a PM-authored one. A PR wiring rotation INTO construction would
     start here, and this fails the moment it does."""
-    source = _module_source_path(portfolio_constructor_module).read_text()
+    source = _package_source(portfolio_constructor_module)
     assert not _imports_rotation(source), (
         "src/portfolio_constructor.py must not import src.rotation — a "
         "rotation close is an ordinary zero-size target and the constructor "
@@ -435,7 +435,7 @@ def test_portfolio_constructor_construct_orders_never_references_rotation_by_nam
     inside a function body, or a same-module symbol literally named after
     rotation, would show up in the source text of the constructor's own
     module — catches the failure mode without depending on import style."""
-    source = _module_source_path(portfolio_constructor_module).read_text()
+    source = _package_source(portfolio_constructor_module)
     assert "rotation" not in source.lower(), (
         "src/portfolio_constructor.py source must not mention rotation at "
         "all — the constructor is the real order-execution path and must "
@@ -571,14 +571,51 @@ def test_the_risk_budget_test_still_binds_on_its_own():
     assert outcome.refusal is None
 
 
-def test_real_room_on_every_constraint_still_returns_none():
-    """The other side of the regression: genuine room everywhere is still
-    silence, and the refusal row says so by name."""
+def test_a_below_bar_holding_is_culled_even_with_room_on_every_constraint():
+    """OWNER RULING 2026-10-01. The book having money is no longer a reason
+    to keep a name that would not be bought today — that was the exact state
+    on the live book (15.09% headroom, $1,266 deployable) while three held
+    names sat below the bar."""
     from src.rotation import evaluate_rotation
 
     outcome = evaluate_rotation(
         ranked=[_rc("NEW", 1.8)],
         blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
+        held_symbols={"OLD"},
+        headroom_pct=TODAY_RISK_HEADROOM_PCT, floor_pct=FLOOR_PCT,
+        entry_budget_usd=9_000.0, min_order_usd=MIN_ORDER_USD,
+    )
+    assert outcome.refusal is None
+    assert outcome.opportunity is not None
+    assert outcome.opportunity.tier == "ineligible_hold"
+    assert outcome.opportunity.held_symbol == "OLD"
+
+
+def test_a_below_bar_holding_is_culled_with_no_replacement_candidate():
+    """And no candidate to rotate INTO is not a reason either. The
+    replacement carries `None` rather than a placeholder score."""
+    from src.rotation import evaluate_rotation
+
+    outcome = evaluate_rotation(
+        ranked=[_rc("OLD", 0.4)],  # every ranked name is already held
+        blocked={"OLD": ["R3 not BUY-eligible"]},
+        held_symbols={"OLD"},
+        headroom_pct=0.2, floor_pct=FLOOR_PCT,
+        entry_budget_usd=10.0, min_order_usd=MIN_ORDER_USD,
+    )
+    assert outcome.opportunity is not None
+    assert outcome.opportunity.new_symbol is None
+    assert outcome.opportunity.new_score is None
+
+
+def test_room_everywhere_and_nothing_below_the_bar_is_still_silence():
+    """The precondition still governs the RANKED-MARGIN tier, which sells a
+    still-eligible name purely to fund a replacement."""
+    from src.rotation import evaluate_rotation
+
+    outcome = evaluate_rotation(
+        ranked=[_rc("NEW", 1.8), _rc("OLD", 1.0)],
+        blocked={},
         held_symbols={"OLD"},
         headroom_pct=TODAY_RISK_HEADROOM_PCT, floor_pct=FLOOR_PCT,
         entry_budget_usd=9_000.0, min_order_usd=MIN_ORDER_USD,
@@ -800,7 +837,7 @@ def test_the_prompt_names_the_constraint_that_is_actually_binding():
     )
     assert "Capital is constrained" in result
     assert "$92.20 still deployable for new entries" in result
-    assert "$500 minimum order" in result
+    assert "the smallest order the desk will place" in result
     assert "real room exists" not in result
 
 
@@ -852,7 +889,9 @@ def test_precheck_records_the_holdings_below_the_entry_bar_every_session():
         existing_risk_pct={"OLD": 2.0, "KEEP": 2.0},
         ceiling_pct=25.0,
     )
-    assert precheck.opportunity is None  # book had room — nothing surfaced
+    # Owner ruling 2026-10-01: room on the book no longer silences the cull.
+    assert precheck.opportunity is not None
+    assert precheck.opportunity.tier == "ineligible_hold"
     assert precheck.held_below_entry_bar == ("OLD",)
     record = precheck_record(
         precheck, execute_enabled=True, ranked_margin_enabled=False,

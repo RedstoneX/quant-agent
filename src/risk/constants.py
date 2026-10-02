@@ -7,6 +7,8 @@ that cares about "is this account meaningfully on margin?" imports from
 here.
 """
 
+import math
+
 MARGIN_DEFICIT_FLOOR_USD = 1.0
 """Minimum cash deficit (in USD) before cash-only-policy actions fire.
 
@@ -95,9 +97,21 @@ def reward_risk_floor_applies(
 
     True for a Type A / range trade, whose reward:risk IS real — measured
     from that specific trade's own support (risk) and resistance (reward).
-    What is done with that number: ranking, not a cutoff, and not a size
-    cap (owner 2026-09-17). An unmeasurable range payoff is a recorded
-    fact / ranking hint — not a refuse and not a size-cap.
+    What is done with that number: ranking, and, since the owner ruling of
+    2026-10-01, ALSO a refusal at parity — never a size cap. The older
+    wording here ("ranking, not a cutoff, and not a size cap", owner
+    2026-09-17) is SUPERSEDED on the cutoff half only: the owner was shown
+    buy 100 / stop 94 / nearest level above 104 (risking 6 to make 4) and
+    chose to refuse the purchase outright rather than leave it alone or
+    shrink it. `reward_risk_parity_refuses` is that cutoff; the "not a size
+    cap" half still holds, because the answer to thin geometry is now no
+    trade, not a smaller one. An unmeasurable range payoff is a recorded
+    fact / ranking hint — still not a refuse and still not a size-cap.
+
+    NOTE this function answers "does the RANKING machinery apply", which is
+    a label-keyed question. The 2026-10-01 refusal deliberately does NOT
+    consult it — see `reward_risk_parity_refuses` for why the refusal keys
+    off the measured level instead.
 
     Fails to the conservative side: an unknown or missing setup type, with
     no measured ceiling fact supplied, keeps the reward:risk machinery on.
@@ -110,6 +124,91 @@ def reward_risk_floor_applies(
     return not is_trend_trade(
         setup_type, structural_ceiling=structural_ceiling,
     )
+
+
+#: The reward:risk line below which a purchase is refused outright (owner
+#: ruling, 2026-10-01). PARITY and nothing above it.
+REWARD_RISK_PARITY = 1.0
+"""Why 1.0, and why nothing larger.
+
+The owner ruled on 2026-10-01: "For now, let's refuse a bad risk reward
+ratio. See if that improves the desk purchases." He was shown the worked
+case — buy at 100, stop at 94, nearest structural level above at 104, so
+risking 6 to make 4 — and chose REFUSAL over both leaving it alone and
+shrinking the position. That supersedes the previous standing rule (a wide
+stop ships and is answered by a smaller position) for the geometry case.
+
+Parity sits here because the owner ruled refusal and parity is the only
+line that needs no invented value: "reward at least equals risk" is the
+boundary between arithmetically losing and arithmetically winning geometry,
+and it is the unique point on the scale that can be stated without picking
+a number. Any higher figure (1.5, 2.0) would be an invented number and is
+BARRED by the desk's no-arbitrary-numbers rule.
+
+**Parity is NOT mathematically derived, and the record must not overstate
+the case.** The ratio compares one real number against one estimated one:
+the risk side is a real price the desk will actually transact at (the
+protective stop), while the reward side is the nearest structural level
+above entry, which is a FORECAST — and this desk never actually sells
+there. It rides a trailing stop out (`src/risk/trailing.py`). So the
+numerator is a yardstick, not a plan. The owner knows this and accepted it.
+"""
+
+
+def reward_risk_parity_refuses(
+    entry: float | None,
+    stop: float | None,
+    target: float | None,
+    *,
+    is_short: bool = False,
+    reward_is_measured_level: bool | None = None,
+) -> tuple[bool, float | None]:
+    """Does the 2026-10-01 parity ruling refuse this purchase?
+
+    Returns `(refuse, ratio)`. `ratio` is None when the geometry cannot be
+    measured at all, and an unmeasurable ratio is NEVER a refusal here —
+    honesty about unknown geometry is a separate, already-settled rule.
+
+    **Why this does not consult `reward_risk_floor_applies`.** That helper
+    answers a label-keyed question ("is this a Type B breakout?"). Keying
+    the refusal off the label would be wrong by this module's OWN stated
+    reasoning: the breakout exemption exists because for a trend trade the
+    reward number is *invented* (nothing overhead is being defended, so the
+    numerator is a figure produced to satisfy a ratio). The honest test of
+    that is the MEASUREMENT, not the word — exactly what the measured half
+    of `is_trend_trade` was added for. So the refusal applies whenever the
+    reward side is a real structural level that the desk's own level
+    computation found above the entry, and stands down when the target had
+    to be projected instead.
+
+    This is also what the production record says to do. Of 33 recorded buys
+    carrying entry, stop and target (measured 2026-10-01, read-only), eleven
+    sit below parity, and five of those eleven are labelled `breakout` —
+    including the two WORST ratios in the whole book (0.42 and 0.46). A
+    label-keyed exemption would therefore spare the worst geometry the desk
+    has ever bought while refusing better trades, which inverts the ruling.
+
+    `reward_is_measured_level=None` means the caller could not say. That
+    keeps the refusal ON, which is the conservative side under a ruling
+    whose whole content is "refuse".
+    """
+    if reward_is_measured_level is False:
+        return (False, None)
+    try:
+        e = float(entry)
+        s = float(stop)
+        t = float(target)
+    except (TypeError, ValueError):
+        return (False, None)
+    risk = (s - e) if is_short else (e - s)
+    reward = (e - t) if is_short else (t - e)
+    if not (risk > 0) or reward <= 0:
+        # A non-positive risk is not this rule's business (the stop-side
+        # checks own it), and a target on the wrong side of entry is
+        # already refused by name upstream.
+        return (False, None)
+    ratio = reward / risk
+    return (ratio < REWARD_RISK_PARITY, ratio)
 
 
 REWARD_RISK_FLOOR = 1.5
@@ -158,3 +257,117 @@ Consumers (must stay aligned — if you edit one, verify the others):
   - `PortfolioManagerAgent.decide`                (the sub-floor cap default)
 """
 
+
+
+SHORT_GAP_RISK_MULTIPLE_DEFAULT = 1.5
+"""The short-side gap-risk SIZING haircut, in one place (board item 216).
+
+A short gaps through its stop upward with no bound, so the same nominal
+risk allocation must open a SMALLER short than an equivalent long at the
+same stop distance. SIZING ONLY — never applied to stop placement.
+
+The value is NOT re-derived here and is unchanged from what shipped: it is
+the deployed `risk.short_gap_risk_multiple` default. Whether 1.5 is the
+right magnitude is board item 186's question, not this constant's.
+
+Before 2026-10-01 this literal existed four times (`RiskConfig`,
+`ConstructorConfig`, the pipeline's config read and the execution-time
+risk-budget read) and the haircut was APPLIED at three separate sites, each
+with its own copy of the multiply. Execution sizes a position as
+`min(qty_by_alloc, qty_by_risk)`, so a change to one application site was
+silently a half-change to the quantity that actually reaches the market.
+Both legs now call `gap_adjusted_risk_per_share` below, and
+`tests/test_one_definition_per_quantity.py` fails if a second application
+of this multiple reappears anywhere under `src/`.
+"""
+
+
+def risk_budget_allocation_pct(
+    *, entry_price: float, stop_price: float, total_value: float,
+    risk_budget_pct: float, is_short: bool = False,
+    short_gap_risk_multiple: float | None = None,
+) -> float | None:
+    """How big this ONE name's OWN stop distance lets it be, as a RAW
+    notional percentage of equity. `None` when the geometry cannot bound it.
+
+    THE one definition of stop-derived size, board item 221. Three callers:
+    `PortfolioConstructor._build_buy` and `._build_short`, which cap the
+    PM's requested delta with it, and the PM-facing projected-portfolio
+    preview (`TradingPipeline._build_projected_portfolio`), which sizes each
+    candidate with it.
+
+    The preview used to give every candidate an identical flat slice, so the
+    sector mix the PM self-corrected against was a book no candidate would
+    ever be given: a wide-stopped name gets far less than a flat slice and a
+    tight-stopped name far more. Both directions were live — a sector the
+    preview showed as crowded could be light in reality (a good name dropped
+    for nothing) and one it showed as comfortable could be heavy (the
+    crowding went through unflagged).
+
+    The arithmetic below is the constructor's own, moved here verbatim and
+    in the same order, so the extraction changes no traded value:
+
+        qty_by_risk   = risk_dollars_allowed / risk_per_share
+        position_$    = qty_by_risk * entry_price
+        allocation_%  = position_$ / total_value * 100
+
+    `risk_per_share` is UNSIGNED (D4: a short's stop sits ABOVE its entry),
+    and the D8 short-side gap haircut is applied through the one
+    application site below, never re-implemented.
+    """
+    try:
+        entry = float(entry_price)
+        stop = float(stop_price)
+        equity = float(total_value)
+        budget = float(risk_budget_pct)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(entry) and math.isfinite(stop)
+            and math.isfinite(equity) and math.isfinite(budget)):
+        return None
+    if equity <= 0:
+        return None
+    risk_per_share = gap_adjusted_risk_per_share(
+        abs(entry - stop), is_short=is_short, multiple=short_gap_risk_multiple,
+    )
+    if risk_per_share <= 0:
+        return None
+    risk_dollars_allowed = equity * budget / 100
+    return risk_dollars_allowed * entry / risk_per_share / equity * 100
+
+
+def gap_adjusted_risk_per_share(
+    risk_per_share: float, *, is_short: bool, multiple: float | None = None,
+) -> float:
+    """Risk-per-share with the short-side gap haircut applied, or unchanged.
+
+    THE one application site. Callers pass the configured multiple when they
+    hold one; `None` (or anything that is not a real number greater than 1 —
+    a MagicMock config attribute, most often) falls back to
+    `SHORT_GAP_RISK_MULTIPLE_DEFAULT`. That Mock-safety check used to be
+    written out separately at the execution-time call site; it lives here now
+    so the two legs cannot disagree about what an unreadable config means.
+    """
+    if not is_short:
+        return risk_per_share
+    usable = (
+        not isinstance(multiple, bool)
+        and isinstance(multiple, (int, float))
+        and multiple > 1.0
+    )
+    gap_multiple = (
+        float(multiple) if usable else SHORT_GAP_RISK_MULTIPLE_DEFAULT
+    )
+    return risk_per_share * gap_multiple
+
+
+def live_constructor_cfg_or_none(constructor):
+    """The LIVE `ConstructorConfig` of `constructor`, for rules that must
+    agree with the stops the desk actually places (board item 185: the
+    universe screen's volatility ceiling is 1 / the widest stop this object
+    can produce). `None` when no constructor has been built -- some tests
+    drive a bare pipeline -- and the caller then falls back to
+    `config.risk` plus the class defaults. Pure: reads one attribute.
+    Moved from `TradingPipeline._constructor_cfg_or_none` (2026-10-01).
+    """
+    return getattr(constructor, "cfg", None)

@@ -538,6 +538,60 @@ Mon-Fri 08:45 ET. It exists because PR #111 sat merged-but-undeployed for
 eight hours with nothing catching it (`docs/WORK.md` records that incident).
 Merged and deployed as part of `32c174b`; verified firing.
 
+**Second correction (2026-09-30): an alert that repeats and changes nothing
+is not a control.** The production checkout ran six commits behind
+`origin/main` and the drift alert fired five times that day without anything
+happening; desk alerts are also muted, so the message reached nobody in any
+case. Two changes: `scripts/check_deploy_drift.py` now writes a durable
+snapshot to `data/alerting/deploy_drift.json` on every run (in sync or not,
+so "checked and clean" is distinguishable from "never checked"), and `/health`
+reads it and reports `deploy_drift`, turning the board degraded while the box
+is behind. A snapshot older than 26 hours is reported `stale`, which is also
+degraded — the checker having stopped is itself a fault. The Telegram push is
+now deduplicated per day AND per `origin/main` tip using the same
+`load_state`/`save_state` helpers the three stop-coverage alerts already share,
+so a new merge still speaks but the same drift does not repeat.
+
+**Stale CI results (2026-09-30).** A push to an already-open PR branch was
+measured to create no `pull_request` workflow run at all, leaving the previous
+commit's failure standing and auto-merge unable to fire; roughly six finished
+changes sat stuck that way for hours. Cause not established — `test.yml`
+cancels superseded PR runs, and GitHub also drops run creation under load —
+so `scripts/check_stale_ci.py` tests the observable state instead: every open
+non-draft PR whose head commit has no completed `tests` run is reported, a
+run is dispatched for it, and the job exits non-zero so the scheduled
+`stale-ci` workflow goes red in the Actions tab. A cancelled run counts as
+stale; it is not an answer.
+
+**main's own post-merge run is now watched too (2026-10-01).** Branch
+protection reads a pull request's `pytest` check and does NOT require the
+branch to be current with main first (`strict: false`, verified by API), and
+nothing read the run main produces after a merge. On 2026-10-01 main sat red
+on thirteen cost-circuit tests while every open PR showed green: each PR's
+own run had legitimately passed earlier, against a different wall clock. The
+tests were not the defect; nothing watching main was. `scripts/check_main_red.py`
+now asks whether main's newest COMPLETED push run of `tests` succeeded, and
+the `main-red` job in the scheduled `stale-ci` workflow runs it every half
+hour. A non-success answer prints the failing commit, its subject, the run
+URL and how long the branch has been red, writes the same record to the
+workflow run summary, and exits non-zero so the job goes red in the Actions
+tab. It never re-dispatches: a red main is an answer, not a flake. A
+cancelled newest run counts as red, a `pull_request` run is never a verdict
+on main, and a GitHub read that fails exits 2 rather than claiming health.
+
+**Those thirteen tests were a two-clock bug, not a regression.** The circuit
+dated the ET day from Python and `suspended_at`/`created_at` from SQLite's
+`'now'`. In production that is one OS clock and they cannot disagree; a test
+could freeze only the Python half, so for the first quarter-hour of each ET
+day the two landed on different days and the self-clear refused — correctly,
+given what it was shown. `src.cost_circuit._now_utc()` is now the module's
+single clock: replace it and `_connect` pins SQLite's `'now'` (and the
+`created_at` column default) to the same instant. Production is unchanged —
+with the real clock in place the bare connection is returned and every SQL
+`'now'` still reads SQLite's own clock. `tests/desk_clock.py::freeze_desk_day`
+is the one way to freeze the desk's day, after three clock-class bugs in one
+night.
+
 **Correction (2026-08-31): the drift alarm could not actually send.** The unit
 installed on 2026-08-27 declared no `EnvironmentFile` and invoked the venv
 Python directly on the script, unlike the session units which go through an
@@ -661,7 +715,7 @@ provider attempts, session call count, or session/ET-day spend. Current
 limits are **$0.90 per session** and **$2.75 per ET day**, checked against
 real settled spend only, plus `max_calls_per_session` (40, a runaway-loop
 backstop) and a provider-attempt cap per logical call computed in code
-(`provider_attempt_budget()`, `src/agents/base.py`) rather than pinned here.
+(`provider_attempt_budget()`, `src/agents/llm_attempts.py`) rather than pinned here.
 **2026-09-02, the cost-circuit rewrite:** the per-mode session cap, the
 separate per-session retry/repair-attempt limit, and the cost-reservation
 layer they existed to manage were all deliberately deleted — see

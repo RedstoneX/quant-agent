@@ -533,7 +533,7 @@ found nothing.
 
 **Do not re-derive the desk's own work from this section.** The two
 underived `1.0` multiples and the split between them are board item 70
-(`docs/BOARD_NOTES.md`, "item 70"); the 1.5 → 2.5 ATR stop-floor
+(`docs/board_notes/`, "item 70"); the 1.5 → 2.5 ATR stop-floor
 re-derivation and its explicit warning not to conflate a fixed entry stop
 with a trailing stop is `docs/INCIDENT_HISTORY.md`, 2026-09-10; the
 owner's ratification of the 2.5 floor and the three regime scales as
@@ -595,7 +595,7 @@ What this means in practice:
 
 **Do not re-derive the desk's own work from this section.** The six
 unsourced trail constants, the target that never reaches the broker and the
-"trail sits too loose" finding are board item 75 (`docs/BOARD_NOTES.md`,
+"trail sits too loose" finding are board item 75 (`docs/board_notes/`,
 "item 75"); the minimum-ratchet enforcement is `docs/WORK.md`'s retired
 item 108 and `docs/INCIDENT_HISTORY.md`, 2026-09-25; the range-setup
 ratchet-before-target change is `docs/INCIDENT_HISTORY.md`, 2026-09-25

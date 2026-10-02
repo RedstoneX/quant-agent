@@ -246,6 +246,7 @@ def run_rehearsal(
     pricing_cache_age_hours: float | None = DEFAULT_PRICING_CACHE_AGE_HOURS,
     provider_faults=None,
     market_recording=None,
+    allow_degraded: bool = False,
 ):
     """Rehearse one session in `sandbox` and return a `RehearsalReport`.
 
@@ -260,15 +261,23 @@ def run_rehearsal(
     it a rehearsal can only replay responses that succeeded, which leaves the
     retry and cross-provider failover branches — and the circuit guards they
     cross — untestable outside a live session.
+
+    `allow_degraded` accepts a run in which the recording could not supply
+    something the session asked for. It is OFF by default: a replay that
+    silently continues past a missing recorded input produces a confident
+    answer built on a gap. It never relaxes the network wall — an outbound
+    attempt voids the run whatever this is set to (board item 202).
     """
     _ensure_import_path()
 
     from ops.rehearsal.broker import (
         BrokerSnapshot, blocked_market_data, install_rehearsal_broker,
+        recorded_sector_lookup,
     )
     from ops.rehearsal.clock import frozen_clock
     from ops.rehearsal.isolation import (
-        ProductionWitness, assert_broker_is_stubbed, assert_isolated, no_network,
+        ProductionWitness, assert_broker_is_stubbed, assert_hermetic,
+        assert_isolated, no_network,
     )
     from ops.rehearsal.faults import ProviderFaultInjector
     from ops.rehearsal.replay import (
@@ -398,20 +407,77 @@ def run_rehearsal(
         from ops.rehearsal.market_recording import recorded_market_data
 
         _recording = _load_recording(market_recording) if market_recording else _load_recording()
+        _live_market = pipeline.market
         if _recording:
-            pipeline.market = recorded_market_data(unavailable, _recording)
+            _served = recorded_market_data(unavailable, _recording)
             checks.append(
                 "market data is served from the recording captured "
                 f"{_recording.get('captured_utc')} "
                 f"({len(_recording.get('bars') or {})} symbols), not downloaded"
             )
         else:
-            pipeline.market = blocked_market_data(unavailable)
+            _served = blocked_market_data(unavailable)
             notes.append(
                 "no recorded market data on this box, so every technical read is "
                 "empty — capture one with `python -m ops.rehearsal.market_recording "
                 "SYM ...` (board item 202)"
             )
+        # Replacing `pipeline.market` alone was NOT enough, and that is the
+        # second half of board item 202. `TradingPipeline.__init__` hands the
+        # SAME provider object to the stages it builds (`MorningResearchStage`
+        # takes `market=self.market`), so the technical read — the one read a
+        # rehearsal most needs served from the recording — went on holding the
+        # live provider after the swap. Offline that reads as "No data for
+        # SPY, skipping" for every symbol and the session degrades to
+        # `no_data`; online, before the curl_cffi hole was closed, it is what
+        # actually downloaded the bars. Rebind every holder, and say how many.
+        pipeline.market = _served
+        _rebound = []
+        for _name, _obj in list(vars(pipeline).items()):
+            if _obj is _live_market or not hasattr(_obj, "market"):
+                continue
+            if getattr(_obj, "market", None) is _live_market:
+                _obj.market = _served
+                _rebound.append(_name)
+        _still_live = [
+            _name for _name, _obj in vars(pipeline).items()
+            if _obj is not _live_market and getattr(_obj, "market", None) is _live_market
+        ]
+        if _still_live:
+            raise AssertionError(
+                "a rehearsal cannot start with the LIVE market-data provider "
+                f"still reachable through {sorted(_still_live)} — it would "
+                "fetch prices from the network instead of the recording "
+                "(board item 202)"
+            )
+        checks.append(
+            "every holder of the market-data provider was rebound to the "
+            f"rehearsal's, not just the pipeline: {sorted(_rebound) or 'none'}"
+        )
+        # Board item 202, criterion 2: `broker._get_sector` builds its own
+        # live yfinance client, so the market-data swap above never reached
+        # it and every sector lookup went to the network (and was retried
+        # per symbol behind the wall, ~188s [measured 2026-10-01]).
+        checks.append(
+            stack.enter_context(recorded_sector_lookup(unavailable, _recording))
+        )
+        # Board item 202, the last two unrecorded inputs. The settling run of
+        # 2026-10-01 was voided by 11 blocked attempts and every one of them
+        # was FRED or a news/reference feed. They are now served from their
+        # own recording by the same patch-where-the-client-is-built pattern,
+        # failures included; a gap raises rather than substituting anything.
+        from ops.rehearsal.feed_recording import load as _load_feeds
+        from ops.rehearsal.feed_recording import recorded_feeds
+
+        _feeds = _load_feeds()
+        if not _feeds:
+            notes.append(
+                "no recorded FRED/news feeds on this box, so every macro and "
+                "news read raises as a missing recorded input — capture one "
+                "with `python -m ops.rehearsal.feed_recording --series ...` "
+                "(board item 202)"
+            )
+        checks.append(stack.enter_context(recorded_feeds(unavailable, _feeds)))
         checks.append(assert_broker_is_stubbed(pipeline.broker))
         checks.append(
             "no outbound network connection is possible for the duration of "
@@ -435,6 +501,20 @@ def run_rehearsal(
 
     for symbol in getattr(pipeline.broker._data_client, "missing_price_symbols", []):
         unavailable.append(f"a current price for {symbol}")
+
+    # The hermeticity verdict, taken AFTER the session has run, because a
+    # blocked call is swallowed by every HTTP client in this dependency set
+    # and only the journal survives it (board item 202). The report is still
+    # built on a breach — the operator needs to see WHAT the run did before it
+    # is thrown away — and then the exception is raised carrying it.
+    hermetic_breach = None
+    try:
+        checks.append(assert_hermetic(
+            network_attempts, unavailable, allow_degraded=allow_degraded,
+        ))
+    except Exception as exc:
+        hermetic_breach = exc
+        checks.append(f"NOT HERMETIC: {exc}")
     report = collect(
         session=session,
         rehearsed_date=now_et.date().isoformat(),
@@ -459,6 +539,9 @@ def run_rehearsal(
             f"captured instead of sent: "
             + " | ".join(a.splitlines()[0][:120] for a in captured_alerts.sent[:4])
         )
+    if hermetic_breach is not None:
+        hermetic_breach.report = report
+        raise hermetic_breach
     return report
 
 

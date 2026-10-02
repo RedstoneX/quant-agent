@@ -37,6 +37,7 @@ from src.risk.exit_guard import (
     classify_trend_context,
     render_owner_break_message,
 )
+from tests.pipeline_factory import build_pipeline
 
 MIN_TOUCHES = 5
 _LEVELS = [90.0]
@@ -60,6 +61,11 @@ def _common(**over):
         is_short=False,
         computed_levels=list(_LEVELS),
         computed_level_touches=dict(_TOUCHES),
+        # Item 215 (2026-09-30): a level backs the stop only when the stop
+        # rests inside the traded range of a bar that DREW it. The 90.30
+        # stop sits on the session that turned at 90.00 and traded to 90.60;
+        # every level states the narrowest bar that can have drawn it.
+        computed_level_bars={lv: [(lv, lv)] for lv in _LEVELS} | {90.0: [(90.0, 90.6)]},
         min_level_touches=MIN_TOUCHES,
         level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
     )
@@ -207,6 +213,7 @@ def test_strong_with_trend_holds_until_prior_low_breaks():
     two_closes_only = check_structural_protection(
         **_common(current_price=88.5, adx=30.0,
                   computed_levels=levels, computed_level_touches=touches,
+                  computed_level_bars={90.0: [(90.0, 90.6)], 85.0: [(85.0, 85.0)]},
                   **_UPTREND),
         prior_break_records=[_rec("2026-03-09", 88.5)],
         prior_session_dates=_SESSIONS,
@@ -218,6 +225,7 @@ def test_strong_with_trend_holds_until_prior_low_breaks():
     prior_low_broken = check_structural_protection(
         **_common(current_price=83.5, adx=30.0,
                   computed_levels=levels, computed_level_touches=touches,
+                  computed_level_bars={90.0: [(90.0, 90.6)], 85.0: [(85.0, 85.0)]},
                   **_UPTREND),
         prior_break_records=[_rec("2026-03-09", 88.5)],
         prior_session_dates=_SESSIONS,
@@ -306,7 +314,9 @@ def test_owner_message_wording_lifted_and_kept():
     hold_check = check_structural_protection(
         **_common(current_price=88.5, adx=30.0,
                   computed_levels=[85.0, 90.0],
-                  computed_level_touches={90.0: 6, 85.0: 6}, **_UPTREND),
+                  computed_level_touches={90.0: 6, 85.0: 6},
+                  computed_level_bars={90.0: [(90.0, 90.6)], 85.0: [(85.0, 85.0)]},
+                  **_UPTREND),
         prior_break_records=[_rec("2026-03-09", 88.5)],
         prior_session_dates=_SESSIONS,
     )
@@ -327,10 +337,8 @@ def test_no_owner_message_on_intact_basis():
 
 
 def _voicing_pipeline():
-    from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     return p
 
 

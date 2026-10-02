@@ -126,13 +126,153 @@ MIN_SCAN_BARS = max(PIVOT_WINDOW * 2 + 1, ATR_PERIOD)
 # It stays, labelled, rather than being moved to 3.0 — moving it would be
 # adopting a foreign default, which is the same unsourced act in the other
 # direction. What would settle it is named in docs/WORK.md item 55.
-CLUSTER_TOLERANCE_PCT = 1.0
+# SUPERSEDED 2026-09-30 (docs/WORK.md item 55). The clustering rule above is
+# no longer a percentage at all: two pivots are the same level when the actual
+# PRICE RANGES of the bars that made them OVERLAP, and the level's zone is
+# those bars' own combined span (`_cluster`, `Level.zone_low/zone_high`). That
+# is read off the instrument, so there is no width to pick and nothing left to
+# sweep. The everything above about 1.0 vs 2%-5% bins is history, kept because
+# it records why a number was there.
+#
+# This constant survives for ONE purpose: FAIL-CLOSED fallback. A caller that
+# holds only a bare level PRICE with no zone attached (an older stored
+# analysis, a fixture, any path that predates the zone field) still needs some
+# bound, and silently dropping the level would remove a stop's structural
+# backing. Such a caller gets exactly today's behaviour. It must never be used
+# when a real zone is available.
+CLUSTER_TOLERANCE_PCT_FALLBACK = 1.0
+CLUSTER_TOLERANCE_PCT = CLUSTER_TOLERANCE_PCT_FALLBACK
+
+
+def stop_rests_on_level(
+    stop_price: float,
+    pivot_bars: "tuple | list | None",
+    *,
+    stop_distance: float | None = None,
+) -> bool:
+    """Is `stop_price` AT this level, rather than merely inside its band?
+
+    docs/WORK.md item 215. `level_zone_halfwidth` bounds the level's WHOLE
+    zone, so "inside the zone" and "at the level" were reported as the same
+    statement. They are not: a merged cluster's zone can span a fifth of the
+    price, and a stop at one end of it can be taken out with the level itself
+    never broken.
+
+    The test here introduces NO new number. A level is drawn by the bars that
+    turned at it; the smallest thing the instrument itself says is "structure
+    traded here" is one of those bars' own high-low range. So the stop rests
+    on the level when it lies inside the range of at least one bar that formed
+    the level — a price the market actually defended — and not when it merely
+    lies somewhere in the merged span between two distant pivots. The bound is
+    read off the same bars `find_structural_levels` clustered, so it can never
+    drift from the object it is matching.
+
+    **THE OUTWARD BOUND (adversary pass, 2026-09-30).** Bar membership alone
+    is NOT enough, and on its own it is a one-way loosening. The furthest a
+    stop can sit from `Level.price` and still pass the membership test is the
+    zone halfwidth exactly, because the zone edges ARE bar extremes and an
+    extreme always lies inside some bar. Measured over the 704 levels this
+    desk's own 400-bar set produces under the clustering in `_cluster`: median
+    halfwidth 3.33% of price, p90 9.41%, max 36.07%; restricted to levels with
+    at least 5 touches, median 4.31% and 38% of them above 5%. Against a hard
+    1.00% on the prior rule. With the break check evaluating the matched LEVEL
+    price rather than the stop, that permits "structure intact" reported with
+    the stop a fifth of the price away. So membership needs a ceiling.
+
+    `stop_distance` is that ceiling and it introduces NO number. It is
+    ``abs(entry_price - stop_loss)`` — the trade's own risk, already decided
+    before this question is asked. The rule: **the level must be more precise
+    than the thing it is backing.** The level's measured zone (``min(low)`` to
+    ``max(high)`` over `pivot_bars`, the same span `cluster_span` reports) must
+    be STRICTLY NARROWER than the stop distance. Because the stop-to-level gap
+    can never exceed that span, the bound guarantees
+    ``abs(stop - level) < abs(entry - stop)``: the level a stop claims to rest
+    on is never further from the stop than the stop is from the entry. The
+    bound is a property of the trade, not a constant, so there is nothing to
+    sweep and nothing to ratify.
+
+    What it admits and refuses, measured on the same 704 levels, using the
+    desk's own two existing stop floors as the stop distance (no new number is
+    introduced by the measurement either): at a 1.0-ATR stop it admits 33/704
+    levels (5%), and 1/154 of the >=5-touch levels; at a 2.5-ATR stop it admits
+    465/704 (66%), and 63/154 (41%) of the >=5-touch levels. The levels it
+    refuses at 2.5 ATR have median halfwidth 5.64% of price and reach 36.07%;
+    the widest level it admits has halfwidth 13.41%, which is still inside the
+    trade's own risk by construction. The exemption therefore becomes rare on
+    tight stops, which is the honest consequence of refusing to pick a width:
+    a level too vague to be more precise than the stop cannot earn a stop the
+    right to be tighter than the noise floor.
+
+    Fail closed, in both directions: no bar ranges, a non-finite stop, or a
+    `stop_distance` that is missing, non-finite or non-positive all mean NOT
+    backed, which routes the stop to the ordinary ATR floor exactly as an
+    unmatched stop does today.
+    """
+    if not math.isfinite(stop_price):
+        return False
+    if stop_distance is None or not math.isfinite(stop_distance) or stop_distance <= 0:
+        return False
+    zone_low, zone_high = _pivot_bar_span(pivot_bars)
+    if zone_low is None or zone_high is None:
+        return False
+    if (zone_high - zone_low) >= stop_distance:
+        return False
+    for rng in pivot_bars or ():
+        try:
+            low, high = float(rng[0]), float(rng[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+            continue
+        if low <= stop_price <= high:
+            return True
+    return False
+
+
+def _pivot_bar_span(
+    pivot_bars: "tuple | list | None",
+) -> "tuple[float | None, float | None]":
+    """``(min low, max high)`` over a level's forming bars, or ``(None, None)``.
+
+    The same span `cluster_span` computes, recovered from the ``(low, high)``
+    pairs that travel with the level on `TechAnalysisResult.computed_level_bars`
+    rather than from the cluster object, which the risk seats never see.
+    """
+    lows: list[float] = []
+    highs: list[float] = []
+    for rng in pivot_bars or ():
+        try:
+            low, high = float(rng[0]), float(rng[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+            continue
+        lows.append(low)
+        highs.append(high)
+    if not lows or not highs:
+        return None, None
+    return min(lows), max(highs)
 
 
 def level_zone_halfwidth(
-    level_price: float, tolerance_pct: float = CLUSTER_TOLERANCE_PCT
+    level_price: float,
+    tolerance_pct: float = CLUSTER_TOLERANCE_PCT,
+    *,
+    zone_low: float | None = None,
+    zone_high: float | None = None,
 ) -> float:
     """How far from a reported `Level.price` its own zone can still reach.
+
+    **2026-09-30, item 55.** When `zone_low`/`zone_high` are supplied — the
+    level's MEASURED span, the combined high-low range of the bars whose
+    pivots formed it — the answer is read straight off them and no
+    percentage is involved. `tolerance_pct` is then ignored entirely.
+
+    When they are absent or unusable the percentage fallback below applies,
+    unchanged. That is deliberate and it is the fail-closed direction: a
+    caller holding a bare price still gets a bound wide enough to match
+    within, instead of a zero-width zone that would silently strip a real
+    level out of stop placement.
 
     THE ONE definition of "a level is a zone, not a number", so no caller
     ever has to restate it in different units. docs/WORK.md item 46.
@@ -140,11 +280,12 @@ def level_zone_halfwidth(
     Derivation, read straight off `_cluster` and `find_structural_levels`
     above — not chosen here:
 
-      * `_cluster` chains a pivot into the current group when it sits within
-        `tolerance_pct` of that group's ANCHOR, and the anchor is the group's
-        LOWEST member (the pivots are sorted ascending). So every member of a
-        cluster lies in ``[anchor, anchor * (1 + tolerance_pct/100)]`` and the
-        cluster's full span is at most ``anchor * tolerance_pct/100``.
+      * On the fallback path `_cluster` admits a pivot only when it sits
+        within `tolerance_pct` of EVERY member, and in particular of the
+        group's anchor — its LOWEST member, since the pivots are swept in
+        ascending price. So every member of such a cluster lies in
+        ``[anchor, anchor * (1 + tolerance_pct/100)]`` and the cluster's
+        full span is at most ``anchor * tolerance_pct/100``.
       * `Level.price` is the MEAN of the cluster, so it lies inside that span
         and ``anchor <= price``.
       * Therefore the distance from `Level.price` to the furthest real pivot
@@ -161,6 +302,16 @@ def level_zone_halfwidth(
     """
     if not math.isfinite(level_price) or level_price <= 0:
         return 0.0
+    lo = _finite_positive(zone_low)
+    hi = _finite_positive(zone_high)
+    if lo is not None and hi is not None and hi >= lo:
+        # The furthest the level's own measured band reaches from its price.
+        reach = max(level_price - lo, hi - level_price)
+        if math.isfinite(reach) and reach > 0:
+            return float(reach)
+        # A degenerate band (one bar, zero range) cannot bound a match.
+        # Fall through to the percentage rather than return 0.0, which would
+        # delete the level from every "is price AT this level" test.
     return level_price * tolerance_pct / 100.0
 
 # A level touched once is a coincidence, not structure.
@@ -235,6 +386,31 @@ _CLEAN_FACTOR = 5.0
 #: ATRs. Deliberately looser than the measured-move projection — see the note
 #: on asymmetry in the target section.
 MAX_REACH_ATR_MULTIPLE = 1.5
+#
+# KEPT ON PURPOSE, 2026-10-01 (docs/WORK.md item 218). The question was
+# whether this multiple can be replaced by READING the instrument -- each
+# name's own realised favourable excursion over a hold of the stated
+# length -- so no multiple need be chosen at all. It was measured, on the
+# 400-bar daily set for 101 symbols the desk already holds: over a
+# 15-session hold the MEDIAN per-name realised excursion is 1.93 ATR and
+# the per-name MAXIMUM is 8.78 ATR, against this cap's 1.5*sqrt(15) =
+# 5.81 ATR [measured 2026-10-01, rolling windows, ATR(14)].
+#
+# Two findings, both against replacing it:
+#   1. The cap is NOT the binding constraint it was believed to be. At a
+#      typical hold it sits at ~5.8 ATR while the instrument's own typical
+#      advance is ~1.9 ATR, and recorded target distance is a median 3.25
+#      ATR. It binds only in the tail, not on the ordinary trade. Said
+#      plainly, because an earlier diagnosis in this repo says otherwise:
+#      this cap is NOT what holds the desk's targets close.
+#   2. A measured replacement still needs a QUANTILE -- median (1.93) and
+#      maximum (8.78) differ by 4.5x and sit either side of today's value.
+#      Picking between them is exactly the appetite choice the doctrine
+#      bars, and the only choice-free statistic (the sample maximum) is an
+#      outlier support bound, not a reach estimate.
+# So the purpose cannot be served by reading the instrument without
+# inventing a number, and the cap stays. Recorded rather than silently
+# left alone.
 
 #: Ceiling on `expected_horizon_sessions` before it enters the sqrt() travel
 #: estimate. An analyst claiming a 250-session horizon would otherwise
@@ -379,6 +555,24 @@ class Level:
     touches: int  # pivots clustered into this level
     last_touch_sessions_ago: int  # informational only — not a strength input, see below
     strength: float  # touch count, distance-discounted; higher = more significant
+    # The level's MEASURED zone (item 55, 2026-09-30): the combined traded
+    # range of the pivot bars that formed it. `None` on a level built by an
+    # older caller or a fixture — then `level_zone_halfwidth` falls back to
+    # the percentage, which is the fail-closed direction.
+    zone_low: float | None = None
+    zone_high: float | None = None
+
+    @property
+    def zone_halfwidth(self) -> float:
+        """This level's own match tolerance, measured where possible."""
+        return level_zone_halfwidth(
+            self.price, zone_low=self.zone_low, zone_high=self.zone_high
+        )
+    # (low, high) of every BAR that drew this level — one entry per pivot in
+    # the cluster, read straight off the instrument. This is what makes
+    # "the stop is AT this level" answerable without inventing a tolerance:
+    # see `stop_rests_on_level`. Empty means unknown, which fails closed.
+    pivot_bars: tuple[tuple[float, float], ...] = ()
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -434,42 +628,152 @@ def _clean_bars(bars: list[OHLCV]) -> list[OHLCV]:
     return keep
 
 
-def _find_pivots(bars: list[OHLCV], window: int) -> list[tuple[int, float, str]]:
-    """Locate swing highs and lows. Returns (index, price, "R"|"S")."""
+def _find_pivots(
+    bars: list[OHLCV], window: int
+) -> list[tuple[int, float, str, float, float]]:
+    """Locate swing highs and lows.
+
+    Returns ``(index, price, "R"|"S", bar_low, bar_high)``. The last two are
+    the pivot BAR's own traded range, which is what `_cluster` groups on
+    (item 55, 2026-09-30) — the pivot price alone cannot say how wide the
+    turning point actually was.
+
+    `window` is unchanged and deliberately so: no threshold-free equivalent
+    for the swing-point bar count has been found, so it stays a stated
+    number rather than being replaced by an invented rule.
+    """
     n = len(bars)
     if n < window * 2 + 1:
         return []
     highs = np.array([b.high for b in bars], dtype=float)
     lows = np.array([b.low for b in bars], dtype=float)
 
-    pivots: list[tuple[int, float, str]] = []
+    pivots: list[tuple[int, float, str, float, float]] = []
     for i in range(window, n - window):
         lo, hi = i - window, i + window + 1
+        bar_low, bar_high = float(lows[i]), float(highs[i])
         if highs[i] >= highs[lo:hi].max():
-            pivots.append((i, float(highs[i]), "R"))
+            pivots.append((i, float(highs[i]), "R", bar_low, bar_high))
         if lows[i] <= lows[lo:hi].min():
-            pivots.append((i, float(lows[i]), "S"))
+            pivots.append((i, float(lows[i]), "S", bar_low, bar_high))
     return pivots
 
 
 def _cluster(
-    pivots: list[tuple[int, float, str]], tolerance_pct: float
-) -> list[list[tuple[int, float, str]]]:
-    """Group pivots that sit within `tolerance_pct` of each other into zones."""
+    pivots: list[tuple[int, float, str, float, float]],
+    tolerance_pct: float | None = None,
+) -> list[list[tuple[int, float, str, float, float]]]:
+    """Group pivots into levels by OVERLAP of the bars that made them.
+
+    **The rule (item 55, 2026-09-30), and there is no number in it.** Two
+    pivots belong to the same level when the price RANGES their bars actually
+    traded overlap.
+
+    **THE ACCEPTANCE TEST IS ALL-MEMBERS; THE PARTITION IS GREEDY FIRST-FIT,
+    AND THE DIFFERENCE IS STATED HERE RATHER THAN GLOSSED.** A pivot joins a
+    level only if its bar range overlaps the range of EVERY member already in
+    it — never merely the nearest one. Equivalently, the members' ranges must
+    share at least one common price: the running intersection
+    ``[max(low), min(high)]`` stays non-empty. So every level names a price
+    band that every one of its bars actually traded, and that invariant holds
+    unconditionally.
+
+    What this is NOT is agglomerative complete-linkage clustering, and an
+    earlier version of this docstring said it was. The loop below sweeps the
+    pivots in ascending price and puts each into the FIRST existing level that
+    accepts it, so a pivot whose bar overlaps two levels joins the
+    lower-priced one and the partition depends on the sweep order. True
+    complete linkage would merge the globally closest pair at every step and
+    is order-independent. The all-members acceptance test is what buys the
+    anti-chaining property described below; the first-fit assignment is a
+    deliberate, cheaper choice and the resulting partition is not claimed to
+    be optimal. An untrue description of an algorithm is the same class of
+    defect as an untrue alert, so it is written down rather than implied.
+
+    Single linkage (chaining a pivot in when it reaches any one member) was
+    tried first and is WRONG here for the reason this desk already wrote
+    down in `src/data/news_dedup.py`: "single-linkage chaining is the classic
+    way two distinct events get welded together through an intermediate
+    article that resembles both." One tall bar spanning two unrelated shelves
+    welds them into a level whose band covers neither. The assignment loop
+    below is deliberately the same shape as `cluster_news`: try each existing
+    level in order, require the candidate to pass against every member, and
+    open a new level only when none accepts it.
+
+    The level's width is then the members' own combined span — ``min(low)``
+    to ``max(high)`` — measured, not assigned. That span can exceed the
+    common intersection, and it is reported as it falls; nothing is capped,
+    because a cap would be exactly the invented number this rule deletes.
+
+    What this replaces, and why. Until today a pivot joined a group when its
+    PRICE sat within `CLUSTER_TOLERANCE_PCT` (1%) of the group's anchor. That
+    1% was never shown to be right (its own ledger entry said so), it did not
+    scale with how violently a name moves, and it made a quiet utility's
+    level as wide as a volatile name's. The bars themselves already answer
+    the question the percentage was guessing at: if the market traded through
+    both turning points at the same prices, it was defending the same band.
+    A wide, volatile turning point produces a wide zone and a tight one
+    produces a tight zone, with nothing to sweep and nothing to ratify.
+
+    `tolerance_pct` is accepted and IGNORED so existing callers that still
+    pass it keep working; it is no longer part of the definition.
+    """
     if not pivots:
         return []
-    ordered = sorted(pivots, key=lambda p: p[1])
-    clusters: list[list[tuple[int, float, str]]] = []
-    current = [ordered[0]]
-    for pivot in ordered[1:]:
-        anchor = current[0][1]
-        if anchor > 0 and abs(pivot[1] - anchor) / anchor * 100.0 <= tolerance_pct:
-            current.append(pivot)
-        else:
-            clusters.append(current)
-            current = [pivot]
-    clusters.append(current)
+    ordered = sorted(pivots, key=lambda p: (p[1], p[0]))
+    clusters: list[list[tuple[int, float, str, float, float]]] = []
+    # Running common intersection of each cluster's bar ranges, parallel to
+    # `clusters`. Non-empty by construction, which IS the complete-linkage
+    # invariant.
+    shared: list[tuple[float, float]] = []
+
+    for pivot in ordered:
+        p_low, p_high = pivot[3], pivot[4]
+        measurable = math.isfinite(p_low) and math.isfinite(p_high) and p_low <= p_high
+        placed = False
+        for idx, members in enumerate(clusters):
+            lo, hi = shared[idx]
+            if measurable:
+                # Overlaps EVERY member iff it overlaps their common band.
+                if p_low > hi or p_high < lo:
+                    continue
+                shared[idx] = (max(lo, p_low), min(hi, p_high))
+            else:
+                # Unusable range: the overlap test cannot be evaluated. Fail
+                # closed to the OLD percentage rule against this cluster's
+                # anchor rather than split a level (which would drop it below
+                # MIN_TOUCHES and delete it outright). Same complete-linkage
+                # spirit: it must sit within the fallback band of every
+                # member, and the cluster's shared band is unchanged because
+                # this pivot contributes no measured range.
+                anchor = members[0][1]
+                if anchor <= 0:
+                    continue
+                tol = CLUSTER_TOLERANCE_PCT_FALLBACK
+                if any(
+                    m[1] <= 0
+                    or abs(pivot[1] - m[1]) / m[1] * 100.0 > tol
+                    for m in members
+                ):
+                    continue
+            members.append(pivot)
+            placed = True
+            break
+        if not placed:
+            clusters.append([pivot])
+            shared.append((p_low, p_high) if measurable else (pivot[1], pivot[1]))
     return clusters
+
+
+def cluster_span(
+    cluster: list[tuple[int, float, str, float, float]]
+) -> tuple[float | None, float | None]:
+    """``(low, high)`` of the bars forming a cluster — the level's own zone."""
+    lows = [c[3] for c in cluster if len(c) > 4 and math.isfinite(c[3]) and c[3] > 0]
+    highs = [c[4] for c in cluster if len(c) > 4 and math.isfinite(c[4]) and c[4] > 0]
+    if not lows or not highs:
+        return None, None
+    return min(lows), max(highs)
 
 
 def find_structural_levels(
@@ -567,6 +871,11 @@ def find_structural_levels(
             continue
 
         newest_index = max(p[0] for p in cluster)
+        pivot_bars = tuple(
+            (float(clean[p[0]].low), float(clean[p[0]].high))
+            for p in cluster
+            if 0 <= p[0] < len(clean)
+        )
         sessions_ago = last_index - newest_index
 
         # Strength is touch count, discounted by distance — no age term.
@@ -609,12 +918,16 @@ def find_structural_levels(
             1.0 + distance_pct / LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
         )
 
+        zlow, zhigh = cluster_span(cluster)
         level = Level(
             price=round(price, 2),
             kind="support" if price < side_price else "resistance",
             touches=len(cluster),
             last_touch_sessions_ago=int(sessions_ago),
             strength=round(strength, 4),
+            zone_low=round(zlow, 4) if zlow is not None else None,
+            zone_high=round(zhigh, 4) if zhigh is not None else None,
+            pivot_bars=pivot_bars,
         )
         (supports if level.kind == "support" else resistances).append(level)
 
@@ -1333,3 +1646,155 @@ def derive_structural_target(
         model_target=guess,
         divergence_pct=_divergence(price),
     )
+
+
+# ---------------------------------------------------------------------------
+# Item 55 recording — WHAT the stop was actually based on, pinned at entry.
+# ---------------------------------------------------------------------------
+#
+# FALSIFICATION ONLY. This record exists so the question "what IS a structural
+# level — how many bars make a swing point, and how wide is a level's zone?"
+# can one day be answered from the desk's OWN record of what its levels did,
+# instead of from argument. It may be read to show that the CURRENT definition
+# is WRONG: that stops sitting on supposedly-real levels were broken as often
+# as stops that sat on nothing, that a zone of a given width held no better
+# than a wider or narrower one, that a pivot confirmed by N bars predicted
+# nothing.
+#
+# IT MAY NEVER BE SWEPT FOR A BETTER NUMBER. Choosing `PIVOT_WINDOW` or
+# `CLUSTER_TOLERANCE_PCT` by trying candidate values against the outcomes
+# stored here is FITTING A NUMBER TO THIS DESK'S OWN HISTORY, which this desk
+# bars outright ("no fitting, only reading"). A replacement for either number
+# comes from published evidence or from a measurement made on data that is not
+# this book's trading record. A pass that lowers a window because the record
+# "says so" is the defect, not the finding.
+#
+# NO INVENTED THRESHOLDS. Nothing here classifies an outcome as "respected",
+# "pierced" or "broken", because every one of those words needs a cutoff that
+# nobody can source today. Only RAW DISTANCES in price units are stored; the
+# classification is derived later, by a reader who states and defends its own
+# cutoff, from numbers that were never rounded to it. Anything genuinely
+# unknown at write time is stored as JSON null and never substituted.
+
+#: Schema version for `describe_stop_level_basis`. Bumped only when a FIELD is
+#: added or its meaning changes, so a later reader can tell which rows carry
+#: which facts rather than guessing from absence.
+STOP_LEVEL_BASIS_VERSION = 1
+
+
+def describe_stop_level_basis(
+    *,
+    level_price: float | None,
+    stop_loss: float,
+    entry_price: float,
+    computed_levels: Sequence[float] | None = None,
+    computed_level_touches: dict | None = None,
+    is_short: bool = False,
+    pivot_window: int = PIVOT_WINDOW,
+    tolerance_pct: float = CLUSTER_TOLERANCE_PCT,
+) -> dict:
+    """The identity of the level standing behind a stop, as plain facts.
+
+    RECORDING ONLY — reads the inputs it is handed and computes nothing the
+    desk acts on. Nothing in this function decides whether a stop is
+    level-backed, how wide a zone is, or where a level sits; it is handed the
+    answer the live code already reached and writes down what that answer was
+    made of. Read the module note above for the falsification-only limit.
+
+    `level_price` is whatever `PortfolioConstructor._level_backing_stop`
+    returned — the computed level the shipping stop sits at, or None when no
+    computed level stood behind it. None is a FACT worth recording, not a
+    missing value: it is the control group without which "levels hold" cannot
+    be falsified, so the record is written either way.
+
+    Fields, all in price units unless stated:
+      `level_backed`        — whether a computed level stood behind the stop.
+      `level_price`         — that level's price, or null.
+      `level_kind`          — "support" for a long, "resistance" for a short,
+                              which is the side `_level_backing_stop` searches;
+                              null when there is no level.
+      `level_touches`       — how many pivots clustered into it, i.e. how many
+                              separate times price turned there. Null when the
+                              analysis carried no touch count for that price.
+      `pivot_window_bars`   — bars required EITHER SIDE of a bar for it to
+                              count as a swing point, and `pivot_confirm_bars`
+                              the whole confirmation span (window*2+1). This is
+                              the "how many bars make a swing point" half of
+                              the open question, recorded as it stood at entry.
+      `zone_low`/`zone_high`/`zone_width` — the level's own zone, the "how wide
+                              is a level's zone" half, as the live
+                              `level_zone_halfwidth` drew it at entry.
+      `stop_to_level`       — signed distance from the stop to the level price,
+                              positive when the stop sits BEYOND the level (further
+                              from entry, the protective side) and negative when it
+                              sits short of it. Sign is taken per side.
+      `stop_inside_zone`    — whether the stop fell inside the level's zone.
+      `entry_to_level`      — distance from entry to the level, same sign rule.
+      `tolerance_pct`       — the clustering tolerance in force at entry, so a
+                              later reader knows which definition produced the
+                              level rather than assuming today's.
+      `schema_version`      — `STOP_LEVEL_BASIS_VERSION`.
+    """
+    def _f(value) -> float | None:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return None
+        return out if math.isfinite(out) else None
+
+    stop = _f(stop_loss)
+    entry = _f(entry_price)
+    price = _f(level_price)
+    record: dict = {
+        "schema_version": STOP_LEVEL_BASIS_VERSION,
+        "level_backed": price is not None,
+        "level_price": price,
+        "level_kind": None if price is None else ("resistance" if is_short else "support"),
+        "level_touches": None,
+        "pivot_window_bars": int(pivot_window),
+        "pivot_confirm_bars": int(pivot_window) * 2 + 1,
+        "zone_low": None,
+        "zone_high": None,
+        "zone_width": None,
+        "zone_tolerance_pct": _f(tolerance_pct),
+        "stop_loss": stop,
+        "entry_price": entry,
+        "stop_to_level": None,
+        "entry_to_level": None,
+        "stop_inside_zone": None,
+        "computed_level_count": (
+            None if computed_levels is None else len(list(computed_levels))
+        ),
+    }
+    if price is None:
+        return record
+
+    touches = None
+    if computed_level_touches:
+        # The touch map is keyed by the same float the level list carries, so
+        # an exact hit is the normal case; a tolerant match covers a key that
+        # survived a round-trip through JSON at a different precision. No
+        # match stores null rather than a guessed count.
+        for key, count in computed_level_touches.items():
+            key_f = _f(key)
+            if key_f is not None and math.isclose(key_f, price, rel_tol=1e-9, abs_tol=1e-9):
+                try:
+                    touches = int(count)
+                except (TypeError, ValueError):
+                    touches = None
+                break
+    record["level_touches"] = touches
+
+    half = level_zone_halfwidth(price, tolerance_pct)
+    record["zone_low"] = price - half
+    record["zone_high"] = price + half
+    record["zone_width"] = half * 2.0
+    if stop is not None:
+        # "Beyond" is below the level for a long and above it for a short.
+        record["stop_to_level"] = (price - stop) if not is_short else (stop - price)
+        record["stop_inside_zone"] = bool(
+            record["zone_low"] <= stop <= record["zone_high"]
+        )
+    if entry is not None:
+        record["entry_to_level"] = (entry - price) if not is_short else (price - entry)
+    return record

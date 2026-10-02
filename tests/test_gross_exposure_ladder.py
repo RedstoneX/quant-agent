@@ -134,10 +134,15 @@ def test_each_step_is_strictly_tighter_than_the_one_above_it():
     assert len(set(ceilings)) == 4, "four rungs must produce four values"
 
 
-def test_the_deepest_rung_alerts_the_owner_and_the_others_do_not():
+def test_the_owner_is_told_from_the_sourced_ten_percent_level_onward():
+    """Board item 182, 2026-09-30: the alert threshold is no longer the
+    ladder's deepest rung. It is the 10% depreciation-notification level
+    published in MiFID Org Regulation Article 62(1) / COBS 16A.4.3UK, so the
+    owner hears at -10% and at every deeper drawdown."""
+    assert resolve_gross_ceiling(-10.0, base_x=BASE_X).alert_owner is True
     assert resolve_gross_ceiling(-20.0, base_x=BASE_X).alert_owner is True
     assert resolve_gross_ceiling(-25.0, base_x=BASE_X).alert_owner is True
-    assert resolve_gross_ceiling(-19.99, base_x=BASE_X).alert_owner is False
+    assert resolve_gross_ceiling(-9.99, base_x=BASE_X).alert_owner is False
     assert resolve_gross_ceiling(-8.0, base_x=BASE_X).alert_owner is False
     assert resolve_gross_ceiling(0.0, base_x=BASE_X).alert_owner is False
 
@@ -852,7 +857,8 @@ def test_trimming_the_held_book_has_exactly_one_owner():
     catch — each would be individually correct and the book would be sold
     down twice. So: across all of `src/`, exactly ONE call to
     `apply_gross_ceiling` may leave `emit_trims` at its default of True, and
-    it must be the run preamble in `pipeline.py`, which runs before any agent
+    it must be the run preamble, now in `pipeline_delever.py` (split step 3),
+    which runs before any agent
     and therefore keeps working when the Portfolio Manager returns nothing.
     """
     import ast
@@ -873,16 +879,16 @@ def test_trimming_the_held_book_has_exactly_one_owner():
                 (kw.value for kw in node.keywords if kw.arg == "emit_trims"), None,
             )
             disabled = isinstance(emit, ast.Constant) and emit.value is False
-            (sizing_callers if disabled else trim_owners).append(path.name)
+            (sizing_callers if disabled else trim_owners).append(path.relative_to(src).as_posix())
 
     # Item 112 kept this EXACT: one call site, not one module. The conviction
     # de-lever does not call `apply_gross_ceiling` itself — it delegates to
     # `_enforce_gross_ceiling` with a cut order — precisely so a second owner
     # cannot appear. A duplicate entry here means one did.
-    assert trim_owners == ["pipeline.py"], (
+    assert trim_owners == ["pipeline_delever.py"], (
         f"exactly one caller may author de-lever orders; found {trim_owners}"
     )
-    assert sizing_callers == ["portfolio_constructor.py"], (
+    assert sizing_callers == ["portfolio_constructor/__init__.py"], (
         f"the sizing gate must pass emit_trims=False; found {sizing_callers}"
     )
 
@@ -970,7 +976,13 @@ def test_the_deepest_rung_raises_a_separate_owner_alert():
 
     assert len(lines) == 2, "the -20% rung gets its own line, not a footnote"
     alert = lines[1]
-    assert "DRAWDOWN PAST -20%" in alert
+    # 2026-09-30: the literal "-20%" and the "lowest rung" claim are GONE
+    # from this line. The owner alert now fires at the sourced -10% MiFID
+    # depreciation threshold, so a hardcoded -20% was false for any book
+    # between the two. The line is assembled from the measured drawdown,
+    # the alert level and the resolved rung instead.
+    assert "DRAWDOWN" in alert and "24.0%" in alert
+    assert "-20%" not in alert
     # The cap must be READ from the resolved ceiling, never hardcoded — a
     # literal would go stale the day the ratified ladder changes.
     assert "0.50x equity" in alert
@@ -2933,13 +2945,16 @@ def test_an_unreadable_in_flight_exit_leaves_the_debt_owed():
 
 def test_only_one_place_may_mark_the_gross_ceiling_debt_paid():
     """Structural pin: the flag is cleared in exactly ONE assignment in
-    pipeline.py — inside the enforcement itself, after it has measured and
+    pipeline_delever.py (split step 3) — inside the enforcement itself, after
+    it has measured and
     acted. A second `= False` anywhere is how the debt gets marked paid
     without anything being enforced, which is the bug this pins."""
     import ast
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parent.parent / "src" / "pipeline.py").read_text()
+    src = (
+        Path(__file__).resolve().parent.parent / "src" / "pipeline_delever.py"
+    ).read_text()
     tree = ast.parse(src)
     clears = []
     for node in ast.walk(tree):
@@ -3257,12 +3272,15 @@ def test_the_owner_alert_stays_put_and_the_sentence_names_the_real_rung():
     import src.risk.rules as rules_mod
     from src.risk.rules import GROSS_LADDER_ALERT_PCT, resolve_gross_ceiling
 
-    # The owner-ratified value, not an inference off the table.
-    assert GROSS_LADDER_ALERT_PCT == -20.0
+    # SOURCED 2026-09-30, not inferred off the table and not a round number
+    # of this desk's own choosing: MiFID Org Regulation Article 62(1), as
+    # COBS 16A.4.3UK, requires the client be told at a 10% depreciation.
+    assert GROSS_LADDER_ALERT_PCT == -10.0
+    assert GROSS_LADDER_ALERT_PCT != min(t for t, _ in rules_mod.GROSS_LADDER)
 
-    assert resolve_gross_ceiling(-20.0, base_x=BASE_X).alert_owner
+    assert resolve_gross_ceiling(-10.0, base_x=BASE_X).alert_owner
     assert resolve_gross_ceiling(-25.0, base_x=BASE_X).alert_owner
-    assert not resolve_gross_ceiling(-19.9, base_x=BASE_X).alert_owner
+    assert not resolve_gross_ceiling(-9.9, base_x=BASE_X).alert_owner
 
     # At today's table the deepest rung IS the alert, so the sentence may
     # claim the floor.
@@ -3279,7 +3297,7 @@ def test_the_owner_alert_stays_put_and_the_sentence_names_the_real_rung():
         mid = rules_mod.resolve_gross_ceiling(-22.0, base_x=BASE_X)
         assert mid.alert_owner, "freezing the alert must not create silence"
         assert "NOT its most de-levered setting" in mid.reason
-        assert "-20% rung" in mid.reason
+        assert "-20% rung" in mid.reason  # the rung in force, not the alert
         assert "30%" in mid.reason
         floor = rules_mod.resolve_gross_ceiling(-31.0, base_x=BASE_X)
         assert floor.alert_owner

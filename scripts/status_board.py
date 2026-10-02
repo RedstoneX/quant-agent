@@ -16,7 +16,7 @@ So this board records nothing. It reads `docs/WORK.md` — the backlog that is t
 single source of truth for what this desk is doing — and `docs/phases.yaml`,
 where each phase carries mechanically checkable evidence rules. It re-evaluates
 every rule against the current tree, reads live state off the production box and
-its database, and renders what it found. A separate file, `docs/BOARD_NOTES.md`,
+its database, and renders what it found. A separate file, `docs/board_notes/`,
 supplies the owner-facing prose rendered alongside each item — see "The prose
 problem" below for why that is a second file rather than a section of WORK.md.
 
@@ -59,11 +59,11 @@ The prose problem, and the convention that solves it
 A plain-language explanation, a real-world example and a recommendation cannot
 be derived from the code — they are prose, and somebody has to write them.
 Putting them in this script would recreate exactly the hand-maintained document
-this board exists to replace. So they live in `docs/BOARD_NOTES.md`, keyed to
+this board exists to replace. So they live in `docs/board_notes/`, keyed to
 the item they describe by its NUMBER and section — never by its title, which
 can be reworded without warning.
 
-`docs/BOARD_NOTES.md` is deliberately a file of its own, separate from
+`docs/board_notes/` is deliberately a file of its own, separate from
 `docs/WORK.md`. `docs/WORK.md` stays the agent-facing source of truth for what
 an item IS — its number, title, status and ordering, everything this script
 re-derives — and is mechanically capped at 100,000 bytes (see
@@ -76,7 +76,7 @@ the PM test gate, or a pending decision's due date) is the only thing that
 connects the two files — see `load_board_notes`, `QueueItem.ref` and
 `PendingDecision.ref` for exactly how that key is spelled.
 
-The convention, inside `docs/BOARD_NOTES.md`, under a heading naming the item
+The convention, inside `docs/board_notes/`, under a heading naming the item
 it describes ("## item 32", "## gate item 4", "## decision due 2026-09-16"),
 each field on its own line:
 
@@ -97,7 +97,7 @@ Rules, deliberately few and deliberately dumb:
     into the recommendation.
   * Nothing is mandatory, and nothing is invented. An item with no plain-
     language block — whether because nobody has written to
-    `docs/BOARD_NOTES.md` for it yet, or because `docs/WORK.md` names an item
+    `docs/board_notes/` for it yet, or because `docs/WORK.md` names an item
     number no note names — renders with an explicit "not yet explained in
     plain language" marker — never hidden, never dropped, and never
     auto-generated into fake-friendly prose. Inventing an explanation would
@@ -676,7 +676,7 @@ def parse_prose(body_lines: list[str]) -> Prose:
     )
 
 
-#: The heading `docs/BOARD_NOTES.md` uses to key a prose block to the item it
+#: The heading `docs/board_notes/` uses to key a prose block to the item it
 #: describes: "## item 32", "## gate item 4", "## decision due 2026-09-16".
 #: Deliberately the SAME strings `QueueItem.ref` and `PendingDecision.ref`
 #: already render to the owner, so a lookup is one dict access and the key
@@ -689,7 +689,7 @@ _BOARD_NOTES_HEADING_RE = re.compile(
 
 
 def load_board_notes(path: Path) -> dict[str, Prose]:
-    """Parse `docs/BOARD_NOTES.md` into ``{identifier: Prose}``.
+    """Parse `docs/board_notes/` into ``{identifier: Prose}``.
 
     Keyed by the owner-facing identifier the page already shows for that item
     (`QueueItem.ref` / `PendingDecision.ref`) — ``"item 32"``, ``"gate item
@@ -707,6 +707,17 @@ def load_board_notes(path: Path) -> dict[str, Prose]:
     """
     if not path.exists():
         return {}
+    if path.is_dir():
+        # docs/board_notes/ — one file per item (see its README). Reading the
+        # directory is reading its files in name order, concatenated: the
+        # parser below is unchanged, so a note means exactly what it meant
+        # when every note lived in one file.
+        raw_text = "".join(
+            p.read_text() for p in sorted(path.glob("*.md"))
+            if p.name != "README.md"
+        )
+    else:
+        raw_text = path.read_text()
     notes: dict[str, Prose] = {}
     key: str | None = None
     lines: list[str] = []
@@ -715,7 +726,7 @@ def load_board_notes(path: Path) -> dict[str, Prose]:
         if key is not None:
             notes[key] = parse_prose(lines)
 
-    for raw in path.read_text().splitlines():
+    for raw in raw_text.splitlines():
         m = _BOARD_NOTES_HEADING_RE.match(raw.strip())
         if m:
             _flush()
@@ -985,7 +996,10 @@ class QueueItem:
         reference to another PR or item stripped first (`_strip_cross_
         references`) — a status word cited about something ELSE this item's
         tail happens to mention ("...while PR #343 (merged) repaired...")
-        is not a claim about this item. Negation is still read on the
+        is not a claim about this item. A closure word sitting in a clause
+        whose SUBJECT is another item ("item 175's roll SHIPPED and was
+        RETIRED; this is the separate, still-open half") is stripped the same
+        way, by `_strip_other_item_clauses`. Negation is still read on the
         UNSTRIPPED tail: "STILL OPEN" and friends are claims about the item
         itself and must not depend on whether a reference happens to sit
         nearby.
@@ -993,7 +1007,7 @@ class QueueItem:
         tail = self.status_tail
         if any(w in tail for w in _CLOSURE_NEGATIONS):
             return ""
-        scan = _strip_cross_references(tail)
+        scan = _strip_other_item_clauses(_strip_cross_references(tail), self.rank)
         if not _closure_hit(scan, _RENDER_CLOSURE_WORDS):
             return ""
         if _closure_hit(scan, _RENDER_PART_DONE_WORDS):
@@ -1003,17 +1017,81 @@ class QueueItem:
         return "finished"
 
     @property
+    def done_when_marks(self) -> list[str]:
+        """This item's own `DONE WHEN` checkbox marks, empty when it has no
+        such block. Structured data, not prose: the one statement about an
+        item's completeness that cannot be fooled by how a headline is
+        worded."""
+        return _done_when_checkbox_marks(self.raw_body)
+
+    @property
+    def box_state(self) -> str:
+        """What this item's own `DONE WHEN` boxes say.
+
+          ``"finished"``     at least one box, and none outstanding
+          ``"outstanding"``  at least one box is still open
+          ``"none"``         the item has no `DONE WHEN` block at all
+
+        ``"none"`` is deliberately NOT ``"finished"``. Zero outstanding boxes
+        out of zero boxes is the empty-set trap: it would read every
+        headline-only item on the board as done. An item with no boxes is
+        unstructured, and saying nothing about it is the honest answer.
+        """
+        marks = self.done_when_marks
+        if not marks:
+            return "none"
+        return "finished" if all(m.lower() == "x" for m in marks) else "outstanding"
+
+    @property
     def claims_closure(self) -> bool:
-        """Its status says FULLY finished, but it was never marked finished.
+        """Its boxes say FULLY finished, but it was never marked finished.
+
+        PRIMARY RULE: the item's own `DONE WHEN` boxes (`box_state`), never
+        its headline prose. Owner ruling 2026-10-01, after the prose reading
+        produced two false alarms in one night — an item whose headline
+        mentioned ANOTHER item's completion was reported finished with zero
+        of its ten boxes ticked. Boxes are structured and unambiguous;
+        wording is not. The prose vocabulary survives only as a secondary
+        hint (`closure_claim`), which never classifies anything on its own
+        and loses to the boxes whenever the two disagree.
 
         Reported, never believed. An item saying one thing while the backlog's
         strike-through says another is the backlog's version of a CONTRADICTED
-        phase — so the page shows it as finished (which is what its own author
-        wrote) while saying plainly that the backlog has not been ticked off,
-        rather than filing it as live work, which is the statement he called
-        déjà vu.
+        phase — so the page shows it as finished (which is what its own
+        criteria say) while saying plainly that the backlog has not been
+        ticked off, rather than filing it as live work, which is the statement
+        he called déjà vu.
         """
-        return not self.done and self.closure_claim == "finished"
+        return not self.done and self.box_state == "finished"
+
+    @property
+    def closure_disputed(self) -> bool:
+        """Its prose claims finished while its own boxes are still open.
+
+        The boxes win, so the item stays in the running order as live work —
+        but the disagreement is itself a board defect (one of the two is
+        wrong), so it is surfaced as its own category rather than dropped.
+        """
+        return (not self.done and self.box_state == "outstanding"
+                and self.closure_claim == "finished")
+
+    @property
+    def closure_disagreement(self) -> str:
+        """Plain words for a boxes-vs-prose contradiction, or ``""``.
+
+        Both directions count: a fully ticked item whose status text still
+        reads as open work, and an item whose status text says finished while
+        boxes remain open. Never a classification — only a description of one.
+        """
+        if self.done or self.box_state == "none":
+            return ""
+        if self.box_state == "finished" and self.closure_claim != "finished":
+            return ("every DONE WHEN box is ticked, but its status text does "
+                    "not say so")
+        if self.closure_disputed:
+            return ("its status text says finished, but DONE WHEN boxes are "
+                    "still open")
+        return ""
 
     @property
     def review_owed(self) -> bool:
@@ -1110,7 +1188,7 @@ def _parse_numbered_items(body: str, source: str = "backlog",
     makes the identifier on the page unambiguous — the funnel queue and the PM
     test gate both number from 1. See `_SOURCE_REF_LABEL`.
 
-    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes`
+    `notes` is `docs/board_notes/`, already parsed by `load_board_notes`
     into ``{identifier: Prose}``. An item's prose is looked up by its own
     `ref` (``"item 32"``, ``"gate item 4"``) — never parsed out of this body
     text, which is `docs/WORK.md` and carries the item itself, not the
@@ -1228,7 +1306,7 @@ def load_funnel_queue(work_md: Path,
                        ) -> tuple[list[QueueItem], str | None]:
     """Parse the ranked funnel queue out of docs/WORK.md.
 
-    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes` —
+    `notes` is `docs/board_notes/`, already parsed by `load_board_notes` —
     the item itself (number, title, status) still comes from `work_md`, only
     its plain-language prose is looked up from `notes`.
 
@@ -1283,7 +1361,7 @@ def load_pm_gate(work_md: Path,
                   ) -> tuple[list[QueueItem], str | None]:
     """Parse the PM-test-readiness gate out of docs/WORK.md.
 
-    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes` —
+    `notes` is `docs/board_notes/`, already parsed by `load_board_notes` —
     same lookup-by-`ref` arrangement as `load_funnel_queue`.
 
     Same shape and same failure behaviour as `load_funnel_queue`: a missing
@@ -1406,7 +1484,11 @@ _RENDER_REVIEW_OWED_WORDS = (
 #: them out would hide live work, which is a worse failure than the one being
 #: fixed. They are labelled instead, so a mostly-finished item does not read
 #: as untouched.
-_RENDER_PART_DONE_WORDS = ("PARTIALLY", "PARTIAL", "MOSTLY")
+#: "HALF" is the same statement as "PARTIALLY" in the backlog's own voice:
+#: item 1's real tail is "TIER 1, HALF SHIPPED 2026-09-18, ITEM STAYS OPEN",
+#: which a plain closure-word search read as fully finished when the author
+#: had written, in the same breath, that it was not.
+_RENDER_PART_DONE_WORDS = ("PARTIALLY", "PARTIAL", "MOSTLY", "HALF")
 
 
 def _closure_hit(tail: str, words: tuple[str, ...]) -> bool:
@@ -1447,6 +1529,50 @@ def _strip_cross_references(tail: str) -> str:
     artifact removed, so `_closure_hit` can never read one as a claim about
     the item whose own tail merely cites it. See `_CROSS_REF_STATUS_RE`."""
     return _CROSS_REF_STATUS_RE.sub(" ", tail)
+
+
+#: A reference to a DIFFERENT numbered item, opening a clause that then says
+#: what happened to THAT item. Item 187's real tail is "... CARRIED OUT OF
+#: ITEM 175'S RETIREMENT. ITEM 175'S WEEKEND/HOLIDAY OVERDUE-DATE ROLL
+#: SHIPPED AND WAS RETIRED; THIS IS THE SEPARATE, STILL-OPEN HALF." — every
+#: closure word in it belongs to item 175, and the one sentence that is about
+#: item 187 says the opposite. Read naively it put a live item in the
+#: "finished, not struck through" bucket.
+#:
+#: Same family as `_CROSS_REF_STATUS_RE`, one shape wider: that one only
+#: catches a parenthetical ("PR #343 (merged)"), i.e. a status in brackets
+#: immediately after the number. This one catches the prose shape, where the
+#: other item is the SUBJECT of a clause and its status is the verb.
+_OTHER_ITEM_REF_RE = re.compile(r"\bITEMS?\s+#?(\d+)", re.I)
+
+#: Clause boundaries. A closure word only belongs to the other item when it
+#: sits in the SAME clause as the reference, so the strip must stop at the
+#: next one rather than swallowing the item's own status.
+_CLAUSE_SPLIT_RE = re.compile(r"([;.]|\u2014)")
+
+
+def _strip_other_item_clauses(tail: str, own_rank: int | None) -> str:
+    """`tail` with each clause truncated at the point where it starts
+    talking about a DIFFERENT numbered item.
+
+    Only the text FROM the reference to the end of that clause is dropped,
+    never the text before it. That direction matters in both directions:
+
+      "ITEM 175'S ROLL SHIPPED"   -> ""           (not this item's closure)
+      "SHIPPED, superseding item 12" -> "SHIPPED" (still this item's closure)
+
+    A reference to the item's OWN number is left alone, so an item that
+    writes its status as "item 42 shipped" about itself still reads as a
+    closure claim. See `_OTHER_ITEM_REF_RE`.
+    """
+    out = []
+    for part in _CLAUSE_SPLIT_RE.split(tail):
+        for m in _OTHER_ITEM_REF_RE.finditer(part):
+            if own_rank is None or int(m.group(1)) != own_rank:
+                part = part[:m.start()]
+                break
+        out.append(part)
+    return "".join(out)
 
 
 def find_closed_items_not_marked_done(work_md: Path) -> list[str]:
@@ -1746,7 +1872,7 @@ def find_finished_items_still_on_board(
 
     `docs/WORK.md` opens with the owner's own rule: it holds only open work.
     Finished work belongs in `docs/INCIDENT_HISTORY.md`, with its
-    `## item N` block deleted from `docs/BOARD_NOTES.md` and its number
+    `## item N` block deleted from `docs/board_notes/` and its number
     added to the retired line. Nothing previously checked the OUTFLOW half
     of that rule -- `test_no_board_item_disappears_without_being_retired` and
     `test_work_md_stays_under_a_hundred_thousand_bytes` only stop the file
@@ -1778,7 +1904,7 @@ def find_finished_items_still_on_board(
         an event the desk cannot manufacture -- see the note above
         `_LIVE_EVENT_BLOCKED_RE`.
 
-    `board_notes` is `docs/BOARD_NOTES.md`'s path; it is loaded only so the
+    `board_notes` is `docs/board_notes/`'s path; it is loaded only so the
     lookup-by-`ref` prose attaches the same way the renderer attaches it --
     this check does not read the notes' own text, since an item's *headline*
     is where the backlog records its status, and the notes file is the
@@ -1827,7 +1953,7 @@ def find_finished_items_still_on_board(
                 "Write it up in docs/INCIDENT_HISTORY.md (newest first, "
                 "opening with one plain-language line), then delete its "
                 "docs/WORK.md block AND its matching '## " + item.ref +
-                "' block in docs/BOARD_NOTES.md, and add its number to "
+                "' block in its docs/board_notes/ file, and add its number to "
                 "the retired line at the end of the relevant list in "
                 "docs/WORK.md."
             )
@@ -1936,7 +2062,7 @@ def work_md_cap_warning(size: int,
         f"{work_md_growth_budget(size, cap):,} bytes, and that allowance "
         "keeps shrinking. Retire finished items into "
         "docs/INCIDENT_HISTORY.md, or move argument and history out of open "
-        "items into docs/BOARD_NOTES.md, before the cap starts refusing "
+        "items into docs/board_notes/, before the cap starts refusing "
         "work."
     )
 
@@ -1970,7 +2096,7 @@ def work_md_cap_blocker(before_size: int,
         f"(it was {before_size:,} before this change) — finished or decided "
         "content has likely crept back in; MOVE it to "
         "docs/INCIDENT_HISTORY.md, or move argument and history into "
-        "docs/BOARD_NOTES.md, rather than deleting it, and never raise this "
+        "docs/board_notes/, rather than deleting it, and never raise this "
         "number to make room. A change that SHRINKS the file is exempt from "
         "this cap even while it is still over, so the prune that fixes this "
         "can always merge."
@@ -2015,7 +2141,7 @@ def load_pending_decisions(work_md: Path, today: dt.date | None = None,
                             ) -> list[PendingDecision]:
     """Decisions the owner still owes an answer on, soonest first.
 
-    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes`.
+    `notes` is `docs/board_notes/`, already parsed by `load_board_notes`.
     A decision has no number of its own, so it is keyed by its due date —
     `"decision due 2026-09-16"`, the same string `PendingDecision.ref`
     renders — which is looked up here so a decision can carry its own
@@ -2663,7 +2789,9 @@ def _render_one_liners(items: list[QueueItem], empty: str,
     return "\n".join(rows)
 
 
-def _render_finished_unmarked(items: list[QueueItem]) -> str:
+def _render_finished_unmarked(
+        items: list[QueueItem],
+        disputed: "list[QueueItem] | tuple[()]" = ()) -> str:
     """Items their own author has written up as finished, which the backlog
     has not struck through.
 
@@ -2677,19 +2805,44 @@ def _render_finished_unmarked(items: list[QueueItem]) -> str:
     Nothing is believed on the item's behalf: the page says which half of the
     backlog is claiming what, and never picks one.
     """
-    if not items:
-        return ('<div class="note">Every finished item in the backlog is also '
-                'ticked off as finished.</div>')
     rows = []
+    if not items:
+        rows.append('<div class="note">Every finished item in the backlog is '
+                    'also ticked off as finished.</div>')
     for it in items:
         rows.append(
             '<div class="ol ol-done ol-untidy">'
             f'<span class="q-n">{_esc(it.ref)}</span>'
             f'<span>{_esc(it.title)} '
-            '<em>&mdash; finished according to its own note; the backlog has '
-            'not ticked it off yet, so that one line needs tidying.</em>'
+            '<em>&mdash; every one of its own DONE WHEN boxes is ticked; the '
+            'backlog has not ticked it off yet, so that one line needs '
+            'tidying.</em>'
             '</span></div>')
+    rows.extend(_render_closure_disagreements(list(items) + list(disputed)))
     return "\n".join(rows)
+
+
+def _render_closure_disagreements(items: list[QueueItem]) -> list[str]:
+    """Items whose boxes and whose prose say different things.
+
+    The boxes decide what an item IS (owner ruling 2026-10-01); this says
+    out loud where the two sources disagree, because one of them is wrong
+    and a silent disagreement is how a wrong board line survives. Items
+    whose prose claims closure over open boxes stay in the running order as
+    live work — they are named here, never moved.
+    """
+    rows = []
+    for it in items:
+        note = it.closure_disagreement
+        if not note:
+            continue
+        rows.append(
+            '<div class="ol ol-untidy">'
+            f'<span class="q-n">{_esc(it.ref)}</span>'
+            f'<span>{_esc(it.title)} '
+            f'<em>&mdash; {_esc(note)}; one of the two is wrong.</em>'
+            '</span></div>')
+    return rows
 
 
 def _render_in_hand(items: list[QueueItem]) -> str:
@@ -2931,7 +3084,7 @@ def _safely(loader: Any, work_md: Path, what: str,
     decoding error, a shape nobody anticipated — and reports it the same way,
     because the one thing this page must never do is fail to load.
 
-    `notes` is forwarded to the loader (`docs/BOARD_NOTES.md`, already
+    `notes` is forwarded to the loader (`docs/board_notes/`, already
     parsed) — a broken notes file must degrade the same way a broken backlog
     does: reported, never crashed on.
     """
@@ -3095,11 +3248,11 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     # could not read the backlog — it must never produce a stack trace on his
     # phone, because a board that 500s is a board he stops trusting.
     work_md = work_md or (REPO_ROOT / "docs" / "WORK.md")
-    # docs/BOARD_NOTES.md carries only the owner-facing prose, keyed by each
+    # docs/board_notes/ carries only the owner-facing prose, keyed by each
     # item's number and section (see `load_board_notes`). It is read
     # defensively too, for the same reason: a broken notes file must fall
     # back to "not yet explained" for every item, never a stack trace.
-    board_notes = board_notes or (REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    board_notes = board_notes or (REPO_ROOT / "docs" / "board_notes")
     try:
         notes = load_board_notes(board_notes)
     except Exception:  # noqa: BLE001 - a blank prose set beats a stack trace
@@ -3122,6 +3275,10 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     finished_unmarked = [i for i in queue_items
                          if i.bucket == "finished_unmarked"]
     review_owed = [i for i in queue_items if i.bucket == "review_owed"]
+    # Prose says finished, the item's own boxes say otherwise. Left in the
+    # running order (the boxes win, so it is live work) and named in the
+    # finished section as a contradiction — never counted as finished.
+    closure_disputed = [i for i in queue_items if i.closure_disputed]
     # Decided or being built: his answer is already given, or the work is
     # under way. Drawn BELOW everything that is actually his to answer.
     in_hand = [i for i in queue_items if i.bucket == "in_hand"]
@@ -3143,6 +3300,8 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     finished_unmarked = [i for i in finished_unmarked
                          if i.ref not in owner_call_refs]
     review_owed = [i for i in review_owed if i.ref not in owner_call_refs]
+    closure_disputed = [i for i in closure_disputed
+                        if i.ref not in owner_call_refs]
     in_hand = [i for i in in_hand if i.ref not in owner_call_refs]
     no_action = [i for i in no_action if i.ref not in owner_call_refs]
     unexplained = [i for i in open_items if not i.prose.plain]
@@ -3156,7 +3315,8 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
         "Nothing is parked. Everything in the backlog is either being worked "
         "on or already finished."))
     body = body.replace("{{FINISHED_UNMARKED}}",
-                        _render_finished_unmarked(finished_unmarked))
+                        _render_finished_unmarked(finished_unmarked,
+                                                  closure_disputed))
     body = body.replace("{{REVIEW_OWED}}", _render_review_owed(review_owed))
     body = body.replace("{{IN_HAND}}", _render_in_hand(in_hand))
     body = body.replace("{{IN_HAND_COUNT}}", str(len(in_hand)))
@@ -3207,7 +3367,7 @@ def main() -> int:
     ap.add_argument("--work-md", default="docs/WORK.md",
                     help="the backlog to render from; point it elsewhere to "
                          "preview a page without touching the real one")
-    ap.add_argument("--board-notes", default="docs/BOARD_NOTES.md",
+    ap.add_argument("--board-notes", default="docs/board_notes",
                     help="the owner-facing prose to render alongside the "
                          "backlog's items; point it elsewhere to preview a "
                          "page without touching the real one")

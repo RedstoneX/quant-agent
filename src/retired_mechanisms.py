@@ -229,7 +229,9 @@ def scan(
         prose: list[tuple[int, str]] | None = None
         source: list[str] | None = None
         for entry in entries:
-            if rel in entry.allowed_in:
+            if rel in entry.allowed_in or any(
+                    a.endswith("/") and rel.startswith(a)
+                    for a in entry.allowed_in):
                 continue
             if prose is None:
                 prose = _prose_lines(path)
@@ -290,10 +292,6 @@ def resurrected_symbols(
                     f"'{wanted[node.name]}'",
                 )
     return back
-
-
-def format_findings(findings: list[Finding]) -> str:  # pragma: no cover
-    return "\n\n".join(str(f) for f in findings)
 
 
 # ===========================================================================

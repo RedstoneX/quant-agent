@@ -621,7 +621,7 @@ def test_thesis_health_context_holding_time_is_in_trading_sessions(tmp_path):
         symbol="AAPL", qty=10, avg_entry=190.0, current_price=200.0,
         market_value=2000, unrealized_pnl=100, sector="Technology",
     )
-    with patch("src.pipeline.et_today", return_value=mon), \
+    with patch("src.pipeline_prompt_facts.et_today", return_value=mon), \
             patch("src.execution.broker._get_sector", return_value="Technology"):
         out = p._build_thesis_health_context([aapl], lookback_weeks=8)
 
