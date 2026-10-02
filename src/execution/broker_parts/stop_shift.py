@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from src.execution.broker_parts.stop_amend import _quantize_price
+from src.execution.broker_parts.stop_clock import defer_shift_if_closed
 
 logger = logging.getLogger("src.execution.broker")
 
@@ -168,6 +169,8 @@ class ShiftStopsMixin:
                 "mode": "amend", "legs": legs,
             }
 
+        if (deferred := defer_shift_if_closed(self, symbol, specs, shifted, amount)):
+            return deferred  # out of hours: cancel NOTHING (see stop_clock.py)
         if not self.cancel_snapshotted_stops(symbol, specs):
             return None   # rollback already handled inside
         restored, failed = self._restore_stop_orders(symbol, shifted)
