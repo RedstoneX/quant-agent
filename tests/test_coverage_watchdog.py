@@ -718,20 +718,20 @@ def test_session_gate_says_shut_on_a_non_trading_day():
     assert open_now is False and "not a trading day" in reason
 
 
-def test_session_gate_fails_closed_when_the_calendar_cannot_be_read():
+def test_session_gate_falls_back_to_the_clock_when_the_calendar_cannot_be_read():
     broker = MagicMock()
     broker.is_trading_day.side_effect = RuntimeError("calendar down")
     open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
-    assert open_now is False and "calendar down" in reason
+    assert open_now is True and "calendar down" in reason
 
 
-def test_session_gate_fails_closed_when_an_edge_is_missing():
+def test_session_gate_falls_back_to_the_clock_when_an_edge_is_missing():
     broker = MagicMock()
     broker.is_trading_day.return_value = True
     broker.get_session_open.return_value = None
     broker.get_session_close.return_value = datetime(2026, 9, 11, 16, 0, tzinfo=ET)
     open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
-    assert open_now is False and "both session edges" in reason
+    assert open_now is True and "both session edges" in reason
 
 
 def test_session_gate_respects_an_early_close_from_the_calendar():

@@ -216,35 +216,21 @@ def repair_stop_coverage(
     # today; anything else leaves the gap flagged for the next sweep, which
     # is the same outcome this function already produces for every other
     # unverifiable input.
-    stamped = None
-    try:
-        from src.execution.broker import LivePrice
+    from src.execution.stop_repair_price import read_repair_price
 
-        getter = getattr(broker, "get_latest_price_stamped", None)
-        if callable(getter):
-            candidate = getter(symbol)
-            # isinstance, not truthiness: most tests drive this with a
-            # MagicMock broker whose auto-attributes are callable and whose
-            # return value is another MagicMock. Only a real reading is
-            # allowed to carry the freshness verdict; anything else falls
-            # back to the bare price exactly as before.
-            if isinstance(candidate, LivePrice):
-                stamped = candidate
-        price = stamped.price if stamped is not None else broker.get_latest_price(symbol)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("coverage repair: price lookup failed for %s: %s", symbol, exc)
-        return _refuse(
-            outcome, "the live price could not be read, so the recorded stop "
-            "could not be checked against the tape",
-            code="price_unreadable", record=rec
-        )
-    if not (isinstance(price, (int, float)) and price > 0 and math.isfinite(price)):
+    stamped, price, price_error = read_repair_price(
+        broker, symbol, stop_price=stop_price, uncovered_qty=uncovered_qty,
+        is_short=is_short, caller=caller, db=db, outcome=outcome,
+        resting_stops=resting_stops, rec=rec,
+    )
+    blind = price is None and price_error is not None
+    if not blind and not (isinstance(price, (int, float)) and price > 0 and math.isfinite(price)):
         return _refuse(
             outcome, "the broker returned no usable live price, so the "
             "recorded stop could not be checked against the tape",
             code="price_unusable", record=rec
         )
-    if stamped is not None and not stamped.is_today_print:
+    if not blind and stamped is not None and not stamped.is_today_print:
         # `get_latest_price_stamped` only ever stamps `is_today_print` for a
         # `last_trade` — never for today's still-live 1-minute or session
         # bar, even though `src.data.live_price.resolve_live_price` treats
@@ -300,7 +286,10 @@ def repair_stop_coverage(
     # Long sell-stop must sit strictly below the tape; short buy-stop must
     # sit strictly above it. The wrong-side test is the one that would turn
     # this janitor into an immediate marketable exit.
-    would_fire = stop_price <= price if is_short else stop_price >= price
+    would_fire = (
+        False if blind
+        else (stop_price <= price if is_short else stop_price >= price)
+    )
     if would_fire:
         logger.warning(
             "coverage repair: %s recorded %s-stop $%.2f is on the live-price "
