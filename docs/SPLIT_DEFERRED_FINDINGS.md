@@ -85,7 +85,7 @@ and storage packages were done, and add witness tests.
 STILL OPEN, measured 2026-10-02: 11 `_Breaker*Mixin` classes are still
 composed into `LLMCostCircuitBreaker` in `src/cost_circuit/breaker.py`.
 
-VERDICT 2026-10-02 (isolation pass): REPRODUCED (structural debt, not a runtime fault). `class LLMCostCircuitBreaker(_BreakerLatchMixin, ... _BreakerOperatorMixin)` in `src/cost_circuit/breaker.py` lists 11 mixin bases, one per `src/cost_circuit/breaker_*.py` (11 files hold exactly one `_Breaker*Mixin` each). Rebuild size: large -- 11 pieces each need explicit dependencies and a witness test; no behaviour change intended.
+VERDICT 2026-10-02 (isolation pass): INCORRECT. Earlier verdict read only the `class LLMCostCircuitBreaker(...)` line; the parts ARE already standalone. `src/cost_circuit/parts/` has eleven standalone classes (merged #1064, #1066, #1070 on 2026-10-02); `tests/test_cost_circuit_parts_boundary.py` passes 35 tests, building all eleven from stubs with no breaker composition. The `breaker_*.py` files are thin per-call shims. ONE genuine gap remains: the breaker still INHERITS the shims rather than HOLDING part instances; that conversion changes every test patch target, so it is a separate deliberate instalment.
 
 ## Real boundaries still owed
 
