@@ -3060,9 +3060,9 @@ def test_every_exit_path_registers_its_own_settlement():
     `_finalize_pending_protections`, so registering there covers them by
     construction rather than by remembering to flag each call site."""
     import inspect
-    from src.pipeline import TradingPipeline
+    from src.protection.sell_finalization import SellFinalization
 
-    source = inspect.getsource(TradingPipeline._finalize_pending_protections)
+    source = inspect.getsource(SellFinalization._finalize_pending_protections)
     assert "_register_exit_settlement" in source, (
         "every waited-on exit must register its settlement state centrally"
     )
