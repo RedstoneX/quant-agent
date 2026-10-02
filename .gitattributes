@@ -15,3 +15,13 @@ docs/INCIDENT_HISTORY.md merge=docsmerge
 # both append one entry at the end, and union merge keeps both instead of
 # raising a conflict on the same last line. See the header of that file.
 config/number_ledger_history.yaml merge=union
+
+# The shrink-only ratchet baselines every guard-retiring change edits. Merged
+# by scripts/resolve_baseline_conflict.py (min of both sides, drop keys for
+# deleted files, REFUSE any merge that would loosen a baseline). Like docsmerge
+# this needs the per-clone registration: scripts/install_git_merge_drivers.sh.
+tests/file_size_baseline.json merge=baselinemerge
+tests/import_cycle_baseline.json merge=baselinemerge
+tests/import_layers.json merge=baselinemerge
+tests/silent_swallow_baseline.json merge=baselinemerge
+tests/pipeline_new_baseline.json merge=baselinemerge
