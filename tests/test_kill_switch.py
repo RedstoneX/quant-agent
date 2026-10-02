@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.execution.broker import AlpacaBroker
+from tests.pipeline_factory import build_pipeline
 
 
 def _broker(tmp_path, *, halted: bool, garbage: bool = False) -> AlpacaBroker:
@@ -214,8 +215,7 @@ def _pipeline_with_kill_switch(tmp_path, *, halted: bool):
     flag = tmp_path / "KILL_SWITCH"
     if halted:
         flag.touch()
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline._kill_switch_path = flag
+    pipeline = build_pipeline(_kill_switch_path=flag)
     return pipeline
 
 
@@ -253,12 +253,7 @@ def test_run_morning_short_circuits_when_halted(mock_tc_cls, tmp_path, monkeypat
     flag = tmp_path / "KILL_SWITCH"
     flag.touch()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline._kill_switch_path = flag
-    pipeline._is_trading_day = lambda: True
-    pipeline._reconcile_stop_coverage = MagicMock(
-        side_effect=AssertionError("must not run past the kill switch"),
-    )
+    pipeline = build_pipeline(_kill_switch_path=flag, _is_trading_day=lambda: True, _reconcile_stop_coverage=MagicMock( side_effect=AssertionError("must not run past the kill switch"), ))
 
     result = pipeline.run_morning()
 
@@ -274,12 +269,7 @@ def test_run_intra_check_short_circuits_when_halted(mock_tc_cls, tmp_path):
     flag = tmp_path / "KILL_SWITCH"
     flag.touch()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline._kill_switch_path = flag
-    pipeline._is_trading_day = lambda: True
-    pipeline._drain_pending_protection_restores = MagicMock(
-        side_effect=AssertionError("must not run past the kill switch"),
-    )
+    pipeline = build_pipeline(_kill_switch_path=flag, _is_trading_day=lambda: True, _drain_pending_protection_restores=MagicMock( side_effect=AssertionError("must not run past the kill switch"), ))
 
     result = pipeline.run_intra_check()
 
@@ -295,9 +285,7 @@ def test_run_position_review_short_circuits_when_halted(mock_tc_cls, tmp_path):
     flag = tmp_path / "KILL_SWITCH"
     flag.touch()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline._kill_switch_path = flag
-    pipeline._is_trading_day = lambda: True
+    pipeline = build_pipeline(_kill_switch_path=flag, _is_trading_day=lambda: True)
 
     result = pipeline.run_position_review(session_type="midday")
 

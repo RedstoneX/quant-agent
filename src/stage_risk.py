@@ -1137,10 +1137,8 @@ class RiskStage:
         # not an automatic unprotect — when neither a stated condition nor
         # a qualifying level exists.
         if portfolio_decision.decisions:
-            from src.risk.exit_guard import (
-                holding_discipline_claim_check,
-                veto_contradicted_exit,
-            )
+            from src.exits.pm_claim_check import holding_discipline_claim_check
+            from src.risk.exit_guard import veto_contradicted_exit
             hd_surviving: list = []
             hd_blocked: list[tuple[str, str]] = []
             macro_regime_today = _macro_regime(macro_analysis)
