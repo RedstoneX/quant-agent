@@ -32,7 +32,7 @@ from unittest.mock import MagicMock, patch
 
 from src.storage.db import Database
 from src.execution.broker import AlpacaBroker, _ENTRY_FILL_TIMEOUT_S
-from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _broker(*, enabled: bool, lease_path=None) -> AlpacaBroker:
@@ -285,9 +285,7 @@ def test_alert_fires_when_desk_and_broker_records_disagree(mock_alert, tmp_path)
     broker.get_positions.return_value = []
     broker.list_filled_sell_orders.return_value = []
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = broker
+    pipeline = build_pipeline(db=db, broker=broker)
     pipeline.config = types.SimpleNamespace(
         reconciliation=types.SimpleNamespace(stop_out_lookback_days=7),
     )
@@ -316,9 +314,7 @@ def test_no_alert_when_records_agree(mock_alert, tmp_path):
         types.SimpleNamespace(symbol="ONDS", qty=17.0),
     ]
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = broker
+    pipeline = build_pipeline(db=db, broker=broker)
     pipeline.config = types.SimpleNamespace(
         reconciliation=types.SimpleNamespace(stop_out_lookback_days=7),
     )
