@@ -4800,10 +4800,10 @@ numbers:
       highest-high / lowest-low since entry (src/risk/trailing.py:624,634),
       NOT the published indicator's fixed 22-bar lookback and ATR(22); so the
       3.0 multiple carries this citation, the surrounding geometry does not.
-  - id: src.risk.trailing.MIN_RATCHET_PCT
+  - id: src.risk.trailing.MIN_RATCHET_TICKS
     settles_by:
       kind: measurement
-      state: specified
+      state: settled
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
       records: >-
         the broker's own behaviour -- what an amend of a resting stop costs and whether it is charged
@@ -4815,10 +4815,47 @@ numbers:
         desk's broker charges nothing for amending a stop and the noise band already refuses the moves
         that would be unsafe, so if the recording shows this percentage gate suppressing only moves the
         noise band would also have refused, it is doing nothing and is deleted rather than re-set
-    value: 2
-    status: arbitrary
+    value: 1
+    status: derived
     site: src/risk/trailing.py
     note: >-
+      RETIRED AND REPLACED 2026-10-02. The 2% floor (MIN_RATCHET_PCT = 2.0)
+      is GONE. A proposed stop must now clear the live stop by one VENUE
+      TICK -- the smallest price increment the venue will accept, Alpaca's
+      published $0.01-at-or-above-$1 / $0.0001-below split (SEC Rule 612),
+      the same split `src/execution/broker_parts/stop_amend.py::_quantize_price`
+      and `src/execution/stop_records.py::_prices_match` already carry.
+      DERIVATION: two prices less than one tick apart are the SAME stop
+      after the venue quantizes them, so a sub-tick amend cannot improve
+      protection by construction; the floor is a reading off the instrument,
+      not a chosen appetite. The condition this entry itself named for
+      retirement has fired: `_amend_resting_stop_price` is on main (verified
+      against origin/main 2026-10-02), so a stop move is an atomic in-place
+      amend with no instant of naked protection, which was the ONLY
+      surviving cost defending the percentage gate.
+      REJECTED ALTERNATIVES. (a) No minimum at all -- rejected: with no
+      floor a proposal a hundredth of a cent above the live stop quantizes
+      to the same price, so the desk would amend a resting order to the
+      price it already rests at, spending a broker call and an
+      owner-visible "stop moved" line for a stop that did not move.
+      (b) A smaller percentage (0.5%, 1%) -- rejected as the identical
+      failure to the 2.0 it would replace: a picked constant, and one that
+      still demands a ratchet three times larger on one name than another
+      when expressed in each name's own ATR (measured 2026-09-30, below).
+      (c) k x ATR -- already measured and failed 2026-09-30, below.
+      COSTS MEASURED, not assumed. Money: zero (commission-free US equity
+      orders; an amend crosses no spread and prints no fill). Rate limit:
+      nothing on the stop path counts or budgets requests -- the only 429
+      handling in src/execution is the trade-stream reconnect -- and the
+      deterministic trail runs once per session per position, so the amend
+      count is bounded at one per position per session whatever the floor
+      is; a floor cannot reduce a bound of one. Rejection: an amend the
+      venue cannot apply returns the amender's sentinel and the caller
+      falls back; this repo records no measured amend-rejection rate, so
+      none is claimed. Owner noise: real, and it is exactly what the tick
+      floor removes -- the only amends it suppresses change no price.
+      HISTORY BELOW is kept verbatim because it records why the 2% floor
+      survived three earlier passes.
       A proposed stop must sit at least this far above the live stop.
       src/risk/trailing.py:87-89 says it mirrors the reviewer's historical ">=
       1.02x old stop" min-bump rule so the deterministic path does not churn
