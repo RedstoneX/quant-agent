@@ -7163,7 +7163,7 @@ numbers:
     site: src/execution/broker.py
     note: >-
       Loop bound on following a replaced order's replaced_by chain
-      (src/execution/broker.py:4404-4408), so a broker-side cycle cannot spin
+      (src/execution/broker_parts/order_desk.py:1070-1108), so a broker-side cycle cannot spin
       forever. Decides how far a lookup walks, not whether or how much to
       trade.
   - id: src.execution.broker.AlpacaBroker._wait_for_order_status_via_stream(poll_interval)
@@ -7172,38 +7172,38 @@ numbers:
     site: src/execution/broker.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3856). Same class as
+      (src/execution/broker.py:3011). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker._wait_for_order_terminal_via_stream(poll_interval)
+  - id: src.execution.broker_parts.order_desk.OrderDesk._wait_for_order_terminal_via_stream(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3841). Same class as
+      (src/execution/broker_parts/order_desk.py:667). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.await_replacement_confirmed(timeout_seconds)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.await_replacement_confirmed(timeout_seconds)
     value: 5
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:4577). Same class as
+      (src/execution/broker_parts/order_desk.py:1214). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.get_all_account_activities(page_size)
+  - id: src.execution.broker_parts.account_reads.AccountReads.get_all_account_activities(page_size)
     value: 100
     status: sourced
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/account_reads.py
     source: >-
       Alpaca's account-activities endpoint caps `page_size` at 100 per
       request: https://docs.alpaca.markets/reference/getaccountactivities
       (documented maximum, fetched 2026-09-24). Set to the maximum so the
       margin-interest historical backfill
       (`src.margin_interest.reconstruct_daily_cash_balances`,
-      src/execution/broker.py:1841-1886) pages Alpaca's full activity ledger
+      src/execution/broker_parts/account_reads.py:128-173) pages Alpaca's full activity ledger
       in as few round trips as possible; a smaller value would still be
       correct, a larger one is rejected by the API, so 100 is the API's own
       ceiling rather than a desk choice.
@@ -7214,12 +7214,12 @@ numbers:
     note: >-
       Dead default (src/execution/broker.py:2392): the one caller passes the
       window explicitly.
-  - id: src.execution.broker.AlpacaBroker.get_recent_daily_closes(lookback_days)
+  - id: src.execution.broker_parts.account_reads.AccountReads.get_recent_daily_closes(lookback_days)
     value: 10
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/account_reads.py
     note: >-
-      Dead default (src/execution/broker.py:2016): every caller passes the
+      Dead default (src/execution/broker_parts/account_reads.py:390): every caller passes the
       window explicitly.
   - id: src.execution.broker.AlpacaBroker.get_top_movers(n)
     value: 15
@@ -7228,40 +7228,40 @@ numbers:
     note: >-
       Dead default (src/execution/broker.py:2320): the one caller passes the
       count explicitly.
-  - id: src.execution.broker.AlpacaBroker.wait_for_order_at_exchange(poll_interval)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_at_exchange(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3745). Same class as
+      (src/execution/broker_parts/order_desk.py:569). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.wait_for_order_at_exchange(timeout_seconds)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_at_exchange(timeout_seconds)
     value: 5
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3744). Same class as
+      (src/execution/broker_parts/order_desk.py:569). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.wait_for_order_terminal(poll_interval)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_terminal(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3784). Same class as
+      (src/execution/broker_parts/order_desk.py:608). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.wait_for_order_terminal(timeout_seconds)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_terminal(timeout_seconds)
     value: 15
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3783). Same class as
+      (src/execution/broker_parts/order_desk.py:608). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.execution.broker._TradeUpdatesHub.wait(poll_interval)

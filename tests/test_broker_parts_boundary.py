@@ -97,3 +97,59 @@ def test_existing_stop_cover_lookup_without_a_broker_object():
     out = placer._existing_stop_covering_qty("ZZZ", qty=1.0, side="sell", stop_price=9.0)
     assert out is None
     lister.assert_called_once()
+
+
+# --- third instalment: OrderDesk + AccountReads -------------------------------
+
+def test_order_desk_is_constructible_from_stubs():
+    from src.execution.broker_parts.order_desk import OrderDesk
+    _build(OrderDesk)
+    params = inspect.signature(OrderDesk).parameters
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+def test_order_desk_module_passes_the_boundary_check():
+    verdict = check_boundary("src.execution.broker_parts.order_desk")
+    assert verdict.passed, verdict.failures
+
+
+def test_account_reads_is_constructible_from_stubs():
+    from src.execution.broker_parts.account_reads import AccountReads
+    _build(AccountReads)
+    params = inspect.signature(AccountReads).parameters
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+def test_account_reads_module_passes_the_boundary_check():
+    verdict = check_boundary("src.execution.broker_parts.account_reads")
+    assert verdict.passed, verdict.failures
+
+
+def test_order_desk_helpers_still_resolve_on_the_broker_module():
+    import src.execution.broker as broker_module
+    from src.execution.broker_parts import order_desk
+    assert broker_module._outlier_refusal_detail is order_desk._outlier_refusal_detail
+    assert broker_module._is_terminal_submission_rejection is order_desk._is_terminal_submission_rejection
+    assert broker_module._PLAIN_PRICE_LABELS is order_desk._PLAIN_PRICE_LABELS
+
+
+def test_broker_factories_never_hand_the_desk_its_own_shim():
+    """The recursion guard: a broker whose attributes are the shims passes
+    none of the desk-owned bodies, and passes a replacement bound on the
+    instance; the reads object shares the broker's own cache dicts."""
+    from unittest.mock import patch
+    from src.execution.broker import AlpacaBroker
+    from src.execution.broker_parts.order_desk import OrderDesk
+    with patch("src.execution.broker.TradingClient"):
+        broker = AlpacaBroker("key", "secret")
+    desk = broker._order_desk()
+    assert desk.wait_for_order_terminal.__func__ is OrderDesk.wait_for_order_terminal
+    assert "resolve_replacement_chain" not in desk.__dict__
+    stand_in = MagicMock(name="stand_in")
+    broker.resolve_replacement_chain = stand_in
+    assert broker._order_desk().resolve_replacement_chain is stand_in
+    reads = broker._account_reads()
+    assert "_session_edge" not in reads.__dict__
+    assert reads._shortable_cache is broker._shortable_cache
+    assert reads._fractionable_cache is broker._fractionable_cache
+    assert reads.client is broker.client
