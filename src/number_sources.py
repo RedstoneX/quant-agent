@@ -145,8 +145,8 @@ SEVEN THINGS THE LEDGER IS CHECKED FOR:
      `config/number_ledger_history.yaml`, one appended entry per change,
      each stating why.
   6. UNSCOPED SENTINEL — `MAX_UNSCOPED_NUMERIC_SITES`, above.
-  7. CITATIONS RESOLVE — every `path:line` an entry cites must exist and
-     the line must be inside the file. It cannot check that a citation
+  7. CITATIONS RESOLVE — every `path` or `path::symbol` an entry cites must exist (a `path:line` is refused, item 225) and
+     the symbol must be defined in that file today.
      SAYS what the entry claims, but it catches one nobody opened. It
      caught an invented document path during this gate's own rework.
 
@@ -1155,51 +1155,88 @@ def deployed_values(root: Path | None = None) -> dict[str, float]:
 def _is_falsifiable_source(text: str) -> bool:
     if re.search(r"https?://\S+", text):
         return True
-    return bool(re.search(r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml):\d+", text))
+    return bool(re.search(r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml)(?:::\w+|:\d+)", text))
 
 
-#: Every repo path, with optional line or line range, mentioned anywhere in an
-#: entry's prose.
+#: Every repo path mentioned anywhere in an entry's prose, optionally followed
+#: by `::symbol` (a definition the guard resolves) or by `:N[-M]` (a line, which
+#: the guard REFUSES: a line number cannot be compared with the text it was
+#: meant to point at, so it rots silently the moment the file moves).
 _CITATION_RE = re.compile(
     r"\b((?:docs|src|config|tests|scripts)/[\w./-]+\.(?:md|py|yaml|yml|json|toml))"
-    r"(?::(\d+)(?:-(\d+))?)?"
+    r"(?:::(\w+(?:\.\w+)*)|:(\d+)(?:-(\d+))?)?"
 )
+
+
+def _python_symbols(path: Path) -> set[str]:
+    """Every qualified name a module defines: functions, classes, methods and
+    assigned names. `Class.method` and the bare final segment both resolve."""
+    out: set[str] = set()
+
+    def walk(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            names: list[str] = []
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names = [child.name]
+            elif isinstance(child, ast.Assign):
+                names = [t.id for t in child.targets if isinstance(t, ast.Name)]
+            elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+                names = [child.target.id]
+            for name in names:
+                out.add(name)
+                out.add(f"{prefix}{name}")
+            nested = (
+                f"{prefix}{child.name}."
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                else prefix
+            )
+            walk(child, nested)
+
+    walk(ast.parse(path.read_text(encoding="utf-8")), "")
+    return out
+
+
+def _symbol_resolves(path: Path, symbol: str) -> bool:
+    """Python: a definition or assignment. Markdown: a heading containing the
+    text. YAML/JSON/TOML: the key at the start of a line."""
+    if path.suffix == ".py":
+        return symbol in _python_symbols(path)
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".md":
+        return any(
+            line.startswith("#") and symbol.lower() in line.lower()
+            for line in text.splitlines()
+        )
+    return re.search(rf"^\s*(?:- )?{re.escape(symbol)}\s*[:=]", text, re.M) is not None
 
 
 def broken_citations(
     ledger: dict[str, dict[str, Any]], root: Path
 ) -> list[tuple[str, str, str]]:
-    """Repo citations in the ledger that do not resolve: `(site_id, why, cite)`.
+    """Repo citations in the ledger that do not hold: `(site_id, why, cite)`.
 
-    The cheapest possible defence against the failure that made this rework
-    necessary. It does not read a citation and judge it — nothing can — but a
-    citation pointing at a file that does not exist, or at a line past the end
-    of one, is a claim nobody opened, and that is the whole shape of what went
-    wrong. Caught one on the first run: an invented `docs/FRACTIONAL_TRADING.md`
-    in a source written during this very rework.
+    Board item 225. A citation is a bare file (it must exist) or
+    `path::symbol` (the symbol must be defined in that file today). A
+    `path:line` citation is refused outright: the old check only confirmed the
+    line existed, so a line holding something else read as verified, and the
+    split of the two largest files would have moved thousands of lines under
+    it without a sound. Symbols travel with the code; when one moves or is
+    renamed this reports it. There is no list of citations excused from this.
     """
     out: list[tuple[str, str, str]] = []
-    line_counts: dict[str, int | None] = {}
     for site_id, entry in ledger.items():
         text = f"{entry.get('note') or ''} {entry.get('source') or ''}"
         for match in _CITATION_RE.finditer(text):
-            rel, start, end = match.group(1), match.group(2), match.group(3)
-            if rel not in line_counts:
-                target = root / rel
-                line_counts[rel] = (
-                    len(target.read_text(encoding="utf-8").splitlines())
-                    if target.is_file()
-                    else None
-                )
-            count = line_counts[rel]
-            if count is None:
+            rel, symbol, line = match.group(1), match.group(2), match.group(3)
+            target = root / rel
+            if not target.is_file():
                 out.append((site_id, "no such file", match.group(0)))
-                continue
-            for lineno in (start, end):
-                if lineno and int(lineno) > count:
-                    out.append(
-                        (site_id, f"line past end of file ({count} lines)", match.group(0))
-                    )
+            elif line:
+                out.append(
+                    (site_id, "a line number cannot be checked; cite `path::symbol`", match.group(0))
+                )
+            elif symbol and not _symbol_resolves(target, symbol):
+                out.append((site_id, f"`{symbol}` is not defined in {rel}", match.group(0)))
     return out
 
 

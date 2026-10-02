@@ -33,6 +33,7 @@ from src.number_sources import (
     SCOPED_CONFIG_CLASSES,
     SCOPED_PATHS,
     audit,
+    _CITATION_RE,
     broken_citations,
     collect_sites,
     collect_unscoped_sites,
@@ -329,7 +330,7 @@ def test_every_source_is_openable_by_a_non_author() -> None:
             continue
         source = str(entry.get("source") or "")
         openable = re.search(r"https?://\S+", source) or re.search(
-            r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml):\d+", source
+            r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml)::\w+", source
         )
         assert openable, f"{site_id} cites prose with nothing to open"
 
@@ -585,7 +586,7 @@ def test_a_source_with_a_file_and_line_passes() -> None:
           - id: src.risk.rules.MAX_HEAT_PCT
             value: 4.2
             status: sourced
-            source: the derivation at src/risk/rules.py:12
+            source: the derivation at src/risk/rules.py::MAX_HEAT_PCT
         """,
     )
     assert not _kinds(root, ledger)
@@ -736,7 +737,7 @@ def test_a_citation_pointing_at_nothing_is_reported() -> None:
         },
         "src.risk.rules.FINE": {
             "status": "sourced",
-            "source": "see src/number_sources.py:1",
+            "source": "see src/number_sources.py::broken_citations",
         },
     }
     reported = {site_id for site_id, _, _ in broken_citations(invented, root)}
@@ -1037,3 +1038,37 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
                     "2026-09-30 ruling on global risk dials bars."
                 )
                 start = hit + 1
+
+
+def test_a_citation_whose_cited_text_moved_or_changed_is_rejected() -> None:
+    """Item 225. The old guard only asked whether a line existed, so a cited
+    line that now held something else read as verified. A citation must name a
+    SYMBOL the guard resolves in the file; a bare line number is refused
+    because it cannot be compared with anything, and a symbol that no longer
+    exists there (moved or renamed) is refused because the text is gone.
+    """
+    root = Path(__file__).resolve().parent.parent
+    cases = {
+        "src.a.LINE_ONLY": "see src/number_sources.py:1",
+        "src.a.GONE": "see src/number_sources.py::no_such_symbol_anywhere",
+        "src.a.WRONG_FILE": "see src/rotation.py::broken_citations",
+        "src.a.OK": "see src/number_sources.py::broken_citations",
+        "src.a.OK_FILE": "see docs/WORK.md",
+    }
+    ledger = {k: {"status": "sourced", "source": v} for k, v in cases.items()}
+    reported = {sid for sid, _, _ in broken_citations(ledger, root)}
+    assert reported == {"src.a.LINE_ONLY", "src.a.GONE", "src.a.WRONG_FILE"}
+
+
+def test_the_ledger_has_no_line_number_citations_and_no_exemption_list() -> None:
+    """Item 225: every real citation is a symbol or a bare file, and the
+    guard carries no list of citations it agrees to ignore."""
+    import inspect
+
+    import src.number_sources as ns
+
+    for entry in load_ledger().values():
+        text = f"{entry.get('note') or ''} {entry.get('source') or ''}"
+        assert not [m for m in _CITATION_RE.finditer(text) if m.group(3)], entry["id"]
+    src = inspect.getsource(ns.broken_citations).lower()
+    assert "exempt" not in src and "allow" not in src and "known_bad" not in src
