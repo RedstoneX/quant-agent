@@ -1434,20 +1434,21 @@ async function loadMutedBacklog() {
       }));
     } else if (data.total) {
       parts.push(el("p", {
-        text: `${data.total} muted message${data.total === 1 ? "" : "s"} recorded, ${data.live_risk_total} of them about a position whose protection was gone or never arrived.`,
+        text: `${data.total} undelivered message${data.total === 1 ? "" : "s"} recorded (${data.muted_total ?? 0} muted, ${data.filtered_total ?? 0} filtered as operational), ${data.live_risk_total} of them about a position whose protection was gone or never arrived.`,
       }));
       parts.push(evidenceSection(
         `Live-risk messages (${data.live_risk.length})`,
         [data.live_risk.length ? table(
-          ["When", "Kind", "Symbols", "Message"],
+          ["When", "Why", "Kind", "Symbols", "Message"],
           data.live_risk.map((m) => el("tr", {}, [
             el("td", { text: fmtTime(m.timestamp) }),
+            el("td", { text: m.reason === "filtered" ? "filtered" : "muted" }),
             el("td", { text: m.kind }),
             el("td", { text: (m.symbols || []).join(", ") || "—" }),
             el("td", { text: m.headline || "—", title: m.headline || "" }),
           ]))
         ) : null],
-        "No muted message was about an unprotected position."
+        "No undelivered message was about an unprotected position."
       ));
       parts.push(evidenceSection(
         "By kind",

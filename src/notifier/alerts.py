@@ -19,6 +19,7 @@ from src.notifier.markup import (
     _fmt_price,
     _fmt_qty,
 )
+from src.notifier.category import CATEGORY_OPERATIONAL
 from src.notifier.owner_alert import (
     send_owner_alert,
 )
@@ -138,7 +139,7 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
         f"Machine record, kept for the log — nothing here needs anything "
         f"from you: {raw}"
     )
-    return send_owner_alert(text)
+    return send_owner_alert(text, category=CATEGORY_OPERATIONAL)
 
 
 # === Fill-confirmation alerts (own message, not bundled) ===

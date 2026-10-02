@@ -605,7 +605,7 @@ def classification(
 # scope: it decides, sizes, prices and exits nothing. The census it bounds
 # is written to `specialist_evidence` as evidence and is read by no gate,
 # no ranking key and no sizing path.
-MAX_UNSCOPED_NUMERIC_SITES = 157  # 2026-10-01, item 78: +1 for
+MAX_UNSCOPED_NUMERIC_SITES = 158  # 2026-10-02, PR #978: +1 for `src.cost_circuit.alert_outcome.ALERT_STATE_SUPPRESSED` (3), an alert-state code in a DB column, never a size, price or exit. Was 157  # 2026-10-01, item 78: +1 for
 # `src.seat_heal._RESTORE_OBSERVATION_CAP` (5000), the most parked heal
 # observations held in memory before the oldest are dropped and the loss
 # counted on the drained row. It bounds MEMORY, never a size, price or

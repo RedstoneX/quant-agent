@@ -21,6 +21,10 @@ from src.notifier.base import (
 from src.notifier.sections import (
     _redact_raw_exception_text,
 )
+from src.notifier.category import (
+    SUPPRESSED, filtered_by_category, resolve_risk_only,
+)
+from src.notifier.send_log import record_send
 from src.notifier.markup import (
     _close_open_markup,
     _dedupe_symbols,
@@ -68,6 +72,9 @@ class TelegramNotifier:
         # and "no credentials" into one false, and probe() has to report
         # which of the two it actually is.
         self.muted = kill_switch
+        # Second, independent switch: narrows the channel to money-at-risk alarms.
+        # The hard mute still wins (`enabled` is already False). See category.py.
+        self.risk_only = resolve_risk_only()
         self.enabled = bool(self.token and self.chat_id) and not kill_switch
         # Tap-through link target for send(). Unlike token/chat_id this is
         # NOT read from the environment — src/config.py::NotificationsConfig
@@ -122,88 +129,9 @@ class TelegramNotifier:
         except Exception:  # noqa: BLE001
             return "<unprintable error>"
 
-    def _record_send(
-        self,
-        *,
-        kind: str,
-        status: str,
-        text: str,
-        detail: str | None = None,
-        run_id: str | None = None,
-    ) -> None:
-        """Durably record one outgoing-message attempt (sent/failed/
-        suppressed) so "what did the desk try to tell the owner, and did
-        it arrive" has a single answer that does not depend on the next
-        message happening to land.
-
-        Table, not a log line (see this file's module docstring for why
-        `send()` never logged a success): `session_reports` /
-        `intra_check_reports` / `evening_reports` (src/storage/db.py) are
-        this project's established home for a run's long, rendered text —
-        never the application log, which is grepped/tailed for operational
-        health and would drown in 4000-char message bodies. This table
-        follows the same shape (payload text + timestamp + a key to find
-        it by) rather than inventing a new convention.
-
-        Same-protection guarantee as the rest of this class: this is
-        called from inside `send()`/`send_document()`'s own try/except
-        (or, for the failure path, adds one more try/except around
-        itself), so a recording bug — a locked DB file, a full disk, a
-        schema mismatch — degrades to a `logger.warning` and the message
-        still sends and the caller still gets its True/False. Recording
-        must never be the reason a send looks like it failed, or the
-        reason a real failure looks like it succeeded.
-
-        Redaction: `text` and `detail` both go through `self._redact`
-        before they touch SQLite. `text` should never carry the token or
-        chat id (they live in the URL/payload, not the message body), but
-        redacting here anyway costs nothing and means one place — not
-        every call site — is responsible for the guarantee tested by
-        `test_record_send_output_never_contains_token_or_chat_id`.
-        """
-        try:
-            import sqlite3
-
-            safe_text = self._redact(text if text is not None else "")
-            safe_detail = self._redact(detail) if detail is not None else None
-            # Belt and suspenders: production's data/ dir always exists by
-            # the time this fires (Database() has already created it), but
-            # a notifier call can in principle be the very first thing a
-            # fresh checkout does (e.g. the live-scheduler startup ping in
-            # main.py, before TradingPipeline/Database is constructed) —
-            # don't let a missing directory be the reason recording fails.
-            _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
-            try:
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS notifier_sends (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        kind TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        run_id TEXT,
-                        text TEXT NOT NULL,
-                        detail TEXT,
-                        timestamp TEXT NOT NULL DEFAULT (datetime('now'))
-                    )
-                    """
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_notifier_sends_kind_ts "
-                    "ON notifier_sends(kind, timestamp)"
-                )
-                conn.execute(
-                    "INSERT INTO notifier_sends "
-                    "(kind, status, run_id, text, detail) VALUES (?, ?, ?, ?, ?)",
-                    (kind, status, run_id, safe_text, safe_detail),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-        except Exception as exc:  # noqa: BLE001
-            # Never let a recording failure look like — or cause — a send
-            # failure. See docstring above.
-            logger.warning("notifier: failed to record send (%s/%s): %s", kind, status, exc)
+    def _record_send(self, **kwargs) -> None:
+        """See `send_log.record_send`."""
+        record_send(self, **kwargs)
 
     def _safe_record_send(self, **kwargs) -> None:
         """Call `_record_send`, wrapped in its own try/except.
@@ -232,6 +160,7 @@ class TelegramNotifier:
         preserve_structural_markup: bool = False,
         kind: str = "generic",
         run_id: str | None = None,
+        category: str | None = None,
     ) -> bool:
         """Fire-and-forget send. Returns True on success.
 
@@ -290,9 +219,15 @@ class TelegramNotifier:
                         "suppressed by TELEGRAM_DISABLED; not sent"
                     ),
                 )
+                # Deliberate and settled, not a failure: see `SuppressedSend`.
+                return SUPPRESSED
             return False
         if not text:
             return False
+        if filtered_by_category(
+            self, kind=kind, category=category, text=text, run_id=run_id, symbols=symbols,
+        ):
+            return SUPPRESSED
         # Single chokepoint for every owner-facing message this notifier
         # sends, regardless of which of the ~20 upstream formatters (PM
         # rationale, risk-manager reasoning, evening outlook, key thesis,
@@ -561,6 +496,7 @@ class TelegramNotifier:
     def send_document(
         self, csv_bytes: bytes, filename: str, caption: str = "",
         kind: str = "document", run_id: str | None = None,
+        category: str | None = None,
     ) -> bool:
         """Send a file (e.g. CSV) via Telegram sendDocument. Best-effort.
 
@@ -573,6 +509,8 @@ class TelegramNotifier:
         if not self.enabled:
             return False
         recorded_text = f"[document: {filename}] {caption}".strip()
+        if filtered_by_category(self, kind=kind, category=category, text=recorded_text, run_id=run_id):
+            return False
         try:
             response = requests.post(
                 f"https://api.telegram.org/bot{self.token}/sendDocument",
