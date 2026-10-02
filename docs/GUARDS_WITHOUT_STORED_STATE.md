@@ -38,7 +38,7 @@ shared write.
 reference is available in CI today. A local run fetches `origin/main` or
 refuses.
 
-## The four rules
+## The five rules
 
 1. **Store nothing.** No baseline file, no pinned set, no known-offenders list
    committed to the repo.
@@ -48,6 +48,16 @@ refuses.
    is the single most likely way to get this rebuild wrong.
 4. **Report the delta, not the absolute.** The message says what this change
    made worse, which is the only thing the author can act on.
+5. **Compare identities, never totals.** A delta expressed as a count has a
+   hole: a change that removes one offender and adds a different one nets to
+   zero and passes, so the new defect lands unnoticed (found 2026-10-02 when
+   proving one guard red needed two added offenders because the branch had
+   removed one). Every scanning guard names each site — path, kind, enclosing
+   scope, the site's own source text — and fails any identity the working tree
+   holds more copies of than `origin/main` (`guard_reference.added_sites`).
+   Removals are never a failure. The file-size guard is numeric by nature; its
+   identity is the path, so a shrink in one file never offsets growth in
+   another.
 
 ## What comes out
 
@@ -56,7 +66,7 @@ refuses.
 | ~~`tests/file_size_baseline.json`~~ | DONE — deleted with `scripts/regen_file_size_baseline.py` and `test_regen_baseline_cannot_drop_a_trunk_file`; replaced by `scripts/file_size_guard.py` + `scripts/guard_reference.py`, which measure the working tree and `origin/main` at check time |
 | `tests/import_cycle_baseline.json` | `test_import_layering`, `scripts/import_graph` |
 | `tests/import_layers.json` | `scripts/import_graph` |
-| ~~`tests/pipeline_new_baseline.json`~~ | DONE — deleted; `scripts/pipeline_new_guard.py` now counts `TradingPipeline.__new__` sites in the working tree and on `origin/main` at check time and reports the delta |
+| ~~`tests/pipeline_new_baseline.json`~~ | DONE — deleted; `scripts/pipeline_new_guard.py` now names each `TradingPipeline.__new__` site in the working tree and on `origin/main` at check time and fails on any new site identity |
 | `tests/silent_swallow_baseline.json` | `test_silent_swallow_guard`, `scripts/silent_swallow_guard` |
 
 All five are also read by `tests/test_baseline_merge_driver.py` and
@@ -68,7 +78,7 @@ have existed.
 Same class, same treatment, after the five land:
 - the known-leaks list in `tests/test_no_silent_patch_targets.py`
 - `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`
-- ~~the offender baseline in `tests/test_no_local_day_as_exchange_day.py`~~ DONE — the hardcoded `_BASELINE` is deleted; `scripts/local_day_guard.py` scans the working tree and `origin/main` at check time and fails on the delta
+- ~~the offender baseline in `tests/test_no_local_day_as_exchange_day.py`~~ DONE — the hardcoded `_BASELINE` is deleted; `scripts/local_day_guard.py` scans the working tree and `origin/main` at check time and fails on any new site identity
 - ~~`tests/replay_outbound_sites_baseline.json`~~ DONE — judged a cached
   measurement (an AST scan of `src/` frozen on 2026-10-02, no human
   reasoning in any entry), so it is never created; `scripts/replay_outbound_guard.py`

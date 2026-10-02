@@ -18,9 +18,10 @@ This file used to carry a hardcoded ``_BASELINE`` of every current offender.
 That was a cached measurement committed to the repo -- the same collision
 engine as the JSON baselines, written in Python -- and every change touching a
 listed file had to edit it. The guard now stores nothing
-(docs/GUARDS_WITHOUT_STORED_STATE.md): it counts offenders in this working
-tree, counts them again on ``origin/main`` at check time, and fails only on the
-DELTA. If ``origin/main`` cannot be read it REFUSES; it never passes by default.
+(docs/GUARDS_WITHOUT_STORED_STATE.md): it names each offending site in this
+working tree, names them again on ``origin/main`` at check time, and fails on
+any site identity the tree holds that the trunk does not -- never a total, so
+removing one offender never licenses adding a different one. If ``origin/main`` cannot be read it REFUSES; it never passes by default.
 """
 from __future__ import annotations
 
@@ -66,6 +67,27 @@ def test_a_new_offender_is_caught_and_reported_as_a_delta(monkeypatch):
     monkeypatch.setattr(local_day_guard, "trunk_offences", fewer)
     bad = local_day_guard.violations()
     assert any(key[0] in line and f"[{key[1]}]" in line and "+1" in line for line in bad), bad
+
+
+def test_removing_one_offender_and_adding_another_still_fails(monkeypatch):
+    """The count hole: -1 old +1 new in the same file and kind nets to zero.
+
+    Identity is (path, kind, enclosing scope, source text), so it must still fail.
+    """
+    now = local_day_guard.working_offences()
+    assert now, "nothing to compare against"
+    path, kind, _scope, src = old = sorted(now)[0]
+    new = (path, kind, "_added_for_proof", src)
+    pretend = {site: lines for site, lines in now.items() if site != old}
+    pretend[new] = [1]
+    monkeypatch.setattr(local_day_guard, "working_offences", lambda: pretend)
+    bad = local_day_guard.violations()
+    assert len(bad) == 1 and path in bad[0] and "in _added_for_proof" in bad[0], bad
+
+
+def test_removing_offenders_alone_passes(monkeypatch):
+    monkeypatch.setattr(local_day_guard, "working_offences", lambda: {})
+    assert local_day_guard.violations() == []
 
 
 def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):

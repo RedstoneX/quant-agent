@@ -61,6 +61,17 @@ def test_a_new_site_is_caught_and_reported_as_a_delta(monkeypatch):
     assert any(path in line and dropped in line and "+[" in line for line in bad), bad
 
 
+def test_dropping_one_client_and_adding_another_still_fails(monkeypatch):
+    """-1 old +1 new in the same file nets to zero clients; identity must still fail."""
+    now = replay_outbound_guard.working_sites()
+    path = sorted(now)[0]
+    swapped = dict(now)
+    swapped[path] = (now[path] - {sorted(now[path])[0]}) | {"smtplib"}
+    monkeypatch.setattr(replay_outbound_guard, "working_sites", lambda: swapped)
+    bad = replay_outbound_guard.violations()
+    assert len(bad) == 1 and path in bad[0] and "smtplib" in bad[0], bad
+
+
 def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
     repo = tmp_path / "norepo"
     (repo / "src").mkdir(parents=True)
