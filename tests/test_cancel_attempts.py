@@ -89,7 +89,9 @@ def test_adapter_does_not_surface_the_client_order_id():
     assert '"client_order_id"' not in src and "'client_order_id'" not in src
 
 
-def test_install_skips_a_broker_with_no_trading_client():
+def test_install_skips_a_broker_with_no_trading_client(caplog):
     broker = SimpleNamespace()
-    install_cancel_recording(broker=broker, conn_getter=lambda: None)
+    with caplog.at_level("WARNING"):
+        install_cancel_recording(broker=broker, conn_getter=lambda: None)
     assert not hasattr(broker, "client")
+    assert "SimpleNamespace" in caplog.text and "will not be counted" in caplog.text
