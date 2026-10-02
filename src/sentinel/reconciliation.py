@@ -70,6 +70,14 @@ def record_reconciliation(*, db, kind: str, result, run_id: str | None = None):
         logger.debug("reconciliation %s not recorded: db has no sqlite connection", kind)
         return result
     agreed = not result
-    detail = json.dumps(result, default=str) if not agreed else ""
-    ReconciliationLog(conn=conn).record(kind=kind, agreed=agreed, detail=detail, run_id=run_id)
+    try:
+        detail = json.dumps(result, default=str) if not agreed else ""
+        ReconciliationLog(conn=conn).record(kind=kind, agreed=agreed, detail=detail, run_id=run_id)
+    except Exception:  # noqa: BLE001
+        # An observer must never break the thing it observes. This call sits on
+        # the return of the stop-coverage sweep, OUTSIDE that sweep's own try,
+        # so a locked database or a missing table here would otherwise abort
+        # protection itself. The failure is loud -- full traceback at error --
+        # but it cannot take the money path down with it.
+        logger.error("reconciliation %s could not be recorded", kind, exc_info=True)
     return result
