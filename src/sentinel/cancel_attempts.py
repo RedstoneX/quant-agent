@@ -75,5 +75,7 @@ class CancelRecordingClient:
 
 def install_cancel_recording(*, broker, conn_getter) -> None:
     """Wrap `broker.client` once (idempotent)."""
+    if getattr(broker, "client", None) is None:
+        return  # a test fake with no trading client has no cancels to count; an observer must not break construction
     if not isinstance(broker.client, CancelRecordingClient):
         broker.client = CancelRecordingClient(inner=broker.client, conn_getter=conn_getter)
