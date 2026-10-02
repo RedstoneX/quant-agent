@@ -54,12 +54,12 @@ refuses.
 | Stored file | Read by |
 |---|---|
 | ~~`tests/file_size_baseline.json`~~ | DONE — deleted with `scripts/regen_file_size_baseline.py` and `test_regen_baseline_cannot_drop_a_trunk_file`; replaced by `scripts/file_size_guard.py` + `scripts/guard_reference.py`, which measure the working tree and `origin/main` at check time |
-| `tests/import_cycle_baseline.json` | `test_import_layering`, `scripts/import_graph` |
-| `tests/import_layers.json` | `scripts/import_graph` |
+| ~~`tests/import_cycle_baseline.json`~~ | DONE — deleted with `--shrink-baseline`/`--seed-baseline` and `test_baseline_only_shrinks`; `scripts/import_graph.py --check` now builds the graph from the working tree and again from `origin/main` via `scripts/guard_reference.py` and reports only new cycle edges |
+| `tests/import_layers.json` | `scripts/import_graph` — **STAYS**: hand-written layering policy (rule names, `why` prose, a deliberate allowlist), not a cached measurement |
 | `tests/pipeline_new_baseline.json` | `test_pipeline_new_ratchet`, `scripts/pipeline_new_guard` |
 | `tests/silent_swallow_baseline.json` | `test_silent_swallow_guard`, `scripts/silent_swallow_guard` |
 
-All five are also read by `tests/test_baseline_merge_driver.py` and
+The remaining ones are also read by `tests/test_baseline_merge_driver.py` and
 `scripts/resolve_baseline_conflict.py` — both exist ONLY to manage collisions
 between stored baselines, so both are deleted outright. A merge driver for a
 file that no longer exists is the clearest possible sign the file should not

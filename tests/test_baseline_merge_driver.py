@@ -15,8 +15,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DRIVER = REPO_ROOT / "scripts" / "git_merge_driver_baselines.sh"
 SIZE = "tests/file_size_baseline.json"
+# Only baselines that still EXIST and still need the collision driver. The
+# file-size and import-cycle guards store nothing now, so neither is listed.
 BASELINES = [
-    "tests/file_size_baseline.json", "tests/import_cycle_baseline.json",
     "tests/import_layers.json", "tests/silent_swallow_baseline.json",
     "tests/pipeline_new_baseline.json",
 ]

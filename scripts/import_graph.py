@@ -4,18 +4,32 @@ Pure standard library. Builds the graph of internal ``src.*`` imports with
 ``ast``, separating runtime imports from ``TYPE_CHECKING``-only imports (a
 type-only import is not a true dependency and is ignored by every check).
 
-CLI:  PYTHONPATH=. .venv/bin/python -m scripts.import_graph   (prints a report)
+The cycle guard stores NOTHING: it builds the graph from the working tree,
+builds it again from ``origin/main`` at check time, and reports only the DELTA
+(docs/GUARDS_WITHOUT_STORED_STATE.md). If the trunk cannot be read it REFUSES
+rather than pass. ``tests/import_layers.json`` is NOT a cached measurement --
+it is the hand-written layering policy -- so it stays.
+
+CLI:  PYTHONPATH=. .venv/bin/python -m scripts.import_graph          (report)
+      PYTHONPATH=. .venv/bin/python -m scripts.import_graph --check  (guard)
 """
 from __future__ import annotations
 
 import ast
 import json
+import sys
 from collections import defaultdict, deque
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from scripts.guard_reference import (
+    ROOT,
+    ReferenceUnavailable,
+    TRUNK,
+    trunk_blobs,
+    trunk_paths,
+)
+
 SRC = ROOT / "src"
-BASELINE_PATH = ROOT / "tests" / "import_cycle_baseline.json"
 LAYERS_PATH = ROOT / "tests" / "import_layers.json"
 
 Edge = tuple[str, str]
@@ -58,19 +72,40 @@ def _collect(tree: ast.AST):
     yield from walk(tree, False)
 
 
-def build_graph(src_dir: Path = SRC):
-    """Return (modules, runtime_edges, type_only_edges, edge_sites).
+def _module_of(rel: str) -> str:
+    """``src/pkg/mod.py`` -> ``src.pkg.mod``; a package __init__ names the package."""
+    parts = rel[:-len(".py")].split("/")
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
 
-    edge_sites maps an edge to ``"path:line"`` of its first import statement.
+
+def disk_sources(src_dir: Path = SRC) -> dict[str, str]:
+    """Every ``src/**/*.py`` in the working tree, keyed by repo-relative path."""
+    return {
+        f.relative_to(ROOT).as_posix(): f.read_text(encoding="utf-8")
+        for f in sorted(src_dir.rglob("*.py"))
+    }
+
+
+def trunk_sources() -> dict[str, str]:
+    """The same files as they stand on ``origin/main``. Raises if it cannot read them."""
+    return trunk_blobs([p for p in trunk_paths(".py") if p.startswith("src/")])
+
+
+def graph_from_sources(sources: dict[str, str]):
+    """Return (modules, runtime_edges, type_only_edges, edge_sites) for a source map.
+
+    Taking text rather than a directory is what lets the guard measure the trunk
+    without checking it out, so nothing has to be cached in the repo.
     """
-    files = sorted(src_dir.rglob("*.py"))
-    modules = {module_name(f): f for f in files}
+    modules = {_module_of(rel): rel for rel in sorted(sources)}
     runtime: set[Edge] = set()
     type_only: set[Edge] = set()
     sites: dict[Edge, str] = {}
-    for mod, f in modules.items():
-        is_pkg = f.name == "__init__.py"
-        tree = ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
+    for mod, rel in modules.items():
+        is_pkg = rel.endswith("/__init__.py") or rel == "__init__.py"
+        tree = ast.parse(sources[rel], filename=rel)
         for node, t_only in _collect(tree):
             targets: list[str] = []
             if isinstance(node, ast.Import):
@@ -91,9 +126,14 @@ def build_graph(src_dir: Path = SRC):
                 if t in modules and t != mod:
                     edge = (mod, t)
                     (type_only if t_only else runtime).add(edge)
-                    sites.setdefault(edge, f"{f.relative_to(ROOT)}:{node.lineno}")
+                    sites.setdefault(edge, f"{rel}:{node.lineno}")
     type_only -= runtime
     return set(modules), runtime, type_only, sites
+
+
+def build_graph(src_dir: Path = SRC):
+    """The working tree's graph. edge_sites maps an edge to ``"path:line"``."""
+    return graph_from_sources(disk_sources(src_dir))
 
 
 def adjacency(edges) -> dict[str, set[str]]:
@@ -212,14 +252,55 @@ def stale_allowlist_entries(runtime_edges, config) -> list[str]:
     return out
 
 
-def shrink_baseline() -> None:
-    """Rewrite the baseline to the intersection with today's cycle edges. Never grows it."""
-    nodes, rt, _, _ = build_graph()
-    now = {list(e).__repr__() for e in cycle_edges(nodes, rt)}
-    data = load_json(BASELINE_PATH, {"edges": []})
-    keep = [e for e in data["edges"] if repr(list(e)) in now and tuple(e) in cycle_edges(nodes, rt)]
-    data["edges"] = sorted(keep)
-    BASELINE_PATH.write_text(json.dumps(data, indent=1) + "\n")
+def new_cycle_edges():
+    """Cycle edges this working tree has that ``origin/main`` does not.
+
+    Both sides are measured here and now; nothing is read from or written to a
+    committed file, so two unrelated changes can never collide over this guard.
+    Raises ``ReferenceUnavailable`` when the trunk cannot be read -- the guard
+    refuses rather than passing by default.
+    """
+    nodes, rt, _, sites = build_graph()
+    now = cycle_edges(nodes, rt)
+    t_nodes, t_rt, _, _ = graph_from_sources(trunk_sources())
+    before = cycle_edges(t_nodes, t_rt)
+    return sorted(now - before), now, sites
+
+
+def new_cycle_report() -> list[str]:
+    """One human line per newly introduced cycle edge, naming the loop it closes."""
+    new, now, sites = new_cycle_edges()
+    if not new:
+        return []
+    cycles = shortest_cycles(now)
+    lines = []
+    for a, b in new:
+        cyc = next((c for c in cycles if (a, b) in zip(c, c[1:] + c[:1])), None)
+        loop = " -> ".join(cyc + [cyc[0]]) if cyc else "(cycle)"
+        lines.append(f"  {sites[(a, b)]}: {a} imports {b}, which closes the cycle {loop}")
+    return lines
+
+
+CYCLE_FIX_HINT = (
+    "\nFix: remove or invert that import (move the shared piece into a lower module "
+    "both can import, or import lazily at the call site only if the dependency is "
+    "truly one-way). There is no baseline to add it to: this guard stores nothing "
+    f"and compares the working tree against {TRUNK} every time it runs."
+)
+
+
+def check(argv: list[str] | None = None) -> int:
+    try:
+        lines = new_cycle_report()
+    except ReferenceUnavailable as exc:
+        print(f"REFUSING: {exc}", file=sys.stderr)
+        return 2
+    if lines:
+        print("NEW import cycle(s) introduced against %s:\n%s%s"
+              % (TRUNK, "\n".join(lines), CYCLE_FIX_HINT), file=sys.stderr)
+        return 1
+    print(f"import-cycle guard: this tree adds no import cycle against {TRUNK}.")
+    return 0
 
 
 def report() -> str:
@@ -239,16 +320,7 @@ def report() -> str:
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    import sys
-    if "--shrink-baseline" in sys.argv:
-        shrink_baseline()
-    elif "--seed-baseline" in sys.argv:  # one-time seeding only; the test forbids growth by review
-        nodes, rt, _, _ = build_graph()
-        BASELINE_PATH.write_text(json.dumps({
-            "_comment": "Import-cycle edges that existed when the guard was introduced. This list may only SHRINK: "
-                        "run `PYTHONPATH=. .venv/bin/python -m scripts.import_graph --shrink-baseline` after breaking a cycle. "
-                        "Never add an edge here; break the cycle instead.",
-            "edges": sorted([a, b] for a, b in cycle_edges(nodes, rt))}, indent=1) + "\n")
-    else:
-        print(report())
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    if "--check" in sys.argv:
+        raise SystemExit(check())
+    print(report())

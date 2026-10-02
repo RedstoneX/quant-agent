@@ -260,11 +260,13 @@ vanish.
 
 **Register the baseline merge driver too (same one-time, per-clone, not automatic).**
 Fifteen open changes at once each edited the same shrink-only ratchet files
-under `tests/` (`import_cycle_baseline.json`, `import_layers.json`,
-`silent_swallow_baseline.json`, `pipeline_new_baseline.json`), so every landing
-made the rest conflict. The file-size ratchet no longer has one: it compares the
-working tree with `origin/main` at check time and stores nothing
-(`scripts/file_size_guard.py`, docs/GUARDS_WITHOUT_STORED_STATE.md).
+under `tests/` (`import_layers.json`, `silent_swallow_baseline.json`,
+`pipeline_new_baseline.json`), so every landing made the rest conflict. The
+file-size ratchet and the import-cycle guard no longer have one: each compares
+the working tree with `origin/main` at check time and stores nothing
+(`scripts/file_size_guard.py`, `scripts/import_graph.py --check`,
+docs/GUARDS_WITHOUT_STORED_STATE.md). `tests/import_layers.json` stays: it is
+the hand-written layering policy, not a cached measurement.
 `.gitattributes` names a driver for them (`baselinemerge`); it takes the
 smaller number on both sides, drops keys for deleted files, and **refuses**
 (diff3 markers, exit 2) any merge that would loosen a baseline. Both drivers
