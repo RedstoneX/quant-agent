@@ -25,13 +25,7 @@ fails on `date.today()`, a naive `datetime.now()`, a UTC calendar day used as
 a day, and an import-time clock stamp in a test, with a shrink-only baseline
 of the offenders that already existed.
 
-STILL OPEN: the cost-circuit half. Under the same clock shift (00:02, 00:05 and
-00:10 ET, Python and SQLite moved together) none of the age-latch tests failed,
-so the thirteen are UNPROVEN rather than diagnosed -- the simulator pins SQLite
-at connect time, which may be hiding it. Next step: reproduce against the real
-runner clock, or recover the original failing test names, before changing code.
-The guard's baseline lists the remaining offenders; they are candidates for the
-same fix, not approvals.
+STILL OPEN: the cost-circuit half. The original entry named thirteen failing tests but provides no test names. Reproduction attempts on 2026-10-02 failed by three methods: clock simulation with Python and SQLite moved together showed zero failures; CI runs covering 00:00-00:16 ET showed no cost-circuit test failures; and direct inspection identified no named failure. This entry must not be treated as a known defect until a specific failing test is named and reproduced.
 
 ## The evidence gate's per-name record has never been written -- FIXED
 
