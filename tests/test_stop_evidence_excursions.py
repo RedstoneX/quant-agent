@@ -285,7 +285,10 @@ def test_the_recording_is_declared_falsification_only_in_the_code():
     source = (root / "src/data/levels.py").read_text()
     assert "FALSIFICATION ONLY" in source
     assert "NEVER BE SWEPT" in source.upper()
+    schema_source = (root / "src/storage/schema/manager.py").read_text()
     db_source = (root / "src/storage/db.py").read_text()
-    assert "stop_level_basis" in db_source
-    assert "no fitting, only reading" in db_source.lower()
-    assert "NO CLASSIFICATION IS STORED" in db_source
+    # the declarations moved with the schema code into the schema manager
+    combined = db_source + schema_source
+    assert "stop_level_basis" in combined
+    assert "no fitting, only reading" in combined.lower()
+    assert "NO CLASSIFICATION IS STORED" in combined

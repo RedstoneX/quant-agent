@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import fcntl
 import json
 import logging
@@ -26,1291 +27,51 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
-from src.models import Position, _ALLOWED_SECTORS, _SECTOR_ALIASES
+from src.models import Position
+from src import sector_reference as _sector_reference
 # THE stop-value judgement (docs/WORK.md item 88). `src.execution.stop_records`
 # imports nothing from this module, so this is a leaf dependency.
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
+from src.execution.broker_parts.stop_amend import (  # noqa: F401 (re-exports keep patch targets)
+    StopAmender, _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
+)
+from src.execution.broker_parts.stop_place import (  # noqa: F401 (re-exports keep patch targets)
+    StopPlacer, PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES, PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES, _STOP_PLACEMENT_MAX_ATTEMPTS, _STOP_PLACEMENT_BACKOFF_S, _FRACTIONAL_QTY_EPSILON, PROTECTIVE_ORDER_ACTIVE_STATUSES, _is_held_for_orders_error, _is_unsupported_stop_market_rejection, _split_protective_qty, _derive_stop_tif, _alpaca_symbol, _internal_symbol, real_broker_order_id,
+)
+from src.execution.broker_parts.order_desk import (  # noqa: F401 (re-exports keep patch targets)
+    OrderDesk, _PLAIN_PRICE_LABELS, _outlier_refusal_detail, _is_terminal_submission_rejection,
+)
+from src.execution.broker_parts.account_reads import AccountReads
+from src.execution.order_gates import BadOrderQuantity, QTY_REJECTED, check_order_quantity  # noqa: F401 (re-exports keep patch targets)
+from src.execution.order_idempotency import _client_order_id, _is_dead_stop_result, _session_date_key  # noqa: F401 (re-exports keep patch targets)
+from src.execution.broker_parts.trade_stream import (  # noqa: F401 (re-exports keep patch targets)
+    TradeStreamAuthRejected, TradeStreamGaveUp, TradeStreamWarmup, _ALPACA_STREAM_AUTH_DEADLINE_S,
+    _ALPACA_STREAM_RECONNECT_MAX_S, _ALPACA_STREAM_RECONNECT_MIN_S, _HubWaiter,
+    _STREAM_ATTEMPT_BUDGET, _STREAM_ATTEMPT_CEILING_PER_DAY, _STREAM_ATTEMPT_CEILING_PER_SESSION,
+    _STREAM_AUTH_DEPRECATION_MARKER, _STREAM_RATE_LIMIT_STAND_DOWN_S, _StreamAttemptBudget,
+    _TRADE_UPDATES_STREAM_LOCK, _TradeUpdatesHub, _TradeUpdatesLease, _alert_stream_gave_up,
+    _credential_fingerprint, _default_trade_updates_lease_path, _equal_jitter_backoff,
+    _fell_back_to_deprecated_auth, _install_trading_stream_auth_diagnostics,
+    _install_trading_stream_reconnect_guard, _note_current_auth_format_accepted,
+    _note_stream_auth_deprecation, _parse_stream_auth_reply, _stream_giveup_owner_message,
+    _stream_http_status, _stream_retry_after_seconds, _trading_stream_reconnect_delay,
+    TradeStreamWaits,
+)
+from src.execution.broker_parts.market_data import (  # noqa: F401 (re-exports keep patch targets)
+    LivePrice, _BROKER_HTTP_TIMEOUT, _install_http_timeout, MarketData,
+)
 
 logger = logging.getLogger(__name__)
 
-# Plain-English names for the fat-finger guard's owner-facing "detail"
-# text below — never the raw field name a log/audit trail would use.
-_PLAIN_PRICE_LABELS = {
-    "limit_price": "limit price",
-    "stop_loss_price": "stop",
-    "take_profit_price": "target price",
-}
+# `_PLAIN_PRICE_LABELS` moved to src/execution/broker_parts/order_desk.py (re-exported above).
 
 
-def _outlier_refusal_detail(
-    label: str,
-    candidate: float,
-    reference_price: float,
-    *,
-    symbol: str,
-    atr: float | None,
-) -> str:
-    """The owner-facing sentence for a fat-finger refusal.
+# `_outlier_refusal_detail` moved to src/execution/broker_parts/order_desk.py (re-exported above).
 
-    A bare deviation percentage is not something a trader can judge: 24% is
-    absurd on a utility and an ordinary couple of sessions on a $7 name. So
-    the sentence puts the stock's OWN normal daily range next to it.
+# The trade_updates stream plumbing moved to src/execution/broker_parts/trade_stream.py (re-exported above).
 
-    `atr` is the desk's already-measured ATR(14) for this symbol, handed
-    down by the caller (`src/pipeline_stages.py` reads it off the same
-    analysis the constructor sized from). Nothing is fetched and nothing is
-    estimated here: if the caller has no ATR, the range clause is simply
-    omitted rather than filled with an invented number.
 
-    Plain words only — no field names, no jargon, no "ATR". The owner is
-    not a developer and reads these in a Telegram alert.
-    """
-    deviation_pct = abs(candidate - reference_price) / reference_price * 100
-    sentence = (
-        f"{_PLAIN_PRICE_LABELS.get(label, label)} "
-        f"${candidate:,.2f} is {deviation_pct:.0f}% "
-        f"from price ${reference_price:,.2f}"
-    )
-    if atr is not None and math.isfinite(atr) and atr > 0:
-        atr_pct = atr / reference_price * 100
-        sentence += (
-            f" — {symbol} normally moves about ${atr:,.2f} "
-            f"({atr_pct:.0f}%) in a day"
-        )
-    return sentence
-
-# Alpaca allows one `trade_updates` websocket per account. Each fill wait
-# used to construct its own TradingStream; a second handshake while the
-# first socket was still registered is HTTP 429, and older alpaca-py
-# `_run_forever` loops retried that handshake every 10ms (alpacahq/alpaca-py
-# #740). A threading.Lock serializes waiters inside one process. Morning
-# and intra (and other) systemd jobs are separate processes; the account
-# slot is an advisory flock (`_TradeUpdatesLease`) so only one desk
-# process may open the socket. Anyone else attaches to that process's
-# hub or REST-polls — never a second handshake.
-_TRADE_UPDATES_STREAM_LOCK = threading.Lock()
-
-
-def _default_trade_updates_lease_path() -> Path:
-    """Cwd-relative so an isolated test cwd cannot flock production data/.
-
-    TradingPipeline passes the absolute path next to the DB — the same
-    convention as `.intraday_scan.lock`. The constraint is the Alpaca
-    account, not the database; the file sits beside the DB because that
-    directory is already the desk's on-box coordination point.
-    """
-    return Path("data") / ".trade_updates.lock"
-
-
-class _TradeUpdatesLease:
-    """Account-wide exclusive right to open Alpaca's trade_updates websocket.
-
-    flock is released when the fd closes, including process death, so a
-    killed job cannot wedge the slot. The pid written into the file is
-    diagnostic only — ownership is the lock, not the text. Not a new
-    service, not IPC, not a second trading-memory system.
-    """
-
-    def __init__(self, path: Path):
-        self.path = Path(path)
-        self._fh = None
-
-    def acquire(self, *, blocking: bool = False) -> bool:
-        if self._fh is not None:
-            return True
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fh = open(self.path, "a+")
-        except Exception:
-            logger.warning(
-                "trade_updates lease: could not open %s — refusing to open a socket",
-                self.path, exc_info=True,
-            )
-            return False
-        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
-        try:
-            fcntl.flock(fh.fileno(), flags)
-        except BlockingIOError:
-            fh.close()
-            return False
-        except Exception:
-            logger.warning(
-                "trade_updates lease: flock failed on %s — refusing to open a socket",
-                self.path, exc_info=True,
-            )
-            try:
-                fh.close()
-            except Exception:
-                pass
-            return False
-        try:
-            fh.seek(0)
-            fh.truncate()
-            fh.write(f"{os.getpid()}\n")
-            fh.flush()
-        except Exception:
-            pass
-        self._fh = fh
-        return True
-
-    def release(self) -> None:
-        fh = self._fh
-        self._fh = None
-        if fh is None:
-            return
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-        try:
-            fh.close()
-        except Exception:
-            pass
-
-    def held(self) -> bool:
-        return self._fh is not None
-
-# Fallback reconnect bounds, used only when the installed TradingStream
-# does not expose `_reconnect_min_backoff` / `_reconnect_max_backoff`.
-# They are alpaca-py's own values for this exact storm (TradingStream.__init__
-# on versions that shipped `reconnect_delay`), not a desk-invented constant.
-_ALPACA_STREAM_RECONNECT_MIN_S = 1.0
-_ALPACA_STREAM_RECONNECT_MAX_S = 30.0
-
-# Handshake ceiling for trade_updates auth. Reuses alpaca-py's own reconnect
-# max so we do not invent a second clock. Auth must not consume a fill /
-# funding timeout (measured 2026-09-16: ~4 min of `_auth` retries after
-# Risk approved, before the first BUY hit the tape).
-_ALPACA_STREAM_AUTH_DEADLINE_S = _ALPACA_STREAM_RECONNECT_MAX_S
-
-# THE trade_updates AUTH FORMAT, AND WHY THIS MODULE SENDS THE FRAME.
-#
-# alpaca-py builds the auth payload itself, in
-# `alpaca/trading/stream.py::TradingStream._auth`, as
-#   {"action":"authenticate","data":{"key_id":K,"secret_key":S}}
-# Alpaca's own authorization reply says that form is being DEPRECATED in
-# favour of
-#   {"action":"auth","key":K,"secret":S}
-# Measured against the live paper broker 2026-09-18: both forms return
-# `status: authorized`, and the deprecated one carries the notice.
-#
-# A dependency bump would be the right fix and there is nothing to bump to:
-# alpaca-py 0.44.0, the newest release on PyPI on that date, still sends the
-# deprecated form. So the choice is between sending a frame the counterparty
-# has told us it is retiring, or sending the current one ourselves. The desk
-# sends the current one, on the smallest possible surface: ONE frame, with
-# alpaca-py's own verdict rule (`data.status == "authorized"`) unchanged, on
-# a per-instance wrapper. Nothing in site-packages is edited.
-#
-# THE FALLBACK IS LOAD-BEARING AND STAYS. The current form is proven on
-# `paper-api.alpaca.markets` and nowhere else; the desk has exactly one
-# account and cannot show it is accepted everywhere the old one is. So a
-# refusal of the current form marks the stream and the NEXT handshake sends
-# the deprecated form on a fresh socket — see `_fell_back_to_deprecated_auth`
-# for why it is not re-sent on the same socket. Either way the reconnect
-# ceiling bounds the sequence, the owner is told once in plain English, and
-# fills fall back to the bounded REST path. Retire the fallback only when
-# the current form is proven on every host the desk authenticates against.
-_STREAM_AUTH_DEPRECATION_MARKER = "deprecat"
-_stream_auth_deprecation_logged = False
-_stream_current_auth_format_logged = False
-
-
-# ---------------------------------------------------------------------------
-# Reconnect CEILINGS. Why these exist (2026-09-18 audit of the retained logs).
-#
-# On 2026-09-15 this socket logged 32,896 handshake attempts in ONE day
-# [measured: `grep -c "starting trading websocket connection"` across
-# quant_agent.log.2/.3], 32,666 of which Alpaca rejected with HTTP 429
-# [measured, same grep on "restarting connection: server rejected WebSocket
-# connection: HTTP 429"]. The first twelve attempts are stamped
-# 13:38:30.698 -> 13:38:31.076 — about THIRTY handshakes per second.
-#
-# The retry loop was NOT ours. `alpaca.trading.stream.TradingStream.
-# _run_forever` (alpaca-py 0.43.5, the installed version) catches every
-# exception and closes with `finally: await asyncio.sleep(0.01)` — a flat
-# 10ms, no backoff of any kind, and no attempt ceiling. That is why six
-# previous pull requests adjusted OUR timing and changed nothing: our
-# timing was never in that loop.
-#
-# `_install_trading_stream_reconnect_guard` (below) fixed the RATE on
-# 2026-09-18 and is measurably working: the 2026-09-17 14:24:54 burst is
-# spaced 0.9s, 1.3s, 3.3s, 7.8s, 14.2s, 30.0s, and the whole day logged 50
-# attempts instead of 32,896 [measured]. What it did NOT add is a ceiling.
-# The attempt counter is a closure local, so it resets to zero on every new
-# hub, and a socket that can never authenticate retries at the 30s cap
-# forever. That is still an unbounded account-level liability, just a
-# slower one. These three constants close it.
-# ---------------------------------------------------------------------------
-
-#: Handshake attempts one socket session may spend before it gives up for good.
-#: SOURCE (derived, not chosen): the equal-jitter curve below runs off
-#: alpaca-py's own reconnect bounds, 1.0s min / 30.0s max, so the capped
-#: term goes 1, 2, 4, 8, 16, 30 — it SATURATES at attempt 6. Past saturation
-#: every further attempt waits the identical interval and has already failed
-#: identically, so it can learn nothing new; it only spends the account's
-#: rate-limit budget. Cross-checked against the measured 2026-09-17 14:24
-#: burst, which reached the 30s plateau at attempt 6.
-_STREAM_ATTEMPT_CEILING_PER_SESSION = 6
-
-#: Handshake attempts this PROCESS may spend across all sessions in one day.
-#: SOURCE: Alpaca publishes the trading API limit as "200 requests per
-#: minute, per account" (alpaca.markets/support/usage-limit-api-calls). The
-#: limit is account-wide, so a websocket storm spends the same budget the
-#: order path needs. One single minute's published allowance is therefore
-#: the whole DAY's budget for this socket, which is optional comfort — the
-#: bounded REST fill path does the same job more slowly. Cross-checked
-#: against measured behaviour so it cannot fire spuriously: 2026-09-16 spent
-#: 56 attempts and 2026-09-17 spent 50, both comfortably inside it, while
-#: the 2026-09-15 storm of 32,896 is 164x over it.
-_STREAM_ATTEMPT_CEILING_PER_DAY = 200
-
-#: Stand-down after the broker answers HTTP 429, in seconds.
-#: SOURCE: Alpaca states the limit as 200 requests per MINUTE. A retry
-#: inside the same minute that produced the 429 is asking the identical
-#: question of the identical exhausted window, so it cannot succeed — it can
-#: only deepen the throttle. A rate-limit rejection therefore stands down
-#: for the full published window rather than the 30s TRANSPORT cap, which is
-#: sized for a dropped connection and is the wrong instrument here. A
-#: server-sent Retry-After always wins over this when it is longer.
-_STREAM_RATE_LIMIT_STAND_DOWN_S = 60.0
-
-
-class _StreamAttemptBudget:
-    """Process-wide, day-keyed ceiling on trade_updates handshake attempts.
-
-    Deliberately module-level rather than per-hub. The 2026-09-18 backoff
-    guard kept its attempt counter in a closure, so every new hub started
-    again from zero and nothing ever accumulated across a day — which is
-    exactly how an unbounded loop hides behind a bounded-looking one.
-
-    Fail-CLOSED on the socket, not on the desk: exhausting the budget shuts
-    the OPTIONAL fast path and leaves the bounded REST fill-confirmation
-    path, which is what runs whenever this socket is off anyway.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._day: str | None = None
-        self._attempts = 0
-        self._alerted_day: str | None = None
-
-    def _roll(self, today: str) -> None:
-        if self._day != today:
-            self._day = today
-            self._attempts = 0
-
-    def record_attempt(self, today: str | None = None) -> int:
-        """Count one handshake failure; return attempts spent today."""
-        day = today or date.today().isoformat()
-        with self._lock:
-            self._roll(day)
-            self._attempts += 1
-            return self._attempts
-
-    def day_exhausted(self, today: str | None = None) -> bool:
-        day = today or date.today().isoformat()
-        with self._lock:
-            self._roll(day)
-            return self._attempts >= _STREAM_ATTEMPT_CEILING_PER_DAY
-
-    def attempts_today(self, today: str | None = None) -> int:
-        day = today or date.today().isoformat()
-        with self._lock:
-            self._roll(day)
-            return self._attempts
-
-    def claim_alert(self, today: str | None = None) -> bool:
-        """True exactly ONCE per day, for the caller that should page the owner."""
-        day = today or date.today().isoformat()
-        with self._lock:
-            self._roll(day)
-            if self._alerted_day == day:
-                return False
-            self._alerted_day = day
-            return True
-
-    def reset(self) -> None:
-        with self._lock:
-            self._day = None
-            self._attempts = 0
-            self._alerted_day = None
-
-
-#: One budget per process. The socket is account-wide and so is the limit
-#: it spends, so a per-broker-instance budget would not bound anything.
-_STREAM_ATTEMPT_BUDGET = _StreamAttemptBudget()
-
-
-def _stream_giveup_owner_message(reason: str) -> str:
-    """The owner-facing wording. Plain English, no jargon, no identifiers.
-
-    Says WHAT stopped, WHAT still works, and that nothing is required of
-    him — the desk keeps trading either way. He reads this on a phone.
-    """
-    return (
-        "Instant fill alerts switched off for today. "
-        f"The broker kept refusing the live connection ({reason}), so the desk "
-        "has stopped retrying it to avoid being rate-limited on the account. "
-        "Trading is unaffected: fills are being confirmed the slower way "
-        "instead, by checking with the broker on a timer. "
-        "It retries automatically tomorrow. Nothing for you to do."
-    )
-
-
-def _alert_stream_gave_up(reason: str) -> None:
-    """Loud, ONCE a day, on the log and to the owner. Never per attempt."""
-    if not _STREAM_ATTEMPT_BUDGET.claim_alert():
-        return
-    message = _stream_giveup_owner_message(reason)
-    logger.error(
-        "trade_updates websocket GIVING UP for today after %d handshake "
-        "attempts (%s) — falling back to the bounded REST fill path. %s",
-        _STREAM_ATTEMPT_BUDGET.attempts_today(), reason, message,
-    )
-    try:
-        from src.notifier import send_owner_alert
-
-        send_owner_alert(message)
-    except Exception:  # noqa: BLE001 - never let the alert sink break execution
-        logger.warning(
-            "could not push the trade_updates give-up alert to the owner",
-            exc_info=True,
-        )
-
-
-@dataclass(frozen=True)
-class LivePrice:
-    """A price WITH the provenance needed to decide whether to trust it.
-
-    `get_latest_price` answers "what is it worth" but throws away how it
-    knew: a real trade print, or a quote the tape has not confirmed. It also
-    never looked at WHEN the trade happened, so a thinly-traded name that
-    last printed yesterday, or any read outside market hours, came back
-    looking exactly like a live price. Callers that place or move real orders
-    need the difference; the reporting callers do not, which is why
-    `get_latest_price` keeps its old shape and this is additive.
-
-    `source` is one of `last_trade`, `quote_mid`, `quote_ask`, `quote_bid`.
-
-    Two freshness answers, because two kinds of caller need different
-    strictness and collapsing them into one flag would either block ordinary
-    trading or wave through yesterday's price:
-      - `is_today` — the provider stamped this value with the current ET
-        date, whether it is a trade or a quote. A live quote mid-session is
-        a legitimate fill reference; yesterday's anything is not.
-      - `is_today_print` — additionally a REAL trade print. Only this proves
-        the tape actually traded there, which is what deciding where a stop
-        belongs requires.
-    An unstamped or naive timestamp fails visible rather than passing as
-    live — the same rule `src.trading_calendar.live_price_is_today` already
-    applies to research snapshots.
-    """
-
-    price: float
-    source: str
-    trade_at: object | None
-    is_today: bool
-    is_today_print: bool
-
-
-@dataclass(frozen=True)
-class TradeStreamWarmup:
-    """Result of starting the kept trade_updates socket (handshake may still be in flight)."""
-
-    ready: bool
-    handshake_failed: bool
-    retried: bool
-
-
-class _HubWaiter:
-    """One fill/status wait attached to the kept trade_updates hub."""
-
-    def __init__(self, stop_states: frozenset):
-        self.stop_states = stop_states
-        self.event = threading.Event()
-        self.status: str | None = None
-
-
-class _TradeUpdatesHub:
-    """One trade_updates websocket kept across Risk → funding → fills.
-
-    Alpaca allows one trade_updates socket per account. Opening it only
-    inside `wait_for_order_*` made handshake serial after Risk and burned
-    the fill/funding timeout (measured 2026-09-16). Start during Risk so
-    auth overlaps the review; fill waits attach here instead of opening
-    a second socket. Auth budget starts at `started_mono` and uses
-    alpaca-py's reconnect max — not a second fitted clock.
-
-    Cross-process ownership is the account lease on the broker, not this
-    object. Frame-drain of `_last_status` is a same-process attach aid,
-    not the ownership fix. A wait on this hub is bounded by the caller's
-    timeout (the REST path's ceiling) — auth leftover is not added on
-    top, and a dead thread falls to REST instead of sitting out the
-    window.
-    """
-
-    def __init__(self, broker: "AlpacaBroker"):
-        self._broker = broker
-        self._stream = None
-        self._thread: threading.Thread | None = None
-        self._connected = threading.Event()
-        self._authed = threading.Event()
-        self._waiters_lock = threading.Lock()
-        self._waiters: dict[str, list[_HubWaiter]] = {}
-        self._last_status: dict[str, str] = {}
-        self.started_mono = time.monotonic()
-        self.handshake_hook = False
-        self._run_error: list[Exception] = []
-        self._stopped = False
-        self._dead = threading.Event()
-        self._gate = threading.Condition()
-
-    def _kick(self) -> None:
-        with self._gate:
-            self._gate.notify_all()
-
-    def start(self) -> None:
-        stream = TradingStream(
-            self._broker.api_key, self._broker.secret_key,
-            paper=self._broker._paper,
-        )
-        stream._qamc_authed = self._authed
-        stream._qamc_connected = self._connected
-        _orig_authed_set = self._authed.set
-        _orig_authed_clear = self._authed.clear
-
-        def _authed_set() -> None:
-            _orig_authed_set()
-            self._kick()
-
-        def _authed_clear() -> None:
-            _orig_authed_clear()
-            self._kick()
-
-        self._authed.set = _authed_set  # type: ignore[method-assign]
-        self._authed.clear = _authed_clear  # type: ignore[method-assign]
-        _install_trading_stream_auth_diagnostics(stream)
-        _install_trading_stream_reconnect_guard(stream)
-        self.handshake_hook = callable(getattr(stream, "_start_ws", None))
-        self._stream = stream
-
-        async def _handler(update) -> None:
-            try:
-                self._connected.set()
-                self._kick()
-                order = getattr(update, "order", None)
-                oid = str(getattr(order, "id", "") or "")
-                if not oid:
-                    return
-                status = str(getattr(getattr(order, "status", None), "value",
-                                     getattr(order, "status", ""))).lower()
-                to_signal: list[_HubWaiter] = []
-                with self._waiters_lock:
-                    self._last_status[oid] = status
-                    for waiter in self._waiters.get(oid, []):
-                        if status in waiter.stop_states:
-                            to_signal.append(waiter)
-                for waiter in to_signal:
-                    waiter.status = status
-                    waiter.event.set()
-                if to_signal:
-                    self._kick()
-            except Exception:
-                logger.warning(
-                    "trade_updates hub handler error",
-                    exc_info=True,
-                )
-
-        stream.subscribe_trade_updates(_handler)
-
-        def _run() -> None:
-            try:
-                stream.run()
-            except Exception as exc:
-                self._run_error.append(exc)
-            finally:
-                self._dead.set()
-                with self._waiters_lock:
-                    for bucket in self._waiters.values():
-                        for waiter in bucket:
-                            waiter.event.set()
-                self._kick()
-
-        self._thread = threading.Thread(
-            target=_run, name="trade-updates-hub", daemon=True,
-        )
-        self._thread.start()
-
-    def is_alive(self) -> bool:
-        thread = self._thread
-        return (
-            not self._stopped
-            and not self._dead.is_set()
-            and thread is not None
-            and thread.is_alive()
-        )
-
-    def authed(self) -> bool:
-        return self._authed.is_set() or self._connected.is_set()
-
-    def auth_remaining_s(self) -> float:
-        if not self.handshake_hook:
-            return float("inf")
-        left = _ALPACA_STREAM_AUTH_DEADLINE_S - (
-            time.monotonic() - self.started_mono
-        )
-        return max(0.0, float(left))
-
-    def wait(
-        self, order_id: str, timeout_seconds: float, *,
-        stop_states: frozenset,
-        poll_interval: float = 1.0,
-    ) -> tuple[str | None, bool]:
-        oid = str(order_id)
-        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
-        # Liveness cadence is the REST path's own poll interval — not a
-        # second clock. poll_interval<=0 waits the remaining window in
-        # one shot (the tests that drive REST with a zero sleep).
-        interval = (
-            float(poll_interval)
-            if poll_interval and float(poll_interval) > 0
-            else None
-        )
-
-        def _mark_auth_failed() -> None:
-            self._broker._last_stream_warmup = TradeStreamWarmup(
-                ready=False, handshake_failed=True, retried=True,
-            )
-
-        if self.handshake_hook and not self.authed():
-            remaining_auth = self.auth_remaining_s()
-            remaining_wait = deadline - time.monotonic()
-            if remaining_auth <= 0 or remaining_wait <= 0:
-                logger.warning(
-                    "trade_updates websocket did not authenticate within the "
-                    "encoded %.1fs budget (started at hub open) — REST for %s",
-                    _ALPACA_STREAM_AUTH_DEADLINE_S, oid,
-                )
-                _mark_auth_failed()
-                return None, False
-            try:
-                with self._gate:
-                    self._gate.wait_for(
-                        lambda: self.authed() or self._dead.is_set(),
-                        timeout=min(remaining_auth, remaining_wait),
-                    )
-            except Exception:
-                pass
-            if not self.authed():
-                logger.warning(
-                    "trade_updates websocket did not authenticate within "
-                    "the wait ceiling — REST for %s",
-                    oid,
-                )
-                _mark_auth_failed()
-                return None, False
-
-        waiter = _HubWaiter(stop_states)
-        with self._waiters_lock:
-            last = self._last_status.get(oid)
-            if last in stop_states:
-                return last, True
-            self._waiters.setdefault(oid, []).append(waiter)
-        try:
-            while waiter.status is None:
-                if not self.is_alive():
-                    break
-                if self.handshake_hook and not self.authed():
-                    # Handshake dropped after the auth gate. Do not sit the
-                    # rest of the fill window on a dead reconnect loop.
-                    _mark_auth_failed()
-                    return None, False
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    break
-                slice_s = left if interval is None else min(left, interval)
-                with self._gate:
-                    self._gate.wait_for(
-                        lambda: (
-                            waiter.status is not None
-                            or self._dead.is_set()
-                            or (self.handshake_hook and not self.authed())
-                        ),
-                        timeout=slice_s,
-                    )
-        finally:
-            with self._waiters_lock:
-                bucket = self._waiters.get(oid, [])
-                if waiter in bucket:
-                    bucket.remove(waiter)
-        if waiter.status is not None:
-            return waiter.status, True
-        if not self.is_alive():
-            # Thread died mid-wait: do not report the stream as fine.
-            # Callers REST-poll for the rest of the window.
-            return None, False
-        if self._run_error and not self._connected.is_set() and not self.authed():
-            return None, False
-        return None, True if (self._connected.is_set() or self.authed()) else False
-
-    def stop(self) -> None:
-        self._stopped = True
-        self._dead.set()
-        with self._waiters_lock:
-            for bucket in self._waiters.values():
-                for waiter in bucket:
-                    waiter.event.set()
-        self._kick()
-        stream = self._stream
-        if stream is not None:
-            try:
-                setattr(stream, "_should_run", False)
-            except Exception:
-                pass
-            try:
-                stream.stop()
-            except Exception:
-                pass
-        thread = self._thread
-        if thread is not None:
-            thread.join(timeout=5.0)
-
-    def thread_still_running(self) -> bool:
-        thread = self._thread
-        return thread is not None and thread.is_alive()
-
-
-class TradeStreamGaveUp(Exception):
-    """The socket has stopped retrying for the day and will not reopen.
-
-    Distinct from `TradeStreamAuthRejected`: that says the broker refused
-    a credential, this says the DESK refused to keep asking. Callers treat
-    it like any other handshake failure and fall through to the bounded
-    REST fill path; it exists so the log and the tests can tell "we gave
-    up" apart from "it failed again".
-    """
-
-
-class TradeStreamAuthRejected(Exception):
-    """The broker REFUSED the trade_updates credential, in the broker's own words.
-
-    Why this class exists (2026-09-18). For a fortnight this failure was
-    indistinguishable from a transport fault in the desk's logs, and that
-    is what cost six pull requests of connection re-sequencing:
-
-      * The installed SDK's `TradingStream._auth` compares
-        `msg["data"]["status"] != "authorized"` and then raises a bare
-        `ValueError("failed to authenticate")` — it DISCARDS the reply.
-        Alpaca actually sends
-        `{"stream":"authorization","data":{"message":"code=401, message=Unauthorized","status":"unauthorized"}}`
-        and that `message` never reached any log line.
-      * A `ValueError` carries no HTTP-status attribute, so
-        `_stream_http_status` returned None and the desk logged
-        `status=unknown` — which reads as "the socket would not open",
-        not "the password was wrong".
-
-    This exception carries Alpaca's own `message`/`status` plus a
-    NON-REVEALING credential fingerprint (length and first two characters
-    only). The secret is never touched, and the key is never logged.
-    """
-
-    def __init__(
-        self,
-        *,
-        broker_message: str | None,
-        broker_status: str | None,
-        credential: str | None,
-        cause: BaseException | None = None,
-    ) -> None:
-        self.broker_message = broker_message
-        self.broker_status = broker_status
-        self.credential_fingerprint = _credential_fingerprint(credential)
-        super().__init__(
-            "broker refused the trade_updates credential "
-            f"(broker said: {broker_message or 'no message returned'}; "
-            f"broker status: {broker_status or 'not stated'}; "
-            f"api key {self.credential_fingerprint})"
-        )
-        self.__cause__ = cause
-
-
-def _credential_fingerprint(credential: str | None) -> str:
-    """Length + first two characters of a key. NEVER the value, never a secret.
-
-    Enough to tell a real Alpaca key (26 chars, `PK`/`AK` prefix) from the
-    29-character literal containing the word `placeholder` that the process
-    actually held until 2026-09-18 — which is the single fact that would
-    have ended this investigation on day one. Two characters cannot
-    identify an account and cannot be replayed.
-    """
-    if not credential:
-        return "absent (empty)"
-    text = str(credential)
-    return f"length {len(text)}, starts '{text[:2]}'"
-
-
-def _parse_stream_auth_reply(raw: object) -> tuple[str | None, str | None]:
-    """(message, status) out of Alpaca's authorization frame. Never raises.
-
-    Shape per Alpaca's streaming docs and observed rejections:
-    `{"stream":"authorization","data":{"message":...,"status":...}}`.
-    Anything unparseable degrades to (None, None) — a missing diagnostic
-    must never replace the failure it was added to explain.
-    """
-    if raw is None:
-        return None, None
-    payload: object = raw
-    if isinstance(raw, (bytes, bytearray)):
-        try:
-            payload = raw.decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001
-            return None, None
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except Exception:  # noqa: BLE001
-            # Not JSON: the body itself is the most informative thing we have.
-            text = str(raw).strip()
-            return (text[:200] or None), None
-    if not isinstance(payload, dict):
-        return None, None
-    data = payload.get("data")
-    if not isinstance(data, dict):
-        data = payload
-    message = data.get("message")
-    status = data.get("status")
-    return (
-        str(message) if message is not None else None,
-        str(status) if status is not None else None,
-    )
-
-
-def _install_trading_stream_auth_diagnostics(stream: object) -> None:
-    """Keep Alpaca's authorization reply so a refusal can be logged verbatim.
-
-    Deliberately NOT a monkeypatch of the vendor SDK and NOT a
-    reimplementation of the auth protocol: the SDK's own `_auth` still
-    sends the frame and still decides the outcome. We only (a) record the
-    first frame the socket hands back during auth, via a one-shot wrapper
-    on this instance's `recv`, (b) translate the SDK's information-free
-    `ValueError` into `TradeStreamAuthRejected` carrying that frame, and
-    (c) on SUCCESS, surface any deprecation notice the broker put in that
-    same frame instead of discarding it — see
-    `_note_stream_auth_deprecation` and `_STREAM_AUTH_DEPRECATION_MARKER`.
-
-    Both wrappers are per-instance attributes on objects this module
-    constructed. Nothing in site-packages is edited. No timeout, retry
-    count or backoff is introduced — the reconnect guard owns all of those
-    and is untouched.
-
-    No-op when the object has no `_auth` (the test doubles).
-    """
-    original_auth = getattr(stream, "_auth", None)
-    if not callable(original_auth):
-        return
-
-    async def _send_current_auth_format() -> None:
-        """Send the format Alpaca asks for, and apply the SDK's own verdict.
-
-        Identical decision rule to alpaca-py's `_auth` — `data.status` must
-        read `authorized`, otherwise `ValueError`, which is what every
-        caller and test in this module already expects. Only the frame
-        differs, because only the frame is what the broker deprecated.
-        """
-        ws_now = getattr(stream, "_ws", None)
-        await ws_now.send(json.dumps({
-            "action": "auth",
-            "key": getattr(stream, "_api_key", None),
-            "secret": getattr(stream, "_secret_key", None),
-        }))
-        raw = await ws_now.recv()
-        msg = json.loads(raw)
-        data = msg.get("data") or {}
-        if data.get("status") != "authorized":
-            raise ValueError("failed to authenticate")
-
-    async def _auth():
-        captured: dict[str, object] = {}
-        ws = getattr(stream, "_ws", None)
-        original_recv = getattr(ws, "recv", None) if ws is not None else None
-        restored = False
-
-        def _restore() -> None:
-            nonlocal restored
-            if restored or ws is None or original_recv is None:
-                return
-            restored = True
-            try:
-                ws.recv = original_recv  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001
-                pass
-
-        if callable(original_recv):
-            async def _recv_once():
-                raw = await original_recv()
-                if "raw" not in captured:
-                    captured["raw"] = raw
-                    _restore()
-                return raw
-
-            try:
-                ws.recv = _recv_once  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001
-                original_recv = None
-
-        # WHICH FRAME THIS HANDSHAKE SENDS. New form unless a previous
-        # handshake on THIS stream was refused with it — see
-        # `_fell_back_to_deprecated_auth`.
-        use_deprecated = bool(getattr(stream, "_qamc_auth_fallback", False))
-        if getattr(stream, "_ws", None) is None:
-            # No socket to send our own frame on. Hand the whole handshake
-            # back to the vendor rather than raise a shape error the
-            # reconnect guard would report as a broker fault.
-            use_deprecated = True
-        attempt_auth = original_auth if use_deprecated else _send_current_auth_format
-        try:
-            # BOUND THE HANDSHAKE. alpaca-py's `_auth` awaits `self._ws.recv()`
-            # with NO timeout (verified in 0.43.5 and 0.44.0), while its own
-            # `_consume` bounds the identical call at 5s. So a broker that
-            # stops ANSWERING — which is one way the deprecated auth format
-            # could be retired — parks this thread in `_auth` forever: no
-            # exception, so the reconnect guard never counts a failure, the
-            # session ceiling never engages, the owner is never told, and
-            # `trade_updates_started()` keeps reporting a live hub. Fill waits
-            # would still fall to REST on their own deadline, so the desk
-            # survives; the socket would just lie about being up.
-            #
-            # Same budget the hub already gives the handshake
-            # (`_ALPACA_STREAM_AUTH_DEADLINE_S`), not a second clock. A
-            # timeout raises out of `_start_ws`, which is exactly the shape
-            # the ceiling already counts and gives up on.
-            await asyncio.wait_for(
-                attempt_auth(), timeout=_ALPACA_STREAM_AUTH_DEADLINE_S,
-            )
-        except asyncio.TimeoutError as exc:
-            message, status = _parse_stream_auth_reply(captured.get("raw"))
-            raise TradeStreamAuthRejected(
-                broker_message=(
-                    message
-                    or "no reply to the authentication frame within "
-                       f"{_ALPACA_STREAM_AUTH_DEADLINE_S:.0f}s"
-                ),
-                broker_status=status or "no reply",
-                credential=getattr(stream, "_api_key", None),
-                cause=exc,
-            ) from exc
-        except ValueError as exc:
-            if not use_deprecated:
-                # The CURRENT format was refused. Do NOT re-send on this
-                # socket: Alpaca closes a connection it refused, so a second
-                # frame here would fail for a reason that has nothing to do
-                # with the format and would look like a credential problem.
-                # Mark the stream instead; the reconnect guard's next
-                # handshake opens a fresh socket and sends the deprecated
-                # form, which is the one measured to work today. The ceiling
-                # still bounds the whole sequence.
-                _fell_back_to_deprecated_auth(stream, captured.get("raw"))
-            message, status = _parse_stream_auth_reply(captured.get("raw"))
-            raise TradeStreamAuthRejected(
-                broker_message=message,
-                broker_status=status,
-                credential=getattr(stream, "_api_key", None),
-                cause=exc,
-            ) from exc
-        else:
-            if not use_deprecated:
-                _note_current_auth_format_accepted()
-            _note_stream_auth_deprecation(captured.get("raw"))
-        finally:
-            _restore()
-
-    stream._auth = _auth
-
-
-def _fell_back_to_deprecated_auth(stream: object, raw: object) -> None:
-    """Mark a stream so its NEXT handshake sends the deprecated auth frame.
-
-    Loud, because this is the fail-visible half of the migration: the desk
-    is now sending a format the broker has said it is retiring, and the
-    only alternative to saying so is silently degrading.
-
-    Marked per-stream rather than per-process: a refusal is evidence about
-    the socket in front of us, and a process-wide latch would pin every
-    later socket to the old form on one bad handshake.
-    """
-    try:
-        setattr(stream, "_qamc_auth_fallback", True)
-    except Exception:  # noqa: BLE001
-        return
-    message, status = _parse_stream_auth_reply(raw)
-    logger.warning(
-        "trade_updates auth: the CURRENT format {\"action\":\"auth\"} was "
-        "refused (broker said: %s; broker status: %s) — the next handshake "
-        "falls back to the deprecated format on a fresh socket. If the "
-        "credential is good, this means the current format is not accepted "
-        "here and the fallback is load-bearing.",
-        message or "no message returned",
-        status or "not stated",
-    )
-
-
-def _note_current_auth_format_accepted() -> None:
-    """Record, once per process, that the non-deprecated frame was accepted.
-
-    Without this line there is no positive evidence in the desk's own log
-    that the migration took — only the absence of a failure, which is what
-    let a socket that never authenticated look healthy for three days.
-    """
-    global _stream_current_auth_format_logged
-    if _stream_current_auth_format_logged:
-        return
-    _stream_current_auth_format_logged = True
-    logger.info(
-        "trade_updates authenticated with the CURRENT auth format "
-        "({\"action\":\"auth\"}) — the deprecated format alpaca-py builds "
-        "was not used",
-    )
-
-
-def _note_stream_auth_deprecation(raw: object) -> None:
-    """Log Alpaca's deprecation notice once per process, in its own words.
-
-    The authorization reply to a SUCCESSFUL handshake was captured for the
-    refusal path and then thrown away, so the broker telling us our auth
-    format is going away reached the desk and left no trace. That is a
-    silent degradation waiting to happen: the day Alpaca enforces it, the
-    only record would be a handshake that stopped working.
-
-    WARNING, not ERROR: nothing is broken yet and nothing is required of
-    anyone today. Once per process, never per attempt — the 2026-09-15
-    storm is what a per-attempt line costs. Never raises, never carries a
-    credential (the reply frame contains neither).
-    """
-    global _stream_auth_deprecation_logged
-    if _stream_auth_deprecation_logged:
-        return
-    try:
-        message, _status = _parse_stream_auth_reply(raw)
-    except Exception:  # noqa: BLE001 - a diagnostic must not break the handshake
-        return
-    if not message or _STREAM_AUTH_DEPRECATION_MARKER not in message.lower():
-        return
-    _stream_auth_deprecation_logged = True
-    logger.warning(
-        "trade_updates auth format is DEPRECATED by the broker — broker "
-        "said: %s. The payload is built by alpaca-py "
-        "(TradingStream._auth), not by this desk, and the newest release "
-        "still sends the old form; the handshake is accepted today. See "
-        "_STREAM_AUTH_DEPRECATION_MARKER in this module.",
-        message,
-    )
-
-
-def _stream_http_status(exc: BaseException) -> int | None:
-    """Best-effort HTTP status on a websocket handshake error. Never raises."""
-    for attr in ("status_code", "status"):
-        val = getattr(exc, attr, None)
-        if isinstance(val, int):
-            return val
-    response = getattr(exc, "response", None)
-    if response is not None:
-        for attr in ("status_code", "status"):
-            val = getattr(response, attr, None)
-            if isinstance(val, int):
-                return val
-    match = re.search(r"\bHTTP\s*429\b|\bstatus(?:\s+code)?\s*[:=]?\s*429\b",
-                      str(exc), re.IGNORECASE)
-    if match:
-        return 429
-    return None
-
-
-def _stream_retry_after_seconds(exc: BaseException) -> float | None:
-    """Retry-After from a handshake 429, when the server sent one.
-
-    Numeric seconds only (same restriction as `_retry_after_hint_seconds`
-    in src/agents/base.py). The HTTP-date form is not worth parsing here:
-    the fill wait already has its own wall-clock ceiling.
-    """
-    sources = [exc, getattr(exc, "response", None)]
-    for src in sources:
-        if src is None:
-            continue
-        headers = getattr(src, "headers", None)
-        if headers is None:
-            continue
-        try:
-            raw = headers.get("retry-after") or headers.get("Retry-After")
-        except Exception:  # noqa: BLE001
-            raw = None
-        if raw is None:
-            continue
-        try:
-            hint = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if hint > 0:
-            return hint
-    match = re.search(
-        r'retry[_-]after["\']?\s*[:=]\s*"?(\d+(?:\.\d+)?)',
-        str(exc), re.IGNORECASE,
-    )
-    if match:
-        hint = float(match.group(1))
-        if hint > 0:
-            return hint
-    return None
-
-
-def _equal_jitter_backoff(attempt: int, min_backoff: float, max_backoff: float) -> float:
-    """Equal-jitter exponential backoff.
-
-    Same shape as `alpaca.common.utils.reconnect_delay`, which exists to
-    stop this exact reconnect/HTTP 429 storm. Copied so an older alpaca-py
-    that still sleeps 10ms in `_run_forever` still backs off.
-    """
-    if min_backoff <= 0:
-        min_backoff = _ALPACA_STREAM_RECONNECT_MIN_S
-    if max_backoff < min_backoff:
-        max_backoff = min_backoff
-    capped = min_backoff
-    for _ in range(max(0, int(attempt) - 1)):
-        if capped >= max_backoff / 2:
-            capped = max_backoff
-            break
-        capped *= 2
-    capped = min(max_backoff, capped)
-    return capped / 2 + random.uniform(0, capped / 2)
-
-
-def _trading_stream_reconnect_delay(
-    attempt: int, exc: BaseException, stream: object | None = None,
-) -> float:
-    """Seconds to wait before the next trade_updates handshake.
-
-    Prefer the server's Retry-After. Otherwise the stream's own reconnect
-    bounds (alpaca-py's fix for this storm), else that library's documented
-    1s/30s equal-jitter curve.
-    """
-    hint = _stream_retry_after_seconds(exc)
-    rate_limited = _stream_http_status(exc) == 429
-    if hint is not None:
-        # A 429 never waits LESS than the published rate-limit window, even
-        # when the server asks for less: retrying inside the window that
-        # produced it cannot clear it. See _STREAM_RATE_LIMIT_STAND_DOWN_S.
-        return max(hint, _STREAM_RATE_LIMIT_STAND_DOWN_S) if rate_limited else hint
-    if rate_limited:
-        # Rate limiting is an ACCOUNT-level fault, not a transport one. The
-        # transport curve below is sized for a dropped connection and is the
-        # wrong instrument: retrying fast is precisely what produced the
-        # 32,666 rejections of 2026-09-15.
-        return _STREAM_RATE_LIMIT_STAND_DOWN_S
-    min_b = float(getattr(stream, "_reconnect_min_backoff", 0) or 0) if stream else 0.0
-    max_b = float(getattr(stream, "_reconnect_max_backoff", 0) or 0) if stream else 0.0
-    if min_b <= 0:
-        min_b = _ALPACA_STREAM_RECONNECT_MIN_S
-    if max_b < min_b:
-        max_b = _ALPACA_STREAM_RECONNECT_MAX_S
-    return _equal_jitter_backoff(max(1, int(attempt)), min_b, max_b)
-
-
-def _install_trading_stream_reconnect_guard(stream: object) -> None:
-    """Stop older alpaca-py TradingStream clients tight-looping on HTTP 429.
-
-    Public `run()`/`stop()` stay the entry points. We wrap `_start_ws` so a
-    failed handshake waits (Retry-After, else equal-jitter backoff) before
-    the SDK's `_run_forever` retries. Newer alpaca-py already waits in
-    `_wait_before_reconnect`; wrapping then would double the delay, so we
-    only insert the sleep when that helper is missing. Logging is throttled
-    to once per backoff interval either way.
-
-    No-op when the object has no `_start_ws` (the test double).
-    """
-    original_start = getattr(stream, "_start_ws", None)
-    if not callable(original_start):
-        return
-    original_stop_ws = getattr(stream, "stop_ws", None)
-    sdk_backs_off = callable(getattr(stream, "_wait_before_reconnect", None))
-    failures = 0
-    last_log_mono = 0.0
-
-    async def stop_ws() -> None:
-        event = getattr(stream, "_reconnect_stop", None)
-        if event is None:
-            event = asyncio.Event()
-            setattr(stream, "_reconnect_stop", event)
-        event.set()
-        if callable(original_stop_ws):
-            await original_stop_ws()
-
-    async def start_ws():
-        nonlocal failures, last_log_mono
-        event = getattr(stream, "_reconnect_stop", None)
-        if event is None:
-            event = asyncio.Event()
-            setattr(stream, "_reconnect_stop", event)
-        if _STREAM_ATTEMPT_BUDGET.day_exhausted():
-            # The day's budget is already gone, so do not spend a handshake
-            # to rediscover that. Checked BEFORE the attempt: without this a
-            # new hub still costs one rejection every time it opens, which
-            # is how a "bounded" loop stays unbounded in aggregate.
-            try:
-                setattr(stream, "_should_run", False)
-            except Exception:  # noqa: BLE001
-                pass
-            event.set()
-            _alert_stream_gave_up("the daily retry budget is spent")
-            raise TradeStreamGaveUp(
-                "trade_updates retry budget for today is spent "
-                f"({_STREAM_ATTEMPT_CEILING_PER_DAY} handshake attempts) — "
-                "fills are confirmed by the bounded REST path"
-            )
-        try:
-            await original_start()
-            failures = 0
-            # The SDK's own post-auth line (`connected to: wss...`) is on the
-            # alpaca logger, which the desk's log does not carry — so across
-            # all retained production logs there is no line that says the
-            # socket ever worked, only 1,017 that say it did not. This is the
-            # desk's own affirmative record of a successful handshake.
-            logger.info(
-                "trade_updates websocket authenticated (endpoint=%s)",
-                getattr(stream, "_endpoint", "unknown"),
-            )
-            authed = getattr(stream, "_qamc_authed", None)
-            if authed is not None:
-                try:
-                    authed.set()
-                except Exception:
-                    pass
-        except Exception as exc:
-            authed = getattr(stream, "_qamc_authed", None)
-            if authed is not None:
-                try:
-                    authed.clear()
-                except Exception:
-                    pass
-            connected = getattr(stream, "_qamc_connected", None)
-            if connected is not None:
-                try:
-                    connected.clear()
-                except Exception:
-                    pass
-            failures += 1
-            spent_today = _STREAM_ATTEMPT_BUDGET.record_attempt()
-            status = _stream_http_status(exc)
-            # CEILINGS. Either one being reached ends the socket for good --
-            # the session ceiling because the backoff curve has saturated and
-            # further attempts cannot learn anything new, the daily ceiling
-            # because the account's published rate-limit budget belongs to
-            # the order path. Both are checked BEFORE the sleep so an
-            # exhausted budget never buys another wait.
-            if (
-                failures >= _STREAM_ATTEMPT_CEILING_PER_SESSION
-                or _STREAM_ATTEMPT_BUDGET.day_exhausted()
-            ):
-                if isinstance(exc, TradeStreamAuthRejected):
-                    reason = "it rejected our credential"
-                elif status == 429:
-                    reason = "it rate-limited us"
-                else:
-                    reason = "the connection would not open"
-                # Stop the SDK's own loop. `TradingStream._run_forever`
-                # re-checks `_should_run` at the top of every iteration and
-                # returns when it is false, so this ends the retry loop
-                # without abandoning the SDK's public run()/stop() contract.
-                try:
-                    setattr(stream, "_should_run", False)
-                except Exception:  # noqa: BLE001
-                    pass
-                event.set()
-                logger.warning(
-                    "trade_updates websocket give-up: %d attempts this "
-                    "session (ceiling %d), %d today (ceiling %d), last "
-                    "status=%s",
-                    failures, _STREAM_ATTEMPT_CEILING_PER_SESSION,
-                    spent_today, _STREAM_ATTEMPT_CEILING_PER_DAY,
-                    status if status is not None else "unknown",
-                )
-                _alert_stream_gave_up(reason)
-                raise
-            delay = _trading_stream_reconnect_delay(failures, exc, stream)
-            now = time.monotonic()
-            # Log at most once per wait: a 10ms loop otherwise reprints the
-            # same HTTP 429 thousands of times during one fill window.
-            if last_log_mono == 0.0 or now - last_log_mono >= delay:
-                if isinstance(exc, TradeStreamAuthRejected):
-                    # An application-level credential refusal, NOT a
-                    # handshake/transport fault. Reporting it as
-                    # "handshake failed (status=unknown)" is what sent six
-                    # previous pull requests at the connection's timing.
-                    logger.warning(
-                        "trade_updates authentication REJECTED by broker — "
-                        "broker said: %s (broker status: %s; api key %s); "
-                        "attempt %d, reconnect in %.1fs",
-                        exc.broker_message or "no message returned",
-                        exc.broker_status or "not stated",
-                        exc.credential_fingerprint,
-                        failures, delay,
-                    )
-                else:
-                    logger.warning(
-                        "trade_updates websocket handshake failed "
-                        "(status=%s, attempt %d); reconnect in %.1fs",
-                        status if status is not None else "unknown",
-                        failures, delay,
-                    )
-                last_log_mono = now
-            if not sdk_backs_off and delay > 0 and getattr(stream, "_should_run", True):
-                try:
-                    await asyncio.wait_for(event.wait(), timeout=delay)
-                except asyncio.TimeoutError:
-                    pass
-            raise
-
-    stream._start_ws = start_ws
-    if callable(original_stop_ws):
-        stream.stop_ws = stop_ws
-
-
-# Index ETFs that have no single sector — bucket them as "Broad".
-_INDEX_ETFS = {"SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "IVV"}
-
-# Sector / thematic ETFs → their canonical sector bucket.
-#
-# WHY (2026-07-16 audit): yfinance's `.info` carries no `sector` key for ETFs,
-# so _get_sector fell through to "Unknown" for every one of them. Two silent
-# failures followed: (1) `max_sector_pct` is gated on `new_sector != "Unknown"`
-# (risk/rules.py), so a BUY of XLV/SMH/... skipped the sector cap ENTIRELY;
-# (2) a held ETF carries sector="Unknown", so it contributed $0 to the sector
-# bucket of a same-sector single name — a book that is 30% XLV would let an
-# LLY BUY through as if Healthcare exposure were zero. Both directions of the
-# cap were dead for these symbols despite the universe being ~20% ETFs.
-#
-# Deterministic table, consulted BEFORE the network fetch: an ETF's sector is
-# a fact about the product, not something to rediscover per process.
-_ETF_SECTORS = {
-    # SPDR sector suite
-    "XLF": "Financial Services", "XLE": "Energy", "XLV": "Healthcare",
-    "XLI": "Industrials", "XLP": "Consumer Defensive", "XLY": "Consumer Cyclical",
-    "XLU": "Utilities", "XLRE": "Real Estate", "XLB": "Basic Materials",
-    "XLK": "Technology", "XLC": "Communication Services",
-    # Semiconductor / AI thematics
-    "SMH": "Technology", "SOXX": "Technology", "DRAM": "Technology",
-    "CHPX": "Technology",
-    # Inverse / leveraged index ETFs track a BROAD index — they have no sector
-    # of their own. (Their leverage is handled separately by the signed/gross
-    # multipliers in risk/rules.py.)
-    "SH": "Broad", "SDS": "Broad", "PSQ": "Broad", "SQQQ": "Broad",
-}
-
-# Default HTTP timeout for ALL Alpaca SDK calls (connect, read).
-# Without this, a stalled TCP connection to the broker can hang the process
-# for hours under launchd — observed 2026-04-17 when the evening job sat for
-# 13+ hours at the very first broker call.
-_BROKER_HTTP_TIMEOUT = 30.0
-_SECTOR_LOOKUP_TIMEOUT_S = 10  # per-symbol ceiling on yfinance .info hang in _get_sector
+# `_BROKER_HTTP_TIMEOUT` moved to src/execution/broker_parts/market_data.py (re-exported above).
 
 # 2026-09-10: 15 -> 30 -> 90. `wait_for_order_terminal` now watches Alpaca's
 # real-time trade_updates stream first (see that method) — a fill is
@@ -1328,454 +89,43 @@ _SECTOR_LOOKUP_TIMEOUT_S = 10  # per-symbol ceiling on yfinance .info hang in _g
 # added to every order.
 _ENTRY_FILL_TIMEOUT_S = 90.0
 
-# Spec §11.1, guard 1: "stop placement retries immediately and hard on
-# failure". IMMEDIATELY — at the point of failure, inside the same call,
-# not queued for the next sweep. The position is already open by the time
-# this runs; a retry that waits for the 30-minute reconcile is exactly the
-# indefinite gap the guard exists to prevent.
-#
-# THREE ATTEMPTS, ~2 SECONDS TOTAL, and both halves of that are deliberate:
-#
-#   * Three, because a failure worth retrying is transient — a 429 rate
-#     limit, a 5xx, a dropped connection, an eventual-consistency blip
-#     between the fill and the order being placeable — and those clear in
-#     under a second. A REJECTION (a bad price, an unsupported qty, a
-#     closed venue) is not worth retrying at all: the broker's answer is
-#     Alpaca's own `APIError.status_code` 400/404/422, it will not change
-#     between attempt 1 and attempt 3, and burning the burst on a doomed
-#     resubmit just delays the owner alert that is the real remedy.
-#     Board item 129: this ceiling used to be a blind `except Exception`
-#     that retried a 422 exactly like a 429, so a genuine rejection paid
-#     the full three-attempt, ~2-second cost anyway before anyone was
-#     told. `_is_terminal_broker_rejection` now reads the status code that
-#     was always on the exception and short-circuits on it, so only a
-#     failure with no such code (or a 429/5xx) spends the retry burst; a
-#     genuine rejection is reported after its FIRST attempt.
-#   * ~2 seconds, because the owner's own standard for this feature is that
-#     "the gap is brief upon entry". A retry loop long enough to matter
-#     would itself become the exposure it was added to close. Escalating to
-#     a human inside two seconds beats a fourth doomed attempt.
-_STOP_PLACEMENT_MAX_ATTEMPTS = 3
-_STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
+# `_STOP_PLACEMENT_MAX_ATTEMPTS` moved to src/execution/broker_parts/stop_place.py (re-exported above).
+# `_STOP_PLACEMENT_BACKOFF_S` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
-# Spec §11.1 HYBRID FRACTIONAL STOPS. Measured 2026-09-01 against the live
-# paper account — treat as broker capability, not account state:
-#
-#   * a fractional-quantity order MUST be time_in_force=DAY. A fractional
-#     GTC order is refused outright: "fractional orders must be DAY orders"
-#     (code 42210000).
-#   * a fractional order must be market, limit, stop or stop_limit. A
-#     fractional TRAILING stop is refused at EVERY tif.
-#   * ACCEPTED fractional: STOP/DAY, STOP_LIMIT/DAY, LIMIT/DAY.
-#   * whole-share GTC stops are unaffected (control probe accepted).
-#
-# So a position of N.f shares cannot be covered by one durable order. It is
-# covered by TWO: a GTC stop over floor(N.f) — which survives the close —
-# and a DAY stop over the sub-share remainder, which lapses at 16:00 ET by
-# design and is re-placed at the start of the next session. The remainder is
-# a deliberate overnight exposure the owner accepted in exchange for being
-# able to hold expensive names at all on a ~$10k account. NOT bounded under
-# one share — a position that is itself sub-one-share lapses in full (see
-# config/settings.yaml), and "the next session" only exists while the desk
-# is running: `src/coverage_watchdog.py` is what says so when it is not.
-#
-# `_derive_stop_tif` is where that rule is MECHANICALLY enforced: every stop
-# this class submits goes through `_submit_stop_limit_order`, and the tif is
-# derived from the quantity there rather than chosen by each caller. A path
-# that forgets the rule cannot exist, because no path gets to state it.
-_FRACTIONAL_QTY_EPSILON = 1e-9
+# `_FRACTIONAL_QTY_EPSILON` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 
-# Sentinel returned by `_amend_resting_stop_price` to mean "the in-place
-# amend was NOT attempted (or its outcome is unknown), so the caller must run
-# the legacy cancel+resubmit path". It is deliberately distinct from `None`,
-# which means "the broker REFUSED the amend, the original stop is still
-# resting, and cancelling it now would open a naked window for nothing".
-_AMEND_NOT_ATTEMPTED = object()
+# `_AMEND_NOT_ATTEMPTED` moved to src/execution/broker_parts/stop_amend.py (re-exported above).
 
 
-def _is_held_for_orders_error(exc: BaseException) -> bool:
-    """True when the broker refused because shares are reserved by an open order.
-
-    Alpaca surfaces this as `held_for_orders` and/or `insufficient qty
-    available` (2026-04-25 AMZN, 2026-09-16 BRK-B DAY sliver).
-    """
-    text = str(exc).lower()
-    return "held_for_orders" in text or "insufficient qty" in text
+# `_is_held_for_orders_error` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 
-def _is_terminal_broker_rejection(exc: BaseException) -> bool:
-    """True when the broker's OWN answer says retrying is pointless.
-
-    Board item 129: the retry burst below used to catch every exception
-    identically, so a deterministic rejection (bad price, unsupported qty,
-    a closed/unknown symbol — Alpaca's `APIError.status_code` 400/404/422,
-    same classification `get_asset_record` and `get_intraday_snapshots`
-    already use for exactly these codes) burned the full attempt budget
-    and backoff before alerting, exactly the "delays the owner alert"
-    outcome the retry ceiling was written to avoid. A 429/5xx/timeout/
-    dropped-connection failure has no such status (or a 429/5xx one) and
-    is genuinely worth another try, so only these codes short-circuit.
-    """
-    status_code = getattr(exc, "status_code", None)
-    return status_code in (400, 404, 422)
+# `_is_terminal_broker_rejection` moved to src/execution/broker_parts/stop_amend.py (re-exported above).
 
 
-def _is_terminal_submission_rejection(exc: BaseException) -> bool:
-    """True when Alpaca's OWN answer to a NEW-ORDER POST says it was refused.
-
-    SEPARATE from `_is_terminal_broker_rejection` on purpose. That one is the
-    retry classifier for STOP PLACEMENT (board item 129): its job is only to
-    decide whether another attempt is worth making, and a false "terminal"
-    there costs at worst an alert two seconds early. This one decides whether
-    `submit_order` SWALLOWS the failure and hands the caller a
-    `rejected_by_broker` result instead of raising — so a false positive here
-    means the desk records an order as refused while the broker may actually
-    be holding it. The two questions are not the same question, and the code
-    set was inherited rather than re-checked when #786 reused it.
-
-    Re-checked 2026-09-30 against Alpaca's own published documentation for
-    the create-order endpoint:
-
-      * https://docs.alpaca.markets/reference/postorder — the endpoint's own
-        reference lists exactly three responses: 200 (the created order),
-        403 ("Buying power or shares is not sufficient.") and 422 ("Input
-        parameters are not recognized."). 404 is NOT among them; neither
-        is 400.
-      * https://alpaca.markets/learn/how-to-fix-common-trading-api-errors-at-alpaca
-        — Alpaca's own troubleshooting guide for this API lists 422 for
-        order-parameter errors and 403 for account/risk-control refusals,
-        and names 400 only in a FUNDING flow, never for POST /v2/orders.
-
-    So 422 is the one code both sources establish as "this order submission
-    was rejected", and it is the only one that short-circuits here.
-
-      * 404 is DROPPED. Nothing fetched shows Alpaca returning it for a
-        creation POST; where 404 does appear in this API it means an
-        addressed resource was not found (looking up / cancelling /
-        replacing an order by id), which on a submission would read far more
-        like "created, then not found" than "definitely rejected" — the
-        dangerous direction, because treating a LIVE order as rejected leaves
-        real exposure the desk believes it does not have. It is not kept on
-        inheritance alone.
-      * 400 is DROPPED for the same reason: not documented for this endpoint
-        by either source above.
-      * 403 is deliberately NOT ADDED even though it IS documented here. It
-        is a different failure (buying power / shortability / PDT), the
-        callers' existing exception paths already handle it, and widening
-        what `submit_order` swallows is not what this classifier is for.
-
-    A code that is not established simply keeps the pre-#786 behaviour: the
-    exception propagates and the caller's own recovery runs.
-    """
-    return getattr(exc, "status_code", None) == 422
+# `_is_terminal_submission_rejection` moved to src/execution/broker_parts/order_desk.py (re-exported above).
 
 
-def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
-    """True when the broker refused a stop-MARKET specifically because the
-    order TYPE / TIME-IN-FORCE combination is not supported — the one
-    rejection that must degrade to a stop-LIMIT rather than to no stop.
-
-    Owner ratified 2026-09-25: protective stops are stop-MARKET (a guaranteed
-    exit — an elected stop fills instead of resting unfilled past a limit).
-    Every combo this desk submits (whole-share GTC, fractional DAY) is a
-    plain stop order and should be accepted (STOP/DAY was proven accepted by
-    the 2026-09-01 live probe); this classifier exists ONLY so a position is
-    never left unprotected if some combo turns out refused — a market-stop
-    refusal degrades to a stop-limit, never to no stop.
-
-    Deliberately NARROW so it cannot swallow an unrelated rejection:
-
-      * a held_for_orders / insufficient-qty refusal is NOT this — it is
-        handled by the retry / existing-stop path and must propagate;
-      * a garbage stop price is short-circuited before submit;
-      * only a 400/422 whose message names the order TYPE / CLASS or the
-        TIME-IN-FORCE as the problem qualifies.
-
-    A false positive here is harmless anyway: the stop-limit fallback submit
-    is UNGUARDED, so a rejection that was not really a type/tif problem still
-    surfaces as an exception from that second attempt — never swallowed,
-    only retried once as a stop-limit.
-    """
-    if _is_held_for_orders_error(exc):
-        return False
-    status_code = getattr(exc, "status_code", None)
-    if status_code not in (400, 422):
-        return False
-    text = str(exc).lower()
-    type_terms = (
-        "order type", "order_type", "order class", "order_class",
-        "time_in_force", "time in force",
-        "not supported", "unsupported",
-        "not permitted", "not allowed", "invalid order",
-    )
-    return any(term in text for term in type_terms)
+# `_is_unsupported_stop_market_rejection` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 
-def _split_protective_qty(qty) -> tuple[float, float]:
-    """Split a protective-stop quantity into (whole_shares, sub_share_remainder).
-
-    The whole part is what a durable GTC stop can cover; the remainder is what
-    only a DAY stop can. Both are returned as non-negative magnitudes — a
-    short's signed qty is normalised by its callers long before this.
-
-    The remainder is rounded to 9dp before the epsilon test so that float
-    representation error (10.5 - 10.0 landing at 0.5000000000000007, or a qty
-    of 7.000000000000001 arriving from a fill) cannot mint a phantom
-    sub-share leg for a position that is really whole.
-    """
-    try:
-        value = abs(float(qty))
-    except (TypeError, ValueError):
-        return 0.0, 0.0
-    if not math.isfinite(value) or value <= 0:
-        return 0.0, 0.0
-    whole = float(math.floor(value))
-    frac = round(value - whole, 9)
-    if frac <= _FRACTIONAL_QTY_EPSILON:
-        return whole, 0.0
-    if frac >= 1.0:  # only reachable via the round() above on a near-integer
-        return whole + 1.0, 0.0
-    return whole, frac
+# `_split_protective_qty` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 
-def _derive_stop_tif(qty) -> TimeInForce:
-    """The ONLY place a protective stop's time_in_force is decided.
-
-    Whole share count → GTC, the durable order that survives 16:00 ET and is
-    what every pre-fractional path already got. Fractional → DAY, because the
-    broker refuses any other tif for a fractional quantity (see the block
-    comment above). This is derived from the quantity rather than passed in
-    by the caller on purpose: a caller that could ask for a fractional GTC
-    would just be asking for a rejection, and the one thing this desk cannot
-    afford is a protective order that was refused while the code believed it
-    was placed.
-    """
-    _whole, frac = _split_protective_qty(qty)
-    return TimeInForce.DAY if frac > 0 else TimeInForce.GTC
+# `_derive_stop_tif` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 
-def _alpaca_symbol(symbol: str) -> str:
-    """Translate the universe's yfinance class-share spelling at Alpaca's edge.
-
-    BRK-B/BF-B are valid yfinance symbols while Alpaca expects BRK.B/BF.B.
-    Only the terminal one-letter class suffix is translated; ordinary hyphenated
-    symbols are left untouched instead of applying a broad, unsafe replacement.
-    """
-    value = str(symbol).strip().upper()
-    return re.sub(r"^([A-Z]+)-([A-Z])$", r"\1.\2", value)
+# `_alpaca_symbol` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 
-def _internal_symbol(symbol: str) -> str:
-    """Map Alpaca class-share spelling back to QAMC/yfinance canonical form."""
-    value = str(symbol).strip().upper()
-    return re.sub(r"^([A-Z]+)\.([A-Z])$", r"\1-\2", value)
+# `_internal_symbol` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 
-def _quantize_price(price: float | None) -> float | None:
-    """Round to Alpaca's minimum tick size: $0.01 for stocks ≥ $1, $0.0001 below.
-
-    The quote-midpoint in `get_latest_price` can produce sub-penny values like
-    $106.515; submitting that raw triggers Alpaca error 42210000 and the order
-    is rejected. Observed 2026-04-17 morning: UPS BUY @ $106.515 rejected.
-
-    NaN/Inf handling: NaN comparisons all return False, so the original
-    `price <= 0` guard fell through to `round(nan, ...)` = nan. The NaN
-    then propagated all the way to Alpaca's submit_order, which silently
-    broker-rejects the order and corrupts audit logs. Treat NaN/Inf as
-    None (no quotable price) — callers' existing
-    `price is not None and price > 0` checks then skip the order or
-    fall back to market. Zero/negative values are preserved unchanged
-    (pre-existing semantics: caller decides what to do with them).
-    """
-    if price is None:
-        return None
-    import math as _math
-    if not _math.isfinite(price):
-        return None
-    if price <= 0:
-        return price
-    return round(price, 2 if price >= 1.0 else 4)
+# `_quantize_price` moved to src/execution/broker_parts/stop_amend.py (re-exported above).
 
 
-def _install_http_timeout(client, timeout: float = _BROKER_HTTP_TIMEOUT) -> None:
-    """Inject a default timeout on an Alpaca SDK client's underlying requests.Session.
-
-    The SDK (alpaca-py 0.43.2) uses a requests.Session with no default timeout; each
-    call goes through RESTClient._one_request which just forwards opts. This patches
-    session.request to set timeout=30s if the caller didn't specify one.
-    """
-    session = getattr(client, "_session", None)
-    if session is None or getattr(session, "_quant_timeout_patched", False):
-        return
-    original_request = session.request
-
-    def _request_with_timeout(method, url, **kwargs):
-        kwargs.setdefault("timeout", timeout)
-        return original_request(method, url, **kwargs)
-
-    session.request = _request_with_timeout
-    session._quant_timeout_patched = True
-
-# Cache sector lookups to avoid repeated API calls
-_sector_cache: dict[str, str] = {}
-_sector_lock = threading.Lock()
-
-# WHY (2026-09-01 audit): a symbol whose sector never resolves reads
-# identically to one with no exception at all — both come back "Unknown"
-# from `_get_sector` with no further detail. That is fine for the two
-# existing consumers (they only needed a sector string), but it is not
-# enough for an owner-facing alert: "the network is having a bad day, this
-# will self-heal" and "this instrument has no sector to find" are different
-# situations and should not read the same. Best-effort, advisory only —
-# NOT part of the caching contract above (an unresolved symbol is still
-# never cached; see `_get_sector`'s docstring), keyed the same way as
-# `_sector_cache`, and simply absent/stale when `_get_sector` itself is
-# mocked out wholesale (tests) — `_sector_resolution_status_for` defaults
-# to "unknown_reason" rather than guessing.
-_sector_resolution_status: dict[str, str] = {}
-
-
-def _sector_resolution_status_for(symbol: str) -> str:
-    """Best-effort reason the last `_get_sector(symbol)` call in THIS
-    process came back "Unknown". One of:
-
-      "resolved"       - moot; the symbol has a real sector.
-      "lookup_failed"  - network error, timeout, or an empty response with
-                          no error — yfinance returning nothing for a real
-                          symbol is usually transient (see
-                          test_sector_canonicalization.py). Will retry.
-      "no_sector"      - the fetch itself succeeded and returned real data,
-                          just no `sector` field — this symbol may
-                          genuinely be unclassifiable (e.g. an ETF outside
-                          `_ETF_SECTORS`), not a network problem.
-      "unknown_reason" - no attempt recorded yet for this symbol in this
-                          process (fresh process, or a test/caller mocked
-                          `_get_sector` directly instead of going through
-                          the real fetch below).
-    """
-    with _sector_lock:
-        return _sector_resolution_status.get(symbol, "unknown_reason")
-
-
-def _canonicalize_sector(raw: str | None) -> str:
-    """Normalize yfinance / LLM sector strings to the 12-value canonical enum.
-
-    Returns "Unknown" for anything that can't be mapped — callers must decide
-    whether to skip or fall back. The MacroAnalysis pydantic model uses the
-    same alias table to self-heal LLM output.
-    """
-    if not raw:
-        return "Unknown"
-    s = str(raw).strip()
-    if s in _ALLOWED_SECTORS:
-        return s
-    canon = _SECTOR_ALIASES.get(s.lower())
-    if canon in _ALLOWED_SECTORS:
-        return canon
-    return "Unknown"
-
-
-def _get_sector(symbol: str) -> str:
-    """Look up sector for a symbol using yfinance. Thread-safe, cached per process.
-
-    Output is canonicalized to the 12-value MacroSectorGuidance enum (or "Unknown"
-    for un-classifiable names), so macro sector_guidance and position.sector share
-    a namespace.
-
-    Caching policy: only KNOWN sectors are cached. "Unknown" is returned but
-    NOT cached, so a transient yfinance outage gets re-diagnosed on every
-    call instead of freezing a stale verdict. Codex r11 P1: a one-shot
-    lookup miss in --mode live used to leave the symbol cap-exempt until
-    process restart. Re-querying yfinance on every call for an unresolved
-    symbol is a small overhead vs. silently disabling a hard risk rule.
-
-    2026-09-01 audit: "Unknown" used to mean EXEMPT from
-    `RiskRuleEngine.check`'s sector cap (rule 5 skipped the check outright).
-    80 of 101 universe symbols depend on this lookup with no offline
-    fallback, so a network blip silently switched the sector cap off for
-    most of the book. The gate now pools "Unknown" like any other sector
-    (`sector_side_gross(..., include_unknown=True)`) and checks it against
-    the same soft/hard cap pair instead of skipping it — see
-    `_sector_resolution_status_for` below for WHY a given call came back
-    "Unknown", which the gate surfaces as an owner-visible alert.
-    """
-    # _sector_lock guards ONLY the cache dict — never a network call.
-    # audit F3: the old code held _sector_lock for the entire function
-    # including the yfinance fetch, so one stuck symbol froze every
-    # sector lookup process-wide (risk/position sizing all serialize
-    # through _get_sector).
-    with _sector_lock:
-        cached = _sector_cache.get(symbol)
-    if cached is not None:
-        return cached
-    if symbol.upper() in _INDEX_ETFS:
-        with _sector_lock:
-            _sector_cache[symbol] = "Broad"
-        return "Broad"
-    # Sector/thematic ETFs: yfinance .info has no `sector` for ETFs, so
-    # without this table they resolve to "Unknown" and silently switch the
-    # sector cap OFF (see _ETF_SECTORS). Deterministic, offline, before the fetch.
-    etf_sector = _ETF_SECTORS.get(symbol.upper())
-    if etf_sector is not None:
-        with _sector_lock:
-            _sector_cache[symbol] = etf_sector
-        return etf_sector
-
-    # Set from inside the worker thread when the fetch itself raises — read
-    # back on the calling thread only after `.result()` returns (timeout
-    # aside, where we already know the answer without consulting this).
-    # Best-effort/advisory like the status table it feeds; not a
-    # correctness dependency of the timeout/lock guarantees below.
-    fetch_error = {"raised": False}
-
-    def _fetch():
-        try:
-            return yf.Ticker(symbol).info or {}
-        except Exception as e:
-            logger.warning("yfinance sector fetch raised for %s: %s", symbol, e)
-            fetch_error["raised"] = True
-            return {}
-
-    # yfinance .info has no hard upper bound — a stuck socket can hang
-    # for far longer than _SECTOR_LOOKUP_TIMEOUT_S. audit F3: do NOT use
-    # `with ThreadPoolExecutor(...)`; its __exit__ calls
-    # shutdown(wait=True), which re-blocks on the hung worker after the
-    # .result() timeout fires, making the ceiling illusory.
-    # shutdown(wait=False, cancel_futures=True) returns immediately. A
-    # still-running fetch leaks one worker thread — accepted vs. the
-    # prior behaviour of stalling the whole session.
-    ex = ThreadPoolExecutor(max_workers=1)
-    timed_out = False
-    try:
-        info = ex.submit(_fetch).result(timeout=_SECTOR_LOOKUP_TIMEOUT_S)
-    except FuturesTimeout:
-        logger.warning("yfinance sector lookup timed out for %s", symbol)
-        info = {}
-        timed_out = True
-    finally:
-        ex.shutdown(wait=False, cancel_futures=True)
-
-    raw = info.get("sector", "") if isinstance(info, dict) else ""
-    canonical = _canonicalize_sector(raw)
-    if canonical != "Unknown":
-        with _sector_lock:
-            _sector_cache[symbol] = canonical
-        return canonical
-
-    # Unresolved. Record WHY — never cached (see docstring above), same as
-    # the "Unknown" return itself, so a self-heal on the next call is
-    # re-diagnosed fresh rather than repeating a stale verdict.
-    # `not info` (fetch technically completed, no exception, but returned
-    # nothing) is bucketed with "lookup_failed": per
-    # test_sector_canonicalization.py's own finding, an empty response for
-    # a real symbol is usually transient, not proof the symbol lacks a
-    # sector. "no_sector" is reserved for a fetch that came back with real
-    # data and simply had no `sector` field in it.
-    status = "lookup_failed" if (timed_out or fetch_error["raised"] or not info) else "no_sector"
-    with _sector_lock:
-        _sector_resolution_status[symbol] = status
-    return canonical
+# `_install_http_timeout` moved to src/execution/broker_parts/market_data.py (re-exported above).
 
 
 #: Entry sides `place_entry_protection` will derive a protective side from.
@@ -1783,32 +133,9 @@ def _get_sector(symbol: str) -> str:
 #: `place_entry_protection`. "sell" and "sell_short" both open/extend a short.
 _ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
 
-#: Broker order states in which a resting order is REAL protection.
-#:
-#: One definition, two readers. `AlpacaBroker`'s scale-in reprotect used a
-#: local literal set; `TradingPipeline._finalize_protection_restore` needed
-#: exactly the same judgement and, on 2026-09-30, was given a second copy of
-#: the same four strings. Two copies of one rule is how this desk ended up
-#: with four different spellings of "a trigger was named", so they are one
-#: name now. Anything outside this set -- notably `pending_cancel`, which is
-#: what a just-cancelled stop still reports for a moment -- is a dying order
-#: and must never be counted as a stop that protects the position.
-PROTECTIVE_ORDER_ACTIVE_STATUSES = frozenset(
-    {"new", "accepted", "held", "partially_filled"}
-)
+# `PROTECTIVE_ORDER_ACTIVE_STATUSES` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
-#: Broker order states in which an order has been ACCEPTED BY US to the
-#: broker but is not yet working on the book. Alpaca's own enum names them:
-#: `pending_new` (received, not yet routed) and `accepted_for_bidding`.
-#:
-#: These are deliberately NOT in the set above. That set answers "is this
-#: resting order real protection right now?" and its reader
-#: (`replace_stop_loss`'s failure path) is looking at the AGED order book —
-#: an order that has been sitting there and is still `pending_new` is a
-#: stuck order, not coverage.
-PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES = frozenset(
-    {"pending_new", "accepted_for_bidding"}
-)
+# `PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 #: The set for the OTHER question: "would submitting another stop here
 #: create a SECOND live order against the same shares?"
@@ -1837,20 +164,28 @@ PROTECTIVE_ORDER_ALIVE_STATUSES = (
 )
 
 
-def real_broker_order_id(value: object) -> str:
-    """The broker order id in `value`, or "" when there ISN'T one.
+# `real_broker_order_id` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
-    `_snapshot_stop_order` stamps `"id": str(order.id)`, so an order that
-    reached it without an id carries the four-character string "None" —
-    which is TRUTHY. Every `if spec.get("id")` filter therefore counted a
-    missing id as a present one, and the resulting "id" then matched no
-    open order at the broker, ever. Judge the value, don't test the
-    stringified None for truthiness.
-    """
-    text = str(value or "").strip()
-    if not text or text.lower() in {"none", "null", "nan"}:
-        return ""
-    return text
+
+def _is_broker_class_shim(obj, attr: str) -> bool:
+    """True when `obj` is AlpacaBroker's own thin shim for `attr`, however it was
+    bound: a bound method (`__func__`), a `functools.partial` over the plain
+    function (`func`, unwrapped through nested partials), or the plain function."""
+    target = getattr(AlpacaBroker, attr, None)
+    if target is None:
+        return False
+    seen = obj
+    for _ in range(8):
+        if seen is target:
+            return True
+        if isinstance(seen, functools.partial):
+            seen = seen.func
+            continue
+        bound = getattr(seen, "__func__", None)
+        if bound is None:
+            return False
+        seen = bound
+    return False
 
 
 class AlpacaBroker:
@@ -1858,6 +193,9 @@ class AlpacaBroker:
     #: reads None rather than raising; `_kill_switch_active` already treats
     #: None as "no switch configured", i.e. inert.
     _kill_switch_path: "Path | None" = None
+    #: Set in __init__ (RiskConfig via src/pipeline.py). None = no notional
+    #: check; declared here so an instance built without __init__ reads None.
+    _max_position_pct: "float | None" = None
     #: Called with the facts of every protective stop the kill switch
     #: refuses (see `_submit_stop_limit_order`). The broker holds no
     #: database, so the owner of one wires this — `TradingPipeline` does, to
@@ -1879,8 +217,10 @@ class AlpacaBroker:
     def __init__(self, api_key: str, secret_key: str, paper: bool = True,
                  kill_switch_path: str | None = None,
                  trade_updates_lease_path: str | None = None,
-                 fill_stream_enabled: bool = False):
+                 fill_stream_enabled: bool = False,
+                 max_position_pct: float | None = None):
         self.api_key = api_key
+        self._max_position_pct = max_position_pct  # RiskConfig via src/pipeline.py; None = no notional check
         self.secret_key = secret_key
         self._paper = paper
         self.client = TradingClient(api_key, secret_key, paper=paper)
@@ -1954,423 +294,65 @@ class AlpacaBroker:
         """
         return self._kill_switch_path is not None and self._kill_switch_path.exists()
 
-    def get_account(self) -> dict:
-        acct = self.client.get_account()
-        portfolio_value = float(acct.portfolio_value)
-        # last_equity = equity at previous trading-day close (Alpaca-provided).
-        # Fall back to current portfolio value for brand-new accounts where
-        # Alpaca hasn't stamped a prior close yet.
-        raw_last = getattr(acct, "last_equity", None)
-        last_equity = float(raw_last) if raw_last else portfolio_value
-        if last_equity <= 0:
-            last_equity = portfolio_value
-        # `cash` can include same-day sale proceeds that are not yet
-        # settled (T+1 for equities) and therefore not safely spendable on
-        # a new BUY without implicitly drawing broker margin — Alpaca does
-        # not offer a true cash-account product; every account is a margin
-        # account, and accounts >= $2,000 equity get no unsettled-funds
-        # allowance. `non_marginable_buying_power` is Alpaca's own settled,
-        # non-margin-eligible buying-power figure — the correct "safe to
-        # spend right now, no margin" number for a cash-only design (2026-
-        # 08-19 SGOV/deployable-liquidity forensic).
-        raw_nmbp = getattr(acct, "non_marginable_buying_power", None)
-        non_marginable_buying_power = (
-            float(raw_nmbp) if raw_nmbp is not None else float(acct.cash)
-        )
-        return {
-            "cash": float(acct.cash),
-            "portfolio_value": portfolio_value,
-            "last_equity": last_equity,
-            "non_marginable_buying_power": non_marginable_buying_power,
-        }
-
-    def get_margin_interest_activities(self, after: str | None = None) -> list[dict]:
-        """Broker-truth `INT` (margin interest) account activity records.
-
-        Spec §11.2's empirical check: paper trading's own docs don't say
-        whether margin interest is simulated, so this reads Alpaca's
-        account-activities ledger directly rather than guessing. Feeds
-        `src.margin_interest.compare_estimate_to_broker_activity`,
-        which does the actual "confirmed / not confirmed" judgement — this
-        method only fetches and normalizes the raw records.
-
-        `after` is an optional ISO date/datetime string (Alpaca's
-        `after` query param) to scope the lookup to the relevant
-        overnight period; omitted, Alpaca returns its own recent-activity
-        default window.
-
-        The SDK version pinned here (alpaca-py) has no typed wrapper for
-        the activities endpoint, so this uses the low-level
-        `TradingClient.get()` REST passthrough against
-        `/v2/account/activities/INT` directly. Never raises — a broker
-        read failure here must not be able to break the caller (the
-        morning alert / dashboard read); it degrades to an empty list,
-        which `compare_estimate_to_broker_activity` reports as "not
-        confirmed", never as a fabricated "confirmed absent".
-        """
-        try:
-            params: dict = {}
-            if after:
-                params["after"] = after
-            raw = self.client.get("/account/activities/INT", params or None)
-        except Exception as exc:
-            logger.warning("get_margin_interest_activities failed: %s", exc)
-            return []
-        if not isinstance(raw, list):
-            return []
-        out: list[dict] = []
-        for item in raw:
-            try:
-                if not isinstance(item, dict):
-                    continue
-                out.append({
-                    "date": item.get("date"),
-                    "net_amount": float(item.get("net_amount") or 0.0),
-                    "description": item.get("description", ""),
-                    "activity_type": item.get("activity_type", "INT"),
-                })
-            except (TypeError, ValueError):
-                continue
-        return out
-
-    def get_all_account_activities(self, page_size: int = 100) -> list[dict]:
-        """The account's FULL activity ledger — every `JNLC` deposit/
-        withdrawal, `FILL`, `FEE`, `WH` withholding, `CFEE`, `DIV`, `INT`,
-        etc., for the life of the account. Unlike
-        `get_margin_interest_activities`, no `activity_type` filter — this
-        is the raw feed the margin-interest HISTORICAL BACKFILL replays to
-        reconstruct a daily cash balance (`src.margin_interest.
-        reconstruct_daily_cash_balances`), since Alpaca has no historical
-        cash or positions endpoint at all.
-
-        Same low-level `TradingClient.get()` REST passthrough as
-        `get_margin_interest_activities` (no typed SDK wrapper for this
-        endpoint), paged forward with Alpaca's own `page_token` cursor
-        (ascending by `id`, its documented order) until a short page ends
-        the list. Returns raw dicts, unfiltered and unnormalized — the
-        caller picks whichever fields it needs per activity type, since
-        different types carry different shapes (a `FILL` has `price`/
-        `qty`/`side`; a `JNLC`/`FEE`/`WH` has `net_amount`).
-
-        Never raises — a broker read failure here must not be able to
-        break a caller; it degrades to whatever was fetched before the
-        failure (empty list, on a first-page failure).
-        """
-        activities: list[dict] = []
-        page_token: str | None = None
-        try:
-            while True:
-                params: dict = {"direction": "asc", "page_size": page_size}
-                if page_token:
-                    params["page_token"] = page_token
-                page = self.client.get("/account/activities", params)
-                if not isinstance(page, list) or not page:
-                    break
-                activities.extend(a for a in page if isinstance(a, dict))
-                if len(page) < page_size:
-                    break
-                last_id = page[-1].get("id")
-                if not last_id:
-                    break
-                page_token = last_id
-        except Exception as exc:
-            logger.warning(
-                "get_all_account_activities failed after %d rows: %s",
-                len(activities), exc,
-            )
-        return activities
-
-    def get_transient_equity_eligibility(self, symbol: str) -> dict:
-        """Fail-closed broker eligibility for an out-of-universe candidate.
-
-        This is a read-only asset-directory lookup. It grants no trading
-        permission by itself; the Smart Money admission reducer combines it
-        with SEC provenance, price/history/liquidity checks, and a per-run cap.
-        """
-        canonical = _internal_symbol(_alpaca_symbol(symbol))
-        alpaca_symbol = _alpaca_symbol(canonical)
-        non_equity_suffixes = (".WS", ".WSA", ".WSB", ".U", ".UN", ".RT")
-        if alpaca_symbol.endswith(non_equity_suffixes):
-            return {"eligible": False, "reason": "unsupported_security_suffix"}
-        try:
-            asset = self.client.get_asset(alpaca_symbol)
-        except Exception as exc:
-            logger.warning("asset eligibility lookup failed for %s: %s", canonical, exc)
-            return {"eligible": False, "reason": "asset_lookup_failed"}
-
-        def _field(name, default=None):
-            if isinstance(asset, dict):
-                return asset.get(name, default)
-            return getattr(asset, name, default)
-
-        def _enum_text(value) -> str:
-            return str(getattr(value, "value", value) or "").strip().lower()
-
-        status = _enum_text(_field("status"))
-        asset_class = _enum_text(_field("asset_class", _field("class")))
-        exchange = _enum_text(_field("exchange"))
-        tradable = bool(_field("tradable", False))
-        name = str(_field("name", "") or "").strip()
-        name_lower = name.casefold()
-        unsupported_name_terms = (
-            " exchange traded fund", " etf", "fund shares", "warrant",
-            "preferred", "depositary", " american deposit", " unit", " rights",
+    def _account_reads(self) -> AccountReads:
+        """Thin shim: builds the standalone reads object from this broker's collaborators
+        (bodies moved to src/execution/broker_parts/account_reads.py). Built per call so a
+        client swapped after construction is what the body sees; the caches are this
+        broker's own dicts, mutated in place."""
+        return AccountReads(
+            client=self.client,
+            shortable_cache=self._shortable_cache,
+            fractionable_cache=self._fractionable_cache,
+            trading_day_cache=self._trading_day_cache,
+            session_open_cache=self._session_open_cache,
+            # `_session_edge` is itself a moved body -- same recursion guard as
+            # `_stop_placer`: pass it ONLY when it is NOT this broker's shim.
+            **{
+                kw: getattr(self, attr)
+                for kw, attr in (("session_edge", "_session_edge"),)
+                if not _is_broker_class_shim(getattr(self, attr, None), attr)
+            },
         )
 
-        reason = None
-        if status != "active":
-            reason = "asset_not_active"
-        elif asset_class not in {"us_equity", "assetclass.us_equity"}:
-            reason = "not_us_equity"
-        elif not tradable:
-            reason = "asset_not_tradable"
-        elif exchange not in {
-            "nyse", "nasdaq", "amex", "arca", "bats",
-            "assetexchange.nyse", "assetexchange.nasdaq",
-            "assetexchange.amex", "assetexchange.arca", "assetexchange.bats",
-        }:
-            reason = "unsupported_exchange"
-        elif any(term in name_lower for term in unsupported_name_terms):
-            reason = "not_common_stock"
+    def get_account(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_account(*args, **kwargs)
 
-        return {
-            "eligible": reason is None,
-            "reason": reason or "eligible",
-            "symbol": canonical,
-            "name": name,
-            "exchange": exchange,
-        }
+    def get_margin_interest_activities(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_margin_interest_activities(*args, **kwargs)
 
-    def list_assets(self) -> list[dict]:
-        """Every ACTIVE US-equity asset record, raw, one read-only GET.
+    def get_all_account_activities(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_all_account_activities(*args, **kwargs)
 
-        The universe screen's candidate source (`src/universe_screen.py`).
-        Raw REST rather than the SDK's `get_all_assets` because the pinned
-        alpaca-py (0.44) `Asset` model has no `borrow_status`, the field
-        Alpaca now names as the borrow flag (it deprecated `easy_to_borrow`
-        on 2026-06-22 with a 2026-09-22 sunset —
-        https://docs.alpaca.markets/reference/get-v2-assets-1). Raises on
-        failure: an empty list would read as "every admitted name was
-        delisted", which it is not.
-        """
-        raw = self.client.get(
-            "/assets", {"status": "active", "asset_class": "us_equity"},
-        )
-        if not isinstance(raw, list):
-            raise RuntimeError(f"asset list returned {type(raw).__name__}, not a list")
-        return [item for item in raw if isinstance(item, dict)]
+    def get_transient_equity_eligibility(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_transient_equity_eligibility(*args, **kwargs)
 
-    def get_asset_record(self, symbol: str) -> dict | None:
-        """One raw asset record; None ONLY when the broker says it does not
-        exist (HTTP 404/422). Any other failure raises, so a network blip is
-        never mistaken for a delisting."""
-        alpaca_symbol = _alpaca_symbol(_internal_symbol(_alpaca_symbol(symbol)))
-        try:
-            raw = self.client.get(f"/assets/{alpaca_symbol}")
-        except Exception as exc:
-            status = getattr(exc, "status_code", None)
-            if status in (404, 422):
-                return None
-            raise
-        return raw if isinstance(raw, dict) else None
+    def list_assets(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().list_assets(*args, **kwargs)
 
-    def get_shortability(self, symbol: str) -> dict:
-        """D6 (Stage 3): the borrow gate. Alpaca's per-asset `shortable` and
-        `easy_to_borrow` flags, cached for the life of this broker instance
-        exactly like `get_transient_equity_eligibility` is (a read-only
-        asset-directory fact that does not change intra-session).
+    def get_asset_record(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_asset_record(*args, **kwargs)
 
-        A short may open ONLY when BOTH flags are true. This is paper
-        trading against IEX data: a hard-to-borrow name fills unrealistically
-        in paper and its borrow cost is not modeled anywhere in this system,
-        so restricting to easy-to-borrow names is what keeps measured paper
-        results transferable to live capital. `reason` distinguishes the two
-        ways a short can be refused ("not_shortable" vs "hard_to_borrow") so
-        the caller can log which one fired.
+    def get_shortability(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_shortability(*args, **kwargs)
 
-        Fails CLOSED: an API error or an unreadable/unknown symbol reports
-        shortable=False / easy_to_borrow=False — a short is refused, never
-        guessed open.
-        """
-        canonical = _internal_symbol(_alpaca_symbol(symbol))
-        cached = self._shortable_cache.get(canonical)
-        if cached is not None:
-            return cached
+    def get_fractionability(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_fractionability(*args, **kwargs)
 
-        alpaca_symbol = _alpaca_symbol(canonical)
-        try:
-            asset = self.client.get_asset(alpaca_symbol)
-        except Exception as exc:
-            logger.warning("shortability lookup failed for %s: %s", canonical, exc)
-            result = {
-                "shortable": False, "easy_to_borrow": False,
-                "reason": "asset_lookup_failed", "symbol": canonical,
-            }
-            self._shortable_cache[canonical] = result
-            return result
+    def get_recent_daily_closes(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_recent_daily_closes(*args, **kwargs)
 
-        def _field(name, default=None):
-            if isinstance(asset, dict):
-                return asset.get(name, default)
-            return getattr(asset, name, default)
-
-        shortable = bool(_field("shortable", False))
-        easy_to_borrow = bool(_field("easy_to_borrow", False))
-        if shortable and easy_to_borrow:
-            reason = "eligible"
-        elif not shortable and not easy_to_borrow:
-            reason = "not_shortable"  # the more specific/common of the two
-        elif not shortable:
-            reason = "not_shortable"
-        else:
-            reason = "hard_to_borrow"
-        result = {
-            "shortable": shortable, "easy_to_borrow": easy_to_borrow,
-            "reason": reason, "symbol": canonical,
-        }
-        self._shortable_cache[canonical] = result
-        return result
-
-    def get_fractionability(self, symbol: str) -> dict:
-        """Spec §11.1: is this symbol tradeable in fractional quantities?
-
-        Alpaca publishes a per-asset `fractionable` flag in the same
-        asset-directory record `get_shortability` reads, and it is cached the
-        same way for the same reason — it does not change intra-session.
-
-        **Fails CLOSED, and that is the whole point.** An API error, an
-        unknown symbol, an asset record with no `fractionable` field at all —
-        every one of those reports `fractionable=False`, and the caller sizes
-        in whole shares. Fractional-by-assumption is the failure this guard
-        exists to prevent: a fractional order on a non-fractionable name is
-        rejected outright by the broker, which turns an approved trade into
-        no trade at all and hides the reason in an order-rejection log.
-
-        `reason` distinguishes the three ways the answer can be no, so the
-        caller can log which one fired rather than a bare False.
-        """
-        canonical = _internal_symbol(_alpaca_symbol(symbol))
-        cached = self._fractionable_cache.get(canonical)
-        if cached is not None:
-            return cached
-
-        alpaca_symbol = _alpaca_symbol(canonical)
-        try:
-            asset = self.client.get_asset(alpaca_symbol)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "fractionability lookup failed for %s: %s — sizing in WHOLE "
-                "shares (fail closed)", canonical, exc,
-            )
-            result = {
-                "fractionable": False, "reason": "asset_lookup_failed",
-                "symbol": canonical,
-            }
-            self._fractionable_cache[canonical] = result
-            return result
-
-        def _field(name, default=None):
-            if isinstance(asset, dict):
-                return asset.get(name, default)
-            return getattr(asset, name, default)
-
-        raw = _field("fractionable", None)
-        if raw is None:
-            # The record came back but carries no flag — an older API shape,
-            # a stub, a mock. "Absent" is not "true".
-            result = {
-                "fractionable": False, "reason": "fractionable_unknown",
-                "symbol": canonical,
-            }
-        elif bool(raw):
-            result = {
-                "fractionable": True, "reason": "fractionable",
-                "symbol": canonical,
-            }
-        else:
-            result = {
-                "fractionable": False, "reason": "not_fractionable",
-                "symbol": canonical,
-            }
-        self._fractionable_cache[canonical] = result
-        return result
-
-    def get_recent_daily_closes(self, lookback_days: int = 10) -> list[tuple[str, float]]:
-        """Official regular-session daily CLOSE equity for recent trading days.
-
-        Source: Alpaca portfolio_history at 1D timeframe with
-        ``extended_hours=False`` — the broker-side source of truth for
-        end-of-regular-session equity. Crucially, unlike ``account.last_equity``
-        (which is the PRIOR trading day's close, and so is one day stale at the
-        20:00 ET evening run), the LAST point here is TODAY's 4pm close. That
-        lets the evening report show a true close-to-close ("4pm-to-4pm") P&L
-        instead of a close-to-8pm-after-hours broker diff.
-
-        Returns ``[(et_date_str, close_equity), ...]`` oldest-first, or ``[]``
-        on any failure (caller falls back to the real-time P&L). Best-effort —
-        never raises. ET-date mapping mirrors scripts/export_alpaca_trades.py.
-        """
-        from datetime import datetime, timedelta, timezone
-        from src.util.time import ET
-        try:
-            from alpaca.trading.requests import GetPortfolioHistoryRequest
-            now = datetime.now(timezone.utc)
-            req = GetPortfolioHistoryRequest(
-                timeframe="1D", extended_hours=False,
-                start=now - timedelta(days=lookback_days * 2 + 10), end=now,
-            )
-            history = self.client.get_portfolio_history(history_filter=req)
-        except Exception as exc:
-            logger.warning("get_recent_daily_closes: portfolio_history failed: %s", exc)
-            return []
-        timestamps = getattr(history, "timestamp", None) or []
-        equities = getattr(history, "equity", None) or []
-        out: list[tuple[str, float]] = []
-        for i, ts in enumerate(timestamps):
-            if i >= len(equities) or equities[i] is None:
-                continue
-            try:
-                d = datetime.fromtimestamp(int(ts), tz=timezone.utc).astimezone(ET).strftime("%Y-%m-%d")
-                eq = float(equities[i])
-            except (TypeError, ValueError, OSError):
-                continue
-            out.append((d, eq))
-        return out
-
-    def get_full_portfolio_history(self) -> list[tuple[str, float]]:
-        """All available 1D equity history from Alpaca portfolio_history.
-
-        Returns [(et_date_str, equity), ...] oldest-first, skipping zero
-        rows (pre-funding). Best-effort — never raises.
-        """
-        from datetime import datetime, timedelta, timezone
-        from src.util.time import ET
-        try:
-            from alpaca.trading.requests import GetPortfolioHistoryRequest
-            now = datetime.now(timezone.utc)
-            req = GetPortfolioHistoryRequest(
-                timeframe="1D", extended_hours=False,
-                start=now - timedelta(days=365 * 5), end=now,
-            )
-            history = self.client.get_portfolio_history(history_filter=req)
-        except Exception as exc:
-            logger.warning("get_full_portfolio_history failed: %s", exc)
-            return []
-        timestamps = getattr(history, "timestamp", None) or []
-        equities = getattr(history, "equity", None) or []
-        out: list[tuple[str, float]] = []
-        for i, ts in enumerate(timestamps):
-            if i >= len(equities) or equities[i] is None:
-                continue
-            try:
-                d = datetime.fromtimestamp(int(ts), tz=timezone.utc).astimezone(ET).strftime("%Y-%m-%d")
-                eq = float(equities[i])
-            except (TypeError, ValueError, OSError):
-                continue
-            if eq == 0.0:
-                continue  # skip pre-funding rows
-            out.append((d, eq))
-        return out
+    def get_full_portfolio_history(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_full_portfolio_history(*args, **kwargs)
 
     def get_positions(self) -> list[Position]:
         raw_positions = self.client.get_all_positions()
@@ -2385,921 +367,127 @@ class AlpacaBroker:
                 market_value=float(p.market_value),
                 unrealized_pnl=float(p.unrealized_pl),
                 unrealized_intraday_pnl=float(getattr(p, "unrealized_intraday_pl", 0) or 0),
-                sector=_get_sector(symbol),
+                sector=_sector_reference._get_sector(symbol),
             ))
         return positions
 
-    def is_trading_day(self, on_date: date | None = None) -> bool:
-        from src.util.time import et_today
-        target_date = on_date or et_today()  # ET trading-day, not host-local
-        # Per-date result cache. is_trading_day is hit on every session
-        # entry, in scheduler `_run_safe`, in some agent helpers — easily
-        # 20+ Alpaca calendar lookups per session for a fact that's
-        # invariant within the day. The result is also stable: a date
-        # either is or isn't a trading day, decided by the exchange
-        # calendar months in advance, so per-date cache is safe.
-        cached = self._trading_day_cache.get(target_date)
-        if cached is not None:
-            return cached
-        try:
-            from alpaca.trading.requests import GetCalendarRequest
+    def is_trading_day(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().is_trading_day(*args, **kwargs)
 
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=target_date, end=target_date)
-            )
-            result = bool(calendar)
-        except Exception as exc:
-            logger.warning(
-                "Failed to confirm trading calendar for %s; assuming market closed: %s",
-                target_date, exc,
-            )
-            # Do NOT cache a failed lookup — caller's session is already
-            # aborted (we returned False) but a transient API hiccup
-            # shouldn't poison the cache for the rest of the day.
-            return False
-        self._trading_day_cache[target_date] = result
-        return result
+    def trading_sessions_held(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().trading_sessions_held(*args, **kwargs)
 
-    def trading_sessions_held(self, start: date, end: date) -> int:
-        """Holiday-aware companion to `trading_calendar.trading_sessions_held`.
+    def is_last_trading_day_of_quarter(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().is_last_trading_day_of_quarter(*args, **kwargs)
 
-        Same semantics — trading sessions strictly AFTER `start` up to and
-        including `end` — but backed by Alpaca's real market calendar
-        instead of a Mon-Fri weekday heuristic, so a market holiday inside
-        the range (Thanksgiving, July 4, Christmas, Good Friday, etc.) is
-        correctly excluded instead of silently counted as a session.
+    def get_session_close(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_session_close(*args, **kwargs)
 
-        Item 165: `trading_calendar.trading_sessions_held` documents this
-        exact gap (a holiday-crossing week overstates the count by one per
-        holiday) as an accepted CHEAP approximation for callers with no
-        broker connection. Callers that hold a broker instance — this one —
-        should prefer this method instead.
+    def get_session_open(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_session_open(*args, **kwargs)
 
-        Falls back to the weekday approximation on a calendar-query failure
-        (transient API hiccup) rather than raising, matching the existing
-        `is_trading_day` failure posture of degrading, not aborting.
+    def _session_edge(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads()._session_edge(*args, **kwargs)
 
-        Returns 0 if `end` is not after `start`.
-        """
-        if end <= start:
-            return 0
-        from datetime import timedelta as _td
 
-        from alpaca.trading.requests import GetCalendarRequest
-
-        query_start = start + _td(days=1)
-        try:
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=query_start, end=end)
-            ) or []
-            return len(calendar)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "trading_sessions_held: calendar query failed (%s -> %s); "
-                "falling back to weekday count: %s", start, end, exc,
-            )
-            from src.trading_calendar import (
-                trading_sessions_held as _weekday_sessions_held,
-            )
-            return _weekday_sessions_held(start, end)
-
-    def is_last_trading_day_of_quarter(self, on_date: date | None = None) -> bool:
-        """True when `on_date` (default today-ET) is the last OPEN session
-        of the current quarter — respects holidays and early closes.
-
-        Uses Alpaca's calendar. For Mar/Jun/Sep/Dec only (other months
-        short-circuit to False, saving the API call). Queries the
-        calendar from today through month-end; we're the last trading
-        day iff no later entry exists.
-
-        The quarterly meta-reflector launchd wrapper relies on this:
-        Dec 31 is often Sunday, and the real "last trading day" can be
-        Dec 29 or Dec 30 depending on the calendar. Weekday heuristic
-        alone gets this wrong.
-        """
-        from src.trading_calendar import _QUARTER_END_MONTHS, et_today
-        from datetime import date as _date, timedelta as _td
-        target = on_date or et_today()
-        if target.month not in _QUARTER_END_MONTHS:
-            return False
-        # Build month-end date for range query (last day of target.month).
-        if target.month == 12:
-            next_month_start = _date(target.year + 1, 1, 1)
-        else:
-            next_month_start = _date(target.year, target.month + 1, 1)
-        month_end = next_month_start - _td(days=1)
-        try:
-            from alpaca.trading.requests import GetCalendarRequest
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=target, end=month_end)
-            ) or []
-        except Exception as exc:
-            logger.warning(
-                "is_last_trading_day_of_quarter: calendar query failed (%s → %s): %s",
-                target, month_end, exc,
-            )
-            return False
-        if not calendar:
-            return False
-        # Alpaca returns one entry per trading day in [start, end]. We are the
-        # last iff the LAST entry's date equals target.
-        last_entry = calendar[-1]
-        last_date = getattr(last_entry, "date", None)
-        if last_date is None:
-            return False
-        return last_date == target
-
-    def get_session_close(self, on_date: date | None = None):
-        """Return the ET-aware datetime when the regular cash session closes
-        today, or None if today is not a trading day (weekend / holiday) or
-        the calendar lookup fails.
-
-        Distinct from `is_trading_day` because it answers a different
-        question: "WHEN does today close?" — needed to detect early-close
-        days (Thanksgiving Friday 13:00, July 3 half-day) where the
-        launchd-scheduled midday (13:00-14:30 ET) and close (15:30-15:55 ET)
-        sessions would otherwise keep running against an already-shut market.
-        """
-        return self._session_edge(on_date, "close")
-
-    def get_session_open(self, on_date: date | None = None):
-        """Return the ET-aware datetime when the regular cash session OPENS
-        today, or None if today is not a trading day or the calendar lookup
-        fails.
-
-        The mirror of `get_session_close`, and added for the same reason it
-        was: a caller that needs to know whether the market is open right
-        now must read BOTH edges from the exchange calendar rather than
-        assume 09:30. Late opens exist, and the desk's rule is that a timing
-        boundary comes from the calendar the broker publishes, never from a
-        number typed here. `src/coverage_watchdog.py` is the caller that
-        needs it — it may only place an order while the session is genuinely
-        open, and it runs from a unit that fires hours before the bell.
-        """
-        return self._session_edge(on_date, "open")
-
-    def _session_edge(self, on_date: date | None, attr: str):
-        """Shared body of `get_session_close` / `get_session_open` — one
-        calendar read, one attribute. Two copies of this would be two places
-        for the naive-datetime bug below to be fixed in."""
-        from src.trading_calendar import ET, et_today
-        from datetime import datetime as _dt
-        target_date = on_date or et_today()
-        try:
-            from alpaca.trading.requests import GetCalendarRequest
-
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=target_date, end=target_date)
-            )
-        except Exception as exc:
-            logger.warning(
-                "get_session_%s: calendar query failed for %s: %s",
-                attr, target_date, exc,
-            )
-            return None
-        if not calendar:
-            return None
-        entry = calendar[0]
-        entry_date = getattr(entry, "date", None)
-        entry_edge = getattr(entry, attr, None)
-        if entry_date is None or entry_edge is None:
-            return None
-        try:
-            # alpaca-py's Calendar.close/.open is a full naive DATETIME
-            # (already carrying the session date + ET wall clock), NOT a
-            # time. The old code called datetime.combine(date, datetime),
-            # which ALWAYS raised TypeError → logged → returned None → the
-            # early-close guard never fired and midday/close ran against a
-            # shut market on half-days, submitting orders that can only be
-            # rejected (2026-07-16 audit: dead code since it was written;
-            # the test that was supposed to cover it used a MagicMock with
-            # a `time`). Keep the `time` branch for the older SDK shape.
-            if isinstance(entry_edge, _dt):
-                return entry_edge.replace(tzinfo=ET)
-            return _dt.combine(entry_date, entry_edge).replace(tzinfo=ET)
-        except Exception as exc:
-            logger.warning(
-                "get_session_%s: failed to resolve date=%s %s=%s: %s",
-                attr, entry_date, attr, entry_edge, exc,
-            )
-            return None
-
-    def get_session_open(self, on_date: date | None = None):
-        """Return the ET-aware datetime when the regular cash session opens
-        on `on_date` (default today), or None if `on_date` is not a trading
-        day (weekend / holiday) or the calendar lookup fails.
-
-        Mirrors `get_session_close` (same Alpaca calendar entry, same
-        naive-datetime-vs-time SDK-shape handling), but answers "when did
-        the session START" rather than "when does it end" — needed to tell
-        a genuinely stale quote from a live one (docs/WORK.md item 15):
-        a last-trade timestamp from BEFORE today's session open, seen while
-        the market is open, means nothing has traded for this symbol yet
-        today, not that the feed is current. This is an exchange session
-        boundary Alpaca's own calendar supplies — never a fitted duration.
-
-        Cached per-date (a trading day's open time is fixed by the exchange
-        calendar in advance, same invariance argument as `is_trading_day`)
-        since this may be called on every `/quotes` read.
-        """
-        from src.trading_calendar import ET, et_today
-        from datetime import datetime as _dt
-        target_date = on_date or et_today()
-        if target_date in self._session_open_cache:
-            return self._session_open_cache[target_date]
-        try:
-            from alpaca.trading.requests import GetCalendarRequest
-
-            calendar = self.client.get_calendar(
-                GetCalendarRequest(start=target_date, end=target_date)
-            )
-        except Exception as exc:
-            logger.warning(
-                "get_session_open: calendar query failed for %s: %s",
-                target_date, exc,
-            )
-            return None  # transient failure — do not cache
-        if not calendar:
-            self._session_open_cache[target_date] = None
-            return None
-        entry = calendar[0]
-        entry_date = getattr(entry, "date", None)
-        entry_open = getattr(entry, "open", None)
-        if entry_date is None or entry_open is None:
-            self._session_open_cache[target_date] = None
-            return None
-        try:
-            if isinstance(entry_open, _dt):
-                result = entry_open.replace(tzinfo=ET)
-            else:
-                result = _dt.combine(entry_date, entry_open).replace(tzinfo=ET)
-        except Exception as exc:
-            logger.warning(
-                "get_session_open: failed to resolve date=%s open=%s: %s",
-                entry_date, entry_open, exc,
-            )
-            result = None
-        self._session_open_cache[target_date] = result
-        return result
-
-    def get_top_movers(self, n: int = 15) -> list[dict]:
-        """Return today's top-`n` gainers from Alpaca's screener.
-
-        Output shape: ``[{"symbol": str, "percent_change": float, "price": float}, ...]``,
-        sorted by `percent_change` descending as Alpaca returns them.
-        Returns `[]` on any failure (SDK error, auth issue, empty response) —
-        the missed-opportunity digest falls back to universe-only when the
-        top-movers signal is unavailable, so a degraded screener must never
-        crash an evening run. Caller treats [] as "no top-mover augmentation".
-        """
-        if n <= 0:
-            return []
-        try:
-            # Lazy import + lazy-construct so the extra SDK client is only
-            # instantiated the first time evening actually runs a digest.
-            from alpaca.data.historical.screener import ScreenerClient
-            from alpaca.data.requests import MarketMoversRequest
-        except ImportError as exc:
-            logger.warning("get_top_movers: screener SDK unavailable: %s", exc)
-            return []
-
-        if not hasattr(self, "_screener_client") or self._screener_client is None:
-            try:
-                self._screener_client = ScreenerClient(
-                    api_key=self.api_key, secret_key=self.secret_key,
+    def _market_data(self) -> MarketData:
+        """Thin shim: builds the standalone object from this broker's collaborators
+        (bodies moved to src/execution/broker_parts/market_data.py). Built per call so a
+        collaborator set or swapped after construction is what the body sees."""
+        return MarketData(
+            state=self,
+            api_key=self.api_key,
+            secret_key=self.secret_key,
+            closed_bars_cache=self._closed_bars_cache,
+            closed_bars_cache_lock=self._closed_bars_cache_lock,
+            # The collaborators below are themselves moved bodies, so the object
+            # already owns them. Passing this broker's same-named shim would
+            # overwrite its own method with a function that calls straight back
+            # into it -- infinite recursion. Same guard as `_stop_placer`: pass one
+            # ONLY when it is NOT that shim.
+            **{
+                kw: getattr(self, attr)
+                for kw, attr in (
+                    ("get_latest_price_stamped", "get_latest_price_stamped"),
+                    ("_extract_symbol_payload", "_extract_symbol_payload"),
                 )
-                _install_http_timeout(self._screener_client)
-            except Exception as exc:
-                logger.warning("get_top_movers: ScreenerClient init failed: %s", exc)
-                self._screener_client = None
-                return []
+                if not _is_broker_class_shim(getattr(self, attr, None), attr)
+            },
+        )
 
-        try:
-            movers = self._screener_client.get_market_movers(
-                MarketMoversRequest(top=n)
-            )
-        except Exception as exc:
-            logger.warning("get_top_movers: screener API call failed: %s", exc)
-            return []
+    def get_top_movers(self, *args, **kwargs):
+        return self._market_data().get_top_movers(*args, **kwargs)
 
-        gainers = getattr(movers, "gainers", None) or []
-        out: list[dict] = []
-        # Suffix filter — Alpaca's screener returns warrants (.WS, .WSA,
-        # .WSB), units (.U, .UN), and rights (.RT) alongside common stock.
-        # None of these are tradable as equities in our system, and
-        # yfinance 404s on them later — flooding logs with errors. Drop
-        # them at the boundary instead. Class shares (e.g. BRK.B) keep
-        # the dot but are legitimate; the universe uses the dash form
-        # (BRK-B), so any .A/.B from the screener would also be skipped
-        # if we filtered too aggressively. So we only filter the
-        # non-equity-instrument suffixes explicitly.
-        _NON_EQUITY_SUFFIXES = (".WS", ".WSA", ".WSB", ".U", ".UN", ".RT")
-        for m in gainers:
-            sym = getattr(m, "symbol", None)
-            if not sym:
-                continue
-            alpaca_sym_upper = str(sym).upper()
-            if alpaca_sym_upper.endswith(_NON_EQUITY_SUFFIXES):
-                continue
-            sym_upper = _internal_symbol(alpaca_sym_upper)
-            try:
-                out.append({
-                    "symbol": sym_upper,
-                    "percent_change": float(getattr(m, "percent_change", 0) or 0),
-                    "price": float(getattr(m, "price", 0) or 0),
-                })
-            except (TypeError, ValueError):
-                continue
-            if len(out) >= n:
-                break
-        return out
+    def get_bars(self, *args, **kwargs):
+        return self._market_data().get_bars(*args, **kwargs)
 
-    def get_bars(self, symbol: str, lookback_days: int = 120) -> list:
-        """Fetch daily OHLCV bars from Alpaca as a list[OHLCV].
+    def get_intraday_chart_bars(self, *args, **kwargs):
+        return self._market_data().get_intraday_chart_bars(*args, **kwargs)
 
-        Used by MarketDataProvider as a fallback when yfinance returns empty.
-        Same shape as MarketDataProvider.get_ohlcv so the caller is oblivious
-        to which source answered. Returns [] on any error.
-        """
-        from datetime import timedelta as _td
-        from src.models import OHLCV
-        from src.util.time import et_today
+    def get_latest_price_stamped(self, *args, **kwargs):
+        return self._market_data().get_latest_price_stamped(*args, **kwargs)
 
-        try:
-            if self._data_client is None:
-                from alpaca.data.historical.stock import StockHistoricalDataClient
-                self._data_client = StockHistoricalDataClient(
-                    self.api_key, self.secret_key
+    def get_latest_price(self, *args, **kwargs):
+        return self._market_data().get_latest_price(*args, **kwargs)
+
+    def get_latest_quote(self, *args, **kwargs):
+        return self._market_data().get_latest_quote(*args, **kwargs)
+
+    def get_intraday_snapshots(self, *args, **kwargs):
+        return self._market_data().get_intraday_snapshots(*args, **kwargs)
+
+    def _extract_symbol_payload(self, *args, **kwargs):
+        return self._market_data()._extract_symbol_payload(*args, **kwargs)
+
+
+    def get_current_stop_price(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/account_reads.py."""
+        return self._account_reads().get_current_stop_price(*args, **kwargs)
+
+
+    def _order_desk(self) -> OrderDesk:
+        """Thin shim: builds the standalone order desk from this broker's collaborators
+        (bodies moved to src/execution/broker_parts/order_desk.py). Built per call so a
+        client or cluster method swapped after construction is what the body sees."""
+        return OrderDesk(
+            client=self.client,
+            kill_switch_active=self._kill_switch_active,
+            kill_switch_path=self._kill_switch_path,
+            wait_for_order_status=self._wait_for_order_status,
+            wait_for_order_status_via_stream=self._wait_for_order_status_via_stream,
+            get_latest_price=self.get_latest_price,
+            order_terminal_states=self._ORDER_TERMINAL_STATES,
+            order_replaceable_states=self._ORDER_REPLACEABLE_STATES,
+            max_replacement_hops=self._MAX_REPLACEMENT_HOPS,
+            get_fractionability=self.get_fractionability,
+            get_account=self.get_account,
+            max_position_pct=self._max_position_pct,
+            # Four collaborators below are themselves moved bodies, so the desk
+            # already owns them. Passing this broker's same-named shim would
+            # overwrite the desk's own method with a function that calls
+            # straight back into the desk -- infinite recursion. Same guard
+            # as `_stop_placer`: pass one ONLY when it is NOT that shim.
+            **{
+                kw: getattr(self, attr)
+                for kw, attr in (
+                    ("wait_for_order_terminal", "wait_for_order_terminal"),
+                    ("resolve_replacement_chain", "resolve_replacement_chain"),
+                    ("wait_for_order_status_via_polling", "_wait_for_order_status_via_polling"),
+                    ("list_open_entry_orders_checked", "list_open_entry_orders_checked"),
                 )
-                _install_http_timeout(self._data_client)
+                if not _is_broker_class_shim(getattr(self, attr, None), attr)
+            },
+        )
 
-            from alpaca.data.requests import StockBarsRequest
-            from alpaca.data.timeframe import TimeFrame
-
-            end = et_today()
-            start = end - _td(days=lookback_days)
-            alpaca_symbol = _alpaca_symbol(symbol)
-
-            def _fetch(range_start, range_end) -> list[OHLCV]:
-                req = StockBarsRequest(
-                    symbol_or_symbols=alpaca_symbol,
-                    timeframe=TimeFrame.Day,
-                    start=range_start,
-                    end=range_end,
-                )
-                raw = self._data_client.get_stock_bars(req)
-                # SDK returns a BarSet-like object with .data = {symbol: [Bar, ...]}
-                bars_list = None
-                if hasattr(raw, "data") and isinstance(raw.data, dict):
-                    bars_list = raw.data.get(alpaca_symbol)
-                elif isinstance(raw, dict):
-                    bars_list = raw.get(alpaca_symbol)
-                if not bars_list:
-                    return []
-                parsed: list[OHLCV] = []
-                for b in bars_list:
-                    ts = getattr(b, "timestamp", None)
-                    d = ts.date() if ts is not None else None
-                    if d is None:
-                        continue
-                    try:
-                        parsed.append(OHLCV(
-                            date=d,
-                            open=float(getattr(b, "open", 0) or 0),
-                            high=float(getattr(b, "high", 0) or 0),
-                            low=float(getattr(b, "low", 0) or 0),
-                            close=float(getattr(b, "close", 0) or 0),
-                            volume=int(getattr(b, "volume", 0) or 0),
-                        ))
-                    except (TypeError, ValueError):
-                        continue
-                return parsed
-
-            # Caching: only the portion of the range up to (and including)
-            # yesterday can possibly be closed/complete daily bars — Alpaca
-            # doesn't publish a daily bar for a session that hasn't closed
-            # yet, but we still never trust "today" to a cache: today's
-            # entry is always fetched fresh, never cached. Keyed so a new
-            # calendar day naturally invalidates the historical portion.
-            hist_end = end - _td(days=1)
-            cache_key = ("daily", alpaca_symbol, start, hist_end)
-            with self._closed_bars_cache_lock:
-                cached_hist = self._closed_bars_cache.get(cache_key)
-
-            if cached_hist is None:
-                # Cache miss: one fetch over the whole range, exactly as
-                # before caching existed. Split the result so only the
-                # closed (pre-today) portion is stored.
-                all_bars = _fetch(start, end)
-                cached_hist = [b for b in all_bars if b.date <= hist_end]
-                with self._closed_bars_cache_lock:
-                    self._closed_bars_cache[cache_key] = cached_hist
-                return all_bars
-
-            # Cache hit: reuse the closed history, only refetch today.
-            today_bars = _fetch(end, end)
-            out = cached_hist + [b for b in today_bars if b.date not in {c.date for c in cached_hist}]
-            out.sort(key=lambda b: b.date)
-            return out
-        except Exception as e:
-            logger.warning("broker.get_bars failed for %s: %s", symbol, e)
-            return []
-
-    def get_intraday_chart_bars(
-        self, symbol: str, timeframe: str, lookback_days: int
-    ) -> list[dict]:
-        """Fetch read-only intraday OHLCV bars for Mission Control.
-
-        This deliberately does not participate in trading decisions or
-        execution. It uses the same Alpaca historical-data client as
-        ``get_bars`` but preserves each bar's timestamp so Lightweight
-        Charts can render 5m/15m/1h candles and align execution markers.
-        Returns [] on any failure, matching the broker's other market-data
-        degradation contracts.
-        """
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-        from src.util.time import ET
-
-        try:
-            if self._data_client is None:
-                from alpaca.data.historical.stock import StockHistoricalDataClient
-                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
-                _install_http_timeout(self._data_client)
-
-            from alpaca.data.enums import DataFeed
-            from alpaca.data.requests import StockBarsRequest
-            from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-
-            timeframe_value = {
-                "5m": TimeFrame(5, TimeFrameUnit.Minute),
-                "15m": TimeFrame(15, TimeFrameUnit.Minute),
-                "1h": TimeFrame.Hour,
-            }.get(timeframe)
-            if timeframe_value is None:
-                return []
-
-            now = _dt.now(_tz.utc)
-            start = now - _td(days=lookback_days)
-            alpaca_symbol = _alpaca_symbol(symbol)
-
-            def _fetch(range_start, range_end) -> list[dict]:
-                req = StockBarsRequest(
-                    symbol_or_symbols=alpaca_symbol,
-                    timeframe=timeframe_value,
-                    start=range_start,
-                    end=range_end,
-                    # This account's market-data plan is entitled to IEX, not
-                    # SIP. Leaving feed unset resolves to SIP server-side for
-                    # sub-daily bars and comes back with zero bars for every
-                    # symbol/range — silently, since Alpaca doesn't error, it
-                    # just returns nothing. Daily bars (get_bars, above) aren't
-                    # feed-gated the same way, which is why only this intraday
-                    # path needs it.
-                    feed=DataFeed.IEX,
-                )
-                raw = self._data_client.get_stock_bars(req)
-                if hasattr(raw, "data") and isinstance(raw.data, dict):
-                    bars_list = raw.data.get(alpaca_symbol)
-                elif isinstance(raw, dict):
-                    bars_list = raw.get(alpaca_symbol)
-                else:
-                    bars_list = None
-                if not bars_list:
-                    return []
-
-                parsed: list[dict] = []
-                for bar in bars_list:
-                    ts = getattr(bar, "timestamp", None)
-                    if ts is None:
-                        continue
-                    try:
-                        parsed.append(
-                            {
-                                "date": ts.astimezone(ET).date().isoformat(),
-                                "timestamp": ts.isoformat(),
-                                "open": float(getattr(bar, "open", 0) or 0),
-                                "high": float(getattr(bar, "high", 0) or 0),
-                                "low": float(getattr(bar, "low", 0) or 0),
-                                "close": float(getattr(bar, "close", 0) or 0),
-                                "volume": int(getattr(bar, "volume", 0) or 0),
-                            }
-                        )
-                    except (TypeError, ValueError):
-                        continue
-                return parsed
-
-            # Caching: only prior, fully-closed trading days are cacheable.
-            # Today (including its still-forming candle) is always fetched
-            # fresh, never cached. The historical portion is cached keyed
-            # by the (rounded-to-day) start and today's date, so a new
-            # calendar day naturally invalidates it. The start is rounded
-            # down to ET midnight of its day (a superset of the exact
-            # `start` instant) purely so repeated calls with the same
-            # lookback_days share one cache key — outside trading hours
-            # Alpaca simply returns nothing extra, so this never fabricates
-            # data, only makes the cache key stable.
-            today_et = now.astimezone(ET).date()
-            today_midnight_et = _dt.combine(today_et, _dt.min.time(), tzinfo=ET)
-            start_day_et = start.astimezone(ET).date()
-            cache_key = ("intraday", alpaca_symbol, timeframe, start_day_et, today_et)
-
-            with self._closed_bars_cache_lock:
-                cached_hist = self._closed_bars_cache.get(cache_key)
-
-            if cached_hist is None:
-                # Cache miss: one fetch over the whole range, exactly as
-                # before caching existed. Split the result so only the
-                # portion from before today is stored.
-                all_bars = _fetch(start, now)
-                cached_hist = [b for b in all_bars if b["date"] < today_et.isoformat()]
-                with self._closed_bars_cache_lock:
-                    self._closed_bars_cache[cache_key] = cached_hist
-                return all_bars
-
-            # Cache hit: reuse the closed history, only refetch today.
-            today_bars = _fetch(today_midnight_et, now)
-            out = cached_hist + today_bars
-            out.sort(key=lambda b: b["timestamp"])
-            return out
-        except Exception as exc:
-            logger.warning(
-                "broker.get_intraday_chart_bars failed for %s/%s: %s",
-                symbol, timeframe, exc,
-            )
-            return []
-
-    def get_current_stop_price(self, symbol: str) -> float | None:
-        """Return the price of the current open protective stop for a symbol.
-
-        Used by ex-dividend / trailing-stop logic that needs to read the
-        existing stop before replacing it. Returns None if no protective stop
-        exists or the query fails.
-
-        A long's protective stop is a SELL stop (fires as price falls); a
-        short's is a BUY stop (fires as price rises) — Alpaca has no notion
-        of "protective" on the order itself, only a side. Pre-shorts this
-        method only ever looked for SELL stops, so a short's live BUY stop
-        was invisible here: every downstream caller (ex-div shift,
-        deterministic trailing, coverage repair) would treat a perfectly
-        protected short as unprotected. This reads BOTH sides and reports
-        whichever one is actually present, rather than asking the caller to
-        already know the position's direction.
-        """
-        try:
-            from alpaca.trading.requests import GetOrdersRequest
-            orders = self.client.get_orders(
-                filter=GetOrdersRequest(
-                    status=QueryOrderStatus.OPEN,
-                    symbols=[_alpaca_symbol(symbol)], nested=True,
-                )
-            )
-        except Exception as exc:
-            logger.warning("get_current_stop_price failed for %s: %s", symbol, exc)
-            return None
-        # Post-#102 a position can legitimately carry SEVERAL stops on its
-        # protective side (one GTC stop per entry BUY, plus coverage-repair
-        # top-ups). The old first-match return made "the current stop"
-        # depend on Alpaca's ordering (audit round 2). Consumers want the
-        # level that fires FIRST; qty-weighting would blur two real levels
-        # into a price nobody set.
-        sell_stops: list[float] = []
-        buy_stops: list[float] = []
-        for order in orders or []:
-            order_type = str(getattr(getattr(order, "order_type", None), "value",
-                                    getattr(order, "order_type", ""))).lower()
-            order_side = str(getattr(getattr(order, "side", None), "value",
-                                    getattr(order, "side", ""))).lower()
-            if "stop" not in order_type:
-                continue
-            try:
-                px = float(getattr(order, "stop_price", 0) or 0)
-            except (TypeError, ValueError):
-                continue
-            if px <= 0:
-                continue
-            if order_side == "sell":
-                sell_stops.append(px)
-            elif order_side == "buy":
-                buy_stops.append(px)
-        if sell_stops and buy_stops:
-            # A single symbol can't legitimately be both long and short at
-            # once, so seeing both sides means stale orders survived a
-            # direction flip. Reporting either price would be a guess about
-            # which one is "the" stop — fail closed instead so the caller
-            # treats this as needing attention rather than trusting a number
-            # that might belong to a position that no longer exists.
-            logger.error(
-                "get_current_stop_price: %s carries BOTH sell-stops %s and "
-                "buy-stops %s — direction is ambiguous, refusing to report "
-                "a stop", symbol, sorted(sell_stops), sorted(buy_stops),
-            )
-            return None
-        if sell_stops:
-            if len(sell_stops) > 1:
-                logger.info(
-                    "get_current_stop_price: %s carries %d sell-stops %s — "
-                    "reporting the highest (first to trigger on the way "
-                    "down)", symbol, len(sell_stops), sorted(sell_stops),
-                )
-            return max(sell_stops)
-        if buy_stops:
-            if len(buy_stops) > 1:
-                logger.info(
-                    "get_current_stop_price: %s carries %d buy-stops %s — "
-                    "reporting the lowest (first to trigger on the way up)",
-                    symbol, len(buy_stops), sorted(buy_stops),
-                )
-            return min(buy_stops)
-        return None
-
-    def get_latest_price_stamped(self, symbol: str) -> "LivePrice | None":
-        """Latest price for `symbol` with its source and freshness attached.
-
-        Order of preference is unchanged from `get_latest_price`: a real
-        trade print first, then the quote midpoint, then a single side. What
-        is new is that the answer says which one it was and whether the trade
-        print is from today's ET date, so a caller about to place or move an
-        order can refuse a stale number instead of silently acting on it.
-        """
-        try:
-            if self._data_client is None:
-                from alpaca.data.historical.stock import StockHistoricalDataClient
-
-                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
-                _install_http_timeout(self._data_client)
-
-            from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
-
-            alpaca_symbol = _alpaca_symbol(symbol)
-
-            trade_data = self._data_client.get_stock_latest_trade(
-                StockLatestTradeRequest(symbol_or_symbols=alpaca_symbol)
-            )
-            trade = self._extract_symbol_payload(trade_data, alpaca_symbol)
-            trade_price = float(getattr(trade, "price", 0) or 0)
-            if trade_price > 0:
-                trade_at = getattr(trade, "timestamp", None)
-                from src.trading_calendar import live_price_is_today
-
-                fresh = bool(live_price_is_today(trade_at))
-                return LivePrice(
-                    price=trade_price, source="last_trade", trade_at=trade_at,
-                    is_today=fresh, is_today_print=fresh,
-                )
-
-            quote_data = self._data_client.get_stock_latest_quote(
-                StockLatestQuoteRequest(symbol_or_symbols=alpaca_symbol)
-            )
-            quote = self._extract_symbol_payload(quote_data, alpaca_symbol)
-            ask_price = float(getattr(quote, "ask_price", 0) or 0)
-            bid_price = float(getattr(quote, "bid_price", 0) or 0)
-            quote_at = getattr(quote, "timestamp", None)
-            from src.trading_calendar import live_price_is_today
-
-            quote_today = bool(live_price_is_today(quote_at))
-            if ask_price > 0 and bid_price > 0:
-                return LivePrice(
-                    price=(ask_price + bid_price) / 2, source="quote_mid",
-                    trade_at=quote_at, is_today=quote_today, is_today_print=False,
-                )
-            if ask_price > 0:
-                return LivePrice(
-                    price=ask_price, source="quote_ask", trade_at=quote_at,
-                    is_today=quote_today, is_today_print=False,
-                )
-            if bid_price > 0:
-                return LivePrice(
-                    price=bid_price, source="quote_bid", trade_at=quote_at,
-                    is_today=quote_today, is_today_print=False,
-                )
-        except Exception as exc:
-            logger.warning("Failed to fetch latest price for %s: %s", symbol, exc)
-
-        return None
-
-    def get_latest_price(self, symbol: str) -> float | None:
-        """Latest price as a bare number — unchanged behaviour.
-
-        Reporting and grading callers ("how far has this moved since we sold
-        it") do not care where the number came from, and they already degrade
-        to a last close when it is missing. They keep this. Anything that
-        places or moves an order should call `get_latest_price_stamped` and
-        check `is_today_print`.
-        """
-        stamped = self.get_latest_price_stamped(symbol)
-        return stamped.price if stamped is not None else None
-
-    def get_latest_quote(self, symbol: str) -> dict[str, float | None]:
-        """Return the current bid/ask without inventing a side of the book.
-
-        Execution uses the ask to construct a bounded marketable BUY limit
-        and the bid to construct the mirrored SHORT floor. Missing or failed
-        quote data returns explicit ``None`` fields so the caller can retain
-        its existing last-trade behavior without guessing.
-        """
-        out = {"bid_price": None, "ask_price": None}
-        try:
-            if self._data_client is None:
-                from alpaca.data.historical.stock import StockHistoricalDataClient
-
-                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
-                _install_http_timeout(self._data_client)
-
-            from alpaca.data.requests import StockLatestQuoteRequest
-
-            alpaca_symbol = _alpaca_symbol(symbol)
-            quote_data = self._data_client.get_stock_latest_quote(
-                StockLatestQuoteRequest(symbol_or_symbols=alpaca_symbol)
-            )
-            quote = self._extract_symbol_payload(quote_data, alpaca_symbol)
-            for field in out:
-                try:
-                    value = float(getattr(quote, field, 0) or 0)
-                except (TypeError, ValueError):
-                    value = 0.0
-                out[field] = value if value > 0 else None
-        except Exception as exc:
-            logger.warning("Failed to fetch latest quote for %s: %s", symbol, exc)
-        return out
-
-    def get_intraday_snapshots(self, symbols: list[str]) -> dict[str, dict]:
-        """Bulk current-session move data for the intraday opportunity scan.
-
-        One Alpaca snapshot call for the whole symbol list (not one call
-        per symbol — the same `symbol_or_symbols` bulk parameter
-        `get_latest_price` already uses for a single symbol) — cheap
-        enough to run every intra_check tick, unlike re-fetching daily
-        bars for the whole universe.
-
-        Returns, for every requested symbol, a dict of the current-session
-        facts needed both to detect a material move and to give Tech
-        truthful intraday evidence:
-
-            {"last_price", "last_trade_at", "prev_close",
-             "session_bar_at", "minute_close", "minute_bar_at",
-             "session_open", "session_close", "session_high",
-             "session_low", "session_volume"}
-
-        `last_trade_at` is the raw provider datetime (or None) for the
-        latest trade's own `timestamp` field — used by `broker_reads.py`
-        to tell a stale last_price from a live one (docs/WORK.md item 15).
-
-        The `session_*` fields come from Alpaca's `daily_bar`, which during
-        the session is an INCOMPLETE, still-forming bar — callers must
-        present it as such and must never append it to a series of completed
-        daily bars. **It is not guaranteed to be TODAY's**: for a name that
-        has not printed today, Alpaca returns the previous session's daily
-        bar in that slot. `session_bar_at` is that bar's own opening
-        timestamp so a caller can check the date before calling it "today"
-        (docs/WORK.md item 120). `minute_close` / `minute_bar_at` are the
-        snapshot's 1-minute bar and carry the same caveat.
-
-        NONE of these fields is freshness-checked here. Use
-        `src.data.live_price.resolve_live_price` to turn this payload into a
-        price that is known to come from today — this method deliberately
-        reports what the provider said, and the judgement about what counts
-        as today lives in one place.
-
-        Any field is `None` when unavailable. Never raises — broker/network
-        failure degrades to an empty dict (caller treats that as "no signal
-        this tick", not a crash).
-        """
-        if not symbols:
-            return {}
-        if self._data_client is None:
-            try:
-                from alpaca.data.historical.stock import StockHistoricalDataClient
-
-                self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
-                _install_http_timeout(self._data_client)
-            except Exception as exc:
-                logger.warning("get_intraday_snapshots: data client init failed: %s", exc)
-                return {}
-
-        from alpaca.data.requests import StockSnapshotRequest
-
-        requested = [(symbol, _alpaca_symbol(symbol)) for symbol in symbols]
-        alpaca_symbols = list(dict.fromkeys(mapped for _, mapped in requested))
-        successful_batches = 0
-
-        def _fetch_batch(batch: list[str]) -> dict:
-            """Bulk first; isolate a bad symbol only when Alpaca rejects a batch."""
-            nonlocal successful_batches
-            if not batch:
-                return {}
-            try:
-                result = self._data_client.get_stock_snapshot(
-                    StockSnapshotRequest(symbol_or_symbols=batch)
-                )
-                successful_batches += 1
-                return result if isinstance(result, dict) else {}
-            except Exception as exc:
-                status_code = getattr(exc, "status_code", None)
-                symbol_error = (
-                    status_code in (400, 404, 422)
-                    or "invalid symbol" in str(exc).lower()
-                )
-                if len(batch) == 1:
-                    logger.warning(
-                        "get_intraday_snapshots: symbol %s unavailable: %s",
-                        batch[0], exc,
-                    )
-                    return {}
-                if not symbol_error:
-                    logger.warning(
-                        "get_intraday_snapshots: bulk snapshot fetch failed "
-                        "for %d symbols: %s",
-                        len(batch), exc,
-                    )
-                    return {}
-                midpoint = len(batch) // 2
-                logger.warning(
-                    "get_intraday_snapshots: batch of %d rejected; isolating bad symbol(s): %s",
-                    len(batch), exc,
-                )
-                return {
-                    **_fetch_batch(batch[:midpoint]),
-                    **_fetch_batch(batch[midpoint:]),
-                }
-
-        snapshots = _fetch_batch(alpaca_symbols)
-        if successful_batches == 0:
-            return {}
-
-        def _num(obj, attr):
-            if obj is None:
-                return None
-            try:
-                v = float(getattr(obj, attr, 0) or 0)
-            except (TypeError, ValueError):
-                return None
-            return v if v > 0 else None
-
-        out: dict[str, dict] = {}
-        for symbol, alpaca_symbol in requested:
-            snap = snapshots.get(alpaca_symbol) if isinstance(snapshots, dict) else None
-            trade = getattr(snap, "latest_trade", None) if snap is not None else None
-            prev_bar = getattr(snap, "previous_daily_bar", None) if snap is not None else None
-            # TODAY's still-forming bar. Deliberately kept in its own
-            # `session_*` namespace so no caller can mistake it for a
-            # completed daily bar (2026-08-19 intraday-evidence fix).
-            today_bar = getattr(snap, "daily_bar", None) if snap is not None else None
-            # Alpaca's Trade model DOES carry its own `timestamp` field
-            # (verified against the installed SDK, 2026-09-13) — this is
-            # the provider's own market timestamp for the last print, not
-            # a guess. Kept as the raw datetime (or None); broker_reads.py
-            # serializes it and derives freshness from it.
-            last_trade_at = getattr(trade, "timestamp", None) if trade is not None else None
-            # board item 120: the `session_*` block was returned with no way
-            # to tell WHICH session it belongs to. Alpaca's snapshot carries
-            # the previous session's daily bar in `daily_bar` for a name that
-            # has not printed today, so a caller rendering "CURRENT SESSION
-            # (TODAY)" off these fields could be showing yesterday. `Bar
-            # .timestamp` is a required field on the installed SDK's model
-            # (`alpaca/data/models/bars.py`, verified 2026-09-20) and is the
-            # bar's OPENING timestamp, so its ET date is the session date.
-            session_bar_at = getattr(today_bar, "timestamp", None) if today_bar is not None else None
-            # The 1-minute bar is an aggregation of REAL PRINTS on the same
-            # entitled venue — not a quote. It is the finest-grained today
-            # print the snapshot carries, and it exists for names whose
-            # `latest_trade` is still yesterday's (item 120, 2026-09-17).
-            minute_bar = getattr(snap, "minute_bar", None) if snap is not None else None
-            minute_bar_at = getattr(minute_bar, "timestamp", None) if minute_bar is not None else None
-            out[symbol] = {
-                "last_price": _num(trade, "price"),
-                "last_trade_at": last_trade_at,
-                "prev_close": _num(prev_bar, "close"),
-                "session_bar_at": session_bar_at,
-                "minute_close": _num(minute_bar, "close"),
-                "minute_bar_at": minute_bar_at,
-                "session_open": _num(today_bar, "open"),
-                "session_close": _num(today_bar, "close"),
-                "session_high": _num(today_bar, "high"),
-                "session_low": _num(today_bar, "low"),
-                "session_volume": _num(today_bar, "volume"),
-            }
-        return out
-
-    @staticmethod
-    def _extract_symbol_payload(payload, symbol: str):
-        if isinstance(payload, dict):
-            return payload.get(symbol)
-        try:
-            return payload[symbol]
-        except Exception:
-            return getattr(payload, symbol, None)
-
-    def cancel_open_orders(self) -> int:
-        """Cancel all open orders. Returns count of cancelled orders."""
-        try:
-            cancelled = self.client.cancel_orders()
-            count = len(cancelled) if cancelled else 0
-            if count:
-                logger.info("Cancelled %d open order(s)", count)
-            return count
-        except Exception as exc:
-            logger.warning("Failed to cancel open orders: %s", exc)
-            return 0
+    def cancel_open_orders(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().cancel_open_orders(*args, **kwargs)
 
     def snapshot_protective_stops(
         self, symbol: str, *, side: str = "sell",
@@ -3572,386 +760,33 @@ class AlpacaBroker:
             )
         return cancelled
 
-    def cancel_open_entry_orders(self, symbol: str | None = None) -> int:
-        """Cancel open entry orders on EITHER side — BUY-to-open-long and
-        SELL-to-open-short — while preserving protective stop legs on
-        either side.
+    def cancel_open_entry_orders(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().cancel_open_entry_orders(*args, **kwargs)
 
-        `symbol` scopes the cancel to one name — used by the full-exit
-        SELL/COVER discipline (audit round 2: a fully-exited symbol could
-        still carry the same day's resting DAY entry BUY, which would
-        silently re-open the position — or, in the emergency-liquidation
-        case, re-buy into the crash the breaker just sold). Stage 3 (shorts)
-        gap fix: an EMERGENCY_COVER used to leave a resting SELL-to-open
-        entry order untouched, which could fill and re-open the exact short
-        exposure the emergency close just cleared — the short-side mirror
-        of the BUY case above.
+    def list_open_entry_order_ids(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().list_open_entry_order_ids(*args, **kwargs)
 
-        Pre-shorts this only ever needed to filter by SIDE: entries were
-        always BUY and protective legs were always SELL, so a bare
-        `side == "buy"` filter could never touch a stop. Now that BUY-side
-        protective covers (a short's stop) and SELL-side entries (a
-        short-open) both exist, side alone stopped being a safe proxy for
-        "is this an entry" — the discriminator has to be ORDER TYPE. Any
-        *stop* order (stop / stop_limit / trailing_stop — the same
-        `"stop" in order_type` test `_list_open_sell_stop_orders` /
-        `_list_open_stop_orders_by_side` already use to find a protective
-        leg) is left alone regardless of side; every other BUY or SELL
-        order is a plain entry and gets cancelled.
-        """
-        try:
-            from alpaca.trading.requests import GetOrdersRequest
+    def list_open_entry_orders_checked(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().list_open_entry_orders_checked(*args, **kwargs)
 
-            req_kwargs = dict(status=QueryOrderStatus.OPEN, nested=True)
-            if symbol:
-                req_kwargs["symbols"] = [_alpaca_symbol(symbol)]
-            orders = self.client.get_orders(filter=GetOrdersRequest(**req_kwargs))
-            count = 0
-            for order in orders or []:
-                order_id = getattr(order, "id", None)
-                order_side = str(getattr(getattr(order, "side", None), "value",
-                                        getattr(order, "side", ""))).lower()
-                order_type = str(getattr(getattr(order, "order_type", None), "value",
-                                        getattr(order, "order_type", ""))).lower()
-                if order_side not in ("buy", "sell") or not order_id:
-                    continue
-                if "stop" in order_type:
-                    continue  # protective leg on either side — preserve it
-                self.client.cancel_order_by_id(order_id)
-                count += 1
-            if count:
-                logger.info("Cancelled %d open entry order(s)", count)
-            return count
-        except Exception as exc:
-            logger.warning("Failed to cancel open entry orders: %s", exc)
-            return 0
+    def open_buy_notional(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().open_buy_notional(*args, **kwargs)
 
-    def list_open_entry_order_ids(
-        self, symbol: str, *, side: str | None = None,
-    ) -> list[str]:
-        """Ids of working non-stop BUY/SELL orders for `symbol`.
+    def list_recent_orders(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().list_recent_orders(*args, **kwargs)
 
-        The discriminator matches `cancel_open_entry_orders`: any *stop*
-        order is a protective leg and is omitted; every other working
-        BUY or SELL is an entry. Named so scale-in crash recovery can
-        confirm leftover DAY adds are gone before it rearms a protective
-        sell (a working BUY plus a new SELL stop is the wash-trade block
-        the scale-in sequence exists to walk around).
+    def list_filled_sell_orders(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().list_filled_sell_orders(*args, **kwargs)
 
-        `side`, when given ("buy" / "sell"), returns only that side. The
-        short scale-in wash-trade guard passes ``side="buy"`` to find any
-        FOREIGN working BUY (a resting cover-limit / take-profit) that would
-        collide with its SELL add — protective buy-stops are stop orders and
-        are already excluded here, so a returned BUY is never the protection.
-        Default None keeps every existing caller's both-sides behaviour.
-
-        Returns [] on an API failure (fail-OPEN) — the leftover-entry drain
-        check treats that the same as "none working". A caller that must
-        tell "confirmed empty" from "could not read" — the wash-trade guard,
-        which cancels protection on the answer — uses
-        `list_open_entry_orders_checked` instead.
-        """
-        _ok, ids = self.list_open_entry_orders_checked(symbol, side=side)
-        return ids
-
-    def list_open_entry_orders_checked(
-        self, symbol: str, *, side: str | None = None,
-    ) -> tuple[bool, list[str]]:
-        """`(ok, ids)` for working non-stop orders — same discriminator as
-        `list_open_entry_order_ids`, but ``ok`` is FALSE when the broker's
-        order listing itself FAILED (vs a genuine empty list, ``(True, [])``).
-
-        The short scale-in wash-trade guard must FAIL CLOSED: it is about to
-        cancel a protective buy-stop and submit a SELL add, and it may not do
-        that on an unverified assumption that Alpaca will bounce a self-cross
-        (paper may not enforce it). ``ok=False`` lets it refuse rather than
-        guess "no foreign buy" from a swallowed API error.
-        """
-        want_side = str(side).lower() if side is not None else None
-        try:
-            from alpaca.trading.requests import GetOrdersRequest
-
-            orders = self.client.get_orders(
-                filter=GetOrdersRequest(
-                    status=QueryOrderStatus.OPEN,
-                    symbols=[_alpaca_symbol(symbol)],
-                    nested=True,
-                )
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "list_open_entry_orders_checked failed for %s: %s", symbol, exc,
-            )
-            return False, []
-        ids: list[str] = []
-        for order in orders or []:
-            order_id = getattr(order, "id", None)
-            order_side = str(getattr(getattr(order, "side", None), "value",
-                                    getattr(order, "side", ""))).lower()
-            order_type = str(getattr(getattr(order, "order_type", None), "value",
-                                    getattr(order, "order_type", ""))).lower()
-            if order_side not in ("buy", "sell") or not order_id:
-                continue
-            if "stop" in order_type:
-                continue
-            if want_side is not None and order_side != want_side:
-                continue
-            ids.append(str(order_id))
-        return True, ids
-
-    def open_buy_notional(self) -> float | None:
-        """Dollar notional of all OPEN BUY orders, or None when the query fails.
-
-        Used by the cash sweeper: Alpaca's `cash` field does not subtract
-        open-order holds, so parking must leave room for still-working BUY
-        limits. The None-vs-0.0 distinction matters — a transient API failure
-        must read as "unknowable" (caller skips parking), never as "no
-        pending buys" (caller would sweep cash a pending fill needs).
-        """
-        try:
-            from alpaca.trading.requests import GetOrdersRequest
-
-            orders = self.client.get_orders(
-                filter=GetOrdersRequest(
-                    status=QueryOrderStatus.OPEN,
-                    side=OrderSide.BUY,
-                    nested=True,
-                )
-            )
-            total = 0.0
-            for order in orders or []:
-                order_side = getattr(getattr(order, "side", None), "value", getattr(order, "side", ""))
-                if str(order_side).lower() != "buy":
-                    continue
-                try:
-                    qty = float(getattr(order, "qty", 0) or 0)
-                except (TypeError, ValueError):
-                    qty = 0.0
-                price = None
-                for attr in ("limit_price", "stop_price"):
-                    raw = getattr(order, attr, None)
-                    if raw is not None:
-                        try:
-                            candidate = float(raw)
-                        except (TypeError, ValueError):
-                            continue
-                        if candidate > 0:
-                            price = candidate
-                            break
-                if price is None:
-                    # Market order with no price attached — estimate from the
-                    # live quote; on failure treat the whole answer as
-                    # unknowable rather than under-counting the hold.
-                    live = self.get_latest_price(getattr(order, "symbol", ""))
-                    if not live or live <= 0:
-                        return None
-                    price = live
-                total += qty * price
-            return total
-        except Exception as exc:
-            logger.warning("open_buy_notional query failed: %s", exc)
-            return None
-
-    def list_recent_orders(
-        self, symbol: str, side: str, after,
-    ) -> list[dict] | None:
-        """All of `symbol`'s orders (any status) on `side` since `after`.
-
-        audit F4: used by the orphan-pending_submit sweep to match a DB
-        write-ahead row to a broker order whose id we lost to a crash
-        between submit_order() and confirm_trade_submitted(). Returns
-        light dicts {id, symbol, side, qty, status}.
-
-        audit F4 (review #2): the return distinguishes "query succeeded,
-        zero orders" ([]) from "query FAILED" (None). The caller must
-        NOT treat a transient Alpaca/API failure as "submit never
-        landed" — doing so would mark a possibly-real / already-filled
-        BUY as submit_failed. None ⇒ leave the row and retry next
-        session; [] ⇒ genuinely no such order.
-        """
-        try:
-            from alpaca.trading.requests import GetOrdersRequest
-
-            want = side.lower()
-            req_side = OrderSide.BUY if want == "buy" else OrderSide.SELL
-            orders = self.client.get_orders(
-                filter=GetOrdersRequest(
-                    status=QueryOrderStatus.ALL,
-                    symbols=[_alpaca_symbol(symbol)],
-                    side=req_side, after=after, nested=False,
-                )
-            )
-            out: list[dict] = []
-            for o in orders or []:
-                o_side = str(getattr(getattr(o, "side", None), "value",
-                                     getattr(o, "side", ""))).lower()
-                if o_side != want:
-                    continue
-                try:
-                    oqty = float(getattr(o, "qty", 0) or 0)
-                except (TypeError, ValueError):
-                    oqty = 0.0
-                oid = str(getattr(o, "id", "") or "")
-                if not oid:
-                    continue
-                out.append({
-                    "id": oid,
-                    "symbol": _internal_symbol(getattr(o, "symbol", "") or ""),
-                    "side": o_side,
-                    "qty": oqty,
-                    "status": str(getattr(getattr(o, "status", None), "value",
-                                          getattr(o, "status", ""))).lower(),
-                })
-            return out
-        except Exception as exc:
-            logger.warning(
-                "list_recent_orders failed for %s %s: %s — returning None "
-                "so the caller retries rather than misjudging the order "
-                "absent", side, symbol, exc,
-            )
-            return None
-
-    def list_filled_sell_orders(self, symbol: str, after) -> list[dict] | None:
-        """Every FILLED sell-side order for `symbol` whose FILL happened at
-        or after `after` — broker truth, independent of anything this
-        process itself submitted or remembers.
-
-        2026-08-28 ONDS/CCJ: both positions were closed by their broker-
-        resident protective stop (a GTC stop-MARKET order — stop-limit only
-        on the unsupported-combo fallback — placed by
-        `place_entry_protection` / `_repair_stop_coverage` /
-        `shift_stops_down`), and none of those paths ever write the STOP
-        ORDER ITSELF into `trades` — only every system-DECIDED exit (SELL /
-        REDUCE / TRAIL_STOP / SWEEP_SELL) does that, at submission time.
-        `_reconcile_stop_out_fills` (src/pipeline.py) uses this method to
-        ask the broker directly rather than trusting the ledger's own
-        opinion of what happened, then diffs the result against
-        `Database.get_known_broker_order_ids` to find fills the ledger has
-        never recorded.
-
-        `after` is applied CLIENT-SIDE against each order's `filled_at`,
-        deliberately NOT passed to Alpaca's own `after=` query parameter
-        (unlike `list_recent_orders`, which correctly uses it that way for
-        its own purpose). Alpaca's `after`/`until` filter on `submitted_at`
-        — when it was ACCEPTED, not when it EXECUTED — and a GTC protective
-        stop is typically submitted at entry and can rest for a long time
-        before firing. Verified 2026-08-28 against the real paper account
-        (MRVL): the stop was submitted 2026-08-21 13:35 and filled
-        2026-08-24 13:48 — a naive `after=now-7d` broker-side query anchored
-        4 days before "now" would have excluded it entirely (its
-        submitted_at sat 7h before that cutoff) even though the FILL was
-        comfortably inside the 7-day window everyone actually cares about.
-        Silently missing a stop-out because the underlying order happened
-        to be placed slightly outside an arbitrary lookback is exactly the
-        failure mode this reconciler exists to prevent, so the broker query
-        below is intentionally unbounded on symbol+side and every date
-        filtering happens here, against the field that actually means
-        "when did this become a real exit".
-
-        Distinct from `list_recent_orders`: that method returns orders of
-        ANY status and is used by the orphan-BUY sweep to match a KNOWN
-        write-ahead row by qty, submitted within a tight recent window —
-        `submitted_at` is exactly the right anchor there. This method is
-        scoped to already-FILLED sells and is used to discover fills the
-        ledger has NEVER SEEN, including ones this process itself placed at
-        the broker (a protective stop) but never logged — `filled_at` is
-        the only anchor that means what the caller needs it to mean.
-
-        Returns None on a query failure — the caller must retry on the
-        next reconciliation pass rather than concluding "no fills" and
-        risking a missed exit (same None-means-retry contract as
-        `list_recent_orders`). On success, a list of lightweight dicts:
-        {id, symbol, qty (the ACTUAL filled qty), price (the ACTUAL filled
-        avg price), filled_at (ISO-8601 UTC string, or None if the broker
-        didn't report one), order_type} — orders with no filled_at at all
-        are KEPT (never silently excluded by the date filter; None means
-        "unknown timing", not "too old").
-        """
-        try:
-            from alpaca.trading.requests import GetOrdersRequest
-
-            orders = self.client.get_orders(
-                filter=GetOrdersRequest(
-                    status=QueryOrderStatus.ALL,
-                    symbols=[_alpaca_symbol(symbol)],
-                    side=OrderSide.SELL, nested=False,
-                )
-            )
-            out: list[dict] = []
-            for o in orders or []:
-                status = str(getattr(getattr(o, "status", None), "value",
-                                     getattr(o, "status", ""))).lower()
-                if status != "filled":
-                    continue
-                oid = str(getattr(o, "id", "") or "")
-                if not oid:
-                    continue
-                try:
-                    filled_qty = float(getattr(o, "filled_qty", 0) or 0)
-                except (TypeError, ValueError):
-                    filled_qty = 0.0
-                try:
-                    filled_avg_price = float(getattr(o, "filled_avg_price", 0) or 0)
-                except (TypeError, ValueError):
-                    filled_avg_price = 0.0
-                if filled_qty <= 0 or filled_avg_price <= 0:
-                    # "filled" with no actual qty/price is not a real fill
-                    # to reconstruct a ledger row from — nothing to record.
-                    continue
-                filled_at = getattr(o, "filled_at", None)
-                if filled_at is not None and after is not None:
-                    cutoff = after if getattr(after, "tzinfo", None) else after.replace(
-                        tzinfo=filled_at.tzinfo,
-                    )
-                    if filled_at < cutoff:
-                        continue
-                order_type = getattr(o, "type", None) or getattr(o, "order_type", None)
-                out.append({
-                    "id": oid,
-                    "symbol": _internal_symbol(getattr(o, "symbol", "") or ""),
-                    "qty": filled_qty,
-                    "price": filled_avg_price,
-                    "filled_at": filled_at.isoformat() if hasattr(filled_at, "isoformat") else None,
-                    "order_type": str(getattr(order_type, "value", order_type)) if order_type else None,
-                })
-            return out
-        except Exception as exc:
-            logger.warning(
-                "list_filled_sell_orders failed for %s: %s — returning None "
-                "so the caller retries rather than concluding there was no "
-                "fill (a missed stop-out is a money-relevant accounting "
-                "gap, not just a stale read)", symbol, exc,
-            )
-            return None
-
-    def get_order_fill_info(self, order_id: str) -> dict | None:
-        """Return {status, filled_qty, filled_avg_price} for an order, or None.
-
-        Used by Phase 3 reconciliation. The caller decides whether the
-        returned status is terminal; this method does not block / poll.
-        """
-        try:
-            order = self.client.get_order_by_id(order_id)
-        except Exception as exc:
-            logger.warning("get_order_fill_info failed for %s: %s", order_id, exc)
-            return None
-        status = str(
-            getattr(getattr(order, "status", None), "value",
-                    getattr(order, "status", ""))
-        ).lower()
-        try:
-            filled_qty = float(getattr(order, "filled_qty", 0) or 0)
-        except (TypeError, ValueError):
-            filled_qty = 0.0
-        try:
-            filled_avg_price = float(getattr(order, "filled_avg_price", 0) or 0)
-        except (TypeError, ValueError):
-            filled_avg_price = 0.0
-        return {
-            "status": status,
-            "filled_qty": filled_qty,
-            "filled_avg_price": filled_avg_price,
-        }
+    def get_order_fill_info(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().get_order_fill_info(*args, **kwargs)
 
     #: `OrderStatus`/`TradeEvent` values that mean "this order will not
     #: change again" — shared between the stream and polling paths so the
@@ -3986,949 +821,109 @@ class AlpacaBroker:
     #: filled order (see `_repeg_entry_order`'s partial-fill guard).
     _ORDER_REPLACEABLE_STATES = frozenset({"new"})
 
-    def _acquire_trade_updates_slot(self) -> bool:
-        """Non-blocking owner of the account-wide trade_updates socket.
-
-        In-process threading lock plus the cross-process flock. Either
-        failing means someone already owns the Alpaca slot — the caller
-        must REST, not handshake.
-        """
-        if self._trade_slot_held:
-            return True
-        if not _TRADE_UPDATES_STREAM_LOCK.acquire(blocking=False):
-            return False
-        if not self._trade_lease.acquire(blocking=False):
-            try:
-                _TRADE_UPDATES_STREAM_LOCK.release()
-            except RuntimeError:
-                pass
-            return False
-        self._trade_slot_held = True
-        return True
-
-    def _release_trade_updates_slot(self) -> None:
-        held = self._trade_slot_held
-        self._trade_slot_held = False
-        self._trade_lease.release()
-        if held:
-            try:
-                _TRADE_UPDATES_STREAM_LOCK.release()
-            except RuntimeError:
-                pass
-
-    def fill_stream_enabled(self) -> bool:
-        """True when the desk is allowed to open the `trade_updates` socket.
-
-        Public because the submit-window budget needs it: `src/pipeline_stages.py`
-        adds the handshake budget only when a handshake can actually happen.
-        """
-        return bool(getattr(self, "_fill_stream_enabled", False))
-
-    def _fill_stream_off_warmup(self) -> TradeStreamWarmup:
-        """The warmup an intentionally-disabled socket reports.
-
-        `handshake_failed` and `retried` are both FALSE on purpose. They are
-        what `_start_trade_updates_early` / `_warm_trade_updates` /
-        `_adopt_stream_stall` read to set `ctx.desk_latency_stall` — i.e. "the
-        desk lost time to a broken socket". A socket that was never opened
-        because the owner switched it off cost no time and is not a stall, so
-        reporting a failure here would rebuild the exact noise this switch
-        removes, just in a different field.
-        """
-        if not self._fill_stream_off_logged:
-            # Once per process, at INFO — ops still needs to be able to see
-            # WHY fills are REST-confirmed. This deliberately replaces the
-            # ~150 auth-failure WARNINGs a day, and must never become a
-            # per-order line.
-            logger.info(
-                "trade_updates websocket disabled by configuration "
-                "(execution.fill_stream_enabled) — fills are confirmed by "
-                "the bounded REST path; no socket, no lease, no reconnect loop",
-            )
-            self._fill_stream_off_logged = True
-        return TradeStreamWarmup(ready=False, handshake_failed=False, retried=False)
-
-    def ensure_trade_updates(self) -> TradeStreamWarmup:
-        """Start (or reuse) the kept trade_updates socket. Does not wait for auth.
-
-        A probe-then-teardown handshake duplicated auth. This starts the
-        real socket and leaves it up for fill waits. Call from Risk so the
-        handshake overlaps the review; Execution calling again is a no-op.
-        """
-        return self.start_trade_updates()
-
-    def trade_updates_lease_contended(self) -> bool:
-        """True when another process owns the account-wide trade_updates slot."""
-        return bool(getattr(self, "_trade_lease_contended", False))
-
-    def trade_updates_started(self) -> bool:
-        hub = getattr(self, "_trade_hub", None)
-        return hub is not None and hub.is_alive()
-
-    def trade_updates_authed(self) -> bool:
-        hub = getattr(self, "_trade_hub", None)
-        return bool(hub is not None and hub.authed())
-
-    def trade_updates_auth_remaining_s(self) -> float | None:
-        """Seconds left on the encoded auth budget, or None when it does not apply.
-
-        None: no hub, or a test double with no handshake hook (no auth wait).
-        0: the reconnect-max budget started at hub open is gone and we must
-        not sit in `_auth` after Risk.
-        """
-        hub = getattr(self, "_trade_hub", None)
-        if hub is None or not hub.is_alive():
-            return None
-        if not hub.handshake_hook:
-            return None
-        return hub.auth_remaining_s()
-
-    def _hub_warmup(self, hub: _TradeUpdatesHub) -> TradeStreamWarmup:
-        failed = (
-            hub.handshake_hook
-            and hub.auth_remaining_s() <= 0
-            and not hub.authed()
-        )
-        return TradeStreamWarmup(
-            ready=hub.is_alive() and not failed,
-            handshake_failed=failed,
-            retried=failed,
+    def _trade_stream_waits(self) -> TradeStreamWaits:
+        """Thin shim: builds the standalone object from this broker's collaborators
+        (bodies moved to src/execution/broker_parts/trade_stream.py). Built per call so a
+        collaborator set or swapped after construction is what the body sees."""
+        return TradeStreamWaits(
+            state=self,
+            get_order_status_once=self._get_order_status_once,
+            wait_for_order_status_via_polling=self._wait_for_order_status_via_polling,
+            # The collaborators below are themselves moved bodies, so the object
+            # already owns them. Passing this broker's same-named shim would
+            # overwrite its own method with a function that calls straight back
+            # into it -- infinite recursion. Same guard as `_stop_placer`: pass one
+            # ONLY when it is NOT that shim.
+            **{
+                kw: getattr(self, attr)
+                for kw, attr in (
+                    ("start_trade_updates", "start_trade_updates"),
+                    ("_wait_for_order_status_via_stream", "_wait_for_order_status_via_stream"),
+                    ("_wait_for_order_status_via_stream_locked", "_wait_for_order_status_via_stream_locked"),
+                    ("fill_stream_enabled", "fill_stream_enabled"),
+                    ("_release_trade_updates_slot", "_release_trade_updates_slot"),
+                    ("_acquire_trade_updates_slot", "_acquire_trade_updates_slot"),
+                    ("_hub_warmup", "_hub_warmup"),
+                    ("_fill_stream_off_warmup", "_fill_stream_off_warmup"),
+                )
+                if not _is_broker_class_shim(getattr(self, attr, None), attr)
+            },
         )
 
-    def start_trade_updates(self) -> TradeStreamWarmup:
-        """Open the kept trade_updates socket without blocking on handshake.
+    def _acquire_trade_updates_slot(self, *args, **kwargs):
+        return self._trade_stream_waits()._acquire_trade_updates_slot(*args, **kwargs)
 
-        No-op reuse when this process already owns a live hub. Refuses to
-        open a socket when another process holds the account lease.
+    def _release_trade_updates_slot(self, *args, **kwargs):
+        return self._trade_stream_waits()._release_trade_updates_slot(*args, **kwargs)
 
-        Refuses outright, before the lease is even attempted, when
-        `execution.fill_stream_enabled` is off — see that flag for why.
-        """
-        if not self.fill_stream_enabled():
-            warmup = self._fill_stream_off_warmup()
-            self._last_stream_warmup = warmup
-            return warmup
-        if TradingStream is None:
-            warmup = TradeStreamWarmup(
-                ready=False, handshake_failed=True, retried=False,
-            )
-            self._last_stream_warmup = warmup
-            return warmup
-        with self._trade_hub_lock:
-            hub = self._trade_hub
-            if hub is not None and hub.is_alive():
-                warmup = self._hub_warmup(hub)
-                self._last_stream_warmup = warmup
-                return warmup
-            if hub is not None:
-                try:
-                    hub.stop()
-                except Exception:
-                    pass
-                if hub.thread_still_running():
-                    logger.warning(
-                        "previous trade_updates thread still running — "
-                        "not opening another socket",
-                    )
-                    warmup = TradeStreamWarmup(
-                        ready=False, handshake_failed=False, retried=False,
-                    )
-                    self._last_stream_warmup = warmup
-                    return warmup
-                self._trade_hub = None
-                self._release_trade_updates_slot()
-            if not self._acquire_trade_updates_slot():
-                logger.info(
-                    "trade_updates lease held by another process — "
-                    "not opening a competing socket",
-                )
-                self._trade_lease_contended = True
-                warmup = TradeStreamWarmup(
-                    ready=False, handshake_failed=False, retried=False,
-                )
-                self._last_stream_warmup = warmup
-                return warmup
-            self._trade_lease_contended = False
-            try:
-                hub = _TradeUpdatesHub(self)
-                hub.start()
-                self._trade_hub = hub
-            except Exception as exc:
-                logger.warning("trade_updates hub failed to start: %s", exc)
-                self._release_trade_updates_slot()
-                warmup = TradeStreamWarmup(
-                    ready=False, handshake_failed=True, retried=False,
-                )
-                self._last_stream_warmup = warmup
-                return warmup
-            warmup = self._hub_warmup(hub)
-            self._last_stream_warmup = warmup
-            return warmup
+    def fill_stream_enabled(self, *args, **kwargs):
+        return self._trade_stream_waits().fill_stream_enabled(*args, **kwargs)
 
-    def stop_trade_updates(self) -> None:
-        """Tear down the kept trade_updates socket and release the lease.
+    def _fill_stream_off_warmup(self, *args, **kwargs):
+        return self._trade_stream_waits()._fill_stream_off_warmup(*args, **kwargs)
 
-        The lease stays held if the stream thread is still running after
-        stop() — releasing it would let another process handshake while
-        Alpaca still has this socket registered.
-        """
-        with self._trade_hub_lock:
-            hub = self._trade_hub
-            if hub is not None:
-                try:
-                    hub.stop()
-                except Exception:
-                    pass
-                if hub.thread_still_running():
-                    logger.warning(
-                        "trade_updates thread still running after stop — "
-                        "keeping the account lease so a second process cannot "
-                        "open a competing socket",
-                    )
-                    return
-            self._trade_hub = None
-            self._release_trade_updates_slot()
+    def ensure_trade_updates(self, *args, **kwargs):
+        return self._trade_stream_waits().ensure_trade_updates(*args, **kwargs)
 
-    def _wait_for_order_status(
-        self,
-        order_id: str,
-        timeout_seconds: float,
-        poll_interval: float,
-        *,
-        stop_states: frozenset,
-        use_stream: bool,
-        unavailable_log: str,
-    ) -> str | None:
-        """Stream first, REST as the bound — never a stacked second window.
+    def trade_updates_lease_contended(self, *args, **kwargs):
+        return self._trade_stream_waits().trade_updates_lease_contended(*args, **kwargs)
 
-        A live-but-silent hub (alpaca-py reconnecting inside `run()`) is
-        sliced at the REST poll interval so a fill cannot hide longer than
-        the REST path would have taken to see it.
+    def trade_updates_started(self, *args, **kwargs):
+        return self._trade_stream_waits().trade_updates_started(*args, **kwargs)
 
-        `execution.fill_stream_enabled` off takes the SAME branch as an
-        explicit `use_stream=False` — deliberately the identical code path,
-        not a parallel one, so the configuration change cannot alter a
-        bounded wait. Same timeout, same poll interval, same ceiling.
-        """
-        if not use_stream or not self.fill_stream_enabled():
-            return self._wait_for_order_status_via_polling(
-                order_id, timeout_seconds, poll_interval,
-                stop_states=stop_states,
-            )
-        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
-        interval = (
-            float(poll_interval)
-            if poll_interval and float(poll_interval) > 0
-            else 0.0
-        )
-        last: str | None = None
-        logged_unavailable = False
-        hub = getattr(self, "_trade_hub", None)
-        slice_stream = bool(hub is not None and hub.is_alive() and interval > 0)
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return last if last is not None else self._get_order_status_once(
-                    order_id,
-                )
-            slice_s = remaining if not slice_stream else min(remaining, interval)
-            status, connected = self._wait_for_order_status_via_stream(
-                order_id, slice_s, stop_states=stop_states,
-                poll_interval=poll_interval,
-            )
-            if status is not None:
-                return status
-            last = self._get_order_status_once(order_id)
-            if last and last in stop_states:
-                return last
-            if not connected:
-                if not logged_unavailable:
-                    logger.warning(unavailable_log, order_id)
-                    logged_unavailable = True
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return last
-                polled = self._wait_for_order_status_via_polling(
-                    order_id, remaining, poll_interval,
-                    stop_states=stop_states,
-                )
-                return polled if polled is not None else last
-            if not slice_stream:
-                return last
+    def trade_updates_authed(self, *args, **kwargs):
+        return self._trade_stream_waits().trade_updates_authed(*args, **kwargs)
 
-    def wait_for_order_at_exchange(
-        self,
-        order_id: str,
-        timeout_seconds: float = 5.0,
-        poll_interval: float = 1.0,
-        use_stream: bool = True,
-    ) -> str | None:
-        """Wait until the order has LEFT the not-yet-at-exchange states.
+    def trade_updates_auth_remaining_s(self, *args, **kwargs):
+        return self._trade_stream_waits().trade_updates_auth_remaining_s(*args, **kwargs)
 
-        Returns the last known status (lowercased) or None when nothing could
-        be read. The status returned may be:
-          * terminal (`_ORDER_TERMINAL_STATES`) — it filled/cancelled/etc.
-            while we waited; the caller has nothing to reprice;
-          * `new` / `partially_filled` — at the venue, working;
-          * still `accepted` / `pending_new` — the window ran out before the
-            venue acknowledged it. The caller MUST NOT attempt a replace on
-            this outcome: the broker would reject it anyway.
+    def _hub_warmup(self, *args, **kwargs):
+        return self._trade_stream_waits()._hub_warmup(*args, **kwargs)
 
-        Same shape as `wait_for_order_terminal`: the real-time `trade_updates`
-        websocket first (the stream emits an update the instant the status
-        changes, so an ordinary open-time acknowledgement costs milliseconds,
-        not the whole window), then one REST read to report the last known
-        status if nothing arrived, and the full REST polling loop only when
-        the stream could not be used at all. No new polling machinery.
-        """
-        stop_states = (
-            self._ORDER_TERMINAL_STATES
-            | self._ORDER_REPLACEABLE_STATES
-            | frozenset({"partially_filled"})
-        )
-        return self._wait_for_order_status(
-            order_id, timeout_seconds, poll_interval,
-            stop_states=stop_states, use_stream=use_stream,
-            unavailable_log=(
-                "order-status stream unavailable for %s — falling back to "
-                "REST polling for exchange acknowledgement"
-            ),
-        )
+    def start_trade_updates(self, *args, **kwargs):
+        return self._trade_stream_waits().start_trade_updates(*args, **kwargs)
 
-    def wait_for_order_terminal(
-        self,
-        order_id: str,
-        timeout_seconds: float = 15.0,
-        poll_interval: float = 1.0,
-        use_stream: bool = True,
-    ) -> str | None:
-        """Wait for an order to reach a terminal state and return its last known status.
+    def stop_trade_updates(self, *args, **kwargs):
+        return self._trade_stream_waits().stop_trade_updates(*args, **kwargs)
 
-        2026-09-10: watches Alpaca's real-time `trade_updates` websocket
-        first — see `_wait_for_order_terminal_via_stream` — instead of
-        polling `get_order_by_id` on a fixed interval. A fill, cancel or
-        reject is detected the instant Alpaca reports it, so the timeout no
-        longer trades detection speed against giving a slow-to-fill order
-        enough room; it is now purely a ceiling. This was the actual
-        question the owner asked when the fixed-timeout number was under
-        discussion: not "what should the number be" but "why are we
-        guessing at all when Alpaca tells you the instant it happens."
+    def _wait_for_order_status(self, *args, **kwargs):
+        return self._trade_stream_waits()._wait_for_order_status(*args, **kwargs)
 
-        Three distinct outcomes from the stream attempt, each handled
-        differently on purpose:
-          - a terminal event arrived for THIS order -> return it immediately,
-            no REST call needed at all.
-          - the stream connected fine but nothing terminal arrived before
-            `timeout_seconds` (a genuinely still-open order) -> one single
-            REST check, to preserve this function's existing contract of
-            returning the LAST KNOWN status (which may be non-terminal,
-            e.g. "new") rather than None.
-          - the stream itself could not be used at all (library missing,
-            auth/network failure) -> fall back to the full REST polling
-            loop exactly as this function worked before this change, so a
-            websocket outage degrades to the old behaviour rather than to
-            no behaviour.
+    def _wait_for_order_status_via_stream(self, *args, **kwargs):
+        return self._trade_stream_waits()._wait_for_order_status_via_stream(*args, **kwargs)
 
-        `use_stream=False` skips straight to REST polling — an explicit
-        escape hatch for a misbehaving stream in production, and what unit
-        tests use to exercise the polling path deterministically without
-        real network I/O.
-        """
-        return self._wait_for_order_status(
-            order_id, timeout_seconds, poll_interval,
-            stop_states=self._ORDER_TERMINAL_STATES, use_stream=use_stream,
-            unavailable_log=(
-                "order-fill stream unavailable for %s — falling back to REST polling"
-            ),
-        )
+    def _wait_for_order_status_via_stream_locked(self, *args, **kwargs):
+        return self._trade_stream_waits()._wait_for_order_status_via_stream_locked(*args, **kwargs)
 
-    def _get_order_status_once(self, order_id: str) -> str | None:
-        """Single REST read of an order's current status, lowercased. None
-        on any failure — callers already treat None as "no information"."""
-        try:
-            order = self.client.get_order_by_id(order_id)
-            status = str(getattr(getattr(order, "status", None), "value",
-                                 getattr(order, "status", ""))).lower()
-            return status or None
-        except Exception as exc:
-            logger.warning("Failed to read order %s: %s", order_id, exc)
-            return None
 
-    def _wait_for_order_terminal_via_stream(
-        self, order_id: str, timeout_seconds: float,
-        poll_interval: float = 1.0,
-    ) -> tuple[str | None, bool]:
-        """Terminal-state wait on the websocket. See
-        `_wait_for_order_status_via_stream` — this is that method with the
-        stop set fixed to `_ORDER_TERMINAL_STATES`, kept under its original
-        name because the polling/stream tests and `wait_for_order_terminal`
-        address it directly."""
-        return self._wait_for_order_status_via_stream(
-            order_id, timeout_seconds, stop_states=self._ORDER_TERMINAL_STATES,
-            poll_interval=poll_interval,
-        )
+    def wait_for_order_at_exchange(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().wait_for_order_at_exchange(*args, **kwargs)
 
-    def _wait_for_order_status_via_stream(
-        self, order_id: str, timeout_seconds: float, *,
-        stop_states: frozenset,
-        poll_interval: float = 1.0,
-    ) -> tuple[str | None, bool]:
-        """Block until Alpaca's `trade_updates` websocket reports an event
-        for `order_id` whose status is in `stop_states`, or `timeout_seconds`
-        elapses. With `stop_states=_ORDER_TERMINAL_STATES` this is the
-        original fill wait (PR #287); with the terminal set plus `new`, it
-        is the "has the venue acknowledged it yet" wait that gates a replace.
+    def wait_for_order_terminal(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().wait_for_order_terminal(*args, **kwargs)
 
-        Returns `(status, connected)`:
-          - `(status, True)` — a terminal event for this order arrived;
-            `status` is one of `_ORDER_TERMINAL_STATES`.
-          - `(None, True)` — the stream connected and ran cleanly for the
-            full window but nothing terminal arrived for this order (it is
-            genuinely still open, or belongs to a different account feed
-            entirely — either way the stream itself is not at fault).
-          - `(None, False)` — the stream could not be used at all: the
-            `alpaca-py` streaming extra is not installed, or the websocket
-            never reached a running/authenticated state within the window.
-            Callers must fall back to REST polling on this outcome, not on
-            `(None, True)`.
+    def _get_order_status_once(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk()._get_order_status_once(*args, **kwargs)
 
-        Runs Alpaca's own `TradingStream` (the same class its own docs
-        recommend for order-fill notification instead of polling) on a
-        background thread via its public `run()`/`stop()` API. Handshake
-        retries are guarded (`_install_trading_stream_reconnect_guard`) so
-        an HTTP 429 cannot tight-loop. Only the process that holds the
-        account-wide lease may open a socket (`_TradeUpdatesLease` plus
-        `_TRADE_UPDATES_STREAM_LOCK`). A second process, or a second
-        concurrent wait that lost the slot, falls through to REST polling
-        rather than opening another socket. Same-process fill waits attach
-        to the kept hub. Never raises: any failure here is reported as
-        `(None, False)` so the caller's fallback path is the only thing
-        that can fail loudly.
+    def _wait_for_order_terminal_via_stream(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk()._wait_for_order_terminal_via_stream(*args, **kwargs)
 
-        The wait itself is the caller's timeout — the REST path's ceiling.
-        Auth leftover is not added on top. A dead hub does not sit out a
-        second full window before REST.
-        """
-        # Belt and braces with `_wait_for_order_status`'s own gate: this is
-        # the ONLY function that can construct a TradingStream or take the
-        # account lease for a fill wait, so the "never opens a socket"
-        # guarantee is enforced here too and does not depend on every
-        # caller routing through the wrapper above.
-        if not self.fill_stream_enabled():
-            return None, False
-        if TradingStream is None:
-            return None, False
 
-        hub = getattr(self, "_trade_hub", None)
-        if hub is not None and hub.is_alive():
-            return hub.wait(
-                order_id, timeout_seconds, stop_states=stop_states,
-                poll_interval=poll_interval,
-            )
+    def _wait_for_order_terminal_via_polling(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk()._wait_for_order_terminal_via_polling(*args, **kwargs)
 
-        # A kept hub that died still owns the account slot until
-        # stop_trade_updates releases it. Do not handshake a second socket
-        # into that slot — REST for this wait.
-        if hub is not None or getattr(self, "_trade_slot_held", False):
-            logger.info(
-                "trade_updates hub unusable — REST polling for %s",
-                order_id,
-            )
-            return None, False
+    def _wait_for_order_status_via_polling(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk()._wait_for_order_status_via_polling(*args, **kwargs)
 
-        # Non-blocking: fill monitoring continues on REST for the waiter
-        # that lost the race, instead of stacking a second websocket onto
-        # the one-connection slot (that is the 429 storm).
-        if not self._acquire_trade_updates_slot():
-            hub = getattr(self, "_trade_hub", None)
-            if hub is not None and hub.is_alive():
-                return hub.wait(
-                    order_id, timeout_seconds, stop_states=stop_states,
-                    poll_interval=poll_interval,
-                )
-            logger.info(
-                "trade_updates stream already in use — REST polling for %s",
-                order_id,
-            )
-            return None, False
-
-        try:
-            return self._wait_for_order_status_via_stream_locked(
-                order_id, timeout_seconds, stop_states=stop_states,
-            )
-        finally:
-            self._release_trade_updates_slot()
-
-    def _wait_for_order_status_via_stream_locked(
-        self, order_id: str, timeout_seconds: float, *,
-        stop_states: frozenset,
-    ) -> tuple[str | None, bool]:
-        result: dict = {"status": None}
-        matched = threading.Event()
-        connected = threading.Event()
-        auth_wake = threading.Event()
-        match_wake = threading.Event()
-        run_error: list[Exception] = []
-        stream = TradingStream(self.api_key, self.secret_key, paper=self._paper)
-        stream._qamc_authed = threading.Event()
-        _orig_authed_set = stream._qamc_authed.set
-
-        def _authed_set() -> None:
-            _orig_authed_set()
-            auth_wake.set()
-
-        stream._qamc_authed.set = _authed_set  # type: ignore[method-assign]
-        _install_trading_stream_auth_diagnostics(stream)
-        _install_trading_stream_reconnect_guard(stream)
-
-        async def _handler(update) -> None:
-            try:
-                connected.set()
-                auth_wake.set()
-                order = getattr(update, "order", None)
-                if str(getattr(order, "id", "") or "") != str(order_id):
-                    return
-                status = str(getattr(getattr(order, "status", None), "value",
-                                     getattr(order, "status", ""))).lower()
-                if status in stop_states:
-                    result["status"] = status
-                    matched.set()
-                    match_wake.set()
-                    await stream.stop_ws()
-            except Exception:
-                logger.warning(
-                    "order-fill stream handler error for %s", order_id,
-                    exc_info=True,
-                )
-
-        try:
-            stream.subscribe_trade_updates(_handler)
-        except Exception as exc:
-            logger.warning("order-fill stream subscribe failed: %s", exc)
-            return None, False
-
-        finished = threading.Event()
-
-        def _run() -> None:
-            try:
-                stream.run()
-            except Exception as exc:
-                run_error.append(exc)
-            finally:
-                finished.set()
-                auth_wake.set()
-                match_wake.set()
-
-        thread = threading.Thread(
-            target=_run, name=f"order-fill-stream-{order_id}", daemon=True,
-        )
-        started = time.monotonic()
-        deadline = started + max(0.0, float(timeout_seconds))
-        thread.start()
-        handshake_hook = callable(getattr(stream, "_start_ws", None))
-        if handshake_hook:
-            auth_left = min(
-                _ALPACA_STREAM_AUTH_DEADLINE_S,
-                max(0.0, deadline - time.monotonic()),
-            )
-            auth_wake.wait(timeout=auth_left)
-            authed = bool(stream._qamc_authed.is_set() or connected.is_set())
-            if not authed:
-                logger.warning(
-                    "trade_updates websocket did not authenticate within %.1fs — "
-                    "falling back to REST for %s",
-                    auth_left, order_id,
-                )
-                self._last_stream_warmup = TradeStreamWarmup(
-                    ready=False, handshake_failed=True, retried=True,
-                )
-                try:
-                    stream.stop()
-                except Exception:
-                    pass
-                thread.join(timeout=2.0)
-                return None, False
-        remaining = max(0.0, deadline - time.monotonic())
-        match_wake.wait(timeout=remaining)
-        try:
-            stream.stop()
-        except Exception:
-            pass  # best-effort; the background thread is a daemon regardless
-        thread.join(timeout=5.0)
-
-        if not matched.is_set() and run_error and not connected.is_set():
-            # Never reached a live, authenticated connection — treat as
-            # "stream unusable", not "order still open".
-            return None, False
-        return result["status"], True
-
-    def _wait_for_order_terminal_via_polling(
-        self,
-        order_id: str,
-        timeout_seconds: float,
-        poll_interval: float,
-    ) -> str | None:
-        """The original REST-polling implementation, kept as the fallback
-        path for when the real-time stream cannot be used at all."""
-        return self._wait_for_order_status_via_polling(
-            order_id, timeout_seconds, poll_interval,
-            stop_states=self._ORDER_TERMINAL_STATES,
-        )
-
-    def _wait_for_order_status_via_polling(
-        self,
-        order_id: str,
-        timeout_seconds: float,
-        poll_interval: float,
-        *,
-        stop_states: frozenset,
-    ) -> str | None:
-        """REST polling until the status is in `stop_states`, or the window
-        ends. Returns the last known status (possibly one outside the set)."""
-        deadline = time.monotonic() + timeout_seconds
-        last_status = None
-
-        while time.monotonic() < deadline:
-            try:
-                order = self.client.get_order_by_id(order_id)
-                status = str(getattr(getattr(order, "status", None), "value",
-                                     getattr(order, "status", ""))).lower()
-            except Exception as exc:
-                logger.warning("Failed to poll order %s: %s", order_id, exc)
-                return last_status
-
-            last_status = status or last_status
-            if status in stop_states:
-                return status
-            time.sleep(poll_interval)
-
-        return last_status
-
-    def submit_order(self, symbol: str, qty: float, side: str,
-                     limit_price: float | None = None,
-                     stop_loss_price: float | None = None,
-                     take_profit_price: float | None = None,
-                     reference_price: float | None = None,
-                     atr: float | None = None) -> dict:
-        """Submit an entry or exit order.
-
-        `atr` is OPTIONAL and is used for the OWNER-FACING WORDING ONLY —
-        never for a gate, a threshold or a size. It is the desk's own
-        already-measured ATR(14) for this symbol, so that a fat-finger
-        refusal can state the stock's normal daily range beside the
-        deviation instead of a bare percentage the owner cannot judge. No
-        code path branches on it.
-        """
-        if self._kill_switch_active():
-            # Guard 1: deliberately unconditional. This is the ONE check in
-            # the order-submission path that does NOT exempt a SELL/COVER —
-            # see RiskConfig.kill_switch_path.
-            logger.error(
-                "KILL SWITCH ACTIVE (%s exists): refusing %s %s %s. Every "
-                "order — entry or exit — is halted until the file is "
-                "removed.", self._kill_switch_path, side.upper(), qty, symbol,
-            )
-            return {
-                "id": None, "status": "kill_switch_halted",
-                "symbol": _internal_symbol(symbol),
-                "detail": "the trading kill switch is active — every order "
-                          "is halted until the file is removed",
-            }
-        order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-        internal_symbol = _internal_symbol(symbol)
-        alpaca_symbol = _alpaca_symbol(internal_symbol)
-
-        # Captured BEFORE `_quantize_price`, which maps NaN/Inf to None (see
-        # its docstring). A non-finite STOP would therefore vanish silently
-        # and `use_stop` below would go False — submitting the entry with no
-        # protective stop at all, which is the worst possible outcome of a
-        # bad number. The stop checks below refuse it instead.
-        stop_was_supplied = stop_loss_price is not None
-        stop_was_finite = (
-            stop_loss_price is not None and math.isfinite(stop_loss_price)
-        )
-
-        # Normalize to Alpaca's tick size — sub-penny values from quote-midpoint
-        # math or LLM outputs get Alpaca error 42210000 and a rejected order.
-        limit_price = _quantize_price(limit_price)
-        stop_loss_price = _quantize_price(stop_loss_price)
-        take_profit_price = _quantize_price(take_profit_price)
-
-        # ------------------------------------------------------------------
-        # Fat-finger / outlier price guardrail — ENTRY/LIMIT PRICE ONLY.
-        # ------------------------------------------------------------------
-        # If the caller passed a reference_price (today's quote) and the
-        # price we would TRANSACT AT is more than `OUTLIER_MAX_DEVIATION`
-        # away from it, the number is almost certainly garbage — a
-        # data-source glitch ($0.01 quote on a $300 stock, or an LLM
-        # hallucinated entry). Submitting would turn qty sizing into
-        # nonsense (5% alloc / $0.01 = 500x expected shares) and blow
-        # through every risk check. Refuse the order.
-        #
-        # WHY THIS NO LONGER APPLIES TO THE STOP (2026-09-17, FLNC).
-        # `OUTLIER_MAX_DEVIATION` is an unsourced 20% inherited from the
-        # upstream project (ca4c51d9, yebof, 2026-04-18) and it was being
-        # applied to the stop as well. A flat percentage band is the wrong
-        # shape of test for a stop, for three reasons:
-        #
-        #   1. It is measured in the wrong units. A stop's distance from
-        #      entry is a volatility distance, not a fixed fraction of
-        #      price. FLNC's own measured ATR(14) on 2026-09-17 was $0.75
-        #      against a $7.785 price — 9.6% — so a flat 20% band refuses
-        #      any stop wider than ~2.1x that stock's ordinary daily range,
-        #      while on a $500 name with a 1% ATR the same band permits 20
-        #      ATRs. It bans nothing on a quiet stock and bans normal
-        #      structure on a volatile one.
-        #   2. It only catches the SAFE direction. A too-WIDE stop, under
-        #      risk-based sizing, makes the position SMALLER (qty = risk
-        #      budget / stop distance). The dangerous error is a too-TIGHT
-        #      stop, which inflates size — and a deviation band never
-        #      catches a tight stop at all, because a tight stop sits close
-        #      to the reference by definition.
-        #   3. It refused a trade the desk had already paid for. On
-        #      2026-09-17 17:05:30 (production log) a risk-manager-approved
-        #      SELL_SHORT FLNC — entry $7.785, stop $9.66, correct side,
-        #      R/R 1.51:1, the constructor's own reading recorded as "stop
-        #      width 2.50 x ATR, touch probability 20.7%" — was rejected
-        #      here AFTER every analyst, portfolio-manager and risk-manager
-        #      call had been billed.
-        #
-        # No replacement percentage is invented for the stop: there is no
-        # published source for one, and per the desk's no-arbitrary-numbers
-        # rule a fitted number would be no better than this one. What the
-        # stop gets instead, below, are the two checks that need no number
-        # at all — finiteness and side. The width question already belongs
-        # to `src/portfolio_constructor.py::_widen_stop_past_noise`, which
-        # measures it in the instrument's own ATR and honours a
-        # level-backed stop however tight (spec §12.1). Nothing here
-        # second-guesses that in percent.
-        OUTLIER_MAX_DEVIATION = 0.20
-        if reference_price and reference_price > 0:
-            label, candidate = "limit_price", limit_price
-            if candidate is not None and candidate > 0:
-                deviation = abs(candidate - reference_price) / reference_price
-                if deviation > OUTLIER_MAX_DEVIATION:
-                    logger.error(
-                        "Fat-finger guard: %s %s — %s=$%.4f deviates %.1f%% from reference $%.2f. "
-                        "Order REJECTED (likely data glitch or LLM hallucination).",
-                        side.upper(), symbol, label, candidate, deviation * 100, reference_price,
-                    )
-                    return {
-                        "id": None, "status": "rejected_outlier", "symbol": internal_symbol,
-                        # Surfaced downstream (src/pipeline_stages.py's
-                        # execution-skip record, then the Telegram alert) so
-                        # the operator reads the REAL blocker — QAMC's own
-                        # price-sanity check, before this order ever reached
-                        # the broker — instead of a generic "broker
-                        # rejected", which used to read as if the broker had
-                        # refused a perfectly sane order. Plain words, not
-                        # the internal field name/precision the log line
-                        # above carries (owner-facing text, not a log):
-                        # "limit price $9.66 is 24% from price $7.79", never
-                        # "limit_price=$9.6600 deviates 24.1% from
-                        # reference $7.79 (likely ... hallucinated)".
-                        #
-                        # The bare percentage alone is not judgeable: 24%
-                        # is an outrage on a utility and an ordinary two
-                        # days on a $7 name. So the message carries the
-                        # stock's OWN measured daily range beside it —
-                        # `atr` is the desk's already-computed ATR(14) for
-                        # this symbol, passed down from the entry stage; it
-                        # is never fetched or estimated here, and when the
-                        # caller has none the sentence simply omits it
-                        # rather than inventing a range.
-                        "detail": _outlier_refusal_detail(
-                            label, candidate, reference_price,
-                            symbol=internal_symbol, atr=atr,
-                        ),
-                    }
-
-        # ------------------------------------------------------------------
-        # Stop-price sanity — the checks appropriate to a STOP.
-        # ------------------------------------------------------------------
-        # Only on the two ENTRY sides, which are the only sides that ever
-        # pass a stop (see `use_stop` below): 'sell' is this codebase's
-        # word for reducing/closing a long and never supplies one.
-        if side.lower() in ("buy", "sell_short") and stop_was_supplied:
-            # docs/WORK.md item 88. A stop WAS requested, so from here the
-            # only two legal outcomes are "a usable price" and "refused".
-            # `0.0` used to be a third: this codebase's sentinel for "no
-            # stop", which made a degenerate ATR output or a miscomputed
-            # level REMOVE protection instead of refusing the trade. The
-            # sentinel survives only where nothing was supplied at all
-            # (`stop_loss_price=None`, the cash-sweep park's deliberate
-            # stopless buy) — that distinction is the whole fix. NaN/Inf
-            # was the same hole in a different disguise, closed for this
-            # lane by PR #455; zero is closed here.
-            stop_state, _stop_px = classify_stop_price(
-                stop_loss_price if stop_was_finite else float("nan")
-            )
-            if stop_state != STOP_USABLE:
-                logger.error(
-                    "Stop sanity: %s %s — a stop was requested and its value "
-                    "(%r) cannot be a stop price. Order REJECTED rather than "
-                    "submitted naked. A garbage stop is not an absent stop: "
-                    "only a caller that passes no stop at all (None) is "
-                    "allowed a stopless order.",
-                    side.upper(), symbol, stop_loss_price,
-                )
-                return {
-                    "id": None, "status": "rejected_bad_stop",
-                    "symbol": internal_symbol,
-                    "detail": "the stop price is not a usable number",
-                }
-            # Side check. A stop on the wrong side of the price we are
-            # entering at protects nothing and would fire instantly — the
-            # same refusal the constructor makes against its own entry
-            # (`STOP_REFUSAL_WRONG_SIDE`), repeated here because this is
-            # the last deterministic gate before the broker and Invariant 2
-            # requires the final authority to fail closed. Measured against
-            # the price this order actually transacts at (the limit),
-            # falling back to the quote when it is a market order. No
-            # number is chosen: it is an inequality.
-            entry_ref = (
-                limit_price if (limit_price and limit_price > 0)
-                else (reference_price if (reference_price and reference_price > 0)
-                      else None)
-            )
-            if (
-                entry_ref is not None
-                and stop_loss_price is not None
-                # Unreachable unless usable now — the refusal above returns
-                # on anything else. Kept as a precondition, not a sentinel.
-                and stop_loss_price > 0
-            ):
-                is_short_entry = side.lower() == "sell_short"
-                wrong_side = (
-                    stop_loss_price <= entry_ref if is_short_entry
-                    else stop_loss_price >= entry_ref
-                )
-                if wrong_side:
-                    logger.error(
-                        "Stop sanity: %s %s — stop=$%.4f is on the wrong "
-                        "side of the $%.4f entry, so it protects nothing. "
-                        "Order REJECTED.",
-                        side.upper(), symbol, stop_loss_price, entry_ref,
-                    )
-                    return {
-                        "id": None, "status": "rejected_bad_stop",
-                        "symbol": internal_symbol,
-                        "detail": (
-                            f"stop ${stop_loss_price:,.2f} is on the wrong "
-                            f"side of the ${entry_ref:,.2f} entry, so it "
-                            f"would protect nothing"
-                        ),
-                    }
-
-        # Protective stop for a BUY is placed as a SEPARATE GTC stop-MARKET
-        # (guaranteed exit; stop-limit only on the unsupported-combo fallback)
-        # AFTER the entry fills — NOT as an OTO leg.
-        #
-        # WHY (2026-07-16 audit, CRITICAL): `StopLossRequest` carries no
-        # time_in_force of its own, so an OTO child leg inherits the PARENT's
-        # TIF. The parent must be DAY (an unfilled entry limit must die at the
-        # close, never fill into a stale thesis the next morning) — which
-        # silently made every BUY-attached stop a DAY order too. Alpaca expired
-        # it at 16:00 ET the same session, so any position bought in the
-        # morning and not later given a midday/close TRAIL_STOP (which uses the
-        # GTC `_submit_stop_limit_order` path) sat NAKED overnight — precisely
-        # when gap risk is the reason the stop exists. Confirmed in production:
-        # VST bought 2026-06-26 09:47 ET with SL=$158.75; the same evening's
-        # coverage reconcile logged `VST held=31.0000 but only 0.0000 covered`;
-        # it was ultimately exited at $152.77 for ~$185 more loss than the stop
-        # would have capped. This also contradicted the close-session prompt,
-        # which tells the reviewer to hold overnight *because* the broker stop
-        # is standing watch.
-        #
-        # Placing the stop post-fill also fixes a second latent bug: the OTO
-        # leg was sized to the REQUESTED qty, so a partial entry fill left a
-        # stop covering more shares than we own. `_place_entry_protection`
-        # keys the stop to the ACTUAL filled qty.
-        # Stage 3 (shorts, D7): a SHORT entry (side='sell_short') owes a
-        # protective stop exactly the way a BUY entry does — it just gets
-        # placed on the opposite side by `place_entry_protection`. 'sell'
-        # deliberately stays OUT of this: that's this codebase's convention
-        # for REDUCING/closing a long (`_submit_protected_sell`'s default),
-        # which never passes `stop_loss_price` and so never reaches here
-        # regardless — 'sell_short' is the only sell-side string an ENTRY
-        # ever uses.
-        use_stop = (stop_loss_price is not None and stop_loss_price > 0
-                    and side.lower() in ("buy", "sell_short"))
-
-        if limit_price is not None:
-            request = LimitOrderRequest(
-                symbol=alpaca_symbol, qty=qty, side=order_side,
-                time_in_force=TimeInForce.DAY, limit_price=limit_price,
-            )
-        else:
-            request = MarketOrderRequest(
-                symbol=alpaca_symbol, qty=qty, side=order_side,
-                time_in_force=TimeInForce.DAY,
-            )
-
-        try:
-            order = self.client.submit_order(request)
-        except Exception as exc:  # noqa: BLE001
-            # Owner ruling 2026-09-30 (board item 183): the constructor's
-            # flat `min_trade_weight_delta` churn floor is gone, so a
-            # genuinely tiny, desk-requested nudge now reaches THIS call for
-            # the first time — and the broker has its own real, documented
-            # floors this desk never chose: a $1 minimum notional on a BUY
-            # entry (https://alpaca.markets/support/can-we-submit-orders-
-            # smaller-than-1-usd-in-notional-value), Alpaca's tick size
-            # (already normalized above by `_quantize_price`), and
-            # fractional support per asset (already read live by
-            # `get_fractionability`). WHICH status codes actually mean
-            # "this submission was refused" is answered by
-            # `_is_terminal_submission_rejection` — read off Alpaca's own
-            # create-order documentation (422 only). #786 first reused the
-            # stop-placement retry classifier's 400/404/422 set here without
-            # re-checking that it means the same thing on the SUBMISSION
-            # endpoint; it does not, and the narrowed test is derived from
-            # two fetched Alpaca sources cited in that function. Any other
-            # failure still propagates, exactly as before this change, so
-            # the caller's orphan-sweep recovery (src/pipeline_stages.py)
-            # still runs for the ambiguous case where the broker may or may
-            # not have the order.
-            if _is_terminal_submission_rejection(exc):
-                logger.warning(
-                    "Order rejected by broker for %s %s %s: %s",
-                    side, qty, symbol, exc,
-                )
-                return {
-                    "id": None, "status": "rejected_by_broker",
-                    "symbol": internal_symbol, "detail": str(exc),
-                }
-            raise
-        bracket_info = f" [SL=${stop_loss_price} to be placed on fill]" if use_stop else ""
-        logger.info("Order submitted: %s %s %s @ %s%s — status: %s",
-                     side, qty, symbol, limit_price or "market", bracket_info,
-                     str(getattr(order.status, "value", order.status)))
-        return {
-            "id": str(order.id),
-            # alpaca-py OrderStatus is `(str, Enum)`. Plain `str(enum)`
-            # returns 'OrderStatus.REJECTED' (the repr), not 'rejected'
-            # (the value). `_order_accepted`'s rejection filter
-            # lowercases and checks for the *value* form, so without
-            # the .value unwrap a real broker rejection would slip past
-            # as "accepted" and proceed through the pipeline (audit
-            # 2026-05-27).
-            "status": str(getattr(order.status, "value", order.status)),
-            "symbol": _internal_symbol(order.symbol),
-            # Echo back the parameters so downstream consumers (notifier,
-            # audit log, finalize) can render orders without having to
-            # join against the trades table for what was JUST submitted.
-            # Pre-2026-05-12 this dict was {id, status, symbol} only and
-            # the notifier could only show "BUY NVDA qty=?" — now it can
-            # show "BUY NVDA qty=27 @$238.63 SL=$230".
-            "side": side.lower(),
-            "qty": qty,
-            "limit_price": limit_price,
-            "stop_loss_price": stop_loss_price if use_stop else None,
-            # Signals the caller that this entry still OWES a protective stop
-            # (see _place_entry_protection). Absent/None => nothing to place.
-            "pending_stop_price": stop_loss_price if use_stop else None,
-        }
+    def submit_order(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().submit_order(*args, **kwargs)
 
     # SCOPE (owner ratified 2026-09-25): primary PROTECTIVE stops are now
     # stop-MARKET (guaranteed exit), so this buffer NO LONGER governs the
@@ -4967,248 +962,21 @@ class AlpacaBroker:
     # broker-side cycle or a pathological chain can never spin this forever.
     _MAX_REPLACEMENT_HOPS = 8
 
-    def cancel_entry_order(self, order_id: str) -> bool:
-        """Cancel one order by id. True when the broker accepted the cancel.
+    def cancel_entry_order(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().cancel_entry_order(*args, **kwargs)
 
-        A named seam rather than a raw `client.cancel_order_by_id` call so the
-        re-peg race path — "the superseded order filled, kill the replacement
-        before it buys the same idea again" — is explicit, mockable, and
-        cannot be confused with `cancel_open_entry_orders`, which cancels
-        every working entry for a symbol.
-        """
-        try:
-            self.client.cancel_order_by_id(order_id)
-            return True
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "cancel_entry_order: cancel of %s FAILED: %s — if this was a "
-                "re-peg replacement racing a partial fill, the position may "
-                "end up larger than intended; the next coverage reconcile "
-                "must be checked", order_id, exc,
-            )
-            return False
+    def resolve_replacement_chain(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().resolve_replacement_chain(*args, **kwargs)
 
-    def resolve_replacement_chain(self, order_id: str) -> str | None:
-        """Follow Alpaca's `replaced_by` links to the order that is live now.
+    def replace_entry_limit(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().replace_entry_limit(*args, **kwargs)
 
-        A replaced order keeps its own identity forever: status 'replaced',
-        `filled_qty` frozen at whatever it filled before the swap, and
-        `replaced_by` pointing at its successor. This walks that chain and
-        returns the id at the end of it — which is the only id worth polling
-        for a fill.
-
-        Returns the input id unchanged when the order was never replaced.
-        Returns None when the broker read FAILED, which callers must treat as
-        "unknown, retry later" and never as "no replacement" — repointing a
-        trades row on a failed read would be inventing a fact.
-        """
-        current = str(order_id)
-        for _ in range(self._MAX_REPLACEMENT_HOPS):
-            try:
-                order = self.client.get_order_by_id(current)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "resolve_replacement_chain: broker read failed for %s: %s "
-                    "— returning None so the caller retries rather than "
-                    "concluding the order was never replaced", current, exc,
-                )
-                return None
-            status = str(
-                getattr(getattr(order, "status", None), "value",
-                        getattr(order, "status", ""))
-            ).lower()
-            successor = getattr(order, "replaced_by", None)
-            successor = str(successor) if successor else ""
-            if status != "replaced" or not successor or successor == current:
-                return current
-            current = successor
-        logger.error(
-            "resolve_replacement_chain: %s exceeded %d hops — refusing to "
-            "keep walking", order_id, self._MAX_REPLACEMENT_HOPS,
-        )
-        return None
-
-    def replace_entry_limit(
-        self, order_id: str, new_limit_price: float, *, qty: float | None = None,
-    ) -> dict:
-        """PATCH a working entry limit to a new price. Returns the NEW order id.
-
-        This is the only place in the codebase that calls Alpaca's replace
-        endpoint, and the reason it is wrapped rather than inlined is the
-        footgun: **the replacement is a different order**. The response
-        carries a new id; the id passed in is dead from that moment.
-
-        `qty` is passed through explicitly rather than left to the broker's
-        default. The caller only ever re-pegs an order that has filled ZERO
-        shares, so "remaining" and "original" are the same number here — but
-        stating it removes any dependence on how the endpoint interprets an
-        omitted qty against a partially filled order, which is exactly the
-        ambiguity that turns a re-peg into an over-buy.
-
-        Never raises. Failure shapes, all with `id=None`:
-          - 'replace_invalid_price' — nothing was sent to the broker.
-          - 'replace_rejected'      — the broker refused. The overwhelmingly
-            likely cause is that the order reached a terminal state (it
-            FILLED) between the caller's check and this call. The caller must
-            re-read the ORIGINAL id, which is still authoritative in that
-            case, and must not retry blindly.
-          - 'kill_switch_halted'    — Guard 1: ops has halted the desk. The
-            ORIGINAL id remains authoritative and simply does not chase.
-        """
-        if self._kill_switch_active():
-            logger.error(
-                "KILL SWITCH ACTIVE (%s exists): refusing to re-peg entry "
-                "order %s to $%.4f.", self._kill_switch_path, order_id, new_limit_price,
-            )
-            return {"id": None, "status": "kill_switch_halted"}
-        price = _quantize_price(new_limit_price)
-        if price is None or price <= 0:
-            logger.warning(
-                "replace_entry_limit refused for %s: non-quotable price %r",
-                order_id, new_limit_price,
-            )
-            return {"id": None, "status": "replace_invalid_price"}
-
-        # Spec §11.1: a FRACTIONAL entry cannot be re-pegged. Alpaca's
-        # ReplaceOrderRequest types `qty` as an int, and the two ways out of
-        # that are both worse than refusing: truncating 1.5625 to 1 silently
-        # SHRINKS a position the risk math already sized, and omitting qty
-        # reintroduces exactly the "how does the endpoint read an omitted qty"
-        # ambiguity this wrapper documents itself as removing. Refusing means
-        # the original order stays authoritative and simply does not chase —
-        # the caller's existing `id=None` path, and the safe direction.
-        try:
-            is_fractional = qty is not None and not float(qty).is_integer()
-        except (TypeError, ValueError):
-            is_fractional = False
-        if is_fractional:
-            logger.info(
-                "replace_entry_limit refused for %s: fractional qty %s cannot "
-                "be re-pegged — the original order remains authoritative",
-                order_id, qty,
-            )
-            return {"id": None, "status": "replace_unsupported_fractional_qty"}
-
-        kwargs: dict = {"limit_price": price}
-        if qty is not None:
-            try:
-                int_qty = int(qty)
-            except (TypeError, ValueError):
-                int_qty = 0
-            if int_qty > 0:
-                kwargs["qty"] = int_qty
-
-        try:
-            order = self.client.replace_order_by_id(
-                order_id, ReplaceOrderRequest(**kwargs),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "replace_entry_limit: broker refused replacement of %s at "
-                "$%.4f: %s — the order most likely reached a terminal state "
-                "(filled) first; the ORIGINAL id remains authoritative",
-                order_id, price, exc,
-            )
-            return {"id": None, "status": "replace_rejected", "detail": str(exc)}
-
-        new_id = str(getattr(order, "id", "") or "")
-        if not new_id:
-            logger.error(
-                "replace_entry_limit: broker accepted the replacement of %s "
-                "but returned no order id — treating as rejected so the "
-                "caller keeps polling the original", order_id,
-            )
-            return {"id": None, "status": "replace_rejected"}
-        status = str(
-            getattr(getattr(order, "status", None), "value",
-                    getattr(order, "status", ""))
-        ).lower()
-        logger.info(
-            "replace_entry_limit: %s → %s @ $%.4f (status %s)",
-            order_id, new_id, price, status or "unknown",
-        )
-        return {
-            "id": new_id, "status": status or "accepted",
-            "limit_price": price, "replaces": str(order_id),
-        }
-
-    def await_replacement_confirmed(
-        self, old_order_id: str, new_order_id: str,
-        timeout_seconds: float = 5.0,
-    ) -> bool:
-        """Block until Alpaca has FINISHED replacing `old_order_id`.
-
-        2026-09-12: the entry chase is now a SINGLE decisive reprice (see
-        `_repeg_entry_order`), so there is no second replace to sequence and
-        this is no longer on the entry hot path. Kept because it is the
-        correct primitive if a second replace is ever needed again, and the
-        reasoning below is the reason a ladder was retired: every extra
-        replace is another `pending_replace` window to get stuck in.
-
-        Why this exists as a hard gate rather than an optimistic assumption:
-        Alpaca refuses to replace an order whose status is `accepted`,
-        `pending_new`, `pending_cancel` **or `pending_replace`** (its own
-        Replace-Order reference). A replace is therefore not an instant
-        edit — the order sits in `pending_replace` while the broker works,
-        and a SECOND replace fired into that window is rejected outright.
-        Chasing a running market means issuing several replaces in a row, so
-        the sequencing is not a nicety: without this gate the second re-peg
-        of any chase is a coin flip on broker timing.
-
-        The confirmation signal is the OLD order reaching the terminal
-        status `replaced` — which is exactly when Alpaca has completed the
-        swap. That is read from the real-time `trade_updates` websocket
-        first via `wait_for_order_terminal` (PR #287), so the ordinary case
-        costs a few milliseconds rather than the whole timeout, and a
-        websocket outage degrades to that method's own REST fallback rather
-        than to no confirmation at all.
-
-        Returns True only on positive evidence the swap completed:
-          * the old order reports `replaced`, or
-          * `resolve_replacement_chain` independently shows the old id now
-            points at `new_order_id`.
-
-        Anything else — timeout, an unreadable broker, a status that never
-        settles — returns False, and the caller MUST stop chasing. "I could
-        not confirm" and "it is safe to send another replace" are different
-        statements, and conflating them is the whole failure mode this
-        guards. Never raises.
-        """
-        if not old_order_id or not new_order_id:
-            return False
-        try:
-            status = self.wait_for_order_terminal(
-                str(old_order_id), timeout_seconds=timeout_seconds,
-                poll_interval=min(1.0, max(0.1, timeout_seconds)),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "replace confirmation: wait on %s failed (%s) — treating the "
-                "replacement as UNCONFIRMED", old_order_id, exc,
-            )
-            return False
-        if str(status or "").lower() == "replaced":
-            return True
-
-        # No `replaced` event inside the window. Ask the broker directly
-        # rather than concluding either way from silence.
-        try:
-            resolved = self.resolve_replacement_chain(str(old_order_id))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "replace confirmation: chain re-read for %s failed: %s",
-                old_order_id, exc,
-            )
-            return False
-        if resolved is not None and str(resolved) == str(new_order_id):
-            return True
-        logger.warning(
-            "replace confirmation: %s → %s could not be confirmed within "
-            "%.1fs (last status %r, chain %r) — the chase stops here rather "
-            "than firing a second replace into a pending_replace window",
-            old_order_id, new_order_id, timeout_seconds, status, resolved,
-        )
-        return False
+    def await_replacement_confirmed(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().await_replacement_confirmed(*args, **kwargs)
 
     def place_entry_protection(
         self, symbol: str, order_id: str, stop_price: float,
@@ -5472,271 +1240,65 @@ class AlpacaBroker:
             return None
         return stop_order
 
-    def _existing_stop_covering_qty(
-        self, symbol: str, *, qty: float, side: str, stop_price: float,
-    ) -> dict | None:
-        """Return a live stop dict if the broker already covers this sliver.
-
-        Qty match uses the same fractional epsilon as the hybrid split —
-        not a trading threshold. Price match is Alpaca's published tick
-        (half-tick, same as stop_records._prices_match).
-        """
-        try:
-            orders = self._list_open_protective_stop_orders(symbol, side=side)
-        except Exception:  # noqa: BLE001
-            return None
-        tick = 0.01 if stop_price >= 1.0 else 0.0001
-        for order in orders or []:
-            snap = self._snapshot_stop_order(order)
-            if snap is None:
-                continue
-            if abs(float(snap.get("qty") or 0) - qty) > _FRACTIONAL_QTY_EPSILON:
-                continue
-            live_px = float(snap.get("stop_price") or 0)
-            if live_px <= 0:
-                continue
-            if abs(live_px - stop_price) > (tick / 2.0):
-                continue
-            return {
-                "id": snap["id"],
-                "qty": snap["qty"],
-                "stop_price": snap["stop_price"],
-                "already_live": True,
-            }
-        return None
-
-    def _submit_stop_leg_retrying(
-        self, *, symbol: str, qty: float, stop_price: float,
-        limit_price: float | None, side: str, leg: str,
-    ) -> dict | None:
-        """One protective-stop LEG, with spec §11.1 guard 1's retry burst.
-
-        Extracted from `_submit_protective_stop_retrying` so the hybrid split
-        can run the identical retry discipline over each of its two legs
-        instead of a second, weaker copy of it. `leg` is log context only
-        ('GTC', 'GTC whole-share', 'DAY fractional') — the tif itself is
-        derived from `qty` inside `_submit_stop_limit_order` and is not a
-        decision made here.
-
-        Returns the broker's response dict, or None when every attempt
-        failed. Never raises.
-
-        A kill-switch refusal does NOT raise (`_submit_stop_limit_order`
-        returns a dict with `id=None`) — until this check existed that fell
-        straight through to the success branch below and was logged and
-        returned as a PLACED stop. The switch is a stable ops halt, not a
-        transient broker error, so this does not burn the retry burst on
-        it: one refusal is reported as blocked and the leg fails now,
-        exactly as if the broker itself had refused every attempt.
-        """
-        attempts = max(1, int(_STOP_PLACEMENT_MAX_ATTEMPTS))
-        last_exc: BaseException | None = None
-        for attempt in range(1, attempts + 1):
-            try:
-                order = self._submit_stop_limit_order(
-                    symbol=symbol, qty=qty, stop_price=stop_price,
-                    limit_price=limit_price, side=side,
+    def _stop_placer(self) -> StopPlacer:
+        """Thin shim: builds the standalone placer from this broker's collaborators
+        (bodies moved to src/execution/broker_parts/stop_place.py). Built per call so a
+        client or cluster method swapped after construction is what the body sees."""
+        return StopPlacer(
+            client=self.client,
+            list_open_stop_orders_by_side=self._list_open_stop_orders_by_side,
+            list_open_protective_stop_orders=self._list_open_protective_stop_orders,
+            list_open_sell_stop_orders=self._list_open_sell_stop_orders,
+            snapshot_stop_order=self._snapshot_stop_order,
+            amend_one_stop_price=self._amend_one_stop_price,
+            amend_resting_stop_price=self._amend_resting_stop_price,
+            stop_order_amendable_in_place=self._stop_order_amendable_in_place,
+            cancel_snapshotted_stops=self.cancel_snapshotted_stops,
+            get_positions=self.get_positions,
+            kill_switch_active=self._kill_switch_active,
+            kill_switch_path=self._kill_switch_path,
+            protective_stop_block_recorder=self.protective_stop_block_recorder,
+            stop_limit_buffer_pct=self.STOP_LIMIT_BUFFER_PCT,
+            # Six collaborators below are themselves moved bodies, so the
+            # placer already owns them. Passing this broker's same-named shim
+            # would overwrite the placer's own method with a function that
+            # calls straight back into the placer -- infinite recursion. Pass
+            # one ONLY when it is NOT that shim: a replacement bound on this
+            # instance, or a stand-in on a test host that is not a broker at
+            # all. Those are exactly the cases the placer cannot see itself.
+            # The shim is recognised through a bound method (`__func__`) AND
+            # through a `functools.partial` (`func`): tests bind the class
+            # function onto a non-broker host with partial, and that is still
+            # the shim.
+            **{
+                kw: getattr(self, attr)
+                for kw, attr in (
+                    ("submit_protective_stop_retrying", "_submit_protective_stop_retrying"),
+                    ("submit_stop_leg_retrying", "_submit_stop_leg_retrying"),
+                    ("existing_stop_covering_qty", "_existing_stop_covering_qty"),
+                    ("submit_stop_limit_order", "_submit_stop_limit_order"),
+                    ("submit_stop_legs", "_submit_stop_legs"),
+                    ("restore_stop_orders", "_restore_stop_orders"),
                 )
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                logger.error(
-                    "protective stop [%s] attempt %d/%d FAILED for %s "
-                    "(qty=%.4f, stop $%.2f): %s", leg, attempt, attempts,
-                    symbol, qty, stop_price, exc,
-                )
-                if _is_terminal_broker_rejection(exc):
-                    # Board item 129: a 400/404/422 will fail identically on
-                    # every retry — it is not a blip, it is the broker's
-                    # answer. Burning the rest of the burst on a doomed
-                    # resubmit only delays the alert this ceiling exists to
-                    # deliver promptly; stop now instead.
-                    logger.error(
-                        "protective stop [%s] for %s got a terminal broker "
-                        "rejection (status %s) on attempt %d/%d — this will "
-                        "not change on retry, escalating now instead of "
-                        "spending the rest of the budget.",
-                        leg, symbol, getattr(exc, "status_code", None),
-                        attempt, attempts,
-                    )
-                    break
-                if attempt < attempts:
-                    delay = _STOP_PLACEMENT_BACKOFF_S[
-                        min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
-                    ]
-                    time.sleep(delay)
-                continue
-            from src.execution.exit_path_records import is_kill_switch_block
-            if is_kill_switch_block(order):
-                logger.critical(
-                    "protective stop [%s] for %s qty=%.4f BLOCKED by the "
-                    "desk's own kill switch — nothing was sent to the "
-                    "broker; NOT reporting this as placed.",
-                    leg, symbol, qty,
-                )
-                return None
-            if attempt > 1:
-                logger.warning(
-                    "protective stop [%s] placed for %s on attempt %d/%d — the "
-                    "position was briefly unprotected and is now covered",
-                    leg, symbol, attempt, attempts,
-                )
-            else:
-                logger.info(
-                    "entry protection: [%s] %s protective stop placed for %s "
-                    "qty=%.4f @ stop $%.2f", leg, side, symbol, qty, stop_price,
-                )
-            return order
-        # Concurrent morning + intra_check both repair the same DAY sliver:
-        # the second hits held_for_orders because the first already placed
-        # it. Treat an existing stop covering this qty as success — do not
-        # leave the remainder flagged uncovered when the broker already
-        # holds the order.
-        if last_exc is not None and _is_held_for_orders_error(last_exc):
-            existing = self._existing_stop_covering_qty(
-                symbol, qty=qty, side=side, stop_price=stop_price,
-            )
-            if existing is not None:
-                logger.info(
-                    "protective stop [%s] for %s qty=%.4f already live at "
-                    "the broker (held_for_orders on submit) — treating as "
-                    "covered", leg, symbol, qty,
-                )
-                return existing
-        return None
-
-    def _submit_protective_stop_retrying(
-        self, *, symbol: str, qty: float, stop_price: float,
-        limit_price: float | None, side: str,
-    ) -> dict | None:
-        """Spec §11.1 guard 1 — submit protective stop coverage for `qty`,
-        retrying immediately and hard on failure. Returns a stop order dict,
-        or None when nothing at all could be placed.
-
-        The retry happens HERE, in the same call, milliseconds after the
-        failure — not queued, not deferred to the next 30-minute sweep. The
-        position is already open; a deferred retry is an open position with
-        no stop for however long the defer lasts, which is the exact failure
-        mode §11.1 was required to bound. See `_STOP_PLACEMENT_MAX_ATTEMPTS`
-        for why the budget is three attempts over ~2 seconds and not more.
-
-        Never raises. Returning None is the signal the CALLER must escalate
-        on — a naked position that nobody is told about is strictly worse
-        than one that fails loudly.
-
-        WHOLE SHARE COUNTS (every short, and every long while
-        `execution.fractional_enabled` is off) take a single GTC stop and
-        this function behaves exactly as it always has, down to the returned
-        shape: the broker's own response, untouched.
-
-        A FRACTIONAL qty takes the HYBRID split instead, because the broker
-        will not carry one durable order over it (measured 2026-09-01; see
-        the `_FRACTIONAL_QTY_EPSILON` block comment):
-
-            leg A   GTC stop over floor(qty)   — durable, survives the close
-            leg B   DAY stop over the sub-share remainder — lapses at 16:00
-                    ET BY DESIGN and is re-placed by the next session's
-                    coverage sweep
-
-        Under one share there is no leg A, so a sub-share position carries a
-        DAY stop only. This REPLACES the old "try the exact fractional qty
-        three times, then fall back to a whole-share stop" path: those three
-        attempts are now known to be three guaranteed rejections costing ~2
-        seconds of naked position each time, and the whole-share fallback
-        they led to is exactly leg A, reached immediately instead.
-
-        The returned dict is leg A's response (leg B's when there is no leg
-        A) annotated with `covered_qty` / `uncovered_qty` / `gtc_qty` /
-        `day_qty` / `hybrid`. `uncovered_qty` keeps the meaning every caller
-        already reads it with: shares the broker is NOT watching right now.
-        It is 0.0 when both legs land, which is the ordinary fractional
-        success — so guard 2 stays silent on success and still fires on a
-        genuine partial cover.
-        """
-        # docs/WORK.md item 88. Refuse a garbage trigger BEFORE burning the
-        # retry burst on it: a zero/negative/NaN/Inf stop is not a transient
-        # broker failure, so three attempts and ~2 seconds of sleeps cannot
-        # turn it into a placed order. None is the caller's escalate signal
-        # and every caller on this path already treats it as one, so the
-        # gap stays flagged instead of being reported as covered.
-        if classify_stop_price(stop_price)[0] != STOP_USABLE:
-            logger.critical(
-                "protective stop REFUSED for %s (qty=%s): the requested "
-                "trigger %r cannot be a stop price. Nothing was placed and "
-                "the position stays flagged as uncovered — a garbage stop "
-                "is never treated as 'no stop needed'.",
-                symbol, qty, stop_price,
-            )
-            return None
-
-        whole, frac = _split_protective_qty(qty)
-        if frac <= 0:
-            # Whole-share: unchanged in every observable way.
-            return self._submit_stop_leg_retrying(
-                symbol=symbol, qty=qty, stop_price=stop_price,
-                limit_price=limit_price, side=side, leg="GTC",
-            )
-
-        logger.info(
-            "protective stop for %s is HYBRID: DAY over %s sub-share remainder "
-            "+ GTC over %.0f whole share(s), both @ stop $%.2f. DAY is placed "
-            "first so the GTC hold cannot starve the sliver (held_for_orders). "
-            "The DAY leg lapses at the close by design and is re-placed at "
-            "the next session's open.", symbol, frac, whole, stop_price,
+                if not _is_broker_class_shim(getattr(self, attr, None), attr)
+            },
         )
-        day_order = self._submit_stop_leg_retrying(
-            symbol=symbol, qty=frac, stop_price=stop_price,
-            limit_price=limit_price, side=side, leg="DAY fractional",
-        )
-        if day_order is None:
-            logger.error(
-                "protective stop: the DAY fractional leg FAILED for %s (%s "
-                "share(s), stop $%.2f) after %d attempt(s) — the sub-share "
-                "remainder is uncovered NOW, during the session, which is not "
-                "the expected overnight lapse.",
-                symbol, frac, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
-            )
-        gtc_order = None
-        if whole >= 1:
-            gtc_order = self._submit_stop_leg_retrying(
-                symbol=symbol, qty=whole, stop_price=stop_price,
-                limit_price=limit_price, side=side, leg="GTC whole-share",
-            )
-            if gtc_order is None:
-                logger.critical(
-                    "protective stop: the DURABLE whole-share GTC leg FAILED "
-                    "for %s (%.0f share(s), stop $%.2f) after %d attempt(s). "
-                    "This is the leg that must never be missing; the caller "
-                    "alerts the owner.",
-                    symbol, whole, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
-                )
 
-        gtc_qty = whole if gtc_order is not None else 0.0
-        day_qty = frac if day_order is not None else 0.0
-        covered = gtc_qty + day_qty
-        if covered <= 0:
-            return None
-        # A COPY — never annotate the broker's own response object in place;
-        # a caller holding that dict must not have its shape changed
-        # underneath it. Leg A is the base when it exists: it is the durable
-        # order, and it is the id worth carrying forward.
-        base = gtc_order if gtc_order is not None else day_order
-        return {
-            **base,
-            "covered_qty": covered,
-            "uncovered_qty": max(0.0, round(qty - covered, 9)),
-            "gtc_qty": gtc_qty,
-            "day_qty": day_qty,
-            "gtc_stop_id": (gtc_order or {}).get("id"),
-            "day_stop_id": (day_order or {}).get("id"),
-            "hybrid": True,
-        }
+    def _existing_stop_covering_qty(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""
+        return self._stop_placer()._existing_stop_covering_qty(*args, **kwargs)
 
-    def close_position(self, symbol: str) -> dict:
-        order = self.client.close_position(_alpaca_symbol(symbol))
-        logger.info("Closed position: %s", symbol)
-        # Unwrap OrderStatus enum value (see submit_order — same reason).
-        return {"id": str(order.id),
-                "status": str(getattr(order.status, "value", order.status))}
+    def _submit_stop_leg_retrying(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""
+        return self._stop_placer()._submit_stop_leg_retrying(*args, **kwargs)
+
+    def _submit_protective_stop_retrying(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""
+        return self._stop_placer()._submit_protective_stop_retrying(*args, **kwargs)
+
+    def close_position(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/order_desk.py."""
+        return self._order_desk().close_position(*args, **kwargs)
 
     def _list_open_stop_orders_by_side(
         self, symbol: str, *, errors: list | None = None,
@@ -5863,1184 +1425,113 @@ class AlpacaBroker:
             "limit_price": limit_price or None,
         }
 
-    def _submit_stop_limit_order(
-        self,
-        symbol: str,
-        qty: float,
-        stop_price: float,
-        limit_price: float | None = None,
-        *,
-        side: str = "sell",
-    ) -> dict:
-        """Submit a protective stop. `side` is the STOP ORDER's own
-        side — "sell" (default) protects a long and fires as price falls;
-        "buy" protects a short and fires as price rises. Defaults to "sell"
-        so every pre-shorts call site (none of which pass `side`) keeps its
-        behaviour.
+    def _submit_stop_limit_order(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""
+        return self._stop_placer()._submit_stop_limit_order(*args, **kwargs)
 
-        PRIMARY: a stop-MARKET (`StopOrderRequest`) — owner ratified
-        2026-09-25 for a GUARANTEED exit. An elected market stop fills at the
-        next print instead of resting unfilled past a limit on a gap, which
-        is the exposure the stop exists to close. `limit_price` is therefore
-        IGNORED on the primary order (a market stop has no limit).
+    def _submit_stop_legs(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""
+        return self._stop_placer()._submit_stop_legs(*args, **kwargs)
 
-        SAFETY FALLBACK: if the broker refuses the stop-MARKET for an
-        unsupported order-type/tif combination
-        (`_is_unsupported_stop_market_rejection`), this degrades to the
-        original stop-LIMIT for the SAME leg so the position is never left
-        unprotected — a market-stop refusal becomes a stop-limit, never no
-        stop. Any OTHER rejection propagates unchanged. `STOP_LIMIT_BUFFER_PCT`
-        and `limit_price` govern ONLY this fallback now (and the separate
-        force-de-lever must-fill SELL), not the primary protective stop.
+    def _restore_stop_orders(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""
+        return self._stop_placer()._restore_stop_orders(*args, **kwargs)
 
-        When `limit_price` is not supplied, the fallback buffer must sit on
-        the correct side of the trigger too: a SELL's limit belongs BELOW
-        the stop (same STOP_LIMIT_BUFFER_PCT the entry-protection path
-        uses), a BUY's belongs ABOVE it. A SELL limit placed above its stop,
-        or a BUY limit placed below its, can never fill — the order looks
-        accepted but is dead on arrival.
+    def shift_stops_down(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""
+        return self._stop_placer().shift_stops_down(*args, **kwargs)
 
-        TIME IN FORCE IS DERIVED FROM `qty`, NOT PASSED IN (spec §11.1
-        hybrid fractional stops). Whole share counts get GTC exactly as
-        before — every existing call site is byte-identical. A FRACTIONAL
-        qty gets DAY, because the broker refuses a fractional GTC order
-        outright (measured; see `_derive_stop_tif`). Putting the rule here
-        rather than at each call site means every path that can submit a
-        fractional stop — entry protection, the coverage repair, the WAL
-        restore, the partial-sell reprotect, the ex-dividend shift — becomes
-        broker-legal at once, and no future path can forget it.
-        """
-        if self._kill_switch_active():
-            # Guard 1: a protective stop is risk-REDUCING (it only ever
-            # tightens protection), yet the kill switch still blocks it —
-            # this is the one deliberate exception in the codebase; see
-            # RiskConfig.kill_switch_path. An already-resting stop from
-            # before the halt is untouched; this only refuses a NEW one.
-            logger.error(
-                "KILL SWITCH ACTIVE (%s exists): refusing protective stop "
-                "for %s qty=%s stop=$%.4f.",
-                self._kill_switch_path, symbol, qty, stop_price,
-            )
-            # Until 2026-09-19 this refusal left no record, and the repair
-            # path told the owner the BROKER had refused the stop. The
-            # durable row goes through the recorder the database's owner
-            # wires in; `detail` is the plain sentence any caller can show.
-            from src.execution.exit_path_records import kill_switch_blocked_text
-            recorder = self.protective_stop_block_recorder
-            if recorder is not None:
-                try:
-                    recorder(
-                        symbol=symbol, qty=qty, stop_price=stop_price,
-                        side=side, kill_switch_path=str(self._kill_switch_path),
-                    )
-                except Exception as exc:  # noqa: BLE001 — never trading authority
-                    logger.warning(
-                        "kill-switch block record for %s could not be "
-                        "written: %s", symbol, exc,
-                    )
-            return {
-                "id": None, "status": "kill_switch_halted", "symbol": symbol,
-                "blocked_by": "kill_switch",
-                "detail": kill_switch_blocked_text(symbol),
-            }
-        # docs/WORK.md item 88 — the LAST authority before the broker, for
-        # the callers that reach this directly (the partial-exit reprotect
-        # and the restore paths) rather than through
-        # `_submit_protective_stop_retrying`. A zero trigger quantizes to
-        # 0.0 and a non-finite one quantizes to None, and both used to be
-        # handed to the SDK: one becomes a broker rejection, the other a
-        # serializer error, and neither says what was wrong. Raising is the
-        # contract this method's callers already handle ("the submit either
-        # worked or it raised"), so a garbage stop can never be mistaken
-        # for a placed one.
-        if classify_stop_price(stop_price)[0] != STOP_USABLE:
-            raise ValueError(
-                f"refusing a protective stop for {symbol}: the requested "
-                f"trigger {stop_price!r} is not a usable stop price "
-                f"(must be finite and positive)"
-            )
-        order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-        time_in_force = _derive_stop_tif(qty)
-        if time_in_force is TimeInForce.DAY:
-            logger.info(
-                "protective stop for %s is FRACTIONAL (qty=%s) — submitting "
-                "DAY, the only tif the broker accepts for a fractional order. "
-                "It lapses at the close and is re-placed by the next session's "
-                "coverage sweep.", symbol, qty,
-            )
-        stop_price_q = _quantize_price(stop_price)
-        # The limit is computed EAGERLY but used ONLY by the stop-limit
-        # fallback below — the primary protective order is a stop-MARKET and
-        # carries no limit. Same buffer/side rule the fallback and the
-        # force-de-lever must-fill SELL use.
-        if limit_price and limit_price > 0:
-            limit_price_q = _quantize_price(limit_price)
-        else:
-            buffer_mult = (
-                (1 + self.STOP_LIMIT_BUFFER_PCT) if order_side == OrderSide.BUY
-                else (1 - self.STOP_LIMIT_BUFFER_PCT)
-            )
-            limit_price_q = _quantize_price(stop_price * buffer_mult)
-        # PRIMARY: stop-MARKET (guaranteed exit) — owner ratified 2026-09-25.
-        market_req = StopOrderRequest(
-            symbol=_alpaca_symbol(symbol),
-            qty=qty,
-            side=order_side,
-            time_in_force=time_in_force,
-            stop_price=stop_price_q,
+    _AMEND_DEAD_STATES = StopAmender._AMEND_DEAD_STATES
+
+    def _stop_amender(self) -> StopAmender:
+        """Thin shim: builds the standalone amender from this broker's collaborators
+        (bodies moved to src/execution/broker_parts/stop_amend.py)."""
+        return StopAmender(
+            client=self.client,
+            list_open_stop_orders_by_side=self._list_open_stop_orders_by_side,
+            snapshot_stop_order=self._snapshot_stop_order,
         )
-        try:
-            order = self.client.submit_order(market_req)
-        except Exception as exc:  # noqa: BLE001
-            if not _is_unsupported_stop_market_rejection(exc):
-                # NOT a type/tif refusal — held_for_orders, buying-power,
-                # symbol, rate-limit, 5xx, etc. must propagate unchanged so
-                # the retry / existing-stop / escalation paths above see the
-                # real cause. The fallback must never swallow these.
-                raise
-            # SAFETY FALLBACK: the broker refused the stop-MARKET for an
-            # unsupported order-type/tif combo. Degrade to the ORIGINAL
-            # stop-LIMIT for this same leg so the position is NEVER left
-            # unprotected. This second submit is UNGUARDED: if it too is
-            # rejected, that exception surfaces to the caller — a naked
-            # position is never reported as covered.
-            logger.warning(
-                "protective stop-MARKET refused for %s (qty=%s, stop $%.4f) as "
-                "an unsupported order-type/tif combo (%s) — falling back to a "
-                "stop-LIMIT (limit $%s) so the position stays protected.",
-                symbol, qty, stop_price_q, exc, limit_price_q,
-            )
-            limit_req = StopLimitOrderRequest(
-                symbol=_alpaca_symbol(symbol),
-                qty=qty,
-                side=order_side,
-                time_in_force=time_in_force,
-                stop_price=stop_price_q,
-                limit_price=limit_price_q,
-            )
-            order = self.client.submit_order(limit_req)
-        # Unwrap OrderStatus enum value (see submit_order — same reason).
-        return {"id": str(order.id),
-                "status": str(getattr(order.status, "value", order.status)),
-                "symbol": _internal_symbol(symbol)}
 
-    def _submit_stop_legs(
-        self, *, symbol: str, qty: float, stop_price: float,
-        limit_price: float | None = None, side: str = "sell",
-    ) -> list[dict]:
-        """Submit the protective stop LEG(S) covering `qty`, all-or-nothing.
+    _failed_amend_payload = staticmethod(StopAmender._failed_amend_payload)
 
-        A whole share count is ONE GTC stop — byte-identical to the bare
-        `_submit_stop_limit_order` call this replaced. A fractional qty is
-        the spec §11.1 hybrid PAIR: a durable GTC stop over floor(qty) plus a
-        DAY stop over the sub-share remainder, both at the same trigger.
-
-        WHY EVERY RE-PLACEMENT PATH NEEDS THIS, not just entry protection.
-        `replace_stop_loss` (trailing) and the partial-sell reprotect both
-        cancel a position's existing stops and submit ONE order for the whole
-        remaining quantity. On a fractional position that single order is
-        necessarily fractional, therefore necessarily DAY, therefore gone at
-        16:00 ET — and the position would have SILENTLY LOST its durable
-        whole-share GTC leg. The next overnight sweep would then see zero
-        coverage on 12.3456 held shares, correctly call it NO STOP AT ALL,
-        and page the owner. A trailing-stop ratchet must not be able to
-        convert a properly protected position into a nightly false alarm.
-
-        Raises if any leg is rejected, after cancelling any leg that already
-        landed. Callers here have an all-or-nothing rollback contract ("the
-        submit either worked or it raised"); a half-placed pair left behind
-        would be read by the coverage sweep as a mis-sized stop and by the
-        rollback as nothing at all.
-        """
-        whole, frac = _split_protective_qty(qty)
-        # DAY remainder FIRST. Measured 2026-09-16: placing the GTC
-        # whole-share leg first made Alpaca report held_for_orders /
-        # insufficient qty on the 0.4393 BRK-B DAY sliver (the GTC hold
-        # reserved the position). The remainder is the smaller qty; placing
-        # it first leaves the whole shares free for the durable GTC.
-        legs: list[float] = []
-        if frac > 0:
-            legs.append(frac)
-        if whole >= 1:
-            legs.append(whole)
-        if not legs:
-            legs = [qty]
-        placed: list[dict] = []
-        for leg_qty in legs:
-            try:
-                leg_order = self._submit_stop_limit_order(
-                    symbol=symbol, qty=leg_qty, stop_price=stop_price,
-                    limit_price=limit_price, side=side,
-                )
-                # A kill-switch refusal does not raise (`id=None` dict) —
-                # this docstring's own "either worked or raised" contract
-                # means a refusal MUST become an exception here too, or the
-                # caller (replace_stop_loss) logs and returns it as a
-                # placed trailing stop. Raising drives the same
-                # already-placed-leg rollback below as any other failure.
-                from src.execution.exit_path_records import is_kill_switch_block
-                if is_kill_switch_block(leg_order):
-                    raise RuntimeError(
-                        f"protective stop leg for {symbol} qty={leg_qty} "
-                        f"blocked by the desk's own kill switch"
-                    )
-                placed.append(leg_order)
-            except Exception:
-                for done in placed:
-                    try:
-                        self.client.cancel_order_by_id(done.get("id"))
-                    except Exception as cancel_exc:  # noqa: BLE001
-                        logger.error(
-                            "_submit_stop_legs: leg %s failed for %s AND the "
-                            "already-placed leg %s could not be cancelled: %s "
-                            "— the symbol may carry a partial stop the caller "
-                            "does not know about; the coverage sweep will "
-                            "reconcile it.",
-                            leg_qty, symbol, done.get("id"), cancel_exc,
-                        )
-                raise
-        return placed
-
-    def _restore_stop_orders(
-        self, symbol: str, stop_specs: list[dict],
-        *,
-        check_idempotency: bool = False,
-        side: str = "sell",
-    ) -> tuple[int, list[dict]]:
-        """Re-submit a set of cancelled stop specs. Best-effort per-spec —
-        a single broker rejection doesn't abort the loop.
-
-        `side` is the specs' own side — "sell" (default) restores stops that
-        protect a long. `replace_stop_loss` is the one caller that can pass
-        `side="buy"`, when the position it's trailing is a short; every
-        other caller only ever restores a long's SELL stops, so the default
-        keeps them unchanged.
-
-        ``check_idempotency`` controls whether we first query broker for
-        already-alive stops and skip matching specs:
-
-        - **False (default; in-line rollback path)** — the caller just
-          cancelled these specs moments ago in the same method
-          (cancel_protective_stops or replace_stop_loss partial-cancel
-          rollback). The cancelled stops are not alive anymore at the
-          broker by construction; checking would just slow the rollback
-          and risk false-positives on Alpaca's eventual-consistency
-          window (pending_cancel orders sometimes still appear in
-          get_orders briefly).
-
-        - **True (drain path)** — the caller is replaying a recovery
-          intent persisted from a previous session. Specs that landed
-          successfully in an earlier drain pass are alive at the broker;
-          re-submitting them now would trigger held_for_orders /
-          duplicate-protection rejections. Query open sell-stops first
-          and skip specs whose (qty, stop_price) match a live stop
-          within 1¢ tolerance. This closes the drain re-submission race
-          documented in the design audit — finalize's
-          reprotect-raised / restore-raised paths return the full
-          cancelled_specs list, and drain's length-equality narrowing
-          (pipeline.py:1039) can't distinguish "all failed" from
-          "partial succeeded then raised", so it leaves the row's
-          specs unchanged. Idempotency defends against the resulting
-          re-submit dupes at the broker layer.
-
-        Returns ``(restored_count, failed_specs)``. With idempotency on,
-        ``restored_count`` includes already-alive-skipped specs (from
-        the caller's perspective, coverage is intact either way).
-        """
-        existing_alive: list[dict] = []
-        if check_idempotency:
-            try:
-                for order in self._list_open_protective_stop_orders(symbol, side=side):
-                    snap = self._snapshot_stop_order(order)
-                    if snap is not None:
-                        existing_alive.append(snap)
-            except Exception as exc:
-                # If we can't see existing stops, fall through to the
-                # non-idempotent behavior — broker's own duplicate
-                # detection is the last line.
-                logger.warning(
-                    "_restore_stop_orders: failed to list existing stops for %s "
-                    "(idempotency check skipped): %s",
-                    symbol, exc,
-                )
-
-        def _spec_matches(spec: dict, alive: dict) -> bool:
-            """Two specs match when qty and stop_price are within rounding."""
-            try:
-                if abs(float(spec.get("qty", 0)) - float(alive.get("qty", 0))) > 1e-6:
-                    return False
-                spec_stop = float(spec.get("stop_price", 0))
-                alive_stop = float(alive.get("stop_price", 0))
-                # 1 cent tolerance covers _quantize_price rounding.
-                return abs(spec_stop - alive_stop) <= 0.01
-            except (TypeError, ValueError):
-                return False
-
-        restored = 0
-        skipped_already_alive = 0
-        failed_specs: list[dict] = []
-        for spec in stop_specs:
-            if existing_alive and any(_spec_matches(spec, alive) for alive in existing_alive):
-                # Already alive at broker (likely landed in a prior
-                # drain pass). Treat as restored from the caller's
-                # perspective; do NOT re-submit.
-                skipped_already_alive += 1
-                restored += 1
-                logger.info(
-                    "_restore_stop_orders: %s @ $%.2f qty=%s already alive "
-                    "at broker — skipping re-submit (idempotent)",
-                    symbol, float(spec.get("stop_price", 0)), spec.get("qty"),
-                )
-                continue
-            try:
-                restore_result = self._submit_stop_limit_order(
-                    symbol=symbol,
-                    qty=spec["qty"],
-                    stop_price=spec["stop_price"],
-                    limit_price=spec.get("limit_price"),
-                    side=side,
-                )
-            except Exception as exc:
-                logger.error(
-                    "replace_stop_loss: failed to restore prior stop for %s @ $%.2f: %s",
-                    symbol, spec["stop_price"], exc,
-                )
-                failed_specs.append(spec)
-                continue
-            # A kill-switch refusal does not raise — it comes back as a
-            # dict with `id=None` — so without this check the loop above
-            # counted a refused restore as `restored += 1`, and the caller
-            # (the WAL drain, and replace_stop_loss's own rollback) then
-            # treated the position as re-covered and discharged its
-            # recovery row over a stop that was never sent to the broker.
-            from src.execution.exit_path_records import is_kill_switch_block
-            if is_kill_switch_block(restore_result):
-                logger.critical(
-                    "replace_stop_loss: restore of prior stop for %s @ "
-                    "$%.2f BLOCKED by the desk's own kill switch — NOT "
-                    "counting this as restored; the position stays flagged "
-                    "uncovered.", symbol, spec["stop_price"],
-                )
-                failed_specs.append(spec)
-                continue
-            restored += 1
-        if restored:
-            new_submits = restored - skipped_already_alive
-            if skipped_already_alive:
-                logger.warning(
-                    "replace_stop_loss rollback: restored %d/%d prior stop order(s) "
-                    "for %s (%d newly submitted, %d already alive)",
-                    restored, len(stop_specs), symbol, new_submits, skipped_already_alive,
-                )
-            else:
-                logger.warning(
-                    "replace_stop_loss rollback: restored %d/%d prior stop order(s) for %s",
-                    restored, len(stop_specs), symbol,
-                )
-        return restored, failed_specs
-
-    def shift_stops_down(self, symbol: str, amount: float) -> dict | None:
-        """Lower EVERY open sell-stop for `symbol` by `amount`, preserving
-        each stop's own level and qty.
-
-        Ex-dividend flow (audit round 2): the old path read ONE stop level
-        (first-match) and replace_stop_loss'd ALL stops with a single
-        consolidated order — with per-BUY GTC stops now the steady state,
-        that collapsed distinct per-lot levels into one and could TIGHTEN a
-        wide lot's stop to the tightest lot's level. Shifting each spec
-        keeps the per-lot geometry and just absorbs the mechanical gap.
-
-        Item 201: a shift moves PRICE only, so when every resting stop is the
-        measured-safe shape each one is AMENDED IN PLACE and nothing is ever
-        cancelled — the position is protected before, during and after. The
-        cancel+resubmit below is now the fallback for shapes the measurement
-        did not cover, and `mode` in the return says which path ran.
-
-        Returns {"id", "status", "symbol", "shifted", "total", "mode"} or None
-        when nothing was shifted. Best-effort with rollback: on the fallback,
-        cancel failures roll back already-cancelled stops and re-place failures
-        restore the ORIGINAL spec for that stop; on the amend path a failure
-        leaves that stop resting at its old level, which is tighter than
-        intended but never absent.
-
-        SELL-stops only, deliberately not generalised to a short's BUY-stop
-        (shorts-safe, Stage 2): the caller (`pipeline._handle_ex_dividends`)
-        already excludes shorts before reaching this method, because the
-        economics are genuinely different, not just the arithmetic sign — a
-        long owns the shares and receives the dividend (the mechanical
-        gap-down needs absorbing); a short instead OWES the dividend to the
-        lender, a cash liability with no corresponding price-gap-absorption
-        logic here. Mirroring the sign without modelling that liability
-        would be a guess, not a fix.
-        """
-        if amount <= 0:
-            return None
-        specs: list[dict] = []
-        orders: list = []
-        for order in self._list_open_sell_stop_orders(symbol):
-            spec = self._snapshot_stop_order(order)
-            if spec is None:
-                logger.warning(
-                    "shift_stops_down: cannot snapshot stop %s for %s — aborting",
-                    getattr(order, "id", "<unknown>"), symbol,
-                )
-                return None
-            specs.append(spec)
-            orders.append(order)
-        if not specs:
-            return None
-        shifted = [{
-            **spec,
-            "stop_price": _quantize_price(spec["stop_price"] - amount),
-            "limit_price": (_quantize_price(spec["limit_price"] - amount)
-                            if spec.get("limit_price") else None),
-        } for spec in specs]
-        if any(not s.get("stop_price") or s["stop_price"] <= 0 for s in shifted):
-            logger.error(
-                "shift_stops_down: shifting %s's stop(s) by %s would put a stop "
-                "at or below zero — aborting, the existing stops stay resting",
-                symbol, amount,
-            )
-            return None
-
-        # IN-PLACE AMEND FIRST (item 201). A shift changes each stop's PRICE and
-        # nothing else, which is exactly the operation the 2026-09-30 rehearsal
-        # measurement established `replace_order_by_id(stop_price=...)` performs
-        # atomically. Cancelling every stop and re-placing them left the whole
-        # position naked for the width of that round trip, on a path that runs
-        # on ordinary ex-dividend days against real open positions.
-        #
-        # All-or-nothing on the DECISION, per spec on the EXECUTION: if any one
-        # resting order is not the measured-safe shape (a stop-limit fallback
-        # leg, a bracket child), the legacy cancel+resubmit runs for the symbol
-        # exactly as before rather than half the stops moving one way and half
-        # the other.
-        if all(self._stop_order_amendable_in_place(o) for o in orders):
-            legs: list[dict] = []
-            for spec, target in zip(specs, shifted):
-                leg = self._amend_one_stop_price(
-                    symbol=symbol, spec=spec, new_price=target["stop_price"],
-                )
-                legs.append(leg)
-                if leg["outcome"] == "amended":
-                    logger.info(
-                        "shift_stops_down: %s stop %s AMENDED IN PLACE $%.4f -> "
-                        "$%.4f, qty %s unchanged, new id %s (no cancel)",
-                        symbol, leg["id"], leg["old_stop"], leg["new_stop"],
-                        leg["qty"], leg["new_id"],
-                    )
-                elif leg["outcome"] == "refused":
-                    # NOT a conservative outcome: across an ex-dividend open the
-                    # un-shifted level is wrong by exactly the dividend, in the
-                    # direction that TRIGGERS it. The caller records and alerts.
-                    logger.error(
-                        "shift_stops_down: %s stop %s was REFUSED the shift to "
-                        "$%.4f (%s) — it is still resting at $%.4f, which the "
-                        "ex-dividend opening gap may trigger on its own; "
-                        "nothing cancelled", symbol, leg["id"], leg["new_stop"],
-                        leg["detail"], leg["old_stop"],
-                    )
-                elif leg["outcome"] == "flat":
-                    logger.info(
-                        "shift_stops_down: %s stop %s could not be shifted and "
-                        "the position is FLAT (%s) — nothing left to protect",
-                        symbol, leg["id"], leg["detail"],
-                    )
-                elif leg["outcome"] == "naked":
-                    logger.error(
-                        "shift_stops_down: %s stop %s is GONE after a dead "
-                        "replacement (%s) — the broker shows NO protective "
-                        "stop for this symbol; the position is UNPROTECTED, "
-                        "and this session's coverage repair has already run, "
-                        "so the gap persists until the NEXT intra sweep",
-                        symbol, leg["id"], leg["detail"],
-                    )
-                else:
-                    logger.error(
-                        "shift_stops_down: %s stop %s amend outcome UNKNOWN (%s) "
-                        "— the desk does NOT know whether it rests at $%.4f or "
-                        "$%.4f; nothing cancelled, re-read the book",
-                        symbol, leg["id"], leg["detail"], leg["old_stop"],
-                        leg["new_stop"],
-                    )
-            amended = [l for l in legs if l["outcome"] == "amended"]
-            unknown = [l for l in legs if l["outcome"] == "unknown"]
-            if any(l["outcome"] == "naked" for l in legs):
-                status = "naked"
-            elif unknown:
-                status = "unknown"
-            elif legs and all(l["outcome"] == "flat" for l in legs):
-                status = "flat"
-            elif len(amended) == len(legs):
-                status = "accepted"
-            elif amended:
-                status = "partial"
-            else:
-                status = "refused"
-            logger.info(
-                "shift_stops_down: %s — %d/%d stop(s) CONFIRMED amended in "
-                "place, %d unknown, 0 cancelled (status=%s)",
-                symbol, len(amended), len(legs), len(unknown), status,
-            )
-            return {
-                # Only a CONFIRMED full shift carries an order id. A partial, a
-                # refusal or an unknown must not read as an accepted stop order,
-                # or the caller writes every leg back at the shifted level and
-                # files a trade row for a stop that never moved.
-                "id": amended[0]["new_id"] if status == "accepted" else None,
-                "status": status, "symbol": symbol,
-                "shifted": len(amended), "total": len(legs),
-                "mode": "amend", "legs": legs,
-            }
-
-        if not self.cancel_snapshotted_stops(symbol, specs):
-            return None   # rollback already handled inside
-        restored, failed = self._restore_stop_orders(symbol, shifted)
-        if failed:
-            # Put the ORIGINAL levels back for whatever couldn't be shifted —
-            # protection at the old level beats no protection.
-            originals = [s for s in specs if any(
-                f.get("qty") == s["qty"] and abs(f.get("stop_price", 0) -
-                (s["stop_price"] - amount)) < 0.02 for f in failed)]
-            if originals:
-                self._restore_stop_orders(symbol, originals)
-            logger.error(
-                "shift_stops_down: %d/%d stop(s) failed to shift for %s — "
-                "originals restored where possible", len(failed), len(specs), symbol,
-            )
-        if restored <= 0:
-            return None
-        return {"id": f"shift-{symbol}", "status": "accepted", "symbol": symbol,
-                "shifted": restored, "total": len(specs), "mode": "cancel_resubmit"}
-
-    #: Order statuses that mean the amended order is NOT resting at the new
-    #: level. Anything else coming back from a replace is treated as live.
-    _AMEND_DEAD_STATES = frozenset({"rejected", "canceled", "cancelled", "expired", "done_for_day"})
-
-    @staticmethod
-    def _failed_amend_payload(symbol: str, legs: list[dict]) -> dict:
-        """The non-success return of an in-place amend.
-
-        A bare `None` preserved protection and threw the evidence away: the
-        caller could not tell a partial from a refusal, could not record which
-        leg moved, and could not alert. `id` is None so `accepted_stop_order`
-        still rejects it — nothing is written back — but the legs travel.
-        """
-        amended = [l for l in legs if l.get("outcome") == "amended"]
-        if any(l.get("outcome") == "naked" for l in legs):
-            status = "naked"
-        elif any(l.get("outcome") == "unknown" for l in legs):
-            status = "unknown"
-        elif amended:
-            status = "partial"
-        elif legs and all(l.get("outcome") == "flat" for l in legs):
-            status = "flat"
-        else:
-            status = "refused"
-        return {"id": None, "status": status, "amend_status": status,
-                "symbol": symbol, "legs": legs,
-                "shifted": len(amended), "total": len(legs)}
-
-    def _classify_after_dead_replacement(
-        self, *, symbol: str, spec: dict, new_price: float, leg: dict,
-    ) -> str:
-        """Read the book after a replacement came back dead. Never guess.
-
-        ASSUMED, NOT VERIFIED: that a replace moves the original order to
-        REPLACED before the replacement is accepted. If that is how it works,
-        a rejected or cancelled REPLACEMENT can mean the symbol has NO
-        protective stop at all — so "the original is still resting" must be
-        read off the broker, not inferred. What would settle the assumption:
-        a rehearsal that forces a replacement to be rejected and then lists
-        the symbol's open orders.
-
-        Returns "refused" (the original is confirmed still resting),
-        "amended" (something IS resting at the new level), "naked" (the book
-        shows no protective stop for this symbol) or "unknown" (the book
-        could not be read, or shows a level that is neither).
-        """
-        errors: list = []
-        try:
-            sells, buys = self._list_open_stop_orders_by_side(symbol, errors=errors)
-            live_orders = list(sells or []) + list(buys or [])
-        except Exception as exc:  # noqa: BLE001
-            leg["detail"] += f"; the book could not be re-read ({exc})"
-            return "unknown"
-        if errors:
-            leg["detail"] += "; the book could not be re-read"
-            return "unknown"
-        live = [spec_ for spec_ in (self._snapshot_stop_order(o) for o in live_orders)
-                if spec_ is not None]
-        if not live:
-            # A replacement is also rejected when the ORIGINAL already
-            # triggered: the book is then empty because the position is gone,
-            # and calling that UNPROTECTED would alert about a flat symbol.
-            try:
-                held = [
-                    abs(float(getattr(pos, "qty", 0) or 0))
-                    for pos in (self.client.get_all_positions() or [])
-                    if getattr(pos, "symbol", None) == symbol
-                ]
-            except Exception as exc:  # noqa: BLE001
-                leg["detail"] += (
-                    f"; the book is empty and the position could not be "
-                    f"re-read ({exc}) — treating it as UNPROTECTED"
-                )
-                return "naked"
-            if not held or sum(held) <= 0:
-                leg["detail"] += (
-                    "; the book is empty because the position is FLAT — the "
-                    "original stop most likely filled, so there is nothing "
-                    "left to protect"
-                )
-                return "flat"
-            # HONEST LIMIT, no settle window: a replace that is still pending
-            # at the broker can also present as an empty book for a moment.
-            # The two are indistinguishable from one read, so this reports the
-            # LOUD direction — a false UNPROTECTED alert costs attention, a
-            # missed one costs the position. What would settle it: a rehearsal
-            # that lists open orders during a pending replace.
-            leg["detail"] += (
-                "; the broker shows NO resting protective stop while the "
-                "position is still open — UNPROTECTED (a replace still "
-                "pending at the broker can look the same from one read)"
-            )
-            return "naked"
-        if any(str(s["id"]) == str(spec.get("id")) for s in live):
-            leg["detail"] += "; the ORIGINAL order was read back, still resting"
-            return "refused"
-        at_new = [s for s in live if abs(s["stop_price"] - new_price) <= 1e-9]
-        if at_new:
-            leg["new_id"] = at_new[0]["id"]
-            leg["detail"] += (
-                "; a stop was read back at the NEW level despite the dead "
-                "replacement"
-            )
-            return "amended"
-        leg["detail"] += (
-            "; a stop is resting but at neither the old nor the new level"
-        )
-        return "unknown"
+    def _classify_after_dead_replacement(self, *, symbol: str, spec: dict, new_price: float, leg: dict) -> str:
+        """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
+        return self._stop_amender()._classify_after_dead_replacement(symbol=symbol, spec=spec, new_price=new_price, leg=leg)
 
     def _amend_one_stop_price(self, *, symbol: str, spec: dict, new_price: float) -> dict:
-        """Amend ONE resting stop's price and report what is KNOWN afterwards.
+        """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
+        return self._stop_amender()._amend_one_stop_price(symbol=symbol, spec=spec, new_price=new_price)
 
-        The single place both the trailing path and the ex-dividend shift
-        classify an amend's outcome. Sharing only the shape test and leaving
-        the failure classification to each caller is sharing the half that does
-        not lose money. Returns a leg record whose `outcome` is one of:
+    _stop_order_amendable_in_place = staticmethod(StopAmender._stop_order_amendable_in_place)
 
-          "amended" — the broker answered with a live order id (confirmed);
-          "refused" — the broker ANSWERED no (400/404/422, or a dead status),
-                      so the ORIGINAL stop is still resting at its old level;
-          "unknown" — no broker answer, or an answer with no id. The amend MAY
-                      have been applied. Nothing may be cancelled on this
-                      outcome and nothing may be STATED about where the stop is.
-        """
-        leg = {
-            "id": str(spec.get("id") or ""), "qty": spec.get("qty"),
-            "old_stop": spec.get("stop_price"), "new_stop": new_price,
-            "new_id": None, "outcome": "unknown", "detail": "",
-        }
-        try:
-            replaced = self.client.replace_order_by_id(
-                leg["id"], ReplaceOrderRequest(stop_price=new_price),
-            )
-        except Exception as exc:  # noqa: BLE001
-            if _is_terminal_broker_rejection(exc):
-                leg["outcome"] = "refused"
-                leg["detail"] = f"broker refused the amend: {exc}"
-            else:
-                leg["outcome"] = "unknown"
-                leg["detail"] = (
-                    f"no broker status on the amend ({exc}) — it may have been "
-                    f"applied before the answer was lost"
-                )
-            return leg
-        new_id = str(getattr(replaced, "id", "") or "")
-        status_attr = getattr(replaced, "status", None)
-        status = str(getattr(status_attr, "value", status_attr) or "accepted").lower()
-        if not new_id:
-            leg["detail"] = "broker accepted the amend but returned no order id"
-            return leg
-        leg["new_id"] = new_id
-        leg["status"] = status
-        if status in self._AMEND_DEAD_STATES:
-            leg["detail"] = f"the replacement order came back {status}"
-            leg["outcome"] = self._classify_after_dead_replacement(
-                symbol=symbol, spec=spec, new_price=new_price, leg=leg,
-            )
-            return leg
-        leg["outcome"] = "amended"
-        return leg
+    def _amend_resting_stop_price(self, *, symbol: str, live_orders: list, stop_specs: list[dict], new_stop_price: float, position_qty: float):
+        """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
+        return self._stop_amender()._amend_resting_stop_price(symbol=symbol, live_orders=live_orders, stop_specs=stop_specs, new_stop_price=new_stop_price, position_qty=position_qty)
 
-    @staticmethod
-    def _stop_order_amendable_in_place(order) -> bool:
-        """True when `order` is the SHAPE the 2026-09-30 rehearsal measurement
-        covered for `replace_order_by_id(stop_price=...)`: one plain, parentless
-        stop-MARKET order with no legs.
+    def replace_stop_loss(self, *args, **kwargs):
+        """Thin shim: body moved to src/execution/broker_parts/stop_place.py."""
+        return self._stop_placer().replace_stop_loss(*args, **kwargs)
 
-        Shared by `_amend_resting_stop_price` (trailing) and `shift_stops_down`
-        (ex-dividend) so the two paths cannot drift on what "measured-safe"
-        means. Every rejection here routes to a cancel+resubmit fallback, which
-        is the measured-safe outcome for an unrecognised shape.
-        """
-        # A bracket/OTO/OCO leg is the one shape the original comment was right
-        # about and the measurement did NOT cover.
-        order_class = getattr(order, "order_class", None)
-        order_class = str(getattr(order_class, "value", order_class) or "").lower()
-        if order_class not in ("", "simple") or getattr(order, "legs", None):
-            return False
-        # `order_class` and `legs` sit on the PARENT on Alpaca, so a child leg
-        # can present as class "" with no legs. `parent_id` is populated ON the
-        # child and is what actually establishes parentlessness.
-        if getattr(order, "parent_id", None):
-            return False
-        # A stop-LIMIT carries a limit price too, and the ReplaceOrderRequest
-        # used by both callers amends stop_price ONLY -- the limit would keep
-        # its old level and the buffer between them would drift on every move.
-        # `_submit_stop_limit_order`'s fallback leg produces exactly this shape.
-        otype = getattr(order, "order_type", None) or getattr(order, "type", None)
-        otype = str(getattr(otype, "value", otype) or "").lower()
-        return otype == "stop"
 
-    def _amend_resting_stop_price(
-        self,
-        *,
-        symbol: str,
-        live_orders: list,
-        stop_specs: list[dict],
-        new_stop_price: float,
-        position_qty: float,
-    ):
-        """Amend EVERY resting protective stop's price in place, at one level.
+# ---------------------------------------------------------------------------
+# Patch-target mirror (the ONE module-level __getattr__ and the ONE write-through
+# __setattr__ of this file). Tests patch `src.execution.broker.<name>` for names
+# whose bodies now live in broker_parts.trade_stream / broker_parts.market_data;
+# those bodies read their OWN module globals, so a write here is mirrored into
+# every part that defines the name. The two flags the stream code rebinds with
+# `global` are not imported above (an imported copy would go stale); reads of
+# them fall through to the part and writes go only there.
+import sys as _sys
+import types as _types
+from src.execution.broker_parts import market_data as _market_data_part
+from src.execution.broker_parts import trade_stream as _trade_stream_part
 
-        Returns a {id, status, symbol} dict on success, `None` when the broker
-        REFUSED the amend (the original stop is still resting, protection is
-        intact, and the caller must NOT cancel it), or `_AMEND_NOT_ATTEMPTED`
-        when this path does not apply and the caller should run the legacy
-        cancel+resubmit fallback.
+# Sector cluster: OWNED by `src.sector_reference` (L0). Its names stay reachable
+# here so tests that patch `src.execution.broker.<name>` keep working; a write
+# is mirrored into the owning module (via _MIRRORED_PARTS) and a read is always
+# live from it. The copy kept in this module's dict exists so `unittest.mock.patch`
+# sees the name as local and restores it with a plain setattr, which writes through.
+_SECTOR_MIRROR_NAMES = frozenset({
+    "_get_sector", "_sector_resolution_status_for", "_canonicalize_sector",
+    "_sector_cache", "_sector_lock", "_sector_resolution_status",
+    "_INDEX_ETFS", "_ETF_SECTORS", "_SECTOR_LOOKUP_TIMEOUT_S",
+    "_ALLOWED_SECTORS", "_SECTOR_ALIASES",
+})
+_MIRRORED_PARTS = (_trade_stream_part, _market_data_part, _sector_reference)
+_FORWARDED_GLOBALS = {
+    "_stream_auth_deprecation_logged": _trade_stream_part,
+    "_stream_current_auth_format_logged": _trade_stream_part,
+}
 
-        A whole-share QUANTITY amend was ALSO measured working on 2026-09-30
-        (3 shares to 2, one open stop); only a FRACTIONAL quantity amend is
-        refused, which is why a coverage-repairing size change still goes to
-        the fallback. A bracket/OTO child is UNMEASURED, not known-unamendable.
 
-        Measured against the broker on rehearsal account <redacted-rehearsal-account> on
-        2026-09-30: `replace_order_by_id(id, ReplaceOrderRequest(stop_price=X))`
-        moves a resting protective stop atomically (old order -> REPLACED, new
-        id issued, exactly one open stop on the symbol at every instant), and a
-        refused amend leaves the original `new` at its old price. Only the
-        shapes that measurement covered take this path; everything else falls
-        back.
-        """
-        if not stop_specs or len(stop_specs) != len(live_orders):
-            return _AMEND_NOT_ATTEMPTED
-        if not all(self._stop_order_amendable_in_place(o) for o in live_orders):
-            return _AMEND_NOT_ATTEMPTED
-        # MULTI-LEG (item 201). 9 of the 11 open positions are fractional
-        # [measured 2026-10-01, production quant_agent.db, read-only]. That a
-        # fractional position carries the spec 11.1 hybrid PAIR — a durable GTC
-        # whole-share leg plus a DAY sliver leg — is ASSUMED, not measured: the
-        # production database holds positions, not an order book. What would
-        # settle it: one read of the open orders for a fractional holding. Restricting the atomic path to
-        # exactly ONE resting order therefore left the trailing stop cancelling
-        # and resubmitting on most of the book while the ex-dividend shift no
-        # longer did, which is protection moving in two directions at once.
-        # Each leg keeps its own id, quantity and time-in-force under a
-        # price-only amend, so moving them all to the new trigger does to the
-        # LEVEL exactly what the cancel+resubmit fallback already did, minus
-        # the unprotected window.
-        try:
-            covered = sum(abs(float(spec["qty"])) for spec in stop_specs)
-        except (TypeError, ValueError, KeyError):
-            return _AMEND_NOT_ATTEMPTED
-        # A price-only amend cannot fix a coverage gap: if the resting stops do
-        # not already cover exactly the position, the fallback (which resubmits
-        # at the position's qty) is the path that repairs it. Compare at the
-        # broker's own fractional resolution and SAY why when it does not match,
-        # so a persistently-skipped atomic path is visible instead of invisible.
-        if abs(covered - position_qty) > 1e-9:
-            logger.info(
-                "replace_stop_loss: %s's %d resting stop(s) cover %s of %s held "
-                "shares, so the in-place amend is skipped and the "
-                "cancel+resubmit path runs to repair coverage.",
-                symbol, len(stop_specs), covered, position_qty,
-            )
-            return _AMEND_NOT_ATTEMPTED
-        price = _quantize_price(new_stop_price)
-        if price is None or price <= 0:
-            return _AMEND_NOT_ATTEMPTED
+def __getattr__(name):
+    part = _FORWARDED_GLOBALS.get(name)
+    if part is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(part, name)
 
-        legs = [self._amend_one_stop_price(symbol=symbol, spec=spec, new_price=price)
-                for spec in stop_specs]
-        amended = [l for l in legs if l["outcome"] == "amended"]
-        unknown = [l for l in legs if l["outcome"] == "unknown"]
-        if any(l["outcome"] == "naked" for l in legs):
-            # Read off the broker, not inferred: the symbol has no resting
-            # protective stop. Say UNPROTECTED and let coverage repair place
-            # one; cancelling or resubmitting from here would race it.
-            # Coverage repair has ALREADY run this session — `_reconcile_stop_
-            # coverage` executes earlier in the same position review than the
-            # trails — so the gap is NOT closed by this session. It is closed
-            # by the next intra sweep, which is why the owner is alerted.
-            logger.error(
-                "replace_stop_loss: after a dead replacement %s has NO resting "
-                "protective stop — the position is UNPROTECTED, nothing was "
-                "cancelled, and this session's coverage repair has already "
-                "run, so the gap persists until the NEXT intra sweep",
-                symbol,
-            )
-            return self._failed_amend_payload(symbol, legs)
-        if len(amended) == len(legs):
-            logger.info(
-                "Trailing stop AMENDED IN PLACE for %s: %d leg(s) moved to "
-                "$%.4f, quantities unchanged (no cancel, no unprotected window)",
-                symbol, len(legs), price,
-            )
-            return {"id": amended[0]["new_id"],
-                    "status": amended[0].get("status", "accepted"),
-                    "amend_status": "accepted", "symbol": symbol, "legs": legs}
-        if unknown:
-            # The amend MAY have landed. Cancelling now could cancel a stop the
-            # broker already moved, so the fallback must NOT run: take the
-            # "refused, do not cancel" channel and let the next pass re-read.
-            logger.error(
-                "replace_stop_loss: %d of %d in-place amends for %s came back "
-                "with NO broker answer — the desk does not know which level "
-                "each leg is at; nothing cancelled, nothing written back, "
-                "re-read the book before trailing %s again",
-                len(unknown), len(legs), symbol, symbol,
-            )
-            return self._failed_amend_payload(symbol, legs)
-        if amended:
-            # NARROW HEAL (item 201, adversary round 3). Only the legs THIS
-            # amend failed to move, and only to THIS proposal's intended
-            # level. Deliberately NOT "the most protective level already
-            # resting": per-lot stop levels are a design choice the desk
-            # maintains (see `shift_stops_down`'s docstring on the audit-round-2
-            # fix), so collapsing them would tighten a lot the desk chose to
-            # keep wide — a worse failure than the straddle. A leg whose
-            # outcome is unknown or naked is never retried, because the desk
-            # does not know where it is.
-            #
-            # Exactly ONE retry, inside the trailing proposal's own gates
-            # (ratchet floor, tightening cooldown, no-proposal-on-a-stalled-
-            # price): nothing here re-attempts an unchanged outcome on a later
-            # pass, so a leg the broker keeps refusing cannot spin.
-            laggards = [l for l in legs if l["outcome"] == "refused"]
-            if laggards:
-                retried = {}
-                for lag in laggards:
-                    again = self._amend_one_stop_price(
-                        symbol=symbol,
-                        spec={"id": lag["id"], "qty": lag["qty"],
-                              "stop_price": lag["old_stop"]},
-                        new_price=price,
-                    )
-                    again["retry_of"] = lag["id"]
-                    retried[lag["id"]] = again
-                legs = [retried.get(l["id"], l) for l in legs]
-                amended = [l for l in legs if l["outcome"] == "amended"]
-                unknown = [l for l in legs if l["outcome"] == "unknown"]
-                if len(amended) == len(legs):
-                    logger.info(
-                        "replace_stop_loss: %s's lagging stop leg(s) came up to "
-                        "$%.4f on one retry — all %d leg(s) now at the intended "
-                        "level, nothing cancelled", symbol, price, len(legs),
-                    )
-                    return {"id": amended[0]["new_id"],
-                            "status": amended[0].get("status", "accepted"),
-                            "amend_status": "accepted", "symbol": symbol,
-                            "legs": legs}
-            if not amended:
-                return self._failed_amend_payload(symbol, legs)
-            logger.error(
-                "replace_stop_loss: only %d of %d stop legs for %s moved to "
-                "$%.4f; the rest were REFUSED and are still resting at their "
-                "old levels even after one retry. Coverage is intact and "
-                "nothing was cancelled, and the straddle is LEFT IN PLACE: "
-                "pulling the laggards to another resting level would collapse "
-                "per-lot geometry the desk maintains on purpose. The next "
-                "accepted proposal moves them all together.",
-                len(amended), len(legs), symbol, price,
-            )
-            return self._failed_amend_payload(symbol, legs)
-        logger.warning(
-            "replace_stop_loss: the broker REFUSED the in-place amend of all "
-            "%d stop leg(s) for %s to $%.4f — the ORIGINAL stops are still "
-            "resting, so protection is intact and nothing is cancelled",
-            len(legs), symbol, price,
-        )
-        return self._failed_amend_payload(symbol, legs)
 
-    def replace_stop_loss(
-        self,
-        symbol: str,
-        new_stop_price: float,
-        *,
-        allow_lowering: bool = False,
-    ) -> dict | None:
-        """Replace an existing protective stop with rollback so protection is preserved on failure.
+class _MirrorModule(_types.ModuleType):
+    def __setattr__(self, name, value):
+        for part in _MIRRORED_PARTS:
+            if name in vars(part):
+                setattr(part, name, value)
+        if name in _FORWARDED_GLOBALS:
+            return
+        super().__setattr__(name, value)
 
-        Used by the midday trailing-stop logic. PREFERRED PATH: when exactly one
-        plain (non-bracket/OTO) protective stop covers the whole position, the stop's
-        price is amended ATOMICALLY via Alpaca's replace endpoint — measured against
-        the broker on rehearsal account <redacted-rehearsal-account> on 2026-09-30: the old order goes
-        to REPLACED, a new id is issued, and exactly ONE open stop covers the symbol at
-        every instant. A refused amend leaves the ORIGINAL order resting untouched.
+    def __delattr__(self, name):
+        if name in _FORWARDED_GLOBALS:
+            return
+        super().__delattr__(name)
 
-        FALLBACK PATH: the older cancel + resubmit sequence, kept for the shapes that
-        measurement did not cover (more than one resting stop, a bracket/OTO leg, a stop
-        whose qty does not match the position, or an amend whose outcome is unknown).
-        That sequence is not atomic — it is the origin of the naked-position window this
-        method now avoids — so it still snapshots existing stops and best-effort restores
-        them if the replacement submit fails.
-        Returns {id, status, symbol} on successful replacement, else None.
+    def __getattribute__(self, name):
+        if name in _SECTOR_MIRROR_NAMES:
+            return getattr(_sector_reference, name)
+        return _types.ModuleType.__getattribute__(self, name)
 
-        A short's protective stop is a BUY stop above the market, and
-        "trailing" for a short means ratcheting it DOWN — the mirror of a
-        long's stop-only-rises rule. Direction is read from whichever side
-        ALREADY has a live stop (`_list_open_stop_orders_by_side` checks
-        both with one fetch, since a long-only "sell" listing would make a
-        short's BUY stop invisible); the position's own qty sign — read
-        below to confirm the position exists, same as before shorts were
-        possible — is the authoritative vote once there's something to cross-
-        check it against, and the sole vote when there was no live stop yet
-        to infer direction from.
-        """
-        if new_stop_price <= 0:
-            logger.warning("replace_stop_loss ignored: non-positive new_stop_price=%s", new_stop_price)
-            return None
 
-        sell_orders, buy_orders = self._list_open_stop_orders_by_side(symbol)
-        if sell_orders and buy_orders:
-            # A single symbol can't legitimately be both long and short at
-            # once, so live stops on both sides means stale orders survived
-            # a direction flip. Reporting/acting on either would be a guess
-            # — fail closed instead.
-            logger.error(
-                "replace_stop_loss: %s carries BOTH sell-stops and buy-stops "
-                "— direction is ambiguous, refusing to trail", symbol,
-            )
-            return None
-        # "sell" is also the default when NEITHER side has a live stop yet;
-        # the position check below is what actually decides direction in
-        # that case (see the qty_side cross-check).
-        side = "buy" if buy_orders else "sell"
-
-        live_orders = list(buy_orders or sell_orders)
-        stop_specs: list[dict] = []
-        for order in live_orders:
-            spec = self._snapshot_stop_order(order)
-            if spec is None:
-                logger.warning(
-                    "replace_stop_loss: cannot safely snapshot existing stop %s for %s; aborting replacement",
-                    getattr(order, "id", "<unknown>"), symbol,
-                )
-                return None
-            stop_specs.append(spec)
-
-        # Direction check: "trailing" means the stop moves toward less risk
-        # — UP for a long, DOWN for a short — never the other way. If the
-        # LLM hallucinates a stop on the wrong side (or the caller passes the
-        # wrong value), accepting it would weaken existing protection. Ex-
-        # dividend adjustments would intentionally lower a LONG's stop to
-        # absorb tomorrow's mechanical dividend gap, and that is what the
-        # allow_lowering=True opt-in is for.
-        #
-        # VERIFIED 2026-09-30: NO caller anywhere in src/ passes
-        # allow_lowering=True — grep finds the name only in this file's own
-        # signature and comments. The ex-dividend caller this comment
-        # described does not exist, so every call today takes the
-        # never-loosen branch below. Stated rather than removed because the
-        # parameter is still reachable from tests and from a future caller,
-        # but do not cite the ex-div caller as if it were live.
-        if stop_specs and not allow_lowering:
-            if side == "buy":
-                tightest_existing = min(spec["stop_price"] for spec in stop_specs)
-                if new_stop_price >= tightest_existing:
-                    logger.warning(
-                        "replace_stop_loss rejected for %s: new_stop $%.4f is "
-                        "not below lowest existing buy-stop $%.4f — a "
-                        "short's trailing stop must ratchet down only "
-                        "(protection would weaken).",
-                        symbol, new_stop_price, tightest_existing,
-                    )
-                    return None
-            else:
-                tightest_existing = max(spec["stop_price"] for spec in stop_specs)
-                if new_stop_price <= tightest_existing:
-                    logger.warning(
-                        "replace_stop_loss rejected for %s: new_stop $%.4f is not "
-                        "above highest existing stop $%.4f — trailing stops must "
-                        "ratchet up only (protection would weaken).",
-                        symbol, new_stop_price, tightest_existing,
-                    )
-                    return None
-
-        positions = [p for p in self.get_positions() if p.symbol == symbol]
-        if not positions or positions[0].qty == 0:
-            logger.warning("replace_stop_loss: no open position in %s, nothing to protect", symbol)
-            return None
-        qty_side = "buy" if positions[0].qty < 0 else "sell"
-        if stop_specs and qty_side != side:
-            # Live stops on one side, but the held position is on the other
-            # — the same stale-order shape as the both-sides check above,
-            # just caught against the position instead of the order book.
-            logger.error(
-                "replace_stop_loss: %s has live %s-stop(s) but qty=%.4f says "
-                "the opposite side — refusing to trail an ambiguous position",
-                symbol, side, positions[0].qty,
-            )
-            return None
-        side = qty_side  # authoritative now that a position confirms direction
-
-        # PREFERRED: amend the resting stop's price in place. The sentinel
-        # means "not attempted / outcome unknown" and drops through to the
-        # legacy cancel+resubmit below; None means the broker REFUSED and the
-        # original stop is still resting, so we must NOT cancel anything.
-        # Re-read the position IMMEDIATELY before the amend. The fallback
-        # already does this right before it submits, with a comment naming the
-        # sub-second window; the amend path was comparing against a qty read
-        # further up, so a fill landing in between could leave the stop
-        # covering more than is held. A read failure is not a reason to amend
-        # on stale data -- drop to the fallback, which repairs coverage.
-        try:
-            fresh = [
-                p for p in self.get_positions()
-                if getattr(p, "symbol", None) == symbol
-            ]
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "replace_stop_loss: could not re-read %s's position before "
-                "the in-place amend (%s) — using the cancel+resubmit path, "
-                "which re-reads and repairs coverage itself.", symbol, exc,
-            )
-            fresh = []
-        amended = (
-            _AMEND_NOT_ATTEMPTED if not fresh
-            else self._amend_resting_stop_price(
-                symbol=symbol,
-                live_orders=live_orders,
-                stop_specs=stop_specs,
-                new_stop_price=new_stop_price,
-                position_qty=abs(float(fresh[0].qty)),
-            )
-        )
-        if amended is not _AMEND_NOT_ATTEMPTED:
-            return amended
-
-        cancelled_specs: list[dict] = []
-        for spec in stop_specs:
-            try:
-                self.client.cancel_order_by_id(spec["id"])
-                cancelled_specs.append(spec)
-            except Exception as exc:
-                logger.warning("replace_stop_loss: cancel failed for order %s: %s", spec["id"], exc)
-                # Always restore whatever we already cancelled. The previous
-                # "if no open stops remain" gate was wrong for partial
-                # failures: with [A, B, C], if A and B cancel cleanly and C
-                # fails, the broker now shows [C] — the gate sees something
-                # open and skips restore, leaving A's and B's qty
-                # unprotected. Restore is safe even when C is still live;
-                # at worst we end up with slightly more stops than minimal,
-                # but full original coverage is preserved.
-                if cancelled_specs:
-                    restored, _failed = self._restore_stop_orders(symbol, cancelled_specs, side=side)
-                    logger.warning(
-                        "replace_stop_loss: rolled back %d/%d already-cancelled "
-                        "stop(s) for %s after partial cancel failure",
-                        restored, len(cancelled_specs), symbol,
-                    )
-                return None
-
-        # Re-read position right before submit — in the sub-second window
-        # between our cancel-stops and this submit, the position may have
-        # been closed (liquidated by another path, or market-sold into a
-        # fill). If it's gone, the new-stop submit would fail with a qty
-        # mismatch AND our rollback would then re-attach a phantom stop to
-        # a non-existent position. Bail cleanly in that case.
-        fresh_positions = [p for p in self.get_positions() if p.symbol == symbol]
-        if not fresh_positions or fresh_positions[0].qty == 0:
-            logger.warning(
-                "replace_stop_loss: %s was closed between cancel and submit; "
-                "NOT restoring old stops (position no longer exists)",
-                symbol,
-            )
-            return None
-        # Order qty is always the unsigned share count — the SIDE parameter
-        # carries direction. `fresh_positions[0].qty` is negative for a
-        # short; submitting that raw would hand Alpaca a negative qty.
-        qty = abs(fresh_positions[0].qty)
-        try:
-            # Spec §11.1: a fractional position is re-protected by the HYBRID
-            # PAIR, not by one fractional order that would be DAY-only and
-            # gone by tomorrow morning. Whole-share positions submit exactly
-            # one GTC order, unchanged.
-            legs = self._submit_stop_legs(
-                symbol=symbol, qty=qty, stop_price=new_stop_price, side=side,
-            )
-            order = legs[0]
-            logger.info(
-                "Trailing stop placed for %s: replaced %d old stop(s), new %s "
-                "stop @ $%.2f across %d leg(s)",
-                symbol, len(cancelled_specs), side, new_stop_price, len(legs),
-            )
-            return order
-        except Exception as exc:
-            logger.error("replace_stop_loss: failed to submit new stop for %s: %s", symbol, exc)
-            # The Alpaca QueryOrderStatus.OPEN filter INCLUDES transitional
-            # statuses (pending_cancel / pending_replace), so the orders we
-            # just cancelled can still appear in this list for ~1s after the
-            # cancel call returns AND a *different* stop placed by another
-            # path could itself be in pending_cancel. Three things must all
-            # be true for "visible" to count as real protection:
-            #   1. the order's id is NOT in cancelled_specs (PR #75)
-            #   2. the order's status is in an active state, not pending_*
-            #   3. the *sum* of active stop qtys covers the current position
-            # Miss any of those and `cancelled_specs` must be restored.
-
-            def _is_live_protection(order) -> bool:
-                if str(getattr(order, "id", "")) in cancelled_ids:
-                    return False
-                status_attr = getattr(order, "status", None)
-                status = str(getattr(status_attr, "value", status_attr) or "").lower()
-                return status in PROTECTIVE_ORDER_ACTIVE_STATUSES
-
-            def _stop_qty(order) -> float:
-                try:
-                    return float(getattr(order, "qty", 0) or 0)
-                except (TypeError, ValueError):
-                    return 0.0
-
-            cancelled_ids = {
-                real_broker_order_id(spec.get("id"))
-                for spec in cancelled_specs
-                if real_broker_order_id(spec.get("id"))
-            }
-            visible = self._list_open_protective_stop_orders(symbol, side=side)
-            live_stops = [o for o in visible if _is_live_protection(o)]
-            covered_qty = sum(_stop_qty(o) for o in live_stops)
-            position_qty = qty  # captured pre-submit above; the position
-                                # cannot have grown between then and now (this
-                                # path doesn't BUY/SELL_SHORT to open), so this
-                                # is an upper bound for required coverage.
-            if live_stops and covered_qty >= position_qty:
-                logger.warning(
-                    "replace_stop_loss: %d active stop(s) cover %.4f >= position %.4f for %s after submit failure; leaving stop state unchanged",
-                    len(live_stops), covered_qty, position_qty, symbol,
-                )
-                return None
-            if live_stops:
-                logger.warning(
-                    "replace_stop_loss: %d active stop(s) cover only %.4f of %.4f shares for %s; restoring cancelled specs to close the gap",
-                    len(live_stops), covered_qty, position_qty, symbol,
-                )
-            restored, _failed = self._restore_stop_orders(symbol, cancelled_specs, side=side)
-            if restored == 0:
-                logger.error(
-                    "replace_stop_loss: %s has no confirmed stop protection after replacement failure",
-                    symbol,
-                )
-            return None
+_sys.modules[__name__].__class__ = _MirrorModule
+for _n in _SECTOR_MIRROR_NAMES:
+    _types.ModuleType.__setattr__(_sys.modules[__name__], _n, getattr(_sector_reference, _n))
+del _n

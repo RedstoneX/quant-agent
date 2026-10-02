@@ -464,8 +464,8 @@ class ResearchContinuityMixin:
         )
         logger.error("PRE-OPEN: %s", text)
         try:
-            from src.notifier import send_owner_alert
-            send_owner_alert(text)
+            from src.notifier import CATEGORY_OPERATIONAL, send_owner_alert
+            send_owner_alert(text, category=CATEGORY_OPERATIONAL)
         except Exception as exc:  # noqa: BLE001
             logger.error("Form 4 backlog pre-open alert failed to send: %s", exc)
 

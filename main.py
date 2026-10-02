@@ -281,6 +281,15 @@ def main():
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("data-quality alert failed in finally: %s", exc)
+        # Defect 1 (PR #978): see src/trader_feed.send_naked_position_alert.
+        try:
+            from src.trader_feed import send_naked_position_alert
+
+            send_naked_position_alert(
+                notifier, result if isinstance(result, dict) else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("naked-position alert failed in finally: %s", exc)
         if message:
             # Wrapped in its own try/except inside send(), but be doubly
             # defensive: notifier code in finally must NEVER mask the

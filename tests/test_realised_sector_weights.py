@@ -112,7 +112,10 @@ def test_one_row_per_run(db):
 
 def test_recording_is_reachable_from_executable_product_code():
     """The write must be reached from the product, not only from a test."""
-    stages = (SRC / "pipeline_stages.py").read_text()
+    # item 210 step 12 moved `_record_realised_sector_weights` verbatim
+    # into src/pipeline_entry_orders.py. Read it where it now lives; the
+    # assertion below is unchanged.
+    stages = (SRC / "pipeline_entry_orders.py").read_text()
     tree = ast.parse(stages)
     helper = next(
         n for n in ast.walk(tree)
@@ -128,7 +131,8 @@ def test_recording_is_reachable_from_executable_product_code():
     # pipeline_stages.py. Scan both so the reachability claim survives
     # the split instead of being weakened by it.
     callers = []
-    for module in ("pipeline_stages.py", "stage_decision.py"):
+    for module in ("pipeline_stages.py", "stage_decision.py",
+                   "pipeline_entry_orders.py", "pipeline_rotation_exec.py"):
         callers += [
             n for n in ast.walk(ast.parse((SRC / module).read_text()))
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)

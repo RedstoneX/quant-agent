@@ -34,10 +34,10 @@
 #   * it said the number was absent from any ratification record. It was
 #     ratified 2026-08-27, commit 75c02335.
 #   * it said the number existed in exactly one place, while this same file
-#     listed it twice -- and a third site (src/config.py:770) was invisible to
+#     listed it twice -- and a third site (src/config/__init__.py:770) was invisible to
 #     the scanner because its default was bound to a NAME.
 #
-# It also cited a comment at src/portfolio_constructor.py:480-488 as calling
+# It also cited a comment at src/portfolio_constructor/config.py:480-488 as calling
 # that 0.50% "a constructor default nobody chose". That comment is about
 # `risk_budget_pct`'s prior value, a legacy NOTIONAL target -- a different
 # quantity that shares a digit. Every one of those five claims was one grep
@@ -91,7 +91,7 @@ numbers:
   - id: src.config.INTRA_CHECK_TICK_MINUTES
     value: 30
     status: sourced
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
       src/scheduler.py:56 (`for tick_min in range(lo_min, hi_min + 1, 30)` in
       `_build_intra_check_trigger`, the authority for how often the intraday
@@ -105,7 +105,7 @@ numbers:
   - id: src.config.CashSweepConfig.min_order_usd
     value: 500
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       UNSOURCED AND TRADE-GOVERNING. A round $500 with nothing behind it.
       CORRECTED 2026-10-01 (board item 190): the 2026-09-24 note below said
@@ -205,7 +205,7 @@ numbers:
         was holding back
     value: 1
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       % of equity the /account liquidity view reports as held back as raw
       cash for fees, slippage and partial fills. RELOCATED 2026-10-01 (board
@@ -264,7 +264,7 @@ numbers:
         to be smaller than the reporting resolution of the invested share
     value: 1
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Tolerance band, in percentage points under 100% invested, for the
       `deployment_gap` advisory (PM facts block and pre-trade advisory).
@@ -315,7 +315,7 @@ numbers:
   - id: src.config.EventRiskConfig.calendar_deadline_s
     value: 20
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -324,7 +324,7 @@ numbers:
   - id: src.config.EventRiskConfig.earnings_deadline_s
     value: 20
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -333,7 +333,7 @@ numbers:
   - id: src.config.EventRiskConfig.earnings_symbol_timeout_s
     value: 8
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -342,7 +342,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_cache_ttl_days
     value: 7
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -351,7 +351,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_deadline_s
     value: 15
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -360,7 +360,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_max_retries
     value: 2
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -369,7 +369,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_request_timeout_s
     value: 10
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -389,7 +389,7 @@ numbers:
         sizing or gating input, if no pre-event elevation is measurable at any horizon
     value: 10
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       How far ahead the macro release calendar looks. The definition site says
       10 calendar days "covers the next few sessions the event_risk field asks
@@ -428,9 +428,9 @@ numbers:
   - id: src.config.ExecutionConfig.fractional_share_decimals
     value: 4
     status: sourced
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
-      src/config.py:483 (the derivation at the definition site: the quantity
+      src/config/__init__.py:483 (the derivation at the definition site: the quantity
       is FLOORED, never rounded up, so the only exposure is under-spending the
       budget, and 4dp is under a tenth of a cent of notional at any price this
       desk trades) and docs/QAMC_REMEDIATION_SPEC.md:1457 (the
@@ -450,7 +450,7 @@ numbers:
         separates
     value: 40
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The entry-slippage belt: executed geometry worse than this rejects the
       fill. docs/INCIDENT_HISTORY.md records the belt comparing every range
@@ -535,7 +535,7 @@ numbers:
   - id: src.config.ExecutionConfig.repeg_poll_seconds
     value: 5
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -555,7 +555,7 @@ numbers:
         if repeat crossings turn out to carry independent information
     value: 3
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The intraday scan trigger, its cooldown and its per-scan cap. THE SCAN
       IS ON -- the 2026-09-14 verification corrected a stale settings comment
@@ -601,7 +601,7 @@ numbers:
         is a measured affordability limit, stated as such, if it binds often
     value: 5
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The intraday scan trigger, its cooldown and its per-scan cap. THE SCAN
       IS ON -- the 2026-09-14 verification corrected a stale settings comment
@@ -651,7 +651,7 @@ numbers:
         of what the level turns out to be
     value: 3
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The intraday scan trigger, its cooldown and its per-scan cap. THE SCAN
       IS ON -- the 2026-09-14 verification corrected a stale settings comment
@@ -699,7 +699,7 @@ numbers:
         it, if it binds
     value: 3
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Nomination caps: 3 per seat, 6 per run, 3 external. Recorded in the
       2026-09-14 verification as affordability caps, not measurements. They
@@ -743,7 +743,7 @@ numbers:
         it, if it binds
     value: 6
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Nomination caps: 3 per seat, 6 per run, 3 external. Recorded in the
       2026-09-14 verification as affordability caps, not measurements. They
@@ -778,7 +778,7 @@ numbers:
   - id: src.config.RiskConfig.SECTOR_HARD_CEILING_MAX
     value: 90
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The terminal bound on the sector ceiling, deciding when a sector stops
       accepting new risk. The definition site records that this was NOT in the
@@ -812,7 +812,7 @@ numbers:
       points of binding, and nothing records whether it ever has been.
     cost_while_unanswered: >-
       A concentrated sector book is capped at a number the spec never set
-      (src/config.py:1004 says 90 was chosen when section 12.3 was built and
+      (src/config/__init__.py:1004 says 90 was chosen when section 12.3 was built and
       is open for the owner to move).
     settles_by:
       kind: recording
@@ -829,11 +829,11 @@ numbers:
   - id: src.config.RiskConfig.SECTOR_HARD_MULTIPLE
     value: 1.5
     status: sourced
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
       docs/QAMC_REMEDIATION_SPEC.md section 10.3, ratified: the hard sector
       ceiling is defined there as a multiple of the sector target. Definition
-      site: src/config.py:1000. The multiple is the spec's, not this file's.
+      site: src/config/__init__.py:1000. The multiple is the spec's, not this file's.
   - id: src.config.RiskConfig.absolute_min_stop_atr_multiple
     settles_by:
       kind: measurement
@@ -849,14 +849,14 @@ numbers:
         ordinary one
     value: 1
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The HARD FLOOR under every stop this desk sets. A level-backed stop is
       honoured however tight down to this many ATRs; inside it the stop is
-      pushed out to exactly this floor (src/config.py:840-848). It was hidden
+      pushed out to exactly this floor (src/config/__init__.py:840-848). It was hidden
       from the first version of this gate by a blanket 1.0 exclusion justified
       as "the identity, not a setting". It is not an identity.
-      src/config.py:842 says section 12.1's safety argument rests on the same
+      src/config/__init__.py:842 says section 12.1's safety argument rests on the same
       1xATR figure in config/prompts/tech_analyst.md - a PROMPT, which
       Invariant 2 says cannot be the final authority.
     open_question: >-
@@ -890,17 +890,17 @@ numbers:
   - id: src.config.RiskConfig.breakout_projection_atr_multiple
     value: 1
     status: sourced
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
-      src/config.py:884 and src/data/levels.py:766-769. 1.0 means the
+      src/config/__init__.py:884 and src/data/levels.py:766-769. 1.0 means the
       projection IS the instrument's typical excursion over the stated horizon
       and nothing more, so the claim is read off the instrument rather than
       chosen. Note the documented interaction with min_stop_atr_multiple at
-      src/config.py:880-883.
+      src/config/__init__.py:880-883.
     note: >-
       The measured move claimed when no structural level stands in the way, in
-      sqrt(session)-scaled ATRs (src/config.py:879-884).
-  - id: src.agents.base._INSUFFICIENT_CREDIT_STATUS
+      sqrt(session)-scaled ATRs (src/config/__init__.py:879-884).
+  - id: src.agents.llm_retry._INSUFFICIENT_CREDIT_STATUS
     value: 402
     status: instrument
     site: src/agents/base.py
@@ -921,13 +921,13 @@ numbers:
   - id: src.config.RiskConfig.maintenance_margin_pct
     value: 25
     status: instrument
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
       FINRA Rule 4210(c)(1): the margin which must be maintained is 25 percent
       of the current market value of margin securities held long.
       https://www.finra.org/rules-guidance/rulebooks/finra-rules/4210 (fetched
       and confirmed 2026-09-18). Quoted at the definition site
-      src/config.py:952. Not a desk choice, and used only to report
+      src/config/__init__.py:952. Not a desk choice, and used only to report
       distance-to-forced-liquidation. CAVEAT recorded rather than asserted
       away: 25% is the REGULATORY FLOOR and brokers routinely enforce 30-40%,
       so a distance-to-liquidation computed from it is the most optimistic
@@ -935,7 +935,7 @@ numbers:
   - id: src.config.RiskConfig.margin_interest_rate_pct
     value: 6.25
     status: instrument
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
       The broker's published default margin lending rate, 6.25% annualised:
       Alpaca Securities Brokerage Fee Schedule,
@@ -944,13 +944,13 @@ numbers:
       and confirmed 2026-09-18; the Elite tier is 4.75%). Applied on the
       broker's own (debit x rate)/360 convention at src/margin_interest.py:1.
       The fee schedule says the rate MAY CHANGE OVER TIME, so this is a source
-      with an expiry. The definition site src/config.py:921 already labels
+      with an expiry. The definition site src/config/__init__.py:921 already labels
       every figure derived from it an ESTIMATE until the broker's own INT
       activity confirms paper accounts are charged at all.
   - id: src.config.RiskConfig.max_cluster_risk_share_pct
     value: 40
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The share of total risk one correlation cluster may hold, owner-ratified
       appetite 2026-09-25 (delegated to the adversary). Ratified, not sourced:
@@ -1014,7 +1014,7 @@ numbers:
         at any gross the desk can reach
     value: 2
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Gross-exposure ceiling, owner-ratified 2026-09-01 per the definition
       site. Ratified, not sourced: nothing reads 2.0x off the account or off a
@@ -1050,7 +1050,7 @@ numbers:
   - id: src.config.RiskConfig.max_portfolio_risk_pct
     value: 25
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Total portfolio risk ceiling, owner-ratified appetite 2026-09-25
       (delegated to the adversary). Ratified, not sourced: the 25% total
@@ -1114,7 +1114,7 @@ numbers:
         ratified appetite is not a source, and only the recorded dollar figure and its date change
     value: 5
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The 5% single-position risk envelope, owner-ratified 2026-08-27.
       Ratified and unsourced. ITEM 222, reconciled 2026-10-01: the most the
@@ -1169,7 +1169,7 @@ numbers:
         to carry no information about whether a target is reached at all
     value: 60
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The longest horizon a target may claim before the desk stops believing
       it, owner-ratified appetite 2026-09-25 (delegated to the adversary).
@@ -1228,7 +1228,7 @@ numbers:
         not already change, since the two are then one constraint written twice
     value: 1.5
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The reach caps, split out of one number -- board item 56 owns the
       question and records that the split made them CONSISTENT without making
@@ -1272,7 +1272,7 @@ numbers:
         are honoured on distance alone, if the curve is flat in touch count
     value: 5
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     downgraded: >-
       WAS `sourced`. DOWNGRADED 2026-10-01 (docs/WORK.md item 55), because the
       input its source was measured on no longer exists. The table below was
@@ -1285,7 +1285,7 @@ numbers:
       stays at 5 because moving it would be inventing a number; the status no
       longer claims a measurement that stands.
     source: >-
-      In-repo measured study at src/config.py:722-740 (Phase 12.1, 2026-09-03,
+      In-repo measured study at src/config/__init__.py:722-740 (Phase 12.1, 2026-09-03,
       docs/RESEARCH_FINDINGS.md section 7): a real-vs-shuffled bounce-probability
       table over 101 symbols, 5 years of daily bars, separates with
       non-overlapping 95% confidence intervals only at 5+ touches -- real 0.644
@@ -1343,23 +1343,23 @@ numbers:
   - id: src.config.RiskConfig.min_position_risk_pct
     value: 0.5
     status: derived
-    site: src/config.py
+    site: src/config/__init__.py
     derived_from: src.risk.constants.STARTER_POSITION_RISK_PCT
     base_value: 0.5
     note: >-
       The deployed floor. `min_position_risk_pct: float =
-      Field(default=STARTER_POSITION_RISK_PCT, ...)` at src/config.py:770 - a
+      Field(default=STARTER_POSITION_RISK_PCT, ...)` at src/config/__init__.py:770 - a
       default bound to a NAME, which the first version of this scanner could
       not see at all, so the LIVE 0.50% floor was invisible to the gate that
       was built around it. config/settings.yaml:685 sets the same 0.5.
   - id: src.config.RiskConfig.min_stop_atr_multiple
     value: 2.5
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     settles_by:
       kind: recording
       state: built
-      where: src/storage/db.py
+      where: src/storage/trades/ledger.py
       writes:
         - trades.entry_atr
         - trades.stop_basis
@@ -1400,7 +1400,7 @@ numbers:
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
       than), owner-ratified appetite 2026-09-25 (delegated to the adversary) as
       a point WITHIN the published band. The definition site
-      (src/config.py:779-796) carries a real derivation - measured 2026-08-27
+      (src/config/__init__.py:779-796) carries a real derivation - measured 2026-08-27
       stop/ATR geometry, and a published 2.5-3.0x entry-stop consensus for
       swing holds; the 2-3x band IS sourced, and the effective floor already
       varies live within it because the setup and regime scalers multiply into
@@ -1409,7 +1409,7 @@ numbers:
       this desk's own rule is not a source for the point. CORRECTION
       2026-09-18: the first version of this entry attributed the phrase "a
       doctrine-grounded placeholder, not a permanent constant" to this site.
-      That phrase is at src/portfolio_constructor.py, not here.
+      That phrase is at src/portfolio_constructor/config.py, not here.
       ITEM 90 PASS 2026-09-30, REVISED after an adversary pass found the
       first version of this note asserted a false history. The VALUE is
       unchanged and stays `arbitrary`. What changed: the old open question
@@ -1569,9 +1569,9 @@ numbers:
   - id: src.config.RiskConfig.min_target_atr_multiple
     value: 1
     status: sourced
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
-      src/config.py:877 and src/data/levels.py:762-764. One ATR is the
+      src/config/__init__.py:877 and src/data/levels.py:762-764. One ATR is the
       instrument's own typical single-session range, so this is read off the
       instrument rather than chosen: the number says "one ordinary session's
       travel and nothing more".
@@ -1582,7 +1582,7 @@ numbers:
   - id: src.config.RiskConfig.short_gap_risk_multiple
     value: 1.5
     status: derived
-    site: src/config.py
+    site: src/config/__init__.py
     derived_from: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
     base_value: 1.5
     note: >-
@@ -1612,7 +1612,7 @@ numbers:
       MOVED 2026-10-01, board item 216: this is the SAME number, unchanged in
       value, re-homed from src.config.RiskConfig.short_gap_risk_multiple to
       the one place that now defines AND applies it. It previously had a
-      second ledger row (src.portfolio_constructor.ConstructorConfig.
+      second ledger row (src.portfolio_constructor.config.ConstructorConfig.
       short_gap_risk_multiple, `derived`); that row is deleted rather than
       kept in sync, because a mirror kept in sync is the same defect waiting
       to recur. The literal existed four times and the haircut was APPLIED at
@@ -1624,7 +1624,7 @@ numbers:
       Sizing-only haircut on a short's risk-per-share, never applied to stop
       placement: a short gaps through its stop upward with no bound, so the
       same risk allocation opens a SMALLER short than an equivalent long
-      (src/config.py:961-965). The direction is reasoned; the 1.5 magnitude is
+      (src/config/__init__.py:961-965). The direction is reasoned; the 1.5 magnitude is
       not measured against any gap distribution.
       ITEM 186 PASS 2026-09-26 — RESEARCHED. The DIRECTION survives and needs
       no citation: a short's loss above its stop is unbounded while a long's
@@ -1653,7 +1653,7 @@ numbers:
       outcome. NO VALUE PICKED.
       CORRECTION 2026-09-18: the
       first version quoted "until a separate pass re-examines it" as text at
-      this site; that phrase is in docs/, not in src/config.py.
+      this site; that phrase is in docs/, not in src/config/__init__.py.
       ITEM 186 PASS 2026-09-30 — TWO DERIVATIONS ATTEMPTED, BOTH WITHDRAWN,
       NO VALUE CHANGED. The desk sizes shorts today exactly as it did
       before this pass. Record of the two failures so nobody spends a third
@@ -1693,7 +1693,7 @@ numbers:
       overnight-gap magnitude relative to its own stop distance, so a
       tight-stopped name is haircut harder than a wide-stopped one. That read
       is BLOCKED ON DATA and on nothing else. Verified 2026-09-30 at the two
-      live sizing sites (src/portfolio_constructor.py, the short branch and
+      live sizing sites (src/portfolio_constructor/config.py, the short branch and
       the risk-plan loop): they are handed `analysis.atr_14` and a stop
       price, never bars, and the database still holds no OHLCV table, so the
       gap term cannot be read at sizing time. Writing the gap as some
@@ -1718,7 +1718,7 @@ numbers:
         the gap is simply reported with every target, if no firing has ever been followed by a change
     value: 25
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       How far a proposed target may diverge from the desk's own computation
       before it is flagged. A round 25% with nothing behind it.
@@ -1748,7 +1748,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.cluster_window_days
     value: 2
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Windows and thresholds that decide whether an insider or congressional
       buy becomes a signal at all -- what counts as a cluster, how far back to
@@ -1784,7 +1784,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.congress_assumed_max_disclosure_lag_days
     value: 45
     status: instrument
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
       The STOCK Act's statutory backstop: a periodic transaction report is due
       no later than 30 days after notification of a transaction and IN NO CASE
@@ -1794,11 +1794,11 @@ numbers:
       is therefore the latest date the statute allows, which is exactly the
       CONSERVATIVE estimate wanted when a trade carries no filing date - never
       an earlier one that would overstate freshness. Definition site:
-      src/config.py:1379.
+      src/config/__init__.py:1379.
   - id: src.config.SmartMoneyConfig.congress_lookback_days
     value: 180
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Windows and thresholds that decide whether an insider or congressional
       buy becomes a signal at all -- what counts as a cluster, how far back to
@@ -1833,7 +1833,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.congress_max_trades_per_source
     value: 10000
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -1842,7 +1842,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.congress_refresh_deadline_s
     value: 60
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -1851,7 +1851,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.congress_request_timeout_s
     value: 15
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -1860,7 +1860,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.insider_cadence_max_gap_dispersion
     value: 0.25
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Windows and thresholds that decide whether an insider or congressional
       buy becomes a signal at all -- what counts as a cluster, how far back to
@@ -1896,7 +1896,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.insider_cadence_max_mean_gap_days
     value: 120
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Windows and thresholds that decide whether an insider or congressional
       buy becomes a signal at all -- what counts as a cluster, how far back to
@@ -1931,7 +1931,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.insider_cadence_min_mean_gap_days
     value: 20
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Windows and thresholds that decide whether an insider or congressional
       buy becomes a signal at all -- what counts as a cluster, how far back to
@@ -1966,7 +1966,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.insider_calendar_routine_years
     value: 3
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Windows and thresholds that decide whether an insider or congressional
       buy becomes a signal at all -- what counts as a cluster, how far back to
@@ -2002,17 +2002,17 @@ numbers:
   - id: src.config.SmartMoneyConfig.insider_history_retention_days
     value: 1830
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       How long fetched insider-filing history is kept on disk, written as `5 *
-      366` at src/config.py:1347 - constant arithmetic, which the first
+      366` at src/config/__init__.py:1347 - constant arithmetic, which the first
       version of this scanner could not see. A retention window for a local
       cache: too short costs a re-fetch, and it never decides whether or how
       much to trade.
   - id: src.config.SmartMoneyConfig.insider_min_cadence_trades
     value: 3
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Windows and thresholds that decide whether an insider or congressional
       buy becomes a signal at all -- what counts as a cluster, how far back to
@@ -2047,7 +2047,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.lookback_days
     value: 365
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Windows and thresholds that decide whether an insider or congressional
       buy becomes a signal at all -- what counts as a cluster, how far back to
@@ -2082,7 +2082,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.max_external_candidates
     value: 3
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Nomination caps: 3 per seat, 6 per run, 3 external. Recorded in the
       2026-09-14 verification as affordability caps, not measurements. They
@@ -2126,7 +2126,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.max_filings_per_refresh
     value: 1000
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       CORRECTION 2026-09-18. This entry read `not-trade-governing`, with the
       note "it decides how long the desk waits or how much it fetches, never
@@ -2252,7 +2252,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.max_observations
     value: 40
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Windows and thresholds that decide whether an insider or congressional
       buy becomes a signal at all -- what counts as a cluster, how far back to
@@ -2287,7 +2287,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.min_cluster_owners
     value: 2
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The insider-signal admission screen: 2 owners, a $5 minimum price,
       $10M average daily dollar volume, 20 days of history. The $100k/$250k
@@ -2323,7 +2323,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.min_external_avg_dollar_volume_usd
     value: 10000000
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The insider-signal admission screen: 2 owners, a $5 minimum price,
       $10M average daily dollar volume, 20 days of history. The $100k/$250k
@@ -2359,7 +2359,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.min_external_history_days
     value: 20
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The insider-signal admission screen: 2 owners, a $5 minimum price,
       $10M average daily dollar volume, 20 days of history. The $100k/$250k
@@ -2395,7 +2395,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.min_external_price_usd
     value: 5
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       The insider-signal admission screen: 2 owners, a $5 minimum price,
       $10M average daily dollar volume, 20 days of history. The $100k/$250k
@@ -2431,7 +2431,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.refresh_deadline_s
     value: 180
     status: arbitrary
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       CORRECTION 2026-09-18. This entry read `not-trade-governing`, with the
       note "it decides how long the desk waits or how much it fetches, never
@@ -2501,9 +2501,9 @@ numbers:
   - id: src.config.SmartMoneyConfig.watched_drain_deadline_s
     value: 859
     status: sourced
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
-      Derivation at src/config.py:1299 (the comment above the field), from a
+      Derivation at src/config/__init__.py:1299 (the comment above the field), from a
       read-only measurement against SEC on 2026-09-19 with the desk's own
       User-Agent and 8 req/s limiter: 82 watched issuers indexed in 11.0 s;
       5,431 unread Form 4s inside lookback_days on them; 0.156 s per filing
@@ -2522,7 +2522,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.request_timeout_s
     value: 15
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -2531,7 +2531,7 @@ numbers:
   - id: src.config.SmartMoneyConfig.requests_per_second
     value: 8
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -3161,125 +3161,125 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.pipeline_stages._DEFAULT_RISK_BUDGET_PCT
+  - id: src.pipeline_sizing._DEFAULT_RISK_BUDGET_PCT
     value: 5
     status: derived
     site: src/pipeline_stages.py
-    derived_from: src.portfolio_constructor.ConstructorConfig.risk_budget_pct
+    derived_from: src.portfolio_constructor.config.ConstructorConfig.risk_budget_pct
     base_value: 5
     note: >-
       The fallback used when the configured risk budget cannot be read.
-      src/pipeline_stages.py:2254-2267 records the incident it came out of -
+      src/pipeline_sizing.py:123-136 records the incident it came out of -
       real NVDA/ORCL/RSG rows risking ~$49 on a ~$9.85k book where ~$490 was
       ratified - and says the 5.0 here is the ratified default, not an
       invented one. Recorded as derived so it cannot drift from the
       constructor's own value, which is the exact failure it was introduced to
       fix.
-  - id: src.pipeline_stages._EARNINGS_XBRL_DOLLAR_FLOOR
+  - id: src.pipeline_earnings_quality._EARNINGS_XBRL_DOLLAR_FLOOR
     value: 10000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       Absolute floor stopping that same post-hoc percentage test from
-      exploding on a near-zero true value (src/pipeline_stages.py:2030-2040).
+      exploding on a near-zero true value (src/pipeline_earnings_quality.py:194-204).
       Same boundary as the tolerance above: a data-quality record, not a trade
       decision.
-  - id: src.pipeline_stages._EARNINGS_XBRL_EPS_FLOOR
+  - id: src.pipeline_earnings_quality._EARNINGS_XBRL_EPS_FLOOR
     value: 0.02
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The same floor for EPS - one cent above ordinary EPS reporting precision
-      (src/pipeline_stages.py:2041). Same boundary: it grades a stored
+      (src/pipeline_earnings_quality.py:205). Same boundary: it grades a stored
       analysis, it does not gate a trade.
-  - id: src.pipeline_stages._EARNINGS_XBRL_TOLERANCE_PCT
+  - id: src.pipeline_earnings_quality._EARNINGS_XBRL_TOLERANCE_PCT
     value: 0.05
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       Tolerance for a POST-HOC data-quality comparison between an earnings
       analysis's numeric fields and the filer's own XBRL figures
-      (src/pipeline_stages.py:2020-2028). It records whether the analyst's
+      (src/pipeline_earnings_quality.py:184-192). It records whether the analyst's
       number and the filing disagree; nothing in the entry, sizing, stop or
       exit path reads the result. The 5% itself mirrors the accounting
       materiality rule of thumb discussed in SEC Staff Accounting Bulletin No.
       99.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['b']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['b']
     value: 1000000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "b" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['billion']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['billion']
     value: 1000000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "billion" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['bn']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['bn']
     value: 1000000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "bn" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['k']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['k']
     value: 1000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "k" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['m']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['m']
     value: 1000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "m" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['million']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['million']
     value: 1000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "million" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['mm']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['mm']
     value: 1000000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "mm" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.pipeline_stages._UNIT_MULTIPLIERS['thousand']
+  - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['thousand']
     value: 1000
     status: not-trade-governing
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "thousand" when parsing a magnitude out of
-      analyst prose (src/pipeline_stages.py:1972-1976). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.portfolio_constructor.ConstructorConfig.absolute_min_stop_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple
     value: 1
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.absolute_min_stop_atr_multiple
     base_value: 1
     note: >-
@@ -3290,10 +3290,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.breakout_projection_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.breakout_projection_atr_multiple
     value: 1
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.breakout_projection_atr_multiple
     base_value: 1
     note: >-
@@ -3304,10 +3304,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_cluster_risk_share_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_cluster_risk_share_pct
     value: 40
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_cluster_risk_share_pct
     base_value: 40
     note: >-
@@ -3318,10 +3318,10 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_gross_exposure_x
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_gross_exposure_x
     value: 2
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_gross_exposure_x
     base_value: 2
     note: >-
@@ -3332,10 +3332,10 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_portfolio_risk_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_portfolio_risk_pct
     value: 25
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_portfolio_risk_pct
     base_value: 25
     note: >-
@@ -3346,10 +3346,10 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_position_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_position_pct
     value: 65
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Single-name ceiling, moved to 65 by owner override on 2026-09-11
       (docs/INCIDENT_HISTORY.md, the prompt_limits defect). Ratified,
@@ -3382,10 +3382,10 @@ numbers:
         percentile turns that tolerance into a notional share. The ceiling is then
         that computed share. Until both halves exist the desk pays a round 65 nobody
         derived; the open mandate half belongs to board item 186
-  - id: src.portfolio_constructor.ConstructorConfig.max_sector_hard_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct
     value: 90
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       The soft sector target and the hard sector ceiling. Owner-accepted
       figures with no measurement behind either; approval does not make a flat
@@ -3417,10 +3417,10 @@ numbers:
       closes_when: >-
         the base row's recording shows the realised maximum sector share and
         both definition sites are moved together to a bound above it
-  - id: src.portfolio_constructor.ConstructorConfig.max_sector_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_pct
     value: 75
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       The soft sector target and the hard sector ceiling. Owner-accepted
       figures with no measurement behind either; approval does not make a flat
@@ -3452,10 +3452,10 @@ numbers:
         reach that tolerance, the soft target is DELETED rather than re-picked,
         because then it is a diversification number the mandate does not want. Board
         item 104 separately owns the prompt wording defect
-  - id: src.portfolio_constructor.ConstructorConfig.max_target_horizon_sessions
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_target_horizon_sessions
     value: 60
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_target_horizon_sessions
     base_value: 60
     note: >-
@@ -3466,10 +3466,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_target_reach_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_target_reach_atr_multiple
     value: 1.5
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_target_reach_atr_multiple
     base_value: 1.5
     note: >-
@@ -3480,10 +3480,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.structural_stop_buffer_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.structural_stop_buffer_pct
     value: 0.005
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       How far BELOW a structural level (ABOVE it for a short) the protective
       stop is placed when it must be READ from price structure because there is
@@ -3527,10 +3527,10 @@ numbers:
         recording states how often it was too tight -- pierced without the level
         breaking -- so the cost is at least a measured number instead of an
         assumption
-  - id: src.portfolio_constructor.ConstructorConfig.min_level_touches_for_stop_honor
+  - id: src.portfolio_constructor.config.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.min_level_touches_for_stop_honor
     base_value: 5
     note: >-
@@ -3541,10 +3541,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.min_risk_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.min_risk_pct
     value: 0.5
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     prior_source: >-
       Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335).
       docs/OUTCOME.md:84 states it as "Min risk per trade | 0.5% - below this,
@@ -3554,15 +3554,15 @@ numbers:
       said the number was absent from settings.yaml, absent from every
       document and absent from any ratification record. All three were false
       and each was one grep from being disproved. It also cited the comment at
-      src/portfolio_constructor.py:480-488 as calling this 0.5% "a constructor
+      src/portfolio_constructor/config.py:480-488 as calling this 0.5% "a constructor
       default nobody chose" - that comment is about `risk_budget_pct`'s prior
       value, a legacy NOTIONAL target. A 0.5% notional budget and a 0.5%
       minimum-risk floor are different quantities that share a digit.
     note: >-
       Every new trade plan sized under 0.50% of the account is DENIED OUTRIGHT
-      rather than shrunk (src/portfolio_constructor.py:488). One of three
+      rather than shrunk (src/portfolio_constructor/config.py:488). One of three
       sites holding the same ratified number; the other two are
-      src/risk/constants.py:144 and src/config.py:770.
+      src/risk/constants.py:144 and src/config/__init__.py:770.
     open_question: >-
       Does this floor bind anything at all? The VALUE is owner-ratified
       appetite and is not for re-deriving. What is unknown is whether the
@@ -3585,7 +3585,7 @@ numbers:
     settles_by:
       kind: recording
       state: built
-      where: src/storage/db.py
+      where: src/storage/trades/ledger.py
       writes:
         - trade_refusals.requested_risk_pct
       records: >-
@@ -3603,10 +3603,10 @@ numbers:
         ratified. If after a year of sessions no row has ever been written,
         the floor governs nothing the seat ever asks for, and the row leaves
         `arbitrary` by reformulation rather than by derivation.
-  - id: src.portfolio_constructor.ConstructorConfig.min_stop_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.min_stop_atr_multiple
     value: 2.5
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.min_stop_atr_multiple
     base_value: 2.5
     note: >-
@@ -3631,10 +3631,10 @@ numbers:
       `arbitrary` with open questions. The arbitrary content of the desk is
       unchanged by item 185; only the number of independent literals fell.
       Board item 185 therefore STAYS OPEN.
-  - id: src.portfolio_constructor.ConstructorConfig.min_target_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.min_target_atr_multiple
     value: 1
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.min_target_atr_multiple
     base_value: 1
     note: >-
@@ -3645,10 +3645,10 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.risk_budget_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.risk_budget_pct
     value: 5
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       The 5% single-position risk envelope, owner-ratified 2026-08-27.
       Ratified and unsourced. ITEM 222, reconciled 2026-10-01: the most the
@@ -3686,10 +3686,10 @@ numbers:
         in which case the per-name formula replaces it and this row leaves the
         ledger. Never set by searching for the envelope that would have performed
         best on this desk's own fills
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[0][1]
     value: 1.2
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Macro-regime stop-width scalers, owner-ratified appetite 2026-09-25
       (delegated to the adversary): the DIRECTION (a risk-off tape widens
@@ -3739,7 +3739,7 @@ numbers:
       per-name volatility reading today, which is why this stays open.
     cost_while_unanswered: >-
       Every stop in a high-volatility regime is widened by a scaler no
-      measurement supports (src/portfolio_constructor.py:636-646 says exactly
+      measurement supports (src/portfolio_constructor/config.py:636-646 says exactly
       that).
     settles_by:
       kind: measurement
@@ -3761,10 +3761,10 @@ numbers:
         for this bucket is indistinguishable from 1.0 the rung is DELETED rather
         than kept at its present figure. Never set from which scaler would have
         traded best on this desk's own record, which docs/OUTCOME.md bars outright
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[1][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[1][1]
     value: 1.1
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Macro-regime stop-width scalers, owner-ratified appetite 2026-09-25
       (delegated to the adversary): the DIRECTION (a risk-off tape widens
@@ -3800,10 +3800,10 @@ numbers:
         for this bucket is indistinguishable from 1.0 the rung is DELETED rather
         than kept at its present figure. Never set from which scaler would have
         traded best on this desk's own record, which docs/OUTCOME.md bars outright
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[2][1]
     value: 0.95
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Macro-regime stop-width scalers, owner-ratified appetite 2026-09-25
       (delegated to the adversary): the DIRECTION (a risk-off tape widens
@@ -3839,22 +3839,22 @@ numbers:
         this bucket is indistinguishable from 1.0 the rung is DELETED rather than
         kept at its present figure. Never set from which scaler would have traded
         best on this desk's own record, which docs/OUTCOME.md bars outright
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[0][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[0][1]
     value: 1
     status: sourced
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     source: >-
-      src/portfolio_constructor.py:640-646. 1.0 here is the declared absence
+      src/portfolio_constructor/config.py:640-646. 1.0 here is the declared absence
       of a scaler, not a chosen magnitude - the sibling range rung 0.90
       carries the arbitrary entry.
     note: >-
-      The breakout rung of the setup scaler. src/portfolio_constructor.py:642
+      The breakout rung of the setup scaler. src/portfolio_constructor/config.py:642
       states it explicitly: breakout runs AT THE BASE, because no measurement
       supports widening beyond it.
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[1][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[1][1]
     value: 0.9
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       The range-setup stop-width scaler. The definition site is explicit: the
       DIRECTION (range tighter than breakout) is doctrine, but 0.90 is "a
@@ -3869,7 +3869,7 @@ numbers:
       Does a range setup warrant a tighter stop than a breakout, and by how
       much, measured per setup type?
     cost_while_unanswered: >-
-      src/portfolio_constructor.py:644 calls it "a modest tightening off the
+      src/portfolio_constructor/config.py:644 calls it "a modest tightening off the
       base, not a specific measured number" - and it multiplies into every
       range trade's stop and therefore its size.
     settles_by:
@@ -3891,10 +3891,10 @@ numbers:
         and range setups take the base width, rather than keeping a 0.90 the
         definition site itself calls 'not a specific measured number'. Never set
         from this desk's own trade outcomes
-  - id: src.portfolio_constructor.ConstructorConfig.target_divergence_warn_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.target_divergence_warn_pct
     value: 25
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.target_divergence_warn_pct
     base_value: 25
     note: >-
@@ -3922,7 +3922,7 @@ numbers:
     source: >-
       docs/board_notes/:1198 (section "## item 218 — Arithmetically losing
       geometry is refused (owner ruling 2026-10-01)") records the ruling
-      verbatim, and src/portfolio_constructor.py:517 carries it beside the
+      verbatim, and src/portfolio_constructor/config.py:517 carries it beside the
       constant that applies it. Owner ruling 2026-10-01, verbatim: "For now,
       let's refuse a bad risk
       reward ratio. See if that improves the desk purchases." He was shown
@@ -3991,7 +3991,7 @@ numbers:
       said the number was absent from settings.yaml, absent from every
       document and absent from any ratification record. All three were false
       and each was one grep from being disproved. It also cited the comment at
-      src/portfolio_constructor.py:480-488 as calling this 0.5% "a constructor
+      src/portfolio_constructor/config.py:480-488 as calling this 0.5% "a constructor
       default nobody chose" - that comment is about `risk_budget_pct`'s prior
       value, a legacy NOTIONAL target. A 0.5% notional budget and a 0.5%
       minimum-risk floor are different quantities that share a digit.
@@ -4026,7 +4026,7 @@ numbers:
     settles_by:
       kind: recording
       state: built
-      where: src/storage/db.py
+      where: src/storage/trades/ledger.py
       writes:
         - trade_refusals.requested_risk_pct
       records: >-
@@ -4342,10 +4342,10 @@ numbers:
       swing-low must also break) under the owner mandate 2026-09-24 trend-scaled
       exit; below it, the default two-close floor. The only ADX threshold used —
       Wilder's published value, not a discretionary pick.
-  - id: src.risk.exit_guard._NEGATION_LOOKBACK_CHARS
+  - id: src.risk.exit_guard_claims._NEGATION_LOOKBACK_CHARS
     value: 40
     status: not-trade-governing
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_claims.py
     note: >-
       A character window for string matching inside the exit-reason phrase
       check. It parses English, not price.
@@ -5346,10 +5346,10 @@ numbers:
   # --- 2026-09-19, board item 130: src/execution/broker.py, src/coverage_watchdog.py,
   # src/pipeline.py and src/agents brought into scope. 47 new sites, 0 in
   # src/execution/stop_repair.py. No value changed. ---
-  - id: src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S
+  - id: src.execution.broker_parts.trade_stream._ALPACA_STREAM_RECONNECT_MIN_S
     value: 1.0
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Fallback reconnect floor for the trade_updates fill-notification
       socket, used only when the installed alpaca-py TradingStream does not
@@ -5359,20 +5359,20 @@ numbers:
       notification socket retries, never whether or how much to trade; the
       bounded REST fill-confirmation path is unaffected when this socket is
       off entirely.
-  - id: src.execution.broker._ALPACA_STREAM_RECONNECT_MAX_S
+  - id: src.execution.broker_parts.trade_stream._ALPACA_STREAM_RECONNECT_MAX_S
     value: 30.0
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Fallback reconnect ceiling for the same trade_updates socket, same
       alpaca-py default (site-packages/alpaca/trading/stream.py:54,
       alpaca-py 0.43.5). Same reasoning as
       src.execution.broker._ALPACA_STREAM_RECONNECT_MIN_S: bounds an
       optional notification socket's retry speed, not a trade decision.
-  - id: src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION
+  - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_SESSION
     value: 6
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Handshake-attempt ceiling for one trade_updates session, derived from
       the equal-jitter curve run off the reconnect min/max above (1, 2, 4,
@@ -5382,10 +5382,10 @@ numbers:
       (src/execution/broker.py:218-242); none of the three decides, sizes,
       prices or exits a trade -- the bounded REST fill path is unchanged and
       is what runs when this ceiling fires.
-  - id: src.execution.broker._STREAM_ATTEMPT_CEILING_PER_DAY
+  - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY
     value: 200
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Handshake-attempt ceiling per process per day for the same socket,
       set to Alpaca's own published account-wide rate limit of 200
@@ -5393,28 +5393,28 @@ numbers:
       against measured 56 and 50 attempts on 2026-09-16/17). Same
       not-trade-governing reasoning as
       src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
-  - id: src.execution.broker._STREAM_RATE_LIMIT_STAND_DOWN_S
+  - id: src.execution.broker_parts.trade_stream._STREAM_RATE_LIMIT_STAND_DOWN_S
     value: 60.0
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Stand-down after the broker answers HTTP 429 on the same socket, set
       to Alpaca's published one-minute rate-limit window
       (src/execution/broker.py:267-274). Same not-trade-governing reasoning
       as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
-  - id: src.execution.broker._BROKER_HTTP_TIMEOUT
+  - id: src.execution.broker_parts.market_data._BROKER_HTTP_TIMEOUT
     value: 30.0
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/market_data.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It
       decides how long the desk waits or how much it fetches, never whether
       or how much to trade. A wrong value degrades data availability, which
       is a separate failure the seats already see as missing evidence.
-  - id: src.execution.broker._SECTOR_LOOKUP_TIMEOUT_S
+  - id: src.sector_reference._SECTOR_LOOKUP_TIMEOUT_S
     value: 10
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/sector_reference.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It
       decides how long the desk waits or how much it fetches, never whether
@@ -5431,10 +5431,10 @@ numbers:
       ceiling for the rare fallback where that stream itself could not be
       used. It decides how long the desk waits, never whether or how much
       to trade.
-  - id: src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+  - id: src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS
     value: 3
     status: arbitrary
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/stop_place.py
     note: >-
       Retry ceiling for placing the protective stop immediately after an
       entry fills (src/execution/broker.py:1329-1348). docs/WORK.md item
@@ -5471,20 +5471,20 @@ numbers:
         ladder goes entirely and a placement failure escalates to the
         unprotected-position alert at once, rather than the attempt count being
         re-picked.
-  - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[0]
+  - id: src.execution.broker_parts.stop_place._STOP_PLACEMENT_BACKOFF_S[0]
     value: 0.5
     status: arbitrary
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/stop_place.py
     note: >-
       First of the two stop-placement retry delays, same site and same
-      falsified reasoning as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+      falsified reasoning as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS
       (docs/WORK.md item 129).
     open_question: >-
-      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS: what delay
+      Same as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS: what delay
       actually clears the transient failure classes this retry is meant
       for, measured rather than assumed.
     cost_while_unanswered: >-
-      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS: a position
+      Same as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS: a position
       can be left without a protective stop if the real clearing time
       exceeds the assumed one.
     settles_by:
@@ -5503,18 +5503,18 @@ numbers:
         on the following attempt is independent of the delay waited, the delay
         is buying nothing, and this rung goes -- with the retry becoming
         immediate -- rather than being re-picked at another round number.
-  - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[1]
+  - id: src.execution.broker_parts.stop_place._STOP_PLACEMENT_BACKOFF_S[1]
     value: 1.5
     status: arbitrary
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/stop_place.py
     note: >-
       Second of the two stop-placement retry delays, same site and same
-      falsified reasoning as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+      falsified reasoning as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS
       (docs/WORK.md item 129).
     open_question: >-
-      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
+      Same as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS.
     cost_while_unanswered: >-
-      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
+      Same as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS.
     settles_by:
       kind: recording
       state: specified
@@ -5531,10 +5531,23 @@ numbers:
         on the following attempt is independent of the delay waited, the delay
         is buying nothing, and this rung goes -- with the retry becoming
         immediate -- rather than being re-picked at another round number.
-  - id: src.execution.broker._FRACTIONAL_QTY_EPSILON
+  - id: src.execution.order_idempotency._CLIENT_ORDER_ID_MAX_LEN
+    value: 48
+    status: not-trade-governing
+    site: src/execution/order_idempotency.py
+    note: >-
+      Length ceiling for the deterministic client_order_id (the order
+      idempotency key). Cited, not chosen: Alpaca publishes 128 characters
+      in the Trading API POST /v2/orders reference
+      (https://docs.alpaca.markets/reference/postorder) and 48 in its own
+      docs repository's Broker API orders reference; the stricter figure is
+      honoured so the key is valid under both. Decides nothing about
+      whether, how much or at what price to trade: a longer key is hashed
+      down to this length and behaves identically.
+  - id: src.execution.order_gates._FRACTIONAL_QTY_EPSILON
     value: 1.0e-9
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/order_gates.py
     note: >-
       Floating-point tolerance used only to tell a genuine sub-share
       remainder from float representation error (src/execution/broker.py:
@@ -5544,10 +5557,10 @@ numbers:
       well below a real fractional remainder (which is never smaller than a
       broker-tradable fraction of one share) produces identical behaviour,
       so this is a precision guard rather than a policy choice.
-  - id: src.portfolio_constructor._NO_REAL_WEIGHT_DELTA_PCT
+  - id: src.portfolio_constructor.config._NO_REAL_WEIGHT_DELTA_PCT
     value: 1.0e-9
     status: not-trade-governing
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Floating-point tolerance, added 2026-09-30 (owner ruling, board item
       183) when the picked `min_trade_weight_delta` churn floor (0.5%) was
@@ -5556,7 +5569,7 @@ numbers:
       model-typed percent), so a delta the desk did not actually request —
       "hold exactly what is held" — can land a few ULPs off zero instead of
       bit-exact. This recognises that as no request at all, the same role
-      `src.execution.broker._FRACTIONAL_QTY_EPSILON` plays for share
+      `src.execution.broker_parts.stop_place._FRACTIONAL_QTY_EPSILON` plays for share
       quantities; it is nine orders of magnitude below the finest weight a
       model or a human types, so any value in a wide band below that
       produces identical behaviour — a precision guard, not a policy
@@ -5581,7 +5594,7 @@ numbers:
       (src/coverage_watchdog.py:145-146, same tolerance the coverage
       reconciler uses). Guards against representation error rather than
       choosing a policy magnitude, same reasoning as
-      src.execution.broker._FRACTIONAL_QTY_EPSILON.
+      src.execution.broker_parts.stop_place._FRACTIONAL_QTY_EPSILON.
   - id: src.pipeline_prompt_facts._PM_PROFILE_SYMBOL_CAP
     value: 40
     status: not-trade-governing
@@ -5592,49 +5605,49 @@ numbers:
       informational facts block (src/pipeline.py:134-140); it decides how
       much the desk fetches for that block, never whether or how much to
       trade.
-  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-v4-flash']
+  - id: src.agents.llm_providers._DEEPSEEK_MAX_OUTPUT['deepseek-v4-flash']
     value: 384000
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       LLM plumbing: provider-declared maximum output-token ceiling used to
       size a request, not a trading decision.
-  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-v4-pro']
+  - id: src.agents.llm_providers._DEEPSEEK_MAX_OUTPUT['deepseek-v4-pro']
     value: 384000
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       LLM plumbing: provider-declared maximum output-token ceiling used to
       size a request, not a trading decision.
-  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-chat']
+  - id: src.agents.llm_providers._DEEPSEEK_MAX_OUTPUT['deepseek-chat']
     value: 384000
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       LLM plumbing: provider-declared maximum output-token ceiling used to
       size a request, not a trading decision.
-  - id: src.agents.base._DEEPSEEK_MAX_OUTPUT['deepseek-reasoner']
+  - id: src.agents.llm_providers._DEEPSEEK_MAX_OUTPUT['deepseek-reasoner']
     value: 384000
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       LLM plumbing: provider-declared maximum output-token ceiling used to
       size a request, not a trading decision.
-  - id: src.agents.base._DEEPSEEK_DEFAULT_CEILING
+  - id: src.agents.llm_providers._DEEPSEEK_DEFAULT_CEILING
     value: 8192
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       LLM plumbing: fallback output-token ceiling for a DeepSeek model not
       named in _DEEPSEEK_MAX_OUTPUT, not a trading decision.
-  - id: src.agents.base._DEFAULT_MAX_RETRIES
+  - id: src.agents.llm_retry._DEFAULT_MAX_RETRIES
     value: 2
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       LLM plumbing: default retry count for a failed LLM call, not a
       trading decision.
-  - id: src.agents.base._LLM_HTTP_TIMEOUT
+  - id: src.agents.llm_retry._LLM_HTTP_TIMEOUT
     value: 300.0
     status: not-trade-governing
     site: src/agents/base.py
@@ -5642,21 +5655,21 @@ numbers:
       Network deadline, timeout, poll interval or fetch batch cap for LLM
       HTTP calls. It decides how long the desk waits, never whether or how
       much to trade.
-  - id: src.agents.base._DEFAULT_RETRY_DEADLINE_S
+  - id: src.agents.llm_retry._DEFAULT_RETRY_DEADLINE_S
     value: 480.0
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap for the
       LLM retry loop, not a trading decision.
-  - id: src.agents.base._RETRY_AFTER_CAP_S
+  - id: src.agents.llm_retry._RETRY_AFTER_CAP_S
     value: 120.0
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       LLM plumbing: ceiling applied to a provider-returned Retry-After
       value, not a trading decision.
-  - id: src.agents.base._BACKOFF_CAP_S
+  - id: src.agents.llm_retry._BACKOFF_CAP_S
     value: 60.0
     status: sourced
     site: src/agents/base.py
@@ -5673,7 +5686,7 @@ numbers:
       comfortably below 480 satisfies the constraint; 60 is the round number
       inside it, and that choice is the arbitrary part -- stated rather than
       dressed up as measured.
-  - id: src.agents.base._MIN_CAPACITY_BACKOFF_S
+  - id: src.agents.llm_retry._MIN_CAPACITY_BACKOFF_S
     value: 1.0
     status: sourced
     site: src/agents/base.py
@@ -5689,14 +5702,14 @@ numbers:
       and capacity classes the cited page is about; a transport-class failure
       gets pure Full Jitter, because no source publishes a floor for those
       and inventing one would be arbitrary.
-  - id: src.agents.base._ANTHROPIC_MAX_CONCURRENT
+  - id: src.agents.llm_concurrency._ANTHROPIC_MAX_CONCURRENT
     value: 4
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       LLM plumbing: concurrency cap on outstanding Anthropic calls, not a
       trading decision.
-  - id: src.agents.base._GOVERNOR_CHARS_PER_TOKEN
+  - id: src.agents.llm_concurrency._GOVERNOR_CHARS_PER_TOKEN
     value: 1.5
     status: not-trade-governing
     site: src/agents/base.py
@@ -7045,65 +7058,65 @@ numbers:
     base_value: 10
     note: >-
       Default macro-event horizon (src/agents/macro_analyst.py:211);
-      production passes event_risk.horizon_days (src/pipeline_stages.py:3819).
+      production passes event_risk.horizon_days (src/stage_risk.py:412).
       A further inline `or 10` fallback sits at
       src/agents/macro_analyst.py:37, which no rule sees.
-  - id: src.agents.portfolio_manager.PortfolioManagerAgent.candidate_eligibility(rr_floor)
+  - id: src.agents.portfolio_manager.candidate_ranking.CandidateRanking.candidate_eligibility(rr_floor)
     value: 1.5
     status: derived
-    site: src/agents/portfolio_manager.py
+    site: src/agents/portfolio_manager/candidate_ranking.py
     derived_from: src.risk.constants.REWARD_RISK_FLOOR
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager.py:2063-2068 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager.py:1442-1446).
+      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(max_portfolio_risk_pct)
     value: 25
     status: derived
-    site: src/agents/portfolio_manager.py
+    site: src/agents/portfolio_manager/ranking.py
     derived_from: src.config.RiskConfig.max_portfolio_risk_pct
     base_value: 25
     note: >-
       Default rotation-check risk ceiling for the PM
-      (src/agents/portfolio_manager.py:2079). Same 25 as the deployed ceiling;
+      (src/agents/portfolio_manager/__init__.py:406). Same 25 as the deployed ceiling;
       a second inline 25.0 fallback sits at
-      src/agents/portfolio_manager.py:656-657, which no rule sees.
+      src/agents/portfolio_manager/__init__.py:1307-1308, which no rule sees.
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(rr_floor)
     value: 1.5
     status: derived
-    site: src/agents/portfolio_manager.py
+    site: src/agents/portfolio_manager/__init__.py
     derived_from: src.risk.constants.REWARD_RISK_FLOOR
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager.py:2063-2068 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager.py:1442-1446).
+      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(starter_risk_pct)
     value: 0.5
     status: derived
-    site: src/agents/portfolio_manager.py
+    site: src/agents/portfolio_manager/ranking.py
     derived_from: src.risk.constants.STARTER_POSITION_RISK_PCT
     base_value: 0.5
     note: >-
       Parameter default bound to the imported STARTER_POSITION_RISK_PCT
-      (src/agents/portfolio_manager.py:2063-2069).
-  - id: src.agents.portfolio_manager.PortfolioManagerAgent.rank_candidates(rr_floor)
+      (src/agents/portfolio_manager/__init__.py:1253-1308).
+  - id: src.agents.portfolio_manager.candidate_ranking.CandidateRanking.rank_candidates(rr_floor)
     value: 1.5
     status: derived
-    site: src/agents/portfolio_manager.py
+    site: src/agents/portfolio_manager/candidate_ranking.py
     derived_from: src.risk.constants.REWARD_RISK_FLOOR
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager.py:2063-2068 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager.py:1442-1446).
+      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
   - id: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     value: 0.03
     status: arbitrary
@@ -7163,114 +7176,114 @@ numbers:
     site: src/execution/broker.py
     note: >-
       Loop bound on following a replaced order's replaced_by chain
-      (src/execution/broker.py:4404-4408), so a broker-side cycle cannot spin
+      (src/execution/broker_parts/order_desk.py:1070-1108), so a broker-side cycle cannot spin
       forever. Decides how far a lookup walks, not whether or how much to
       trade.
-  - id: src.execution.broker.AlpacaBroker._wait_for_order_status_via_stream(poll_interval)
+  - id: src.execution.broker_parts.trade_stream.TradeStreamWaits._wait_for_order_status_via_stream(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3856). Same class as
+      (src/execution/broker_parts/trade_stream.py:1538). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker._wait_for_order_terminal_via_stream(poll_interval)
+  - id: src.execution.broker_parts.order_desk.OrderDesk._wait_for_order_terminal_via_stream(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3841). Same class as
+      (src/execution/broker_parts/order_desk.py:667). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.await_replacement_confirmed(timeout_seconds)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.await_replacement_confirmed(timeout_seconds)
     value: 5
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:4577). Same class as
+      (src/execution/broker_parts/order_desk.py:1214). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.get_all_account_activities(page_size)
+  - id: src.execution.broker_parts.account_reads.AccountReads.get_all_account_activities(page_size)
     value: 100
     status: sourced
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/account_reads.py
     source: >-
       Alpaca's account-activities endpoint caps `page_size` at 100 per
       request: https://docs.alpaca.markets/reference/getaccountactivities
       (documented maximum, fetched 2026-09-24). Set to the maximum so the
       margin-interest historical backfill
       (`src.margin_interest.reconstruct_daily_cash_balances`,
-      src/execution/broker.py:1841-1886) pages Alpaca's full activity ledger
+      src/execution/broker_parts/account_reads.py:128-173) pages Alpaca's full activity ledger
       in as few round trips as possible; a smaller value would still be
       correct, a larger one is rejected by the API, so 100 is the API's own
       ceiling rather than a desk choice.
-  - id: src.execution.broker.AlpacaBroker.get_bars(lookback_days)
+  - id: src.execution.broker_parts.market_data.MarketData.get_bars(lookback_days)
     value: 120
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker.py:2392): the one caller passes the
+      Dead default (src/execution/broker_parts/market_data.py:184): the one caller passes the
       window explicitly.
-  - id: src.execution.broker.AlpacaBroker.get_recent_daily_closes(lookback_days)
+  - id: src.execution.broker_parts.account_reads.AccountReads.get_recent_daily_closes(lookback_days)
     value: 10
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/account_reads.py
     note: >-
-      Dead default (src/execution/broker.py:2016): every caller passes the
+      Dead default (src/execution/broker_parts/account_reads.py:390): every caller passes the
       window explicitly.
-  - id: src.execution.broker.AlpacaBroker.get_top_movers(n)
+  - id: src.execution.broker_parts.market_data.MarketData.get_top_movers(n)
     value: 15
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker.py:2320): the one caller passes the
+      Dead default (src/execution/broker_parts/market_data.py:112): the one caller passes the
       count explicitly.
-  - id: src.execution.broker.AlpacaBroker.wait_for_order_at_exchange(poll_interval)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_at_exchange(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3745). Same class as
+      (src/execution/broker_parts/order_desk.py:569). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.wait_for_order_at_exchange(timeout_seconds)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_at_exchange(timeout_seconds)
     value: 5
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3744). Same class as
+      (src/execution/broker_parts/order_desk.py:569). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.wait_for_order_terminal(poll_interval)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_terminal(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3784). Same class as
+      (src/execution/broker_parts/order_desk.py:608). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker.AlpacaBroker.wait_for_order_terminal(timeout_seconds)
+  - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_terminal(timeout_seconds)
     value: 15
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:3783). Same class as
+      (src/execution/broker_parts/order_desk.py:608). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
-  - id: src.execution.broker._TradeUpdatesHub.wait(poll_interval)
+  - id: src.execution.broker_parts.trade_stream._TradeUpdatesHub.wait(poll_interval)
     value: 1
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/trade_stream.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker.py:567). Same class as
+      (src/execution/broker_parts/trade_stream.py:486). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.pipeline.TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT
@@ -7278,7 +7291,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline.py
     note: >-
-      Dead. Defined at src/pipeline.py:1464 and described in comments as the
+      Dead. Defined at src/pipeline_admission.py:247 and described in comments as the
       de-lever cushion, but nothing reads it: the de-lever no longer prices off
       a fixed % of the mark at all -- it crosses the LIVE quote or sends a
       MARKET order (src.pipeline.TradingPipeline._live_delever_price, branch
@@ -7292,10 +7305,10 @@ numbers:
       No caller in src/, and the docstring (src/pipeline_research_continuity.py:1114-1120)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(lookback_days)
     value: 21
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Window of the PM's 'names you keep proposing and never get' memory
       (src/pipeline_intraday.py:847-861). Its only caller passes nothing, so this
@@ -7322,10 +7335,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(max_lines)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(max_lines)
     value: 5
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Maximum blocked names shown to the PM in that memory
       (src/pipeline_intraday.py:847-861). Its only caller passes nothing, so this
@@ -7352,10 +7365,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(min_proposals)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(min_proposals)
     value: 3
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Proposal count before a blocked name is shown to the PM in that memory
       (src/pipeline_intraday.py:847-861). Its only caller passes nothing, so this
@@ -7382,10 +7395,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_calibration_note(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_calibration_note(lookback_days)
     value: 45
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Window of the PM's own hit-rate/return calibration note
       (src/pipeline_intraday.py:739-744). Its only caller passes nothing, so this
@@ -7412,19 +7425,19 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(lookback_days)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(lookback_days)
     value: 5
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
       (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
     value: 5
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dollar-volume floor ($M) for a top-mover to enter the evening missed-
       opportunity review, which feeds the PM's missed-lessons memory
@@ -7452,10 +7465,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(move_threshold_pct)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(move_threshold_pct)
     value: 8
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
       (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
@@ -7464,10 +7477,10 @@ numbers:
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
       number is settled together with the tick cadence and the per-run held-book
       context, never alone.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(top_movers_count)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(top_movers_count)
     value: 15
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       How many broker top-movers are added to the evening missed-opportunity
       review (src/pipeline_intraday.py:1132-1146). Its only caller passes nothing, so
@@ -7494,10 +7507,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(top_n)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(top_n)
     value: 15
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
       (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
@@ -7509,7 +7522,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many previous position-reviewer sessions the reviewer is shown
-      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:3573-3577). Its only caller
+      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:1511-1515). Its only caller
       passes nothing, so this default is live. Same class as the smart-money
       prompt-truncation caps classified arbitrary on 2026-09-19: it decides
       what evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7563,19 +7576,19 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_post_exit_reality(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_post_exit_reality(lookback_days)
     value: 14
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_research_continuity.py:766-768): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_post_exit_reality(max_symbols)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_post_exit_reality(max_symbols)
     value: 12
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Maximum exits audited in that post-exit block
       (src/pipeline_research_continuity.py:889-897). Its only caller passes nothing, so this
@@ -7602,10 +7615,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_post_exit_reality(min_age_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_post_exit_reality(min_age_days)
     value: 2
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Minimum age of an exit before its after-the-fact move is shown to the
       position reviewer (src/pipeline_research_continuity.py:889-897). Its only caller passes
@@ -7632,19 +7645,19 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_buys_for_grading(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_buys_for_grading(lookback_days)
     value: 5
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_research_continuity.py:474-479): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_loss_pits(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_loss_pits(lookback_days)
     value: 14
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Window of the PM's repeat-loss-cause memory (src/pipeline_intraday.py:770-779).
       Its only caller passes nothing, so this default is live. Same class as
@@ -7671,10 +7684,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_missed_lessons(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_missed_lessons(lookback_days)
     value: 14
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Window of the PM's recurring-missed-theme memory
       (src/pipeline_research_continuity.py:979-989). Its only caller passes nothing, so this
@@ -7701,28 +7714,28 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_outlook_calibration(lookback)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_outlook_calibration(lookback)
     value: 10
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_intraday.py:1222): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_outlook_calibration._fwd_cumulative(n)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_outlook_calibration._fwd_cumulative(n)
     value: 5
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_intraday.py:1268): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_sells_for_grading(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_sells_for_grading(lookback_days)
     value: 2
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_research_continuity.py:401-406): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
@@ -7758,10 +7771,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_thesis_health_context(lookback_weeks)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_thesis_health_context(lookback_weeks)
     value: 8
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       News/rating window of the evening thesis-health review of every held
       position (src/pipeline_research_continuity.py:1203-1217). Its only caller passes nothing, so
@@ -7788,12 +7801,12 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_trade_grade_summary(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_trade_grade_summary(lookback_days)
     value: 14
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
-      Dead default (src/pipeline_intraday.py:100): every caller in src/ passes this
+      Dead default (src/pipeline.py:2344): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7844,14 +7857,14 @@ numbers:
       bid, whose displayed size is finite, so this is a reachable state, not
       a theoretical one. Booking from the filled quantity and continuing to
       sell while the deficit stands would delete this haircut entirely.
-  - id: src.pipeline.TradingPipeline._has_actionable_signal_fn:factor[0]
+  - id: src.pipeline_risk_gate.RiskGate._has_actionable_signal_fn:factor[0]
     value: 0.5
     status: arbitrary
-    site: src/pipeline.py
+    site: src/pipeline_risk_gate.py
     note: >-
       Research pre-filter: a symbol whose MA20/MA50 spread is under 0.5 x
       ATR14 counts as having an actionable signal and is sent to the technical
-      seat (src/pipeline.py:2959-2962). The same function has further inline
+      seat (src/pipeline.py:2198-2201). The same function has further inline
       thresholds (50% volume change, 2% MA spread) that no rule sees because
       they are comparisons, not multipliers. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive 0.5 from the ledgered noise-band multiple of 1.25 ATR as a half-band. FAILED -- the noise band bounds a STOP against daily range, this bounds a moving-average SPREAD; they share a unit and nothing else. Attempt (2): treat it as a sort-key position with no magnitude, the shape that explained eight rows in tranche 1. FAILED -- checked at the definition site and it is a genuine magnitude: it is compared against a computed spread and decides inclusion, it is not a position in any ordering. Value unchanged.
     open_question: >-
@@ -7969,15 +7982,15 @@ numbers:
     note: >-
       Board item 39, attempt 3. Not a trading threshold: it is the length of
       the field this text has to fit in. `_build_sell` stores
-      `reasoning[:500]` (src/portfolio_constructor.py:3142, :3198, :3411),
+      `reasoning[:500]` (src/portfolio_constructor/orders.py:133, :189, :411),
       so a rotation reason longer than that loses its LAST clause - which is
       the one naming what the sale was cleared on, or that the close is
       contingent on the replacement buy. Read from the truncation it has to
       survive; if that column width changes, this changes with it.
-  - id: src.pipeline_stages._projected_post_sale_cash:factor[0]
+  - id: src.pipeline_rotation_exec._projected_post_sale_cash:factor[0]
     value: 1.005
     status: derived
-    site: src/pipeline_stages.py
+    site: src/pipeline_rotation_exec.py
     derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
@@ -7986,20 +7999,20 @@ numbers:
       than to the equity: a COVER buys the borrowed shares back at
       price x 1.005 and spends that cash. Read from the loop it mirrors;
       not a second number.
-  - id: src.pipeline_stages._projected_post_sale_cash:factor[1]
+  - id: src.pipeline_rotation_exec._projected_post_sale_cash:factor[1]
     value: 0.995
     status: derived
-    site: src/pipeline_stages.py
+    site: src/pipeline_rotation_exec.py
     derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
       Board item 39, attempt 3. The SELL side of the same mirrored offset:
       a sale credits price x 0.995, the limit the SELL loop actually
       places, rather than the mark.
-  - id: src.pipeline_stages._projected_post_sale_book:factor[0]
+  - id: src.pipeline_rotation_exec._projected_post_sale_book:factor[0]
     value: 1.005
     status: derived
-    site: src/pipeline_stages.py
+    site: src/pipeline_rotation_exec.py
     derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
@@ -8009,10 +8022,10 @@ numbers:
       one below sat on each other's entry - the 1.005 row carried the SELL
       text and the 0.995 row the COVER text - from the day they were filed
       until 2026-09-23.
-  - id: src.pipeline_stages._projected_post_sale_book:factor[1]
+  - id: src.pipeline_rotation_exec._projected_post_sale_book:factor[1]
     value: 0.995
     status: derived
-    site: src/pipeline_stages.py
+    site: src/pipeline_rotation_exec.py
     derived_from: src.stage_execution.ExecutionStage._run_session:factor[0]
     base_value: 0.995
     note: >-
@@ -8041,8 +8054,8 @@ numbers:
     note: >-
       Default portfolio risk ceiling of the allocator
       (src/risk/budget.py:193). Every caller passes it
-      (src/portfolio_constructor.py:1630-1635,
-      src/agents/portfolio_manager.py:1870-1873); same 25 as the deployed
+      (src/portfolio_constructor/__init__.py:705-710,
+      src/agents/portfolio_manager/__init__.py:437-440); same 25 as the deployed
       ceiling.
   - id: src.risk.budget.allocate_risk_budget(cluster_share_pct)
     value: 40
@@ -8053,7 +8066,7 @@ numbers:
     note: >-
       Default per-cluster risk share (src/risk/budget.py:194). The constructor
       passes the config value; the PM rotation pre-check
-      (src/agents/portfolio_manager.py:1870-1873) relies on this default but
+      (src/agents/portfolio_manager/__init__.py:437-440) relies on this default but
       passes clusters=None. Same 40 as the deployed field.
   - id: src.risk.budget.allocate_risk_budget(floor_pct)
     value: 0.5
@@ -8298,7 +8311,7 @@ numbers:
   - id: src.config.UniverseScreenConfig.min_price_usd
     value: 5
     status: sourced
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
       SEC Rule 3a51-1(d), 17 CFR 240.3a51-1: a security that "has a price of
       five dollars or more" is excluded from the definition of penny stock.
@@ -8309,7 +8322,7 @@ numbers:
   - id: src.config.UniverseScreenConfig.min_market_cap_usd
     value: 30000000
     status: sourced
-    site: src/config.py
+    site: src/config/__init__.py
     source: >-
       FTSE Russell US indexes methodology overview, ineligible securities:
       "Companies under $30 Million in total market capitalization".
@@ -8320,17 +8333,17 @@ numbers:
   - id: src.config.UniverseScreenConfig.screen_deadline_s
     value: 900
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Wall-clock budget for one incremental screening pass at the end of
       the evening session. Decides how many symbols are screened TONIGHT,
       never whether one passes; an unfinished pass resumes next evening.
-      Derivation at src/config.py (UniverseScreenConfig): evening job
+      Derivation at src/config/__init__.py (UniverseScreenConfig): evening job
       TimeoutStartSec=1260, evening body measured 173 s on 2026-09-19.
   - id: src.config.UniverseScreenConfig.bars_batch_size
     value: 50
     status: not-trade-governing
-    site: src/config.py
+    site: src/config/__init__.py
     note: >-
       Symbols per multi-ticker daily-bar download. A fetch batch size: it
       changes how many requests a pass makes, never a screen verdict.
@@ -8351,7 +8364,7 @@ numbers:
     note: >-
       Board item 107. One of the drift flag's two thresholds (weight percent
       of book). Consolidates three bare inline literals (src/pipeline.py's
-      `_build_position_facts`, src/agents/portfolio_manager.py's
+      `_build_position_facts`, src/agents/portfolio_manager/__init__.py's
       `_fmt_position`, src/agents/position_reviewer.py's label string) that
       already existed on main before this change and were never a ledger
       site because a bare comparison literal inside a function body matches

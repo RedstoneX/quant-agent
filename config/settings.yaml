@@ -194,7 +194,7 @@ llm:
   # === Cross-provider failover target (2026-08-31 owner decision) ===
   # Process-wide, not per-agent (see src/agents/base.py's
   # _DEFAULT_FALLBACK_PROVIDER/_DEFAULT_FALLBACK_MODEL and LLMConfig.
-  # fallback_provider/fallback_model in src/config.py). OpenRouter serving
+  # fallback_provider/fallback_model in src/config/__init__.py). OpenRouter serving
   # the SAME model the primary above uses direct: a failover changes the
   # ROAD, not the REASONING — the owner's explicit objection to the
   # inherited claude-opus-4-7 Anthropic fallback (an upstream `yebof`
@@ -449,7 +449,7 @@ execution:
   #
   # Safe to have on: this is a PAPER account and the stream is RECEIVE-ONLY
   # — it delivers fill notifications and places no orders. A paper/live
-  # endpoint mismatch is impossible by construction: src/config.py hard-
+  # endpoint mismatch is impossible by construction: src/config/__init__.py hard-
   # fails unless `paper` is true and the REST base_url is the paper host,
   # and the SDK derives the stream host from that same `paper` bool with no
   # url_override anywhere.
@@ -1012,7 +1012,7 @@ risk:
   # seat count as max_position_risk_pct x sqrt(n / 5 seats); the sqrt law is
   # the statistics of averaging INDEPENDENT estimates, and this desk's five
   # seats read overlapping evidence, so its one precondition is unmet. The
-  # key is REJECTED on load (src/config.py) so a stale settings.yaml cannot
+  # key is REJECTED on load (src/config/__init__.py) so a stale settings.yaml cannot
   # resurrect it silently. What survives is the refusal only: a net score at
   # or below zero refuses the target outright
   # (src/risk/rules.py::agreement_refuses_trade). Above zero, the ratified
@@ -1068,7 +1068,7 @@ cash_reserve:
 # current-session snapshot flags symbols that moved materially since the
 # last close; only those (capped, cooldown-deduped) get a real tech_analyst
 # call and the normal Specialist -> PM -> AI Risk -> deterministic gate ->
-# execution chain. See src/config.py::IntradayScanConfig.
+# execution chain. See src/config/__init__.py::IntradayScanConfig.
 #
 # ENABLED. This comment used to say the scan was left disabled pending
 # operator review; the flag below has been `true` since that step was taken,
@@ -1093,10 +1093,10 @@ smart_money:
   refresh_deadline_s: 180
   # The watched-name drain's own budget, after the market-wide pass. Sized
   # from a 2026-09-19 measurement of the watched backlog; derivation at
-  # src/config.py::SmartMoneyConfig.watched_drain_deadline_s.
+  # src/config/__init__.py::SmartMoneyConfig.watched_drain_deadline_s.
   watched_drain_deadline_s: 859
   requests_per_second: 8
-  # 7 -> 365 on 2026-09-11 — see src/config.py::SmartMoneyConfig.lookback_days
+  # 7 -> 365 on 2026-09-11 — see src/config/__init__.py::SmartMoneyConfig.lookback_days
   # for the full derivation. A year is the real behavioral bound: someone
   # trading on real inside information has no reason to sit on it past a
   # year. Fetch/retention bound only; whether an old observation can
@@ -1115,7 +1115,7 @@ smart_money:
   min_external_avg_dollar_volume_usd: 10000000
   min_external_history_days: 20
   # Routine-versus-opportunistic Form 4 classification
-  # (src/data/insider_signal.py). See src/config.py::SmartMoneyConfig for
+  # (src/data/insider_signal.py). See src/config/__init__.py::SmartMoneyConfig for
   # the evidence basis behind each default.
   insider_calendar_routine_years: 3
   insider_min_cadence_trades: 3
@@ -1124,13 +1124,13 @@ smart_money:
   insider_cadence_max_gap_dispersion: 0.25
   # insider_min_material_sell_fraction REMOVED 2026-09-13 — it was a cutoff no
   # published source measures, and it discarded a band Scott & Xu find
-  # significantly positive. The ratio is reported, not gated. See src/config.py.
+  # significantly positive. The ratio is reported, not gated. See src/config/__init__.py.
   insider_history_retention_days: 1830
 
 nominations:
   # Phase 9 — bounds on how many candidates News/Earnings/Macro may put in
   # front of the Technical responder pass each run. See
-  # src/config.py::NominationConfig and docs/QAMC_REMEDIATION_SPEC.md §9.1.
+  # src/config/__init__.py::NominationConfig and docs/QAMC_REMEDIATION_SPEC.md §9.1.
   max_per_seat_per_run: 3
   max_total_per_run: 6
 
@@ -1139,7 +1139,7 @@ universe_screen:
   # with the owner 2026-09-01, built 2026-09-19). OFF until the owner turns
   # it on after review. Off = no weekly screen, no screened symbol in any
   # session, and the Form 4 / nomination side doors keep their old gates.
-  # Thresholds and their sources: src/config.py::UniverseScreenConfig and
+  # Thresholds and their sources: src/config/__init__.py::UniverseScreenConfig and
   # config/number_ledger.yaml.
   enabled: false
   data_dir: "data/universe"
@@ -1159,7 +1159,7 @@ news:
   # Per-symbol Yahoo Finance RSS (2026-08-30 owner decision — see the
   # "CHECKED AND REJECTED" audit note in src/data/news.py). Scoped every run
   # to held positions + admitted candidates, never the full ~101-symbol
-  # universe. See src/config.py::NewsConfig for the evidence behind each
+  # universe. See src/config/__init__.py::NewsConfig for the evidence behind each
   # default below.
   per_symbol_enabled: true
   per_symbol_max_symbols: 15
@@ -1173,7 +1173,7 @@ macro:
   # flat-2s-backoff policy. total_fetch_deadline_s is the actual hard
   # ceiling on added wall-clock (requests and backoff sleeps are clipped
   # to it); the retry/backoff settings are the best-effort recovery layer
-  # underneath that ceiling. See src/config.py::MacroConfig for the
+  # underneath that ceiling. See src/config/__init__.py::MacroConfig for the
   # reasoning behind each default.
   request_timeout_s: 15.0
   max_retries: 2
@@ -1200,7 +1200,7 @@ event_risk:
   # The FRED retry/backoff policy is NOT repeated here — the calendar hits the
   # same host as the macro feed, so the `macro:` settings above are threaded
   # into it. Only the ceilings below are event-calendar-specific. See
-  # src/config.py::EventRiskConfig for the reasoning behind each default.
+  # src/config/__init__.py::EventRiskConfig for the reasoning behind each default.
   horizon_days: 10
   calendar_deadline_s: 20.0
   earnings_deadline_s: 20.0
@@ -1374,7 +1374,7 @@ storage:
 # 2026-08-28 ONDS/CCJ incident: both positions were closed by their broker-
 # resident protective stop and the `trades` ledger never heard about it — no
 # SELL row, `realized_pnl` stuck NULL on the BUY forever. See
-# src/config.py::ReconciliationConfig and src/pipeline.py::
+# src/config/__init__.py::ReconciliationConfig and src/pipeline.py::
 # _reconcile_stop_out_fills for the fix. This section is optional; omitting
 # it keeps the documented default (7-day lookback) unchanged.
 reconciliation:
@@ -1399,6 +1399,7 @@ reconciliation:
 # the API on 127.0.0.1:8800), which mounts /cockpit (src/api/server.py).
 # Tailscale-only — matches Mission Control's private, read-only posture.
 notifications:
+  risk_only: false
   mission_control_url: "https://ovh-vps.wallaby-bowfin.ts.net/cockpit/"
 
 # Mandatory paid-analysis circuit.  It is persisted in the same SQLite DB and

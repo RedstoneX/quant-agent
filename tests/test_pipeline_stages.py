@@ -3944,7 +3944,7 @@ def test_item155_entry_enlargement_has_exactly_one_enforcement_point():
     """
     import inspect
     import src.pipeline_stages as ps
-    from src.pipeline import TradingPipeline
+    from src.pipeline_risk_gate import RiskGate  # the body lives here (step 7)
 
     # (a) No second enforcement point in the stage layer.
     stage_src = inspect.getsource(ps)
@@ -3962,7 +3962,7 @@ def test_item155_entry_enlargement_has_exactly_one_enforcement_point():
     # (b) Guard 1b itself still covers BOTH sides, so no second point is
     # needed. Read only the guard-1b block, not the whole method: guards 2
     # and 3 carry their own BUY/SHORT tests.
-    guard_src = inspect.getsource(TradingPipeline._apply_risk_modifications)
+    guard_src = inspect.getsource(RiskGate._apply_risk_modifications)
     block = guard_src.split("# Guard 1b")[-1].split("# Guard 2")[0]
     assert 'decision.action in ("BUY", "SHORT")' in block, (
         "board item 155: guard 1b no longer tests both sides — if it has "
@@ -4143,7 +4143,7 @@ def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
         max_position_pct=40, max_total_position_pct=50,
         max_sector_pct=90, require_stop_loss=True,
     ))
-    with patch("src.pipeline._get_sector", return_value="Broad"), patch(
+    with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(

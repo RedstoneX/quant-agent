@@ -32,7 +32,7 @@ _EXIT_GUARD_IDS = (
 )
 _MIN_STOP_ID = "src.config.RiskConfig.absolute_min_stop_atr_multiple"
 _MIN_STOP_MIRROR_ID = (
-    "src.portfolio_constructor.ConstructorConfig.absolute_min_stop_atr_multiple"
+    "src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple"
 )
 
 
@@ -73,7 +73,9 @@ def test_three_distinct_names_not_one_shared_constant() -> None:
 
     # The minimum stop multiple is a THIRD, config-borne number: it must not be
     # imported from, or aliased to, either exit-path band.
-    source = (_REPO_ROOT / "src" / "config.py").read_text()
+    from src.feature_flags import config_modules
+
+    source = "\n".join(p.read_text() for p in config_modules(_REPO_ROOT))
     assert "absolute_min_stop_atr_multiple" in source
     assert "NOISE_BAND_ATR_MULTIPLE" not in source
     assert "BREAK_CONFIRMATION_ATR_MULTIPLE" not in source

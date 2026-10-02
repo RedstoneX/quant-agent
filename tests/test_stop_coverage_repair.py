@@ -744,7 +744,7 @@ def test_the_worst_elected_trigger_is_the_one_reported(shared_marker):
 
 def _evening_pipeline(qty, price, stop, atr=2.0):
     p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p.broker = MagicMock(); p.db = MagicMock()
     p.broker.get_current_stop_price.return_value = stop
     p._sweep_symbol = lambda: None
     p._atr_for_symbol = lambda _sym: atr

@@ -5,7 +5,7 @@ from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from src.config import AppConfig
-from src.notifier import TelegramNotifier
+from src.notifier import CATEGORY_OPERATIONAL, TelegramNotifier
 from src.pipeline import TradingPipeline
 from src.trader_feed import format_session_result
 from src.trading_calendar import ET, SESSION_WINDOWS
@@ -206,6 +206,23 @@ class TradingScheduler:
                         logger.warning(
                             "[%s] data-quality alert failed in _run_safe: %s", name, exc,
                         )
+                    # Defect 1 (PR #978). The naked-position banner lives
+                    # inside the session summary, which is operational and
+                    # therefore filtered; its other carrier claims the
+                    # symbol for the whole trading day. Raise it here, on
+                    # its own, every session in which it is true.
+                    try:
+                        from src.trader_feed import send_naked_position_alert
+
+                        send_naked_position_alert(
+                            self.notifier,
+                            result if isinstance(result, dict) else None,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[%s] naked-position alert failed in _run_safe: %s",
+                            name, exc,
+                        )
                     if message:
                         symbols = None
                         try:
@@ -226,6 +243,12 @@ class TradingScheduler:
                         # TelegramNotifier.send()'s docstring.
                         self.notifier.send(
                             message, symbols=symbols, preserve_structural_markup=True,
+                            # A scheduled session summary is a routine
+                            # report, not a money-at-risk alarm: the
+                            # alarms inside a session (a missing stop, a
+                            # rejected order) raise their own
+                            # `send_owner_alert`, which is unaffected.
+                            category=CATEGORY_OPERATIONAL,
                         )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(

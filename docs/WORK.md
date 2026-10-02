@@ -1,3 +1,4 @@
+
 # QAMC Current Work
 
 ## Active finish line
@@ -40,6 +41,8 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 **Engineering setup.** Work as `ubuntu`, never as `qamc`. No venv in engineering checkouts: use `/home/ubuntu/projects/quant-agent/.venv/bin/python` with `PYTHONPATH` at the checkout root and the five dummy API-key env vars CI uses. Read the live box with `sudo -n -u qamc`. Log timestamps are **UTC**; the owner is **ET** — convert before quoting times to him.
 
 **Working agreement.** Standing autonomy to execute the backlog without stopping at phase gates. Interrupt only for live-capital activation, new paid dependencies, secrets redesign, destructive infrastructure, or evidence a ratified decision was wrong. The grant covers executing, not expanding: report breakage that predates your task in plain language and let the owner decide. Never state a date or duration from impression — take it from `git log` and check the author (everything before **2026-08-09** is upstream `yebof`). The desk board (`docs/phases.yaml`, `/board`) is a source of truth; defects go on it. Orchestrate: delegate at task START (cheapest tier for docs and inventory, mid tier for bounded implementation, strongest for trading/risk logic), read diffs not whole files, never two writing agents in one worktree, and verify the single load-bearing claim of every agent report (check the test count; reproduce the cause) — a confidently wrong root cause was caught only that way on 2026-08-29.
+
+**Beta operational ruling (owner 2026-09-19).** Deploys and changes to the live system are permitted during market hours while the desk is in beta. Automated fix-it sessions are approved to run after each health report, charged to the owner's allowance, with adversary review applied to every change.
 
 **Operational facts.**
 - Stage explicit paths; never `git add -A`. Never bare `git stash` — the ref is repo-global across worktrees; use `git stash push -m "<name>"` and pop by index, or a throwaway worktree.
@@ -213,9 +216,10 @@ DONE WHEN:
   - [x] 2026-10-01 every blocked outbound attempt is journalled and the breach voids the run, mechanically.
   - [x] 2026-10-01 a missing recorded input stops the replay instead of being filled in or quietly degraded.
   - [x] 2026-10-01 the rot guard exercises every installed HTTP transport against TEST-NET-1.
-  - [x] 2026-10-01 every OTHER test that still reaches the network is NAMED: the conftest guard now journals each blocked attempt to `QAMC_NETWORK_JOURNAL` before raising, so a test that SWALLOWS the error is no longer invisible; one full-suite run measured 1139 blocked attempts from 247 tests in 45 files (1034 Yahoo, 99 the LiteLLM price table, 6 OpenRouter), none of which fail the suite.
-  - [x] 2026-10-01 FRED and the news/reference feeds replay from a recording and never reach the network, by the same patch-where-the-client-is-built pattern the bars and sectors use; recorded FAILURES replay as failures, credentials are stripped from the key, and a gap RAISES rather than fetching or substituting [measured 2026-10-01: 7 tests inside the rehearsal's own network wall, empty journal].
-  - [ ] STILL OPEN: a real rehearsal against the production snapshot returns a verdict it is entitled to give. The run was PERFORMED 2026-10-01 and VOIDED on the wall, as expected: the full session completed end to end including the Portfolio Manager, production was byte-identical afterwards and no order was placed anywhere, but 11 endpoints (FRED plus ten news/reference hosts) had no recording. Those are now recorded (box above); what is left is the pinned recording's zero sectors, the offline Alpaca asset directory, and repeating the settling run — not done here, and no verdict is claimed from the unrepeated one.
+  - [x] 2026-10-01 every other test that reaches the network is NAMED: the conftest guard journals each blocked attempt to `QAMC_NETWORK_JOURNAL` (1139 attempts from 247 tests, none failing; detail in the note, update 5).
+  - [x] 2026-10-01 FRED and the news/reference feeds replay from a recording by the same patch-where-the-client-is-built pattern; recorded failures replay as failures, a gap raises (note, update 6).
+  - [x] 2026-10-01 the TEST SUITE is closed at the socket, not just at `requests`: 17 tests reached FRED/the Fed/news feeds through `urlopen`, 2 more reached openrouter.ai on a shell key, all green only because the code degrades a failed fetch; each stubbed at its seam, and the guard now fails any test that reaches off-box, naming test and host, with no allow-list (note, update 7).
+  - [ ] STILL OPEN: a real rehearsal against the production snapshot returns a verdict it is entitled to give. Performed and VOIDED on the wall 2026-10-01 (11 unrecorded endpoints, since recorded); left: the pinned recording's zero sectors, the offline Alpaca asset directory, and repeating the settling run (note, update 6).
 
 **208. Item 18's three residuals, carried forward — filed 2026-09-30 when item 18 was retired. The prompt-bulk defect that item 18 was opened for no longer applies and was re-measured under that item; these three leftovers remain OPEN, share no subject with it and were blocking item 19 for no reason. Detail: `docs/board_notes/` (item 208).** One changes what the ranking seat decides, one is an account setting outside this repo, and one cannot be closed by building at all.
 
@@ -280,7 +284,7 @@ DONE WHEN:
 - [ ] the three citations named in the note are corrected and the guard passes with no exemption list
 detail: docs/board_notes/item-225.md
 
-**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards), 1 (prompt facts), 2 (protection), 3 (the de-levering ladder), 4 (the held-position exit engine) and 10 (the four stage classes) have landed, and step 7 (research continuity — change detectors, carry-forward, Form-4 backlog, seat healing; 1,308 lines moved verbatim) is landing; steps 5 (the risk gate) and 6 (universe admission) are open pull requests; steps 8, 9, 11 and 12 remain. `src/pipeline.py` is 7,687 lines, down from 21,864 when the plan was written.
+**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards), 1 (prompt facts), 2 (protection), 3 (the de-levering ladder), 4 (the held-position exit engine), 5 (the risk gate), 6 (universe admission), 7 (research continuity — change detectors, carry-forward, Form-4 backlog, seat healing; 1,308 lines moved verbatim) and 10 (the four stage classes) have landed; steps 8, 9, 11 and 12 remain. `src/pipeline.py` is 7,687 lines, down from 21,864 when the plan was written. STEP 5 and STEP 6 LANDED 2026-10-01 (merged with main after step 7); the full landing records are in the item 210 note.
 
 DONE WHEN:
   - [ ] 1. the open pull-request queue is at zero, because the split moves `src/pipeline.py` and `src/pipeline_stages.py`, which nearly every open pull request touches, so splitting sooner collides with all of them
@@ -297,7 +301,7 @@ DONE WHEN:
   - [x] the holdings it KEPT are named as considered and kept, so a silent pass can no longer pass for a pass that never ran
   - [x] every session says whether the score-margin tier is on or off, so the owner is never told the desk pruned more thoroughly than it did
   - [x] the dashboard renders the SAME sentences from the SAME durable row via the run detail, with no second reporting path invented
-  - [ ] a real session's stored report is read back and shown carrying the block, on both surfaces, against a run the desk actually made — until then this is rendering proven only by test
+  - [ ] a real session's stored report is read back and shown carrying the block, on both surfaces, against a run the desk actually made — until then this is rendering proven only by test (2026-10-02: a stored run is now rendered through the real Telegram formatter and the dashboard reader in tests/test_pruning_pass_reaches_both_surfaces.py, which also fixed a false line telling the owner below-bar names still clear the bar; still OPEN until a production session is observed, desk is OFF)
 detail: docs/board_notes/item-219.md
 
 

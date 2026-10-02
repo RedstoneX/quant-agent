@@ -14,34 +14,24 @@
         "TradingPipeline": [
           "__init__",
           "_activate_cost_session",
-          "_admit_nominated_external_symbols",
-          "_admit_screened_universe_symbols",
-          "_admit_transient_smart_money_symbols",
-          "_apply_risk_modifications",
           "_atr_for_symbol",
           "_attach_cost_circuit_to_agents",
           "_attach_evidence_freshness",
           "_attach_pnl",
-          "_attach_universe_changes",
+          "_collab",
           "_compute_deployable_cash",
           "_constructor_cfg_or_none",
           "_cost_circuit_status",
           "_decision_stage",
           "_earnings_preprocess_symbols",
-          "_evaluate_external_admission_gates",
-          "_evaluate_screened_admission",
           "_evening_earnings_proximity",
           "_evening_stop_proximity",
           "_evidence_gate_skip",
           "_execution_stage",
           "_expected_sessions_missing_today",
-          "_filter_hard_risk_decisions",
-          "_filter_supported_symbols",
           "_forced_close_side_and_qty",
-          "_form4_admission_is_current",
           "_format_qty",
           "_full_sell_qty",
-          "_has_actionable_signal_fn",
           "_install_sigterm_unwind",
           "_is_trading_day",
           "_kill_switch_halt_result",
@@ -53,36 +43,29 @@
           "_paid_suspension_after_late_safety",
           "_parse_logged_agent_response",
           "_persist_evening_report",
-          "_persist_hard_risk_block",
           "_persist_review_metrics",
           "_persist_session_report",
-          "_reconcile_size_to_risk_budget",
           "_record_account_snapshot",
           "_record_name_coverage",
           "_record_short_overnight_gaps",
           "_reduce_sell_qty",
           "_refresh_account_state",
-          "_refuse_queued_earnings_buys",
           "_release_retired_cash_park",
           "_require_paid_analysis",
           "_resolve_live_context",
           "_restore_sigterm",
           "_retired_cash_park_symbol",
-          "_risk_mod_floor_breach",
           "_risk_stage",
           "_run_earnings_preprocess_body",
           "_run_evening_body",
           "_run_morning_body",
           "_run_news_update",
           "_run_position_review_body",
-          "_run_universe_screen",
           "_sweep_symbol",
           "_sweeper",
           "_sync_positions_from_broker",
           "_total_pnl_since_reset",
           "_trade_executed_or_pending",
-          "_universe_screen_enabled",
-          "_universe_screen_sources",
           "run_close",
           "run_daily",
           "run_earnings_preprocess",
@@ -91,6 +74,60 @@
           "run_morning",
           "run_position_review",
           "run_quarterly_meta_reflection"
+        ],
+        "_MissingCollaborator": [
+          "__getattr__",
+          "__init__",
+          "_raise"
+        ]
+      }
+    },
+    "src/pipeline_admission.py": {
+      "module_functions": [],
+      "classes": {
+        "AdmissionService": [
+          "__init__",
+          "_admit_nominated_external_symbols",
+          "_admit_screened_universe_symbols",
+          "_admit_transient_smart_money_symbols",
+          "_attach_universe_changes",
+          "_constructor_cfg_or_none",
+          "_evaluate_external_admission_gates",
+          "_evaluate_screened_admission",
+          "_filter_supported_symbols",
+          "_form4_admission_is_current",
+          "_run_universe_screen",
+          "_universe_screen_enabled",
+          "_universe_screen_sources"
+        ]
+      }
+    },
+    "src/pipeline_admission_shell.py": {
+      "module_functions": [],
+      "classes": {
+        "AdmissionMixin": [
+          "_admission_service",
+          "_admit_nominated_external_symbols",
+          "_admit_screened_universe_symbols",
+          "_admit_transient_smart_money_symbols",
+          "_attach_universe_changes",
+          "_evaluate_external_admission_gates",
+          "_evaluate_screened_admission",
+          "_filter_supported_symbols",
+          "_form4_admission_is_current",
+          "_run_universe_screen",
+          "_universe_screen_enabled",
+          "_universe_screen_sources"
+        ],
+        "_Late": [
+          "__getattr__",
+          "__init__"
+        ],
+        "_PipelineDatabaseJournal": [
+          "__init__",
+          "_journal",
+          "persist_evidence",
+          "record_pipeline_event"
         ]
       }
     },
@@ -119,6 +156,7 @@
     "src/pipeline_exits.py": {
       "module_functions": [
         "_actions_with_scan_fallback",
+        "_collab_of",
         "_reason_cites_hard_trigger",
         "_reason_claims_alignment_exit"
       ],
@@ -175,17 +213,10 @@
       }
     },
     "src/pipeline_prompt_facts.py": {
-      "module_functions": [
-        "_missed_ops_quality_metrics",
-        "_valuation_signal_from"
-      ],
+      "module_functions": [],
       "classes": {
         "PromptFactsMixin": [
-          "_actualize_trade_row",
           "_build_active_state_changes",
-          "_build_blocked_proposals",
-          "_build_calibration_note",
-          "_build_macro_tech_alignment",
           "_build_macro_trajectory",
           "_build_missed_opportunities_digest",
           "_build_own_recent_decisions",
@@ -194,43 +225,64 @@
           "_build_portfolio_heat",
           "_build_position_facts",
           "_build_position_history",
-          "_build_post_exit_reality",
           "_build_projected_portfolio",
-          "_build_recent_buys_for_grading",
-          "_build_recent_loss_pits",
-          "_build_recent_missed_lessons",
-          "_build_recent_outlook_calibration",
-          "_build_recent_sells_for_grading",
           "_build_review_metric_deltas",
           "_build_rm_recent_verdicts",
           "_build_stop_map",
           "_build_thesis_health_context",
-          "_build_trade_grade_summary",
           "_build_watchlist_candidates",
           "_build_weekly_narrative",
-          "_compute_recent_performance",
           "_ensure_correlation_matrix",
           "_log_conviction_outcome_for_operator",
           "_missed_ops_earnings_signal",
           "_missed_ops_held_set",
           "_missed_ops_macro_sector_map",
           "_missed_ops_news_signal",
+          "_missed_ops_signals",
           "_missed_ops_tech_signal",
           "_missed_ops_theme_tags",
-          "_persist_evening_replay_inputs",
           "_thesis_news_events_map",
           "_thesis_tech_trajectory_map"
         ]
       }
     },
+    "src/pipeline_prompt_facts_pure.py": {
+      "module_functions": [
+        "_actualize_trade_row",
+        "_build_macro_tech_alignment",
+        "_missed_ops_quality_metrics",
+        "_valuation_signal_from"
+      ],
+      "classes": {}
+    },
+    "src/pipeline_prompt_facts_review.py": {
+      "module_functions": [],
+      "classes": {
+        "PromptFactsReviewMixin": [
+          "_build_blocked_proposals",
+          "_build_calibration_note",
+          "_build_post_exit_reality",
+          "_build_recent_buys_for_grading",
+          "_build_recent_loss_pits",
+          "_build_recent_missed_lessons",
+          "_build_recent_outlook_calibration",
+          "_build_recent_sells_for_grading",
+          "_build_trade_grade_summary",
+          "_compute_recent_performance",
+          "_persist_evening_replay_inputs"
+        ]
+      }
+    },
     "src/pipeline_protection.py": {
       "module_functions": [
+        "_build_coverage_election",
+        "_build_fill_reconciler",
+        "_build_owner_alerts",
+        "_build_repeg_drain",
+        "_build_sell_finalization",
         "_classify_coverage_gap",
-        "_finite_float_or_none",
-        "_market_is_open_now",
-        "_position_notional",
-        "_price_is_through_stop",
-        "_reconciled_exit_action"
+        "_collab_of",
+        "_market_is_open_now"
       ],
       "classes": {
         "ProtectionMixin": [
@@ -278,6 +330,36 @@
         ]
       }
     },
+    "src/pipeline_risk_gate.py": {
+      "module_functions": [],
+      "classes": {
+        "RiskGate": [
+          "__init__",
+          "_apply_risk_modifications",
+          "_filter_hard_risk_decisions",
+          "_has_actionable_signal_fn",
+          "_persist_hard_risk_block",
+          "_reconcile_size_to_risk_budget",
+          "_refuse_queued_earnings_buys",
+          "_risk_mod_floor_breach"
+        ]
+      }
+    },
+    "src/pipeline_risk_gate_mixin.py": {
+      "module_functions": [],
+      "classes": {
+        "RiskGateMixin": [
+          "_apply_risk_modifications",
+          "_filter_hard_risk_decisions",
+          "_has_actionable_signal_fn",
+          "_persist_hard_risk_block",
+          "_reconcile_size_to_risk_budget",
+          "_refuse_queued_earnings_buys",
+          "_risk_gate",
+          "_risk_mod_floor_breach"
+        ]
+      }
+    },
     "src/pipeline_research_continuity.py": {
       "module_functions": [],
       "classes": {
@@ -316,101 +398,66 @@
         ]
       }
     },
+    "src/pipeline_sizing.py": {
+      "module_functions": [
+        "_entry_deployment_budget",
+        "_execution_payoff_skip_reason",
+        "_fmt_shares",
+        "_fractional_sizing_allowed",
+        "_min_order_usd",
+        "_qty_by_risk_budget",
+        "_risk_budget_pct",
+        "_single_name_execution_cap",
+        "_size_shares"
+      ],
+      "classes": {}
+    },
+    "src/pipeline_earnings_quality.py": {
+      "module_functions": [
+        "_classify_earnings_status",
+        "_earnings_analysis_has_real_figures",
+        "_earnings_data_quality_flags_problem",
+        "_earnings_field_disclosed",
+        "_earnings_xbrl_mismatch_fields",
+        "_parse_reported_figure"
+      ],
+      "classes": {}
+    },
     "src/pipeline_stages.py": {
       "module_functions": [
         "__dir__",
         "__getattr__",
         "_account_for_pm_candidates",
-        "_adopt_stream_stall",
         "_alert_holding_discipline_block",
-        "_alert_owner_entry_cancelled",
         "_alert_owner_protection_failed",
-        "_alert_rotation_buy_leg_missing",
-        "_alert_rotation_executed",
-        "_alert_unmeasurable_symbols",
-        "_apply_repeg",
-        "_apply_rotation_execution",
         "_book_risk_inputs",
         "_check_levels_coverage",
-        "_classify_earnings_status",
         "_collect_seat_nominations",
-        "_delete_repeg_wal",
-        "_drop_buys_sold_today_below_bar",
-        "_drop_rotation_buy_if_room_not_freed",
-        "_dropped_since_proposal",
-        "_earnings_analysis_has_real_figures",
-        "_earnings_data_quality_flags_problem",
-        "_earnings_field_disclosed",
-        "_earnings_xbrl_mismatch_fields",
-        "_encode_entry_submit_window",
-        "_entry_deployment_budget",
-        "_entry_slippage_bps",
-        "_execution_payoff_skip_reason",
-        "_fill_stream_enabled",
-        "_fmt_shares",
-        "_fractional_sizing_allowed",
         "_isolate_empty_soft_exit_entries",
-        "_known_entry_submit_budget_s",
         "_link_nominations_to_decision",
-        "_live_fill_price",
         "_live_stops_from_heat",
         "_macro_analysis_as_dict",
         "_macro_regime",
-        "_min_order_usd",
-        "_parse_reported_figure",
-        "_pending_cover_symbols",
         "_persist_evidence",
-        "_pin_approved_entry_ceilings",
         "_probe_sale_census",
-        "_projected_entry_cost",
-        "_projected_post_sale_book",
-        "_projected_post_sale_cash",
-        "_projected_sale_qty",
-        "_qty_by_risk_budget",
         "_record_accounted_candidate",
-        "_record_constructor_drops",
-        "_record_constructor_side_flips",
         "_record_execution_skip",
         "_record_heal_safely",
         "_record_mechanical_soft_exit_restores",
         "_record_pipeline_event",
-        "_record_realised_sector_weights",
-        "_record_rotation_buy_leg_outcome",
-        "_record_rotation_precheck",
         "_record_scale_advisory",
         "_record_scale_in_window_closed",
         "_record_seat_stances",
         "_record_soft_exit_heals",
         "_record_soft_exit_missing_after_retry",
-        "_repeg_entry_order",
-        "_repeg_settings",
-        "_repoint_trade",
-        "_risk_budget_pct",
         "_risk_edit_snapshot",
         "_risk_event_for",
-        "_rotation_buy_leg_projected_refusal",
-        "_rotation_execution_enabled",
-        "_rotation_ranked_margin_enabled",
-        "_rotation_ranked_margin_sell_reason",
-        "_rotation_sell_gate",
-        "_rotation_sell_last",
-        "_rotation_skip",
-        "_scaled_position",
-        "_session_candidate_ranking",
         "_session_gross_ceiling",
-        "_single_name_execution_cap",
-        "_size_shares",
         "_soft_exit_heal_detail",
-        "_start_trade_updates_early",
         "_stash_macro_parse_failure",
-        "_stop_trade_updates",
-        "_submit_window_overrun",
         "_target_increase_missing_falsifier",
         "_targets_admitted_to_book",
-        "_today_order_price",
-        "_today_sizing_price",
-        "_trade_updates_already_started",
-        "_warm_trade_updates"
+        "_today_sizing_price"
       ],
       "classes": {
         "_StageMirroringModule": [

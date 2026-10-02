@@ -23,12 +23,20 @@ INVENTORY_PATH = REPO_ROOT / "tests" / "pipeline_method_inventory.json"
 #: same change that moves the code, which is the point of the guard.
 TRACKED_MODULES: tuple[str, ...] = (
     "src/pipeline.py",
+    "src/pipeline_admission.py",
+    "src/pipeline_admission_shell.py",
     "src/pipeline_delever.py",
     "src/pipeline_exits.py",
     "src/pipeline_intraday.py",
     "src/pipeline_prompt_facts.py",
+    "src/pipeline_prompt_facts_pure.py",
+    "src/pipeline_prompt_facts_review.py",
     "src/pipeline_protection.py",
+    "src/pipeline_risk_gate.py",
+    "src/pipeline_risk_gate_mixin.py",
     "src/pipeline_research_continuity.py",
+    "src/pipeline_sizing.py",
+    "src/pipeline_earnings_quality.py",
     "src/pipeline_stages.py",
     # Board item 210 step 10: the four stage classes moved out of
     # `src/pipeline_stages.py` verbatim into one file each.

@@ -27,6 +27,7 @@ from src.risk.exit_guard import (
     veto_contradicted_exit,
 )
 from src.trading_calendar import et_today
+from tests.pipeline_factory import build_pipeline
 
 
 def _position(symbol="AAA", qty=10, avg_entry=100.0, current_price=110.0):
@@ -46,9 +47,7 @@ def _pipeline():
     # assert on, while keeping the pipeline wired the way production is.
     from src.trading_calendar import trading_sessions_held as _weekday_sessions_held
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
-    p.broker = MagicMock()
+    p = build_pipeline(db=MagicMock(), broker=MagicMock())
     p.broker.get_current_stop_price.return_value = None
     p.broker.trading_sessions_held.side_effect = _weekday_sessions_held
     p._atr_for_symbol = MagicMock(return_value=2.0)

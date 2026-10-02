@@ -247,3 +247,7 @@ still patch the object the moved code calls.
 Still open on item 210: steps 5–9 and 11–12 (`src/pipeline.py`, and the
 remaining `pipeline_stages` helper files — rotation exec, entry orders, sizing,
 earnings quality).
+
+Landing records for steps 5 and 6 (moved here verbatim from the board item; note the older 'still open' paragraph above predates them):
+
+STEP 5 LANDED 2026-10-01 (merged with main after step 7): `src/pipeline_risk_gate.py` (`RiskGateMixin`) carries cluster D plus `_refuse_queued_earnings_buys` -- 909 lines moved verbatim; `compute_indicators`, `_get_sector` and `HARD_BLOCK_RULES` now resolve against the new module, so the 5 patch sites in `tests/test_bugfixes.py` and the import in `tests/test_sector_cap_unresolved.py` were re-pointed in the same change; the one ledger id (`_has_actionable_signal_fn:factor[0]`) was migrated and the new module added to `SCOPED_PATHS` and to the method-inventory guard. STEP 6 LANDED the same day, also after step 7: `src/pipeline_admission.py` (`AdmissionMixin`) carries cluster C -- 11 methods, 510 lines moved verbatim; the 8 `src.pipeline._get_sector` patch sites that reach it were re-pointed and the 12 hard-risk-cap sites stay on `src/pipeline.py`.
