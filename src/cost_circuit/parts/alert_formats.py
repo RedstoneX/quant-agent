@@ -1,17 +1,17 @@
 """src.cost_circuit.parts.alert_formats -- Owner-facing alert texts for the cost circuit.
 
-Bodies moved verbatim from src/cost_circuit/breaker_formats.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_formats.py shim (originally src/cost_circuit.py); held by LLMCostCircuitBreaker.
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations
 from typing import Any, Callable, TypeVar
 from src.cost_circuit.refusal import _fmt_settled
+from src.cost_circuit.parts.episode_wording import EpisodeWording
 
 
 class AlertFormats:
     def __init__(self) -> None:
-        # Four pure formatters: no state, no collaborators. `LLMCostCircuitBreaker`
-        # named inside the bodies is bound into this module by src/cost_circuit/breaker.py.
+        # Four pure formatters: no state, no collaborators.
         pass
 
     @staticmethod
@@ -52,7 +52,7 @@ class AlertFormats:
             "🟢 QAMC PAID ANALYSIS RESUMED\n"
             f"previous suspension: {code}\n"
             f"{when}"
-            f"{LLMCostCircuitBreaker._format_episode_summary(event)}"
+            f"{EpisodeWording._format_episode_summary(event)}"
             f"reason: {event.get('detail') or default_reason}\n"
             f"settled spend at resume: {_fmt_settled(session_cost)} this run · "
             f"{_fmt_settled(daily_cost)} today\n"
@@ -138,7 +138,7 @@ class AlertFormats:
         return (
             "🔴 QAMC PAID ANALYSIS SUSPENDED\n"
             f"trigger: {state.get('trigger_detail') or state.get('trigger_code') or 'safety limit'}\n"
-            f"{LLMCostCircuitBreaker._format_episode_line(state)}"
+            f"{EpisodeWording._format_episode_line(state)}"
             f"affected run: {state.get('run_id') or 'unknown'} "
             f"({state.get('mode') or 'unknown'} / {state.get('agent_name') or 'unknown'})\n"
             f"{attempts_line}\n"
