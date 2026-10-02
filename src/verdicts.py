@@ -37,7 +37,7 @@ published prior now, on outside literature about the general reliability of
 each TYPE of analysis (not a claim about how good THIS desk's specific
 analyst prompts are) — and let it be overridden the moment the desk's own
 conviction ledger clears the 20-resolved-call bar per seat
-(`_CONVICTION_OUTCOME_MIN_N`, `src/storage/db.py`; not yet wired — tracked in
+(`_CONVICTION_OUTCOME_MIN_N`, `src/storage/analytics/calibration.py`; not yet wired — tracked in
 `docs/WORK.md`).
 
 `SEAT_WEIGHT` is a per-seat multiplier, sourced from real published research

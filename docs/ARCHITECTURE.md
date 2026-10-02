@@ -29,6 +29,16 @@ mixin class definitions, one per file.
 
 **The broker's order desk and its account/calendar reads are boundaries (2026-10-02, third broker instalment).** `src/execution/broker_parts/order_desk.py` holds `OrderDesk` (`submit_order`, `replace_entry_limit`, `cancel_entry_order`, the replacement-chain follow, `wait_for_order_terminal` / `wait_for_order_at_exchange` and the polling waits, the open/filled/recent order reads and `close_position`, lifted verbatim with the module helpers those bodies read: `_outlier_refusal_detail`, `_is_terminal_submission_rejection`, `_PLAIN_PRICE_LABELS`). `src/execution/broker_parts/account_reads.py` holds `AccountReads` (account, activities, asset, shortability/fractionability, portfolio history, trading-calendar and resting-stop-price reads; the four per-process caches are passed in and mutated in place, so they stay the broker's own dicts). The stream-backed waits (`_wait_for_order_status`, `_wait_for_order_status_via_stream` and its `_locked` half) stay on the broker because they read and write the live trade-updates hub, lease slot and warm-up record; the desk reaches them as collaborators. Both factories reuse the `_stop_placer` recursion guard (`_is_broker_class_shim`) so a desk is never handed the broker's shim for a body it already owns. The number ledger rows for the moved defaults point at the new modules; both files are in the silent-swallow guard's scope. `broker.py` is 3,762 lines after it.
 
+**Five exit-engine pieces now ARE boundaries (2026-10-02).** `src/exits/`
+holds `TargetRevision`, `StructuralProtection`, `ExitSubstantiation`,
+`HoldingDiscipline` and `AlignmentExit`, each a standalone class taking every
+collaborator as a keyword-only constructor argument (the `src/sessions/`
+pattern); `ExitEngineMixin` keeps a thin same-named shim per method. All five
+pass `check_boundary`; `tests/test_exits_boundary.py` is the witness. The trails
+and the AI risk review stayed in the mixin: the former imports the broker seam
+(`src.execution`, a frozen importer list), the latter reads the module-level
+`_reason_cites_hard_trigger` that a test patches on `src.pipeline_exits`.
+
 **Five protection pieces now ARE boundaries (2026-10-02).** `src/protection/`
 holds `OwnerAlerts`, `SellFinalization`, `FillReconciler`, `RepegDrain` and
 `CoverageElection`, each a standalone class taking every collaborator as a
