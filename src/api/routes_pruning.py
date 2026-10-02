@@ -55,8 +55,32 @@ def _split(value: object) -> list[str]:
     return [s for s in str(value or "").split(",") if s]
 
 
-def verdicts_for(record: dict) -> list[PruningVerdict]:
-    """One verdict and one reason per examined name, off the durable row."""
+def _pairs(value: object) -> dict[str, str]:
+    """Parse the dispositions row's "SYM=text|SYM2=text" fields."""
+    out: dict[str, str] = {}
+    for part in str(value or "").split("|"):
+        sym, sep, text = part.partition("=")
+        if sep and sym:
+            out[sym.strip().upper()] = text.strip()
+    return out
+
+
+def verdicts_for(
+    record: dict,
+    disposition: dict | None = None,
+    skips: dict[str, str] | None = None,
+) -> list[PruningVerdict]:
+    """One verdict and one reason per examined name, off the durable rows.
+
+    `disposition` is the run's `rotation`/`dispositions` row and `skips` the
+    run's `rotation`/`skipped` reasons by symbol; together they say why a
+    below-bar name was kept. A run recorded before the disposition row
+    existed says so, which is a true state, never a blank.
+    """
+    disposition = disposition or {}
+    skips = skips or {}
+    fail_on = _pairs(disposition.get("below_bar_reasons"))
+    not_reached = _pairs(disposition.get("not_reached"))
     examined = _split(record.get("held_examined"))
     below = set(_split(record.get("held_below_entry_bar")))
     reasons = "; ".join(_split(record.get("held_reasons")))
@@ -70,10 +94,18 @@ def verdicts_for(record: dict) -> list[PruningVerdict]:
                 reason=reasons or "it no longer clears the desk's own entry bar",
             ))
         elif sym in below:
+            held_back = (
+                f"refused: {skips[sym]}" if sym in skips
+                else not_reached.get(sym)
+                or "not reached: this run was recorded before the pass "
+                   "stored why a below-bar name was kept"
+            )
+            fails = fail_on.get(sym)
             out.append(PruningVerdict(
                 symbol=sym, verdict="below_bar_not_cut",
-                reason="below the desk's own entry bar today; not cut this "
-                       "pass, and the record does not say which rule held it back",
+                reason="below the desk's own entry bar"
+                + (f" ({fails})" if fails else "")
+                + f"; kept because {held_back}",
             ))
         else:
             out.append(PruningVerdict(
@@ -99,12 +131,27 @@ def read_passes(conn: sqlite3.Connection) -> PruningPassesResponse:
                  "same as a pass having run and kept everything.",
         )
     rows = conn.execute(
-        "SELECT run_id, timestamp, evidence_json FROM specialist_evidence "
+        "SELECT run_id, symbol, timestamp, evidence_json FROM specialist_evidence "
         "WHERE agent_name = 'pipeline' AND kind = 'pipeline_event' "
         "AND date(timestamp) = ? ORDER BY id DESC", (day,),
     ).fetchall()
     passes: list[PruningPass] = []
     seen: set[str] = set()
+    dispositions: dict[str, dict] = {}
+    skips: dict[str, dict[str, str]] = {}
+    for row in rows:
+        try:
+            data = json.loads(row["evidence_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if data.get("stage") == "rotation" and data.get("outcome") == "dispositions":
+            dispositions.setdefault(row["run_id"], data)
+        elif data.get("stage") == "rotation" and data.get("outcome") == "skipped":
+            sym = str(row["symbol"] or "").upper()
+            if sym:
+                skips.setdefault(row["run_id"], {}).setdefault(
+                    sym, str(data.get("reason") or "no reason recorded")
+                )
     for row in rows:
         try:
             data = json.loads(row["evidence_json"] or "{}")
@@ -121,7 +168,9 @@ def read_passes(conn: sqlite3.Connection) -> PruningPassesResponse:
         passes.append(PruningPass(
             run_id=row["run_id"], recorded_at=row["timestamp"],
             examined_count=int(record.get("held_examined_count") or 0),
-            verdicts=verdicts_for(record),
+            verdicts=verdicts_for(
+                record, dispositions.get(row["run_id"]), skips.get(row["run_id"]),
+            ),
             lines=list(owner_precheck_lines(record))
             + list(pruning_pass_lines(record)),
         ))

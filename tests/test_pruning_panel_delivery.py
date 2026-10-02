@@ -78,3 +78,49 @@ def test_delivery_is_read_only_and_wired():
     html = (_STATIC / "index.html").read_text()
     assert "panel-pruning" in html
     assert "/pruning-passes" in (_STATIC / "app.js").read_text()
+
+
+def _event(db, run, outcome, reason, symbol=None, **extra):
+    _evidence(db, run, "pipeline", "pipeline_event",
+              {"stage": "rotation", "outcome": outcome, "reason": reason, **extra},
+              symbol=symbol)
+
+
+def test_kept_below_bar_name_carries_its_reason_to_the_panel(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    _precheck(db, "run-c", **{**_ROW, "held_below_entry_bar": "BBB,CCC,DDD",
+                             "held_examined": "AAA,BBB,CCC,DDD",
+                             "held_examined_count": 4})
+    _event(db, "run-c", "dispositions", "below_bar_names",
+           below_bar_reasons="BBB=technical rule failed|CCC=rating too low|DDD=rating too low",
+           not_reached="DDD=not reached: the pass closes one below-bar name per run and BBB was closed first")
+    _event(db, "run-c", "skipped", "held_symbol_structurally_protected", symbol="CCC")
+    _point_api_at(db, monkeypatch)
+    by = {v.symbol: v for v in get_pruning_passes().passes[0].verdicts}
+    assert "refused: held_symbol_structurally_protected" in by["CCC"].reason
+    assert "rating too low" in by["CCC"].reason
+    assert "not reached: the pass closes one below-bar name per run" in by["DDD"].reason
+    assert "does not say" not in by["DDD"].reason
+
+
+def test_old_run_without_disposition_row_says_so_not_blank(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    _precheck(db, "run-d", **_ROW)
+    _point_api_at(db, monkeypatch)
+    by = {v.symbol: v for v in get_pruning_passes().passes[0].verdicts}
+    assert "not reached: this run was recorded before" in by["CCC"].reason
+
+
+def test_disposition_payload_records_not_reached_at_the_source():
+    from types import SimpleNamespace as NS
+
+    from src.rotation_dispositions import disposition_payload
+
+    opp = NS(ineligible_candidates=(("BBB", ("r1",)), ("CCC", ("r2",))))
+    pre = NS(opportunity=opp, held_below_entry_bar=("BBB", "CCC"))
+    on = disposition_payload(pre, {"BBB"}, True)
+    assert "CCC=not reached: the pass closes one below-bar name per run and BBB" in on["not_reached"]
+    assert on["below_bar_reasons"] == "BBB=r1|CCC=r2"
+    off = disposition_payload(pre, set(), False)
+    assert off["not_reached"].count("switched off") == 2
+    assert disposition_payload(NS(opportunity=None, held_below_entry_bar=()), set(), True) == {}
