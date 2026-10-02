@@ -5431,10 +5431,10 @@ numbers:
       ceiling for the rare fallback where that stream itself could not be
       used. It decides how long the desk waits, never whether or how much
       to trade.
-  - id: src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+  - id: src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS
     value: 3
     status: arbitrary
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/stop_place.py
     note: >-
       Retry ceiling for placing the protective stop immediately after an
       entry fills (src/execution/broker.py:1329-1348). docs/WORK.md item
@@ -5471,20 +5471,20 @@ numbers:
         ladder goes entirely and a placement failure escalates to the
         unprotected-position alert at once, rather than the attempt count being
         re-picked.
-  - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[0]
+  - id: src.execution.broker_parts.stop_place._STOP_PLACEMENT_BACKOFF_S[0]
     value: 0.5
     status: arbitrary
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/stop_place.py
     note: >-
       First of the two stop-placement retry delays, same site and same
-      falsified reasoning as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+      falsified reasoning as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS
       (docs/WORK.md item 129).
     open_question: >-
-      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS: what delay
+      Same as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS: what delay
       actually clears the transient failure classes this retry is meant
       for, measured rather than assumed.
     cost_while_unanswered: >-
-      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS: a position
+      Same as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS: a position
       can be left without a protective stop if the real clearing time
       exceeds the assumed one.
     settles_by:
@@ -5503,18 +5503,18 @@ numbers:
         on the following attempt is independent of the delay waited, the delay
         is buying nothing, and this rung goes -- with the retry becoming
         immediate -- rather than being re-picked at another round number.
-  - id: src.execution.broker._STOP_PLACEMENT_BACKOFF_S[1]
+  - id: src.execution.broker_parts.stop_place._STOP_PLACEMENT_BACKOFF_S[1]
     value: 1.5
     status: arbitrary
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/stop_place.py
     note: >-
       Second of the two stop-placement retry delays, same site and same
-      falsified reasoning as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS
+      falsified reasoning as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS
       (docs/WORK.md item 129).
     open_question: >-
-      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
+      Same as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS.
     cost_while_unanswered: >-
-      Same as src.execution.broker._STOP_PLACEMENT_MAX_ATTEMPTS.
+      Same as src.execution.broker_parts.stop_place._STOP_PLACEMENT_MAX_ATTEMPTS.
     settles_by:
       kind: recording
       state: specified
@@ -5531,10 +5531,10 @@ numbers:
         on the following attempt is independent of the delay waited, the delay
         is buying nothing, and this rung goes -- with the retry becoming
         immediate -- rather than being re-picked at another round number.
-  - id: src.execution.broker._FRACTIONAL_QTY_EPSILON
+  - id: src.execution.broker_parts.stop_place._FRACTIONAL_QTY_EPSILON
     value: 1.0e-9
     status: not-trade-governing
-    site: src/execution/broker.py
+    site: src/execution/broker_parts/stop_place.py
     note: >-
       Floating-point tolerance used only to tell a genuine sub-share
       remainder from float representation error (src/execution/broker.py:
@@ -5556,7 +5556,7 @@ numbers:
       model-typed percent), so a delta the desk did not actually request —
       "hold exactly what is held" — can land a few ULPs off zero instead of
       bit-exact. This recognises that as no request at all, the same role
-      `src.execution.broker._FRACTIONAL_QTY_EPSILON` plays for share
+      `src.execution.broker_parts.stop_place._FRACTIONAL_QTY_EPSILON` plays for share
       quantities; it is nine orders of magnitude below the finest weight a
       model or a human types, so any value in a wide band below that
       produces identical behaviour — a precision guard, not a policy
@@ -5581,7 +5581,7 @@ numbers:
       (src/coverage_watchdog.py:145-146, same tolerance the coverage
       reconciler uses). Guards against representation error rather than
       choosing a policy magnitude, same reasoning as
-      src.execution.broker._FRACTIONAL_QTY_EPSILON.
+      src.execution.broker_parts.stop_place._FRACTIONAL_QTY_EPSILON.
   - id: src.pipeline_prompt_facts._PM_PROFILE_SYMBOL_CAP
     value: 40
     status: not-trade-governing

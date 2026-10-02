@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import fcntl
 import json
 import logging
@@ -1645,6 +1646,27 @@ PROTECTIVE_ORDER_ALIVE_STATUSES = (
 
 
 # `real_broker_order_id` moved to src/execution/broker_parts/stop_place.py (re-exported above).
+
+
+def _is_broker_class_shim(obj, attr: str) -> bool:
+    """True when `obj` is AlpacaBroker's own thin shim for `attr`, however it was
+    bound: a bound method (`__func__`), a `functools.partial` over the plain
+    function (`func`, unwrapped through nested partials), or the plain function."""
+    target = getattr(AlpacaBroker, attr, None)
+    if target is None:
+        return False
+    seen = obj
+    for _ in range(8):
+        if seen is target:
+            return True
+        if isinstance(seen, functools.partial):
+            seen = seen.func
+            continue
+        bound = getattr(seen, "__func__", None)
+        if bound is None:
+            return False
+        seen = bound
+    return False
 
 
 class AlpacaBroker:
@@ -5292,6 +5314,10 @@ class AlpacaBroker:
             # one ONLY when it is NOT that shim: a replacement bound on this
             # instance, or a stand-in on a test host that is not a broker at
             # all. Those are exactly the cases the placer cannot see itself.
+            # The shim is recognised through a bound method (`__func__`) AND
+            # through a `functools.partial` (`func`): tests bind the class
+            # function onto a non-broker host with partial, and that is still
+            # the shim.
             **{
                 kw: getattr(self, attr)
                 for kw, attr in (
@@ -5302,8 +5328,7 @@ class AlpacaBroker:
                     ("submit_stop_legs", "_submit_stop_legs"),
                     ("restore_stop_orders", "_restore_stop_orders"),
                 )
-                if getattr(getattr(self, attr, None), "__func__", None)
-                is not getattr(AlpacaBroker, attr, None)
+                if not _is_broker_class_shim(getattr(self, attr, None), attr)
             },
         )
 

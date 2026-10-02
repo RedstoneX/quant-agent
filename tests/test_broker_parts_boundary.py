@@ -11,6 +11,9 @@ from unittest.mock import MagicMock
 from src.execution.broker_parts.stop_amend import (
     StopAmender, _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
 )
+from src.execution.broker_parts.stop_place import (
+    StopPlacer, _STOP_PLACEMENT_MAX_ATTEMPTS, _is_held_for_orders_error, _is_unsupported_stop_market_rejection, _split_protective_qty,
+)
 from tests.boundary_harness import check_boundary
 
 
@@ -52,3 +55,45 @@ def test_amend_refusal_without_a_broker_object():
     out = amender._amend_one_stop_price(symbol="ZZZ", spec={"id": "s1", "qty": 1, "stop_price": 9.0, "limit_price": None}, new_price=9.5)
     assert isinstance(out, dict)
     client.replace_order_by_id.assert_called_once()
+
+
+def test_stop_placer_is_constructible_from_stubs():
+    _build(StopPlacer)
+    params = inspect.signature(StopPlacer).parameters
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+def test_stop_place_module_passes_the_boundary_check():
+    verdict = check_boundary("src.execution.broker_parts.stop_place")
+    assert verdict.passed, verdict.failures
+
+
+def test_stop_place_helpers_still_resolve_on_the_broker_module():
+    import src.execution.broker as broker_module
+    assert broker_module._STOP_PLACEMENT_MAX_ATTEMPTS is _STOP_PLACEMENT_MAX_ATTEMPTS
+    assert broker_module._is_held_for_orders_error is _is_held_for_orders_error
+    assert broker_module._is_unsupported_stop_market_rejection is _is_unsupported_stop_market_rejection
+    assert broker_module._split_protective_qty is _split_protective_qty
+
+
+def test_broker_shim_passes_its_own_cluster_methods_so_instance_doubles_land():
+    """The shim builds the placer per call from the broker's CURRENT bound
+    methods, so a test that swaps `_restore_stop_orders` on the instance after
+    construction is what the lifted `shift_stops_down` body sees."""
+    import src.execution.broker as broker_module
+    broker = object.__new__(broker_module.AlpacaBroker)
+    broker.client = MagicMock(name="client")
+    broker._restore_stop_orders = MagicMock(name="restore", return_value=(0, []))
+    placer = broker._stop_placer()
+    assert placer._restore_stop_orders is broker._restore_stop_orders
+    assert placer.client is broker.client
+
+
+def test_existing_stop_cover_lookup_without_a_broker_object():
+    """A stand-alone placer: with no resting protective stop the cover lookup
+    asks the lister once and reports nothing to reuse."""
+    lister = MagicMock(name="list_open_protective_stop_orders", return_value=[])
+    placer = _build(StopPlacer, list_open_protective_stop_orders=lister, existing_stop_covering_qty=None)
+    out = placer._existing_stop_covering_qty("ZZZ", qty=1.0, side="sell", stop_price=9.0)
+    assert out is None
+    lister.assert_called_once()
