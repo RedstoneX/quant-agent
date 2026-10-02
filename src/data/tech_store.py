@@ -80,7 +80,24 @@ class TechStore:
             })
             history = history[-14:]  # keep last 2 trading weeks
 
+            # Board item 177: the inputs this verdict was a function of, and
+            # the verdict in full, so the next run can tell "nothing has
+            # moved" from "something has" without asking the seat again.
+            # Stored beside the rating rather than in a new file so the
+            # fingerprint can never drift away from the verdict it belongs to.
+            fingerprint = getattr(a, "input_fingerprint", None)
+            try:
+                full = a.model_dump(mode="json")
+            except Exception as exc:  # pragma: no cover - never lose the row
+                logger.warning(
+                    "tech store: could not record the full verdict for %s "
+                    "(%s); the re-read cache will ask the seat next time",
+                    sym, exc,
+                )
+                full, fingerprint = None, None
             prior[sym] = {
+                "input_fingerprint": fingerprint,
+                "last_result": full,
                 "rating": a.rating,
                 "conviction": a.conviction,
                 "first_seen_date": first_seen,

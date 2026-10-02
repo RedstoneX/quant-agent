@@ -1295,22 +1295,18 @@ def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
     """Same hazard on the partial-exit path: trimming 5 shares off 12.3456
     leaves a 7.3456 residual, and re-protecting it with one fractional order
     would leave the whole residual DAY-only."""
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=None)
     pipeline.broker._list_open_sell_stop_orders.return_value = []
     pipeline._format_qty = lambda q: str(q)
-    pipeline.db = None
     # Reprotect submits through the desk's ONE protective submit, so bind
     # the real thing over a mocked raw order call: that is what actually
     # exercises the whole-share/sliver leg split this test is about.
     pipeline.broker._submit_stop_limit_order.return_value = {
         "id": "leg", "status": "accepted",
     }
-    pipeline.broker._submit_stop_leg_retrying = functools.partial(
-        AlpacaBroker._submit_stop_leg_retrying, pipeline.broker,
-    )
-    pipeline.broker._submit_protective_stop_retrying = functools.partial(
-        AlpacaBroker._submit_protective_stop_retrying, pipeline.broker,
-    )
+    pipeline.broker._stop_placer = functools.partial(AlpacaBroker._stop_placer, pipeline.broker)
+    pipeline.broker._submit_stop_leg_retrying = functools.partial(AlpacaBroker._submit_stop_leg_retrying, pipeline.broker)
+    pipeline.broker._submit_protective_stop_retrying = functools.partial(AlpacaBroker._submit_protective_stop_retrying, pipeline.broker)
 
     cancelled = [{"id": "s1", "qty": 12.3456, "stop_price": 90.0,
                   "limit_price": 88.0}]

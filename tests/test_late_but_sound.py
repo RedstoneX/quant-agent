@@ -41,11 +41,11 @@ def _rc() -> ReasoningChain:
 
 
 def test_ensure_trade_updates_does_not_open_a_throwaway_socket():
-    from src.execution import broker as broker_mod
-    src = inspect.getsource(broker_mod.AlpacaBroker.ensure_trade_updates)
+    from src.execution.broker_parts.trade_stream import TradeStreamWaits
+    src = inspect.getsource(TradeStreamWaits.ensure_trade_updates)
     assert "TradingStream(" not in src
     assert "thread.start" not in src
-    start_src = inspect.getsource(broker_mod.AlpacaBroker.start_trade_updates)
+    start_src = inspect.getsource(TradeStreamWaits.start_trade_updates)
     assert "_TradeUpdatesHub" in start_src
     assert "_acquire_trade_updates_slot" in start_src
     assert _ALPACA_STREAM_AUTH_DEADLINE_S == _ALPACA_STREAM_RECONNECT_MAX_S

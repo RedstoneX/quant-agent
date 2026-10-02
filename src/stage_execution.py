@@ -1737,16 +1737,16 @@ class ExecutionStage:
                         skip_reason = "fat_finger_guard"
                         skip_detail = order_detail or "price is too far from the market price"
                     elif order_status == "rejected_bad_stop":
-                        # The stop-side sanity checks (non-finite, non-
-                        # positive, wrong side of entry) — desk-side, like
-                        # the fat-finger guard, not the broker. Kept a
-                        # SEPARATE reason from `fat_finger_guard` because
-                        # they are a different fact about a different
-                        # price, and collapsing them would tell the owner a
-                        # price was "too far from the market" when what
-                        # actually happened is the stop could never work.
+                        # Stop-side sanity (non-finite, non-positive, wrong
+                        # side of entry) — desk-side, like the fat-finger
+                        # guard, not the broker. A SEPARATE reason: folded
+                        # into `fat_finger_guard` it would tell the owner a
+                        # price was "too far" when the stop could never work.
                         skip_reason = "unusable_stop"
                         skip_detail = order_detail or "the stop price is not usable"
+                    elif order_status == "rejected_bad_qty":  # order_gates.py
+                        skip_reason = "bad_quantity"
+                        skip_detail = order_detail or "the quantity is not usable"
                     elif order_status == "kill_switch_halted":
                         skip_reason = "kill_switch_halted"
                         skip_detail = order_detail or (

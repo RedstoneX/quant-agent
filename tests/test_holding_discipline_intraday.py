@@ -38,6 +38,7 @@ from src.models import (
 from src.pipeline import TradingPipeline
 from src.risk.exit_guard import HoldingDisciplineClaimCheck
 from src.trading_calendar import et_today
+from tests.pipeline_factory import build_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -69,21 +70,15 @@ def _protection(protected: bool):
 
 
 def _pipeline(*, macro_state=None, protected=True, state_changes=None):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock(), broker=MagicMock(), market=MagicMock(), tech_store=MagicMock(), macro_store=MagicMock(), news_store=MagicMock())
     p.db.get_symbol_last_buy.return_value = {
         "price": 100.0, "stop_loss": 94.0,
         "thesis_invalid_if": "loses the 94 shelf on a close",
         "timestamp": f"{et_today().isoformat()} 14:00:00",
     }
-    p.broker = MagicMock()
     p.broker.get_current_stop_price.return_value = None
-    p.market = MagicMock()
-    p.tech_store = MagicMock()
     p.tech_store.get_history.return_value = []
-    p.macro_store = MagicMock()
     p.macro_store.load_last_state.return_value = macro_state
-    p.news_store = MagicMock()
     p.news_store.recent_state_changes.return_value = state_changes or []
     p._atr_for_symbol = MagicMock(return_value=2.0)
     p._structural_protection_for_holding = MagicMock(
@@ -120,8 +115,8 @@ def _execute(pipeline, review, run_id):
 #: Today's macro read, risk-ON. A SELL claiming a flip TO risk-off today is
 #: provably contradicted by it. `_carry_forward_macro` only accepts a state
 #: dated today, which is what makes this a TRUSTED read rather than a stale one.
-_MACRO_RISK_ON_TODAY = {"date": str(et_today()), "regime": "risk-on"}
-_MACRO_RISK_OFF_TODAY = {"date": str(et_today()), "regime": "risk-off"}
+def _macro_today(regime):  # read at RUN time, never at import: a collection-time stamp compared to a run-time et_today() reds this file whenever the suite crosses ET midnight between collecting and running it (reproduced 2026-10-02)
+    return {"date": str(et_today()), "regime": regime}
 #: Nothing stored, or stored from a previous day — no read to check against.
 _MACRO_STALE = {"date": "2020-01-02", "regime": "risk-on"}
 
@@ -142,7 +137,7 @@ def test_provably_false_regime_claim_blocks_the_intraday_exit(run_id):
     `run_position_review` — the single entry `run_midday` and `run_close` both
     delegate to — dispatches both sessions through this one executor.
     """
-    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
+    pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
 
     orders = _execute(pipeline, _review(), run_id)
 
@@ -206,7 +201,7 @@ def test_midday_and_close_share_the_one_executor_this_gate_lives_in():
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_midday)
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_close)
     assert "_run_position_review_body" in inspect.getsource(TradingPipeline.run_position_review)
-    review_src = inspect.getsource(TradingPipeline._run_position_review_body)
+    review_src = inspect.getsource(__import__("src.sessions.position_review_session", fromlist=["PositionReviewSession"]).PositionReviewSession.run)
     assert review_src.count("_midday_execute_llm_actions(") == 1
 
 
@@ -265,7 +260,7 @@ def test_an_infrastructure_failure_inside_the_check_fails_open():
     """Same reasoning as the unverifiable case, one layer down: if the check
     itself cannot run, the exit proceeds unverified rather than being blocked
     on an error."""
-    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
+    pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
     pipeline._structural_protection_for_holding = MagicMock(
         side_effect=RuntimeError("bars store down")
     )
@@ -283,7 +278,7 @@ def test_an_infrastructure_failure_inside_the_check_fails_open():
 def test_a_confirmed_regime_flip_executes_normally(run_id):
     """Today's macro read agrees: the regime really is risk-off. The claim is
     CONFIRMED, the checker says "ok", and neither audit row is written."""
-    pipeline = _pipeline(macro_state=_MACRO_RISK_OFF_TODAY, protected=True)
+    pipeline = _pipeline(macro_state=_macro_today("risk-off"), protected=True)
 
     _execute(pipeline, _review(), run_id)
 
@@ -320,7 +315,7 @@ def test_an_unprotected_position_is_not_this_gates_business():
     confirmed. A plain SELL there needs no special justification, so the check
     returns "ok" whatever the macro read says — unchanged from the morning
     path's semantics."""
-    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=False)
+    pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=False)
 
     _execute(pipeline, _review(), "midday-2026-09-11")
 
@@ -348,7 +343,7 @@ def test_a_thesis_invalidation_exit_now_consults_the_structural_check():
 
     The read now happens, READ-ONLY, and lands in the evidence ledger.
     """
-    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
+    pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
 
     _execute(
         pipeline,
@@ -376,7 +371,7 @@ def test_the_thesis_invalidation_read_never_blocks_or_releases_an_exit():
     still returns None for an (a)-only reason, so no verdict reaches the
     caller and no audit row claims one."""
     for protected in (True, False):
-        pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=protected)
+        pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=protected)
 
         verdict = pipeline._holding_discipline_check_for_exit(
             symbol="AAA", action="SELL",
@@ -395,7 +390,7 @@ def test_a_reason_making_no_recognised_claim_at_all_still_short_circuits():
     """The cost-saving short-circuit survives for reasons that name neither
     (a), (b) nor (c) — there is still nothing for the structural read to
     inform."""
-    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
+    pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
 
     pipeline._holding_discipline_check_for_exit(
         symbol="AAA", action="SELL", reason="stopped out at the broker",
@@ -421,7 +416,7 @@ def test_a_denied_thesis_invalidation_is_not_a_claim():
 
 
 def test_a_hold_only_review_buys_no_entry_context_reads():
-    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
+    pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
 
     orders = _execute(pipeline, _review(action="HOLD"), "midday-2026-09-11")
 
@@ -466,7 +461,7 @@ def test_the_intraday_assembler_labels_a_same_day_carry_forward_honestly():
     """And when there IS a read dated today, it is labelled with the status
     this repo already uses for it — `carried_from_morning`, which
     `TRUSTED_MACRO_STATUSES` accepts — rather than a second invented one."""
-    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
+    pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
 
     with patch(
         "src.risk.exit_guard.holding_discipline_claim_check"
@@ -487,7 +482,7 @@ def test_regime_only_snapshot_is_trusted_for_exits_not_passed_to_pm():
     The same payload must not be smuggled into PM as a MacroAnalysis."""
     from src.pipeline_stages import _macro_analysis_as_dict
 
-    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
+    pipeline = _pipeline(macro_state=_macro_today("risk-on"), protected=True)
     carried = pipeline._carry_forward_macro()
     assert carried.status == "carried_from_morning"
     assert carried.payload["regime"] == "risk-on"

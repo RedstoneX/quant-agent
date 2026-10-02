@@ -258,6 +258,23 @@ not by line, and **refuses to resolve** rather than guess when two branches
 file different items under the same number or a merge would make a live item
 vanish.
 
+**Register the baseline merge driver too (same one-time, per-clone, not automatic).**
+Fifteen open changes at once each edited the same shrink-only ratchet files
+under `tests/` (`file_size_baseline.json`, `import_cycle_baseline.json`,
+`import_layers.json`, `silent_swallow_baseline.json`,
+`pipeline_new_baseline.json`), so every landing made the rest conflict.
+`.gitattributes` names a driver for them (`baselinemerge`); it takes the
+smaller number on both sides, drops keys for deleted files, and **refuses**
+(diff3 markers, exit 2) any merge that would loosen a baseline. Both drivers
+are registered by one script, run once per clone:
+
+```bash
+scripts/install_git_merge_drivers.sh
+```
+
+Without it the clone is unaffected (git's plain merge), not broken;
+`tests/test_baseline_merge_driver.py` emits a warning when it is missing.
+
 **What a refusal leaves behind (changed 2026-09-23).** It leaves the document
 with conflict markers around the parts it could not resolve, both sides
 preserved, and the plain-English reason in a gitignored file beside it
@@ -318,6 +335,7 @@ chmod 600 .env
      ```
   5. Verify delivery without running a trading session: `.venv/bin/python scripts/telegram_test.py` (add `--dry-run` to check the config without sending). It reports each variable as SET / NOT SET — never its value — and says whether the creds came from `.env` or the shell. No broker, LLM or market-data call.
   6. (Optional) Set `TELEGRAM_DISABLED=1` to mute without removing the creds. The notifier accepts exactly `1` / `true` / `yes` (case-insensitive) — `0` and `false` leave pushes ON, so un-mute by removing the line.
+  7. (Optional) Set `TELEGRAM_RISK_ONLY=1` to keep the channel open for money-at-risk alarms only — a position with no protective stop, a stop that failed to place/amend/cancel, a rejected or unfilled order that leaves risk on, an executed trade, the broker unreachable while positions are held, any liquidation or halt. Operational noise (paid-analysis cost-circuit suspensions, provider/research failures, data-quality warnings, scan crashes, routine hourly checks, session summaries) is dropped instead, and each drop is still written to `notifier_sends` with status `filtered`, so nothing becomes invisible. Classification is declared per send site (`category=`), never guessed from message text, and a send site with no category FAILS CLOSED — it is treated as money-at-risk and delivered. Independent of `TELEGRAM_DISABLED`; when both are set the hard mute wins and nothing is sent at all.
 
   **Per-mode noise policy** (so the operator gets signal, not noise):
   - `morning` / `midday` / `close` / `evening`: always notify on completion (status + run_id + orders + degraded-data flag + elapsed).
@@ -590,13 +608,19 @@ quant-agent/
 │   ├── stage_risk.py             # RiskStage + its 5 private helpers (moved verbatim)
 │   ├── stage_execution.py        # ExecutionStage (moved verbatim, item 210 step 10)
 │   ├── pipeline_context.py        # RunContext dataclass — explicit shared state across stages
-│   ├── notifier.py                # Telegram session-status push (opt-in via env vars; per-mode noise policy)
-│   ├── portfolio_constructor.py   # Deterministic Target → TradeDecision translator (risk-budget sizing)
+│   ├── notifier/                  # Telegram session-status push (opt-in via env vars; per-mode noise policy)
+│   ├── portfolio_constructor/     # Deterministic Target → TradeDecision translator (risk-budget sizing)
+│   │   ├── __init__.py            # PortfolioConstructor core: targets, risk plan, sector dial; re-exports the whole package
+│   │   ├── config.py              # ConstructorConfig, RiskPlan, every refusal/rule constant
+│   │   ├── stops.py               # stop + reward-to-risk resolution mixin
+│   │   └── orders.py              # buy/sell/short/cover leg builders mixin
 │   ├── trading_calendar.py        # ET timezone + SESSION_WINDOWS + session_date_key (single source of truth)
 │   ├── scheduler.py               # APScheduler — only used by --mode live (dev/legacy)
 │                                  #   Production uses systemd timers (Linux) or launchd (macOS).
-│   ├── config.py                  # Pydantic config with API key validation
-│   ├── models.py                  # Data models (ReasoningChain, MacroNarrative, etc.)
+│   ├── config/                    # Pydantic config with API key validation (public name: src.config)
+│   │   ├── __init__.py            # every *Config class, AppConfig, load_config; re-exports the rest
+│   │   └── macro.py               # MacroConfig (FRED fetch resilience), lifted verbatim
+│   ├── models/                    # Data models package (base, analysis, decisions, portfolio, risk_verdicts, macro, news, positions, earnings, smart_money, evening, meta)
 │   ├── agents/                    # 9 daily LLM agents + 1 quarterly meta_reflector
 │   ├── rotation.py                # Opportunity-cost rotation (execution.rotation_enabled)
 │   ├── nominations.py             # Per-seat candidate nomination + capping

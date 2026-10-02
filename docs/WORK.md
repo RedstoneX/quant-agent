@@ -208,7 +208,7 @@ DONE WHEN:
 
 detail: docs/board_notes/item-201.md
 
-**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
+**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. 2026-10-02: the wall itself was sealed against six more routes (UDP, async/raw libcurl, curl subprocess, DNS). Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
 
 DONE WHEN:
   - [x] 2026-10-01 the run reaches the Portfolio Manager OFFLINE.
@@ -301,7 +301,7 @@ DONE WHEN:
   - [x] the holdings it KEPT are named as considered and kept, so a silent pass can no longer pass for a pass that never ran
   - [x] every session says whether the score-margin tier is on or off, so the owner is never told the desk pruned more thoroughly than it did
   - [x] the dashboard renders the SAME sentences from the SAME durable row via the run detail, with no second reporting path invented
-  - [ ] a real session's stored report is read back and shown carrying the block, on both surfaces, against a run the desk actually made — until then this is rendering proven only by test
+  - [ ] a real session's stored report is read back and shown carrying the block, on both surfaces, against a run the desk actually made — until then this is rendering proven only by test (2026-10-02: a stored run is now rendered through the real Telegram formatter and the dashboard reader in tests/test_pruning_pass_reaches_both_surfaces.py, which also fixed a false line telling the owner below-bar names still clear the bar; still OPEN until a production session is observed, desk is OFF)
 detail: docs/board_notes/item-219.md
 
 

@@ -30,6 +30,7 @@ from src.risk.exit_refusal import (
     record_exit_refusal,
 )
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _position(symbol="AAA", qty=10, avg_entry=100.0, current_price=110.0):
@@ -67,10 +68,7 @@ def _verdict(approved: bool, reasoning="because"):
 
 
 def _risk_pipeline(verdict=None, raises=False):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
-    pipeline.broker = MagicMock()
-    pipeline.risk_manager = MagicMock()
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock(), risk_manager=MagicMock())
     if raises:
         pipeline.risk_manager.review.side_effect = RuntimeError("provider down")
     else:

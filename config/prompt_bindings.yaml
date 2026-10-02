@@ -33,7 +33,7 @@ bindings:
     code:
       - file: src/risk/metrics.py
         symbol: drift_flag
-      - file: src/agents/portfolio_manager.py
+      - file: src/agents/portfolio_manager/__init__.py
         symbol: PortfolioManagerAgent._fmt_position
     prose:
       - file: config/prompts/position_reviewer.md
@@ -61,10 +61,10 @@ bindings:
       This is the exact shape of drift the deletion-site check cannot see:
       nothing was retired, the numbers moved underneath the sentence.
     code:
-      - file: src/portfolio_constructor.py
-        symbol: PortfolioConstructor._stop_atr_multiple
-      - file: src/portfolio_constructor.py
-        symbol: PortfolioConstructor._level_backing_stop
+      - file: src/portfolio_constructor/stops.py
+        symbol: _StopMixin._stop_atr_multiple
+      - file: src/portfolio_constructor/stops.py
+        symbol: _StopMixin._level_backing_stop
     prose:
       - file: config/prompts/tech_analyst.md
         contains:

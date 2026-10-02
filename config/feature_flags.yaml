@@ -53,7 +53,7 @@
 #
 # HOW TO ADD A FLAG. Do not invent a reason. If `git log -S "<field_name>"`
 # and `git blame` on its config/settings.yaml line give nothing, and the
-# field carries no explanatory comment or docstring in src/config.py, write
+# field carries no explanatory comment or docstring in src/config/__init__.py, write
 # "reason not recorded" and leave `decided`/`source` null. That is honest;
 # guessing is not.
 
@@ -83,7 +83,7 @@ flags:
       compounding per member) and still cannot alone admit a new symbol
       (`transient_admission_eligible` stays false for it).
     decided: "2026-09-20"
-    source: "owner ruling 2026-09-19; docs/INCIDENT_HISTORY.md 2026-09-20 entry; src/config.py:1436"
+    source: "owner ruling 2026-09-19; docs/INCIDENT_HISTORY.md 2026-09-20 entry; src/config/__init__.py:1436"
 
   - id: src.config.CashSweepConfig.enabled
     effective_value: false
@@ -102,11 +102,11 @@ flags:
     intentional: true
     reason: >-
       Master switch for the single-shot entry reprice, deployed dark by
-      design ("the owner owns this switch" -- src/config.py docstring). Per
+      design ("the owner owns this switch" -- src/config/__init__.py docstring). Per
       standing instruction this switch stays off and is not to be
       re-proposed for enabling.
     decided: "2026-08-28"
-    source: "commit 0b2982d0; src/config.py:404-407"
+    source: "commit 0b2982d0; src/config/__init__.py:404-407"
 
   - id: src.config.ExecutionConfig.rotation_enabled
     effective_value: true
@@ -170,10 +170,10 @@ flags:
     reason: >-
       Code default is the conservative cash-only mode ("margin leverage
       amplifies drawdowns and is not the bot's intended mode unless
-      explicitly opted in" -- src/config.py docstring). Flipped on in
+      explicitly opted in" -- src/config/__init__.py docstring). Flipped on in
       settings.yaml as a deliberate opt-in.
     decided: "2026-09-02"
-    source: "commit a82f761e5; config/settings.yaml:989; src/config.py:927-931"
+    source: "commit a82f761e5; config/settings.yaml:989; src/config/__init__.py:927-931"
 
   - id: src.config.RiskConfig.require_stop_loss
     effective_value: true
@@ -220,7 +220,7 @@ flags:
       any session, and the Form 4 / nomination side doors keep their
       pre-existing gates (including the dead Form 4 age gate).
     decided: "2026-09-19"
-    source: "src/config.py:1546; config/settings.yaml:1185"
+    source: "src/config/__init__.py:1546; config/settings.yaml:1185"
 
   - id: src.config.LLMCostCircuitConfig.enabled
     effective_value: true
@@ -263,7 +263,7 @@ flags:
       are staged to proposed_edits.json for an operator to read first
       (pre-QAMC, upstream yebof commit).
     decided: "2026-05-13"
-    source: "commit c8caaf3d; src/config.py:1718-1723"
+    source: "commit c8caaf3d; src/config/__init__.py:1718-1723"
 
   - id: src.config.EvolutionConfig.auto_commit
     effective_value: true
@@ -274,7 +274,7 @@ flags:
       a whole quarter's evolution has a one-shot `git revert` rollback
       (pre-QAMC, upstream yebof commit).
     decided: "2026-04-20"
-    source: "commit e84e5f3d; src/config.py:1712-1715"
+    source: "commit e84e5f3d; src/config/__init__.py:1712-1715"
 
   - id: src.config.LLMConfig.structured_output
     effective_value: true
@@ -310,3 +310,17 @@ flags:
       chose.
     decided: null
     source: "docs/OUTCOME.md:94"
+
+  - id: src.config.NotificationsConfig.risk_only
+    effective_value: false
+    code_default: false
+    intentional: true
+    reason: >-
+      Per-category Telegram mute. Declared off: the live switch is the
+      TELEGRAM_RISK_ONLY env var on the box, and this registry row exists so
+      a switch that decides whether a money-at-risk alarm reaches the owner
+      cannot sit in a state nobody chose. TELEGRAM_DISABLED, the older
+      global mute, is still env-only and NOT registered here -- an
+      inconsistency recorded rather than copied.
+    decided: "2026-10-01"
+    source: "PR #978; src/notifier/category.py resolve_risk_only"

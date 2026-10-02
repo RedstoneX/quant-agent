@@ -30,13 +30,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 from src.storage.db import Database, _trail_stop_reduced_position
 
 
 def _mk_pipeline(db: Database, broker, lookback_days: int = 7) -> TradingPipeline:
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = broker
+    pipeline = build_pipeline(db=db, broker=broker)
     pipeline.config = types.SimpleNamespace(
         reconciliation=types.SimpleNamespace(stop_out_lookback_days=lookback_days),
     )
@@ -440,10 +439,8 @@ def test_reconcile_stop_out_fills_noop_without_config(tmp_path):
     db.initialize()
     db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "r1", fill_status="filled")
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
-    # No pipeline.config at all.
+    pipeline = build_pipeline(db=db, broker=MagicMock())
+    del pipeline.config  # the real constructor always sets it; force the defensive branch
 
     assert pipeline._reconcile_stop_out_fills(run_id="r1") == []
     pipeline.broker.get_positions.assert_not_called()
@@ -779,16 +776,16 @@ _PRE_TERMINAL_STATUSES = ("submitted", "pending_submit")
 
 def test_terminal_status_list_still_matches_the_only_writer():
     """The mechanical half of the derivation. `_reconcile_fills` in
-    src/pipeline_protection.py is the only thing that writes a terminal fill_status,
+    src/protection/fill_reconciler.py is the only thing that writes a terminal fill_status,
     and it stores the broker's string verbatim. If that set ever gains or
     loses a status, the parametrized tests below must follow it, so this
     fails rather than letting them quietly stop covering a real state."""
-    source = (Path(__file__).resolve().parents[1] / "src" / "pipeline_protection.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "protection" / "fill_reconciler.py").read_text()
     match = re.search(r"terminal_fail\s*=\s*\{([^}]*)\}", source)
-    assert match, "could not find terminal_fail in src/pipeline_protection.py"
+    assert match, "could not find terminal_fail in src/protection/fill_reconciler.py"
     written = {s.strip().strip("\"'") for s in match.group(1).split(",") if s.strip()}
     assert written == set(_TERMINAL_FAIL_STATUSES), (
-        "src/pipeline_protection.py's terminal_fail set has changed; update "
+        "src/protection/fill_reconciler.py's terminal_fail set has changed; update "
         "_TERMINAL_FAIL_STATUSES and the tests parametrized over it"
     )
 

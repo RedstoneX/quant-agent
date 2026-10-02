@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from src.models import (
+from src.models.base import (
     SECTOR_DIRECTIONS,
     SECTOR_STANCE_TO_DIRECTION,
     _ALLOWED_SECTORS,
@@ -222,7 +222,7 @@ def merge_retry_falsifiers(original_targets: list, retry_targets: list) -> tuple
     unmeasurable-range exception already gated in Python. Returns
     (targets, symbols filled).
     """
-    from src.models import stated_soft_exit
+    from src.models.base import stated_soft_exit
 
     if not original_targets:
         return original_targets, []

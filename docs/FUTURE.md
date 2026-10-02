@@ -142,7 +142,7 @@ Until then: **paper trading only; live trading is not authorized.**
 Every condition above is enumerated in `src/live_capital_preflight.py` and the
 list here is a human-readable mirror of it. The gate sits at the point where the
 paper lock would be lifted: `AlpacaConfig._enforce_paper_only` in
-`src/config.py` refuses a non-paper account unless BOTH the reviewed code
+`src/config/__init__.py` refuses a non-paper account unless BOTH the reviewed code
 constant `config.LIVE_TRADING_AUTHORIZED` is flipped AND the gate reports every
 activation-scope condition satisfied, and a refusal names the conditions that
 failed. Run it with `.venv/bin/python scripts/live_capital_preflight.py`
@@ -165,3 +165,94 @@ A read-only panel showing host and network security next to trading state, so po
 - No Grafana, Prometheus, Loki or other monitoring stack. First evaluate a small read-only pull into the existing Mission Control API.
 - Display only: no ban/unban, firewall edits or restarts from the UI.
 - Not part of current work; dashboard work follows deployed-MVP acceptance (`docs/OUTCOME.md`, MVP lifecycle principle).
+
+## 4. The owner command panel
+
+RATIFIED by the owner 2026-10-02, take-profit explicitly excluded. This is
+the owner's only sanctioned way to act on the account. Today there is none:
+the cockpit is read-only and the alert channel is one-way and muted, so the
+only way for him to intervene is directly at the broker -- which is exactly
+what leaves the desk's books disagreeing with reality.
+
+### The rule that keeps it from becoming bloat
+
+**It adds no new way to reach the broker.** The panel is one more caller of
+the execution seam the desk already uses, never a side door. If an action
+cannot be expressed through that seam, the seam is what changes -- not the
+panel. Every order it sends is recorded, counted and protected exactly as
+the desk's own are, and carries the owner as its author.
+
+It is its own component, not a feature bolted into the pipeline. A human
+issuing orders and a desk reasoning its way to orders are different things
+with different trust levels; merging them is how the monolith happened.
+
+### Interaction
+
+Buttons and pickers, never a blank box. The owner reads on a phone, and a
+typed symbol or a mistyped decimal is a real money error.
+
+* Actions start FROM a position, so a symbol is never typed.
+* Prices come as a stepper pre-filled with the live price, showing the
+  resulting risk in dollars as it moves.
+* Every action ends on one confirm screen stating in plain words what will
+  be sent. Nothing reaches the broker before that press.
+* One optional free-text line: why. The owner's standing rule that every
+  trade states its real reason applies to his trades too.
+
+### What it can do
+
+On a held position: close all or a slice; trim or add; set, move or remove
+the protective stop; mark the position HANDS OFF so the desk stops managing
+it; record "I did this at the broker myself" and reconcile.
+
+New exposure: buy or short, market or limit, sized by dollars or by risk
+rather than share count, with a protective stop REQUIRED exactly as the
+desk's own entries now require one.
+
+Desk-wide: pause and resume trading without shutting the service down; a
+never-touch list of symbols; cancel any order resting at the broker; and
+flatten everything, behind a second confirm.
+
+### Deliberately excluded
+
+**Take-profit, in any form.** The owner ruled that exits happen when
+structure, volatility and trend agree, never at a chosen number, and a
+resting take-profit would also give one position two owners: the desk reads
+live orders to judge protection, and a limit sell it did not place can
+half-fill and leave it sizing off a quantity that is no longer true. The
+same intention is served by "close a slice now", which leaves nothing
+resting. An owner who wants a standing target marks the position HANDS OFF
+instead -- one owner at a time, never two.
+
+### Two rules with reach beyond the panel
+
+1. A stop the owner sets is HONOURED. No trailing, ratchet or re-protection
+   path may move it back. This is a rule, not a preference.
+2. HANDS OFF means hands off everywhere -- exits, sizing, rotation and the
+   coverage sweep all skip the position, while still reporting it.
+
+### Build order
+
+Safe plumbing first, money last: the record and the single door, then the
+flag-only actions (pause, never-touch, hands off), then the actions on an
+existing position, and only then new exposure. Each instalment proves the
+plumbing before the next one can lose anything.
+
+### How it reaches the broker: an intent queue, not a trading API
+
+`tests/test_api_cannot_trade.py` fails if anything reachable from `src/api/`
+can place an order or write to the database. That guard is correct and the
+panel does not get an exemption from it: the cockpit is the one surface a
+future bug or a mistaken request could reach, and it must stay unable to
+move money by construction.
+
+So the panel does not execute. It RECORDS AN INTENT -- one durable row
+saying what the owner asked for, when, and why -- and the desk's own process
+picks it up and executes it through the single execution seam, with the same
+protection, recording and counting as its own orders. The confirm screen
+confirms the intent; the result comes back on the next read.
+
+This also answers "what if the desk is down": an intent raised while the
+desk is not running is still recorded and still acted on when it starts,
+rather than silently lost. An intent that is stale by then is refused with
+its reason, never executed blind.

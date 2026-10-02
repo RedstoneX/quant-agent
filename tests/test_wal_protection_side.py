@@ -24,6 +24,7 @@ from unittest.mock import MagicMock
 
 from src.pipeline import TradingPipeline, _WAL_SELL_SENTINEL
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _mk_db(tmp_path) -> Database:
@@ -33,11 +34,7 @@ def _mk_db(tmp_path) -> Database:
 
 
 def _mk_pipeline(db: Database) -> TradingPipeline:
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
-    pipeline._format_qty = lambda q: str(q)
-    pipeline._reprotect_residual_after_partial_sell = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q), _reprotect_residual_after_partial_sell=MagicMock())
     return pipeline
 
 

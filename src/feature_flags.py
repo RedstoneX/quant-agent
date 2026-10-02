@@ -29,7 +29,8 @@ on request — the task that built this file explicitly forbids inventing a
 reason, and `config/feature_flags.yaml` says "reason not recorded" wherever
 git history and the code did not already say why.
 
-SCOPE. Every class in `src/config.py` whose name ends in `Config` (matching
+SCOPE. Every class in the configuration (`src/config.py`, or every module
+of the `src/config/` package) whose name ends in `Config` (matching
 `src/number_sources.py`'s own suffix rule, which the docstring there argues
 makes a new `FooConfig` covered the day it is written) except `AppConfig`
 itself, which composes the others and defines no switches of its own. A
@@ -75,7 +76,7 @@ WHAT THIS STRUCTURALLY CANNOT CATCH:
   * A feature switch expressed some OTHER way — an environment variable, a
     CLI flag, a magic string default instead of a `bool` field, or a switch
     inside a nested non-`Config`-suffixed model. This gate only sees
-    `src/config.py`'s own `*Config` boolean fields.
+    the configuration modules' own `*Config` boolean fields.
   * Owner-facing TEXT (a Telegram label, a log line, a workflow page)
     describing a switch as running when it is not. That mismatch is exactly
     what let the congressional feature hide, and it is a separate, harder
@@ -101,8 +102,37 @@ DECLARATIONS_PATH = REPO_ROOT / "config" / "feature_flags.yaml"
 #: Deployed overrides — the file `load_config` actually reads.
 SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 
-#: The single module every switch lives in today.
+#: Where the configuration lives: either the single module `src/config.py`
+#: or the package `src/config/` (every module inside it). Resolved from the
+#: tree, never listed by hand — a hand-kept list of extra paths would be the
+#: same defect (a switch the scanner cannot see) wearing a different hat.
 CONFIG_MODULE = REPO_ROOT / "src" / "config.py"
+CONFIG_PACKAGE = REPO_ROOT / "src" / "config"
+
+
+def config_location(root: Path | None = None) -> Path:
+    """`src/config.py` if it is a file, else the `src/config/` package dir."""
+    base = root or REPO_ROOT
+    module = base / "src" / "config.py"
+    if module.is_file():
+        return module
+    package = base / "src" / "config"
+    if package.is_dir():
+        return package
+    raise FileNotFoundError(f"no src/config.py or src/config/ package under {base}")
+
+
+def config_modules(root: Path | None = None) -> list[Path]:
+    """Every Python module the configuration is spread across, sorted."""
+    return _modules_at(config_location(root))
+
+
+def _modules_at(location: Path) -> list[Path]:
+    if location.is_dir():
+        return sorted(p for p in location.rglob("*.py") if p.is_file())
+    if location.is_file():
+        return [location]
+    raise FileNotFoundError(f"no configuration at {location}")
 
 #: Sentinel for the one thing the suffix/annotation scan structurally cannot
 #: see: a `bool | None` tri-state switch (absent/true/false, a different
@@ -121,9 +151,10 @@ class FlagSite:
     field: str
     lineno: int
     code_default: bool | None  # None means the field has no default (required)
+    path: str = "src/config.py"  # module the field is defined in, repo-relative
 
     def __str__(self) -> str:  # pragma: no cover - diagnostics only
-        return f"{self.flag_id} (default={self.code_default!r}) @ src/config.py:{self.lineno}"
+        return f"{self.flag_id} (default={self.code_default!r}) @ {self.path}:{self.lineno}"
 
 
 @dataclass
@@ -180,9 +211,24 @@ def _is_tristate_bool_annotation(annotation: ast.AST) -> bool:
 
 
 def collect_switches(config_module: Path | None = None) -> list[FlagSite]:
-    """Every boolean field on a `*Config` class in `src/config.py`."""
-    path = config_module or CONFIG_MODULE
+    """Every boolean field on a `*Config` class in the configuration.
+
+    `config_module` is `src/config.py` (a file) or the `src/config/` package
+    (a directory, every module inside it scanned); default: this repo's.
+    """
+    location = config_module or config_location()
+    sites: list[FlagSite] = []
+    for path in _modules_at(location):
+        sites.extend(_switches_in(path))
+    return sorted(sites, key=lambda s: s.flag_id)
+
+
+def _switches_in(path: Path) -> list[FlagSite]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    try:
+        rel = str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        rel = str(path)
     sites: list[FlagSite] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
@@ -202,9 +248,10 @@ def collect_switches(config_module: Path | None = None) -> list[FlagSite]:
                         field=body_node.target.id,
                         lineno=body_node.lineno,
                         code_default=code_default,
+                        path=rel,
                     )
                 )
-    return sorted(sites, key=lambda s: s.flag_id)
+    return sites
 
 
 def _appconfig_sections(root: Path | None = None) -> dict[str, str]:
@@ -215,8 +262,11 @@ def _appconfig_sections(root: Path | None = None) -> dict[str, str]:
     desynchronise this check from the loader it is checking.
     """
     base = root or REPO_ROOT
-    tree = ast.parse((base / "src" / "config.py").read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
+    nodes = [
+        n for path in config_modules(base)
+        for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+    ]
+    for node in nodes:
         if not isinstance(node, ast.ClassDef) or node.name != "AppConfig":
             continue
         out: dict[str, str] = {}
@@ -248,7 +298,7 @@ def effective_values(root: Path | None = None) -> dict[str, bool]:
     sections = _appconfig_sections(base)
     class_to_section = sections  # {class_name: section_name}
     out: dict[str, bool] = {}
-    for site in collect_switches(base / "src" / "config.py"):
+    for site in collect_switches(config_location(base)):
         section = class_to_section.get(site.class_name)
         block = raw.get(section) if section else None
         if isinstance(block, dict) and site.field in block and isinstance(
@@ -281,7 +331,7 @@ def load_declarations(path: Path | None = None) -> dict[str, dict[str, Any]]:
 def audit(root: Path | None = None) -> list[FlagProblem]:
     """Every reason `tests/test_feature_flags.py` should fail the build."""
     base = root or REPO_ROOT
-    sites = collect_switches(base / "src" / "config.py")
+    sites = collect_switches(config_location(base))
     by_id = {s.flag_id: s for s in sites}
     declarations = load_declarations(base / "config" / "feature_flags.yaml")
     settings = base / "config" / "settings.yaml"
@@ -313,7 +363,7 @@ def audit(root: Path | None = None) -> list[FlagProblem]:
                 FlagProblem(
                     "undeclared",
                     site.flag_id,
-                    f"boolean switch at src/config.py:{site.lineno} with no "
+                    f"boolean switch at {site.path}:{site.lineno} with no "
                     f"entry in config/feature_flags.yaml. Record its effective "
                     f"value, whether it is intentional, and why.",
                 )

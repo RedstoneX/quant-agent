@@ -65,7 +65,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #      where each one's real dict literal lives). This is the case the
 #      previous hand-list's docstring cited for `pm_agent_failure` and the
 #      four `pm_*` statuses (three call frames into
-#      src/agents/portfolio_manager.py's `_semantic_failure`) -- true, and
+#      src/agents/portfolio_manager/__init__.py's `_semantic_failure`) -- true, and
 #      handled below -- but the *same* shape also applies to
 #      `hard_risk_block` / `agent_failure` / `rejected` / `symbol_block`
 #      (RiskStage.run, a different file: src/pipeline_stages.py),
@@ -290,7 +290,7 @@ def _derive_known_pipeline_statuses() -> set[str]:
     )
     # item 210 step 10 moved RiskStage into src/stage_risk.py.
     stages_tree = ast.parse((REPO_ROOT / "src" / "stage_risk.py").read_text())
-    pm_tree = ast.parse((REPO_ROOT / "src" / "agents" / "portfolio_manager.py").read_text())
+    pm_tree = ast.parse((REPO_ROOT / "src" / "agents" / "portfolio_manager" / "__init__.py").read_text())
 
     # A call to another _PIPELINE_SESSION_FUNCTIONS entry (e.g.
     # run_intra_check calling _run_intraday_opportunity_scan) is not an
@@ -317,7 +317,7 @@ def _derive_known_pipeline_statuses() -> set[str]:
 
     # Bridge 1: the PM's semantic failure statuses -- set on
     # AgentResult.semantic_status three call frames from run_morning, by
-    # src/agents/portfolio_manager.py's `_semantic_failure(result, status,
+    # src/agents/portfolio_manager/__init__.py's `_semantic_failure(result, status,
     # error)`. All 11 call sites pass a literal as the status argument.
     for node in ast.walk(pm_tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)

@@ -32,7 +32,7 @@ import pytest
 from src.models import Position, TargetPosition, TechAnalysisResult
 from src.portfolio_constructor import PortfolioConstructor
 
-_SOURCE = Path(__file__).resolve().parent.parent / "src" / "portfolio_constructor.py"
+_SOURCE = Path(__file__).resolve().parent.parent / "src" / "portfolio_constructor"
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "constructor_drop_paths_archive.json"
 
 
@@ -232,6 +232,7 @@ _CANNOT_END_A_CANDIDATE = {
     "_hold_decision": "builds a HOLD row; the symbol survives",
     "_build_sell": "exits, not entries — a refused exit leaves the position untouched",
     "_build_cover": "same, short side",
+    "_entry_stop_resolver": "thin shim factory: builds the resolver whose methods are scanned above",
     "_derive_target": "returns a derivation; every fault it finds it files itself",
     "_log_target_divergence": "logging only",
     "_target_note": "string formatting",
@@ -273,16 +274,14 @@ _CANNOT_END_A_CANDIDATE = {
 _DELEGATION_MARKER = "# drop-reason:"
 
 
-def _class_node():
-    tree = ast.parse(_SOURCE.read_text())
-    return next(
-        n for n in tree.body
-        if isinstance(n, ast.ClassDef) and n.name == "PortfolioConstructor"
-    )
+def _class_nodes():  # the resolver is LAST so its lifted bodies win by name over the host shims
+    def _c(paths, names): return [(n, t.splitlines()) for p in paths for t in [p.read_text()] for n in ast.parse(t).body if isinstance(n, ast.ClassDef) and n.name in names]
+    out = _c(sorted(_SOURCE.glob("*.py")), {"PortfolioConstructor", "_StopMixin", "_OrderBuildMixin"}) + _c(sorted((_SOURCE / "entry_stop").glob("*.py")), {"EntryStopResolver"})
+    assert len(out) == 4, [n.name for n, _ in out]
+    return out
 
-
-def _methods():
-    return {n.name: n for n in _class_node().body if isinstance(n, ast.FunctionDef)}
+def _methods(lines=False):
+    return {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body if isinstance(n, ast.FunctionDef)}
 
 
 def _drop_sites(fn):
@@ -399,7 +398,7 @@ def test_every_drop_site_in_the_constructor_files_a_reason():
     previous passes at this defect each shipped a list of sites believed
     complete, and each was wrong about a site nobody had thought of.
     """
-    source_lines = _SOURCE.read_text().splitlines()
+    lines_by_method = _methods(lines=True)
     methods = _methods()
     silent = []
     checked = 0
@@ -407,8 +406,8 @@ def test_every_drop_site_in_the_constructor_files_a_reason():
         fn = methods[name]
         for site in _drop_sites(fn):
             checked += 1
-            if not _files_a_reason(fn, site, source_lines):
-                silent.append(f"{name}:{site.lineno}: {source_lines[site.lineno - 1].strip()}")
+            if not _files_a_reason(fn, site, lines_by_method[name]):
+                silent.append(f"{name}:{site.lineno}: {lines_by_method[name][site.lineno - 1].strip()}")
     assert silent == [], (
         "drop sites with no structured reason and no `# drop-reason:` marker "
         "saying who files one:\n  " + "\n  ".join(silent)

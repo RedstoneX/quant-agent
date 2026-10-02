@@ -36,6 +36,7 @@ import pytest
 
 from src.data.levels import CLUSTER_TOLERANCE_PCT, COVERAGE_MEASURED
 from src.models import TargetRevisionFlag
+from tests.pipeline_factory import build_pipeline
 from src.risk import target_revision as tr
 from src.risk.exit_guard import (
     _HIGHER_IS_BETTER,
@@ -171,9 +172,9 @@ def test_pinned_target_column_is_never_written_by_a_revision():
     """`update_open_take_profit` writes the live target only. If it ever
     touched `initial_take_profit` the pinned denominator would move with the
     revision and the guard would be exposed again."""
-    from src.storage.db import Database
+    from src.storage.trades.ledger import TradeLedger
 
-    src = inspect.getsource(Database.update_open_take_profit)
+    src = inspect.getsource(TradeLedger.update_open_take_profit)
     assert "SET take_profit" in src
     assert "initial_take_profit" not in src.split('"""')[2], (
         "the revision write-back must not touch the pinned entry target"
@@ -890,6 +891,8 @@ class _SweepDB:
 
 
 class _SweepMarket:
+    def set_fallback_bars(self, fn): pass  # the real constructor wires broker bars in
+
     def get_ohlcv_batch(self, symbols, lookback_days):
         # Batches fine, carries nothing — the normal, non-degraded shape
         # for these tests, so the serial-fallback record stays off.
@@ -904,20 +907,17 @@ class _SweepMarket:
 
 
 class _SweepBroker:
-    def trading_sessions_held(self, start, end):
-        return 10
+    def get_bars(self, *args, **kwargs): return []  # handed to the market as its fallback
+
+    def trading_sessions_held(self, start, end): return 10
 
 
 def _sweep_pipeline():
-    from src.pipeline import TradingPipeline
     import types
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = _SweepDB()
-    p.market = _SweepMarket()
-    p.broker = _SweepBroker()
-    p.config = types.SimpleNamespace(
-        trading=types.SimpleNamespace(lookback_days=400))
+    p = build_pipeline(market=_SweepMarket(), broker=_SweepBroker())
+    p.db = _SweepDB()  # a recording double with no initialize(); set after construction
+    p.config = types.SimpleNamespace(trading=types.SimpleNamespace(lookback_days=400))
     p.risk_engine = None
     return p
 
