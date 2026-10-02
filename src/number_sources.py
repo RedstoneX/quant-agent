@@ -256,9 +256,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # entry used to require); scoping it adds nothing today but stops a
     # future one arriving unseen.
     "src/execution/broker.py", "src/execution/broker_parts",
-    "src/execution/stop_repair.py",
-    "src/execution/order_gates.py",  # quantity gate + fractional split (lifted from broker_parts)
-    "src/execution/order_idempotency.py",  # client_order_id key length
+    "src/execution/stop_repair.py", "src/execution/order_gates.py", "src/execution/order_idempotency.py",
     "src/coverage_watchdog.py",
     # The pipeline's own decision/execution glue. The de-lever and midday
     # order-price buffers are inline multipliers and rule (e) has seen them
