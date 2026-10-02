@@ -124,3 +124,5 @@ to be skipped is a guard that gets skipped.
 Convert ONE guard end to end first — the size ratchet, which causes most of the
 pain — and prove all four acceptance criteria on it before touching the others.
 A half-converted set is worse than either the old one or the new one.
+
+Also done: ~~`tests/pipeline_method_inventory.json`~~ (a script-regenerated measurement, not policy) is deleted with its `--write` mode; `scripts/pipeline_method_guard.py` names each owner of a method defined on 2+ of `TradingPipeline` and its mixins, in the working tree and on `origin/main`, and fails any new identity. A move that leaves one copy never fails.
