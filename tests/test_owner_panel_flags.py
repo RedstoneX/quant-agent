@@ -41,13 +41,6 @@ def _rows(db_path):
         c.close()
 
 
-def _hold(db_path, sym):
-    c = sqlite3.connect(db_path)
-    c.execute("INSERT INTO positions (symbol, qty, avg_entry, current_price, market_value, unrealized_pnl)"
-              " VALUES (?,1,1,1,1,0)", (sym,))
-    c.commit(); c.close()
-
-
 def test_intent_survives_restart_and_is_acted_on(db_path):
     _raise(db_path, oi.PAUSE, reason="owner asked while desk down")
     assert owner_flags.read_flags(db_path).paused is False  # raised, not yet acted
@@ -56,12 +49,14 @@ def test_intent_survives_restart_and_is_acted_on(db_path):
     assert owner_flags.read_flags(db_path).paused is True
 
 
-def test_stale_intent_is_refused_with_its_reason(db_path):
-    _raise(db_path, oi.HANDS_OFF, symbol="ZZZT")  # never held by the time the desk starts
+def test_unknown_intent_is_refused_with_its_reason(db_path):
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO owner_intents (action, raised_at) VALUES ('HANDS_OFF', '2026-01-01T00:00:00+00:00')")
+    c.commit(); c.close()
     oi.intake(db_path)
     (_, _, _, state, outcome), = _rows(db_path)
-    assert state == "refused" and "no longer a held position" in outcome
-    assert owner_flags.read_flags(db_path).hands_off == frozenset()
+    assert state == "refused" and "unknown action" in outcome
+    assert not hasattr(owner_flags.Flags(), "hands_off")  # no per-position exemption exists
 
 
 def test_owner_expiry_is_honoured(db_path):
@@ -72,14 +67,12 @@ def test_owner_expiry_is_honoured(db_path):
 
 
 def test_flags_replay_in_order(db_path):
-    _hold(db_path, "AAA")
     for a, s in [(oi.PAUSE, None), (oi.RESUME, None), (oi.NEVER_TOUCH_ADD, "bbb"),
-                 (oi.NEVER_TOUCH_ADD, "ccc"), (oi.NEVER_TOUCH_REMOVE, "ccc"),
-                 (oi.HANDS_OFF, "AAA"), (oi.HANDS_ON, "AAA"), (oi.HANDS_OFF, "AAA")]:
+                 (oi.NEVER_TOUCH_ADD, "ccc"), (oi.NEVER_TOUCH_REMOVE, "ccc")]:
         _raise(db_path, a, symbol=s)
     oi.intake(db_path)
     f = owner_flags.read_flags(db_path)
-    assert (f.paused, f.never_touch, f.hands_off) == (False, {"BBB"}, {"AAA"})
+    assert (f.paused, f.never_touch) == (False, {"BBB"})
 
 
 class _Door:
@@ -110,9 +103,8 @@ def test_paused_desk_raises_no_orders_and_resume_restores(db_path):
     assert d.submit_order("ABC") == "THROUGH"
 
 
-@pytest.mark.parametrize("flag", [oi.HANDS_OFF, oi.NEVER_TOUCH_ADD])
-def test_flagged_symbol_is_skipped_by_every_write_verb_but_still_reported(db_path, flag):
-    _hold(db_path, "ABC")
+def test_never_touch_symbol_is_skipped_by_every_write_verb_but_still_reported(db_path):
+    flag = oi.NEVER_TOUCH_ADD
     cls, calls = _recording_class()
     d = cls()
     _raise(db_path, flag, symbol="ABC"); oi.intake(db_path)
@@ -120,8 +112,10 @@ def test_flagged_symbol_is_skipped_by_every_write_verb_but_still_reported(db_pat
         if kind in ("arg", "optarg"):
             getattr(d, n)("ABC")
     assert calls == []  # every symbol-bound verb refused
-    d.client = type("C", (), {"get_order_by_id": lambda s, oid: type("O", (), {"symbol": "ABC"})()})()
+    d.client = type("C", (), {"get_order_by_id": lambda s, oid: type("O", (), {"symbol": "ABC"})(),
+                              "get_orders": lambda s, filter: []})()
     assert d.cancel_entry_order("oid") is False and d.replace_entry_limit("oid", 1.0)["status"] == "owner_flag_halted"
+    d.client.get_orders = lambda filter: []
     assert d.cancel_open_orders() == 0 and calls == []
     assert d.submit_order("OTHER") == "THROUGH"  # other names unaffected
     assert d.get_positions() == "READ"  # reporting is not gated
@@ -138,11 +132,9 @@ def test_every_broker_write_verb_is_gated_and_reads_are_not():
 def test_every_sdk_order_write_lives_behind_the_gated_broker():
     sdk = re.compile(r"\.(submit_order|cancel_order_by_id|cancel_orders|replace_order_by_id|"
                      r"close_position|close_all_positions)\(")
-    # order_idempotency.py is the broker parts' own submit helper. sell_finalization
-    # cancels a lingering SELL the desk itself placed, so protection state can settle:
-    # cancel-only and risk-reducing, deliberately left outside the flags (reported).
+    # order_idempotency.py is the broker parts' own submit helper. No other exception.
     allowed = ("src/execution/broker.py", "src/execution/broker_parts/",
-               "src/execution/order_idempotency.py", "src/protection/sell_finalization.py")
+               "src/execution/order_idempotency.py")
     stray = []
     for p in (ROOT / "src").rglob("*.py"):
         rel = p.relative_to(ROOT).as_posix()
@@ -151,3 +143,41 @@ def test_every_sdk_order_write_lives_behind_the_gated_broker():
             if m and re.search(r"(client|_client)\.\w+\($", line[:m.end()]) and not rel.startswith(allowed):
                 stray.append((rel, line.strip()))
     assert not stray, stray
+
+
+def test_wholesale_cancel_skips_only_flagged_names_and_says_so(db_path):
+    cls, calls = _recording_class()
+    d = cls()
+    _raise(db_path, oi.NEVER_TOUCH_ADD, symbol="AAA"); oi.intake(db_path)
+    mk = lambda i, sym, t: type("O", (), {"id": i, "symbol": sym, "order_type": t})()
+    orders = [mk("1", "AAA", "limit"), mk("2", "BBB", "limit"), mk("3", "BBB", "stop")]
+    d.client = type("C", (), {"get_orders": lambda s, filter: orders,
+                              "get_order_by_id": lambda s, oid: next(o for o in orders if o.id == oid)})()
+    entries = d.cancel_open_entry_orders()
+    assert entries == 1 and entries.skipped == (("AAA", "never-touch"),)
+    assert calls == ["cancel_entry_order"]
+    calls.clear()
+    allo = d.cancel_open_orders()
+    assert allo == 2 and allo.skipped == (("AAA", "never-touch"),)
+
+
+def test_unreadable_flags_use_last_known_then_refuse_new_exposure_only(db_path, monkeypatch, tmp_path):
+    monkeypatch.setattr(owner_flags.time, "sleep", lambda s: None)
+    _raise(db_path, oi.NEVER_TOUCH_ADD, symbol="AAA"); oi.intake(db_path)
+    assert owner_flags.read_flags(db_path).never_touch == {"AAA"}  # primes the durable copy
+    Path(db_path).write_bytes(b"not a database")
+    cls, calls = _recording_class()
+    d = cls()
+    owner_flags._CACHE.clear()  # a restarted desk: only the file copy survives
+    f = owner_flags.read_flags(db_path)
+    assert f.stale and f.never_touch == {"AAA"} and not f.unknown
+    assert d.replace_stop_loss("AAA", 1.0) is None and calls == []  # still honoured from the copy
+    Path(owner_flags._cache_file(db_path)).unlink()
+    owner_flags._CACHE.clear()
+    seen = []
+    monkeypatch.setattr(gate, "unknown_state_recorder", seen.append)
+    assert owner_flags.read_flags(db_path).unknown
+    assert d.submit_order("ZZZ")["status"] == "owner_flag_halted"  # new exposure refused
+    assert d.replace_stop_loss("ZZZ", 1.0) == "THROUGH"            # protection continues
+    assert d.cancel_protective_stops("ZZZ") == "THROUGH"
+    assert seen and "unreadable" in seen[0]

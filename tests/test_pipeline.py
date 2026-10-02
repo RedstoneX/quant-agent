@@ -1324,7 +1324,7 @@ def test_finalize_protection_cancels_lingering_sell_when_status_non_terminal():
     )
 
     # Lingering SELL must be cancelled before finalize proceeds.
-    pipeline.broker.client.cancel_order_by_id.assert_called_once_with(
+    pipeline.broker.cancel_entry_order.assert_called_once_with(
         "alpaca-lingering",
     )
     pipeline.broker.wait_for_order_terminal.assert_called_once()
@@ -1359,7 +1359,7 @@ def test_finalize_protection_uses_partial_fill_after_lingering_cancel():
         cancelled_specs=cancelled,
     )
 
-    pipeline.broker.client.cancel_order_by_id.assert_called_once()
+    pipeline.broker.cancel_entry_order.assert_called_once()
     # Residual = 100 - 18 = 82 (driven by post-cancel fill_qty)
     pipeline._reprotect_residual_after_partial_sell.assert_called_once_with(
         "NVDA", 82.0, cancelled,
@@ -1392,7 +1392,7 @@ def test_finalize_protection_bails_when_post_cancel_status_still_non_terminal():
         cancelled_specs=cancelled,
     )
 
-    pipeline.broker.client.cancel_order_by_id.assert_called_once()
+    pipeline.broker.cancel_entry_order.assert_called_once()
     # Critical: restore must NOT fire — broker may still consider the
     # SELL live. Compounding with a stop submit would re-trigger
     # held_for_orders.
@@ -1417,7 +1417,7 @@ def test_finalize_persists_orphan_when_lingering_cancel_fails(tmp_path):
     pipeline.broker.get_order_fill_info.return_value = {
         "status": "new", "filled_qty": "0", "filled_avg_price": None,
     }
-    pipeline.broker.client.cancel_order_by_id.side_effect = RuntimeError("api timeout")
+    pipeline.broker.cancel_entry_order.side_effect = RuntimeError("api timeout")
 
     cancelled = [
         {"id": "stop-old", "qty": 100, "stop_price": 95.0, "limit_price": 92.0},
@@ -2044,7 +2044,7 @@ def test_drain_does_not_re_persist_when_called_from_drain_path(tmp_path):
         {"status": "canceled", "filled_qty": "0"},  # drain's check
         {"status": "new", "filled_qty": "0"},        # finalize's re-check (regressed)
     ]
-    pipeline.broker.client.cancel_order_by_id.side_effect = RuntimeError("api timeout")
+    pipeline.broker.cancel_entry_order.side_effect = RuntimeError("api timeout")
 
     pipeline._drain_pending_protection_restores()
 
@@ -2099,7 +2099,7 @@ def test_finalize_protection_bails_when_lingering_cancel_fails():
     pipeline.broker.get_order_fill_info.return_value = {
         "status": "new", "filled_qty": "0", "filled_avg_price": None,
     }
-    pipeline.broker.client.cancel_order_by_id.side_effect = RuntimeError("api timeout")
+    pipeline.broker.cancel_entry_order.side_effect = RuntimeError("api timeout")
 
     cancelled = [{"id": "stop-old", "qty": 100, "stop_price": 95.0}]
 
@@ -2110,7 +2110,7 @@ def test_finalize_protection_bails_when_lingering_cancel_fails():
         cancelled_specs=cancelled,
     )
 
-    pipeline.broker.client.cancel_order_by_id.assert_called_once()
+    pipeline.broker.cancel_entry_order.assert_called_once()
     # Critical: NO restore, NO reprotect — leaving broker state alone
     # is safer than compounding the inconsistency.
     pipeline.broker._restore_stop_orders.assert_not_called()
@@ -3158,7 +3158,7 @@ def test_finalize_bail_updates_wal_row_not_duplicate(tmp_path):
     # Lingering non-terminal SELL + cancel raises → first bail branch
     # persists recovery intent. With wal_row_id set it must UPDATE.
     pipe.broker.get_order_fill_info.return_value = {"status": "new"}
-    pipe.broker.client.cancel_order_by_id.side_effect = RuntimeError("broker down")
+    pipe.broker.cancel_entry_order.side_effect = RuntimeError("broker down")
 
     ok, _ = pipe._finalize_protection_after_sell(
         "ord-real", "NVDA", 5.0, specs, wal_row_id=wal_id,
