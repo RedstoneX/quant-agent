@@ -7048,18 +7048,18 @@ numbers:
       production passes event_risk.horizon_days (src/stage_risk.py:412).
       A further inline `or 10` fallback sits at
       src/agents/macro_analyst.py:37, which no rule sees.
-  - id: src.agents.portfolio_manager.ranking.CandidateRankingMixin.candidate_eligibility(rr_floor)
+  - id: src.agents.portfolio_manager.candidate_ranking.CandidateRanking.candidate_eligibility(rr_floor)
     value: 1.5
     status: derived
-    site: src/agents/portfolio_manager/ranking.py
+    site: src/agents/portfolio_manager/candidate_ranking.py
     derived_from: src.risk.constants.REWARD_RISK_FLOOR
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager/ranking.py:26-34 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager/ranking.py:332-337).
+      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(max_portfolio_risk_pct)
     value: 25
     status: derived
@@ -7079,10 +7079,10 @@ numbers:
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager/ranking.py:26-34 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager/ranking.py:332-337).
+      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(starter_risk_pct)
     value: 0.5
     status: derived
@@ -7092,18 +7092,18 @@ numbers:
     note: >-
       Parameter default bound to the imported STARTER_POSITION_RISK_PCT
       (src/agents/portfolio_manager/__init__.py:1253-1308).
-  - id: src.agents.portfolio_manager.ranking.CandidateRankingMixin.rank_candidates(rr_floor)
+  - id: src.agents.portfolio_manager.candidate_ranking.CandidateRanking.rank_candidates(rr_floor)
     value: 1.5
     status: derived
-    site: src/agents/portfolio_manager/ranking.py
+    site: src/agents/portfolio_manager/candidate_ranking.py
     derived_from: src.risk.constants.REWARD_RISK_FLOOR
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager/ranking.py:26-34 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager/ranking.py:332-337).
+      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
   - id: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     value: 0.03
     status: arbitrary
@@ -7412,19 +7412,19 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(lookback_days)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(lookback_days)
     value: 5
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
       (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
     value: 5
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dollar-volume floor ($M) for a top-mover to enter the evening missed-
       opportunity review, which feeds the PM's missed-lessons memory
@@ -7452,10 +7452,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(move_threshold_pct)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(move_threshold_pct)
     value: 8
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
       (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
@@ -7464,10 +7464,10 @@ numbers:
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
       number is settled together with the tick cadence and the per-run held-book
       context, never alone.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(top_movers_count)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(top_movers_count)
     value: 15
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       How many broker top-movers are added to the evening missed-opportunity
       review (src/pipeline_intraday.py:1132-1146). Its only caller passes nothing, so
@@ -7494,10 +7494,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(top_n)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(top_n)
     value: 15
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
       (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
@@ -7509,7 +7509,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many previous position-reviewer sessions the reviewer is shown
-      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:2142-2146). Its only caller
+      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:1511-1515). Its only caller
       passes nothing, so this default is live. Same class as the smart-money
       prompt-truncation caps classified arbitrary on 2026-09-19: it decides
       what evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7758,10 +7758,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_thesis_health_context(lookback_weeks)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_thesis_health_context(lookback_weeks)
     value: 8
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       News/rating window of the evening thesis-health review of every held
       position (src/pipeline_research_continuity.py:1203-1217). Its only caller passes nothing, so
