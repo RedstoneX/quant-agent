@@ -112,6 +112,16 @@ from src.pipeline_stages import (
 from src.portfolio_constructor import PortfolioConstructor
 from src.sessions.evening_session import EveningSession
 from src.sessions.position_review_session import PositionReviewSession
+from src.sessions.expected_sessions_session import ExpectedSessionsMissingSession
+from src.sessions.live_session_context_session import LiveSessionContextSession
+from src.sessions.earnings_analyses_session import EarningsAnalysesLoadSession
+from src.sessions.live_context_resolve_session import LiveContextResolveSession
+from src.sessions.evening_stop_proximity_session import EveningStopProximitySession
+from src.sessions.name_coverage_session import NameCoverageRecordSession
+from src.sessions.news_update_session import NewsUpdateSession
+from src.sessions.quarterly_meta_session import QuarterlyMetaReflectionSession
+from src.sessions.earnings_preprocess_session import EarningsPreprocessSession
+from src.sessions.morning_session import MorningSession
 from src.storage.db import Database
 from src.cost_circuit import (
     LLMCostCircuitBreaker,
@@ -1259,146 +1269,16 @@ class TradingPipeline(
 
     @staticmethod
     def _resolve_live_context(snapshots: dict, symbols: list) -> tuple:
-        """Freshness-resolve a bulk snapshot reply into per-symbol context.
-
-        Shared by the morning Tech pass and the intraday opportunity scan,
-        because both hand the SAME payload to the SAME seat and only one of
-        them used to check it (docs/WORK.md item 120). Returns
-        `(context, missing, stale, rescued)`.
-
-        `context[sym]` is either `{"live_unavailable": reason}` or the raw
-        snapshot decorated with `live_price` / `live_price_source` /
-        `live_price_at` / `live_price_description`, with the `session_*`
-        block blanked when the daily bar in it belongs to a prior session.
-        """
-        from src.data.live_price import (
-            NO_PRICE_AT_ALL, SOURCE_LAST_TRADE, resolve_live_price,
-        )
-
-        out: dict[str, dict] = {}
-        missing: list[str] = []
-        stale: list[str] = []
-        rescued: dict[str, str] = {}
-        blanked: list[str] = []
-        for sym in symbols:
-            snap = snapshots.get(sym) or {}
-            resolved = resolve_live_price(snap)
-            if resolved.price is None:
-                (missing if resolved.unavailable == NO_PRICE_AT_ALL
-                 else stale).append(sym)
-                out[sym] = {"live_unavailable": resolved.unavailable}
-                continue
-            # The RAW provider price is deliberately NOT republished here.
-            # It sits a key away from the resolved one, still carrying a
-            # prior session's number, and the next reader picking the wrong
-            # one is this bug returning. What no consumer can reach, no
-            # consumer can misread.
-            entry = {k: v for k, v in snap.items()
-                     if k not in ("last_price", "minute_close")}
-            entry["live_price"] = resolved.price
-            entry["live_price_source"] = resolved.source
-            entry["live_price_at"] = resolved.as_of
-            entry["live_price_description"] = resolved.describe()
-            if not resolved.session_bar_is_today:
-                # The daily bar in this payload belongs to a PRIOR session.
-                # Blank it rather than let a caller render yesterday's
-                # open/high/low/volume under a "today" heading.
-                blanked.append(sym)
-                for field in ("session_open", "session_close", "session_high",
-                              "session_low", "session_volume"):
-                    entry[field] = None
-            if resolved.source != SOURCE_LAST_TRADE:
-                rescued[sym] = resolved.source
-            out[sym] = entry
-        # Blanking every priced name at once is the signature of the one
-        # assumption in `resolve_live_price` that has never been checked
-        # against a live call: that a daily bar's timestamp carries the
-        # session's ET date. If that is wrong this fires on day one instead
-        # of the session range vanishing silently.
-        priced = len(symbols) - len(missing) - len(stale)
-        if blanked and priced and len(blanked) == priced:
-            logger.error(
-                "live session context: EVERY priced symbol (%d) had a daily "
-                "bar dated to a prior session. One name is ordinary; all of "
-                "them means the daily-bar timestamp convention is not what "
-                "`src/data/live_price.py` assumes — check it before trusting "
-                "any session range", len(blanked),
-            )
-        elif blanked:
-            logger.info(
-                "live session context: %d symbol(s) carried a PRIOR session's "
-                "daily bar; their session range is blanked rather than shown "
-                "as today's (item 120): %s", len(blanked), blanked[:10],
-            )
-        return out, missing, stale, rescued
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/live_context_resolve_session.py)."""
+        return LiveContextResolveSession(
+        ).run(snapshots, symbols)
 
     def _live_session_context(self, symbols) -> dict[str, dict]:
-        """Live, in-progress-session price facts for `symbols`, or {}.
-
-        2026-09-14 (docs/INCIDENT_HISTORY.md, ORCL 2026-09-10): the morning
-        Tech pass compared price against levels using bars that end at the
-        PREVIOUS close, so a stock that opened below its support still
-        read as above it. This supplies the live price for the same
-        seats, from the broker snapshot the intraday scan already uses
-        (`get_intraday_snapshots` — no new data source).
-
-        - Outside regular hours: {} — completed bars ARE current (after the
-          close today's bar is complete; pre-market/weekend the last close
-          is the latest price that exists).
-        - In session: one bulk snapshot, resolved through
-          `src.data.live_price.resolve_live_price`. A symbol with no print
-          from TODAY on any of the snapshot's three print-derived fields
-          gets `{"live_unavailable": reason}` and a WARNING — rendered as an
-          explicit STALE label, never silently replaced by yesterday, and
-          never replaced by a quote mid.
-        Never raises.
-
-        2026-09-20, board item 120: this used to read `last_price` alone. On
-        2026-09-17 that cost 8 of 104 names their technical seat at the open
-        while today's forming bar in the SAME payload already held the open,
-        because a thin name's `latest_trade` can still be yesterday's minutes
-        into the session on an IEX entitlement. Two changes follow from that:
-        the resolver now falls through to today's minute bar and then today's
-        forming session bar (both aggregations of real prints on the same
-        entitled venue, neither a quote), and the `session_*` block is
-        BLANKED when the snapshot's daily bar is not today's — Alpaca returns
-        the previous session's bar in that slot for a name that has not
-        printed, and it was being rendered to the analyst as "CURRENT SESSION
-        (TODAY)".
-
-        The resolved number is published as `live_price` (with
-        `live_price_source` and `live_price_at`), NOT as `last_price`. The
-        raw provider field keeps its own name so no reader can pick up an
-        unchecked number believing it was checked.
-        """
-        from src.trading_calendar import in_regular_session
-
-        symbols = [s for s in (symbols or []) if s]
-        if not symbols or not in_regular_session():
-            return {}
-        try:
-            snapshots = self.broker.get_intraday_snapshots(symbols) or {}
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("live session context: snapshot read failed: %s", exc)
-            snapshots = {}
-        out, missing, stale, rescued = self._resolve_live_context(snapshots, symbols)
-        if missing or stale:
-            logger.warning(
-                "live session context: in-session price unavailable for %d/%d "
-                "symbol(s) (no price: %s; no today print: %s) — labelled STALE "
-                "in the Tech prompt, not replaced by the last close and never "
-                "by a quote mid",
-                len(missing) + len(stale), len(symbols),
-                missing[:10], stale[:10],
-            )
-        if rescued:
-            logger.info(
-                "live session context: %d/%d symbol(s) had no today last-trade "
-                "print but a today bar on the same venue, priced from it "
-                "rather than losing the seat (item 120): %s",
-                len(rescued), len(symbols), sorted(rescued.items())[:10],
-            )
-        return out
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/live_session_context_session.py)."""
+        return LiveSessionContextSession(
+            resolve_live_context=self._collab("_resolve_live_context"),
+            broker=self._collab("broker"),
+        ).run(symbols)
 
     def _is_trading_day(self) -> bool:
         try:
@@ -1498,183 +1378,26 @@ class TradingPipeline(
         held_symbols: list[str] | None = None,
         candidate_symbols: list[str] | None = None,
     ) -> "tuple[NewsIntelligenceReport | None, NewsCoverage | None]":
-        """Fetch news, run intelligence analysis, save report. Session-aware.
-
-        - morning: full 3-layer build. prior_session_report=None.
-        - midday:  delta mode. prior_session_report=morning's snapshot.
-        - evening: summary mode. prior_session_report=midday's or morning's.
-
-        Session-tagged reports persist alongside the latest full_report.json so
-        each session's output is individually recoverable for audit / debug.
-
-        `held_symbols` / `candidate_symbols` (2026-08-30 owner decision) are
-        the caller's ALREADY-ORDERED lists of symbols to also fetch
-        individually via Yahoo Finance's per-symbol RSS — see
-        NewsDataProvider.fetch_news. The deterministic selection rule lives
-        HERE, not in the provider: held positions first, then the run's
-        admitted candidates, each list in the caller's own stable order
-        (never raw set iteration — see the callers of this method), deduped
-        while preserving that order. NewsDataProvider itself enforces the
-        symbol-count cap (config.news.per_symbol_max_symbols); this method
-        only decides ordering and priority.
-
-        Returns `(intel_report, coverage)`. `coverage` (src.data.news.
-        NewsCoverage) is the 2026-08-28 fix for a dead feed vanishing
-        silently: before this, a feed that 404'd or 403'd was dropped with a
-        log warning and the news stage still reported "ok" regardless of
-        how many wires actually came back. `coverage` is returned even when
-        the analyst call itself fails below, since the fetch already
-        happened and the caller (MorningResearchStage) needs it either way
-        to set data_status["news"] honestly.
-        """
-        coverage = None
-        try:
-            research_universe = universe or self.config.trading.universe
-            per_symbol_symbols = list(dict.fromkeys(
-                [str(s).strip().upper() for s in (held_symbols or []) if str(s).strip()]
-                + [str(s).strip().upper() for s in (candidate_symbols or []) if str(s).strip()]
-            ))
-            news_items, coverage = self.news_provider.fetch_news(symbols=per_symbol_symbols)
-            news_text = self.news_provider.format_for_prompt(
-                news_items, max_items=self.config.news.max_prompt_items,
-            )
-            stock_mentions = self.news_provider.tag_symbol_mentions(
-                news_items, research_universe)
-            previous_narrative = self.news_store.load_macro_narrative()
-            # For midday/evening, load the most recent prior session report as
-            # a diff baseline. Prefer midday over morning when both exist
-            # (evening sees the most recent snapshot available).
-            prior_session_report = None
-            if session == "midday":
-                prior_session_report = self.news_store.load_daily_report("morning")
-            elif session == "evening":
-                prior_session_report = (
-                    self.news_store.load_daily_report("midday")
-                    or self.news_store.load_daily_report("morning")
-                )
-            intel_report, result = self.news_analyst.analyze(
-                news_text=news_text,
-                universe=research_universe,
-                stock_mentions=stock_mentions,
-                previous_narrative=previous_narrative,
-                session=session,
-                prior_session_report=prior_session_report,
-                news_coverage=coverage,
-            )
-            if intel_report:
-                report_dict = intel_report.model_dump()
-                self.news_store.save_daily_report(report_dict, session=session)
-                self.news_store.save_macro_narrative(report_dict["macro_narrative"])
-                if report_dict.get("stock_news"):
-                    self.news_store.save_stock_alerts(report_dict["stock_news"])
-                # collapsed_count / source_count are persisted so the dedup
-                # stage stays auditable after the fact — you can re-measure
-                # the duplication rate from the archive without re-fetching.
-                # per_symbol (2026-08-30) is persisted for the same reason:
-                # measuring the per-symbol duplicate rate after the fact
-                # shouldn't require re-fetching either.
-                self.news_store.save_raw_headlines(
-                    [{"title": i.title, "source": i.source, "summary": i.summary,
-                      "collapsed_count": getattr(i, "collapsed_count", 1),
-                      "source_count": getattr(i, "source_count", 1),
-                      "per_symbol": getattr(i, "per_symbol", False)}
-                     for i in news_items])
-                n_changes = len(intel_report.state_changes)
-                n_stocks = len(intel_report.stock_news)
-                logger.info("[%s] News intelligence: sentiment=%s, changes=%d, stocks=%d",
-                            session, intel_report.market_sentiment, n_changes, n_stocks)
-            self.db.insert_agent_log(
-                **seat_acceptance_kwargs("agent_failure" if not intel_report else None),
-                agent_name=f"news_analyst_{session}", run_id=run_id,
-                input_summary=(
-                    f"{len(news_items)} news items "
-                    f"({coverage.describe() if coverage is not None else 'coverage unknown'})"
-                ),
-                input_message=result.user_message,
-                output_summary=f"sentiment={intel_report.market_sentiment}, changes={len(intel_report.state_changes)}" if intel_report else "parse_error",
-                full_response=result.raw_text,
-                model=result.model,
-                tokens_used=result.tokens_used,
-                input_tokens=result.input_tokens,
-                output_tokens=result.output_tokens,
-                cost_usd=result.cost_usd,
-                **agent_log_kwargs(result),
-            )
-            return intel_report, coverage
-        except PaidAnalysisSuspended:
-            raise
-        except Exception as e:
-            logger.error("[%s] News analyst failed: %s", session, e)
-            return None, coverage
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/news_update_session.py)."""
+        return NewsUpdateSession(
+            config=self._collab("config"),
+            db=self._collab("db"),
+            news_analyst=self._collab("news_analyst"),
+            news_provider=self._collab("news_provider"),
+            news_store=self._collab("news_store"),
+        ).run(run_id, session, universe, held_symbols, candidate_symbols)
 
     def _load_earnings_analyses(
         self, run_id: str, session: str = "morning",
         ctx: RunContext | None = None,
         universe: list[str] | None = None,
     ) -> tuple[list, list]:
-        """Hot-path consumer: read cached earnings analyses, never call the LLM.
-
-        The LLM-producing path is `run_earnings_preprocess()`, which runs
-        pre-market (08:00-09:15 ET) and synchronously analyzes + confirms
-        every new 10-Q/10-K. By the time morning/midday/evening fire, the
-        authoritative result is already on disk.
-
-        This method returns:
-          - cached analyses for any filing already confirmed by preprocess
-          - placeholder `queued=True` entries for filings that preprocess
-            missed (e.g. preprocess didn't run, or the filing dropped after
-            preprocess but before a later session). PM sees these and sizes
-            down accordingly — better than blocking the session on an LLM.
-
-        No background threads, no session-time token spend. The
-        `run_id` + `session` + `ctx` signature is preserved for
-        compatibility with MorningResearchStage's callable injection.
-        """
-        try:
-            reports = self.earnings_provider.check_and_fetch(
-                universe or self.config.trading.universe,
-            )
-            if not reports:
-                return [], []
-
-            new_reports = [r for r in reports if r.is_new]
-            cached_reports = [r for r in reports if not r.is_new]
-
-            cached_results = self.earnings_analyst.analyze_reports(cached_reports)
-
-            for r in new_reports:
-                cached_results.append({
-                    "symbol": r.symbol,
-                    "analysis": None,
-                    "is_new": True,
-                    "queued": True,
-                    "form_type": r.form_type,
-                    "filing_date": r.filing_date,
-                })
-
-            if new_reports:
-                symbols = ", ".join(r.symbol for r in new_reports)
-                logger.warning(
-                    "[%s] %d filings missed pre-market preprocessing (%s); "
-                    "surfacing as placeholder only — PM will size down.",
-                    session, len(new_reports), symbols,
-                )
-
-            logger.info(
-                "[%s] Earnings: %d cached analyses, %d unanalyzed placeholders",
-                session, len(cached_results) - len(new_reports), len(new_reports),
-            )
-            return reports, cached_results
-        except Exception as e:
-            # audit round 2: swallowing here made data_status["earnings"]
-            # "failed" unreachable — a full SEC-EDGAR outage was
-            # indistinguishable from "no filings today", so RM's
-            # data_degraded advisory never counted earnings. Morning routes
-            # through MorningResearchStage, whose except sets the status;
-            # midday/evening call sites wrap this locally to keep their
-            # continue-without-earnings behavior.
-            logger.error("[%s] Earnings load failed: %s", session, e)
-            raise
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/earnings_analyses_session.py)."""
+        return EarningsAnalysesLoadSession(
+            config=self._collab("config"),
+            earnings_analyst=self._collab("earnings_analyst"),
+            earnings_provider=self._collab("earnings_provider"),
+        ).run(run_id, session, ctx, universe)
 
     def _earnings_preprocess_symbols(self) -> list[str]:
         """Configured universe plus Form-4 admission-eligible names.
@@ -2241,117 +1964,10 @@ class TradingPipeline(
         return result
 
     def _record_name_coverage(self, ctx, _record) -> None:
-        """Write down, per candidate name, which seats answered ABOUT it.
-
-        The counting half of docs/WORK.md item 20. It is a RECORD, not a
-        bar: no ratio, no minimum, nothing refused here. Both attempts at
-        deriving a coverage bar failed and the reasons are written down in
-        `src/evidence_gate.py` beside `name_coverage`; this is the
-        instrument that would let one be measured from the desk's own data
-        instead of picked. Fail-soft — a forensic record must never be able
-        to break the trading path it reports on.
-        """
-        from src import evidence_gate
-
-        try:
-            seat_symbols: dict[str, set] = {}
-            seat_symbols["tech"] = {
-                getattr(a, "symbol", "") for a in (getattr(ctx, "analyses", None) or ())
-            }
-            seat_symbols["earnings"] = {
-                (r.get("symbol") if isinstance(r, dict) else getattr(r, "symbol", ""))
-                for r in (getattr(ctx, "earnings_results", None) or ())
-            }
-            smart: set = set()
-            for bucket in ("smart_money_observations", "smart_money_findings"):
-                for item in (getattr(ctx, bucket, None) or ()):
-                    smart.add(
-                        item.get("symbol") if isinstance(item, dict)
-                        else getattr(item, "symbol", "")
-                    )
-            seat_symbols["smart_money"] = smart
-            intel = getattr(ctx, "news_intel", None)
-            if intel is not None:
-                # Absent `news_intel` means the news seat recorded no
-                # per-name coverage at all, which `name_coverage` reports as
-                # uncovered rather than assuming complete.
-                seat_symbols["news"] = set(getattr(intel, "stock_news", None) or {})
-
-            universe: set = set()
-            for names in seat_symbols.values():
-                universe |= {n for n in names if n}
-            universe |= {
-                str(s) for s in (getattr(ctx, "admitted_symbols", None) or set())
-            }
-            # HELD NAMES ARE IN THE UNIVERSE (board item 220). The rule binds
-            # on STAYING as well as entering, and a held name that no seat
-            # answered about this review was previously absent from this
-            # record entirely — the one case where "no row" meant "nothing to
-            # see" rather than "nobody looked".
-            for pos in (getattr(ctx, "positions", None) or ()):
-                sym = (
-                    pos.get("symbol") if isinstance(pos, dict)
-                    else getattr(pos, "symbol", "")
-                )
-                if sym:
-                    universe.add(str(sym))
-            # A name whose technical row came back unreadable may be in no
-            # other list at all, and it is the one name that must not vanish.
-            unreadable_by_seat = {
-                "tech": set(getattr(ctx, "tech_unreadable", None) or {}),
-            }
-            asked_no_answer_by_seat = {
-                "tech": set(getattr(ctx, "tech_unanswered", None) or set()),
-            }
-            universe |= {str(s) for s in unreadable_by_seat["tech"]}
-            universe |= {str(s) for s in asked_no_answer_by_seat["tech"]}
-            try:
-                universe |= {str(s) for s in self.config.trading.universe}
-            except Exception:  # noqa: BLE001 — config shape is not this record's job
-                pass
-
-            coverage_by_name = evidence_gate.name_coverage(
-                universe, seat_symbols,
-                unreadable_by_seat=unreadable_by_seat,
-                asked_no_answer_by_seat=asked_no_answer_by_seat,
-            )
-            for name, coverage in coverage_by_name.items():
-                record = coverage.to_evidence()
-                _record(
-                    name,
-                    "recorded",
-                    record.pop("summary"),
-                    stage="evidence_gate",
-                    gate="name_coverage",
-                    **record,
-                )
-
-            # The per-name reading of the owner's blocking-seat mandate,
-            # carried out of here so the entry bar and the holding review
-            # both read a MISSING seat rather than an absent objection.
-            # Nothing is refused here; the categorical refusals already
-            # exist (`risk.rules.own_bar_block_reason` for entry, rotation's
-            # `ineligible_hold` tier for the held side) and both already
-            # treat "no technical read this review" as blocking.
-            gaps = evidence_gate.names_missing_blocking_seat(coverage_by_name)
-            ctx.name_coverage_blocking_gaps = dict(gaps)
-            if gaps:
-                logger.warning(
-                    "evidence gate: %d name(s) have NO answer from a seat that "
-                    "may stop the desk — treated as a missing seat, never as "
-                    "agreement: %s%s",
-                    len(gaps),
-                    "; ".join(
-                        f"{n}={','.join(seats)}" for n, seats in sorted(gaps.items())
-                    ),
-                    (
-                        " (returned-but-unreadable: "
-                        + ", ".join(sorted(unreadable_by_seat["tech"])) + ")"
-                        if unreadable_by_seat["tech"] else ""
-                    ),
-                )
-        except Exception as exc:  # noqa: BLE001 — never break the decision
-            logger.warning("evidence gate: name coverage write failed: %s", exc)
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/name_coverage_session.py)."""
+        return NameCoverageRecordSession(
+            config=self._collab("config"),
+        ).run(ctx, _record)
 
     def _attach_evidence_freshness(self, result) -> None:
         """Carry this run's evidence-freshness disclosure out to the owner.
@@ -2472,418 +2088,41 @@ class TradingPipeline(
             )
 
     def _run_morning_body(self) -> dict:
-        ctx = RunContext.start("morning")
-        run_id = ctx.run_id
-        logger.info("=== Morning run started: %s ===", run_id)
-
-        if not self._is_trading_day():
-            logger.info("Morning run skipped: market closed for non-trading day")
-            return {"status": "market_holiday", "orders": [], "run_id": run_id}
-
-        halt = self._kill_switch_halt_result(run_id)
-        if halt is not None:
-            return halt
-
-        self._activate_cost_session(run_id, "morning")
-
-        # The wrapper kills a slow morning with SIGTERM 30s before SIGKILL,
-        # and that is a DOCUMENTED, OBSERVED death mode for this very
-        # function. Without this, SIGTERM ends the process where it stands
-        # and the `finally` below — which pays the deferred §11.2 gross
-        # ceiling — never runs. Converting it to an unwind spends part of
-        # that grace window on the session's outstanding safety debts.
-        _prior_sigterm = self._install_sigterm_unwind("morning")
-
-        try:
-            # 0a. FIRST BROKER ACTION OF THE DAY: broker-truth coverage audit
-            # (independent of the WAL). Catches any long that went naked
-            # WITHOUT leaving a recovery row — and, since spec §11.1's hybrid
-            # fractional stops, RE-PLACES the sub-share DAY stops that the
-            # broker expired at yesterday's close.
-            #
-            # This used to run at 0b, after three drain passes that each make
-            # their own broker round-trips. Every second it spent waiting was
-            # a second the fractional remainder of every held position sat
-            # unprotected into an open market, and the open is exactly when
-            # that matters most. The owner accepted a bounded OVERNIGHT
-            # exposure; he did not accept it bleeding into the session, so
-            # the unprotected window at the open is now as short as this
-            # system can make it.
-            #
-            # Symbols the drain owns are skipped by the reconciler either way
-            # (it reads `get_pending_protection_restores` itself), so moving
-            # ahead of the drain changes nothing for them — the drain still
-            # restores their coverage microseconds later, exactly as before.
-            coverage_gaps = self._reconcile_stop_coverage()
-            # 0a'. Sweep retired (owner mandate 2026-09-17): sell any T-bill
-            # vehicle still held into cash before any seat reads the book.
-            self._release_retired_cash_park(run_id)
-            # 0b. Drain orphaned protection-restore intents from prior
-            # sessions where finalize had to bail (lingering SELL didn't
-            # converge, or broker API hiccup). Each drained row brings a
-            # symbol's stop coverage back in line with broker reality.
-            drained = self._drain_pending_protection_restores()
-            self._drain_pending_repegs()
-            # audit F4: resolve BUY write-ahead orphans from a prior
-            # crashed session before this run touches positions/cash.
-            self._reconcile_orphan_pending_submits()
-            # 0c. Broker-truth EXIT audit (2026-08-28 ONDS/CCJ): a protective
-            # stop firing overnight is exactly the case morning must catch
-            # first — the position has been closed for hours by the time
-            # this runs, and every other session entry point runs this same
-            # check again in case morning's own attempt failed.
-            #
-            # Item 173(2): unlike intra/evening, this site is NOT reordered to
-            # run `_reconcile_fills` first. Morning's `_reconcile_fills` lives
-            # in the method-end `finally:` block, reconciling THIS session's
-            # own just-submitted orders after execution — there are no stale
-            # 'submitted' SELLs from earlier today for it to resolve here, so
-            # the false-gap page the reorder prevents cannot arise at morning,
-            # and moving it ahead would strand this session's fills.
-            reco = None
-            try:
-                reco = self._reconcile_stop_out_fills(run_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("morning stop-out reconcile failed (non-fatal): %s", exc)
-            # Item 101: surface a broker-made stop-out / re-protection to the
-            # owner — the write-backs above are otherwise silent.
-            self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
-
-            # 0. Cancel stale entry orders from previous sessions, but preserve live protective exits.
-            self.broker.cancel_open_entry_orders()
-
-            # 1. Get account state (snapshot into ctx). Explicit guard mirrors
-            # `run_intra_check` — a broker-API failure at snapshot time should
-            # bail cleanly with a clear status, not propagate an exception
-            # that leaves `ctx` half-populated and every downstream stage
-            # guessing at state.
-            try:
-                account = self.broker.get_account()
-                positions = self.broker.get_positions()
-            except Exception as e:
-                logger.error("Morning: broker snapshot failed: %s", e)
-                return {
-                    "status": "broker_error", "orders": [],
-                    "run_id": run_id, "error": str(e),
-                }
-            cash = account["cash"]
-            total_value = account["portfolio_value"]
-            last_equity = account.get("last_equity", total_value)
-            ctx.account = account
-            ctx.positions = positions
-            ctx.cash = cash
-            ctx.deployable_cash = self._compute_deployable_cash(cash, positions)
-            ctx.total_value = total_value
-            ctx.last_equity = last_equity
-            # The owner's P&L block is built from THIS read, whichever of
-            # the body's return paths the run leaves by (see `_attach_pnl`).
-            self._record_account_snapshot(total_value, last_equity)
-            logger.info(
-                "Account: $%.2f total, $%.2f cash (deployable $%.2f), %d positions (last close $%.2f)",
-                total_value, cash, ctx.deployable_cash, len(positions), last_equity)
-
-            # 1a. Cash-only safety net — force-sell if margin was entered before
-            # this session. Refreshes ctx.cash / positions on completion, so
-            # every stage below runs on clean truth.
-            forced_orders = self._force_delever(ctx)
-
-            # 1b. Spec §11.2 — the gross-exposure MARGIN FLOOR. Deliberately
-            # here, before ANY agent runs: it is computed from account state
-            # alone, so a Portfolio Manager that returns nothing (a measured
-            # failure mode — one candidate model truncated mid-JSON on 1 run
-            # in 10) still cannot leave the desk in a liquidation-proximity
-            # breach. Item 112: the morning lane scopes this to `floor_only`
-            # — a genuine margin breach is de-levered NOW on the live price;
-            # an ordinary §11.2 ceiling breach is de-levered after the PM has
-            # run, by `_enforce_gross_ceiling_by_conviction`, so the WEAKEST-
-            # by-conviction names are cut first using this session's fresh
-            # per-seat read. Always populates ctx.leverage for the alert and
-            # the dashboard, including distance-to-forced-liquidation.
-            forced_orders = list(forced_orders) + self._enforce_gross_ceiling(
-                ctx, floor_only=True,
-            )
-            positions = ctx.positions
-            cash = ctx.cash
-            total_value = ctx.total_value
-            last_equity = ctx.last_equity
-            # Local `positions` table is a derived snapshot (journal /
-            # notifier / rehearsal). Morning used to never write it, so a
-            # midday/close that last ran when only one name was held left
-            # the table lying after later fills. Refresh from the broker
-            # book we just read, before the long research window.
-            self._sync_positions_from_broker(positions)
-
-
-            # All broker-resident and deterministic safety work above runs
-            # even while the paid-analysis circuit is latched. Only now, at
-            # the boundary before research/resume-RM, may it stop the run.
-            try:
-                self._require_paid_analysis("morning_research")
-            except PaidAnalysisSuspended as exc:
-                return self._paid_suspension_after_late_safety(
-                    run_id, session="morning", error=exc, where="paid-pre-research",
-                    orders=forced_orders,
-                )
-
-            # RC2 resume lane: a prior morning tick may have been killed by
-            # the wrapper timeout AFTER the PM produced a plan but BEFORE the
-            # RiskStage reviewed it (the observed death mode: 61/61 BUY-
-            # proposal days destroyed at the PM→RM boundary during the
-            # 6/30-7/15 relay outage). If today's unconsumed checkpoint
-            # exists and is fresh, skip research+PM entirely — the full
-            # preamble above (drains, coverage audit, force_delever, circuit
-            # breaker, FRESH account snapshot) has already run, and the
-            # RiskStage + execution guards below all operate on live state.
-            # RM always re-runs; there is no resume-past-RM.
-            from src import decision_checkpoint as _dc
-            resumed = _dc.load("morning")
-            if resumed is not None:
-                logger.warning(
-                    "RESUME LANE: unconsumed decision checkpoint from %s "
-                    "(age %.0f min, %d decisions) — skipping research+PM, "
-                    "re-entering at RiskStage on fresh account state",
-                    resumed["run_id"], resumed["age_minutes"],
-                    len(resumed["portfolio_decision"].decisions),
-                )
-                ctx.macro_summary = resumed["macro_summary"]
-                ctx.macro_analysis = resumed["macro_analysis"]
-                ctx.news_intel = resumed["news_intel"]
-                ctx.analyses = resumed["analyses"]
-                ctx.earnings_results = resumed["earnings_results"]
-                ctx.data_status = resumed["data_status"]
-                ctx.admitted_symbols = set(resumed["admitted_symbols"])
-                ctx.portfolio_decision = resumed["portfolio_decision"]
-                portfolio_decision = ctx.portfolio_decision
-                # Rehydrate bars for the plan's BUY symbols (zero-LLM, fresh
-                # data). The checkpoint deliberately omits symbols_bars
-                # (huge); without this the entry ATR stop floor silently
-                # no-ops and the correlation advisory false-fires on resume.
-                bars: dict = {}
-                for d in portfolio_decision.decisions:
-                    if d.action != "BUY":
-                        continue
-                    try:
-                        bars[d.symbol] = self.market.get_ohlcv(
-                            d.symbol, self.config.trading.lookback_days,
-                        ) or []
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("resume: bar rehydrate failed for %s: %s",
-                                       d.symbol, e)
-                ctx.symbols_bars = bars
-            else:
-                # Phase 4 #1: research stage runs the parallel fan-out (macro /
-                # news / tech / earnings). Populates ctx fields.
-                try:
-                    self.morning_research_stage.run(ctx)
-                except PaidAnalysisSuspended as exc:
-                    return self._paid_suspension_after_late_safety(
-                        run_id, session="morning", error=exc, where="paid-research-suspended",
-                        orders=forced_orders,
-                    )
-                circuit_state = self._cost_circuit_status()
-                if circuit_state.get("suspended"):
-                    return self._paid_suspension_after_late_safety(
-                        run_id, session="morning", where="post-research-circuit-open",
-                        orders=forced_orders,
-                        error=PaidAnalysisSuspended(
-                            str(circuit_state.get("trigger_detail") or "cost circuit opened")
-                        ),
-                    )
-                analyses = ctx.analyses
-
-
-                if not analyses:
-                    logger.warning("No analyses produced, skipping trading")
-                    # Legit PM-less completion — record it so the evening
-                    # dead-man probe doesn't read "research rows, no PM row"
-                    # as a killed morning.
-                    _dc.write_status("morning", "no_data")
-                    return {"status": "no_data", "orders": [], "run_id": run_id}
-
-                # docs/WORK.md item 20 — the owner's own design. Deliberately
-                # sequenced HERE: after every safety path above (the two
-                # late-breach emergency-liquidation checks and the paid-
-                # suspension bails still run, because a refusal to DECIDE must
-                # never become a refusal to PROTECT), and before the Portfolio
-                # Manager call, which is the expensive one this exists to not
-                # spend on absent evidence.
-                self._heal_lost_research_seats(ctx)
-                gate_skip = self._evidence_gate_skip(ctx, run_id)
-                if gate_skip is not None:
-                    return gate_skip
-
-                # Phase 4 #1: decision stage — memory layers + PM + Constructor.
-                try:
-                    self._decision_stage(ctx)
-                except PaidAnalysisSuspended as exc:
-                    return self._paid_suspension_after_late_safety(
-                        run_id, session="morning", error=exc, where="paid-decision-suspended",
-                        orders=forced_orders,
-                    )
-                portfolio_decision = ctx.portfolio_decision
-
-                # Persist the plan the moment it exists — a kill anywhere
-                # between here and execution leaves a resumable checkpoint
-                # instead of a wasted research+PM spend.
-                _dc.write(ctx)
-
-
-            if not portfolio_decision:
-                failure_status = ctx.analysis_failure_status or "pm_agent_failure"
-                failure_error = ctx.analysis_failure_error or "no valid PM decision"
-                logger.error(
-                    "Portfolio manager produced no valid decision (%s): %s",
-                    failure_status, failure_error,
-                )
-                return {
-                    # Terminal for this slot. main.py must not repeat the full
-                    # paid stack on deterministic parse/schema/grounding faults.
-                    "status": failure_status, "orders": [], "run_id": run_id,
-                    "error": failure_error,
-                    "data_status": dict(ctx.data_status),
-                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
-                    # the distance to forced liquidation, for the operator alert.
-                    "leverage": dict(ctx.leverage),
-                    "stop_coverage_gaps": coverage_gaps,
-                }
-            if not portfolio_decision.decisions:
-                logger.info("Portfolio manager + Constructor: no trades suggested")
-                return {
-                    "status": "no_trades", "orders": [], "run_id": run_id,
-                    "data_status": dict(ctx.data_status),
-                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
-                    # the distance to forced liquidation, for the operator alert.
-                    "leverage": dict(ctx.leverage),
-                    "stop_coverage_gaps": coverage_gaps,
-                }
-
-            # Phase 4 #1: risk stage — hard filter + earnings cap + RM review + mods.
-            try:
-                early_exit = self._risk_stage(ctx)
-            except PaidAnalysisSuspended as exc:
-                return self._paid_suspension_after_late_safety(
-                    run_id, session="morning", error=exc, where="paid-risk-suspended",
-                    orders=forced_orders,
-                )
-            # The plan has now been risk-reviewed — whatever the outcome, it
-            # must never be re-offered by the resume lane (an RM-rejected
-            # plan retried next tick would be a veto bypass), and marking
-            # BEFORE execution makes the execution at-most-once (a kill
-            # mid-execution is owned by the BUY write-ahead orphan sweep,
-            # not by re-running the plan).
-            _dc.mark_consumed("morning")
-            if early_exit is not None:
-                early_exit["run_id"] = run_id
-                early_exit["data_status"] = dict(ctx.data_status)
-                stop_updates = getattr(
-                    getattr(self, "broker", None), "stop_trade_updates", None,
-                )
-                if callable(stop_updates):
-                    try:
-                        stop_updates()
-                    except Exception:
-                        pass
-                return early_exit
-
-            # Item 112 — the ordinary §11.2 gross-ceiling de-lever, run HERE
-            # (morning only) so it cuts the WEAKEST-by-conviction names first
-            # using THIS session's fresh per-seat read, not the stale-stance
-            # biggest-loser cut the preamble would have used. After the risk
-            # stage (so an RM-driven early exit is honoured first) and before
-            # execution (so its SELLs land with the session's other orders).
-            # A no-op on any book already under its ceiling — the ordinary
-            # case — and re-measures gross first, so if the preamble margin
-            # floor already fired it only trims a residual breach.
-            conviction_delever = self._enforce_gross_ceiling_by_conviction(ctx)
-
-            # Phase 4 #1: execution stage — HOLDs logged, SELLs then BUYs submitted.
-            orders = self._execution_stage(ctx)
-            if conviction_delever:
-                orders = list(conviction_delever) + list(orders)
-
-            # Truthful terminal status. 2026-08-19: three risk-approved BUYs
-            # were skipped as unfunded (the funding sell filled 36s after the
-            # session gave up), yet the run reported status='executed' with
-            # orders=[] — the day read as done and nothing retried while the
-            # freed cash sat idle until midday re-parked it. When the session
-            # had approved BUYs, submitted NOTHING, and at least one skip was
-            # the transient funding race, report `buys_unfunded` truthfully.
-            # It is terminal for this slot: automatically re-running the full
-            # paid research -> PM -> RM stack amplified cost for an execution-
-            # timing issue. A future execution-only checkpoint can retry this
-            # without buying another decision chain.
-            approved_buys = [
-                d for d in (portfolio_decision.decisions or [])
-                if d.action == "BUY"
-            ]
-            unfunded = [
-                s for s in ctx.execution_skips
-                if s.get("reason") == "insufficient_cash"
-            ]
-            # Sweep bookkeeping orders are not "the session traded" — only
-            # real BUY/SELL submissions count against the retry decision.
-            real_orders = [
-                o for o in orders
-                if not (isinstance(o, dict)
-                        and str(o.get("action", "")).startswith("SWEEP_"))
-            ]
-            if approved_buys and unfunded and not real_orders:
-                logger.warning(
-                    "=== Morning run: %d approved BUY(s), 0 submitted, "
-                    "%d unfunded skip(s) — reporting terminal "
-                    "buys_unfunded ===", len(approved_buys), len(unfunded),
-                )
-                return {
-                    "status": "buys_unfunded", "orders": orders,
-                    "run_id": run_id,
-                    "data_status": dict(ctx.data_status),
-                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
-                    # the distance to forced liquidation, for the operator alert.
-                    "leverage": dict(ctx.leverage),
-                    "stop_coverage_gaps": coverage_gaps,
-                    "execution_skips": list(ctx.execution_skips),
-                }
-            if not real_orders:
-                logger.info(
-                    "=== Morning run complete: no equity order submitted "
-                    "(not marking executed) ===",
-                )
-                return {
-                    "status": "no_orders", "orders": orders,
-                    "run_id": run_id,
-                    "data_status": dict(ctx.data_status),
-                    # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
-                    # the distance to forced liquidation, for the operator alert.
-                    "leverage": dict(ctx.leverage),
-                    "stop_coverage_gaps": coverage_gaps,
-                    "execution_skips": list(ctx.execution_skips),
-                }
-            logger.info("=== Morning run complete: %d orders executed ===", len(orders))
-            return {
-                "status": "executed", "orders": orders, "run_id": run_id,
-                "data_status": dict(ctx.data_status),
-                # Spec §11.2 — gross exposure, its ladder-resolved ceiling and
-                # the distance to forced liquidation, for the operator alert.
-                "leverage": dict(ctx.leverage),
-                "stop_coverage_gaps": coverage_gaps,
-                "execution_skips": list(ctx.execution_skips),
-            }
-        finally:
-            # Item 112 — pay the deferred ordinary §11.2 ceiling. The preamble
-            # scoped itself to the margin floor so the cut could be ordered by
-            # THIS session's fresh conviction read; if the run never reached
-            # that pass (any PM-less early return, the resume lane, or an
-            # exception), the ordinary ceiling is enforced here instead, with
-            # the unchanged biggest-loser ordering. One place, so a lane added
-            # later cannot silently lose the ceiling. No-op once discharged.
-            self._discharge_deferred_gross_ceiling(ctx)
-            # Phase 3: ask broker which of today's submitted orders actually filled.
-            # Unfilled ones get flagged so PM memory / calibration skip them.
-            self._reconcile_fills(ctx)
-            # Fills (or stop-outs since snapshot) change the book. Re-read
-            # the broker; do not reuse the pre-execution list.
-            self._sync_positions_from_broker()
-            self._restore_sigterm(_prior_sigterm)
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/morning_session.py)."""
+        return MorningSession(
+            activate_cost_session=self._collab("_activate_cost_session"),
+            compute_deployable_cash=self._collab("_compute_deployable_cash"),
+            cost_circuit_status=self._collab("_cost_circuit_status"),
+            decision_stage=self._collab("_decision_stage"),
+            discharge_deferred_gross_ceiling=self._collab("_discharge_deferred_gross_ceiling"),
+            drain_pending_protection_restores=self._collab("_drain_pending_protection_restores"),
+            drain_pending_repegs=self._collab("_drain_pending_repegs"),
+            enforce_gross_ceiling=self._collab("_enforce_gross_ceiling"),
+            enforce_gross_ceiling_by_conviction=self._collab("_enforce_gross_ceiling_by_conviction"),
+            evidence_gate_skip=self._collab("_evidence_gate_skip"),
+            execution_stage=self._collab("_execution_stage"),
+            force_delever=self._collab("_force_delever"),
+            heal_lost_research_seats=self._collab("_heal_lost_research_seats"),
+            install_sigterm_unwind=self._collab("_install_sigterm_unwind"),
+            is_trading_day=self._collab("_is_trading_day"),
+            kill_switch_halt_result=self._collab("_kill_switch_halt_result"),
+            paid_suspension_after_late_safety=self._collab("_paid_suspension_after_late_safety"),
+            reconcile_fills=self._collab("_reconcile_fills"),
+            reconcile_orphan_pending_submits=self._collab("_reconcile_orphan_pending_submits"),
+            reconcile_stop_coverage=self._collab("_reconcile_stop_coverage"),
+            reconcile_stop_out_fills=self._collab("_reconcile_stop_out_fills"),
+            record_account_snapshot=self._collab("_record_account_snapshot"),
+            release_retired_cash_park=self._collab("_release_retired_cash_park"),
+            require_paid_analysis=self._collab("_require_paid_analysis"),
+            restore_sigterm=self._collab("_restore_sigterm"),
+            risk_stage=self._collab("_risk_stage"),
+            surface_reconcile_outcomes=self._collab("_surface_reconcile_outcomes"),
+            sync_positions_from_broker=self._collab("_sync_positions_from_broker"),
+            broker=self._collab("broker"),
+            config=self._collab("config"),
+            market=self._collab("market"),
+            morning_research_stage=self._collab("morning_research_stage"),
+        ).run()
 
     def run_midday(self) -> dict:
         """13:00 ET — position reviewer, patient disposition."""
@@ -3031,263 +2270,28 @@ class TradingPipeline(
         return result
 
     def _run_earnings_preprocess_body(self) -> dict:
-        """Pre-market earnings analysis — the ONLY place that calls the LLM
-        for 10-Q/10-K filings.
-
-        Scheduled at 08:00-09:15 ET via launchd. Synchronously fetches any
-        new filings, runs the earnings analyst on each, saves the analysis,
-        and confirms the filing so later sessions see it as cached.
-
-        Hot sessions (morning/midday/evening) use `_load_earnings_analyses`
-        which is read-only. That separation guarantees no session burns
-        tokens on fresh LLM work — a filing that drops after preprocess
-        surfaces as a `queued=True` placeholder and PM sizes down.
-        """
-        ctx = RunContext.start("earnings_preprocess")
-        run_id = ctx.run_id
-        logger.info("=== Earnings preprocessing: %s ===", run_id)
-
-        if not self._is_trading_day():
-            logger.info("Earnings preprocess skipped: market closed for non-trading day")
-            return {"status": "market_holiday", "run_id": run_id}
-
-        self._activate_cost_session(run_id, "earnings_preprocess")
-
-        # Drain orphaned protection-restore intents from any prior session
-        # that died mid-finalize. earnings_preprocess (08:00-09:15 ET) is the
-        # first session of the trading day, so if an overnight evening run
-        # left state in `pending_protection_restores`, this is the earliest
-        # opportunity to recover before the 09:30 ET open. Without this call
-        # an unprotected position would ride the open-gap with no stop —
-        # matches the drain pattern used in run_morning / run_position_review
-        # / run_intra_check / run_evening.
-        drained = self._drain_pending_protection_restores()
-        self._drain_pending_repegs()
-        self._reconcile_orphan_pending_submits()  # audit F4
-        # Item 101: this pre-market session runs no stop-out reconcile, but a
-        # naked position it re-protects is a live-risk event the owner should
-        # still hear about — surface the drain count on its own.
-        self._surface_reconcile_outcomes(drained_count=drained, run_id=run_id)
-
-        # Refresh the credentialless SEC Form 4 cache before any paid-analysis
-        # gate. This deterministic source work remains available while the
-        # cost circuit is latched and lets the morning session consume a
-        # bounded local cache instead of crawling EDGAR on the trading path.
-        smart_money_refresh: dict = {"status": "disabled"}
-        if self.config.smart_money.enabled:
-            try:
-                # Watched names are passed so the Form 4 discovery budget
-                # (`max_filings_per_refresh`) is spent on the desk's own
-                # names before the rest of the listed market. Nothing is
-                # filtered out — external candidate nomination still reads
-                # filings on names the desk does not watch.
-                watched = self._watched_research_symbols()
-                try:
-                    smart_money_refresh = self.smart_money_provider.refresh(watched)
-                except TypeError:
-                    smart_money_refresh = self.smart_money_provider.refresh()
-                logger.info(
-                    "Smart-money refresh (%s): %s",
-                    _smart_money_refresh_sources_word(self.config.smart_money.congress_enabled),
-                    smart_money_refresh,
-                )
-                # Backlog depth and watched-name coverage, named in their own
-                # line: `refresh` runs once a day pre-market, so a residue
-                # cannot drain until tomorrow.
-                logger.info(
-                    "Smart-money Form 4 backlog: pending=%s watched_pending=%s "
-                    "cap_reached=%s watched_read_through=%s/%s "
-                    "drain_deadline_hit=%s edgar_coverage=%s",
-                    smart_money_refresh.get("pending_filings"),
-                    smart_money_refresh.get("watched_pending_filings"),
-                    smart_money_refresh.get("discovery_cap_reached"),
-                    smart_money_refresh.get("watched_names_read_through"),
-                    smart_money_refresh.get("watched_names"),
-                    smart_money_refresh.get("watched_drain_deadline_hit"),
-                    smart_money_refresh.get("edgar_coverage"),
-                )
-                # ...and RECORDED where the desk records its status. Until
-                # 2026-09-19 these counts existed only in a log line and the
-                # job's stdout, so no one could ask the database whether the
-                # backlog was draining from one morning to the next.
-                self._record_form4_backlog(run_id, smart_money_refresh)
-                self._record_congressional_refresh(run_id, smart_money_refresh)
-                self._alert_form4_backlog_before_open(smart_money_refresh)
-            except Exception as exc:
-                logger.warning("SEC Form 4 refresh failed softly: %s", exc)
-                smart_money_refresh = {
-                    "status": "provider_error",
-                    "error": type(exc).__name__,
-                }
-
-        try:
-            reports = self.earnings_provider.check_and_fetch(
-                self._earnings_preprocess_symbols(),
-            )
-        except Exception as e:
-            logger.error("Earnings preprocess: fetch failed: %s", e)
-            return {
-                "status": "fetch_error", "run_id": run_id, "error": str(e),
-                "smart_money_refresh": smart_money_refresh,
-            }
-
-        new_reports = [r for r in reports if r.is_new]
-        if not new_reports:
-            logger.info("Earnings preprocess: no new filings, nothing to analyze.")
-            return {
-                "status": "nothing_new", "run_id": run_id, "count": 0,
-                "smart_money_refresh": smart_money_refresh,
-            }
-
-        logger.info(
-            "Earnings preprocess: analyzing %d new filings: %s",
-            len(new_reports),
-            ", ".join(r.symbol for r in new_reports),
-        )
-        # Owner-facing record of WHICH filings this pass handled (2026-09-18:
-        # the message used to say "analyzed: 1 confirmed: 1 failed: 0" and
-        # the owner asked "which one? what's the symbol? what's the
-        # company?"). Report-only — nothing reads this back into a decision.
-        filings_waiting = [
-            {"symbol": r.symbol, "form_type": r.form_type,
-             "filing_date": r.filing_date, "outcome": "waiting"}
-            for r in new_reports
-        ]
-        try:
-            self._require_paid_analysis("earnings_analyst")
-            results = self.earnings_analyst.analyze_reports(new_reports)
-        except PaidAnalysisSuspended as exc:
-            # No filing failure is recorded: the filing remains new and will
-            # be eligible after an operator resets the circuit. Attach the
-            # already-computed `filings_waiting` backlog so the notifier
-            # renders "suspended, N filing(s) waiting" instead of the bare
-            # counts, which read as "nothing happened" for a real backlog.
-            payload = self._paid_suspended_payload(
-                run_id, error=exc, filings_waiting=filings_waiting,
-            )
-            payload["smart_money_refresh"] = smart_money_refresh
-            return payload
-        except Exception as e:
-            logger.error("Earnings preprocess: LLM analysis failed: %s", e, exc_info=True)
-            # Record failures so the retry bounds kick in for each filing.
-            for r in new_reports:
-                try:
-                    self.earnings_provider.record_failure(r)
-                except Exception as re:
-                    logger.error("record_failure failed for %s: %s", r.symbol, re)
-            return {
-                "status": "analysis_error", "run_id": run_id, "error": str(e),
-                "filings": filings_waiting,
-            }
-
-        # Match results to reports by (symbol, form_type, filing_date), not
-        # just symbol. Same-symbol multiple-form-day is rare but real
-        # (10-Q + 10-K can land the same fiscal-year-end day). Symbol-only
-        # matching meant a successful 10-K silently flagged a failed 10-Q
-        # as confirmed and never consumed its retry budget — the failed
-        # filing would then be re-queued every preprocess run forever.
-        def _filing_key(symbol: str, form_type: str | None, filing_date: str | None):
-            return (symbol, form_type, filing_date)
-
-        successful_keys = {
-            _filing_key(res["symbol"], res.get("form_type"), res.get("filing_date"))
-            for res in results
-            if res.get("is_new")
-        }
-        failed_reports = [
-            r for r in new_reports
-            if _filing_key(r.symbol, r.form_type, r.filing_date) not in successful_keys
-        ]
-        for report in failed_reports:
-            try:
-                self.earnings_provider.record_failure(report)
-            except Exception as re:
-                logger.error("record_failure failed for %s: %s", report.symbol, re)
-
-        # Log each LLM call (parity with the inline bg-thread path).
-        analyzed_count = 0
-        for res in results:
-            agent_result = res.get("agent_result")
-            if agent_result is None:
-                continue
-            sym = res.get("symbol", "?")
-            analysis = res.get("analysis") or {}
-            sentiment = (analysis.get("investment_implications") or {}).get("sentiment", "?")
-            try:
-                self.db.insert_agent_log(
-                    **seat_acceptance_kwargs("agent_failure" if not analysis else None),
-                    agent_name="earnings_analyst_preprocess",
-                    run_id=run_id,
-                    input_summary=f"{sym} {res.get('form_type','?')} filed {res.get('filing_date','?')}",
-                    input_message=agent_result.user_message,
-                    output_summary=(
-                        f"sentiment={sentiment}" if res.get("analysis") else "parse_error"
-                    ),
-                    full_response=agent_result.raw_text,
-                    model=agent_result.model,
-                    tokens_used=agent_result.tokens_used,
-                    input_tokens=agent_result.input_tokens,
-                    output_tokens=agent_result.output_tokens,
-                    cost_usd=agent_result.cost_usd,
-                    **agent_log_kwargs(agent_result),
-                )
-            except Exception as e:
-                logger.error("Earnings preprocess: log insert failed for %s: %s", sym, e)
-            analyzed_count += 1
-
-        # Confirm filings. Do this AFTER logging so a crash between the two
-        # leaves the filing still "new" for the next preprocess run.
-        # Match by (symbol, form_type, filing_date) to avoid confirming a
-        # failed 10-Q on the back of a successful same-day 10-K.
-        confirmed = 0
-        for r in new_reports:
-            if _filing_key(r.symbol, r.form_type, r.filing_date) in successful_keys:
-                try:
-                    self.earnings_provider.confirm_filing(r)
-                    confirmed += 1
-                except Exception as e:
-                    logger.warning("confirm_filing failed for %s: %s", r.symbol, e)
-
-        logger.info(
-            "Earnings preprocess complete: %d analyzed, %d confirmed, %d failed",
-            analyzed_count, confirmed, len(failed_reports),
-        )
-        # Per-filing outcome for the owner message: the reader's own
-        # sentiment / conviction / key_thesis where it produced one, and
-        # "failed" where it did not. Same (symbol, form, date) key as the
-        # confirmation logic above, so a same-day 10-Q and 10-K stay apart.
-        verdict_by_key: dict = {}
-        for res in results:
-            analysis = res.get("analysis") or {}
-            impl = analysis.get("investment_implications") or {}
-            if not isinstance(impl, dict):
-                impl = {}
-            verdict_by_key[_filing_key(
-                res.get("symbol"), res.get("form_type"), res.get("filing_date"),
-            )] = {
-                "sentiment": impl.get("sentiment"),
-                "conviction": impl.get("conviction"),
-                "key_thesis": impl.get("key_thesis"),
-            }
-        filings: list[dict] = []
-        for r in new_reports:
-            key = _filing_key(r.symbol, r.form_type, r.filing_date)
-            row = {
-                "symbol": r.symbol, "form_type": r.form_type,
-                "filing_date": r.filing_date,
-                "outcome": "analyzed" if key in successful_keys else "failed",
-            }
-            row.update(verdict_by_key.get(key) or {})
-            filings.append(row)
-        return {
-            "status": "preprocessed",
-            "run_id": run_id,
-            "analyzed": analyzed_count,
-            "confirmed": confirmed,
-            "failed": len(failed_reports),
-            "filings": filings,
-            "smart_money_refresh": smart_money_refresh,
-        }
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/earnings_preprocess_session.py)."""
+        return EarningsPreprocessSession(
+            activate_cost_session=self._collab("_activate_cost_session"),
+            alert_form4_backlog_before_open=self._collab("_alert_form4_backlog_before_open"),
+            drain_pending_protection_restores=self._collab("_drain_pending_protection_restores"),
+            drain_pending_repegs=self._collab("_drain_pending_repegs"),
+            earnings_preprocess_symbols=self._collab("_earnings_preprocess_symbols"),
+            is_trading_day=self._collab("_is_trading_day"),
+            paid_suspended_payload=self._collab("_paid_suspended_payload"),
+            reconcile_orphan_pending_submits=self._collab("_reconcile_orphan_pending_submits"),
+            record_congressional_refresh=self._collab("_record_congressional_refresh"),
+            record_form4_backlog=self._collab("_record_form4_backlog"),
+            require_paid_analysis=self._collab("_require_paid_analysis"),
+            surface_reconcile_outcomes=self._collab("_surface_reconcile_outcomes"),
+            watched_research_symbols=self._collab("_watched_research_symbols"),
+            smart_money_refresh_sources_word=_smart_money_refresh_sources_word,
+            config=self._collab("config"),
+            db=self._collab("db"),
+            earnings_analyst=self._collab("earnings_analyst"),
+            earnings_provider=self._collab("earnings_provider"),
+            smart_money_provider=self._collab("smart_money_provider"),
+        ).run()
 
     def run_evening(self) -> dict:
         """The evening session, plus the durable record of its own output.
@@ -3374,80 +2378,12 @@ class TradingPipeline(
             news_store=self._collab("news_store"),
         ).run()
     def _evening_stop_proximity(self, positions) -> list[dict]:
-        """Held positions whose live stop is less than one ordinary day's
-        move away — the evening report's "close to its stop" line.
-
-        "Close" is read off the instrument, never picked: the yardstick is
-        the symbol's own ATR(14) (`_atr_for_symbol`, the same measure the
-        trailing-stop noise band uses). A position is listed when the gap
-        between the last price and the live broker stop is smaller than one
-        ATR, i.e. a single ordinary session could reach it. No percentage
-        threshold is invented anywhere in this method.
-
-        A symbol whose stop or ATR cannot be read is returned with
-        ``status='unknown'`` rather than dropped: silently omitting it would
-        render as "nothing is near its stop", which is not what was
-        measured. Never raises — any failure degrades to [].
-        """
-        rows: list[dict] = []
-        try:
-            park = (self._sweep_symbol() or "").strip().upper()
-            for p in positions or ():
-                symbol = str(getattr(p, "symbol", "") or "").strip().upper()
-                if not symbol or (park and symbol == park):
-                    continue
-                try:
-                    qty = float(getattr(p, "qty", 0) or 0)
-                    price = float(getattr(p, "current_price", 0) or 0)
-                except (TypeError, ValueError):
-                    continue
-                if qty == 0 or not (math.isfinite(price) and price > 0):
-                    continue
-                try:
-                    stop = self.broker.get_current_stop_price(symbol)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "evening stop-proximity: stop read failed for %s: %s",
-                        symbol, exc,
-                    )
-                    stop = None
-                atr = self._atr_for_symbol(symbol)
-                if stop is None or atr is None or not (stop > 0):
-                    rows.append({"symbol": symbol, "status": "unknown"})
-                    continue
-                # A long is stopped from BELOW, a short from ABOVE. The
-                # distance is the same arithmetic either way.
-                gap = (price - stop) if qty > 0 else (stop - price)
-                if gap < 0:
-                    # PRICE IS THROUGH THE STOP and the broker order is
-                    # still open, so it has not filled. This used to be
-                    # clamped to 0.0 and reported as `status='near'`, which
-                    # merged two different facts into one row: a stop that
-                    # is merely TIGHT (an ordinary session could reach it)
-                    # and a stop that has already been BLOWN THROUGH without
-                    # filling (nothing is standing watch over those shares).
-                    # The second is the state the stop-limit buffer trade-off
-                    # produces on a gap — now only reachable on the stop-limit
-                    # FALLBACK leg, since primary protective stops are
-                    # stop-market and fill when elected — and it now reads as
-                    # itself. The distance is reported as a positive number
-                    # of dollars PAST the trigger, which is a different
-                    # quantity from `gap` and carries a different name.
-                    rows.append({
-                        "symbol": symbol, "status": "through", "price": price,
-                        "stop": float(stop), "through": -gap,
-                        "atr": float(atr),
-                    })
-                    continue
-                if gap < atr:
-                    rows.append({
-                        "symbol": symbol, "status": "near", "price": price,
-                        "stop": float(stop), "gap": gap, "atr": float(atr),
-                    })
-        except Exception as exc:  # noqa: BLE001 — never break the evening push
-            logger.warning("evening stop-proximity sweep failed: %s", exc)
-            return []
-        return rows
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/evening_stop_proximity_session.py)."""
+        return EveningStopProximitySession(
+            atr_for_symbol=self._collab("_atr_for_symbol"),
+            sweep_symbol=self._collab("_sweep_symbol"),
+            broker=self._collab("broker"),
+        ).run(positions)
 
     def _evening_earnings_proximity(self, positions) -> list[dict]:
         """Next-earnings proximity for every held name, for the evening
@@ -3487,60 +2423,10 @@ class TradingPipeline(
         ]
 
     def _expected_sessions_missing_today(self) -> list[str]:
-        """Best-effort internal dead-man's check: on a trading day, which of
-        the market-day sessions that should have run by evening left NO
-        agent_logs rows? Catches a session that silently never fired — the one
-        failure mode push-on-completion observability structurally cannot see
-        (a disabled timer, a stuck lock, ET-window math wrong on a half-day).
-
-        Run from evening, which is already gated on `_is_trading_day`, so this
-        never false-fires on a holiday. Does NOT cover total host death or
-        evening itself not firing — that needs an EXTERNAL dead-man's switch
-        (e.g. a healthchecks.io ping the wrapper hits on success). Best-effort:
-        any failure returns [] so it can never break the evening push.
-        """
-        try:
-            present = self.db.session_prefixes_logged_on()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("missing-session check: agent_logs read failed: %s", exc)
-            return []
-        # run_id prefix -> display name; morning's prefix is 'run'.
-        expected = {"run": "morning", "midday": "midday", "close": "close"}
-        missing = [name for prefix, name in expected.items() if prefix not in present]
-
-        # RC5 (2026-07-16): "any run- row exists" cannot tell a completed
-        # morning from one killed mid-flight — research rows land BEFORE the
-        # kill, so 13 straight days of morning deaths passed this check and
-        # the 🔴 banner never fired. Two sharper probes:
-        if "morning" not in missing and "run" in present:
-            # A legit PM-less completion (no_data, say) records a status
-            # marker — skip both probes for it.
-            try:
-                from src import decision_checkpoint as _dc0
-                legit_early_exit = _dc0.read_status("morning") is not None
-            except Exception:  # noqa: BLE001
-                legit_early_exit = False
-            #  (a) research logged but the PM never ran → died during research.
-            try:
-                agents = self.db.agent_names_logged_on("run-")
-                if (not legit_early_exit and agents
-                        and "portfolio_manager" not in agents):
-                    missing.append("morning (research ran, PM never did — killed mid-run?)")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("missing-session check: agent probe failed: %s", exc)
-            #  (b) PM plan checkpointed but never consumed → killed before the
-            #      RiskStage reviewed it (the observed 6/30-7/15 death mode).
-            try:
-                import json as _json
-                from src import decision_checkpoint as _dc
-                p = _dc.checkpoint_path("morning")
-                if p.exists() and _json.loads(p.read_text()).get("consumed") is False:
-                    missing.append(
-                        "morning (PM plan never risk-reviewed — checkpoint unconsumed)"
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("missing-session check: checkpoint probe failed: %s", exc)
-        return missing
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/expected_sessions_session.py)."""
+        return ExpectedSessionsMissingSession(
+            db=self._collab("db"),
+        ).run()
 
     def _maybe_run_quarterly_meta(self) -> dict | None:
         """Evening-time piggyback for the quarterly meta-reflection loop.
@@ -3586,207 +2472,18 @@ class TradingPipeline(
         evolution_root: str = "data/evolution",
         prompts_dir: str | Path | None = None,
     ) -> dict:
-        """Build the quarterly digest, run the meta-reflector, persist both.
-
-        Cadence: normally this is a NOP unless today is the last trading day
-        of the current quarter (`broker.is_last_trading_day_of_quarter`).
-        Pass `force=True` to override — used by CLI `--mode meta --force`
-        for ad-hoc runs and by tests.
-
-        Output always includes `digest_path` (persisted) and, when the LLM
-        succeeded, `reflection_path`. PR3 intentionally stops here — it
-        does NOT edit any prompt files. PR4 will pick up reflection.json
-        from disk and apply proposed_learnings through prompt_editor.
-        """
-        from src.evolution.quarterly_digest import (
-            build_quarterly_digest,
-            load_previous_digest,
-            persist_digest,
-        )
-        from src.agents.meta_reflector import (
-            load_previous_reflection,
-            persist_reflection,
-        )
-
-        today = period_end or et_today()
-        if not force:
-            try:
-                is_last = self.broker.is_last_trading_day_of_quarter(on_date=today)
-            except Exception as exc:
-                logger.warning(
-                    "meta reflection skipped: quarter-end check failed (%s); "
-                    "pass --force to override", exc,
-                )
-                return {"status": "skipped", "reason": "quarter_end_check_failed"}
-            if not is_last:
-                logger.info(
-                    "meta reflection skipped: %s is not the last trading "
-                    "day of the quarter. Pass --force to run anyway.",
-                    today,
-                )
-                return {"status": "skipped", "reason": "not_quarter_end"}
-
-        logger.info("=== Quarterly meta-reflection: %s ===", today)
-
-        # 1. Build digest — deterministic facts layer.
-        prev_digest = load_previous_digest(today, root_dir=evolution_root)
-        digest = build_quarterly_digest(
-            self.db, self.market,
-            period_end=today, lookback_days=lookback_days,
-            prev_digest=prev_digest,
-            prompts_dir=prompts_dir,
-        )
-        digest_path = persist_digest(digest, root_dir=evolution_root)
-        logger.info(
-            "Quarterly digest built for %s: alpha=%s, total_real_misses=%s, "
-            "total_wrong_buys=%s",
-            digest["period"],
-            (digest.get("period_performance") or {}).get("alpha_vs_spy_pct"),
-            (digest.get("missed_themes") or {}).get("total_real_misses"),
-            (digest.get("loss_patterns") or {}).get("total_wrong_buys"),
-        )
-
-        # Every invocation is a distinct paid session.  The period remains in
-        # the artifacts/result, while a UUID suffix prevents forced reruns of
-        # the same quarter from reusing SQLite counters under the run_id PK.
-        meta_run_id = f"meta-{digest['period']}-{uuid.uuid4().hex[:8]}"
-        self._activate_cost_session(meta_run_id, "meta")
-        try:
-            self._require_paid_analysis("meta_reflector")
-        except PaidAnalysisSuspended as exc:
-            payload = self._paid_suspended_payload(meta_run_id, error=exc)
-            payload.update(
-                period=digest["period"], digest_path=str(digest_path),
-                reflection_path=None, reflection=None,
-            )
-            return payload
-
-        # 2. Meta-reflector LLM — observe-only in PR3 (no prompt edits).
-        # analyze() can raise on provider/network failures after retries. The
-        # digest has already been persisted so we must degrade to the
-        # digest_only path rather than let the exception abort the run
-        # (operators lose the audit / status payload otherwise).
-        prev_reflection = load_previous_reflection(today, root_dir=evolution_root)
-        reflection = None
-        ev_result = None
-        try:
-            reflection, ev_result = self.meta_reflector.analyze(
-                digest=digest, prev_reflection=prev_reflection,
-            )
-        except PaidAnalysisSuspended as exc:
-            payload = self._paid_suspended_payload(meta_run_id, error=exc)
-            payload.update(
-                period=digest["period"], digest_path=str(digest_path),
-                reflection_path=None, reflection=None,
-            )
-            return payload
-        except Exception as exc:
-            logger.error(
-                "meta_reflector.analyze raised; falling back to digest_only: %s",
-                exc, exc_info=True,
-            )
-
-        # Always log the agent's raw output for audit, even on failure.
-        if ev_result is not None:
-            try:
-                self.db.insert_agent_log(
-                    agent_name="meta_reflector",
-                    run_id=meta_run_id,
-                    input_summary=(
-                        f"{digest['period']} · "
-                        f"alpha={(digest.get('period_performance') or {}).get('alpha_vs_spy_pct')}"
-                    ),
-                    input_message=ev_result.user_message,
-                    output_summary=(
-                        reflection.style_self_portrait[:200]
-                        if reflection else "parse_error"
-                    ),
-                    full_response=ev_result.raw_text,
-                    model=ev_result.model,
-                    tokens_used=ev_result.tokens_used,
-                    input_tokens=ev_result.input_tokens,
-                    output_tokens=ev_result.output_tokens,
-                    cost_usd=ev_result.cost_usd,
-                    **agent_log_kwargs(ev_result),
-                )
-            except Exception as exc:
-                logger.warning("meta_reflector agent_log insert failed: %s", exc)
-
-        if reflection is None:
-            logger.error("Meta-reflector returned no valid reflection; "
-                         "digest persisted, reflection missing.")
-            return {
-                "status": "digest_only",
-                "run_id": meta_run_id,
-                "period": digest["period"],
-                "digest_path": str(digest_path),
-                "reflection_path": None,
-                "reflection": None,
-            }
-
-        reflection_path = persist_reflection(reflection, root_dir=evolution_root)
-        logger.info(
-            "Quarterly meta-reflection complete: %s · %d proposed learnings",
-            digest["period"], len(reflection.proposed_learnings),
-        )
-
-        # 3. Prompt editor — only runs when evolution.enabled. When off
-        # (default until a deployment has reviewed a quarter or two of
-        # reflection.json contents by hand), we return without touching any
-        # prompt file. The editor itself short-circuits to a full-rejection
-        # report; we still persist the attempt log for audit continuity.
-        editor_report: dict | None = None
-        try:
-            from src.config import EvolutionConfig
-            evolution_cfg = getattr(self.config, "evolution", None)
-            if evolution_cfg is None:
-                evolution_cfg = EvolutionConfig()
-        except Exception:
-            from src.config import EvolutionConfig
-            evolution_cfg = EvolutionConfig()
-
-        try:
-            from src.evolution.prompt_editor import PromptEditor
-            resolved_prompts_dir = (
-                Path(prompts_dir) if prompts_dir is not None
-                else Path(__file__).resolve().parent.parent / "config" / "prompts"
-            )
-            editor = PromptEditor(
-                config=evolution_cfg,
-                prompts_dir=resolved_prompts_dir,
-                evolution_dir=evolution_root,
-            )
-            result_obj = editor.apply_reflection(reflection)
-            editor_report = result_obj.to_dict()
-            if result_obj.applied:
-                logger.info(
-                    "Prompt editor applied %d learning(s) across %d agent(s); "
-                    "git_commit=%s",
-                    len(result_obj.applied),
-                    result_obj.agents_edited,
-                    result_obj.git_commit,
-                )
-            elif result_obj.rejected:
-                # Most common: evolution.enabled=false (observe-only). Log
-                # at INFO so operators see why nothing was applied.
-                logger.info(
-                    "Prompt editor did not apply any learnings (%d rejected). "
-                    "First reason: %s",
-                    len(result_obj.rejected), result_obj.rejected[0].reason,
-                )
-        except Exception as exc:
-            logger.error("Prompt editor invocation failed: %s", exc, exc_info=True)
-
-        return {
-            "status": "reflected",
-            "run_id": meta_run_id,
-            "period": digest["period"],
-            "digest_path": str(digest_path),
-            "reflection_path": str(reflection_path),
-            "reflection": reflection.model_dump(),
-            "proposed_learnings_count": len(reflection.proposed_learnings),
-            "editor_report": editor_report,
-        }
+        """Thin shim: builds the standalone session and runs it (body moved to src/sessions/quarterly_meta_session.py)."""
+        return QuarterlyMetaReflectionSession(
+            activate_cost_session=self._collab("_activate_cost_session"),
+            paid_suspended_payload=self._collab("_paid_suspended_payload"),
+            require_paid_analysis=self._collab("_require_paid_analysis"),
+            pipeline_file=__file__,
+            broker=self._collab("broker"),
+            config=self._collab("config"),
+            db=self._collab("db"),
+            market=self._collab("market"),
+            meta_reflector=self._collab("meta_reflector"),
+        ).run(force=force, period_end=period_end, lookback_days=lookback_days, evolution_root=evolution_root, prompts_dir=prompts_dir)
 
     def run_daily(self) -> dict:
         """Fetch full portfolio history from Alpaca, build a CSV, and send
