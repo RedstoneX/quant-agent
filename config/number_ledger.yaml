@@ -7312,7 +7312,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_intraday.py
     note: >-
-      No caller in src/, and the docstring (src/pipeline_research_continuity.py:1114-1120)
+      No caller in src/, and the docstring (src/pipeline_intraday.py:520-532)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
   - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(lookback_days)
@@ -7591,7 +7591,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_prompt_facts_review.py
     note: >-
-      Dead default (src/pipeline_research_continuity.py:766-768): every caller in src/ passes
+      Dead default (src/pipeline_prompt_facts_review.py:495-583): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
@@ -7601,7 +7601,7 @@ numbers:
     site: src/pipeline_prompt_facts_review.py
     note: >-
       Maximum exits audited in that post-exit block
-      (src/pipeline_research_continuity.py:889-897). Its only caller passes nothing, so this
+      (src/pipeline_prompt_facts_review.py:495-583). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7631,7 +7631,7 @@ numbers:
     site: src/pipeline_prompt_facts_review.py
     note: >-
       Minimum age of an exit before its after-the-fact move is shown to the
-      position reviewer (src/pipeline_research_continuity.py:889-897). Its only caller passes
+      position reviewer (src/pipeline_prompt_facts_review.py:495-583). Its only caller passes
       nothing, so this default is live. Same class as the smart-money prompt-
       truncation caps classified arbitrary on 2026-09-19: it decides what
       evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7660,7 +7660,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_prompt_facts_review.py
     note: >-
-      Dead default (src/pipeline_research_continuity.py:474-479): every caller in src/ passes
+      Dead default (src/pipeline_prompt_facts_review.py:95-212): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
@@ -7700,7 +7700,7 @@ numbers:
     site: src/pipeline_prompt_facts_review.py
     note: >-
       Window of the PM's recurring-missed-theme memory
-      (src/pipeline_research_continuity.py:979-989). Its only caller passes nothing, so this
+      (src/pipeline_prompt_facts_review.py:585-720). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7747,7 +7747,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_prompt_facts_review.py
     note: >-
-      Dead default (src/pipeline_research_continuity.py:401-406): every caller in src/ passes
+      Dead default (src/pipeline_prompt_facts_review.py:22-93): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
@@ -7787,7 +7787,7 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       News/rating window of the evening thesis-health review of every held
-      position (src/pipeline_research_continuity.py:1203-1217). Its only caller passes nothing, so
+      position (src/prompt_facts/missed_ops_signals.py:379-531). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
       trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7930,7 +7930,7 @@ numbers:
     site: src/pipeline_exits.py
     note: >-
       Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
-      the last 4 calendar days (src/pipeline_research_continuity.py:655-663, caller
+      the last 4 calendar days (src/pipeline_exits.py:551-596, caller
       src/pipeline_intraday.py:1076 passes nothing). The docstring's reason is a
       forensic observation, not a measured cooldown length. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive the 4 calendar days from the ratified swing mandate. FAILED -- the mandate names no number, by design. Attempt (2): derive it from the reviewer's >=1.02x min-bump rule, i.e. the sessions needed for 2% of range to accumulate. FAILED -- that rule bounds the SIZE of one tighten and says nothing about spacing, and the 1.02 is itself unsourced. The measurement below is the route. Value unchanged.
     open_question: >-

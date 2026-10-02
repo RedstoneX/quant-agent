@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.pipeline_risk_budget_recording import _record_realised_concentration
+from src.rotation_dispositions import apply_rotation_recording_dispositions
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     FAULT_NO_PRICE,
     FAULT_STALE_PRICE,
@@ -23,7 +24,6 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     STARTER_POSITION_RISK_PCT,
     _account_for_pm_candidates,
     _alert_unmeasurable_symbols,
-    _apply_rotation_execution,
     _book_risk_inputs,
     _dropped_since_proposal,
     _entry_deployment_budget,
@@ -664,7 +664,7 @@ class DecisionStage:
         # session where it surfaced nothing and the acting path returns
         # silently. See `_record_rotation_precheck`.
         _record_rotation_precheck(pipeline, ctx)
-        _apply_rotation_execution(
+        apply_rotation_recording_dispositions(
             pipeline, ctx, portfolio_decision, positions, position_history,
         )
         _record_seat_stances(

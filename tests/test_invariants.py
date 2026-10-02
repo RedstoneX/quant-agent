@@ -25,6 +25,7 @@ from src.risk.rules import RiskRuleEngine
 from src.storage.db import Database
 from src.trading_calendar import ET, UTC
 from tests.session_clock import todays_session_stamp
+from tests.pipeline_factory import build_pipeline
 
 
 def _risk_config() -> RiskConfig:
@@ -58,8 +59,7 @@ def test_invariant_orders_cannot_breach_position_cap():
 def test_invariant_hard_risk_stage_drops_breaching_buy():
     """Full-stack: even if PM emits a breaching BUY, the stage strips it."""
     engine = RiskRuleEngine(_risk_config())
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = engine
+    pipeline = build_pipeline(risk_engine=engine)
     pipeline.config = MagicMock()
     pipeline.config.trading.universe = ["NVDA"]
 
@@ -97,8 +97,7 @@ def test_invariant_hard_risk_gate_unaffected_by_garbage_llm_config():
     `config.llm`/`config.provider` ANYWHERE, this would raise AttributeError
     instead of gating correctly."""
     engine = RiskRuleEngine(_risk_config())
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = engine
+    pipeline = build_pipeline(risk_engine=engine)
     pipeline.config = MagicMock()
     pipeline.config.trading.universe = ["NVDA"]
     # Deliberately not a MagicMock — any attribute access raises immediately,
@@ -209,8 +208,7 @@ def test_invariant_risk_rule_engine_never_reads_llm_or_provider_config():
     "run_earnings_preprocess", "run_intra_check",
 ])
 def test_invariant_non_trading_day_blocks_every_entry_point(method_name, tmp_path):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = Database(str(tmp_path / "t.db"))
+    pipeline = build_pipeline(db=Database(str(tmp_path / "t.db")))
     pipeline.db.initialize()
     pipeline.broker = MagicMock()
     pipeline.broker.is_trading_day.return_value = False  # market closed
@@ -282,18 +280,18 @@ def test_invariant_unfilled_buys_are_invisible_to_pm_memory(tmp_path):
     db.initialize()
 
     # Legacy — NULL fill_status, treated as filled for back-compat.
-    db.insert_trade("NVDA", "BUY", 10, 100.0, "legacy", "r1")
+    db.insert_trade("NVDA", "BUY", 10, 100.0, "legacy", "r1", stop_loss=90.0)
     # Submitted-only, never filled — MUST NOT count as a current buy.
     db.insert_trade("NVDA", "BUY", 20, 105.0, "submitted", "r2",
-                    broker_order_id="ord-submit", fill_status="submitted")
+                    broker_order_id="ord-submit", fill_status="submitted", stop_loss=90.0)
     # Fully canceled with zero partial fill — invisible.
     db.insert_trade("NVDA", "BUY", 15, 103.0, "canceled", "r3",
-                    broker_order_id="ord-cancel", fill_status="submitted")
+                    broker_order_id="ord-cancel", fill_status="submitted", stop_loss=90.0)
     db.update_trade_fill("ord-cancel", fill_status="canceled",
                          fill_qty=0.0, fill_price=0.0)
     # Rejected — invisible.
     db.insert_trade("NVDA", "BUY", 12, 104.0, "rejected", "r4",
-                    broker_order_id="ord-reject", fill_status="submitted")
+                    broker_order_id="ord-reject", fill_status="submitted", stop_loss=90.0)
     db.update_trade_fill("ord-reject", fill_status="rejected",
                          fill_qty=0.0, fill_price=0.0)
 
@@ -312,7 +310,7 @@ def test_invariant_partial_fill_on_canceled_order_preserved(tmp_path):
     db.initialize()
 
     db.insert_trade("AAPL", "BUY", 10, 180.0, "partial", "r1",
-                    broker_order_id="ord-part", fill_status="submitted")
+                    broker_order_id="ord-part", fill_status="submitted", stop_loss=90.0)
     db.update_trade_fill(broker_order_id="ord-part", fill_status="canceled",
                          fill_qty=3.0, fill_price=180.5)
 
@@ -332,7 +330,7 @@ def test_invariant_calibration_excludes_unfilled_orders(tmp_path):
                                           ("JPM", 180.0, 195.0, (7, 2)),
                                           ("MSFT", 300.0, 310.0, (12, 3))):
         db.insert_trade(sym, "BUY", 10, entry, "x", "r1",
-                        broker_order_id=f"buy-{sym}", fill_status="filled")
+                        broker_order_id=f"buy-{sym}", fill_status="filled", stop_loss=90.0)
         db.conn.execute(
             "UPDATE trades SET timestamp = datetime('now', ?) "
             "WHERE broker_order_id=?",
@@ -349,7 +347,7 @@ def test_invariant_calibration_excludes_unfilled_orders(tmp_path):
 
     # Poisoning pair — rejected order that should NOT pollute calibration.
     db.insert_trade("TSLA", "BUY", 10, 250.0, "x", "r1",
-                    broker_order_id="buy-bad", fill_status="submitted")
+                    broker_order_id="buy-bad", fill_status="submitted", stop_loss=90.0)
     db.update_trade_fill("buy-bad", fill_status="rejected",
                          fill_qty=0.0, fill_price=0.0)
     db.insert_trade("TSLA", "SELL", 10, 200.0, "x", "r2",
@@ -377,7 +375,7 @@ def test_invariant_utc_midnight_boundary_attributes_to_et_trading_day(tmp_path):
     # Insert a trade at 03:00 UTC on 2026-04-18 (= 23:00 ET on 2026-04-17).
     # Manually set the timestamp so we're not at the mercy of wall clock.
     db.insert_trade("NVDA", "BUY", 10, 100.0, "boundary", "r1",
-                    broker_order_id="ord-boundary", fill_status="filled")
+                    broker_order_id="ord-boundary", fill_status="filled", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = '2026-04-18 03:00:00' "
         "WHERE broker_order_id = 'ord-boundary'",
@@ -472,7 +470,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     from types import SimpleNamespace
     from src.config import IntradayScanConfig
 
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline(news_provider=MagicMock(), news_analyst=MagicMock(), earnings_provider=MagicMock(), earnings_analyst=MagicMock(), broker=MagicMock(), db=MagicMock(), market=MagicMock(), macro_store=MagicMock(), news_store=MagicMock(), tech_store=MagicMock(), tech_analyst=MagicMock(), decision_stage=MagicMock(), risk_stage=MagicMock(), execution_stage=MagicMock())
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
         storage=SimpleNamespace(
@@ -480,7 +478,6 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         ),
         intraday_scan=IntradayScanConfig(enabled=True),
     )
-    p.broker = MagicMock()
     p.broker.get_intraday_snapshots.return_value = {
         # `last_trade_at`/`session_bar_at` are board item 120: a payload
         # with no timestamps is correctly not-today and buys no paid
@@ -488,15 +485,11 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         "AAPL": {"last_price": 110.0, "prev_close": 100.0,
                  "last_trade_at": todays_session_stamp()},
     }
-    p.db = MagicMock()
     p.db.get_trades.return_value = []
-    p.market = MagicMock()
     p.market.get_ohlcv.return_value = [MagicMock()]
-    p.macro_store = MagicMock()
     from tests.test_intraday_scan import _todays_macro_state
     from src.trading_calendar import et_today
     p.macro_store.load_last_state.return_value = _todays_macro_state()
-    p.news_store = MagicMock()
     from src.models import MacroNarrative, NewsIntelligenceReport
     p.news_store.load_daily_report.return_value = NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
@@ -507,10 +500,8 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         pm_briefing="test", market_sentiment="bullish",
         confidence="medium",
     ).model_dump()
-    p.tech_store = MagicMock()
     p.tech_store.load.return_value = {}
     p.tech_store.compute_ages.return_value = {}
-    p.tech_analyst = MagicMock()
 
     from src.models import TechAnalysisResult, TechReasoningChain
     analysis = TechAnalysisResult(
@@ -530,17 +521,14 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
         MagicMock(user_message="m", raw_text="{}", tokens_used=1,
                   input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
     )
-    p.decision_stage = MagicMock()
     p.decision_stage.run.side_effect = lambda ctx: setattr(
         ctx, "portfolio_decision",
         SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
     )
-    p.risk_stage = MagicMock()
     # Deterministic gate blocks everything — RiskStage's existing early-exit.
     p.risk_stage.run.return_value = {
         "status": "hard_risk_block", "orders": [], "reason": "cash_only",
     }
-    p.execution_stage = MagicMock()
 
     ctx = RunContext.start("intra_check")
     with patch("src.pipeline_intraday.compute_indicators", return_value=MagicMock()):

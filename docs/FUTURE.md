@@ -202,15 +202,13 @@ typed symbol or a mistyped decimal is a real money error.
 ### What it can do
 
 On a held position: close all or a slice; trim or add; set, move or remove
-the protective stop; mark the position HANDS OFF so the desk stops managing
-it; record "I did this at the broker myself" and reconcile.
+the protective stop; record "I did this at the broker myself" and reconcile.
 
 New exposure: buy or short, market or limit, sized by dollars or by risk
 rather than share count, with a protective stop REQUIRED exactly as the
 desk's own entries now require one.
 
-Desk-wide: pause and resume trading without shutting the service down; a
-never-touch list of symbols; cancel any order resting at the broker; and
+Desk-wide: pause and resume trading without shutting the service down; cancel any order resting at the broker; and
 flatten everything, behind a second confirm.
 
 ### Deliberately excluded
@@ -221,20 +219,26 @@ resting take-profit would also give one position two owners: the desk reads
 live orders to judge protection, and a limit sell it did not place can
 half-fill and leave it sizing off a quantity that is no longer true. The
 same intention is served by "close a slice now", which leaves nothing
-resting. An owner who wants a standing target marks the position HANDS OFF
-instead -- one owner at a time, never two.
+resting. The desk keeps managing every position it holds, so an owner
+instruction is something the desk executes, never a standing second owner.
 
-### Two rules with reach beyond the panel
+### Rule with reach beyond the panel
 
-1. A stop the owner sets is HONOURED. No trailing, ratchet or re-protection
-   path may move it back. This is a rule, not a preference.
-2. HANDS OFF means hands off everywhere -- exits, sizing, rotation and the
-   coverage sweep all skip the position, while still reporting it.
+A stop the owner sets is HONOURED. No trailing, ratchet or re-protection
+path may move it back. This is a rule, not a preference.
+
+### Dropped by the owner, 2026-10-02: per-position HANDS OFF and the never-touch list
+
+"Everything goes through the desk. The system manages everything." There is
+no list of names the desk will not touch and no position it is told to leave
+alone. An owner action is an instruction the desk carries out and keeps
+managing the result of, recorded as his decision, never an exemption from
+desk management. Of the flag-only actions only pause/resume remains.
 
 ### Build order
 
 Safe plumbing first, money last: the record and the single door, then the
-flag-only actions (pause, never-touch, hands off), then the actions on an
+flag-only actions (pause), then the actions on an
 existing position, and only then new exposure. Each instalment proves the
 plumbing before the next one can lose anything.
 
