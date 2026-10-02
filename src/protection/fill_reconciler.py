@@ -8,6 +8,7 @@ and calls it, so every existing caller and patch target is unchanged.
 """
 
 import logging
+from src.sentinel.reconciliation import record_reconciliation
 from src.storage.db import Database
 from src.pipeline_context import RunContext
 import math
@@ -294,7 +295,6 @@ class FillReconciler:
             return 0
         if not rows:
             return 0
-
         resolved = 0
         # Generous lookback — Alpaca submitted_at vs our insert timestamp
         # plus any clock skew. A day covers every realistic crash-restart.
@@ -368,7 +368,7 @@ class FillReconciler:
                 )
         if resolved:
             logger.info("orphan-sweep: resolved %d pending_submit row(s)", resolved)
-        return resolved
+        return record_reconciliation(db=self.db, kind="orphan_submits", result=resolved)
 
     @staticmethod
     def _parse_broker_fill_timestamp(filled_at: str | None) -> str | None:
@@ -678,7 +678,7 @@ class FillReconciler:
                 "symbol": symbol, "ledger_qty": ledger_open,
                 "broker_qty": held, "matched": True, "recorded": recorded,
             })
-        return results
+        return record_reconciliation(db=self.db, kind="stop_out_fills", result=results, run_id=run_id)
 
     def _surface_reconcile_outcomes(
         self,
