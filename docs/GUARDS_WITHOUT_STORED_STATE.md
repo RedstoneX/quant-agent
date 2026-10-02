@@ -67,7 +67,7 @@ refuses.
 | ~~`tests/import_cycle_baseline.json`~~ | DONE — deleted with `--shrink-baseline`/`--seed-baseline` and `test_baseline_only_shrinks`; `scripts/import_graph.py --check` now builds the graph from the working tree and again from `origin/main` via `scripts/guard_reference.py` and fails on any cycle edge (importer, imported) that is new — an edge identity, never a count |
 | `tests/import_layers.json` | `scripts/import_graph` — **STAYS**: hand-written layering policy (rule names, `why` prose, a deliberate allowlist), not a cached measurement |
 | ~~`tests/pipeline_new_baseline.json`~~ | DONE — deleted; `scripts/pipeline_new_guard.py` now names each `TradingPipeline.__new__` site in the working tree and on `origin/main` at check time and fails on any new site identity |
-| `tests/silent_swallow_baseline.json` | `test_silent_swallow_guard`, `scripts/silent_swallow_guard` |
+| ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now names each silent-swallow site in the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on any new site identity (never on a total, so a swap of one offender for another still fails) |
 
 The remaining ones are also read by `tests/test_baseline_merge_driver.py` and
 `scripts/resolve_baseline_conflict.py` — both exist ONLY to manage collisions
