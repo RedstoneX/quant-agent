@@ -930,6 +930,26 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
     )
     for site_id in ceilings:
         entry = ledger[site_id]
+        # A ceiling that is a MIRROR of another ceiling owes nothing of its
+        # own: it has no settlement route because a `derived` row may not
+        # carry one (the validator rejects `settles_by` on any non-arbitrary
+        # status), and it cannot drift away from what it mirrors because
+        # `base-drift` fails the build the moment the base moves without it.
+        # What this test is protecting -- that the recording is still owed by
+        # somebody and the owner is still not being asked -- is therefore
+        # checked on the BASE instead, which must itself be one of these
+        # ceilings. Added 2026-10-02 when
+        # `ConstructorConfig.max_sector_hard_pct` was recorded as the mirror
+        # of `RiskConfig.SECTOR_HARD_CEILING_MAX` that src/pipeline.py:363
+        # makes it; the base kept its recording and its withdrawn question.
+        if entry.get("status") == "derived":
+            base_id = entry.get("derived_from")
+            assert base_id in ceilings, (
+                f"{site_id} is a book-wide ceiling recorded as derived from "
+                f"{base_id!r}, which is not itself one of these ceilings, so "
+                "the recording this test guards would be owed by nobody."
+            )
+            continue
         assert settlement_route_problem(entry) is None, (
             f"{site_id} is a book-wide ceiling with no actionable recording: "
             f"{settlement_route_problem(entry)}"

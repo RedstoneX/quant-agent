@@ -152,15 +152,26 @@ __all__ = [
 #: on an eleven-name book. The money cost of a replace is zero (the ledger
 #: entry establishes this); the naked-window cost is not.
 #:
-#: That rejection is CONTINGENT, and the contingency is recorded so nobody
-#: re-derives it. Open PR 806 (`fix/atomic-stop-amend`) adds
-#: `_amend_resting_stop_price` to `src/execution/broker.py`, making a price
-#: amend atomic with no unprotected instant. It is NOT on main (verified
-#: 2026-09-30), which is why this constant is unchanged. If it lands, the
-#: only cost defending this gate is gone and the honest floor becomes one
+#: That rejection was CONTINGENT, the contingency was recorded so nobody
+#: re-derived it, AND THE CONTINGENCY HAS NOW BEEN MET. This comment said
+#: until 2026-10-02 that `_amend_resting_stop_price` was "NOT on main
+#: (verified 2026-09-30)", which is no longer true: it is defined at
+#: `src/execution/broker.py:1467`, constructed into the stop placer at
+#: `src/execution/broker_parts/stop_place.py:186` and `:209`, and
+#: `replace_stop_loss` PREFERS it -- `stop_place.py:1030-1062` amends the
+#: resting stop's price in place and falls back to cancel+resubmit only when
+#: the pre-amend position re-read fails or the order is not amendable, with
+#: that fallback's naked window timed and recorded
+#: (`src/execution/broker_parts/stop_window.py:53`). The measured cost that
+#: was the ONLY defence of this gate therefore no longer applies on the
+#: preferred path, and by the derivation above the honest floor is now one
 #: venue tick (SEC Rule 612 / Alpaca's $0.01-at-or-above-$1, $0.0001-below
 #: split, already carried by `_quantize_price` and `_prices_match`) -- a
-#: reading off the instrument instead of a picked percentage. See the
+#: reading off the instrument instead of a picked percentage.
+#: THE VALUE IS UNCHANGED HERE ON PURPOSE: lowering this floor admits stop
+#: tightenings the desk currently refuses, and a tightened protective stop
+#: does not move back, so the one-way change is reported to the owner rather
+#: than taken by the pass that found it. See the
 #: `src.risk.trailing.MIN_RATCHET_PCT` entry in `config/number_ledger.yaml`.
 #:
 #: What the same pass DID settle is the redundancy question the ledger left
