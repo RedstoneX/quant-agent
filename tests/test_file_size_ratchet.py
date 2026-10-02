@@ -66,3 +66,29 @@ def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
         file_size_guard.violations()
     assert "origin/main" in str(exc.value)
     assert file_size_guard.main() == 2
+
+
+def test_added_sites_compares_identities_never_totals():
+    """The shared comparison every scanning guard uses: -1 old +1 new must fail."""
+    before = {("f.py", "a"): 1, ("f.py", "b"): 1}
+    assert guard_reference.added_sites({("f.py", "a"): 1, ("f.py", "c"): 1}, before) == [
+        (("f.py", "c"), 1, 0)
+    ]
+    assert guard_reference.added_sites({("f.py", "a"): 1}, before) == []  # removal only
+    assert guard_reference.added_sites({("f.py", "a"): 2}, before) == [(("f.py", "a"), 2, 1)]
+    assert guard_reference.added_sites([("g.py", "x")], []) == [(("g.py", "x"), 1, 0)]
+
+
+def test_the_file_size_guard_is_already_per_file_identity():
+    """Lines per file is numeric by nature; its identity is the path, and a shrink
+    in one file never offsets growth in another."""
+    sizes = {"a.py": 500, "b.py": 500}
+    monkeypatch_now = {"a.py": 400, "b.py": 501}
+    import scripts.file_size_guard as g
+    orig_w, orig_t = g.working_sizes, g.trunk_sizes
+    g.working_sizes, g.trunk_sizes = (lambda: monkeypatch_now), (lambda paths: sizes)
+    try:
+        bad = g.violations()
+    finally:
+        g.working_sizes, g.trunk_sizes = orig_w, orig_t
+    assert len(bad) == 1 and bad[0].startswith("b.py: grew from 500 to 501"), bad

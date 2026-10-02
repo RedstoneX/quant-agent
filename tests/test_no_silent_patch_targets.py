@@ -25,19 +25,21 @@ from scripts.guard_reference import (
     ROOT,
     TRUNK,
     ReferenceUnavailable,
+    added_sites,
     trunk_blobs,
     trunk_paths,
 )
 
 
-def _leaks_of(report: dict) -> dict[str, set[str]]:
-    """``"<module>.<name>" -> {modules whose function-local import bypasses it}``."""
-    leaks: dict[str, set[str]] = {}
-    for finding in report["findings"]:
-        for leak in finding["leaks_to"]:
-            key = f"{finding['module']}.{finding['name']}"
-            leaks.setdefault(key, set()).add(leak.split(":")[0])
-    return leaks
+def _leaks_of(report: dict) -> set[tuple[str, str]]:
+    """Identity of every unreachable call site: ``("<module>.<name>", <module whose
+    own binding or function-local import bypasses the patch>)``. Line numbers
+    are dropped so the identity survives line shifts."""
+    return {
+        (f"{finding['module']}.{finding['name']}", leak.split(":")[0])
+        for finding in report["findings"]
+        for leak in finding["leaks_to"]
+    }
 
 
 def _working_report() -> dict:
@@ -95,10 +97,11 @@ def test_patch_target_census_is_nonempty():
 
 def test_unreachable_call_sites_do_not_grow():
     """Report only what THIS change made worse against ``origin/main``."""
-    here = _leaks_of(_working_report())
-    there = _leaks_of(_trunk_report())
-    new = {k: sorted(v - there.get(k, set())) for k, v in here.items()}
-    new = {k: v for k, v in new.items() if v}
+    # Identity comparison, never a total: a change that removes one leak and
+    # adds a different one must still fail (scripts/guard_reference.py).
+    new = [f"{key} -> {leak}" for (key, leak), _, _ in added_sites(
+        _leaks_of(_working_report()), _leaks_of(_trunk_report())
+    )]
     assert not new, (
         f"this change adds unreachable call sites that are not on {TRUNK}: {new!r}"
         " -- a patch of that name cannot reach those call sites, so the real code"

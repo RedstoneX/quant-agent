@@ -93,6 +93,7 @@ def capture(
     urls=(),
     path: Path | str = DEFAULT_RECORDING,
     api_key: str | None = None,
+    merge: bool = False,
 ) -> dict:
     """Fetch FRED series and feed URLs ONCE and write them to disk. Online by design.
 
@@ -136,17 +137,28 @@ def capture(
             except Exception as exc:  # noqa: BLE001
                 fred_info[series_id] = _failure(exc)
 
-    from src.data.news import USER_AGENT
+    from src.data.news import SEC_USER_AGENT, USER_AGENT, _is_sec_gov
 
     for url in sorted({str(u).strip() for u in urls if str(u).strip()}):
         key = url_key(url)
         try:
-            request = Request(url, headers={"User-Agent": USER_AGENT})
+            # sec.gov refuses the generic agent with 403; the repo's own SEC
+            # agent is what the live fetch paths send.
+            agent = SEC_USER_AGENT if _is_sec_gov(url) else USER_AGENT
+            request = Request(url, headers={"User-Agent": agent})
             with urlopen(request, timeout=20) as response:  # noqa: S310 — operator command
                 body = response.read()
             http[key] = {"ok": True, "body_b64": base64.b64encode(body).decode("ascii")}
         except Exception as exc:  # noqa: BLE001 — the failure IS the recording
             http[key] = _failure(exc)
+
+    if merge:
+        # Add to what is already recorded instead of rewriting it: re-fetching
+        # the eleven feeds and 15 series live would replace evidence, not add.
+        held = load(path) or {}
+        fred_series = {**(held.get("fred_series") or {}), **fred_series}
+        fred_info = {**(held.get("fred_series_info") or {}), **fred_info}
+        http = {**(held.get("http") or {}), **http}
 
     recording = {
         "captured_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
@@ -309,9 +321,13 @@ def _main() -> int:
     parser.add_argument("--series", nargs="*", default=[], help="FRED series ids")
     parser.add_argument("--url", nargs="*", default=[], help="feed URLs")
     parser.add_argument("--out", default=str(DEFAULT_RECORDING))
+    parser.add_argument(
+        "--merge", action="store_true",
+        help="keep what the recording already holds and add the given series/urls",
+    )
     args = parser.parse_args()
-    urls = list(args.url) or _default_urls()
-    result = capture(args.series, urls, args.out)
+    urls = list(args.url) or ([] if args.merge else _default_urls())
+    result = capture(args.series, urls, args.out, merge=args.merge)
     ok_series = sum(1 for v in result["fred_series"].values() if v.get("ok"))
     ok_urls = sum(1 for v in result["http"].values() if v.get("ok"))
     print(
