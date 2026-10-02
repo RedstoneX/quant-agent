@@ -395,7 +395,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         read the paragraph above first. The number you would need is a
         decision nobody has made yet.
         """
-        from src.execution.broker import _get_sector
+        from src.sector_reference import _get_sector
         from src.portfolio_constructor import ConstructorConfig
         from src.risk.constants import risk_budget_allocation_pct
         from src.risk.rules import book_exposure, sector_side_gross
@@ -715,7 +715,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
             # Sector stance
             sector = ""
             try:
-                from src.execution.broker import _get_sector
+                from src.sector_reference import _get_sector
                 sector = _get_sector(sym) or ""
             except Exception:
                 sector = ""
@@ -1024,7 +1024,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
 
             sector_stance = "unknown"
             try:
-                from src.execution.broker import _get_sector
+                from src.sector_reference import _get_sector
                 sector = _get_sector(sym) or ""
             except Exception:
                 sector = ""
@@ -1498,7 +1498,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         stay for qualitative continuity.
         """
         import statistics
-        from src.execution.broker import _get_sector as _sector_of
+        from src.sector_reference import _get_sector as _sector_of
 
         f = PMFacts()
 

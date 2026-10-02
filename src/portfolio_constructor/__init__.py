@@ -1548,7 +1548,7 @@ class PortfolioConstructor(_StopMixin, _OrderBuildMixin):
             _gross_multiplier, decision_side, sector_allowance_pct,
             sector_size_scale,
         )
-        from src.execution.broker import _get_sector
+        from src.sector_reference import _get_sector
 
         sector = _get_sector(symbol)
         if not sector or sector == "Unknown":
@@ -1657,7 +1657,7 @@ class PortfolioConstructor(_StopMixin, _OrderBuildMixin):
         in `pending_sector_investment`, for the identical reason.
         """
         from src.risk.rules import _gross_multiplier, decision_side
-        from src.execution.broker import _get_sector
+        from src.sector_reference import _get_sector
         if decision.action not in ("BUY", "SHORT"):
             return
         sector = _get_sector(decision.symbol)
