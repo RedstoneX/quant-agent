@@ -42,6 +42,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.api.diary_pages import ensure_diary_dir
 from src.api.routes_evidence import router as evidence_router
+from src.api.routes_chopping_block import router as chopping_block_router
 from src.api.routes_history import router as history_router
 from src.api.routes_journal import router as journal_router
 from src.api.routes_live import router as live_router
@@ -253,6 +254,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(_GetOnlyMiddleware)
     app.include_router(live_router, tags=["live"])
+    app.include_router(chopping_block_router, tags=["chopping-block"])
     app.include_router(history_router, tags=["history"])
     app.include_router(evidence_router, tags=["evidence"])
     app.include_router(journal_router, tags=["journal"])

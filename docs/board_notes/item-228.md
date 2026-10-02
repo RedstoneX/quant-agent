@@ -1,0 +1,7 @@
+## item 228
+
+The chopping-block heads-up. OWNER RULING 2026-10-02 (verbatim): "I think the rule should win. Otherwise, things become inconsistent. But will I be able to know every day looking at the chart or some indicator that it's going on the chopping block soon? That should be for all stuff. A heads up would be nice. Uh, nothing more than that, because I still want to keep the rule of autonomy. For the desk."
+
+`src/api/routes_chopping_block.py` serves `GET /chopping-block` and the dashboard panel of the same name. It reads the durable `rotation`/`precheck` rows (every session, every held name examined) and the `rotation`/`dispositions` row from item 219's PR 1108 when it exists. It is visibility only: read-only, nothing in the trading path imports it, and a sale is never delayed or vetoed by it.
+
+Shape decisions. Standing is categorical (clears the desk's entry bar, or below it) because that is all the desk records; direction is "since when, and what it was before", derived from the recorded passes, so no warning threshold, danger band or day-count exists. LIMIT, stated on the panel: how far above the bar a healthy name sits is not recorded, so closeness is visible only at the crossing. Closing that needs a pipeline write of per-rule margins and is the first open DONE WHEN box. UNOBSERVED: the desk is OFF, so no live session has fed the panel; it is proven by tests/test_chopping_block_headsup.py only.
