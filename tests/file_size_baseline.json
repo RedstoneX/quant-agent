@@ -90,7 +90,7 @@
   "src/pipeline_entry_orders.py": 1145,
   "src/pipeline_exits.py": 2454,
   "src/pipeline_intraday.py": 1310,
-  "src/pipeline_prompt_facts.py": 2183,
+  "src/pipeline_prompt_facts.py": 1899,
   "src/pipeline_prompt_facts_review.py": 1309,
   "src/pipeline_protection.py": 2420,
   "src/pipeline_research_continuity.py": 1377,
