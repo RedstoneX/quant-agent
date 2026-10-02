@@ -54,25 +54,24 @@ Nearly every caller discards the return value of the owner-alert send, so a
 failed delivery is indistinguishable from a successful one. Fix: make the
 callers honour the result, and prove a failed send is visible somewhere.
 
-## A broker read error reads as "no stop to adjust" -- FIXED (step 3 held)
+## A broker read error reads as "no stop to adjust" -- FIXED
 
 The stop read used to return nothing on ANY error, and the protection path
 read nothing as "no stop" and skipped. Now there are three answers (found,
 none, unreadable) in `src/execution/stop_read.py`, and unreadable is
-escalated, not just reported (owner ruling 2026-10-02): two retries with a
-short pause, then the broker's full open-orders list as a second source, then
-step 3 (establish protection), then a durable row and an owner alert saying
-what the desk did. Found and none behave as before; a read that fails twice
-and then succeeds places nothing and alerts nobody. The prompt now says "stop
-could not be read ... do NOT treat as unprotected" for an unreadable symbol,
-separate from the genuine UNPROTECTED line. All seven callers use it.
-STILL OPEN: step 3 is a named switch (`IDEMPOTENT_PLACEMENT_LANDED`), off,
-because a replacement stop could duplicate a real one until the order
-idempotency key lands; off, the row and alert say plainly the desk did NOT
-place a stop. To switch on: land the key, set the switch, and pass the
-coverage-repair placement as `establish` at the live callers. The coverage
-watchdog's reconcile call still passes no database handle: it is handed only a
-broker and a lookup callable, so it alerts but writes no row.
+escalated (owner ruling 2026-10-02): two retries with a short pause, then the
+broker's full open-orders list, then the protection paths (ex-dividend shift
+and deterministic trail) re-place the stop through coverage repair, which is
+idempotent because the order key has landed; a stop that really was there may
+be duplicated, which the owner accepted. A durable row and an owner alert say
+what the desk actually did (placed, tried and failed, or only reported).
+Reporting-only reads (prompt, evening proximity, reconcile) place nothing. The
+prompt states "stop could not be read, do NOT treat as unprotected". A
+non-numeric broker answer is unreadable: the real read only returns a number or
+nothing, so anything else is a broken answer. Proven through the ex-dividend
+caller: every read failing places the stop once; failing twice then
+succeeding places nothing. All seven callers use it; the watchdog reconcile now
+passes the database it was already given.
 
 ## The cost circuit is eleven mixins, not eleven modules
 

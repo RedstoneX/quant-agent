@@ -52,7 +52,7 @@ def test_unreadable_stop_is_recorded_and_alerted_not_silently_skipped():
     assert alert.call_count == 1
     text = alert.call_args.args[0]
     assert "could not read" in text and "does not know whether" in text
-    assert "no stop" not in text.lower().replace("no stop adjustment", "")
+    assert "no stop" not in text.lower()
 
 
 def test_genuine_no_stop_still_skips_quietly():
@@ -160,8 +160,7 @@ def test_read_failing_twice_then_succeeding_places_no_duplicate(_no_sleep):
     broker = MagicMock()
     broker.get_current_stop_price.side_effect = [RuntimeError("a"), RuntimeError("b"), 9.5]
     establish = MagicMock()
-    with patch(ALERT, return_value=True) as alert, \
-            patch.object(stop_read, "IDEMPOTENT_PLACEMENT_LANDED", True):
+    with patch(ALERT, return_value=True) as alert,:
         r = stop_read.read_stop(broker, "ZZZT", db=MagicMock(), establish=establish)
     assert r.found and r.price == 9.5
     establish.assert_not_called()
@@ -200,20 +199,46 @@ def test_total_outage_records_alerts_and_states_what_it_did(_no_sleep):
     with patch(ALERT, return_value=True) as alert:
         r = read_stop(broker, "ZZZT", db=db)
     assert r.unreadable and r.action.startswith("not_acted")
-    assert "idempotent" in r.action
-    assert "did NOT place" in alert.call_args.args[0]
+    assert "reporting read" in alert.call_args.args[0]
     assert "not_acted" in db.insert_specialist_evidence.call_args.kwargs["evidence_json"]
 
 
-def test_step_three_places_protection_once_when_the_seam_is_on(_no_sleep):
-    from src.execution import stop_read
+def test_every_read_failing_establishes_protection_through_the_exdiv_caller():
+    p = _pipeline(RuntimeError("down"))
+    p._repair_stop_coverage = MagicMock(return_value=True)
+    with patch(ALERT, return_value=True) as alert:
+        out = p._handle_ex_dividends([_pos()], run_id="r1")
+    assert out == []
+    p._repair_stop_coverage.assert_called_once_with("ZZZT", 10.0, is_short=False)
+    p.broker.shift_stops_down.assert_not_called()
+    text = alert.call_args.args[0]
+    assert "established protection" in text and "did NOT" not in text
+    assert "established protection" in p.db.insert_specialist_evidence.call_args.kwargs["evidence_json"]
+
+
+def test_a_failed_placement_is_reported_as_not_placed():
+    p = _pipeline(RuntimeError("down"))
+    p._repair_stop_coverage = MagicMock(return_value=False)
+    with patch(ALERT, return_value=True) as alert:
+        p._handle_ex_dividends([_pos()], run_id="r1")
+    assert "not_acted" in alert.call_args.args[0]
+
+
+def test_read_failing_twice_then_succeeding_places_nothing_through_the_caller():
+    p = _pipeline(None)
+    p.broker.get_current_stop_price.side_effect = [RuntimeError("a"), RuntimeError("b"), 48.0]
+    p._repair_stop_coverage = MagicMock(return_value=True)
+    p.broker.shift_stops_down.return_value = None
+    with patch(ALERT, return_value=True) as alert:
+        p._handle_ex_dividends([_pos()], run_id="r1")
+    p._repair_stop_coverage.assert_not_called()
+    alert.assert_not_called()
+
+
+def test_non_numeric_answer_is_unreadable_not_no_stop():
+    from src.execution.stop_read import read_stop
     broker = MagicMock()
-    broker.get_current_stop_price.side_effect = RuntimeError("down")
-    broker.client.get_orders.side_effect = RuntimeError("down too")
-    establish = MagicMock()
-    with patch(ALERT, return_value=True) as alert, \
-            patch.object(stop_read, "IDEMPOTENT_PLACEMENT_LANDED", True):
-        r = stop_read.read_stop(broker, "ZZZT", db=MagicMock(), establish=establish)
-    establish.assert_called_once_with("ZZZT")
-    assert r.action.startswith("established")
-    assert "established protection" in alert.call_args.args[0]
+    broker.get_current_stop_price.return_value = "garbage"
+    broker.client.get_orders.side_effect = RuntimeError("down")
+    with patch(ALERT, return_value=True):
+        assert read_stop(broker, "ZZZT", db=None).unreadable

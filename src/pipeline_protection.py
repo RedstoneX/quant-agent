@@ -2327,9 +2327,9 @@ class ProtectionMixin:
             if amount <= 0:
                 continue
 
-            from src.execution.stop_read import read_stop
+            from src.execution.stop_read import read_stop, repair_for
             stop_read = read_stop(self.broker, p.symbol, db=self.db,
-                                  run_id=run_id, context="ex-div shift")
+                                  run_id=run_id, context="ex-div shift", establish=repair_for(self._repair_stop_coverage, p))
             if stop_read.unreadable or stop_read.absent:
                 continue  # unreadable was recorded+alerted; absent = nothing to adjust
             current_stop = stop_read.price

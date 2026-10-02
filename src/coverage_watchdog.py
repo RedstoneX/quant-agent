@@ -1957,7 +1957,7 @@ def check_coverage(
             mismatches = reconcile_recorded_stop_levels(
                 broker=broker, last_buy=last_buy, positions=positions,
                 sweep_symbol=sweep_symbol,
-                skip_symbols=scale_in_skip, db=None,
+                skip_symbols=scale_in_skip, db=db,
             )
             # Log every pass; do not page from this 30-minute unit. An
             # out-of-band mismatch is never write-back-cleared, so paging

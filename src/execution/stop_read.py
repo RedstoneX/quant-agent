@@ -27,14 +27,6 @@ UNREADABLE = "unreadable"
 
 _sleep: Callable[[float], None] = time.sleep
 
-#: Step 3, the single switch. Placing a replacement stop for a stop that may
-#: really exist can DUPLICATE it, which the owner has accepted - but only
-#: once the placement is idempotent (order idempotency key landed). Until
-#: then step 3 does NOT place anything and says so in the record and alert.
-#: To switch on: land the idempotency key, set this True, and pass
-#: `establish` (the coverage-repair placement) at the live callers.
-IDEMPOTENT_PLACEMENT_LANDED = False
-
 _alerted: set[tuple[str, str]] = set()
 
 
@@ -132,6 +124,13 @@ def classify_stop_orders(symbol: str, orders: Any) -> float | None:
     return None
 
 
+def repair_for(repair: Callable[..., Any], position: Any) -> Callable[[str], Any]:
+    """An `establish` that re-places the stop for the WHOLE position through
+    the caller's coverage-repair (`repair(symbol, qty, is_short=...)`)."""
+    qty = float(position.qty)
+    return lambda sym: repair(sym, abs(qty), is_short=qty < 0)
+
+
 def _norm(sym: Any) -> str:
     return "".join(ch for ch in str(sym or "").upper() if ch.isalnum())
 
@@ -155,15 +154,18 @@ def unreadable_stop_text(symbol: str, reason: str = "", action: str = "") -> str
         f"the desk could not read the protective stop on {sym} from the "
         f"broker after retrying and a second look at the full "
         f"open-orders list, so it does not know whether one is resting or at "
-        f"what price - no stop adjustment was made on {sym} this run"
+        f"what price"
         + (f" (broker said: {reason})" if reason else "")
         + (f". Then: {action}" if action else "")
     )
 
 
 def _classify(raw: Any) -> StopRead:
-    if raw is None or not isinstance(raw, (int, float)):
-        return StopRead(NONE)  # a non-number is not a read failure
+    if raw is None:
+        return StopRead(NONE)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        # Our own read returns float | None; anything else is a broken answer.
+        return StopRead(UNREADABLE, None, f"non-numeric stop answer {raw!r}")
     px = float(raw)
     if not math.isfinite(px):
         return StopRead(UNREADABLE, None, f"non-finite stop answer {raw!r}")
@@ -205,19 +207,27 @@ def read_stop(broker: Any, symbol: str, *, db: Any, run_id: str | None = None,
 
 def _act(symbol: str, reason: str, *, db: Any, run_id: str | None,
          context: str, establish: Callable[[str], Any] | None) -> StopRead:
-    """Step 3, then step 4 (record + alert what was done)."""
+    """Step 3, then step 4 (record + alert exactly what was done).
+
+    `establish` is the caller's coverage-repair placement. Placement is
+    idempotent (derived client_order_id), so an unconfirmed stop is treated as
+    missing; a stop that really was there may be duplicated, which the owner
+    has accepted. A caller that only REPORTS passes None and nothing is placed.
+    """
     sym = str(symbol or "").upper()
-    if IDEMPOTENT_PLACEMENT_LANDED and establish is not None:
-        try:
-            establish(sym)
-            action = "established protection (may duplicate a stop that was there)"
-        except Exception as exc:  # noqa: BLE001
-            action = f"not_acted: establishing protection failed: {exc}"
-    elif IDEMPOTENT_PLACEMENT_LANDED:
-        action = "not_acted: no placement was supplied by this caller"
+    if establish is None:
+        action = ("not_acted: this was a reporting read and places nothing; the "
+                  "protection paths act on an unreadable stop")
     else:
-        action = ("not_acted: the desk did NOT place a replacement stop because "
-                  "order placement is not yet idempotent and could duplicate")
+        try:
+            closed = establish(sym)
+        except Exception as exc:  # noqa: BLE001
+            closed, why = False, f"placement raised: {exc}"
+        else:
+            why = "the repair refused or placed nothing"
+        action = ("established protection by placing a protective stop (may "
+                  "duplicate one that was already there)" if closed
+                  else f"not_acted: tried to place a protective stop but {why}")
     _report_unreadable(sym, reason, action, db=db, run_id=run_id, context=context)
     return StopRead(UNREADABLE, None, reason, action)
 

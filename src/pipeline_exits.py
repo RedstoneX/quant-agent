@@ -689,9 +689,9 @@ class ExitEngineMixin:
                     "falling back to the last opening row",
                     symbol, e,
                 )
-            from src.execution.stop_read import read_stop
+            from src.execution.stop_read import read_stop, repair_for
             _stop_read = read_stop(self.broker, symbol, db=self.db,
-                                   context="deterministic trail")
+                                   context="deterministic trail", establish=repair_for(self._repair_stop_coverage, position))
             if _stop_read.unreadable:
                 _note(symbol, "live_stop_lookup_failed", _stop_read.reason)
                 continue
