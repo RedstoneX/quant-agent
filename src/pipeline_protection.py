@@ -67,7 +67,8 @@ def _market_is_open_now(broker) -> bool:
     same stop absent while the market is OPEN is a placement failure and
     must wake somebody.
 
-    FAILS TOWARD "OPEN" ON PURPOSE. Every way this can be wrong has an
+    Delegates to `src.market_session.market_open_verdict` — the single answer
+    shared with the coverage watchdog. FAILS TOWARD "OPEN" ON PURPOSE. Every way this can be wrong has an
     asymmetric cost: believing the market is shut when it is open would
     SUPPRESS a real naked-position alert, which is the one failure this
     desk cannot absorb. Believing it is open when it is shut costs a
@@ -85,28 +86,9 @@ def _market_is_open_now(broker) -> bool:
     never reaches here; the weekday check is belt-and-braces for a
     direct call.
     """
-    from datetime import datetime as _dt
+    from src.market_session import market_open_now
 
-    try:
-        from src.trading_calendar import in_session_window
-
-        now = et_now()
-        if not in_session_window("intra_check", now):
-            return False
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "market-hours check failed (%s) — assuming the market is OPEN "
-            "so a coverage gap still alerts", exc,
-        )
-        return True
-    try:
-        session_close = broker.get_session_close()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("market-hours: get_session_close failed: %s", exc)
-        return True
-    if isinstance(session_close, _dt) and now >= session_close:
-        return False
-    return True
+    return market_open_now(broker, et_now)
 
 
 
