@@ -3,7 +3,7 @@
   "keys": [
     "src/execution/broker.py::AlpacaBroker._list_open_sell_stop_orders#1",
     "src/execution/broker.py::AlpacaBroker.cancel_stray_protective_stops#1",
-    "src/execution/broker.py::_get_sector._fetch#1",
+    "src/sector_reference.py::_get_sector._fetch#1",
     "src/execution/broker_parts/account_reads.py::AccountReads._session_edge#1",
     "src/execution/broker_parts/account_reads.py::AccountReads._session_edge#2",
     "src/execution/broker_parts/account_reads.py::AccountReads.get_current_stop_price#1",
