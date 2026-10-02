@@ -92,17 +92,18 @@ def test_owner_notify_uses_its_own_scans_unless_swapped():
 
 
 def test_shim_guard_sees_through_bound_methods_and_partials():
-    from src.cost_circuit.breaker_notify import _BreakerNotifyMixin
-
-    class Host(_BreakerNotifyMixin):
-        pass
+    """The guard is still used by other seams (the PM seat); it no longer has a
+    cost-circuit shim to test against, so a local host stands in."""
+    class Host:
+        def _notify_quota_holds_if_needed(self):
+            return None
 
     host = Host()
     attr = "_notify_quota_holds_if_needed"
-    assert _is_class_shim(getattr(host, attr), attr, _BreakerNotifyMixin)
-    assert _is_class_shim(functools.partial(getattr(_BreakerNotifyMixin, attr), host), attr, _BreakerNotifyMixin)
-    assert not _is_class_shim(MagicMock(), attr, _BreakerNotifyMixin)
-    assert not _is_class_shim(None, attr, _BreakerNotifyMixin)
+    assert _is_class_shim(getattr(host, attr), attr, Host)
+    assert _is_class_shim(functools.partial(getattr(Host, attr), host), attr, Host)
+    assert not _is_class_shim(MagicMock(), attr, Host)
+    assert not _is_class_shim(None, attr, Host)
 
 
 def test_state_statics_run_with_nothing_behind_them():
@@ -157,47 +158,92 @@ def _real_breaker():
     return LLMCostCircuitBreaker(":memory:", cfg, _Notifier())
 
 
-def test_breaker_holds_the_four_parts_instead_of_inheriting_them():
-    """Composition, not inheritance: the breaker owns one instance of each
-    converted part and every same-named method delegates to it. No shim
-    mixin for these four remains in the MRO or on disk."""
+HELD = {
+    "_alert_formats": AlertFormats, "_episode_wording": EpisodeWording,
+    "_circuit_state": CircuitState, "_quota_holds": QuotaHolds,
+    "_emergency_latch": EmergencyLatch, "_infra_retry": InfraRetry,
+    "_session_lifecycle": SessionLifecycle, "_owner_notify": OwnerNotify,
+    "_admission": Admission, "_settlement": Settlement,
+    "_operator_controls": OperatorControls,
+}
+GONE_SHIMS = ("formats", "wording", "state", "holds", "latch", "retry", "session",
+              "notify", "admission", "settlement", "operator")
+
+
+def test_breaker_holds_every_part_instead_of_inheriting_any():
+    """Composition, not inheritance: the breaker owns one instance of each of
+    the eleven parts and every same-named method delegates to it. No shim
+    mixin remains in the MRO or on disk."""
     import importlib
     import src.cost_circuit.breaker as breaker_mod
 
-    for gone in ("breaker_formats", "breaker_wording", "breaker_state", "breaker_holds"):
+    for gone in GONE_SHIMS:
         with pytest.raises(ModuleNotFoundError):
-            importlib.import_module(f"src.cost_circuit.{gone}")
-    assert all("Formats" not in b.__name__ and "Wording" not in b.__name__
-               and "State" not in b.__name__ and "Holds" not in b.__name__
-               for b in LLMCostCircuitBreaker.__mro__)
-    assert "AlertFormats" in breaker_mod.__dict__ and "QuotaHolds" in breaker_mod.__dict__
+            importlib.import_module(f"src.cost_circuit.breaker_{gone}")
+    assert LLMCostCircuitBreaker.__mro__ == (LLMCostCircuitBreaker, object)
+    assert all(cls.__name__ in breaker_mod.__dict__ for cls in HELD.values())
 
     breaker = _real_breaker()
     assert breaker._unavailable_sentinel is None
-    assert isinstance(breaker._alert_formats, AlertFormats)
-    assert isinstance(breaker._episode_wording, EpisodeWording)
-    assert isinstance(breaker._circuit_state, CircuitState)
-    assert isinstance(breaker._quota_holds, QuotaHolds)
+    for attr, cls in HELD.items():
+        assert isinstance(getattr(breaker, attr), cls), attr
     # The held QuotaHolds reads state through the held CircuitState, not the breaker.
     assert breaker._quota_holds._state_row.__self__ is breaker._circuit_state
     assert breaker._quota_holds._trip_locked.__func__ is QuotaHolds._trip_locked
     assert breaker._circuit_state._context.__self__ is breaker
+    # A part keeps its own lifted bodies; it is never handed the breaker's delegate for them.
+    assert breaker._session_lifecycle._seed_today.__func__ is SessionLifecycle._seed_today
+    assert breaker._infra_retry.mark_unavailable.__func__ is InfraRetry.mark_unavailable
+    assert breaker._owner_notify._notify_quota_holds_if_needed.__func__ is OwnerNotify._notify_quota_holds_if_needed
+    assert breaker._admission.enforce_current_limits.__func__ is Admission.enforce_current_limits
     # Delegation reaches the instance: swapping a body on the held part is what runs.
     breaker._quota_holds._trip_locked = MagicMock(name="swapped_trip", return_value="tripped")
     assert breaker._trip_locked(None, scope="day") == "tripped"
     breaker._episode_wording._self_clear_window_minutes = lambda: 42.0
     assert breaker._self_clear_window_minutes() == 42.0
+    breaker._operator_controls.status = lambda: {"swapped": True}
+    assert breaker.status() == {"swapped": True}
 
 
-def test_fail_closed_sentinel_still_holds_the_four_parts():
+def test_held_parts_see_collaborators_that_change_after_construction():
+    """What the per-call shims gave for free, the held parts must still get:
+    a notifier reassigned on the breaker, a `_connect` swapped on the
+    instance, and a sentinel installed mid-call all reach the parts live."""
+    breaker = _real_breaker()
+    good = MagicMock(name="swapped_notifier", enabled=True)
+    breaker.notifier = good
+    assert breaker._emergency_latch.notifier is good
+    assert breaker._infra_retry.notifier is good
+    assert breaker._owner_notify.notifier is good
+
+    calls = []
+    real_connect = breaker._connect
+
+    def counting_connect():
+        calls.append(1)
+        return real_connect()
+
+    breaker._connect = counting_connect
+    breaker.status()
+    assert calls, "a `_connect` swapped on the instance must be what the parts open"
+
+    assert breaker._owner_notify._unavailable_sentinel is None
+    assert breaker._admission._unavailable_sentinel is None
+    breaker._unavailable_sentinel = "installed-mid-call"
+    assert breaker._owner_notify._unavailable_sentinel == "installed-mid-call"
+    assert breaker._infra_retry._unavailable_sentinel == "installed-mid-call"
+    assert breaker._settlement._unavailable_sentinel == "installed-mid-call"
+
+
+def test_fail_closed_sentinel_still_holds_every_part():
     from types import SimpleNamespace
     breaker = LLMCostCircuitBreaker.fail_closed(
         ":memory:", SimpleNamespace(enabled=True), RuntimeError("boom"),
         notifier=MagicMock(enabled=True),
     )
     assert breaker._unavailable_sentinel is not None
-    assert isinstance(breaker._circuit_state, CircuitState)
-    assert isinstance(breaker._quota_holds, QuotaHolds)
+    for attr, cls in HELD.items():
+        assert isinstance(getattr(breaker, attr), cls), attr
 
 
 def test_latch_sync_writes_the_sentinel_through_to_the_host_under_its_own_lock():
@@ -266,33 +312,3 @@ def test_session_uses_its_own_seed_unless_swapped_and_operator_reset_clears_host
     assert op.status() == {"enabled": False, "suspended": False}
     settle = _build(Settlement, enabled=False)
     assert settle.complete_call(MagicMock(reservation_id="x"), 1.0) is None
-
-
-def test_every_remaining_shim_builds_its_part_per_call_and_sees_a_swapped_body():
-    from src.cost_circuit.breaker_latch import _BreakerLatchMixin
-    from src.cost_circuit.breaker_retry import _BreakerRetryMixin
-    from src.cost_circuit.breaker_session import _BreakerSessionMixin
-
-    class Host(_BreakerLatchMixin, _BreakerRetryMixin, _BreakerSessionMixin):
-        config = object()
-        enabled = True
-        notifier = None
-        _connect = None
-        _session_context = None
-        _infrastructure_lock = threading.Lock()
-        _emergency_latch_path = None
-        _emergency_lock_path = None
-        _unavailable_sentinel = None
-        _infrastructure_error = None
-        _context = staticmethod(lambda: ("r", "m"))
-        _reconcile_quota_holds_locked = _notify_if_needed = enforce_current_limits = status = None
-
-    host = Host()
-    assert host._emergency_latch()._read_emergency_latch.__func__ is EmergencyLatch._read_emergency_latch
-    assert host._infra_retry().mark_unavailable.__func__ is InfraRetry.mark_unavailable
-    assert host._session_lifecycle()._seed_today.__func__ is SessionLifecycle._seed_today
-    host._seed_today = MagicMock(name="swapped_seed")
-    assert host._session_lifecycle()._seed_today is host._seed_today
-    assert host._infra_retry()._unavailable_sentinel is None
-    host._unavailable_sentinel = "installed-mid-call"
-    assert host._infra_retry()._unavailable_sentinel == "installed-mid-call"

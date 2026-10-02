@@ -82,11 +82,11 @@ which cannot be built or exercised on their own. Smaller files, not
 boundaries. Fix: convert them the way the sessions, exits, protection, broker
 and storage packages were done, and add witness tests.
 
-PARTLY CLOSED 2026-10-02 (fourth instalment): formats, wording, state and holds
-are now HELD instances on `LLMCostCircuitBreaker` (`_hold_parts`), their four
-shim modules deleted. STILL OPEN: 7 `_Breaker*Mixin` classes (latch, retry,
-session, notify, admission, settlement, operator) are still inherited by
-`LLMCostCircuitBreaker` in `src/cost_circuit/breaker.py`.
+CLOSED 2026-10-02 (fourth and fifth instalments): all eleven parts are HELD
+instances on `LLMCostCircuitBreaker` (`_hold_parts`); every `breaker_*.py`
+shim module is deleted and the class inherits from nothing. Three
+collaborators had to be handed in live rather than snapshotted (`notifier`,
+`_connect`, the owner-notify sentinel); see docs/ARCHITECTURE.md.
 
 VERDICT 2026-10-02 (isolation pass): INCORRECT. Earlier verdict read only the `class LLMCostCircuitBreaker(...)` line; the parts ARE already standalone. `src/cost_circuit/parts/` has eleven standalone classes (merged #1064, #1066, #1070 on 2026-10-02); `tests/test_cost_circuit_parts_boundary.py` passes 35 tests, building all eleven from stubs with no breaker composition. The `breaker_*.py` files are thin per-call shims. ONE genuine gap remains: the breaker still INHERITS the shims rather than HOLDING part instances; that conversion changes every test patch target, so it is a separate deliberate instalment.
 
