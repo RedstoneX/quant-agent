@@ -221,20 +221,27 @@ resting take-profit would also give one position two owners: the desk reads
 live orders to judge protection, and a limit sell it did not place can
 half-fill and leave it sizing off a quantity that is no longer true. The
 same intention is served by "close a slice now", which leaves nothing
-resting. An owner who wants a standing target marks the position HANDS OFF
-instead -- one owner at a time, never two.
+resting. There is no standing-target alternative: a target is a made-up
+number, and the position stays under desk management either way.
 
 ### Two rules with reach beyond the panel
 
 1. A stop the owner sets is HONOURED. No trailing, ratchet or re-protection
    path may move it back. This is a rule, not a preference.
-2. HANDS OFF means hands off everywhere -- exits, sizing, rotation and the
-   coverage sweep all skip the position, while still reporting it.
+2. THE DESK MANAGES EVERY POSITION, ALWAYS. Owner ruling 2026-10-02: "hands
+   off, skip it. Too complicated, too many. Collisions. Everything goes
+   through the desk. Everything goes through the system. The system manages
+   everything. And should have full control." An owner action is an
+   INSTRUCTION the desk executes and then keeps managing the result of -- it
+   is never an exemption from management. There is no state in which a
+   position is live and nothing is watching it: the owner is not staring at a
+   screen, and a desk told to keep its hands off is a position nobody owns.
+   Every protection path therefore has ONE branch, not two.
 
 ### Build order
 
 Safe plumbing first, money last: the record and the single door, then the
-flag-only actions (pause, never-touch, hands off), then the actions on an
+flag-only actions (pause, never-touch), then the actions on an
 existing position, and only then new exposure. Each instalment proves the
 plumbing before the next one can lose anything.
 
