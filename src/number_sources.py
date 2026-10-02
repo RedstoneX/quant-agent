@@ -211,7 +211,7 @@ SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 #: A directory entry covers every `.py` under it.
 SCOPED_PATHS: tuple[str, ...] = (
     "src/risk",
-    "src/portfolio_constructor.py",
+    "src/portfolio_constructor",
     "src/rotation.py",
     "src/nominations.py",
     "src/evidence_gate.py",
@@ -277,7 +277,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
     # scoped.
     "src/pipeline_admission.py",
-    "src/pipeline_prompt_facts.py",
+    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py",
     # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
     # application moved here out of `src/pipeline.py`.
     "src/pipeline_risk_gate.py",

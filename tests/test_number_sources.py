@@ -78,7 +78,7 @@ def test_the_ratified_minimum_risk_floor_is_in_scope_at_every_site() -> None:
     entry that named it said the number existed in exactly one place.
     """
     ids = {site.site_id for site in collect_sites()}
-    assert "src.portfolio_constructor.ConstructorConfig.min_risk_pct" in ids
+    assert "src.portfolio_constructor.config.ConstructorConfig.min_risk_pct" in ids
     assert "src.risk.constants.STARTER_POSITION_RISK_PCT" in ids
     assert "src.config.RiskConfig.min_position_risk_pct" in ids
 
@@ -114,7 +114,7 @@ def test_one_atr_is_not_treated_as_an_identity() -> None:
     assert -1.0 not in NEUTRAL_VALUES
     ids = {site.site_id for site in collect_sites()}
     assert "src.config.RiskConfig.absolute_min_stop_atr_multiple" in ids
-    assert "src.portfolio_constructor.ConstructorConfig.absolute_min_stop_atr_multiple" in ids
+    assert "src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple" in ids
     assert "src.config.CashReserveConfig.pct" in ids
     assert "src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE" in ids
 
@@ -125,8 +125,8 @@ def test_stop_width_scalers_inside_a_tuple_are_sites() -> None:
     that only reads top-level defaults would not see them.
     """
     ids = {site.site_id for site in collect_sites()}
-    assert "src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[1][1]" in ids
-    assert "src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]" in ids
+    assert "src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[1][1]" in ids
+    assert "src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[0][1]" in ids
 
 
 def test_result_dataclasses_are_not_sites() -> None:
@@ -242,7 +242,7 @@ def test_the_arbitrary_count_counts_numbers_not_rows() -> None:
     """
     ledger = load_ledger()
     mirrors = {
-        "src.portfolio_constructor.ConstructorConfig.min_stop_atr_multiple":
+        "src.portfolio_constructor.config.ConstructorConfig.min_stop_atr_multiple":
             "src.config.RiskConfig.min_stop_atr_multiple",
         "src.pipeline_stages.MAX_ENTRY_SLIPPAGE_BPS":
             "src.config.ExecutionConfig.max_entry_slippage_bps",
@@ -373,7 +373,7 @@ def test_scope_has_not_silently_narrowed() -> None:
     for name in SCOPED_CONFIG_CLASSES:
         assert hasattr(config_module, name), f"{name} left src/config.py"
     assert "src/risk" in SCOPED_PATHS
-    assert "src/portfolio_constructor.py" in SCOPED_PATHS
+    assert "src/portfolio_constructor" in SCOPED_PATHS
     assert "src/data/technical.py" in SCOPED_PATHS
     assert "src/data/levels.py" in SCOPED_PATHS
     # Board item 130: broker.py IS the broker order.
@@ -1010,7 +1010,7 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
         "src.config.RiskConfig.max_portfolio_risk_pct",
         "src.config.RiskConfig.SECTOR_HARD_CEILING_MAX",
         "src.config.RiskConfig.max_cluster_risk_share_pct",
-        "src.portfolio_constructor.ConstructorConfig.max_sector_hard_pct",
+        "src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct",
     )
     for site_id in ceilings:
         entry = ledger[site_id]
