@@ -15,9 +15,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DRIVER = REPO_ROOT / "scripts" / "git_merge_driver_baselines.sh"
 SIZE = "tests/file_size_baseline.json"
+# Only the baselines still STORED need a merge driver. file_size and
+# silent_swallow were converted to compute against origin/main at check time
+# (docs/GUARDS_WITHOUT_STORED_STATE.md) and no longer exist.
 BASELINES = [
-    "tests/file_size_baseline.json", "tests/import_cycle_baseline.json",
-    "tests/import_layers.json", "tests/silent_swallow_baseline.json",
+    "tests/import_cycle_baseline.json", "tests/import_layers.json",
     "tests/pipeline_new_baseline.json",
 ]
 

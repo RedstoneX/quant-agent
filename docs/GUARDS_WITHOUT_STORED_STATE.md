@@ -57,7 +57,7 @@ refuses.
 | `tests/import_cycle_baseline.json` | `test_import_layering`, `scripts/import_graph` |
 | `tests/import_layers.json` | `scripts/import_graph` |
 | `tests/pipeline_new_baseline.json` | `test_pipeline_new_ratchet`, `scripts/pipeline_new_guard` |
-| `tests/silent_swallow_baseline.json` | `test_silent_swallow_guard`, `scripts/silent_swallow_guard` |
+| ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now scans the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on the per-file delta |
 
 All five are also read by `tests/test_baseline_merge_driver.py` and
 `scripts/resolve_baseline_conflict.py` — both exist ONLY to manage collisions

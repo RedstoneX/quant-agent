@@ -1,5 +1,4 @@
-"""Silent-swallow guard: a broad ``except`` on a money path may not return an
-empty value while recording nothing durable.
+"""Silent-swallow guard with no stored baseline: scan here, scan trunk, compare.
 
 The pattern it hunts (measured 2026-10-01: 949 broad handlers in src/, 922 of
 which never re-raise)::
@@ -25,19 +24,27 @@ A handler that re-raises is never a swallow. Logging never counts.
 Scope: the money-touching modules only (``MONEY_MODULES``). A guard over all
 949 handlers would be noise and would be deleted within a week.
 
-Baseline lives in tests/silent_swallow_baseline.json and may only SHRINK:
-``PYTHONPATH=. .venv/bin/python -m scripts.silent_swallow_guard --shrink-baseline``
-after fixing a handler. Never add an entry; fix the handler instead.
+This guard stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md). The old
+tests/silent_swallow_baseline.json was one shared shrink-only file that every
+open change had to edit, so changes jammed each other. At check time the scan
+runs twice -- once over the working tree, once over the same modules as they
+stand on ``origin/main`` -- and the guard reports the DELTA: which handlers this
+change ADDED. If ``origin/main`` cannot be read it REFUSES; it never passes by
+default.
+
+Run it directly: ``python -m scripts.silent_swallow_guard``.
 """
 from __future__ import annotations
 
 import ast
-import json
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-BASELINE_PATH = ROOT / "tests" / "silent_swallow_baseline.json"
+from scripts.guard_reference import (
+    ROOT,
+    ReferenceUnavailable,
+    TRUNK,
+    trunk_blobs,
+)
 
 #: Money-touching modules: anything that places, amends, cancels or sizes an
 #: order, or decides whether a position keeps its protection. Order of
@@ -168,51 +175,94 @@ class _Finder(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def scan_text(rel: str, text: str) -> list[tuple[str, int]]:
+    """Return (stable key, line) for each violation in one module's source text."""
+    f = _Finder(rel)
+    f.visit(ast.parse(text, filename=rel))
+    return f.hits
+
+
 def scan(rel: str) -> list[tuple[str, int]]:
     """Return (stable key, current line) for each violation in one module."""
     path = ROOT / rel
     if not path.exists():
         return []
-    f = _Finder(rel)
-    f.visit(ast.parse(path.read_text(), filename=rel))
-    return f.hits
+    return scan_text(rel, path.read_text())
 
 
 def violations(modules: tuple[str, ...] = MONEY_MODULES) -> dict[str, int]:
+    """Silent swallows in the WORKING TREE, keyed by stable key -> line number."""
     out: dict[str, int] = {}
     for rel in modules:
         out.update(scan(rel))
     return out
 
 
-def load_baseline() -> set[str]:
-    if not BASELINE_PATH.exists():
-        return set()
-    return set(json.loads(BASELINE_PATH.read_text())["keys"])
+def trunk_violations(modules: tuple[str, ...] = MONEY_MODULES) -> set[str]:
+    """Silent swallows on ``origin/main``, as stable keys.
+
+    Raises ``ReferenceUnavailable`` when the trunk cannot be read: this guard
+    compares and stores nothing, so an unreadable reference is a refusal, never
+    a pass. A module absent from the trunk is simply new, not an error.
+    """
+    keys: set[str] = set()
+    for rel, text in trunk_blobs(list(modules)).items():
+        try:
+            keys.update(k for k, _ in scan_text(rel, text))
+        except SyntaxError as exc:  # trunk file we cannot parse -> cannot compare
+            raise ReferenceUnavailable(
+                f"cannot parse {rel} as it stands on {TRUNK}: {exc}"
+            ) from exc
+    return keys
 
 
-def _write(keys: set[str]) -> None:
-    BASELINE_PATH.write_text(json.dumps({
-        "_comment": (
-            "Silent-swallow handlers (broad except -> empty return, nothing durable recorded) "
-            "on money paths when the guard was introduced. This list may only SHRINK: run "
-            "`PYTHONPATH=. .venv/bin/python -m scripts.silent_swallow_guard --shrink-baseline` "
-            "after fixing one. Never add a key here; record the failure durably instead."),
-        "keys": sorted(keys),
-    }, indent=1) + "\n")
+def added(modules: tuple[str, ...] = MONEY_MODULES) -> dict[str, int]:
+    """Silent swallows this working tree added relative to ``origin/main``."""
+    now = violations(modules)
+    before = trunk_violations(modules)
+    return {k: ln for k, ln in now.items() if k not in before}
 
 
-def shrink_baseline() -> None:
-    """Rewrite the baseline to the intersection with today's violations. Never grows it."""
-    _write(load_baseline() & set(violations()))
+def delta_report(new: dict[str, int]) -> str:
+    """Per-file delta lines: 'this file gained N silently-swallowed exceptions'."""
+    per_file: dict[str, list[str]] = {}
+    for key, line in sorted(new.items()):
+        rel = key.split("::")[0]
+        per_file.setdefault(rel, []).append(f"      {key}  (line {line})")
+    return "\n".join(
+        f"  {rel}: gained {len(rows)} silently-swallowed exception(s) against {TRUNK}\n"
+        + "\n".join(rows)
+        for rel, rows in sorted(per_file.items())
+    )
 
 
-if __name__ == "__main__":
-    if "--shrink-baseline" in sys.argv:
-        shrink_baseline()
-    elif "--seed-baseline" in sys.argv:  # one-time seeding only; the test forbids growth by review
-        _write(set(violations()))
-    else:
-        for k, ln in sorted(violations().items()):
-            print(f"{k}  (line {ln})")
-    print(f"{len(violations())} silent swallows on money paths; baseline holds {len(load_baseline())}.")
+FIX_ADVICE = (
+    "A swallowed broker error that returns None/False/[] is read by the caller as "
+    "'nothing found' (get_current_stop_price -> 'no stop to adjust'). "
+    "Fix: re-raise, or record the failure durably before returning (event journal, "
+    "insert_*/save_* row, send_owner_alert / _alert_owner_*, record_*). "
+    "A logger call is NOT a record. There is no baseline to add it to."
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        new = added()
+    except ReferenceUnavailable as exc:
+        print(f"REFUSING: {exc}", file=sys.stderr)
+        return 2
+    if new:
+        print(
+            f"NEW silent swallows on money paths against {TRUNK}:\n"
+            + delta_report(new)
+            + "\n"
+            + FIX_ADVICE,
+            file=sys.stderr,
+        )
+        return 1
+    print(f"silent-swallow guard: no money-path module gained a silent swallow against {TRUNK}.")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(main())

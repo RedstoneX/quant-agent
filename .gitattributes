@@ -22,5 +22,4 @@ config/number_ledger_history.yaml merge=union
 # this needs the per-clone registration: scripts/install_git_merge_drivers.sh.
 tests/import_cycle_baseline.json merge=baselinemerge
 tests/import_layers.json merge=baselinemerge
-tests/silent_swallow_baseline.json merge=baselinemerge
 tests/pipeline_new_baseline.json merge=baselinemerge
