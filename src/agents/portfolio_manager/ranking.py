@@ -1,0 +1,585 @@
+"""Candidate eligibility, seat-verdict collection, ranking, conviction bar and its rendering.
+
+Moved verbatim out of src/agents/portfolio_manager.py (split 2026-10-02); every
+method here is a staticmethod/classmethod and needs no agent instance.
+"""
+
+import logging
+from datetime import date
+from src.models import (AnalystVerdict, EarningsAnalysis, MacroAnalysis, Position, SmartMoneyFinding, TechAnalysisResult, news_verdict_for_symbol)
+from src.risk.constants import REWARD_RISK_FLOOR
+from src.risk.rules import own_bar_block_reason, own_bar_opposition_reason, signed_source_score
+from src.verdicts import RankedCandidate, rank_verdicts
+
+# Same logger object the monolith used, so log capture by name is unchanged.
+logger = logging.getLogger("src.agents.portfolio_manager")
+
+
+class CandidateRankingMixin:
+    """Candidate eligibility, seat-verdict collection, ranking, conviction bar and its rendering."""
+
+    # ------------------------------------------------------------------
+    # Phase 13 — candidate eligibility + ranking over the shared verdict shape
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def candidate_eligibility(
+        cls, *,
+        analyses: list[TechAnalysisResult],
+        evidence_registry: dict[str, dict[str, str]],
+        stale_sources: dict[str, set[str]] | None = None,
+        non_corroborating_sources: dict[str, set[str]] | None = None,
+        allowed_buy_symbols: set[str] | None,
+        active_state_changes: str,
+        rr_floor: float = REWARD_RISK_FLOOR,
+        asof: date | None = None,
+        real_reward_risk_by_symbol: dict[str, float | None] | None = None,
+        constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
+    ) -> dict[str, list[str]]:
+        """Which analysed names the desk's own rules ADMIT, before the PM
+        decides — `{SYMBOL: [reasons it is blocked]}`, empty list = eligible.
+
+        These are the pre-decision halves of the gates this class and the
+        constructor already enforce after submission, restated so the prompt
+        can order the survivors (item 18b, `ops/model_policy/
+        deterministic_selection.py::evaluate`, now in production code):
+
+          R2  rating actionable (neutral is not a candidate)
+          R3  a long must be in the BUY-eligible set — the same set
+              `validate_grounding` refuses increases outside of
+          R4  **retired 2026-09-17.** Used to read "R/R ≥ `rr_floor`", then
+              "R/R must be measurable or a catalyst row names the symbol".
+              Neither is a block. A range ratio, including None, is ranking
+              information. A breakout is not measured on reward:risk. The
+              `rr_floor` argument is accepted and ignored so callers do not
+              silently re-default a retired number. Catalyst is not an
+              admission door.
+          R5  net independent source score ≥ 1 for the proposed direction
+              (`signed_source_score`; §9.4 refuses net ≤ 0 outright —
+              `agreement_refuses_trade`, a refusal gate with no schedule
+              and no config behind it since 2026-09-14)
+          R6  the constructor's own preview REFUSED this name by code
+              (`constructor_refusals_by_symbol`, a snapshot of
+              `PortfolioConstructor.last_refusals` taken after
+              `real_reward_risk_preview` ran over every analysis) — today
+              `no_structural_stop_and_no_volatility_reading` (docs/WORK.md
+              item 180 dropped the young-listing bar-count refusal, and
+              item 56 deleted the stop-WIDTH refusal
+              `stop_wider_than_instrument_reach` on 2026-09-26 — a wide
+              stop is answered by a smaller position, never a refusal).
+              The enforcing check is one stage later, in the ONE funnel
+              construction shares with the preview; this only stops the PM
+              being shown a name that funnel has already refused. Absent
+              structure is NOT a reason — the earlier "no floor, no trade"
+              R6 was replaced the day it shipped, on sourced research.
+
+        R1 (current technical coverage) is implied: only symbols with an
+        analysis in `analyses` are considered at all. Nothing here removes or
+        weakens a gate — a name this admits can still be dropped after
+        submission by the stricter post-decision checks.
+
+        **R4's number, 2026-09-04 fix.** `real_reward_risk_by_symbol` — when
+        supplied, keyed by upper-case symbol — is
+        `PortfolioConstructor.real_reward_risk_preview`'s output: the SAME
+        derived-target, noise-floor-widened reward:risk `construct_orders`
+        gates on, not `TechAnalysisResult.risk_reward` (the analyst's own
+        guessed target, real arithmetic but never checked against
+        structure). A 2026-09-04 audit found this gate and the
+        constructor's real one passing DISJOINT sets on a real day — zero
+        overlap — because this gate ran first and screened candidates on a
+        different number than the one that would decide them one stage
+        later. A symbol absent from the map is treated as `None` (fail
+        closed, same as an unmeasurable ratio always has been here).
+        Omitted entirely (`None`), this falls back to `analysis.risk_reward`
+        for callers that have not wired a constructor preview through
+        (rare — pre-existing tests, and any harness with no
+        `PortfolioConstructor` instance to hand); production always
+        supplies it.
+        """
+        _ = (active_state_changes, asof, rr_floor, real_reward_risk_by_symbol)
+        allowed = {
+            str(s).strip().upper() for s in (allowed_buy_symbols or set())
+            if str(s).strip()
+        }
+        stale = stale_sources or {}
+        # Item 109: a macro stance broadcast onto a name whose sector this
+        # read never mentioned may not CORROBORATE the name; its dissent
+        # still counts. One-sided on purpose — see
+        # `broadcast_macro_sources`.
+        non_corroborating = non_corroborating_sources or {}
+
+        verdicts: dict[str, list[str]] = {}
+        for analysis in analyses:
+            symbol = analysis.symbol.upper()
+            blocked: list[str] = []
+            if analysis.rating == "neutral":
+                blocked.append("R2 neutral rating")
+                verdicts[symbol] = blocked
+                continue
+            direction = "short" if analysis.rating in ("sell", "strong_sell") else "long"
+            if direction == "long" and symbol not in allowed:
+                blocked.append("R3 not BUY-eligible")
+            # R4 is retired. Reward:risk — computed, thin, or unmeasurable —
+            # does not admit or refuse. Ranking still consumes the number
+            # when it exists. `rr_floor` and catalyst rows are not a door.
+            sources = evidence_registry.get(symbol, {})
+            net = signed_source_score(
+                symbol, sources, direction, ignored_sources=stale.get(symbol),
+                non_corroborating_sources=non_corroborating.get(symbol),
+            ) if sources else 0
+            if net <= 0:
+                blocked.append(f"R5 net evidence {net:+d} if {direction} — no rung")
+            # R6 — the constructor's preview refused this name by code
+            # (item 54). Read from the snapshot, never recomputed here: the
+            # width gate and the history gate live in the one funnel the
+            # preview and construction share, and a second copy could
+            # drift. What R6 adds over R4 is the case R4 cannot see — a
+            # breakout (no reward:risk number at all) whose stop is wider
+            # than the instrument's own noise band, or a listing too young
+            # to measure.
+            refusal = (constructor_refusals_by_symbol or {}).get(symbol)
+            if refusal and refusal.get("refusal"):
+                blocked.append(
+                    f"R6 constructor refused [{refusal['refusal']}] — "
+                    f"{refusal.get('detail') or 'no detail recorded'}"
+                )
+            verdicts[symbol] = blocked
+        return verdicts
+
+    @staticmethod
+    def _collect_seat_verdicts(
+        *,
+        analyses: list[TechAnalysisResult],
+        news_intel: "NewsIntelligenceReport | None",
+        macro_analysis: dict | None,
+        earnings_analyses: list[dict],
+        smart_money_findings: list[SmartMoneyFinding] | None,
+        symbol_sectors: dict[str, str] | None = None,
+        positions: list[Position] | None = None,
+    ) -> list[AnalystVerdict]:
+        """Every seat's Phase 13 verdict, best-effort, one bad entry never
+        drops another's or the run's.
+
+        2026-09-03: Technical was the only seat on this shape when ranking
+        first shipped. This extends it to the other four — news, macro,
+        earnings, smart_money — each via its own `to_verdict()` (or, for
+        news, the module-level `news_verdict_for_symbol`, since News files
+        several items per symbol with no single object to call it on).
+
+        Two of the four arrive in a DIFFERENT shape here than their own
+        agent modules use: `macro_analysis` and each `earnings_analyses`
+        entry's `"analysis"` key are plain dicts (already `model_dump()`'d
+        for the pipeline), not live `MacroAnalysis`/`EarningsAnalysis`
+        objects — re-parsed via `model_validate` before `to_verdict()` can
+        be called. `smart_money_findings` and `news_intel` are already the
+        real objects.
+
+        Every per-seat, per-symbol step is wrapped: a single malformed dict,
+        an `EarningsAnalysis` whose disclosed bull/bear case is the literal
+        "not disclosed" placeholder (which `to_verdict()` deliberately
+        refuses to construct from — see that method), or any other
+        unexpected shape must drop ONLY that one seat's contribution for
+        that one symbol, never the whole ranking. Mirrors the
+        never-block-the-run posture already established by
+        `_record_seat_stances` and `_check_levels_coverage`.
+
+        **2026-09-13, retired item 31 — macro is now sector-adjusted.**
+        It used to be applied via its plain `equity_outlook`, the same for
+        every symbol, while `build_evidence_registry` — the same macro read,
+        rendered into the same prompt — already resolved a per-symbol stance
+        from `sector_guidance`. The two could and did disagree for any symbol
+        whose sector view differed from the broad market view: one belief,
+        two answers, in one prompt.
+
+        `symbol_sectors` (the same mapping `build_evidence_registry` takes,
+        from the same `pipeline._last_symbol_sectors` cache) is now passed
+        per symbol into `MacroAnalysis.to_verdict`, which resolves the sector
+        stance through the identical `collapse_stances` reduction the
+        registry uses and falls back to `equity_outlook` when the read stated
+        nothing for that sector. See that method for why the old objection
+        ("nothing sector-specific to attach") only held for conviction, and
+        what is done about it.
+
+        Sectors arrive keyed however the caller had them; matching is
+        case-insensitive on the symbol, so a lower-case key still resolves.
+        A symbol absent from the mapping simply gets the broad read, exactly
+        as before — this can only ever make a verdict agree with the
+        registry, never introduce a stance neither of them held.
+        """
+        verdicts: list[AnalystVerdict] = []
+
+        for analysis in analyses:
+            try:
+                verdicts.append(analysis.to_verdict())
+            except Exception:
+                logger.warning(
+                    "Phase 13: technical verdict failed for %s", analysis.symbol,
+                    exc_info=True,
+                )
+
+        if news_intel is not None:
+            for symbol, items in (news_intel.stock_news or {}).items():
+                if not items:
+                    continue
+                try:
+                    verdict = news_verdict_for_symbol(symbol, items)
+                    if verdict is not None:
+                        verdicts.append(verdict)
+                except Exception:
+                    logger.warning(
+                        "Phase 13: news verdict failed for %s", symbol, exc_info=True,
+                    )
+
+        if macro_analysis:
+            try:
+                payload = (
+                    macro_analysis if isinstance(macro_analysis, dict)
+                    else macro_analysis.model_dump()
+                )
+                from src.seat_heal import coerce_macro_shape, describe_macro_parse_failure
+                payload, _fixes = coerce_macro_shape(payload)
+                macro = MacroAnalysis.model_validate(payload)
+            except Exception as exc:
+                macro = None
+                from src.seat_heal import describe_macro_parse_failure
+                reason = describe_macro_parse_failure(
+                    macro_analysis if isinstance(macro_analysis, dict) else {},
+                    exc,
+                )
+                logger.error("Phase 13: macro_analysis failed to parse: %s", reason, exc_info=True)
+                failures = getattr(PortfolioManagerAgent, "_macro_parse_failures", None)
+                if not isinstance(failures, list):
+                    PortfolioManagerAgent._macro_parse_failures = []
+                    failures = PortfolioManagerAgent._macro_parse_failures
+                failures.append(reason)
+            if macro is not None:
+                # ONE sector input, shared with `build_evidence_registry` and
+                # `broadcast_macro_sources` (board item 109, 2026-09-26).
+                # This used to build its own map from `symbol_sectors` alone
+                # while the registry side ALSO back-filled `Position.sector`,
+                # so for a held name with no entry in the cache the two sides
+                # resolved different sectors — measured divergence on one
+                # macro read and one symbol: the registry said bullish and
+                # sector-specific while the verdict said bearish and
+                # broadcast, opposite direction AND opposite classification,
+                # with the tally and the conviction bar each acting on its
+                # own answer. `_macro_sectors` is now the only resolution.
+                sectors = PortfolioManagerAgent._macro_sectors(
+                    list(positions or []), symbol_sectors,
+                )
+                symbols = {a.symbol.upper() for a in analyses}
+                for symbol in symbols:
+                    try:
+                        verdicts.append(
+                            macro.to_verdict(symbol, sector=sectors.get(symbol)),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Phase 13: macro verdict failed for %s", symbol, exc_info=True,
+                        )
+
+        for item in earnings_analyses or []:
+            raw = item.get("analysis") if isinstance(item, dict) else None
+            if not isinstance(raw, dict):
+                continue
+            wrapper_symbol = str(item.get("symbol") or "").strip().upper()
+            if not wrapper_symbol:
+                # No ground truth to check against at all — dropped rather
+                # than trusting the LLM's own `EarningsAnalysis.symbol`
+                # unverified. Matches `_earnings_stance_rows` above, which
+                # drops on the identical missing-wrapper-symbol case rather
+                # than falling back to the embedded one. Found in adversarial
+                # review 2026-09-03: the mismatch check below only fires
+                # when BOTH sides are present, which silently let an
+                # unverified symbol through when the wrapper's was blank.
+                continue
+            try:
+                earnings = EarningsAnalysis.model_validate(raw)
+                # The wrapper's symbol is pipeline-set ground truth (the
+                # filing this analysis was actually run against);
+                # `EarningsAnalysis.symbol` is part of the LLM's own JSON
+                # response and could in principle disagree (a hallucinated
+                # or misread ticker) — `_earnings_stance_rows` above already
+                # trusts the wrapper's symbol for exactly this reason. A
+                # mismatch here is treated as malformed input, not silently
+                # resolved either way, matching this codebase's fail-closed
+                # posture on divergent ground-truth sources.
+                if earnings.symbol.upper() != wrapper_symbol:
+                    logger.warning(
+                        "Phase 13: earnings symbol mismatch, wrapper=%s "
+                        "analysis=%s — dropped", wrapper_symbol, earnings.symbol,
+                    )
+                    continue
+                verdicts.append(earnings.to_verdict())
+            except Exception:
+                logger.warning(
+                    "Phase 13: earnings verdict failed for %s",
+                    wrapper_symbol, exc_info=True,
+                )
+
+        for finding in smart_money_findings or []:
+            try:
+                verdicts.append(finding.to_verdict())
+            except Exception:
+                logger.warning(
+                    "Phase 13: smart_money verdict failed for %s",
+                    getattr(finding, "symbol", "?"), exc_info=True,
+                )
+
+        return verdicts
+
+    @classmethod
+    def rank_candidates(
+        cls, *,
+        analyses: list[TechAnalysisResult],
+        evidence_registry: dict[str, dict[str, str]],
+        stale_sources: dict[str, set[str]] | None = None,
+        non_corroborating_sources: dict[str, set[str]] | None = None,
+        allowed_buy_symbols: set[str] | None,
+        active_state_changes: str,
+        rr_floor: float = REWARD_RISK_FLOOR,
+        asof: date | None = None,
+        news_intel: "NewsIntelligenceReport | None" = None,
+        macro_analysis: dict | None = None,
+        earnings_analyses: list[dict] | None = None,
+        smart_money_findings: list[SmartMoneyFinding] | None = None,
+        real_reward_risk_by_symbol: dict[str, float | None] | None = None,
+        constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
+        symbol_sectors: dict[str, str] | None = None,
+        positions: list[Position] | None = None,
+    ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
+        """The eligible names in ranked order, plus the blocked names with
+        their reasons. Ordering is `src/verdicts.py::rank_verdicts` over
+        every seat's `AnalystVerdict` (2026-09-03: extended from Technical
+        alone to all five — see `_collect_seat_verdicts`), at the
+        research-informed prior weight (`src/verdicts.py::SEAT_WEIGHT`).
+        Blocked names are never ordered: they are reported, not ranked.
+
+        Eligibility itself is still decided from Technical's own analyses
+        only (`candidate_eligibility` — the R/R floor, structural-level, and
+        catalyst gates all key off Technical's numbers) — the other seats
+        only ever ADD a second, third, fourth, or fifth vote onto a symbol
+        Technical already cleared. A symbol only news/macro/earnings/
+        smart_money covered, with no Technical read, can never appear here;
+        it was never eligible in the first place.
+
+        `real_reward_risk_by_symbol` is passed straight through to
+        `candidate_eligibility` — see that method's docstring — AND, as of
+        2026-09-11 (docs/WORK.md item 1(d)), into `rank_verdicts` as the
+        ordering key, alongside each candidate's setup type. That is the
+        substantive half of item 1(d): the real per-trade reward:risk stopped
+        being a pass/fail cutoff and became a real input to the already-
+        ratified weighted ranking, and a breakout carries no such number at
+        all rather than a zero.
+        """
+        eligibility = cls.candidate_eligibility(
+            analyses=analyses,
+            evidence_registry=evidence_registry,
+            stale_sources=stale_sources,
+            non_corroborating_sources=non_corroborating_sources,
+            allowed_buy_symbols=allowed_buy_symbols,
+            active_state_changes=active_state_changes,
+            rr_floor=rr_floor,
+            real_reward_risk_by_symbol=real_reward_risk_by_symbol,
+            constructor_refusals_by_symbol=constructor_refusals_by_symbol,
+            asof=asof,
+        )
+        all_verdicts = cls._collect_seat_verdicts(
+            analyses=analyses,
+            news_intel=news_intel,
+            macro_analysis=macro_analysis,
+            earnings_analyses=earnings_analyses or [],
+            smart_money_findings=smart_money_findings,
+            symbol_sectors=symbol_sectors,
+            positions=positions,
+        )
+        eligible_verdicts = [
+            v for v in all_verdicts
+            if not eligibility.get(v.symbol.upper(), ["no eligibility row"])
+        ]
+        # The desk's own real, structure-derived ratio and each candidate's
+        # setup type both reach the ranking (2026-09-11, item 1(d)): a range
+        # trade is ordered on the REAL number rather than the analyst's
+        # guessed one, and a breakout carries no reward:risk key at all.
+        # This is where the removed hard floor's information went.
+        ranked = rank_verdicts(
+            eligible_verdicts,
+            real_reward_risk=real_reward_risk_by_symbol,
+            setup_types={a.symbol.upper(): a.setup_type for a in analyses},
+        )
+        blocked = {s: why for s, why in eligibility.items() if why}
+        return ranked, blocked
+
+    @staticmethod
+    def _apply_conviction_bar(
+        *,
+        ranked: list[RankedCandidate],
+        blocked: dict[str, list[str]],
+        held_symbols: set[str],
+        all_verdicts: list[AnalystVerdict],
+    ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
+        """The 2026-09-25 owner conviction bar (R7), applied to the ranking.
+
+        A NEW governance overlay on top of `candidate_eligibility`'s R2-R6
+        pre-decision gates: the ROLE-BASED conviction bar
+        (`own_bar_block_reason`). A name is admitted only if the technical seat
+        confirms timing (a timing VETO, no positive weight), NO seat is opposed,
+        and at least one NON-technical seat took a supported directional side
+        (`_has_supported_directional_thesis` — not a genuine specificity or
+        falsifiability test; News and Smart-money always synthesise their
+        invalidation). Deliberately OUTSIDE
+        `candidate_eligibility` so the audit shadow
+        (`ops/model_policy/deterministic_selection.py`) keeps mirroring those
+        gates exactly.
+
+        ENTRY vs STAY — two verdicts from ONE bar (owner ruling 2026-09-25):
+
+          * ENTRY (a candidate NOT in `held_symbols`): full-strict. Any R7
+            failure — technical veto, opposition, OR a soft miss (no supported
+            directional thesis) — moves the name OUT of `ranked` and INTO
+            `blocked` under `CONVICTION_BAR_REASON_PREFIX`. Unchanged.
+          * STAY (a candidate IN `held_symbols`): OPPOSITION-ONLY. A held name
+            is culled into `blocked` (which rotation's `ineligible_hold` tier
+            reads) ONLY when a seat is ACTIVELY OPPOSED to the held direction
+            (`own_bar_opposition_reason` non-None). A held name that fails the
+            entry bar on SOFT grounds — no technical read this review, a
+            neutral/non-confirming technical read, or support that faded to
+            neutral — is dropped from the ranked survivors (it does not belong
+            in the fresh-entry budget order) but gets NO cull reason: it earns
+            its right to STAY. The price-thesis-break exit
+            (`src.risk.exit_guard`) handles genuine deterioration separately.
+
+        Supportive/opposed are read from the SEAT VERDICTS
+        (`AnalystVerdict`), one source of "which seat took which side" — a long
+        is supported by a bullish verdict, a short by a bearish one — so this
+        never introduces a second notion of "aligned".
+
+        SAFETY INVARIANT this relies on (not enforced by the type system): every
+        symbol in `ranked` is expected to already carry a technical verdict in
+        `by_symbol`, because ranking itself is derived from technical reads (see
+        `_render_candidate_ranking`: "no Technical reads this session -> nothing
+        to rank"). So the "absent technical read" branch is expected to never
+        fire for a real ranked name — a ranked name with no technical verdict at
+        all would mean that upstream invariant broke. It is logged loudly below
+        when it does; the name is still handled safely (an entry candidate is
+        refused, a held name drops from survivors without a spurious cull).
+        """
+        by_symbol: dict[str, list[AnalystVerdict]] = {}
+        for v in all_verdicts:
+            by_symbol.setdefault(v.symbol.upper(), []).append(v)
+        held = {str(s).strip().upper() for s in held_symbols if str(s).strip()}
+        blocked = {s: list(why) for s, why in blocked.items()}
+        survivors: list[RankedCandidate] = []
+        for c in ranked:
+            sym = c.symbol.upper()
+            sym_verdicts = by_symbol.get(sym, [])
+            if not any(v.seat == "technical" for v in sym_verdicts):
+                logger.warning(
+                    "R7 conviction bar: ranked candidate %s carries no "
+                    "technical verdict in by_symbol — the ranked-implies-"
+                    "technical invariant broke upstream; handling %s per the "
+                    "absent-technical branch (not a silent cull, not a crash)",
+                    sym, sym,
+                )
+            reason = own_bar_block_reason(
+                sym_verdicts, direction=c.direction,
+            )
+            if reason is None:
+                survivors.append(c)
+            elif sym in held:
+                # STAY: opposition-only. A soft miss drops the name from the
+                # entry budget order but never adds a cull reason.
+                opposition = own_bar_opposition_reason(
+                    sym_verdicts, direction=c.direction,
+                )
+                if opposition is not None:
+                    blocked.setdefault(sym, []).append(opposition)
+            else:
+                # ENTRY: full-strict.
+                blocked.setdefault(sym, []).append(reason)
+        return survivors, blocked
+
+    @staticmethod
+    def _render_candidate_ranking(
+        ranked: list[RankedCandidate], blocked: dict[str, list[str]],
+    ) -> str:
+        """The prompt section. Order first, arithmetic beside each row, then
+        the refused names with the gate that refused them."""
+        lines = ["## Candidate Ranking (deterministic, Phase 13)"]
+        if not ranked and not blocked:
+            lines.append("(no Technical reads this session — nothing to rank)")
+            return "\n".join(lines)
+        lines += [
+            "The names below passed every rule that can be checked before you "
+            "decide (actionable rating; longs BUY-eligible; R/R at or above "
+            "the floor, or a current state-change row naming the symbol; net "
+            "independent evidence ≥ 1). They are ORDERED by the SUM across "
+            "every seat that reported a direction on the name, of that "
+            "seat's stated strength plus its stated conviction — technical "
+            "and earnings weighted 1.2x, news at 1.0x baseline, smart_money "
+            "and macro at 0.8x, a research-informed prior (2026-09-03), not "
+            "a measurement of THIS desk's own analysts. A SUM, so more "
+            "agreeing seats always score higher: breadth is the point, and "
+            "an agreeing seat can never pull a name down. Only technical "
+            "states a strength of its own (its rating rungs); the other four "
+            "seats HAVE no strength scale, so they are absent from the "
+            "strength term entirely — they are not a strength of zero, and "
+            "each row below names which seats the strength figure covers. "
+            "Those seats contribute their weighted conviction and nothing "
+            "else. The score is therefore NOT capped at 2.0 and "
+            "not comparable across sessions with different coverage. "
+            "This is the tiebreak among equally eligible names: to take a "
+            "lower-ranked name over a higher one, say what the ranking does "
+            "not see. It is not a size, and it does not waive any rule "
+            "below.",
+        ]
+        if ranked:
+            for i, c in enumerate(ranked, 1):
+                seats = ", ".join(c.seats)
+                convictions = "/".join(v.conviction for v in c.verdicts)
+                invalidation = "; ".join(
+                    f"{v.seat}: {v.invalidation}" for v in c.verdicts if v.invalidation
+                )
+                # A seat that looked and came back with no lean is stated,
+                # not omitted (2026-09-13). Otherwise "macro's own sector
+                # rows contradicted each other on this name" is invisible
+                # here and reads exactly like "macro never covered it".
+                no_lean = (
+                    f" | no lean from: {', '.join(c.neutral_seats)}"
+                    if c.neutral_seats else ""
+                )
+                # Item 65, 2026-09-26. The strength half is reported with
+                # the seats it is actually summed over, and is reported as
+                # ABSENT — not as 0.00 — when no seat on this name has a
+                # strength scale at all. Before this, four rungless seats
+                # each fed a literal 0.0 into a figure labelled "summed over
+                # N seats", so a name covered by four agreeing non-technical
+                # seats read here as "strength 0.00", which is what a name
+                # whose seats all measured no lean would also read as.
+                if c.strength_seats:
+                    strength = (
+                        f"strength {c.components['magnitude']:.2f} from "
+                        f"{'/'.join(c.strength_seats)}"
+                    )
+                else:
+                    strength = "no strength stated by any seat on this name"
+                no_strength = (
+                    f" | no strength scale: {', '.join(c.no_strength_seats)}"
+                    if c.no_strength_seats else ""
+                )
+                lines.append(
+                    f"{i}. {c.symbol} — {c.direction} | score {c.score:.2f} "
+                    f"({strength} + conviction "
+                    f"{c.components['conviction_score']:.2f} summed over "
+                    f"{len(c.verdicts)} seat(s)) | seats: {seats} "
+                    f"({convictions}){no_strength}{no_lean} | invalid if "
+                    f"— {invalidation}"
+                )
+        else:
+            lines.append("(no name passes every pre-decision rule today)")
+        if blocked:
+            lines.append("")
+            lines.append("Not ranked — refused by a rule, with the rule:")
+            for symbol in sorted(blocked):
+                lines.append(f"- {symbol}: {'; '.join(blocked[symbol])}")
+        return "\n".join(lines)

@@ -273,12 +273,14 @@
     },
     "src/pipeline_protection.py": {
       "module_functions": [
+        "_build_coverage_election",
+        "_build_fill_reconciler",
+        "_build_owner_alerts",
+        "_build_repeg_drain",
+        "_build_sell_finalization",
         "_classify_coverage_gap",
-        "_finite_float_or_none",
-        "_market_is_open_now",
-        "_position_notional",
-        "_price_is_through_stop",
-        "_reconciled_exit_action"
+        "_collab_of",
+        "_market_is_open_now"
       ],
       "classes": {
         "ProtectionMixin": [

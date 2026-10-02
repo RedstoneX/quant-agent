@@ -142,7 +142,7 @@ Until then: **paper trading only; live trading is not authorized.**
 Every condition above is enumerated in `src/live_capital_preflight.py` and the
 list here is a human-readable mirror of it. The gate sits at the point where the
 paper lock would be lifted: `AlpacaConfig._enforce_paper_only` in
-`src/config.py` refuses a non-paper account unless BOTH the reviewed code
+`src/config/__init__.py` refuses a non-paper account unless BOTH the reviewed code
 constant `config.LIVE_TRADING_AUTHORIZED` is flipped AND the gate reports every
 activation-scope condition satisfied, and a refusal names the conditions that
 failed. Run it with `.venv/bin/python scripts/live_capital_preflight.py`

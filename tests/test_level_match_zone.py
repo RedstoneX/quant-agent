@@ -410,7 +410,7 @@ def test_no_atr_multiple_survives_anywhere():
                 ):
                     # The deletion guard in `RiskConfig` and this test's own
                     # assertion both legitimately name the key.
-                    if path.name in {"config.py", "test_level_match_zone.py"}:
+                    if path.name == "test_level_match_zone.py" or path.relative_to(REPO).parts[:2] == ("src", "config"):
                         continue
                     offenders.append(f"{path.relative_to(REPO)}:{lineno}")
     assert not offenders, (

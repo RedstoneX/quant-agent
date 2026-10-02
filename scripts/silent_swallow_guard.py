@@ -50,6 +50,11 @@ MONEY_MODULES: tuple[str, ...] = (
     "src/execution/cash_sweep.py",        # moves cash
     "src/execution/exit_path_records.py", # the record an exit leaves behind
     "src/pipeline_protection.py",         # protective stops
+    "src/protection/owner_alerts.py",         # protective stops (lifted 2026-10-02)
+    "src/protection/sell_finalization.py",    # protective stops (lifted 2026-10-02)
+    "src/protection/fill_reconciler.py",      # protective stops (lifted 2026-10-02)
+    "src/protection/repeg_drain.py",          # protective stops (lifted 2026-10-02)
+    "src/protection/coverage_election.py",    # protective stops (lifted 2026-10-02)
     "src/pipeline_exits.py",              # sells
     "src/pipeline_entry_orders.py",       # buys
     "src/pipeline_delever.py",            # forced reductions
