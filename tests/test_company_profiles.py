@@ -20,6 +20,7 @@ from src.data.company import (
 )
 from src.notifier import _append_trade_session_body
 from src.pipeline_context import PMFacts
+from tests.pipeline_factory import build_pipeline
 
 CAMECO = CompanyProfile(
     symbol="CCJ",
@@ -306,9 +307,9 @@ def test_telegram_adds_no_identity_section_on_a_no_trade_day():
 
 def test_build_pm_facts_degrades_silently_when_the_store_explodes():
     """A profile failure must not cost the session its facts block."""
-    from src.pipeline_prompt_facts import PromptFactsMixin
+    from src.pipeline import TradingPipeline
 
-    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
+    pipeline = build_pipeline()
     with patch.object(
         CompanyProfileStore, "__init__",
         lambda self, *a, **k: (_ for _ in ()).throw(RuntimeError("no disk")),
@@ -322,9 +323,9 @@ def test_build_pm_facts_degrades_silently_when_the_store_explodes():
 def test_build_pm_facts_only_looks_up_symbols_in_scope():
     """Held + candidates, never the configured universe."""
     from src.models import Position
-    from src.pipeline_prompt_facts import PromptFactsMixin
+    from src.pipeline import TradingPipeline
 
-    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
+    pipeline = build_pipeline()
     asked = {}
 
     def _get_many(self, symbols, allow_fetch=True):

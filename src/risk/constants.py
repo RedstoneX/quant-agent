@@ -359,3 +359,15 @@ def gap_adjusted_risk_per_share(
         float(multiple) if usable else SHORT_GAP_RISK_MULTIPLE_DEFAULT
     )
     return risk_per_share * gap_multiple
+
+
+def live_constructor_cfg_or_none(constructor):
+    """The LIVE `ConstructorConfig` of `constructor`, for rules that must
+    agree with the stops the desk actually places (board item 185: the
+    universe screen's volatility ceiling is 1 / the widest stop this object
+    can produce). `None` when no constructor has been built -- some tests
+    drive a bare pipeline -- and the caller then falls back to
+    `config.risk` plus the class defaults. Pure: reads one attribute.
+    Moved from `TradingPipeline._constructor_cfg_or_none` (2026-10-01).
+    """
+    return getattr(constructor, "cfg", None)

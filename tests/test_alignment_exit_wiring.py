@@ -558,14 +558,14 @@ def test_older_position_is_still_eligible():
 
 # --- Defect 5: the two callers of the shared memo pass identical inputs. --
 def test_scan_and_confirmer_resolve_stop_loss_identically():
-    """Both key the SAME per-run memo and `stop_loss` decides whether a
-    broken-level mark exists, so the two call sites must resolve it the
-    same way or one reads a verdict built from a stop it never passed."""
+    """Both key the SAME per-run memo and `stop_loss` decides whether a broken-level mark
+    exists, so both call sites must resolve it the same way; the scan body is in `AlignmentExit`."""
     import inspect
 
+    from src.exits.alignment_exit import AlignmentExit
     from src.pipeline import TradingPipeline
 
-    scan_src = inspect.getsource(TradingPipeline._alignment_exit_scan)
+    scan_src = inspect.getsource(AlignmentExit._alignment_exit_scan)
     exec_src = inspect.getsource(TradingPipeline._midday_execute_llm_actions)
     needle = 'or facts.get("stop_loss")'
     assert needle in scan_src

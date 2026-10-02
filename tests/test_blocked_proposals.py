@@ -8,15 +8,14 @@ from becoming wallpaper, the verbatim reason rendering, and the empty case.
 
 import json
 
-from src.pipeline_prompt_facts import PromptFactsMixin
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _pipeline(tmp_path, name="t.db"):
     db = Database(str(tmp_path / name))
     db.initialize()
-    pipeline = PromptFactsMixin.__new__(PromptFactsMixin)
-    pipeline.db = db
+    pipeline = build_pipeline(db=db)
     return pipeline, db
 
 

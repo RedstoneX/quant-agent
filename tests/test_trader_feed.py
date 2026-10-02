@@ -1590,7 +1590,7 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
 # re-parses that same file and fails the build the moment the two disagree.
 
 _INTRA_CHECK_TIMER = (
-    Path(trader_feed.__file__).resolve().parent.parent
+    Path(trader_feed.__file__).resolve().parent.parent.parent
     / "scripts" / "systemd" / "quant-agent-intra_check.timer"
 )
 
