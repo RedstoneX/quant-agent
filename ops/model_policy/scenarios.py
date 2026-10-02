@@ -2406,7 +2406,7 @@ SCENARIOS: list[Scenario] = [
             "data, and the live call (src/pipeline.py:11698) also passes the news, "
             "earnings and macro seats' outputs and the reviewer's own prior "
             "metrics. The grader's main check rewards SELL/REDUCE/TRAIL_STOP on a "
-            "position near its stop, which config/prompts/position_reviewer.md:247 "
+            "position near its stop, which config/prompts/position_reviewer.md (`to_stop` is ADVISORY DISTANCE) "
             "says is never a trigger and the executor drops without a named one "
             "(src/pipeline.py:9585); its macro regime 'risk_off' is not a "
             "MacroAnalysis value (src/models.py:2258)"
