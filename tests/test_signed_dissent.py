@@ -185,6 +185,7 @@ _WEIGHT_SCAN_FILES = (
     "src/portfolio_constructor/__init__.py",
     "src/portfolio_constructor/config.py",
     "src/portfolio_constructor/stops.py",
+    "src/portfolio_constructor/stop_geometry.py",
     "src/portfolio_constructor/orders.py",
 )
 
