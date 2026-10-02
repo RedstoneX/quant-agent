@@ -7060,7 +7060,7 @@ numbers:
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
       (src/agents/portfolio_manager/ranking.py:332-337).
-  - id: src.agents.portfolio_manager.__init__.PortfolioManagerAgent.decide(max_portfolio_risk_pct)
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(max_portfolio_risk_pct)
     value: 25
     status: derived
     site: src/agents/portfolio_manager/ranking.py
@@ -7071,7 +7071,7 @@ numbers:
       (src/agents/portfolio_manager/__init__.py:406). Same 25 as the deployed ceiling;
       a second inline 25.0 fallback sits at
       src/agents/portfolio_manager/__init__.py:1307-1308, which no rule sees.
-  - id: src.agents.portfolio_manager.__init__.PortfolioManagerAgent.decide(rr_floor)
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(rr_floor)
     value: 1.5
     status: derived
     site: src/agents/portfolio_manager/__init__.py
@@ -7083,7 +7083,7 @@ numbers:
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
       (src/agents/portfolio_manager/ranking.py:332-337).
-  - id: src.agents.portfolio_manager.__init__.PortfolioManagerAgent.decide(starter_risk_pct)
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(starter_risk_pct)
     value: 0.5
     status: derived
     site: src/agents/portfolio_manager/ranking.py
