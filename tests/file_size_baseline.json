@@ -41,7 +41,6 @@
  "src/backtest/engine.py": 699,
  "src/config.py": 2610,
  "src/conviction_ledger.py": 588,
- "src/cost_circuit.py": 4300,
  "src/cost_table.py": 980,
  "src/coverage_watchdog.py": 2598,
  "src/credentials.py": 431,
