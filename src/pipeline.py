@@ -47,9 +47,9 @@ from src.risk.rules import (
 )
 from src.execution.broker import (
     AlpacaBroker,
-    _get_sector,
     _split_protective_qty,
 )
+from src.sector_reference import _get_sector
 from src.pipeline_context import PMFacts, RunContext, SessionType
 # Step 1 of docs/PIPELINE_SPLIT_PLAN.md: these moved to a mixin module and are
 # re-exported here because tests and other modules import them from `src.pipeline`.

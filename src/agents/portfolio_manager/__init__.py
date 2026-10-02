@@ -1802,10 +1802,10 @@ _ranking.PortfolioManagerAgent = PortfolioManagerAgent
 # and the delete that `patch` performs on exit restores the pristine value.
 # This is the ONE mirror block for this package — a second one would cancel it.
 _SUBMODULES = (
-    "src.agents.portfolio_manager.prompt_evidence",
-    "src.agents.portfolio_manager.ranking",
-    "src.agents.portfolio_manager.rotation_section",
-    "src.agents.portfolio_manager.grounding",
+    "src.agents.portfolio_manager.prompt_evidence", "src.agents.portfolio_manager.evidence_prompting",
+    "src.agents.portfolio_manager.ranking", "src.agents.portfolio_manager.candidate_ranking",
+    "src.agents.portfolio_manager.rotation_section", "src.agents.portfolio_manager.rotation_rendering",
+    "src.agents.portfolio_manager.grounding", "src.agents.portfolio_manager.decision_grounding",
 )
 _PRISTINE: dict[str, object] = {}
 
