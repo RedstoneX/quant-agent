@@ -20,7 +20,7 @@ import math
 from pydantic import ValidationError
 
 from src.data.technical import compute_indicators
-from src.execution.broker import _get_sector
+from src.sector_reference import _get_sector
 from src.models import TechnicalIndicators, TradeDecision
 from src.pipeline_context import RunContext
 from src.pipeline_delever import _optional_risk_number
