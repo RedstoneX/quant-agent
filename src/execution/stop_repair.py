@@ -26,52 +26,12 @@ import logging
 import math
 from typing import Any, Callable
 
+from src.execution.stop_repair_parts import _refuse, derive_protective_level
 from src.execution.stop_records import (
     STOP_ABSENT, STOP_USABLE, classify_stop_price,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _refuse(
-    outcome: dict | None, reason: str, *, code: str = "",
-    record: dict | None = None, **extra,
-) -> bool:
-    """Record WHY this repair did not happen, then report it as not repaired.
-
-    docs/WORK.md item 88. Every `return False` in this function is one of
-    two very different things — "the broker would not take the order" or
-    "this janitor refuses to place this number" — and the caller used to
-    receive only the bare bool. `coverage == 'none'` then paged the owner
-    with "the automatic repair could not restore one" and no reason at
-    all, and a 'partial' gap carried the refusal no further than a log
-    line. `reason` is a plain sentence, owner-facing, stamped onto the
-    caller's gap dict when it supplies one.
-
-    `record` carries what the durable row needs (db, symbol, qty, what the
-    broker already held). Until 2026-09-19 a refusal lived only in that
-    in-memory dict, a log line and a one-shot Telegram, so the refusal that
-    left ~$223 of shares unprotected on 2026-09-18 could not be counted or
-    audited afterwards. Every refusal now also writes one
-    `kind='stop_repair_refusal'` row (`src/execution/exit_path_records.py`).
-    The write never changes the return value.
-    """
-    if isinstance(outcome, dict):
-        outcome["repair_refusal"] = reason
-        # The machine-readable half of the same fact. The sentence above is
-        # for the owner; `code` is what the alerting path needs in order to
-        # tell an EXPECTED refusal apart from a fault, and until now it went
-        # only to the durable row — so the caller could render the reason
-        # and could not classify it. Adding it here changes no refusal and
-        # no return value; `_refuse` still returns False for every code.
-        outcome["repair_refusal_code"] = code
-    if record is not None:
-        from src.execution.exit_path_records import record_stop_repair_refusal
-        record_stop_repair_refusal(
-            record.get("db"), code=code, reason=reason,
-            **{k: v for k, v in record.items() if k != "db"}, **extra,
-        )
-    return False
 
 
 def repair_stop_coverage(
@@ -85,6 +45,7 @@ def repair_stop_coverage(
     outcome: dict | None = None,
     resting_stops: list | None = None,
     caller: str = "",
+    market: Any = None,
 ) -> bool:
     """Best-effort: re-place protective stop coverage on an uncovered
     position using the stop level recorded on its last opening row (BUY for
@@ -183,16 +144,27 @@ def repair_stop_coverage(
     recorded = entry.get("stop_loss")
     stop_state, stop_price = classify_stop_price(recorded)
     if stop_state == STOP_ABSENT:
+        # Owner ruling 2026-10-02: the desk acts rather than flagging a
+        # naked position for a review nobody performs. The archive has been
+        # asked; ask the broker and derive off the name's own ATR instead.
+        derived, derived_basis = derive_protective_level(
+            broker=broker, market=market, symbol=symbol, is_short=is_short,
+        )
+        if derived is None:
+            return _refuse(
+                outcome,
+                f"no stop level was ever recorded on the {opening} row and "
+                f"none could be derived from the broker's own average entry "
+                f"price and the name's ATR",
+                code="no_recorded_stop", record=rec
+            )
         logger.warning(
-            "coverage repair: %s has no recorded %s stop_loss — leaving the "
-            "gap flagged for manual review", symbol, opening,
+            "coverage repair: %s has no recorded %s stop_loss — placing a "
+            "protective stop at $%.2f, %s", symbol, opening, derived, derived_basis,
         )
-        return _refuse(
-            outcome,
-            f"no stop level was ever recorded on the {opening} row, so "
-            f"there is no reviewed level to restore",
-            code="no_recorded_stop", record=rec
-        )
+        stop_state, stop_price = STOP_USABLE, derived
+        if isinstance(outcome, dict):
+            outcome["derived_stop_basis"] = derived_basis
     if stop_state != STOP_USABLE:
         logger.error(
             "coverage repair REFUSED for %s: the recorded %s stop_loss is "

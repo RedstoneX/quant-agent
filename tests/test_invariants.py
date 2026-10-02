@@ -282,18 +282,18 @@ def test_invariant_unfilled_buys_are_invisible_to_pm_memory(tmp_path):
     db.initialize()
 
     # Legacy — NULL fill_status, treated as filled for back-compat.
-    db.insert_trade("NVDA", "BUY", 10, 100.0, "legacy", "r1")
+    db.insert_trade("NVDA", "BUY", 10, 100.0, "legacy", "r1", stop_loss=90.0)
     # Submitted-only, never filled — MUST NOT count as a current buy.
     db.insert_trade("NVDA", "BUY", 20, 105.0, "submitted", "r2",
-                    broker_order_id="ord-submit", fill_status="submitted")
+                    broker_order_id="ord-submit", fill_status="submitted", stop_loss=90.0)
     # Fully canceled with zero partial fill — invisible.
     db.insert_trade("NVDA", "BUY", 15, 103.0, "canceled", "r3",
-                    broker_order_id="ord-cancel", fill_status="submitted")
+                    broker_order_id="ord-cancel", fill_status="submitted", stop_loss=90.0)
     db.update_trade_fill("ord-cancel", fill_status="canceled",
                          fill_qty=0.0, fill_price=0.0)
     # Rejected — invisible.
     db.insert_trade("NVDA", "BUY", 12, 104.0, "rejected", "r4",
-                    broker_order_id="ord-reject", fill_status="submitted")
+                    broker_order_id="ord-reject", fill_status="submitted", stop_loss=90.0)
     db.update_trade_fill("ord-reject", fill_status="rejected",
                          fill_qty=0.0, fill_price=0.0)
 
@@ -312,7 +312,7 @@ def test_invariant_partial_fill_on_canceled_order_preserved(tmp_path):
     db.initialize()
 
     db.insert_trade("AAPL", "BUY", 10, 180.0, "partial", "r1",
-                    broker_order_id="ord-part", fill_status="submitted")
+                    broker_order_id="ord-part", fill_status="submitted", stop_loss=90.0)
     db.update_trade_fill(broker_order_id="ord-part", fill_status="canceled",
                          fill_qty=3.0, fill_price=180.5)
 
@@ -332,7 +332,7 @@ def test_invariant_calibration_excludes_unfilled_orders(tmp_path):
                                           ("JPM", 180.0, 195.0, (7, 2)),
                                           ("MSFT", 300.0, 310.0, (12, 3))):
         db.insert_trade(sym, "BUY", 10, entry, "x", "r1",
-                        broker_order_id=f"buy-{sym}", fill_status="filled")
+                        broker_order_id=f"buy-{sym}", fill_status="filled", stop_loss=90.0)
         db.conn.execute(
             "UPDATE trades SET timestamp = datetime('now', ?) "
             "WHERE broker_order_id=?",
@@ -349,7 +349,7 @@ def test_invariant_calibration_excludes_unfilled_orders(tmp_path):
 
     # Poisoning pair — rejected order that should NOT pollute calibration.
     db.insert_trade("TSLA", "BUY", 10, 250.0, "x", "r1",
-                    broker_order_id="buy-bad", fill_status="submitted")
+                    broker_order_id="buy-bad", fill_status="submitted", stop_loss=90.0)
     db.update_trade_fill("buy-bad", fill_status="rejected",
                          fill_qty=0.0, fill_price=0.0)
     db.insert_trade("TSLA", "SELL", 10, 200.0, "x", "r2",
@@ -377,7 +377,7 @@ def test_invariant_utc_midnight_boundary_attributes_to_et_trading_day(tmp_path):
     # Insert a trade at 03:00 UTC on 2026-04-18 (= 23:00 ET on 2026-04-17).
     # Manually set the timestamp so we're not at the mercy of wall clock.
     db.insert_trade("NVDA", "BUY", 10, 100.0, "boundary", "r1",
-                    broker_order_id="ord-boundary", fill_status="filled")
+                    broker_order_id="ord-boundary", fill_status="filled", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = '2026-04-18 03:00:00' "
         "WHERE broker_order_id = 'ord-boundary'",

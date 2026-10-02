@@ -279,7 +279,7 @@ def test_alert_fires_when_desk_and_broker_records_disagree(mock_alert, tmp_path)
     and an evidence row and nothing the owner would ever see."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "r1", fill_status="filled")
+    db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "r1", fill_status="filled", stop_loss=90.0)
 
     broker = MagicMock()
     broker.get_positions.return_value = []
@@ -309,7 +309,7 @@ def test_no_alert_when_records_agree(mock_alert, tmp_path):
     day. It must be silent when there is nothing wrong."""
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "r1", fill_status="filled")
+    db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "r1", fill_status="filled", stop_loss=90.0)
 
     broker = MagicMock()
     broker.get_positions.return_value = [

@@ -35,6 +35,10 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+from src.stop_price_classification import (  # re-export mirror: defined there, still importable from here
+    STOP_ABSENT, STOP_UNUSABLE, STOP_USABLE, classify_stop_price,
+)
+
 # ---------------------------------------------------------------------------
 # THE one place a stop VALUE is judged usable (docs/WORK.md item 88).
 # ---------------------------------------------------------------------------
@@ -54,36 +58,6 @@ logger = logging.getLogger(__name__)
 #
 # No number is chosen here. Positive-and-finite is the arithmetic
 # precondition for a price to be a price at all.
-STOP_ABSENT = "absent"
-STOP_UNUSABLE = "unusable"
-STOP_USABLE = "usable"
-
-
-def classify_stop_price(value: Any) -> tuple[str, float]:
-    """Name what a caller is holding: an absent stop, an unusable one, or a price.
-
-    Returns ``(STOP_ABSENT | STOP_UNUSABLE | STOP_USABLE, price)`` where
-    `price` is the usable float and 0.0 otherwise.
-
-    * ``STOP_ABSENT``   — nothing was supplied (None, or an empty string
-      from a JSON/DB round-trip). The caller decides whether a stopless
-      order is legal on its path; only the cash-sweep park says yes.
-    * ``STOP_UNUSABLE`` — something WAS supplied and it cannot be a stop:
-      zero, negative, NaN, ±Inf, or unparseable. Never silently treated
-      as absence.
-    * ``STOP_USABLE``   — a finite, positive price.
-    """
-    if value is None:
-        return STOP_ABSENT, 0.0
-    if isinstance(value, str) and not value.strip():
-        return STOP_ABSENT, 0.0
-    try:
-        price = float(value)
-    except (TypeError, ValueError):
-        return STOP_UNUSABLE, 0.0
-    if not math.isfinite(price) or price <= 0:
-        return STOP_UNUSABLE, 0.0
-    return STOP_USABLE, price
 
 
 def usable_stop_prices(values: Any) -> list[float]:

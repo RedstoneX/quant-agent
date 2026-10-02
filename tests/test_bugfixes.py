@@ -1160,7 +1160,7 @@ def test_get_trades_today_only(tmp_path):
     db.initialize()
 
     # Insert a trade with today's timestamp (default)
-    db.insert_trade("SPY", "BUY", 10, 500, "test", "run-1")
+    db.insert_trade("SPY", "BUY", 10, 500, "test", "run-1", stop_loss=90.0)
 
     # Insert an old trade by manipulating timestamp
     db.conn.execute(

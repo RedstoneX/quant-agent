@@ -247,7 +247,7 @@ def test_calibration_matches_sell_to_the_true_old_lot(tmp_path):
     db.conn.commit()
     for i, sym in enumerate(("A", "B")):   # filler to clear the >=3 floor
         db.insert_trade(symbol=sym, action="BUY", qty=1, price=100.0,
-                        reasoning="x", run_id="r", fill_status="filled")
+                        reasoning="x", run_id="r", fill_status="filled", stop_loss=90.0)
         db.insert_trade(symbol=sym, action="SELL", qty=1, price=110.0,
                         reasoning="x", run_id="r", fill_status="filled")
     db.insert_trade(symbol="NVDA", action="SELL", qty=100, price=210.0,

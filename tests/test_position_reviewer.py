@@ -667,7 +667,7 @@ def test_symbols_already_trimmed_today_pulls_sell_actions(tmp_path):
                     "r1", fill_status="canceled")
     # BUY today — never counts.
     db.insert_trade("DXPE", "BUY", 18, 170.77, "morning add", "r1",
-                    fill_status="filled")
+                    fill_status="filled", stop_loss=90.0)
     # HOLD audit row — never counts.
     db.insert_trade("GOOGL", "HOLD", 0, 0, "no action", "r1")
 

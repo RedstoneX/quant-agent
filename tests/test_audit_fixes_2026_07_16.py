@@ -406,7 +406,7 @@ def test_calibration_closes_the_lot_on_a_filled_trail_stop(tmp_path):
     # compute_trade_calibration needs >= 3 closed trades to report.
     for i, sym in enumerate(("LLY", "DXPE", "ORCL")):
         db.insert_trade(symbol=sym, action="BUY", qty=8, price=1000.0,
-                        reasoning="entry", run_id="r1", fill_status="filled")
+                        reasoning="entry", run_id="r1", fill_status="filled", stop_loss=90.0)
         db.insert_trade(symbol=sym, action="TRAIL_STOP", qty=8, price=1100.0,
                         reasoning="trail", run_id="r2",
                         broker_order_id=f"stop-{i}", fill_status="submitted")
@@ -427,7 +427,7 @@ def test_calibration_ignores_an_unfilled_trail_stop(tmp_path):
     db.initialize()
     for i, sym in enumerate(("GE", "XLV", "UNH")):
         db.insert_trade(symbol=sym, action="BUY", qty=10, price=300.0,
-                        reasoning="entry", run_id="r1", fill_status="filled")
+                        reasoning="entry", run_id="r1", fill_status="filled", stop_loss=90.0)
         db.insert_trade(symbol=sym, action="TRAIL_STOP", qty=10, price=280.0,
                         reasoning="trail", run_id="r2",
                         broker_order_id=f"live-{i}", fill_status="submitted")

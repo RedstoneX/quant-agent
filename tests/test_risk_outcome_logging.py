@@ -129,6 +129,7 @@ def _seed_closed_round_trips(db: Database, n: int, *, conviction: str,
             conviction=conviction, requested_risk_pct=2.0,
             allocated_risk_pct=1.5, decision_model=decision_model,
             fill_status="filled",
+            stop_loss=90.0 if entry_action == "BUY" else 110.0,
         )
         exit_action = "SELL" if side == "long" else "COVER"
         db.insert_trade(
@@ -147,7 +148,7 @@ def test_entry_columns_persist_and_read_back(tmp_path):
         symbol="NVDA", action="BUY", qty=10, price=100.0, reasoning="t",
         run_id="r1", decision_id="r1-dec-abc", conviction="high",
         requested_risk_pct=2.5, allocated_risk_pct=1.8,
-        decision_model="anthropic/claude-opus-4-6",
+        decision_model="anthropic/claude-opus-4-6", stop_loss=90.0,
     )
     row = dict(db.conn.execute("SELECT * FROM trades WHERE id = ?", (row_id,)).fetchone())
     assert row["conviction"] == "high"
@@ -165,7 +166,7 @@ def test_entry_without_risk_based_target_leaves_risk_columns_null(tmp_path):
     db = _db(tmp_path)
     row_id = db.insert_trade(
         symbol="AAPL", action="BUY", qty=5, price=200.0, reasoning="t",
-        run_id="r1", decision_id="r1-dec-xyz",
+        run_id="r1", decision_id="r1-dec-xyz", stop_loss=90.0,
     )
     row = dict(db.conn.execute("SELECT * FROM trades WHERE id = ?", (row_id,)).fetchone())
     assert row["conviction"] is None
@@ -236,6 +237,8 @@ def test_hold_and_entries_get_no_decision_link_status(tmp_path):
         row_id = db.insert_trade(
             symbol="XYZ", action=action, qty=1, price=10.0,
             reasoning="t", run_id="r1",
+            # BUY/SHORT now REQUIRE a usable stop; HOLD legitimately has none.
+            stop_loss=(9.0 if action == "BUY" else 11.0 if action == "SHORT" else None),
         )
         row = dict(db.conn.execute("SELECT decision_id_status FROM trades WHERE id = ?", (row_id,)).fetchone())
         assert row["decision_id_status"] is None, action
@@ -333,7 +336,7 @@ def test_by_allocated_risk_buckets_and_gates_the_same_way(tmp_path):
             symbol=f"HR{i}", action="BUY", qty=10, price=100.0, reasoning="t",
             run_id="r1", decision_id=f"r-hr-{i}", conviction="medium",
             allocated_risk_pct=4.0, requested_risk_pct=4.0,
-            decision_model="m", fill_status="filled",
+            decision_model="m", fill_status="filled", stop_loss=90.0,
         )
         db.insert_trade(
             symbol=f"HR{i}", action="SELL", qty=10, price=105.0, reasoning="t",
@@ -355,7 +358,7 @@ def test_conviction_and_allocated_risk_unknown_counts_are_honest(tmp_path):
     _seed_closed_round_trips(db, 5, conviction="high")
     # A closed round trip with NO conviction/risk on record at all.
     db.insert_trade(symbol="OLD1", action="BUY", qty=1, price=10.0,
-                     reasoning="t", run_id="r1", fill_status="filled")
+                     reasoning="t", run_id="r1", fill_status="filled", stop_loss=90.0)
     db.insert_trade(symbol="OLD1", action="SELL", qty=1, price=11.0,
                      reasoning="t", run_id="r1", fill_status="filled")
     stats = db.compute_trade_calibration(lookback_days=100_000)
@@ -665,7 +668,7 @@ def test_backfill_recovers_conviction_risk_and_model_for_entries(tmp_path):
     # risk/model, exactly like real historical rows.
     row_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.0, reasoning="t",
-        run_id="r1", decision_id="r1-dec-1", fill_status="filled",
+        run_id="r1", decision_id="r1-dec-1", fill_status="filled", stop_loss=90.0,
     )
 
     result = db.backfill_conviction_ledger(dry_run=True)
@@ -724,7 +727,7 @@ def test_backfill_is_idempotent(tmp_path):
     )
     db.insert_trade(symbol="NVDA", action="BUY", qty=10, price=100.0,
                      reasoning="t", run_id="r1", decision_id="r1-dec-1",
-                     fill_status="filled")
+                     fill_status="filled", stop_loss=90.0)
 
     first = db.backfill_conviction_ledger(dry_run=False)
     assert first["entry_recovered"] == 1
@@ -741,7 +744,7 @@ def test_backfill_reports_unrecoverable_entries_honestly(tmp_path):
     db = _db(tmp_path)
     row_id = db.insert_trade(
         symbol="GHOST", action="BUY", qty=1, price=10.0, reasoning="t",
-        run_id="r1", decision_id="r1-dec-missing", fill_status="filled",
+        run_id="r1", decision_id="r1-dec-missing", fill_status="filled", stop_loss=90.0,
     )
     result = db.backfill_conviction_ledger(dry_run=True)
     assert result["entry_unrecoverable_no_agent_log"] == 1
