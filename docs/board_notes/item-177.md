@@ -32,3 +32,48 @@ The trigger sets how many movers *qualify*; the cap decides how many of those ar
 
 
 **Re-applied 2026-10-02 onto the split modules, with one correction.** The fingerprint now hashes only the six stored-prior-rating fields the prompt renders, plus today's date (the prompt shows the rating's age against today); the first version hashed the whole stored entry, which includes the fingerprint and verdict stored beside it, so a stored fingerprint could never equal the next run's and the cache would never have hit [verified by test: `test_a_second_identical_run_is_carried_through_the_store` fails on the old key]. The fields live on `src/models/tech_reread.py`, the wrapper on `src/agents/tech_reread.py` (a mixin, because the size baseline forbids growing the agent file). A comparison that cannot be made (unrenderable input, no bars, unreadable stored verdict) asks the seat.
+
+### 2026-10-01 — what the paid tick actually wastes, MEASURED
+
+The owner asked what the half-hourly `intra_check` session is losing. Measured
+read-only against the production DB on 2026-10-01, across 116 recorded
+half-hourly checks: 32 no-opportunity, 27 no-trades, 18 paid-analysis-suspended,
+17 `evidence_gate_skip`, 9 `intraday_scan_crashed`, 1 `intraday_analysis_error`,
+1 rejected, 11 executed. The session is 63% of lifetime model spend ($13.93 of
+about $22) and sourced 37 of the desk's 80 trades, so the question is only about
+the wasted ticks, not about the tick itself.
+
+**ONE cause explains 9 of the 9 crashes, and it is not a defect in this repo.**
+Every one of the 9 `intraday_scan_crashed` payloads carries the same error:
+OpenRouter HTTP 402, "This request requires more credits, or fewer max_tokens.
+You requested up to 16000 tokens, but can only afford 843/811/775". First
+occurrence 2026-09-28 18:20 ET, last 2026-09-29 19:47 ET; eight of the nine fall
+inside a single afternoon once the research balance ran down. The provider
+refused before generating, so the refused call itself billed nothing — the loss
+is the free setup work the tick does before reaching the paid call, repeated
+every half hour while the balance stayed empty.
+
+The 1 `intraday_analysis_error` is a DIFFERENT and unrelated cause: a
+`pm_grounding_error` on 2026-09-25 where the PM's own output claimed news
+coverage that did not exist and mislabelled a macro stance. That is the
+grounding check doing its job and refusing an ungrounded decision, not a fault.
+
+**FIXED here:** the naming. Reporting an exhausted research account as "the scan
+for movers crashed" is a false statement about the desk's own state, which this
+desk treats as a root-cause defect in its own right. A payment refusal out of
+the scan is now reported as `intraday_scan_out_of_credit` with its own plain-words
+line in the owner feed ("the research account is out of credit"), while staying
+in exactly the same unhealthy, non-deciding, owner-visible class as the crash it
+replaces. Nothing is swallowed, no retry/backoff/timeout was added, and no
+number was introduced.
+
+**STILL PRESENT, and deliberately not fixed here:** the tick keeps re-entering
+the scan every half hour while the account is empty, doing its free setup work
+and reaching a refusal each time. The cost-circuit latch that would stop that
+(`provider_out_of_credit`) is self-clearing by design, so it re-arms rather than
+holding. Pre-checking the remaining balance before the tick's work would need a
+threshold — how little credit is too little — and this desk does not invent
+numbers, so that is recorded as an owner appetite question, not picked here.
+
+**NOT REPRODUCIBLE / not applicable:** nothing. Both causes are fully explained
+by their recorded payloads.

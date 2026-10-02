@@ -33,6 +33,7 @@ from pathlib import Path
 
 from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.cost_circuit import PaidAnalysisSuspended
+from src.intraday_scan_outcome import failed_scan_result
 from src.data.technical import compute_indicators
 from src.pipeline_context import RunContext
 from src.pipeline_stages import _persist_evidence, _record_pipeline_event
@@ -352,14 +353,7 @@ class IntradayMixin:
             # dict (mirroring the `paid_analysis_suspended` shape
             # above) makes the crash visible through the same nested
             # path, while the tick itself still completes normally.
-            logger.error("Intraday opportunity scan crashed (non-fatal): %s", e)
-            scan_result = {
-                "status": "intraday_scan_crashed",
-                "run_id": run_id,
-                "error": str(e),
-                "error_type": type(e).__name__,
-                "preserved": "fill reconciliation and stop-coverage repair",
-            }
+            scan_result = failed_scan_result(e, run_id)
         if scan_result is not None:
             result["intraday_scan"] = scan_result
             if scan_result.get("status") == "intraday_executed":
