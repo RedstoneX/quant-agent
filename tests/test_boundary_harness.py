@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from boundary_harness import ROOT, check_boundary, count_test_files_importing_pipeline  # noqa: E402
 
 # Measured 2026-10-01 by AST (code references only). May only go DOWN.
-TRADING_PIPELINE_TEST_FILE_BASELINE = 81
+TRADING_PIPELINE_TEST_FILE_BASELINE = 79
 
 
 def _composed_mixin_modules():
