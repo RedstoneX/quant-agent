@@ -24,3 +24,6 @@ build/
 # far, the merged text. Never board content — see that script for why the
 # reason is deliberately NOT put inside the document.
 *.merge-refusal
+
+# Runtime log directory -- documented in the README layout block, never committed.
+/logs/

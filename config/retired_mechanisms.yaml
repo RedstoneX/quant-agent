@@ -344,8 +344,8 @@ described:
       goes, the section silently renders the wrong set or nothing at all,
       and the 2026-05-04 AMZN 41 -> 21 -> 11 double-trim is back.
     symbols:
-      - file: src/pipeline.py
-        symbol: TradingPipeline._symbols_already_trimmed_today
+      - file: src/pipeline_exits.py
+        symbol: ExitEngineMixin._symbols_already_trimmed_today
     described_in:
       - file: src/agents/position_reviewer.py
         contains:
@@ -357,12 +357,12 @@ described:
       The risk manager is told that an `allocation_pct` it edits is applied
       as an INCREMENT on top of what is already held, and that an edit
       RAISING it is refused by the engine while a reduction is applied.
-      Both halves are `TradingPipeline._apply_risk_modifications`. If that
+      Both halves are `RiskGate._apply_risk_modifications`. If that
       guard went, the seat would go on believing it cannot increase risk
       while its edits did exactly that.
     symbols:
-      - file: src/pipeline.py
-        symbol: TradingPipeline._apply_risk_modifications
+      - file: src/pipeline_risk_gate.py
+        symbol: RiskGate._apply_risk_modifications
     described_in:
       - file: src/agents/risk_manager.py
         contains:

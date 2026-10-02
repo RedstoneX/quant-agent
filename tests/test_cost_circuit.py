@@ -32,13 +32,14 @@ from src.cost_circuit import (
 )
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 class _Notifier:
     def __init__(self):
         self.messages: list[str] = []
 
-    def send(self, message: str) -> bool:
+    def send(self, message: str, **_kwargs) -> bool:
         self.messages.append(message)
         return True
 
@@ -83,9 +84,8 @@ def _db_path(tmp_path):
 
 
 def test_pipeline_attaches_breaker_to_every_paid_agent():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
     circuit = object()
-    pipeline.cost_circuit = circuit
+    pipeline = build_pipeline(cost_circuit=circuit)
     names = (
         "tech_analyst", "news_analyst", "macro_analyst",
         "earnings_analyst", "smart_money_analyst", "portfolio_manager",
@@ -387,10 +387,11 @@ def _age_latch_past_self_clear_window(circuit):
     circuit._notify_if_needed()
 
 
-def _assert_charged_and_tripped(circuit, notifier, reservation):
+def _assert_charged_and_tripped(circuit, notifier, reservation,
+                                expected_code="failed_call_unknown_cost"):
     state = circuit.status()
     assert state["suspended"] is True
-    assert state["trigger_code"] == "failed_call_unknown_cost"
+    assert state["trigger_code"] == expected_code
     # Item 208: a transient latch inside its own self-clear window is
     # RECORDED, not sent -- announcing both edges of a fault that clears
     # itself in minutes is what produced 44 of the 107 messages the owner
@@ -408,7 +409,14 @@ def _assert_charged_and_tripped(circuit, notifier, reservation):
     # instead of booking a guessed amount.
     assert state["current_session_cost_usd"] == 0
     assert state["current_daily_cost_usd"] == 0
-    assert "no provable-zero-cost telemetry" in notifier.messages[0]
+    # The owner-facing sentence must match the recorded cause: an
+    # out-of-credit suspension says so, everything else keeps the
+    # unproven-cost wording (item 226).
+    expected_phrase = (
+        "out of credit" if expected_code == "provider_out_of_credit"
+        else "no provable-zero-cost telemetry"
+    )
+    assert expected_phrase in notifier.messages[0]
 
 
 @pytest.mark.parametrize("status_code", [429, 400, 401, 403, 404])
@@ -1837,7 +1845,7 @@ class _FailingNotifier:
     def __init__(self):
         self.attempts = 0
 
-    def send(self, message: str) -> bool:
+    def send(self, message: str, **_kwargs) -> bool:
         self.attempts += 1
         return False
 
@@ -2195,7 +2203,14 @@ def test_status_codes_outside_the_allow_list_stay_ambiguous(tmp_path, status_cod
     reservation = _authorize_and_fail(circuit, error, run_id=f"run-amb-{status_code}")
 
     assert _is_known_zero_cost_failure(error) is False
-    _assert_charged_and_tripped(circuit, notifier, reservation)
+    # Item 226: a 402 is still ambiguous cost and still trips -- the
+    # accounting did not move -- but the desk now NAMES the cause instead
+    # of reporting an unbounded-cost mystery it can actually explain.
+    _assert_charged_and_tripped(
+        circuit, notifier, reservation,
+        expected_code=("provider_out_of_credit" if status_code == 402
+                       else "failed_call_unknown_cost"),
+    )
 
 
 def test_missing_and_non_integer_status_codes_stay_ambiguous(tmp_path):
@@ -2379,7 +2394,7 @@ def test_auto_clear_resume_alert_retries_after_a_telegram_outage(
         def __init__(self):
             self.calls = 0
 
-        def send(self, _message):
+        def send(self, _message, **_kwargs):
             self.calls += 1
             return False
 
@@ -3015,7 +3030,7 @@ def test_resume_is_not_announced_for_a_suspension_the_owner_never_received(
     class _Down:
         messages: list[str] = []
 
-        def send(self, _message):
+        def send(self, _message, **_kwargs):
             return False
 
     circuit = _latch_on_failed_call(path, notifier=_Down())
@@ -3469,7 +3484,7 @@ class _MutedNotifier(_Notifier):
 
     enabled = False
 
-    def send(self, message: str) -> bool:
+    def send(self, message: str, **_kwargs) -> bool:
         self.messages.append(message)
         return False
 

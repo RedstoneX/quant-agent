@@ -48,7 +48,7 @@ executable path reaches it.
 
 LEDGER. Both rows the number ledger carries for this one floor
 (`src.risk.constants.STARTER_POSITION_RISK_PCT` and
-`src.portfolio_constructor.ConstructorConfig.min_risk_pct`) moved from
+`src.portfolio_constructor.config.ConstructorConfig.min_risk_pct`) moved from
 `sourced` to `arbitrary`, the status this repo uses for owner-ratified
 appetite, each with the open question, the cost of leaving it unanswered and
 the new recording as its BUILT settlement route. The arbitrary ratchet moved
@@ -57,7 +57,7 @@ first because one number cannot hold two statuses; no value changed.
 
 FINDING, NOT FIXED HERE. That one floor is ledgered twice at all —
 `src.risk.constants.STARTER_POSITION_RISK_PCT` and
-`src.portfolio_constructor.ConstructorConfig.min_risk_pct`, the same 0.5 —
+`src.portfolio_constructor.config.ConstructorConfig.min_risk_pct`, the same 0.5 —
 is the one-definition-per-quantity rule broken, the same shape as the
 short-side gap haircut the desk collapsed earlier on 2026-10-01. It should
 be collapsed deliberately rather than discovered a third time. The

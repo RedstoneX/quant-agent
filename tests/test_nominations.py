@@ -33,7 +33,7 @@ from src.models import (
     TechReasoningChain,
 )
 from src.nominations import select_nominations
-from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 from src.pipeline_context import RunContext
 from src.pipeline_stages import MorningResearchStage
 
@@ -310,7 +310,7 @@ def test_empty_seats_produce_no_candidates():
 
 def _gate_pipeline(monkeypatch, *, sector="Utilities", broker_eligible=True,
                     bars=None, min_history=20, min_price=5.0, min_dv=10_000_000):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
@@ -327,7 +327,7 @@ def _gate_pipeline(monkeypatch, *, sector="Utilities", broker_eligible=True,
     )
     pipeline.market = MagicMock()
     pipeline.market.get_ohlcv.return_value = bars if bars is not None else _bars(30)
-    monkeypatch.setattr("src.pipeline._get_sector", lambda _symbol: sector)
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: sector)
     return pipeline
 
 
@@ -404,7 +404,7 @@ def test_smart_money_admission_lane_behaves_identically_after_refactor(monkeypat
     tests/test_bugfixes.py::test_transient_admission_requires_sec_purchase_broker_and_market_quality
     — reproduced here so Phase 9's refactor of the shared gate is proven,
     in this file, not to have changed smart-money's observable behavior."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline()
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
@@ -419,7 +419,7 @@ def test_smart_money_admission_lane_behaves_identically_after_refactor(monkeypat
         "exchange": "nyse",
     }
     pipeline.market = MagicMock()
-    monkeypatch.setattr("src.pipeline._get_sector", lambda _symbol: "Utilities")
+    monkeypatch.setattr("src.pipeline_admission._get_sector", lambda _symbol: "Utilities")
     pipeline.market.get_ohlcv.return_value = _bars(30)
     observations = [SimpleNamespace(
         symbol="VST", transaction_code="P", admission_eligible=True,

@@ -47,6 +47,7 @@ from src.models import PortfolioDecision, ReasoningChain, TradeDecision
 from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
 from src.pipeline_stages import ExecutionStage, _size_shares
+from tests.pipeline_factory import build_pipeline
 
 
 # ==========================================================================
@@ -1000,7 +1001,7 @@ def _priced(symbol: str, qty: float, price: float = 900.0) -> MagicMock:
 
 
 def _sweep(pipeline, *, market_open: bool):
-    with patch("src.pipeline._market_is_open_now", return_value=market_open):
+    with patch("src.pipeline_protection._market_is_open_now", return_value=market_open):
         return TradingPipeline._reconcile_stop_coverage(pipeline)
 
 
@@ -1214,7 +1215,7 @@ def test_market_hours_check_fails_toward_open():
 
     broker = MagicMock()
     broker.get_session_close.side_effect = RuntimeError("calendar down")
-    with patch("src.pipeline.et_now", side_effect=RuntimeError("clock down")):
+    with patch("src.pipeline_protection.et_now", side_effect=RuntimeError("clock down")):
         assert _market_is_open_now(broker) is True
 
 
@@ -1229,7 +1230,7 @@ def test_market_hours_check_respects_an_early_close():
     broker = MagicMock()
     broker.get_session_close.return_value = datetime(2026, 11, 27, 13, 0, tzinfo=ET)
     now = datetime(2026, 11, 27, 13, 30, tzinfo=ET)
-    with patch("src.pipeline.et_now", return_value=now):
+    with patch("src.pipeline_protection.et_now", return_value=now):
         assert _market_is_open_now(broker) is False
 
 
@@ -1294,8 +1295,7 @@ def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
     """Same hazard on the partial-exit path: trimming 5 shares off 12.3456
     leaves a 7.3456 residual, and re-protecting it with one fractional order
     would leave the whole residual DAY-only."""
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     pipeline.broker._list_open_sell_stop_orders.return_value = []
     pipeline._format_qty = lambda q: str(q)
     pipeline.db = None
@@ -1305,12 +1305,9 @@ def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
     pipeline.broker._submit_stop_limit_order.return_value = {
         "id": "leg", "status": "accepted",
     }
-    pipeline.broker._submit_stop_leg_retrying = functools.partial(
-        AlpacaBroker._submit_stop_leg_retrying, pipeline.broker,
-    )
-    pipeline.broker._submit_protective_stop_retrying = functools.partial(
-        AlpacaBroker._submit_protective_stop_retrying, pipeline.broker,
-    )
+    pipeline.broker._stop_placer = functools.partial(AlpacaBroker._stop_placer, pipeline.broker)
+    pipeline.broker._submit_stop_leg_retrying = functools.partial(AlpacaBroker._submit_stop_leg_retrying, pipeline.broker)
+    pipeline.broker._submit_protective_stop_retrying = functools.partial(AlpacaBroker._submit_protective_stop_retrying, pipeline.broker)
 
     cancelled = [{"id": "s1", "qty": 12.3456, "stop_price": 90.0,
                   "limit_price": 88.0}]

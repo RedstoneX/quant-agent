@@ -28,7 +28,43 @@ def _parse(path: Path) -> ast.AST:
 
 
 def _api_source_files() -> list[Path]:
-    return sorted(API_DIR.glob("*.py"))
+    """Every Python module in the API package, however deeply nested.
+
+    `rglob`, not `glob`: a future `src/api/routes/` subpackage must not slip
+    out from under the structural guards simply by being one directory down.
+    """
+    return sorted(API_DIR.rglob("*.py"))
+
+
+def test_api_source_scan_is_not_silently_empty():
+    """A scan that matches almost nothing passes vacuously; fail loudly first.
+
+    Both halves matter: the glob must find files at all, and it must cover
+    every module the running app actually loaded, so moving a route module
+    somewhere the glob cannot see is a failure here and not a silent hole.
+    """
+    import sys
+
+    files = _api_source_files()
+    assert len(files) >= 5, f"the src/api scan found almost nothing: {files}"
+    names = {p.name for p in files}
+    assert "server.py" in names, f"src/api scan missed the app module: {sorted(names)}"
+
+    import src.api.server  # noqa: F401  (populates sys.modules)
+
+    scanned = {p.resolve() for p in files}
+    loaded = set()
+    for mod_name, module in list(sys.modules.items()):
+        if mod_name != "src.api" and not mod_name.startswith("src.api."):
+            continue
+        filename = getattr(module, "__file__", None)
+        if filename:
+            loaded.add(Path(filename).resolve())
+    missing = sorted(str(p) for p in loaded - scanned)
+    assert not missing, (
+        "the API package imports modules the structural scan never reads, so "
+        f"they are unguarded: {missing}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -126,14 +162,119 @@ def test_alpaca_broker_constructed_only_in_broker_reads():
 #    load-bearing for trading).
 # ---------------------------------------------------------------------------
 
-_TRADING_CRITICAL_FILES = [
-    "main.py",
-    "src/pipeline.py",
-    "src/pipeline_stages.py",
-    "src/execution/broker.py",
-    "src/risk/rules.py",
-    "src/scheduler.py",
-]
+# The set is DERIVED, not retyped. Board item 210 splits `src/pipeline.py`
+# into one module per cluster over several steps, and a hand-written list
+# silently stopped covering the moved code at every step: the guard kept
+# passing while the module it existed to watch was no longer named here.
+#
+# THE RULE: a fixed core (the entrypoint, the broker, the risk rules, the
+# scheduler) UNION every `src/pipeline*.py` module. The split's own naming
+# convention is what makes the second half honest -- every step of
+# docs/PIPELINE_SPLIT_PLAN.md lands its new module under that name, so a
+# module created by a future step is covered the moment it exists, with no
+# edit here.
+#
+# WHAT THE RULE WOULD MISS: a cluster moved OUT of the `src/pipeline*.py`
+# namespace (say to `src/protection/stops.py`). That gap is closed by
+# `test_every_trading_pipeline_base_module_is_covered` below, which walks the
+# live MRO of `TradingPipeline` and fails if any class it is composed from
+# lives in a file this list does not contain. The remaining blind spot is a
+# moved cluster that is NEITHER named `pipeline*` NOR a base of
+# `TradingPipeline` -- plain helper functions in a new namespace. Nothing
+# mechanical catches that; the reviewer of that step must add it here.
+
+# The trading-critical entry points, named as IMPORTABLE MODULES rather than
+# as file paths. Each is resolved to its file through the import system, so
+# moving a module's file on disk cannot turn this guard into a no-op pointing
+# at a path that no longer exists.
+_ALWAYS_TRADING_CRITICAL_MODULES = (
+    "main",
+    "src.execution.broker",
+    "src.risk.rules",
+    "src.scheduler",
+)
+
+
+def _resolve_module_paths(dotted_names) -> list[str]:
+    """Repo-relative paths of the given modules, resolved by importing them."""
+    import importlib
+
+    root = REPO_ROOT.resolve()
+    out: list[str] = []
+    for dotted in dotted_names:
+        module = importlib.import_module(dotted)
+        filename = getattr(module, "__file__", None)
+        assert filename, f"{dotted} has no __file__ to guard"
+        path = Path(filename).resolve()
+        assert root in path.parents, f"{dotted} resolved outside the repo: {path}"
+        out.append(str(path.relative_to(root)))
+    return out
+
+
+_ALWAYS_TRADING_CRITICAL = tuple(_resolve_module_paths(_ALWAYS_TRADING_CRITICAL_MODULES))
+
+
+def test_trading_critical_modules_all_resolve():
+    """Canary: every named entry point still imports and still lives in-repo."""
+    assert len(_ALWAYS_TRADING_CRITICAL) == len(_ALWAYS_TRADING_CRITICAL_MODULES)
+    for rel in _ALWAYS_TRADING_CRITICAL:
+        assert (REPO_ROOT / rel).is_file(), f"resolved path does not exist: {rel}"
+
+
+def _pipeline_split_modules() -> list[str]:
+    """Every `src/pipeline*.py` module, as a repo-relative path string."""
+    return [f"src/{path.name}" for path in sorted((REPO_ROOT / "src").glob("pipeline*.py"))]
+
+
+def _trading_critical_files() -> list[str]:
+    return sorted(set(_ALWAYS_TRADING_CRITICAL) | set(_pipeline_split_modules()))
+
+
+_TRADING_CRITICAL_FILES = _trading_critical_files()
+
+
+def test_trading_critical_set_is_not_silently_empty():
+    """The derivation must actually find the split modules, not quietly yield none."""
+    split = _pipeline_split_modules()
+    assert "src/pipeline.py" in split
+    assert len(split) >= 2, (
+        "the pipeline split produced extra modules but the glob found none of "
+        f"them: {split}"
+    )
+    for rel in _ALWAYS_TRADING_CRITICAL:
+        assert rel in _TRADING_CRITICAL_FILES
+
+
+def test_every_trading_pipeline_base_module_is_covered():
+    """Every module `TradingPipeline` is composed from must be on the list.
+
+    This is the half of the rule that does not depend on a filename: if a
+    future split step puts a mixin somewhere outside `src/pipeline*.py`, the
+    glob misses it and this test says so by name.
+    """
+    import sys
+
+    from src.pipeline import TradingPipeline
+
+    root = REPO_ROOT.resolve()
+    missing: list[str] = []
+    for klass in TradingPipeline.__mro__:
+        if klass is object:
+            continue
+        module = sys.modules.get(klass.__module__)
+        filename = getattr(module, "__file__", None)
+        if not filename:
+            continue
+        path = Path(filename).resolve()
+        if root not in path.parents:
+            continue
+        rel = str(path.relative_to(root))
+        if rel not in _TRADING_CRITICAL_FILES:
+            missing.append(rel)
+    assert not missing, (
+        "TradingPipeline is composed from modules that the trading-critical "
+        f"import guard does not watch: {sorted(set(missing))}"
+    )
 
 
 def _imported_module_names(tree: ast.AST) -> list[str]:
@@ -148,17 +289,40 @@ def _imported_module_names(tree: ast.AST) -> list[str]:
     return names
 
 
+def _api_imports(tree: ast.AST) -> list[str]:
+    """Imports of the API layer found in `tree`, in source order."""
+    return [
+        name
+        for name in _imported_module_names(tree)
+        if name == "src.api" or name.startswith("src.api.")
+    ]
+
+
 @pytest.mark.parametrize("rel_path", _TRADING_CRITICAL_FILES)
 def test_api_package_never_imports_trading_critical_modules(rel_path: str):
     path = REPO_ROOT / rel_path
     assert path.is_file(), f"expected trading-critical file to exist: {path}"
     tree = _parse(path)
-    imported = _imported_module_names(tree)
-    offenders = [m for m in imported if m == "src.api" or m.startswith("src.api.")]
+    offenders = _api_imports(tree)
     assert not offenders, (
         f"{rel_path} imports src.api, which trading-critical code must never "
         f"depend on: {offenders}"
     )
+
+
+def test_trading_critical_import_guard_can_fail():
+    """Prove the guard above can FAIL -- a guard that cannot fail is not a guard.
+
+    The check is run against the real source text of each derived split module
+    with an `import src.api` appended, so a regression in the detector (not
+    just in the list) is caught too.
+    """
+    assert _api_imports(ast.parse("from src.api.server import app\n")) == ["src.api.server"]
+    for rel_path in _pipeline_split_modules():
+        source = (REPO_ROOT / rel_path).read_text() + "\nimport src.api  # injected\n"
+        assert _api_imports(ast.parse(source)) == ["src.api"], (
+            f"the guard would not notice {rel_path} importing src.api"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -281,10 +445,44 @@ def test_no_db_write_calls_via_shared_database_class():
 # ---------------------------------------------------------------------------
 
 
-def test_read_only_sqlite_connection_uses_mode_ro():
-    text = (API_DIR / "db_reads.py").read_text()
-    assert "mode=ro" in text
-    assert "uri=True" in text
+def test_read_only_sqlite_connection_actually_refuses_writes(tmp_path, monkeypatch):
+    """Execute the helper instead of reading it: a write must RAISE.
+
+    Previously this grepped `db_reads.py` for the string `mode=ro`, which both
+    hard-coded the filename and proved nothing about the connection. Now the
+    real helper opens a real database and SQLite itself is asked to reject the
+    write, which is the property the API layer depends on.
+    """
+    import sqlite3
+
+    from src.api import db_reads
+
+    db_path = tmp_path / "ro_probe.sqlite3"
+    seed = sqlite3.connect(db_path)
+    seed.execute("CREATE TABLE probe (id INTEGER PRIMARY KEY, v TEXT)")
+    seed.execute("INSERT INTO probe (v) VALUES ('seeded')")
+    seed.commit()
+    seed.close()
+
+    monkeypatch.setattr(db_reads, "get_db_path", lambda: db_path)
+    conn = db_reads._connect()
+    try:
+        assert conn.execute("SELECT v FROM probe").fetchone()[0] == "seeded", (
+            "the read-only connection could not even read the seeded row"
+        )
+        with pytest.raises(sqlite3.OperationalError) as excinfo:
+            conn.execute("INSERT INTO probe (v) VALUES ('written')")
+            conn.commit()
+        assert "readonly" in str(excinfo.value).lower(), (
+            f"write failed for the wrong reason: {excinfo.value}"
+        )
+    finally:
+        conn.close()
+
+    check = sqlite3.connect(db_path)
+    rows = check.execute("SELECT COUNT(*) FROM probe").fetchone()[0]
+    check.close()
+    assert rows == 1, "the API's read-only connection managed to write a row"
 
 
 # ---------------------------------------------------------------------------

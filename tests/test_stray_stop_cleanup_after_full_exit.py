@@ -23,13 +23,11 @@ from unittest.mock import MagicMock, patch
 
 from src.execution.broker import AlpacaBroker
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _mk_pipeline() -> TradingPipeline:
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
-    p.broker = MagicMock()
-    p._format_qty = lambda q: str(q)
+    p = build_pipeline(db=MagicMock(), broker=MagicMock(), _format_qty=lambda q: str(q))
     return p
 
 

@@ -1150,12 +1150,12 @@ def test_submit_order_sell_ignores_stop_loss_price(mock_tc_cls):
     mock_client.submit_order.return_value = MagicMock(
         id="ord-sell", status="accepted", symbol="NVDA",
     )
+    mock_client.get_all_positions.return_value = [MagicMock(symbol="NVDA", qty="10")]  # sell gate
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     broker.submit_order(
-        symbol="NVDA", qty=10, side="sell",
-        limit_price=420.0,
+        symbol="NVDA", qty=10, side="sell", limit_price=420.0,
         stop_loss_price=400.0,  # accidentally provided
     )
     req = mock_client.submit_order.call_args[0][0]
@@ -1766,14 +1766,14 @@ def test_a_market_order_skips_the_fat_finger_guard(mock_tc_cls):
     mock_order.status = "accepted"
     mock_order.symbol = "NVDA"
     mock_client.submit_order.return_value = mock_order
+    mock_client.get_all_positions.return_value = [MagicMock(symbol="NVDA", qty="10")]  # sell gate
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     # A stale $300 reference against a name that has gapped to ~$80 (73% away):
     # a LIMIT there would be rejected as an outlier, but a MARKET order submits.
     result = broker.submit_order(
-        symbol="NVDA", qty=10, side="sell",
-        limit_price=None, reference_price=300.0,
+        symbol="NVDA", qty=10, side="sell", limit_price=None, reference_price=300.0,
     )
     assert result["status"] == "accepted"
     assert result["id"] == "order-mkt"

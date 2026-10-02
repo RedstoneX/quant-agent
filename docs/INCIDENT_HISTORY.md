@@ -22,6 +22,137 @@ what would catch it next time.
 
 ---
 
+### 2026-10-01 — Every order now carries a deterministic `client_order_id` (idempotent submission)
+
+**Defect [measured on main]:** `client_order_id` appeared zero times in
+`src/`, so no order carried a deduplication key and an HTTP timeout AFTER
+Alpaca accepted the order was indistinguishable from a rejection.
+
+**What WAS protected before this change (corrected 2026-10-01 after the
+adversary pass; the first draft of this note claimed nothing prevented a
+duplicate, which overstated the defect).** The protective-stop path already
+had two guards: `_existing_stop_covering_qty` is a post-hoc check that, on a
+`held_for_orders` refusal, looks for a live stop of the same qty and trigger
+and treats it as coverage; and Alpaca's own held-quantity rule refuses a
+second SELL stop over shares a resting stop already holds. A retried stop
+therefore produced a broker refusal and a lookup, not a second stop.
+
+**What was NOT protected.** The ENTRY path had neither guard: a timed-out
+entry POST retried in the acceptance window was a second real position, and
+the orphan-pending-submit reconcile is recovery after the fact, not
+prevention. That is the hole this change closes.
+
+**Fix.** All three submission sites (entry/exit order, protective stop-MARKET,
+stop-LIMIT fallback) derive a `client_order_id` from the intent only —
+purpose, Alpaca symbol, side, ET session date, quantity, limit/trigger price.
+No timestamp, random value or counter: the same intent retried reuses the key
+and the broker refuses it; a new side, day, size, trigger or purpose is a new
+key. Length honours the stricter of Alpaca's two published limits (48, Broker
+API orders reference; the Trading API reference says 128); a longer natural key
+keeps its readable prefix and fills the rest of the budget with its SHA-256
+hex. Sources are cited beside the constant in `src/execution/broker.py`.
+
+**A duplicate reply is the guard working, not a failure — but only after the
+read-back's STATUS is inspected.** Alpaca answers a duplicate with HTTP 422
+"client_order_id must be unique" (its own troubleshooting guide). That reply
+is classified by code AND text and the existing order is read back by client
+id; if the read-back fails the call raises "treat as PLACED", never a quiet
+rejection. Any other failure propagates exactly as before.
+
+**Which broker rule applies — settled 2026-10-01 (adversary round 3).**
+An earlier draft of this note said both "Alpaca keeps the key on a dead
+order" and "uniqueness applies to active orders only"; those contradict each
+other and the first is wrong. The one source the change cites (Alpaca's
+troubleshooting guide) says: "Make sure to use a unique client_order_id for
+each active order." The POST /v2/orders reference says only "a unique
+identifier" and is silent on scope. The desk therefore designs against
+ACTIVE-ONLY uniqueness, the weaker guarantee: a key is refused only while a
+non-terminal order holds it; once that order is `canceled`, `filled`,
+`expired` or `rejected` the key is FREE and a resubmission under it is
+ACCEPTED as a brand-new order. The stub broker in the proof file models
+exactly that (its first draft modelled global uniqueness — a broker that does
+not exist — and the tests passed against it).
+
+**Defect introduced by the first draft of this change, found by the adversary
+and fixed in the same PR (2026-10-01).** `_restore_stop_orders` resubmits the
+same qty, trigger and side moments after cancelling the stop — while that stop
+is still `pending_cancel`, i.e. still active and still holding the key. The
+first draft returned the read-back order without reading its status, so the
+restore loop counted a dying stop as restored and the stop-leg retry returned
+it as placed. Now every duplicate read-back on the stop path is judged by
+status: an order that still holds the shares is returned as the placed stop;
+a dying one (`pending_cancel`) is superseded by a new submission whose key
+folds in the dying order's broker id.
+
+**Which statuses "hold the shares" — corrected 2026-10-01 (adversary round
+3, hole 2).** The first fix judged the read-back against
+`PROTECTIVE_ORDER_ALIVE_STATUSES`, which was built for an aged order-book
+read and excludes three states that still hold the shares: `pending_replace`
+(the desk amends stops IN PLACE via `replace_order_by_id`, so a stop read
+back mid-amend is the live stop), `stopped` (Alpaca: "a trade is guaranteed
+... but has not yet occurred" — the shares are being sold by that order) and
+`calculated` (completed, settlement pending — already sold). Superseding any
+of them is a second sell over shares already protected or already gone. The
+same mis-judgement applied to the placement response itself: a stop-MARKET
+placed through its trigger can come back `filled`, and the retry loop would
+have treated that as a failed attempt and sold the shares again on each
+retry. The shared set is NOT mutated — its two existing readers are right for
+their own questions — a third set, `PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES`
+(the alive set plus `pending_replace`, `stopped`, `calculated`, `filled`), is
+the single answer to "may a second stop be submitted over this order?", read
+by the duplicate read-back, the restore loop and the stop-leg retry. Proof:
+six cases fail before the fix (a `pending_replace` / `stopped` read-back was
+superseded; a `pending_replace` / `stopped` / `calculated` / `filled`
+placement response was retried) and pass after [measured 2026-10-01].
+
+**What this change does NOT guarantee (adversary round 3, hole 1) — "never
+two live stops" is NOT delivered.** Under active-only uniqueness the
+superseding key does not survive a retry. Sequence: stop A is
+`pending_cancel` and holds the plain key; the restore POSTs the plain key,
+gets the 422, reads back A, POSTs the superseding key, and the broker
+ACCEPTS stop B but the connection drops; A's cancel then completes, freeing
+the plain key; the retry POSTs the plain key and it is accepted outright as
+stop C — no 422 anywhere, B and C both rest. The proof file carries this as
+`test_KNOWN_LIMITATION_retry_after_cancel_completes_leaves_two_live_stops`,
+asserting what the code DOES (two live stops), so the day it is closed the
+test, not the note, says so. The change is still strictly better than main,
+which placed the restore blind; it narrows the window to "cancel completes
+between the timed-out POST and its retry" but does not close it.
+
+**Known limitation, unchanged from main (finding, not a regression, and
+deliberately NOT fixed here):** a stop that was partially filled and then
+cancelled is restored by `_restore_stop_orders` at the ORIGINAL quantity in
+its spec, not the remaining one — the spec carries the quantity the stop was
+placed with. A second stop for more shares than remain is a sell over shares
+already gone. This predates the idempotency change and is left for its own
+item.
+
+**Proof run (tests/test_idempotent_client_order_id.py):** same intent twice
+gives one key and each changed fact gives another; a stub broker with
+ACTIVE-ONLY uniqueness that accepts then times out leaves ONE order after the
+retry for both the entry and the stop path; every other request field is
+byte-identical to the pre-change request; the `pending_cancel` read-back is
+superseded; the amending / executing cases above are not; the two-live-stops
+limitation is asserted as reality. 22 tests in the file; the wider
+order/stop/broker run is reported in the PR.
+
+**What this does not cover.** Two genuinely distinct same-day intents with
+identical symbol, side, quantity and price (for example an identical second
+scale-in tranche at the identical limit) would be read as a retry and return
+the first order; the probability is low because the limit is derived from the
+live quote, but it is a known edge and is stated here rather than hidden.
+
+**What this change does and does NOT cover (adversary, 2026-10-01).** It
+covers exactly one case: the SAME intent re-POSTed while the first order is
+still ACTIVE at Alpaca, which is when Alpaca's uniqueness rule applies. It
+does NOT cover a fast-filling entry: once the first order has filled, the
+key is free again and a resubmission is accepted as a second position. It
+does NOT add any same-key retry to the entry path — the only retry there is
+the vendor library's own 429/504 loop, which already reuses the request —
+so the key defends a retry the desk does not yet make deliberately. The
+entry path's duplicate read-back is also still returned without a status
+check; that was left alone here (the stop path was the money defect) and is
+an open item, not a covered one.
 ### 2026-09-30 — a near-empty balance refused calls the provider offered to serve
 
 **What happened.** On a near-empty paid balance the provider answered with
@@ -17871,3 +18002,51 @@ number, no threshold and no behaviour changed. A comment at the
 crossing a range trade between the ratchets and the structural trail; that
 reasoning is now moot because the target is not read. It predates this task
 and was left alone.
+
+## Shared-file contention measured, 2026-10-01 — the README and the number ledger
+
+A change-frequency count over the last 300 commits on `main` made
+`README.md` (35%) and `config/number_ledger.yaml` (32%) look like forced
+contention: files every change must edit, so unrelated changes collide over
+the paperwork. Both were replayed against real history before anything was
+built, and the frequency did not survive the replay.
+
+The replay takes every pair of real commits touching one file within a
+four-commit window, puts both changes on the older one's parent as a common
+base — the second change rebased block by block, so it is the change that
+actually landed, not a constructed one — and three-way merges them.
+`README.md`: 110 replayable pairs, 23 conflicts, and **zero** of the 23 lay
+entirely inside the repository-layout block. The layout block is the thing a
+new module must edit, so the module-tree hypothesis was the obvious one; it
+is wrong. Every real conflict was two changes rewriting the same prose
+section. `config/number_ledger.yaml`: 110 pairs, 20 conflicts, of which 17
+were two changes editing the SAME ledger entry and 3 were different entries.
+Splitting the ledger into one file per entry therefore removes at most 3 of
+20 real collisions, and the 17 are genuine disagreement that must keep
+conflicting. The split was measured and NOT shipped on that evidence.
+
+`merge=union` via `.gitattributes` was rejected outright: 57 of the last 97
+commits touching the ledger remove lines, so entries are rewritten routinely
+and union merge would silently duplicate them rather than conflict.
+
+Deriving the ledger from the code — the justification living at each
+number's definition site, with the file generated — was assessed and is not
+reachable as one change here. Of 336 entries, 79 have an id that is not a
+named definition at all (a multiplier literal inside an expression, or a
+function-parameter default) and has nothing to attach an annotation to; 18
+sit in `src/pipeline.py` and `src/pipeline_stages.py`, which the item-210
+split is rewriting; and 102 cite a path other than their own site, so
+attaching the entry to its own definition does not stop the citation going
+stale, because what rots is the cited target. The one part of the ledger
+that genuinely is a copy of the code — the `value` field — is already
+checked against the live literal by `src/number_sources.py` (its check 2,
+VALUE), so that duplication is mechanically pinned today.
+
+What did ship is the one derivation the evidence supports:
+`scripts/readme_tree.py` derives the layout block's paths from the tree and
+`tests/test_readme_module_tree.py` fails if the README names a path that
+does not exist. It is one-directional by design — the block is a curated
+tour with a hand-written description per module, and no generator can invent
+those — so a module on disk the block does not mention is not a defect,
+while a renamed or deleted one named in the README is. It is a rot guard,
+not a contention fix, and is reported as such.

@@ -262,15 +262,23 @@ def test_every_status_the_codebase_writes_is_classified():
         "carry_forward_empty", "carry_forward_failed",
     })
     import ast
-    stages = ast.parse((REPO / "src" / "pipeline_stages.py").read_text())
-    for node in ast.walk(stages):
-        if (isinstance(node, ast.FunctionDef)
-                and node.name == "_classify_earnings_status"):
-            written.update(
-                r.value.value for r in ast.walk(node)
-                if isinstance(r, ast.Return) and isinstance(r.value, ast.Constant)
-                and isinstance(r.value.value, str)
-            )
+    # The classifier moves whenever pipeline_stages is split further, so find
+    # it by name across src/ instead of naming the module that holds it today.
+    classifier_found = False
+    for path in (REPO / "src").rglob("*.py"):
+        text = path.read_text()
+        if "def _classify_earnings_status" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if (isinstance(node, ast.FunctionDef)
+                    and node.name == "_classify_earnings_status"):
+                classifier_found = True
+                written.update(
+                    r.value.value for r in ast.walk(node)
+                    if isinstance(r, ast.Return) and isinstance(r.value, ast.Constant)
+                    and isinstance(r.value.value, str)
+                )
+    assert classifier_found, "_classify_earnings_status not found anywhere in src/"
     assert {"ok", "failed", "parse_error", "content_missing"} <= written, (
         "the scan found almost nothing — the assignment pattern has drifted "
         "and this test is no longer enforcing anything"
@@ -898,3 +906,50 @@ def test_a_row_that_came_back_outranks_asked_and_silent():
         asked_no_answer_by_seat={"tech": ["AAA"]},
     )["AAA"]
     assert cov.unreadable == ["tech"] and cov.asked_no_answer == []
+
+
+def test_the_production_2026_09_18_skip_shape_no_longer_halts_the_desk():
+    """The exact `data_status` of the 11 half-hourly `evidence_gate_skip`
+    runs recorded on 2026-09-18 [measured 2026-10-01, production
+    `intra_check_reports`, read-only]. Every one of them lost only the
+    `smart_money` seat, which is ADVISORY: the owner's 2026-09-18 mandate
+    ("only technical analysis can stop the desk", `BLOCKING_SEATS`) landed
+    at 17:24 ET that day, after the last of them. They must never halt a
+    run again, and the loss must still be disclosed rather than hidden.
+
+    Pinned because item 187 (the FRED fetch) was the standing suspect for
+    these skips and is NOT the cause: the macro seat was covered in all 17.
+    """
+    p = _pipeline({
+        "tech": "ok",
+        "macro": "carried_from_morning",
+        "news": "ok",
+        "earnings": "carried_from_morning",
+        "smart_money": "expired",
+    })
+    result, _, _ = _run(p)
+    assert result["status"] != "evidence_gate_skip"
+    verdict = evidence_gate.evaluate(p._last_decision_data_status)
+    # Doubly fixed since: `expired` was later split out of CATEGORY_LOST
+    # (the desk HOLDS a good answer and knows it is stale), so the seat is
+    # not even lost now, and were it lost it would still be advisory.
+    assert verdict.lost == []
+    assert verdict.blocking_lost == []
+    assert verdict.skip is False
+
+
+def test_the_production_2026_09_28_skip_shape_still_halts_the_desk():
+    """The other 6 of the 17: the technical seat genuinely FAILED, which is
+    the one blocking seat, so the refusal is correct and must stay. No
+    reordering can save this call — tech's outcome is only knowable by
+    making it [measured 2026-10-01, production `intra_check_reports`]."""
+    status = {
+        "tech": "failed",
+        "macro": "remembered",
+        "news": "carry_forward_empty",
+        "earnings": "carried_from_morning",
+        "smart_money": "remembered",
+    }
+    verdict = evidence_gate.evaluate(status)
+    assert verdict.blocking_lost == ["tech"]
+    assert verdict.skip is True

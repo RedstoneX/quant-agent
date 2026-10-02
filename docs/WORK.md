@@ -1,3 +1,4 @@
+
 # QAMC Current Work
 
 ## Active finish line
@@ -41,6 +42,8 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 
 **Working agreement.** Standing autonomy to execute the backlog without stopping at phase gates. Interrupt only for live-capital activation, new paid dependencies, secrets redesign, destructive infrastructure, or evidence a ratified decision was wrong. The grant covers executing, not expanding: report breakage that predates your task in plain language and let the owner decide. Never state a date or duration from impression — take it from `git log` and check the author (everything before **2026-08-09** is upstream `yebof`). The desk board (`docs/phases.yaml`, `/board`) is a source of truth; defects go on it. Orchestrate: delegate at task START (cheapest tier for docs and inventory, mid tier for bounded implementation, strongest for trading/risk logic), read diffs not whole files, never two writing agents in one worktree, and verify the single load-bearing claim of every agent report (check the test count; reproduce the cause) — a confidently wrong root cause was caught only that way on 2026-08-29.
 
+**Beta operational ruling (owner 2026-09-19).** Deploys and changes to the live system are permitted during market hours while the desk is in beta. Automated fix-it sessions are approved to run after each health report, charged to the owner's allowance, with adversary review applied to every change.
+
 **Operational facts.**
 - Stage explicit paths; never `git add -A`. Never bare `git stash` — the ref is repo-global across worktrees; use `git stash push -m "<name>"` and pop by index, or a throwaway worktree.
 - Branch protection requires the `pytest` check to pass but does NOT require an up-to-date branch [verified 2026-09-18: `required_status_checks.strict` is `false`, contexts `["pytest"]`, `enforce_admins` true]. So pull requests may be merged IN PARALLEL — do not rebase each one onto `main` first. Merge `main` in only when there is a real conflict. Never `--admin`, never force-push. The previous wording here claimed up-to-date branches were required; that was false and made every agent serialise merges against a restriction that does not exist.
@@ -60,13 +63,6 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 ## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
 
 **Top of the backlog. Work the PRIORITY ORDER above; do not reorder from intuition.** The original census items (ranks 1-8) are all retired and written up; the measured census that ranked them is in `docs/INCIDENT_HISTORY.md`.
-
-**17. Backup alert channel — OWNER DECISION, deferred, no due date.** No channel exists beyond Telegram, so an alert that cannot reach Telegram reaches nobody.
-
-DONE WHEN:
-  - [ ] OWNER'S CALL — his own 2026-09-03 deferral, no due date: a second alert channel is new scope and, for anything but plain email, a new paid dependency, so nobody proposes it and it closes only when he raises it
-  - [ ] when he does: the record-keeping circuit-breaker trip is shown reaching him on the second channel while Telegram delivery is failing, which is the exact live pairing that went unnoticed
-detail: docs/board_notes/item-017.md
 
 **55. What IS a structural level — how many bars make a swing point, and how wide is a level's zone? OPEN, filed 2026-09-13.** Touch count is settled and pinned by a test: two touches, sourced (Tsinaslanidis 2012) — do not tighten it.
 
@@ -212,7 +208,7 @@ DONE WHEN:
 
 detail: docs/board_notes/item-201.md
 
-**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. FRED and 20 news feeds are still unrecorded, so a real run is still correctly voided. detail: docs/board_notes/item-202.md
+**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
 
 DONE WHEN:
   - [x] 2026-10-01 the run reaches the Portfolio Manager OFFLINE.
@@ -220,8 +216,10 @@ DONE WHEN:
   - [x] 2026-10-01 every blocked outbound attempt is journalled and the breach voids the run, mechanically.
   - [x] 2026-10-01 a missing recorded input stops the replay instead of being filled in or quietly degraded.
   - [x] 2026-10-01 the rot guard exercises every installed HTTP transport against TEST-NET-1.
-  - [x] 2026-10-01 every OTHER test that still reaches the network is NAMED: the conftest guard now journals each blocked attempt to `QAMC_NETWORK_JOURNAL` before raising, so a test that SWALLOWS the error is no longer invisible; one full-suite run measured 1139 blocked attempts from 247 tests in 45 files (1034 Yahoo, 99 the LiteLLM price table, 6 OpenRouter), none of which fail the suite.
-  - [ ] STILL OPEN: a real rehearsal against the production snapshot returns a verdict it is entitled to give. The run was PERFORMED 2026-10-01 and VOIDED on the wall, as expected: the full session completed end to end including the Portfolio Manager, production was byte-identical afterwards and no order was placed anywhere, but 11 endpoints (FRED plus ten news/reference hosts) have no recording. Recording them — plus the pinned recording's zero sectors and the offline asset directory — is what is left.
+  - [x] 2026-10-01 every other test that reaches the network is NAMED: the conftest guard journals each blocked attempt to `QAMC_NETWORK_JOURNAL` (1139 attempts from 247 tests, none failing; detail in the note, update 5).
+  - [x] 2026-10-01 FRED and the news/reference feeds replay from a recording by the same patch-where-the-client-is-built pattern; recorded failures replay as failures, a gap raises (note, update 6).
+  - [x] 2026-10-01 the TEST SUITE is closed at the socket, not just at `requests`: 17 tests reached FRED/the Fed/news feeds through `urlopen`, 2 more reached openrouter.ai on a shell key, all green only because the code degrades a failed fetch; each stubbed at its seam, and the guard now fails any test that reaches off-box, naming test and host, with no allow-list (note, update 7).
+  - [ ] STILL OPEN: a real rehearsal against the production snapshot returns a verdict it is entitled to give. Performed and VOIDED on the wall 2026-10-01 (11 unrecorded endpoints, since recorded); left: the pinned recording's zero sectors, the offline Alpaca asset directory, and repeating the settling run (note, update 6).
 
 **208. Item 18's three residuals, carried forward — filed 2026-09-30 when item 18 was retired. The prompt-bulk defect that item 18 was opened for no longer applies and was re-measured under that item; these three leftovers remain OPEN, share no subject with it and were blocking item 19 for no reason. Detail: `docs/board_notes/` (item 208).** One changes what the ranking seat decides, one is an account setting outside this repo, and one cannot be closed by building at all.
 
@@ -258,6 +256,26 @@ DONE WHEN:
 
 detail: docs/board_notes/item-224.md
 
+**227. A seat's read carried no record of WHEN or in WHICH run it was taken, so "is this evidence fresh?" could only be inferred -- filed 2026-10-01.** The evidence gate has classified every seat as fresh / carried / absent since 2026-09-18, but the classification was stamped with nothing: no run id, no timestamp, and no age for a carried answer. That was tolerable while the disclosure only printed a line to the owner. It stopped being tolerable on 2026-10-01, when the owner ruled that any holding failing the desk's own fresh-entry bar is SOLD and that the test is re-run several times a day -- the half-hourly `intra_check` re-reads the technical seat and carries the rest, so a sell could be taken against a reading made before the market opened and nothing in the record would say so. Measured read-only against the production database 2026-10-01: `intra_check` is 63% of lifetime model spend and produced 37 of the desk's 80 trades, so this is where most decisions are taken. This item is the RECORDING, not a rule: no freshness threshold, no expiry window, no decision gated on any of it. A cutoff would be an invented number and is the owner's call, not this item's.
+
+DONE WHEN:
+- [x] every seat read carries the run id, the session mode and the timestamp of the run that produced it, written into the same `evidence_freshness` record the session and intra-check reports already persist -- no second store
+- [x] one predicate answers per seat and distinguishes three states that are never collapsed: refreshed in this run, carried forward (with how old, or an honest "age unknown"), and absent -- absent is not staleness and carried is not fresh
+- [x] a stamp read back under a DIFFERENT run id reports carried forward rather than fresh, because an hour later that is what it is
+- [x] the storage layer can answer "when was this seat last actually read?" from the rows it already holds, so a carried seat can state its age instead of guessing it
+- [x] proven by a round trip through the real storage methods and a real database file, not by a declared field
+- [ ] one production session observed where a carried seat reports a real age and a refreshed seat reports this run's id -- cannot be ticked from a test
+detail: docs/board_notes/item-227.md
+
+**226. A payment refusal was retried like an outage and reported as an unbounded-cost mystery -- filed 2026-10-01.** Measured on the production database 2026-10-01: the paid research account ran out of credit, the provider answered HTTP 402 with a falling affordable allowance (13290, 7311, 843, 811, 775), the desk spent 12 provider attempts on `portfolio_manager` and 9 on `tech_analyst` against an account no retry could revive, and then suspended paid analysis saying "the real cost is unknown and cannot be bounded safely" when the truth was that the account was empty.
+
+DONE WHEN:
+- [x] a payment refusal is classified on the STATUS CODE (402), never on the provider wording, and is terminal on the first occurrence: no retry and no further rung of the route ladder on the same account
+- [x] a 429 saying credits could not be verified keeps every retry it has today, because that one is genuinely transient
+- [x] the suspension records `provider_out_of_credit` and tells the owner the account is out of credit and needs topping up, while the call is still booked as unproven cost and no spending limit moves
+- [ ] one production session observed where an out-of-credit refusal produces exactly one attempt per seat and the out-of-credit wording reaches Telegram -- fixed-but-unobserved until then
+detail: docs/board_notes/item-226.md
+
 **225. The ledger's file-and-line citations are only checked for existing, so they rot silently and read as verified -- OPEN, filed 2026-10-01.** The guard confirms the line exists, not that it still holds what the row says it holds; 247 rows' worth of citations are exposed, 55 into the pipeline files, and at least three are already wrong by hand-check -- and the coming split of the two largest files will move thousands of lines.
 
 DONE WHEN:
@@ -266,7 +284,7 @@ DONE WHEN:
 - [ ] the three citations named in the note are corrected and the guard passes with no exemption list
 detail: docs/board_notes/item-225.md
 
-**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards) and 1 (the prompt-facts mixin, 3,432 lines moved verbatim, no behaviour change) have landed and ten moving steps remain.
+**210. A properly structured codebase, built in the right order — ratified by the owner 2026-09-30: no parallel split and no rebuild; drain the open pull requests, then split the two oversized files as the only work in flight, and rebuild the tests in the same pass. Detail: `docs/board_notes/` (item 210).** The desk's behaviour is not what is broken; two oversized files and too little recorded evidence are. Plan amended and re-measured 2026-10-01; steps 0 (the guards), 1 (prompt facts), 2 (protection), 3 (the de-levering ladder), 4 (the held-position exit engine), 5 (the risk gate), 6 (universe admission), 7 (research continuity — change detectors, carry-forward, Form-4 backlog, seat healing; 1,308 lines moved verbatim) and 10 (the four stage classes) have landed; steps 8, 9, 11 and 12 remain. `src/pipeline.py` is 7,687 lines, down from 21,864 when the plan was written. STEP 5 and STEP 6 LANDED 2026-10-01 (merged with main after step 7); the full landing records are in the item 210 note.
 
 DONE WHEN:
   - [ ] 1. the open pull-request queue is at zero, because the split moves `src/pipeline.py` and `src/pipeline_stages.py`, which nearly every open pull request touches, so splitting sooner collides with all of them
@@ -275,7 +293,7 @@ DONE WHEN:
 detail: docs/board_notes/
 
 
-**219. The pruning pass reports nowhere the owner looks — OPEN, filed 2026-10-01; the rendering is built, the live confirmation is not.** The rotation/pruning pass ran every session and wrote a durable `rotation`/`precheck` row, but the owner saw nothing of it on either surface he actually reads: the Telegram session message said only what the rotation PRE-CHECK concluded, and the dashboard said nothing at all, so a session that examined the whole book and kept all of it was indistinguishable from a session in which the pass never ran. Reporting only; no number that governs a buy, a sell or a size was touched.
+**219. The pruning pass reports nowhere the owner looks — OPEN, filed 2026-10-01; the rendering is built, the live confirmation is not. 2026-10-01: the cull itself no longer waits for a full book or a replacement (owner ruling), and the ordering/freshness/anti-churn ruling that followed is recorded as NOT BUILT.** The rotation/pruning pass ran every session and wrote a durable `rotation`/`precheck` row, but the owner saw nothing of it on either surface he actually reads: the Telegram session message said only what the rotation PRE-CHECK concluded, and the dashboard said nothing at all, so a session that examined the whole book and kept all of it was indistinguishable from a session in which the pass never ran. Reporting only; no number that governs a buy, a sell or a size was touched.
 
 DONE WHEN:
   - [x] the session message states that the pass ran and how many holdings it examined, read off the held set the pre-check itself received (`held_examined`), never inferred
@@ -283,7 +301,7 @@ DONE WHEN:
   - [x] the holdings it KEPT are named as considered and kept, so a silent pass can no longer pass for a pass that never ran
   - [x] every session says whether the score-margin tier is on or off, so the owner is never told the desk pruned more thoroughly than it did
   - [x] the dashboard renders the SAME sentences from the SAME durable row via the run detail, with no second reporting path invented
-  - [ ] a real session's stored report is read back and shown carrying the block, on both surfaces, against a run the desk actually made — until then this is rendering proven only by test
+  - [ ] a real session's stored report is read back and shown carrying the block, on both surfaces, against a run the desk actually made — until then this is rendering proven only by test (2026-10-02: a stored run is now rendered through the real Telegram formatter and the dashboard reader in tests/test_pruning_pass_reaches_both_surfaces.py, which also fixed a false line telling the owner below-bar names still clear the bar; still OPEN until a production session is observed, desk is OFF)
 detail: docs/board_notes/item-219.md
 
 
@@ -332,6 +350,7 @@ detail: docs/board_notes/item-219.md
 - retired queue: 220
 - retired queue: 190
 - retired queue: 211
+- retired queue: 17
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

@@ -416,8 +416,12 @@ def test_midday_review_loop_guard_source_still_reads_qty_le_0():
     though the loop itself is too deep inside run_midday to exercise
     cheaply end to end here."""
     import inspect
-    from src.pipeline import TradingPipeline
-    source = inspect.getsource(TradingPipeline)
+    from src.pipeline_exits import ExitEngineMixin
+    # The executor moved to `ExitEngineMixin` in step 4 of
+    # docs/PIPELINE_SPLIT_PLAN.md; `getsource(TradingPipeline)` returns only
+    # the class body left in `src/pipeline.py`, so the scan reads the mixin
+    # that now owns `_midday_execute_llm_actions`.
+    source = inspect.getsource(ExitEngineMixin)
     assert 'if not existing or existing[0].qty <= 0:' in source, (
         "the midday review loop's short-refusing guard must still be present verbatim"
     )

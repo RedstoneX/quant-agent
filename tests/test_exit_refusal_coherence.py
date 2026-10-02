@@ -288,7 +288,7 @@ def test_matcher_exception_fails_open_on_the_phrase_gate(monkeypatch):
     is a completed no and is not this test."""
     def boom(_reason):
         raise RuntimeError("matcher exploded")
-    monkeypatch.setattr("src.pipeline._reason_cites_hard_trigger", boom)
+    monkeypatch.setattr("src.pipeline_exits._reason_cites_hard_trigger", boom)
     pipeline = _risk_pipeline(_verdict(True))
     pipeline._format_qty = lambda q: str(q)
     pipeline._full_sell_qty = lambda q: q

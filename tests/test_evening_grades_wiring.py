@@ -16,6 +16,7 @@ from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +120,7 @@ def test_legacy_insights_row_returns_empty_grades_when_column_missing(tmp_path):
 
 def _pipeline_with_insights(rows: list[dict]):
     """Helper: a pipeline whose db.get_recent_insights returns the given rows."""
-    from src.pipeline import TradingPipeline
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
     pipeline.db.get_recent_insights.return_value = rows
     return pipeline
 

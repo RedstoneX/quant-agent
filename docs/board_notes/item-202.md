@@ -183,6 +183,44 @@ answer, and the Yahoo bulk is the same sector lookup the rehearsal needs
 recorded.
 
 
+### Item 202 update 6 — FRED and the news feeds are now recorded (2026-10-01)
+
+The settling run voided on 11 blocked endpoints and every one was FRED
+(`api.stlouisfed.org`, 15 series) or one of the ten news/reference hosts.
+Both are now served from `ops/rehearsal/recordings/feeds.json.gz` by
+`ops/rehearsal/feed_recording.py`, which copies the pattern the bars and the
+sector lookup already use rather than adding a second mechanism: capture once
+as an operator command, then patch the name in the module that BUILDS the
+client, so everything above the transport stays real.
+
+Two transports, because the dependency set has two. `src.data.macro` builds
+`fredapi.Fred` (a bare `urlopen` of its own, so patching `urlopen` would not
+have caught it), and `src.data.news`, `src.data.event_calendar` and
+`src.data.earnings` each import `urlopen` into their own namespace — the FRED
+release-dates call, the Fed/SEC pages and the ~20 RSS feeds all go through
+that one name. The retry, budget, coverage-accounting and honest-degradation
+logic above both is untouched, and nothing changes what any provider is asked
+for.
+
+**Failures are recorded as failures.** Every FRED failure in the retained log
+is `fetch_deadline_exceeded`; a recording that only replayed successes could
+not reproduce the thing the log is full of. A recorded failure is re-raised at
+the same place the live one was raised.
+
+**A gap raises.** An unrecorded series or URL is named in the `unavailable`
+list — which `assert_hermetic` turns into a loud `MissingRecordedInput` — and
+the call itself raises rather than returning a default, an empty body or a
+computed stand-in. Credentials are stripped before a URL becomes a recording
+key, so no API key is written to disk and the recording replays under any key.
+
+**Measured 2026-10-01:** `tests/test_rehearsal_feed_replay.py`, 7 tests, each
+run inside the rehearsal's own `no_network` wall — the wall journals any
+outbound attempt, and the journal is empty for every served call, which is the
+same discriminator the curl_cffi hole needed. Not claimed: the settling run was
+NOT repeated here, so no verdict follows from this; and two unrecorded inputs
+named in update 4 remain — the pinned market recording holds zero sectors, and
+the Alpaca asset directory is unavailable offline.
+
 ### Board text moved here (2026-10-01, per-item byte budget)
 
 The item block below is the full prose that stood in `docs/WORK.md` before the
@@ -203,3 +241,39 @@ DONE WHEN:
 
 
 ```
+
+
+### Item 202 update 7 — the test suite is closed at the socket (2026-10-01)
+
+Update 5 measured what the `requests`-level wall could SEE. A socket-level
+journal run over the same suite found what it could not: 17 tests reaching the
+wire through `urllib.request.urlopen` — `fredapi` (api.stlouisfed.org, 94
+attempts), the Fed's calendar page (www.federalreserve.gov, 26) and ten
+news/reference feeds (33) — and every one of them green, because the code
+degrades a failed fetch by design. Two more (`test_universe_screen.py`) went to
+openrouter.ai only when the developer's shell carried `OPENROUTER_API_KEY`:
+green in CI, red or slow at a desk, which is the exact shape of a check nobody
+trusts.
+
+Causes, each fixed at its seam, none by retry, skip or xfail:
+
+* `NewsDataProvider(feeds={})` is falsy, so the provider fell back to the FULL
+  feed list; the three lookback tests now stub `_fetch_feed` as the dedup tests
+  already did. One of them carried a comment claiming it did so — it did not.
+* `TradingPipeline.__init__` builds `MacroEventCalendarProvider` and
+  `FOMCCalendarProvider` itself; every morning-run test patched the other four
+  providers at `src.pipeline.*` and forgot these two. `offline_calendars`
+  (autouse, `tests/network_guard.py`) patches the same two names at the same
+  seam; the research stage reads an empty schedule with no coverage.
+* `test_event_risk_calendar._provider` now defaults the fetch to offline; the
+  one test that did not override it was the leak.
+* `tests/conftest.py` clears `OPENROUTER_API_KEY` as it already clears
+  `OPENAI_BASE_URL`; the balance-line tests set it themselves.
+
+The guard (`tests/network_guard.py`, imported by `tests/conftest.py`) wraps the
+same three socket calls `ops/rehearsal/isolation.no_network` wraps, allows
+loopback, journals to `QAMC_NETWORK_JOURNAL` in the same `nodeid<TAB>target`
+shape, and FAILS THE TEST AT TEARDOWN whether or not the error was swallowed.
+No allow-list ships: nothing is left to allow. Proven both ways: a probe that
+swallows a blocked `create_connection` errors at teardown naming itself and
+`192.0.2.1:81`; the full suite is green with the guard on.

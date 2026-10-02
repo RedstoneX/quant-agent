@@ -208,7 +208,7 @@ def test_reconcile_surfaces_a_deliberate_long_mismatch(db):
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 362.58
     position = SimpleNamespace(symbol="V", qty=1.0)
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -230,7 +230,7 @@ def test_reconcile_surfaces_a_deliberate_short_mismatch(db):
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 215.0
     position = SimpleNamespace(symbol="TSLA", qty=-4.0)
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -248,7 +248,7 @@ def test_reconcile_is_quiet_when_archive_matches_broker(db):
     _open_long(db, symbol="AAPL", stop=148.25)
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 148.25
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -262,7 +262,7 @@ def test_reconcile_skips_a_missing_live_stop_that_coverage_owns(db):
     _open_long(db, symbol="AAPL", stop=140.0)
     broker = MagicMock()
     broker.get_current_stop_price.return_value = None
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -416,7 +416,7 @@ def test_reconcile_treats_a_sub_dollar_tick_as_a_match(db):
     )
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 0.50005
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -433,7 +433,7 @@ def test_reconcile_surfaces_a_sub_dollar_mismatch_beyond_a_tick(db):
     )
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 0.501
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -556,7 +556,7 @@ def test_reconcile_reports_a_full_tick_difference(db):
     _open_long(db, symbol="AAPL", stop=148.25)
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 148.26
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,

@@ -171,14 +171,53 @@ def test_pinned_target_column_is_never_written_by_a_revision():
     """`update_open_take_profit` writes the live target only. If it ever
     touched `initial_take_profit` the pinned denominator would move with the
     revision and the guard would be exposed again."""
-    from src.storage.db import Database
+    from src.storage.trades.ledger import TradeLedger
 
-    src = inspect.getsource(Database.update_open_take_profit)
+    src = inspect.getsource(TradeLedger.update_open_take_profit)
     assert "SET take_profit" in src
     assert "initial_take_profit" not in src.split('"""')[2], (
         "the revision write-back must not touch the pinned entry target"
     )
 
+
+
+def _code_without_docstrings(module) -> str:
+    """The module's CODE, with every docstring removed, resolved by IMPORT.
+
+    Replaces a `read_text().split('\"\"\"', 2)[2]` slice that assumed the
+    module opened with exactly one triple-quoted docstring: reflowing the
+    header or adding a second one silently changed what the guard looked at,
+    and moving the module broke the path. `inspect.getsource` follows the
+    symbol wherever the file goes, and the AST removes prose properly, so the
+    assertions below are about code and nothing else.
+    """
+    tree = ast.parse(inspect.getsource(module))
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        if not isinstance(node, (ast.Module, ast.ClassDef,
+                                 ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        first = body[0]
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            if len(body) == 1:
+                body[0] = ast.Pass()
+            else:
+                del body[0]
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
+def test_the_docstring_stripper_actually_strips_and_keeps_the_code():
+    """Canary: a stripper that returned nothing would make the guards green."""
+    body = _code_without_docstrings(tr)
+    assert len(body) > 500, f"the module body came back near-empty: {body!r}"
+    assert "def assess_target_revision" in body, (
+        "the stripped body no longer contains the module's own functions"
+    )
+    assert "Honest limitation" not in body
 
 # ---------------------------------------------------------------------------
 # 2. No automatic exit at the target
@@ -192,7 +231,7 @@ def test_revision_module_places_no_orders_and_triggers_no_exit():
     # Parsed, not grepped: every docstring in this module legitimately
     # DISCUSSES exits, so a text search would only ever find prose. What
     # matters is whether the CODE names an exit.
-    tree = ast.parse(pathlib.Path(tr.__file__).read_text())
+    tree = ast.parse(inspect.getsource(tr))
     docstrings = {
         id(node.value) for node in ast.walk(tree)
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
@@ -332,7 +371,7 @@ def test_the_re_derivation_reuses_the_pinned_horizon_and_never_recomputes():
     # holiday-aware counter. This module still calls no calendar, no broker
     # and no session counter itself, and still never converts a calendar day
     # into a session.
-    body = pathlib.Path(tr.__file__).read_text().split('"""', 2)[2]
+    body = _code_without_docstrings(tr)
     assert "trading_sessions_held(" not in body
     assert "trading_calendar" not in body
     assert "days_held" not in body
@@ -346,7 +385,7 @@ def test_the_atr_trigger_introduces_no_new_constant():
     bounds — the noise floor and `horizon_reach`. A bare numeric literal
     used as a threshold here would be an arbitrary number on the live risk
     path (docs/WORK.md, no-arbitrary-numbers)."""
-    body = pathlib.Path(tr.__file__).read_text().split('"""', 2)[2]
+    body = _code_without_docstrings(tr)
     signature = inspect.signature(tr.stale_reach_trigger)
     defaults = {
         name: p.default for name, p in signature.parameters.items()
@@ -358,8 +397,10 @@ def test_the_atr_trigger_introduces_no_new_constant():
     assert defaults["max_reach_atr_multiple"] == lv.MAX_REACH_ATR_MULTIPLE
     assert defaults["max_horizon_sessions"] == lv.MAX_HORIZON_SESSIONS
     # No float literal other than 0/100.0-style arithmetic scaffolding.
-    body_after_helpers = body[body.index("def stale_reach_trigger"):]
-    body_after_helpers = body_after_helpers[:body_after_helpers.index("def assess_target_revision")]
+    # Resolved through the SYMBOL, not by slicing the file between two
+    # `def` strings: reordering the module no longer changes what is checked.
+    body_after_helpers = _code_without_docstrings(tr.stale_reach_trigger)
+    assert "def stale_reach_trigger" in body_after_helpers
     literals = re.findall(r"(?<![\w.])\d+\.\d+(?![\w.])", body_after_helpers)
     assert literals == [], f"invented threshold literal(s): {literals}"
 
