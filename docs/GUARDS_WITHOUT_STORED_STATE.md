@@ -68,7 +68,7 @@ have existed.
 Same class, same treatment, after the five land:
 - the known-leaks list in `tests/test_no_silent_patch_targets.py`
 - `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`
-- the offender baseline in `tests/test_no_local_day_as_exchange_day.py`
+- ~~the offender baseline in `tests/test_no_local_day_as_exchange_day.py`~~ DONE — the hardcoded `_BASELINE` is deleted; `scripts/local_day_guard.py` scans the working tree and `origin/main` at check time and fails on the delta
 - `tests/replay_outbound_sites_baseline.json`
 - the unscoped-number ceiling in the number-sources guard
 
