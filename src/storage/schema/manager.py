@@ -1,9 +1,7 @@
 """Schema cluster lifted VERBATIM from src/storage/db.py (instalment 1 of the db rebuild).
 
 Owns table creation and the irreversible, append-only migration ladder.
-Standalone: the only collaborator is the open sqlite3 connection, passed
-keyword-only, so it builds and runs with no Database/TradingPipeline behind
-it (tests/boundary_harness.py). Database keeps same-named thin shims that
+Standalone: the only collaborator is the open sqlite3 connection, passed keyword-only, so it builds and runs with no Database/TradingPipeline behind it (tests/boundary_harness.py). Database keeps same-named thin shims that
 construct this per call.
 
 Migration steps are NEVER reordered, renumbered or altered here: production
@@ -13,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from src.storage.schema.sentinel_tables import ensure_sentinel_tables
 
 logger = logging.getLogger(__name__)
 
@@ -1112,3 +1111,4 @@ class DatabaseSchema:
             except Exception as e:
                 _log.warning("Index creation failed for %s.%s: %s", table, col, e)
         self.conn.commit()
+        ensure_sentinel_tables(conn=self.conn)  # Sentinel seams, appended 2026-10-02; idempotent

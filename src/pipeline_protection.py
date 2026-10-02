@@ -40,6 +40,7 @@ import json as _json
 import logging
 import math
 
+from src.sentinel.reconciliation import record_reconciliation
 from src.execution.broker import AlpacaBroker, _split_protective_qty
 from src.models import TradeDecision
 from src.pipeline_context import RunContext
@@ -52,7 +53,6 @@ from src.protection.sell_finalization import _WAL_SELL_SENTINEL  # noqa: F401
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
 logger = logging.getLogger("src.pipeline")
-
 
 def _market_is_open_now(broker) -> bool:
     """Is the regular cash session open RIGHT NOW?
@@ -834,10 +834,10 @@ class ProtectionMixin:
                 skip_symbols=pending_syms,
             )
             mismatches = write_back_live_protective_stops(self.db, mismatches)
-            report_stop_level_mismatches(mismatches)
+            report_stop_level_mismatches(record_reconciliation(db=self.db, kind="recorded_stop_levels", result=mismatches))
         except Exception as exc:  # noqa: BLE001
             logger.error("stop-level reconcile failed: %s", exc)
-        return gaps
+        return record_reconciliation(db=self.db, kind="stop_coverage", result=gaps)
 
     def _elected_unfilled_stop_row(self, *args, **kwargs):
         """Thin shim -> CoverageElection (src/protection/coverage_election.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""

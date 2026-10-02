@@ -12,11 +12,11 @@ from src.storage.db import Database
 from src.pipeline_context import RunContext
 import math
 import json as _json
+from src.sentinel.reconciliation import record_reconciliation
 
 #: Logs under `src.pipeline`, as the bodies did before the move;
 #: binding the name rather than `__name__` keeps log records byte-identical.
 logger = logging.getLogger("src.pipeline")
-
 def _finite_float_or_none(value) -> float | None:
     """Coerce a broker fill field to a finite float, or None.
 
@@ -368,7 +368,7 @@ class FillReconciler:
                 )
         if resolved:
             logger.info("orphan-sweep: resolved %d pending_submit row(s)", resolved)
-        return resolved
+        return record_reconciliation(db=self.db, kind="orphan_submits", result=resolved)
 
     @staticmethod
     def _parse_broker_fill_timestamp(filled_at: str | None) -> str | None:
@@ -678,7 +678,7 @@ class FillReconciler:
                 "symbol": symbol, "ledger_qty": ledger_open,
                 "broker_qty": held, "matched": True, "recorded": recorded,
             })
-        return results
+        return record_reconciliation(db=self.db, kind="stop_out_fills", result=results, run_id=run_id)
 
     def _surface_reconcile_outcomes(
         self,

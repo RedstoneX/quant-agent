@@ -44,6 +44,7 @@ from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
+from src.sentinel.order_attempts import record_order_attempt_from_event
 from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
@@ -182,7 +183,6 @@ LEVELS_DEGRADED_RUN_EMPTY_SHARE = 0.5
 #: (tests, a misconfigured owner universe) from a false alarm, and is well
 #: below anything the real desk runs.
 LEVELS_COVERAGE_MIN_SAMPLE = 10
-
 
 def _macro_regime(macro_analysis) -> str | None:
     """The regime string, from either a MacroAnalysis or a carried-forward dict."""
@@ -741,12 +741,12 @@ def _record_scale_in_window_closed(pipeline, ctx, spec: dict, *, covered: bool) 
 
 def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
                            outcome: str, reason: str = "", **details) -> None:
-    """Append one typed lifecycle fact to the existing evidence stream.
-
-    Conversion step 6: shim over `EventJournal.record_pipeline_event`. Routes
-    through this module's `_persist_evidence` on purpose, so a test that
-    patches that name still sees every event, exactly as before.
-    """
+    """Append one typed lifecycle fact to the evidence stream (shim over `EventJournal.record_pipeline_event`,
+    routed through `_persist_evidence` so patches of that name still see every event); an `order`
+    event also writes one Sentinel attempt row (src/sentinel/order_attempts.py)."""
+    if stage == "order":
+        record_order_attempt_from_event(db=pipeline.db, symbol=symbol, outcome=outcome,
+                                        reason=reason, run_id=ctx.run_id, details=details)
     _persist_evidence(pipeline.db, **pipeline_event_fields(
         run_id=ctx.run_id, decision_id=ctx.decision_id, symbol=symbol,
         stage=stage, outcome=outcome, reason=reason, details=details,
