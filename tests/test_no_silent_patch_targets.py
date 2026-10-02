@@ -4,43 +4,72 @@ bare re-export, because such a patch silently no-ops (the real function runs
 and the assertion still passes).  Derived mechanically by
 ``scripts/audit_moved_patch_targets.py``; see its docstring for the buckets.
 
-Seeded 2026-10-01 from the audit on main at that date.  The counts below are
-a ratchet: REEXPORT and MISSING must stay at zero, and the leak list (call
-sites a patch cannot reach because the moved code imports the name from
-somewhere else inside a function) may shrink but never grow.
+**This guard stores nothing** (docs/GUARDS_WITHOUT_STORED_STATE.md).  It used
+to carry a hand-written ``KNOWN_LEAKS`` map of the offenders that existed on
+the day it was seeded.  That list was a cached measurement: the same collision
+engine as the deleted JSON baselines, only written in Python, so every change
+that touched a leaking call site had to edit the one shared dict.
+
+Instead the leak set is measured twice at check time — once against this
+working tree, once against ``origin/main`` materialised into a scratch
+directory — and only the DELTA is reported.  If ``origin/main`` cannot be read
+the guard REFUSES with an error; it never passes by default.
 """
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from scripts.audit_moved_patch_targets import run
-
-ROOT = Path(__file__).resolve().parents[1]
-
-# Seeded 2026-10-01: 157 LIVE, 26 MIRRORED, 0 REEXPORT, 0 MISSING.
-SEED_LIVE = 157
-SEED_MIRRORED = 26
-
-# Known unreachable call sites, as "<patched module>.<name>" -> set of the
-# split-out modules whose function-local import bypasses the patch.  Remove
-# an entry when the call site is fixed; never add one without fixing it.
-KNOWN_LEAKS = {
-    "src.pipeline.compute_indicators": {
-        "src.pipeline", "src.pipeline_exits", "src.pipeline_intraday",
-    },
-    "src.pipeline._get_sector": {"src.pipeline_prompt_facts"},
-    "src.pipeline.AlpacaBroker": {"src.pipeline_protection"},
-    "src.pipeline.PortfolioManagerAgent": {"src.pipeline_stages"},
-    "src.pipeline_stages.compute_indicators": {"src.stage_execution"},
-}
+from scripts.guard_reference import (
+    ROOT,
+    TRUNK,
+    ReferenceUnavailable,
+    trunk_blobs,
+    trunk_paths,
+)
 
 
-def _report():
+def _leaks_of(report: dict) -> dict[str, set[str]]:
+    """``"<module>.<name>" -> {modules whose function-local import bypasses it}``."""
+    leaks: dict[str, set[str]] = {}
+    for finding in report["findings"]:
+        for leak in finding["leaks_to"]:
+            key = f"{finding['module']}.{finding['name']}"
+            leaks.setdefault(key, set()).add(leak.split(":")[0])
+    return leaks
+
+
+def _working_report() -> dict:
     return run(ROOT)
 
 
+def _trunk_report() -> dict:
+    """Run THIS tree's scanner over ``origin/main``'s Python sources.
+
+    The trunk's ``.py`` blobs are written to a throwaway directory in one
+    ``git cat-file --batch``; nothing is cached and no worktree is added, so
+    two agents running this at once cannot collide.
+    """
+    paths = trunk_paths(".py")
+    if not paths:
+        raise ReferenceUnavailable(f"{TRUNK} has no .py files; refusing to compare.")
+    blobs = trunk_blobs(paths)
+    if not blobs:
+        raise ReferenceUnavailable(f"could not read any .py blob from {TRUNK}.")
+    with tempfile.TemporaryDirectory(prefix="trunk-patch-audit-") as tmp:
+        root = Path(tmp)
+        for path, text in blobs.items():
+            dest = root / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+        if not (root / "tests").is_dir():
+            raise ReferenceUnavailable(f"{TRUNK} has no tests/ directory to scan.")
+        return run(root)
+
+
 def test_no_reexport_or_missing_patch_targets():
-    report = _report()
+    report = _working_report()
     bad = [
         f"{f['test_file']}:{f['lineno']} {f['module']}.{f['name']} [{f['classification']}]"
         for f in report["findings"]
@@ -56,24 +85,23 @@ def test_no_reexport_or_missing_patch_targets():
 
 
 def test_patch_target_census_is_nonempty():
-    """The scanner must still SEE the patches; a count of zero means the
-    scanner broke, not that the tests stopped patching."""
-    counts = _report()["counts"]
-    assert counts["LIVE"] >= 100, counts
-    assert counts["MIRRORED"] >= 1, counts
+    """The scanner must still SEE the patches here and on the trunk; a count of
+    zero means the scanner broke, not that the tests stopped patching."""
+    here = _working_report()["counts"]
+    there = _trunk_report()["counts"]
+    assert there["LIVE"] > 0, f"scanner saw no patch targets on {TRUNK}: {there}"
+    assert here["LIVE"] > 0, f"scanner saw no patch targets in this tree: {here}"
 
 
 def test_unreachable_call_sites_do_not_grow():
-    leaks: dict[str, set[str]] = {}
-    for f in _report()["findings"]:
-        for leak in f["leaks_to"]:
-            leaks.setdefault(f"{f['module']}.{f['name']}", set()).add(leak.split(":")[0])
-    new = {k: v - KNOWN_LEAKS.get(k, set()) for k, v in leaks.items()}
+    """Report only what THIS change made worse against ``origin/main``."""
+    here = _leaks_of(_working_report())
+    there = _leaks_of(_trunk_report())
+    new = {k: sorted(v - there.get(k, set())) for k, v in here.items()}
     new = {k: v for k, v in new.items() if v}
     assert not new, (
-        "a patched name is now ALSO loaded, unreachably, by: " + repr(new)
-        + " -- the patch cannot reach those call sites; patch the owning module instead"
+        f"this change adds unreachable call sites that are not on {TRUNK}: {new!r}"
+        " -- a patch of that name cannot reach those call sites, so the real code"
+        " runs and the assertion still passes; patch the owning module instead,"
+        " or stop importing the name inside the function."
     )
-    stale = {k: v - leaks.get(k, set()) for k, v in KNOWN_LEAKS.items()}
-    stale = {k: v for k, v in stale.items() if v}
-    assert not stale, f"KNOWN_LEAKS lists fixed sites, delete them: {stale}"
