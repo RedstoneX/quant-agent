@@ -29,7 +29,7 @@ def test_insert_and_query_trade(db):
         qty=10.0,
         price=500.0,
         reasoning="Test trade",
-        run_id="run-001",
+        run_id="run-001", stop_loss=90.0,
     )
     trades = db.get_trades(symbol="SPY")
     assert len(trades) == 1
@@ -44,17 +44,17 @@ def test_structural_ceiling_is_additive_nullable_and_round_trips(db):
     label-only fallback), and it must round-trip 0/1 faithfully so the
     pace/progress read path reaches construction's OWN verdict."""
     # Legacy-shaped caller: never passes the field → NULL/None.
-    db.insert_trade("LEG", "BUY", 1.0, 100.0, "no ceiling arg", "r-leg")
+    db.insert_trade("LEG", "BUY", 1.0, 100.0, "no ceiling arg", "r-leg", stop_loss=90.0)
     assert db.get_symbol_last_buy("LEG")["structural_ceiling"] is None
 
     # Measured breakout (no overhead level) → stored 0, read back 0.
     db.insert_trade("BRK", "BUY", 1.0, 100.0, "measured breakout", "r-brk",
-                    setup_type="range", structural_ceiling=False)
+                    setup_type="range", structural_ceiling=False, stop_loss=90.0)
     assert db.get_symbol_last_buy("BRK")["structural_ceiling"] == 0
 
     # Measured ceiling present → stored 1, read back 1.
     db.insert_trade("RNG", "BUY", 1.0, 100.0, "measured range", "r-rng",
-                    setup_type="range", structural_ceiling=True)
+                    setup_type="range", structural_ceiling=True, stop_loss=90.0)
     assert db.get_symbol_last_buy("RNG")["structural_ceiling"] == 1
 
 
@@ -265,12 +265,12 @@ def test_sync_positions_replaces_stale_subset_with_full_broker_book(db):
 
 def test_prune_trades_respects_ttl(db):
     """Trades older than keep_days are dropped; recent ones are retained."""
-    db.insert_trade("OLD", "BUY", 1.0, 100.0, "ancient", "r-old")
+    db.insert_trade("OLD", "BUY", 1.0, 100.0, "ancient", "r-old", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-2000 days') WHERE symbol='OLD'"
     )
     db.conn.commit()
-    db.insert_trade("RECENT", "BUY", 2.0, 200.0, "fresh", "r-new")
+    db.insert_trade("RECENT", "BUY", 2.0, 200.0, "fresh", "r-new", stop_loss=90.0)
 
     deleted = db.prune_trades(keep_days=365 * 5)  # 5-year retention
     assert deleted == 1
@@ -567,7 +567,7 @@ def test_prune_methods_reject_keep_days_zero_or_negative(db):
 
     # Seed a row in each table so we can confirm nothing was deleted.
     db.insert_trade(symbol="SPY", action="BUY", qty=1, price=500,
-                    reasoning="seed", run_id="r0")
+                    reasoning="seed", run_id="r0", stop_loss=90.0)
     db.insert_agent_log(agent_name="x", run_id="r0", input_summary="",
                         output_summary="", full_response="", model="m", tokens_used=0)
     import json as _json
@@ -630,7 +630,7 @@ def test_confirm_trade_submitted_updates_pending_row(db):
         symbol="NVDA", action="BUY", qty=10, price=150.0,
         reasoning="write-ahead", run_id="r1",
         fill_status="pending_submit",
-        broker_order_id=None,
+        broker_order_id=None, stop_loss=90.0,
     )
     rows = db.conn.execute(
         "SELECT fill_status, broker_order_id FROM trades WHERE id = ?", (row_id,)
@@ -657,7 +657,7 @@ def test_mark_trade_submit_failed_flags_pending_row(db):
         symbol="NVDA", action="BUY", qty=10, price=150.0,
         reasoning="write-ahead", run_id="r1",
         fill_status="pending_submit",
-        broker_order_id=None,
+        broker_order_id=None, stop_loss=90.0,
     )
     n = db.mark_trade_submit_failed(row_id)
     assert n == 1
@@ -680,19 +680,19 @@ def test_pending_submit_row_distinguishable_from_orphan_terminal_states(db):
     """
     pending = db.insert_trade(
         "NVDA", "BUY", 10, 150.0, "x", "r1",
-        fill_status="pending_submit", broker_order_id=None,
+        fill_status="pending_submit", broker_order_id=None, stop_loss=90.0,
     )
     failed = db.insert_trade(
         "AAPL", "BUY", 10, 180.0, "x", "r1",
-        fill_status="submit_failed", broker_order_id=None,
+        fill_status="submit_failed", broker_order_id=None, stop_loss=90.0,
     )
     submitted = db.insert_trade(
         "TSLA", "BUY", 10, 200.0, "x", "r1",
-        fill_status="submitted", broker_order_id="alpaca-1",
+        fill_status="submitted", broker_order_id="alpaca-1", stop_loss=90.0,
     )
     filled = db.insert_trade(
         "META", "BUY", 10, 500.0, "x", "r1",
-        fill_status="filled", broker_order_id="alpaca-2",
+        fill_status="filled", broker_order_id="alpaca-2", stop_loss=90.0,
     )
 
     # pending_submit + broker_order_id IS NULL is the orphan signature.
@@ -787,7 +787,7 @@ def test_locked_write_reraises_non_lock_operational_error(db, monkeypatch):
     with pytest.raises(_sql.OperationalError, match="no such column"):
         db.insert_trade(
             symbol="NVDA", action="BUY", qty=1, price=1.0,
-            reasoning="x", run_id="r",
+            reasoning="x", run_id="r", stop_loss=90.0,
         )
 
 
@@ -902,7 +902,7 @@ def test_insert_agent_log_new_columns_default_null_when_omitted(db):
 def test_insert_trade_decision_id_roundtrips(db):
     db.insert_trade(
         symbol="SPY", action="BUY", qty=1.0, price=500.0,
-        reasoning="x", run_id="run-003", decision_id="run-003-dec-xyz",
+        reasoning="x", run_id="run-003", decision_id="run-003-dec-xyz", stop_loss=90.0,
     )
     trades = db.get_trades(symbol="SPY")
     assert trades[0]["decision_id"] == "run-003-dec-xyz"
@@ -999,7 +999,7 @@ def test_migration_is_idempotent_on_already_migrated_db(db):
 def test_reconciled_exit_persists_deterministic_realized_pnl(db):
     db.insert_trade(
         "AAPL", "BUY", 10, 100, "entry", "run-entry",
-        broker_order_id="buy-1", fill_status="submitted",
+        broker_order_id="buy-1", fill_status="submitted", stop_loss=90.0,
     )
     db.update_trade_fill("buy-1", "filled", fill_qty=10, fill_price=101)
     db.insert_trade(
@@ -1027,7 +1027,7 @@ def test_realized_pnl_stays_unknown_without_confirmed_cost_basis(db):
 def test_terminal_partial_fill_books_only_confirmed_exit_quantity(db):
     db.insert_trade(
         "NVDA", "BUY", 10, 100, "entry", "run-entry",
-        broker_order_id="nv-buy", fill_status="submitted",
+        broker_order_id="nv-buy", fill_status="submitted", stop_loss=90.0,
     )
     db.update_trade_fill("nv-buy", "filled", fill_qty=10, fill_price=100)
     db.insert_trade(
@@ -1062,9 +1062,9 @@ def test_position_id_inherited_by_sell_reduce_trail_stop(db):
 
 
 def test_position_id_remints_after_position_goes_flat(db):
-    db.insert_trade("AAPL", "BUY", 10, 150.0, "entry 1", "run-1")
+    db.insert_trade("AAPL", "BUY", 10, 150.0, "entry 1", "run-1", stop_loss=90.0)
     db.insert_trade("AAPL", "SELL", 10, 160.0, "thesis_invalid", "run-1")
-    db.insert_trade("AAPL", "BUY", 5, 170.0, "entry 2, unrelated", "run-2")
+    db.insert_trade("AAPL", "BUY", 5, 170.0, "entry 2, unrelated", "run-2", stop_loss=90.0)
     trades = db.get_trades(symbol="AAPL")  # newest first
     by_action = {t["action"]: t["position_id"] for t in trades}
     # trades are newest-first with duplicate actions across chains, so index
@@ -1078,8 +1078,8 @@ def test_position_id_remints_after_position_goes_flat(db):
 
 
 def test_position_id_scale_in_buy_inherits_same_chain(db):
-    db.insert_trade("MSFT", "BUY", 10, 50.0, "initial", "run-1")
-    db.insert_trade("MSFT", "BUY", 5, 52.0, "adding to winner", "run-1")
+    db.insert_trade("MSFT", "BUY", 10, 50.0, "initial", "run-1", stop_loss=90.0)
+    db.insert_trade("MSFT", "BUY", 5, 52.0, "adding to winner", "run-1", stop_loss=90.0)
     trades = db.get_trades(symbol="MSFT")
     assert trades[0]["position_id"] == trades[1]["position_id"]
 
@@ -1118,7 +1118,7 @@ def test_position_id_hold_and_sweep_rows_never_get_a_position_id(db):
 
 
 def test_exit_reason_category_take_profit_gated_on_confirmed_fill(db):
-    db.insert_trade("AMZN", "BUY", 10, 100.0, "entry", "run-1")
+    db.insert_trade("AMZN", "BUY", 10, 100.0, "entry", "run-1", stop_loss=90.0)
     db.insert_trade("AMZN", "TAKE_PROFIT", 2, 135.0,
                      "Auto take-profit: +35.0% >= 30.0%, trimming 15%", "run-1",
                      broker_order_id="tp-1", fill_status="submitted")
@@ -1140,14 +1140,14 @@ def test_exit_reason_category_take_profit_gated_on_confirmed_fill(db):
     ("feels stretched, taking some off", "uncategorised"),
 ])
 def test_exit_reason_category_derived_from_hard_trigger_vocabulary(db, reasoning, expected):
-    db.insert_trade("XOM", "BUY", 10, 100.0, "entry", "run-1")
+    db.insert_trade("XOM", "BUY", 10, 100.0, "entry", "run-1", stop_loss=90.0)
     db.insert_trade("XOM", "SELL", 10, 110.0, reasoning, "run-1")
     sell = db.get_trades(symbol="XOM")[0]
     assert sell["exit_reason_category"] == expected
 
 
 def test_exit_reason_category_stop_out_is_broker_stop_fill(db):
-    db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "run-1", broker_order_id="buy-1", fill_status="filled")
+    db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "run-1", broker_order_id="buy-1", fill_status="filled", stop_loss=90.0)
     db.insert_stop_out_trade(symbol="ONDS", qty=17, price=7.93, broker_order_id="stop-1", filled_at=None)
     stop_out = db.get_trades(symbol="ONDS")[0]
     assert stop_out["action"] == "STOP_OUT"
@@ -1156,7 +1156,7 @@ def test_exit_reason_category_stop_out_is_broker_stop_fill(db):
 
 
 def test_exit_reason_category_none_for_buy_and_hold(db):
-    db.insert_trade("KO", "BUY", 10, 60.0, "entry", "run-1")
+    db.insert_trade("KO", "BUY", 10, 60.0, "entry", "run-1", stop_loss=90.0)
     db.insert_trade("KO", "HOLD", 0, 0.0, "steady", "run-1")
     for t in db.get_trades(symbol="KO"):
         assert t["exit_reason_category"] is None

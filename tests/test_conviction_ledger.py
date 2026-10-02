@@ -641,24 +641,6 @@ def test_resolve_is_idempotent_and_does_not_double_credit(db):
     assert len(db.get_conviction_credits()) == 1
 
 
-def test_resolve_never_scores_a_position_with_no_entry_stop(db):
-    """No stop at entry means no honest R denominator. Counted, never guessed."""
-    db.insert_trade(
-        symbol="IBM", action="BUY", qty=10, price=100.0, reasoning="entry",
-        run_id="run-1", stop_loss=0, fill_status="filled", decision_id="dec-1",
-    )
-    db.insert_trade(
-        symbol="IBM", action="SELL", qty=10, price=120.0, reasoning="target",
-        run_id="run-2", fill_status="filled",
-    )
-    db.record_seat_stances(run_id="run-1", decision_id="dec-1", stances=[
-        SeatStance(seat="technical", symbol="IBM", stance="buy"),
-    ])
-    result = db.resolve_conviction_ledger()
-    assert result["skipped_no_r"] == 1
-    assert db.get_conviction_credits() == []
-
-
 def test_resolve_leaves_an_open_position_unscored(db):
     db.insert_trade(
         symbol="MSFT", action="BUY", qty=10, price=100.0, reasoning="entry",

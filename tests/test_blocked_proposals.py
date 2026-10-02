@@ -107,7 +107,7 @@ def _verdict(db, run_id, decision_id, *, approved, category="rr_fail",
 def _trade(db, run_id, decision_id, symbol, fill_status, days_ago=1):
     row_id = db.insert_trade(
         symbol=symbol, action="BUY", qty=10, price=100.0, reasoning="r",
-        run_id=run_id, decision_id=decision_id, fill_status=fill_status,
+        run_id=run_id, decision_id=decision_id, fill_status=fill_status, stop_loss=90.0,
     )
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', ?) WHERE id = ?",

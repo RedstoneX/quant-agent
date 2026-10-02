@@ -208,8 +208,7 @@ New exposure: buy or short, market or limit, sized by dollars or by risk
 rather than share count, with a protective stop REQUIRED exactly as the
 desk's own entries now require one.
 
-Desk-wide: pause and resume trading without shutting the service down; a
-never-touch list of symbols; cancel any order resting at the broker; and
+Desk-wide: pause and resume trading without shutting the service down; cancel any order resting at the broker; and
 flatten everything, behind a second confirm.
 
 ### Deliberately excluded
@@ -228,16 +227,18 @@ instruction is something the desk executes, never a standing second owner.
 A stop the owner sets is HONOURED. No trailing, ratchet or re-protection
 path may move it back. This is a rule, not a preference.
 
-### Dropped by the owner, 2026-10-02: per-position HANDS OFF
+### Dropped by the owner, 2026-10-02: per-position HANDS OFF and the never-touch list
 
-"Everything goes through the desk. The system manages everything." The desk
-is never told to keep its hands off a position; owner interventions are
-instructions it executes and keeps managing afterwards.
+"Everything goes through the desk. The system manages everything." There is
+no list of names the desk will not touch and no position it is told to leave
+alone. An owner action is an instruction the desk carries out and keeps
+managing the result of, recorded as his decision, never an exemption from
+desk management. Of the flag-only actions only pause/resume remains.
 
 ### Build order
 
 Safe plumbing first, money last: the record and the single door, then the
-flag-only actions (pause, never-touch), then the actions on an
+flag-only actions (pause), then the actions on an
 existing position, and only then new exposure. Each instalment proves the
 plumbing before the next one can lose anything.
 

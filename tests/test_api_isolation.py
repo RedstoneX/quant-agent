@@ -52,7 +52,7 @@ def _trading_write_roundtrip(tmp_path: Path, tag: str) -> None:
     db.initialize()
     row_id = db.insert_trade(
         symbol="AAPL", action="BUY", qty=1, price=100.0,
-        reasoning=f"isolation test ({tag})", run_id=f"run-{tag}",
+        reasoning=f"isolation test ({tag})", run_id=f"run-{tag}", stop_loss=90.0,
     )
     assert row_id
     rows = db.get_trades(limit=10)

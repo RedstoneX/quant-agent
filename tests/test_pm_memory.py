@@ -735,7 +735,7 @@ def test_trade_calibration_matches_fifo_and_buckets(tmp_path):
     db.initialize()
 
     # Large winner: buy 100 @ 100 (entry = $10k), sell 100 @ 115 → +15%
-    db.insert_trade("NVDA", "BUY", 100, 100, "large", "r1")
+    db.insert_trade("NVDA", "BUY", 100, 100, "large", "r1", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-15 days') "
         "WHERE symbol='NVDA' AND action='BUY'"
@@ -749,7 +749,7 @@ def test_trade_calibration_matches_fifo_and_buckets(tmp_path):
     db.conn.commit()
 
     # Medium loser: buy 100 @ 60 (entry = $6k), sell 100 @ 54 → -10%
-    db.insert_trade("XOM", "BUY", 100, 60, "medium", "r3")
+    db.insert_trade("XOM", "BUY", 100, 60, "medium", "r3", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-20 days') "
         "WHERE symbol='XOM' AND action='BUY'"
@@ -763,7 +763,7 @@ def test_trade_calibration_matches_fifo_and_buckets(tmp_path):
     db.conn.commit()
 
     # Small winner: buy 10 @ 200 (entry = $2k), sell 10 @ 220 → +10%
-    db.insert_trade("JPM", "BUY", 10, 200, "small", "r5")
+    db.insert_trade("JPM", "BUY", 10, 200, "small", "r5", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-8 days') "
         "WHERE symbol='JPM' AND action='BUY'"
@@ -796,7 +796,7 @@ def test_trade_calibration_returns_empty_below_threshold(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("NVDA", "BUY", 10, 100, "x", "r1")
+    db.insert_trade("NVDA", "BUY", 10, 100, "x", "r1", stop_loss=90.0)
     db.insert_trade("NVDA", "SELL", 10, 105, "x", "r2")
     stats = db.compute_trade_calibration(lookback_days=45)
     assert stats == {}
@@ -1322,13 +1322,13 @@ def test_db_get_symbol_last_buy_returns_most_recent_buy(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     # Insert an OLD buy then a newer one; last_buy should return the newer
-    db.insert_trade("NVDA", "BUY", 5, 180, "first entry", "r-1")
+    db.insert_trade("NVDA", "BUY", 5, 180, "first entry", "r-1", stop_loss=90.0)
     # Force timestamp backdate
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE reasoning='first entry'"
     )
     db.conn.commit()
-    db.insert_trade("NVDA", "BUY", 5, 195, "second entry, 3/4 aligned", "r-2")
+    db.insert_trade("NVDA", "BUY", 5, 195, "second entry, 3/4 aligned", "r-2", stop_loss=90.0)
     last = db.get_symbol_last_buy("NVDA")
     assert last is not None
     assert last["price"] == 195
@@ -1377,7 +1377,7 @@ def test_db_insert_trade_round_trips_thesis_invalid_if(tmp_path):
     db.initialize()
     db.insert_trade(
         "NVDA", "BUY", 10, 200.0, "AI capex supercycle", "r-1",
-        thesis_invalid_if=_LONG_CONDITION_FOR_DB,
+        thesis_invalid_if=_LONG_CONDITION_FOR_DB, stop_loss=90.0,
     )
     last = db.get_symbol_last_buy("NVDA")
     assert last is not None
@@ -1390,7 +1390,7 @@ def test_db_insert_trade_thesis_invalid_if_defaults_to_none(tmp_path):
     from src.storage.db import Database
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("AAPL", "BUY", 5, 180.0, "legacy caller", "r-1")
+    db.insert_trade("AAPL", "BUY", 5, 180.0, "legacy caller", "r-1", stop_loss=90.0)
     last = db.get_symbol_last_buy("AAPL")
     assert last is not None
     assert last["thesis_invalid_if"] is None
