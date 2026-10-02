@@ -1,6 +1,7 @@
 from datetime import date
 from typing import Annotated, Literal
 from pydantic import BaseModel, Field, ValidationInfo, computed_field, field_validator, model_validator
+from src.models.tech_reread import TechRereadFields
 from src.models.base import ACTIONABLE_TECH_RATINGS, LLMOutputModel, SOFT_EXIT_UNKNOWN, _normalize_enum_case_fields, _normalize_symbol, missing_stated_falsifier, parse_telemetry, reward_to_risk, stated_soft_exit
 
 class Nomination(LLMOutputModel):
@@ -575,7 +576,7 @@ class TechAnalystAnswer(LLMOutputModel):
     results: list[TechAnalystAnswerItem] = Field(default_factory=list)
 
 
-class TechAnalysisResult(TechAnalystAnswerItem):
+class TechAnalysisResult(TechRereadFields, TechAnalystAnswerItem):
     # PYTHON-SET, not LLM-emitted (same pattern as `atr_14` below): every
     # level `src/data/levels.py::find_structural_levels` found over the full
     # fetched history, supports and resistances unioned into one list of bare
@@ -886,5 +887,3 @@ class TechAnalysisResult(TechAnalystAnswerItem):
                 f"{SOFT_EXIT_UNKNOWN!r} is not a falsifier"
             )
         return self
-
-

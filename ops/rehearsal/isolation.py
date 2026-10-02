@@ -75,9 +75,6 @@ class IsolationError(RuntimeError):
     """A rehearsal was about to run without provable isolation."""
 
 
-class NetworkBlocked(OSError):
-    """A rehearsal tried to open an off-box socket."""
-
 
 class HermeticBreach(RuntimeError):
     """A replay was not hermetic, and the run is therefore void.
@@ -548,99 +545,9 @@ def _resolved_db_path(config) -> Path:
 # ------------------------------------------------------------ network wall
 
 
-_REAL_SOCKET_CONNECT = socket.socket.connect
-_REAL_SOCKET_CONNECT_EX = socket.socket.connect_ex
-_REAL_CREATE_CONNECTION = socket.create_connection
-
-
-def _is_loopback(address) -> bool:
-    if not isinstance(address, tuple) or not address:
-        return False
-    host = address[0]
-    if not isinstance(host, str):
-        return False
-    return host in ("127.0.0.1", "::1", "localhost", "")
-
-
-@contextmanager
-def no_network(record: list[str] | None = None):
-    """Block every off-box socket connection for the duration of the block.
-
-    Installed at the socket layer deliberately: patching `requests.get`, or an
-    SDK's transport, or an environment variable only blocks the paths you
-    thought of. Anthropic, OpenAI, OpenRouter, Alpaca, yfinance, FRED and
-    feedparser all reach the network eventually through this one call.
-
-    Anything blocked is appended to `record`, so the report can say which
-    component tried and the operator can judge whether the resulting
-    degradation invalidates the rehearsal.
-    """
-    blocked = record if record is not None else []
-
-    def _blocked(address, what: str):
-        target = f"{address[0]}:{address[1]}" if isinstance(address, tuple) and len(address) > 1 else str(address)
-        message = f"{what} to {target}"
-        if message not in blocked:
-            blocked.append(message)
-        raise NetworkBlocked(
-            f"rehearsal blocked an outbound connection ({message}); a rehearsal "
-            f"is offline by construction — no provider call, no market data "
-            f"fetch and no broker request may leave this process"
-        )
-
-    def guarded_connect(self, address):
-        if _is_loopback(address):
-            return _REAL_SOCKET_CONNECT(self, address)
-        _blocked(address, "socket.connect")
-
-    def guarded_connect_ex(self, address):
-        if _is_loopback(address):
-            return _REAL_SOCKET_CONNECT_EX(self, address)
-        _blocked(address, "socket.connect_ex")
-
-    def guarded_create_connection(address, *args, **kwargs):
-        if _is_loopback(address):
-            return _REAL_CREATE_CONNECTION(address, *args, **kwargs)
-        _blocked(address, "socket.create_connection")
-
-    # The socket layer is NOT the only way out, and the docstring above was
-    # wrong about yfinance for as long as this wall has existed (board item
-    # 202). yfinance ships its own transport on `curl_cffi`, which is libcurl
-    # in C: it never calls `socket.socket.connect`, so every rehearsal went on
-    # downloading live prices through a wall that reported itself intact
-    # (~196s of fetching, measured 2026-09-30). The test suite's own outbound
-    # guard had the identical hole and was closed the same day in
-    # tests/conftest.py; this is that fix, in the same shape.
-    restore: list = []
-
-    def _blocked_call(*args, **kwargs):
-        _blocked(("curl_cffi", 0), "http request")
-
-    try:
-        import curl_cffi.requests as _curl_requests
-    except Exception:  # pragma: no cover - absent in a minimal env
-        _curl_requests = None
-    if _curl_requests is not None:
-        for _attr in ("get", "post", "request"):
-            if hasattr(_curl_requests, _attr):
-                restore.append((_curl_requests, _attr, getattr(_curl_requests, _attr)))
-                setattr(_curl_requests, _attr, _blocked_call)
-        _curl_session = getattr(_curl_requests, "Session", None)
-        if _curl_session is not None:
-            restore.append((_curl_session, "request", _curl_session.request))
-            _curl_session.request = _blocked_call
-
-    socket.socket.connect = guarded_connect
-    socket.socket.connect_ex = guarded_connect_ex
-    socket.create_connection = guarded_create_connection
-    try:
-        yield blocked
-    finally:
-        socket.socket.connect = _REAL_SOCKET_CONNECT
-        socket.socket.connect_ex = _REAL_SOCKET_CONNECT_EX
-        socket.create_connection = _REAL_CREATE_CONNECTION
-        for _owner, _attr, _original in reversed(restore):
-            setattr(_owner, _attr, _original)
+from ops.rehearsal.network_wall import (  # noqa: E402,F401
+    NetworkBlocked, _is_loopback, no_network,
+)
 
 
 # --------------------------------------------------------- production guard

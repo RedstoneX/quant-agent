@@ -29,13 +29,12 @@ from __future__ import annotations
 import pytest
 
 from src import trader_feed
-from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 
 def _pipeline_with_snapshot(total_value, last_equity, total=(None, None, None)):
     """A pipeline that has taken one account read and nothing else."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p._total_pnl_since_reset = lambda tv: total
+    p = build_pipeline(_total_pnl_since_reset=lambda tv: total)
     p._record_account_snapshot(total_value, last_equity)
     return p
 
@@ -101,8 +100,7 @@ def test_a_figure_the_body_already_set_is_never_overwritten():
 # --- 2. No snapshot: an honest reason, matching the actual cause -------
 
 def test_a_run_that_never_read_the_account_says_exactly_that():
-    p = TradingPipeline.__new__(TradingPipeline)
-    p._last_account_snapshot = None
+    p = build_pipeline(_last_account_snapshot=None)
     result = {"status": "market_holiday", "orders": [], "run_id": "r"}
 
     p._attach_pnl(result)
@@ -160,12 +158,7 @@ def test_an_unlabelled_result_claims_no_cause_at_all():
 def test_every_session_wrapper_attaches_the_pnl(wrapper, body_name, kwargs):
     """The defect was per-return-path, so it is fixed at the wrapper: any
     exit the body takes carries the figure out."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p._total_pnl_since_reset = lambda tv: (74.90, 0.749, "2026-08-14")
-    p._attach_evidence_freshness = lambda result: None
-    p._attach_universe_changes = lambda result: None
-    p._persist_session_report = lambda mode, result: None
-    p._persist_intra_check_report = lambda result: None
+    p = build_pipeline(_total_pnl_since_reset=lambda tv: (74.90, 0.749, "2026-08-14"), _attach_evidence_freshness=lambda result: None, _attach_universe_changes=lambda result: None, _persist_session_report=lambda mode, result: None, _persist_intra_check_report=lambda result: None)
 
     def _body(*a, **kw):
         p._record_account_snapshot(10_041.44, 10_000.0)
@@ -180,8 +173,7 @@ def test_every_session_wrapper_attaches_the_pnl(wrapper, body_name, kwargs):
 
 
 def test_earnings_preprocess_labels_its_own_genuinely_absent_read():
-    p = TradingPipeline.__new__(TradingPipeline)
-    p._run_earnings_preprocess_body = lambda: {"status": "nothing_new", "count": 0}
+    p = build_pipeline(_run_earnings_preprocess_body=lambda: {"status": "nothing_new", "count": 0})
 
     result = p.run_earnings_preprocess()
 

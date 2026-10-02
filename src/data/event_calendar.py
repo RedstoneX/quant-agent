@@ -884,12 +884,9 @@ class MacroEventCalendarProvider:
         that a run which misses is retried by the NEXT scheduled prefetch
         instead of landing on the 09:30 session.
         """
-        self._prefetch_mode = True
-        try:
-            self.get_upcoming_events()
-        finally:
-            self._prefetch_mode = False
-        return self.last_coverage
+        from src.data.event_reask import prefetch_with_reasks
+
+        return prefetch_with_reasks(self)
 
 
 # --- FOMC meeting calendar -------------------------------------------------

@@ -19,7 +19,7 @@ import pytest
 from src import universe_screen as us
 from src.config import UniverseScreenConfig
 from src.models import OHLCV
-from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 TODAY = date(2026, 9, 18)  # a Friday
 
@@ -586,7 +586,7 @@ def test_select_for_run_rotates_least_recently_offered_first():
 # ------------------------------------------------------- pipeline wiring ----
 
 def _pipeline(tmp_path, *, enabled=True):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(broker=MagicMock(), market=MagicMock(), sec_form4_provider=MagicMock())
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"], lookback_days=120),
         smart_money=SimpleNamespace(
@@ -605,16 +605,13 @@ def _pipeline(tmp_path, *, enabled=True):
     # numbers as the plain weekday count used to give directly.
     from src.trading_calendar import trading_sessions_held as _weekday_sessions_held
 
-    pipeline.broker = MagicMock()
     pipeline.broker.trading_sessions_held.side_effect = _weekday_sessions_held
     pipeline.broker.get_asset_record.return_value = GOOD_ASSET
     pipeline.broker.get_transient_equity_eligibility.return_value = {
         "eligible": True, "reason": "eligible", "name": "Acme", "exchange": "nyse"}
-    pipeline.market = MagicMock()
     pipeline.market.get_ohlcv.return_value = _good_bars()
     pipeline.market.get_company_profile.return_value = {
         "market_cap_usd": 5e9, "sector_raw": "Industrials", "quote_type": "EQUITY"}
-    pipeline.sec_form4_provider = MagicMock()
     pipeline.sec_form4_provider.recent_filings.return_value = []
     return pipeline
 

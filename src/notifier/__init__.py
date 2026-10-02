@@ -113,6 +113,18 @@ from src.notifier.markup import (
     _fmt_elapsed,
     _attr_or_key,
 )
+from src.notifier.category import (  # noqa: F401
+    CATEGORY_OPERATIONAL,
+    CATEGORY_RISK,
+    SUPPRESSED,
+    SuppressedSend,
+    _KIND_CATEGORY,
+    _risk_only_declared_default,
+    filtered_by_category,
+    resolve_category,
+    resolve_risk_only,
+    was_suppressed,
+)
 from src.notifier.transport import (
     TelegramNotifier,
 )
@@ -190,6 +202,8 @@ _LAZY_NAME_OWNERS = {
 }
 _SUBMODULES = (
     "src.notifier.base",
+    "src.notifier.category",
+    "src.notifier.send_log",
     "src.notifier.sections",
     "src.notifier.markup",
     "src.notifier.transport",

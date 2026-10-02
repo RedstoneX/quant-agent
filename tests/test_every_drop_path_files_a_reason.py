@@ -232,6 +232,7 @@ _CANNOT_END_A_CANDIDATE = {
     "_hold_decision": "builds a HOLD row; the symbol survives",
     "_build_sell": "exits, not entries — a refused exit leaves the position untouched",
     "_build_cover": "same, short side",
+    "_entry_stop_resolver": "thin shim factory: builds the resolver whose methods are scanned above",
     "_derive_target": "returns a derivation; every fault it finds it files itself",
     "_log_target_divergence": "logging only",
     "_target_note": "string formatting",
@@ -273,12 +274,11 @@ _CANNOT_END_A_CANDIDATE = {
 _DELEGATION_MARKER = "# drop-reason:"
 
 
-def _class_nodes():
-    out = [(n, t.splitlines()) for p in sorted(_SOURCE.glob("*.py")) for t in [p.read_text()]
-           for n in ast.parse(t).body if isinstance(n, ast.ClassDef) and n.name in {"PortfolioConstructor", "_StopMixin", "_OrderBuildMixin", "OrderBuilders", "StopGeometry"}]
-    assert len(out) == 5, [n.name for n, _ in out]  # the class body + its two mixins + the lifted order builders + the lifted stop geometry
+def _class_nodes():  # the resolver is LAST so its lifted bodies win by name over the host shims
+    def _c(paths, names): return [(n, t.splitlines()) for p in paths for t in [p.read_text()] for n in ast.parse(t).body if isinstance(n, ast.ClassDef) and n.name in names]
+    out = _c(sorted(_SOURCE.glob("*.py")), {"PortfolioConstructor", "_StopMixin", "_OrderBuildMixin", "OrderBuilders", "StopGeometry"}) + _c(sorted((_SOURCE / "entry_stop").glob("*.py")), {"EntryStopResolver"})
+    assert len(out) == 6, [n.name for n, _ in out]  # the class body + its two mixins + the lifted order builders + the lifted stop geometry + the entry-stop resolver
     return out
-
 
 def _methods(lines=False):  # skips "Thin shim" docstrings: a lift's same-named shim would pass vacuously; the moved body is scanned via its class above
     return {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body if isinstance(n, ast.FunctionDef) and not (ast.get_docstring(n) or "").startswith("Thin shim")}
