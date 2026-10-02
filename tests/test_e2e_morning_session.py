@@ -51,7 +51,6 @@ from src.models import (
     RiskReasoningChain, RiskVerdict, TargetPosition, TechAnalysisResult,
     TechReasoningChain,
 )
-from tests.session_clock import todays_session_stamp
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SYMBOL = "SPY"          # a synthetic series; no desk output, no real price
@@ -310,19 +309,30 @@ def _run_session(tmp_path, monkeypatch, *, skip: str | None = None):
         # refuses an unstamped print as a fill reference. Stamp it with a
         # print from THIS (frozen) session; everything above the SDK client
         # stays the production broker.
+        #
+        # The stamp is the FROZEN instant, never a wall-clock helper:
+        # `frozen_clock` rebinds `et_now` only inside `src.*`, so
+        # `tests.session_clock.todays_session_stamp()` reads the REAL date.
+        # With SESSION_AT pinned to 2026-10-01 that agreed with the frozen
+        # run only on the day the test was written; from the next ET
+        # midnight the print was judged prior-session, the buy refused as
+        # unmeasurable, and the run (correctly) stopped at `no_trades`.
+        # 10:00 ET sits inside the regular session, so both resolver bounds
+        # hold whatever the wall clock says.
         from types import SimpleNamespace
+
+        print_stamp = now
 
         def _stamped_latest_trade(request):
             return {
-                sym: SimpleNamespace(price=LAST_CLOSE,
-                                     timestamp=todays_session_stamp())
+                sym: SimpleNamespace(price=LAST_CLOSE, timestamp=print_stamp)
                 for sym in trading_data_symbols(request)
             }
 
         trading_data_symbols = pipeline.broker._data_client._symbols
         pipeline.broker._data_client.get_stock_latest_trade = _stamped_latest_trade
         pipeline.broker.get_intraday_snapshots = lambda symbols, *a, **k: {
-            s: {"last_price": LAST_CLOSE, "last_trade_at": todays_session_stamp()}
+            s: {"last_price": LAST_CLOSE, "last_trade_at": print_stamp}
             for s in symbols
         }
         _trace_stages(pipeline, trace, skip=skip)
