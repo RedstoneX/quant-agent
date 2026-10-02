@@ -110,3 +110,26 @@ def test_a_buy_written_through_the_ledger_carries_all_three(tmp_path):
         (row,),
     ).fetchone()
     assert tuple(got) == (1, 0.7, "structural")
+
+
+def test_the_constructor_always_hands_the_insert_a_measured_ceiling_verdict():
+    """Item 218, measured 2026-10-01: production `structural_ceiling` is NULL
+    on all 41 entries. The constructor's own decision is a real bool for both
+    a level-backed and an unbacked stop, so the NULL is not "never computed".
+    (`stop_rule` IS legitimately None when no level backs the stop: it has one
+    non-None code, so a NULL `stop_basis` means "not level-honoured", not lost.)
+    """
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    import test_risk_based_sizing as t
+    from src.portfolio_constructor import PortfolioConstructor
+
+    for computed in ([t._TIGHT_STOP, t._UPPER_LEVEL], []):
+        out = PortfolioConstructor().construct_orders(
+            targets=[t._risk_target("MSFT", 1.0)], positions=[],
+            analyses=[t._vol_analysis(
+                "MSFT", t._ENTRY, t._TIGHT_STOP, t._UPPER_LEVEL,
+                atr=t._ATR, computed=computed)],
+            total_value=t.EQUITY, price_map={"MSFT": t._ENTRY},
+        )
+        assert out[0].structural_ceiling is (len(computed) > 0)
