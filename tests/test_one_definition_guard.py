@@ -315,7 +315,7 @@ def find_dollar_volume_definitions(tree: ast.AST, path: Path) -> list[Finding]:
 def find_deployable_cash_definitions(tree: ast.AST, path: Path) -> list[Finding]:
     """A `deployable*` name assigned from arithmetic instead of the owner.
 
-    The engine says `cash + parked_sweep`; the API says `max(cash - reserve, 0)`.
+    Engine: `cash + parked_sweep`; API: `max(cash - reserve, 0)`.
     Measured $54,000 versus $33,000 on one book, both published under the same
     field name. Assignments of a literal default (`0.0`, `None`) are not
     definitions and are not matched.
@@ -329,15 +329,15 @@ def find_deployable_cash_definitions(tree: ast.AST, path: Path) -> list[Finding]
             if not any("deployable" in (_name(t) or "") for t in targets):
                 continue
             value = node.value
-            if isinstance(value, (ast.Constant, ast.Name)):
-                continue  # a default or a bare binding, not a definition
-            # A CALL to the sanctioned function is the fix, not the defect.
-            # Both the old engine-private owner and the shared one count.
-            calls = _calls(value)
-            if ("_compute_deployable_cash" in calls
-                    or "deployable_cash" in calls
-                    or "cash_above_reserve" in calls):
-                continue  # delegates to the owner
+            if isinstance(value, ast.Constant):
+                continue  # a literal default, not a definition
+            # Exempt ONLY a call to/alias of a NAMED owner; an alias of anything else is a second definition (slipped through twice).
+            owners = {"_compute_deployable_cash", "compute_deployable_cash",
+                      "deployable_cash", "cash_above_reserve"}
+            if _calls(value) & owners or (
+                    isinstance(value, (ast.Name, ast.Attribute))
+                    and _name(value) in owners):
+                continue  # delegates to / aliases the owner
             out.append(
                 Finding(_rel(path), node.lineno, fn.name,
                         ast.unparse(value)[:72], "second definition")
