@@ -7412,19 +7412,19 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(lookback_days)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(lookback_days)
     value: 5
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
       (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
     value: 5
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dollar-volume floor ($M) for a top-mover to enter the evening missed-
       opportunity review, which feeds the PM's missed-lessons memory
@@ -7452,10 +7452,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(move_threshold_pct)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(move_threshold_pct)
     value: 8
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
       (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
@@ -7464,10 +7464,10 @@ numbers:
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
       number is settled together with the tick cadence and the per-run held-book
       context, never alone.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(top_movers_count)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(top_movers_count)
     value: 15
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       How many broker top-movers are added to the evening missed-opportunity
       review (src/pipeline_intraday.py:1132-1146). Its only caller passes nothing, so
@@ -7494,10 +7494,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_missed_opportunities_digest(top_n)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(top_n)
     value: 15
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
       (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
@@ -7509,7 +7509,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many previous position-reviewer sessions the reviewer is shown
-      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:1858-1862). Its only caller
+      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:1511-1515). Its only caller
       passes nothing, so this default is live. Same class as the smart-money
       prompt-truncation caps classified arbitrary on 2026-09-19: it decides
       what evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7758,10 +7758,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_thesis_health_context(lookback_weeks)
+  - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_thesis_health_context(lookback_weeks)
     value: 8
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/missed_ops_signals.py
     note: >-
       News/rating window of the evening thesis-health review of every held
       position (src/pipeline_research_continuity.py:1203-1217). Its only caller passes nothing, so

@@ -278,7 +278,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
     # scoped.
     "src/pipeline_admission.py",
-    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py",
+    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py", "src/prompt_facts/missed_ops_signals.py",
     # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
     # application moved here out of `src/pipeline.py`.
     "src/pipeline_risk_gate.py",
