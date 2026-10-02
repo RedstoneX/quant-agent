@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, TypeVar
 from src.cost_circuit.refusal import CallReservation, PaidAnalysisSuspended, _fmt_settled
 from src.cost_circuit.clock import _now_utc
+from src.cost_circuit.alert_outcome import _send_alert_outcome
 
 logger = logging.getLogger(__name__)
 
@@ -41,33 +42,35 @@ def _file_lock(lock_path: Path | None):
         finally:
             os.close(fd)
 
-def _read_alert_outcome(latch_path: Path | None) -> tuple[bool, int]:
-    """Best-effort read of (alert_delivered, alert_attempts) from the latch.
+def _read_alert_outcome(latch_path: Path | None) -> tuple[bool, int, bool]:
+    """Best-effort read of (alert_delivered, alert_attempts, alert_suppressed).
 
     Never raises: an unreadable/missing/corrupt marker reads as "not yet
     delivered, zero attempts" rather than blocking anything.
     """
 
     if latch_path is None or not latch_path.exists():
-        return False, 0
+        return False, 0, False
     try:
         payload = json.loads(latch_path.read_text(encoding="utf-8"))
     except Exception:
-        return False, 0
+        return False, 0, False
     if not isinstance(payload, dict):
-        return False, 0
+        return False, 0, False
     delivered = payload.get("alert_delivered") is True
+    suppressed = payload.get("alert_suppressed") is True
     try:
         attempts = int(payload.get("alert_attempts") or 0)
     except (TypeError, ValueError):
         attempts = 0
-    return delivered, max(0, attempts)
+    return delivered, max(0, attempts), suppressed
 
 def _record_alert_attempt(
     latch_path: Path | None,
     lock_path: Path | None,
     *,
     delivered: bool,
+    suppressed: bool = False,
     now: datetime | None = None,
 ) -> int:
     """Durably fold one alert-send outcome into the emergency latch file.
@@ -117,6 +120,8 @@ def _record_alert_attempt(
             payload["alert_delivered"] = bool(payload.get("alert_delivered")) or bool(
                 delivered
             )
+            # Third state, never folded into delivered: a dropped message was not told.
+            payload["alert_suppressed"] = bool(payload.get("alert_suppressed")) or bool(suppressed)
             payload["last_alert_attempt_at"] = (
                 now or _now_utc()
             ).isoformat()
@@ -218,9 +223,10 @@ class UnavailableLLMCostCircuit:
             default=(run_id, mode),
         )
         self._alert_lock = threading.Lock()
-        durably_delivered, durable_attempts = _read_alert_outcome(
+        durably_delivered, durable_attempts, durably_suppressed = _read_alert_outcome(
             self._emergency_latch_path
         )
+        self._alert_suppressed = durably_suppressed
         self._alert_delivered = durably_delivered
         self._alert_attempts = durable_attempts
         self._last_alert_attempt = 0.0
@@ -257,13 +263,15 @@ class UnavailableLLMCostCircuit:
             # consumes `status()` (Mission Control, session summaries), not
             # just this process's own logs.
             "alert_delivered": self._alert_delivered,
+            # Dropped on purpose (risk-only filter / hard mute): settled, NOT delivered.
+            "alert_suppressed": self._alert_suppressed,
             "alert_attempts": self._alert_attempts,
         }
 
     def _alert(self) -> None:
         now = time.monotonic()
         with self._alert_lock:
-            if self._alert_delivered:
+            if self._alert_delivered or self._alert_suppressed:
                 return
             # Telegram/network outages are retryable, but do not hammer the
             # endpoint on every agent boundary in a parallel fan-out.
@@ -308,20 +316,22 @@ class UnavailableLLMCostCircuit:
             "restart any long-lived worker that observed this emergency latch."
         )
         logger.critical("\n%s", message)
-        sent = False
-        try:
-            sent = bool(self.notifier.send(message))
-        except Exception:
-            logger.exception("cost-circuit unavailable Telegram alert failed")
+        delivered, suppressed = _send_alert_outcome(
+            self.notifier, message, "cost-circuit unavailable Telegram alert failed",
+        )
+        sent = delivered or suppressed  # a drop is settled, but tracked apart
         # item 17(b): fold this outcome into the SAME durable marker the
         # latch itself lives in, so it survives this process exiting before
         # a retry succeeds -- see `_record_alert_attempt`'s docstring.
         durable_attempts = _record_alert_attempt(
-            self._emergency_latch_path, self._emergency_lock_path, delivered=sent,
+            self._emergency_latch_path, self._emergency_lock_path,
+            delivered=delivered, suppressed=suppressed,
         )
         with self._alert_lock:
-            if sent:
+            if delivered:
                 self._alert_delivered = True
+            if suppressed:
+                self._alert_suppressed = True
             if durable_attempts >= 0:
                 self._alert_attempts = durable_attempts
             else:

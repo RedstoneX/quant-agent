@@ -56,7 +56,9 @@ def _with_pnl_header(text: str) -> str:
         return text
 
 
-def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
+def send_owner_alert(
+    text: str, *, symbols: list[str] | None = None, category: str | None = None,
+) -> bool:
     """Push an alert to the owner NOW, outside the session-result message.
 
     Spec §11.1 guard 2. Some conditions cannot wait for a session to finish
@@ -81,7 +83,9 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
     text = _with_pnl_header(text)
     logger.critical("OWNER ALERT\n%s", text)
     try:
-        return bool(TelegramNotifier().send(text, symbols=symbols, kind="owner_alert"))
+        return bool(TelegramNotifier().send(
+            text, symbols=symbols, kind="owner_alert", category=category,
+        ))
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery failed")
         return False

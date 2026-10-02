@@ -1921,14 +1921,14 @@ class TradingPipeline(
         # message is a different renderer) keeps its alert unchanged.
         if session == "morning":
             try:
-                from src.notifier import describe_skipped_decision, send_owner_alert
+                from src.notifier import CATEGORY_OPERATIONAL, describe_skipped_decision, send_owner_alert
 
                 # Plain words only — no run id, no seat key, no state token
                 # and no `verdict.reason`. The machine reason is unchanged in
                 # the result dict, the event rows and the log line above.
                 send_owner_alert("\n".join(
                     describe_skipped_decision(verdict.lost, verdict.data_status)
-                ))
+                ), category=CATEGORY_OPERATIONAL)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("evidence gate: owner alert failed: %s", exc)
         return {

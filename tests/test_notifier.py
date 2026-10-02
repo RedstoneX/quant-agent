@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.notifier import TelegramNotifier, format_session_result
+from src.notifier import TelegramNotifier, format_session_result, was_suppressed
 
 
 # === TelegramNotifier ===
@@ -2905,7 +2905,7 @@ def test_the_global_mute_records_every_message_it_drops(tmp_path, monkeypatch):
     assert n.muted is True
     assert n.enabled is False
 
-    assert n.send("AAA has no protective stop", kind="owner_alert", symbols=["AAA"]) is False
+    assert was_suppressed(out := n.send("AAA has no protective stop", kind="owner_alert", symbols=["AAA"])) and not out
 
     conn = sqlite3.connect(str(db_path))
     try:
