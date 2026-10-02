@@ -8,3 +8,12 @@ filing author's prose is changed, and nothing is added to it here.
 
 DONE WHEN:
 - [ ] one durable row per run carries the realised `(sector, side)` weights of the orders the constructor built that session, written from executable product code with its call site named, and classified POPULATING rather than UNPROVEN against a real session
+
+---
+
+## STATUS 2026-10-02 -- built and proven in test; NOT yet classified POPULATING
+
+The recording shipped in #958: `PortfolioConstructor` keeps `last_order_sectors`, `_record_realised_sector_weights` (src/pipeline_entry_orders.py) is called once from `DecisionStage` (src/stage_decision.py) right after `construct_orders`, and writes the `realised_sector_weights` table through `Database.record_realised_sector_weights`.
+
+- Proven in test: a real `construct_orders` run, the real helper and a real store, row read back with real weights (`test_a_real_construct_orders_run_lands_a_populated_row_in_the_store`).
+- UNPROVEN against a real session: the only database on this box (`data/quant_agent.db`, read-only look 2026-10-02) has no `realised_sector_weights` table, because no session has run since the table was added. The box stays unticked until a real session leaves a row with `entry_orders_built` above zero.
