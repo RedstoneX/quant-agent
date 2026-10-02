@@ -5,15 +5,33 @@ behaviour change hidden in a verbatim move is unreviewable. Each entry says
 what is wrong, where, and what would prove a fix. Work them after the
 structure is sound, hardest-wearing first.
 
-## The midnight clock bug (work this FIRST)
+## The midnight clock bug (HALF DONE -- cost-circuit half still open)
 
 Between 00:00 and roughly 00:16 Eastern, tests compare an exchange trading day
 against the runner's local day and fail. Seven in the holding-discipline
 intraday file, thirteen more in the cost circuit. They pass again at 00:20 ET.
 Verified twice on 2026-10-02. This is the third or fourth instance of the same
 class. It costs a full test round every time it fires and it reds every open
-change at once, which is why it goes first. Fix: compare exchange day to
-exchange day, and add a guard that fails when a test reads the local date.
+change at once, which is why it goes first.
+
+DONE 2026-10-02: the holding-discipline half. Root cause was a module-level
+`str(et_today())` stamped when the file is COLLECTED, compared against an
+`et_today()` read when the test RUNS -- a suite that crosses ET midnight
+between the two compares two different exchange days. Reproduced on demand by
+shifting the clock (collect 23:58 ET, run 00:05 ET): 6 failed before the fix,
+26 passed after, at the same simulated instant. The stamp is now read at run
+time. A mechanical guard, `tests/test_no_local_day_as_exchange_day.py`, now
+fails on `date.today()`, a naive `datetime.now()`, a UTC calendar day used as
+a day, and an import-time clock stamp in a test, with a shrink-only baseline
+of the offenders that already existed.
+
+STILL OPEN: the cost-circuit half. Under the same clock shift (00:02, 00:05 and
+00:10 ET, Python and SQLite moved together) none of the age-latch tests failed,
+so the thirteen are UNPROVEN rather than diagnosed -- the simulator pins SQLite
+at connect time, which may be hiding it. Next step: reproduce against the real
+runner clock, or recover the original failing test names, before changing code.
+The guard's baseline lists the remaining offenders; they are candidates for the
+same fix, not approvals.
 
 ## The evidence gate's per-name record has never been written
 

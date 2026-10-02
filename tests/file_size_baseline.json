@@ -220,6 +220,7 @@
  "tests/test_never_blank_soft_exit.py": 740,
  "tests/test_news.py": 1485,
  "tests/test_news_dedup.py": 576,
+ "tests/test_no_local_day_as_exchange_day.py": 192,
  "tests/test_nominations.py": 706,
  "tests/test_notifier.py": 2923,
  "tests/test_number_sources.py": 1039,
