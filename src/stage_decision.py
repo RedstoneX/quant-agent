@@ -35,6 +35,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     _record_constructor_drops,
     _record_constructor_side_flips,
     _record_pipeline_event,
+    _record_realised_risk_budget,
     _record_realised_sector_weights,
     _record_rotation_precheck,
     _record_seat_stances,
@@ -755,6 +756,7 @@ class DecisionStage:
         _record_realised_sector_weights(
             pipeline, ctx, portfolio_decision, total_value,
         )
+        _record_realised_risk_budget(pipeline, ctx, total_value)
         logger.info(
             "Constructor: %d targets → %d decisions "
             "(%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",
