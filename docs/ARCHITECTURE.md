@@ -23,6 +23,19 @@ ExitEngineMixin, RiskGateMixin, AdmissionMixin, ResearchContinuityMixin,
 IntradayMixin, ...)`. A `grep -rn '^class \w*Mixin' src/` returns exactly eight
 mixin class definitions, one per file.
 
+**Five protection pieces now ARE boundaries (2026-10-02).** `src/protection/`
+holds `OwnerAlerts`, `SellFinalization`, `FillReconciler`, `RepegDrain` and
+`CoverageElection`, each a standalone class taking every collaborator as a
+keyword-only constructor argument (the `src/sessions/` pattern);
+`ProtectionMixin` keeps a thin same-named shim per method. All five pass
+`check_boundary`; `tests/test_protection_boundary.py` is the witness. What
+stayed in the mixin: the stop-coverage reconciler, the residual re-protection,
+the restore drain, the ex-dividend handler and the kill-switch wiring (all
+import the broker seam `src.execution`, a frozen importer list; the first two
+also read `_market_is_open_now`/`et_today`, which tests patch on
+`src.pipeline_protection`), and the protected sell with its write-ahead cancel,
+which pass `_last_stop_clear_refusal` between each other through the pipeline.
+
 **No mixin can be constructed alone.** `grep -n 'def __init__'` across
 `src/pipeline_protection.py`, `src/pipeline_exits.py`, `src/pipeline_intraday.py`
 and `src/pipeline_risk_gate.py` returns nothing. None of them defines a
