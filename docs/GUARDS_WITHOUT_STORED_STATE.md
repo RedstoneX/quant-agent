@@ -67,7 +67,7 @@ refuses.
 | `tests/import_cycle_baseline.json` | `test_import_layering`, `scripts/import_graph` |
 | `tests/import_layers.json` | `scripts/import_graph` |
 | ~~`tests/pipeline_new_baseline.json`~~ | DONE — deleted; `scripts/pipeline_new_guard.py` now names each `TradingPipeline.__new__` site in the working tree and on `origin/main` at check time and fails on any new site identity |
-| `tests/silent_swallow_baseline.json` | `test_silent_swallow_guard`, `scripts/silent_swallow_guard` |
+| ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now names each silent-swallow site in the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on any new site identity (never on a total, so a swap of one offender for another still fails) |
 
 All five are also read by `tests/test_baseline_merge_driver.py` and
 `scripts/resolve_baseline_conflict.py` — both exist ONLY to manage collisions
