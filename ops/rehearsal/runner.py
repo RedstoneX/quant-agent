@@ -458,9 +458,9 @@ def run_rehearsal(
         # live yfinance client, so the market-data swap above never reached
         # it and every sector lookup went to the network (and was retried
         # per symbol behind the wall, ~188s [measured 2026-10-01]).
-        checks.append(
-            stack.enter_context(recorded_sector_lookup(unavailable, _recording))
-        )
+        from ops.rehearsal.sector_recording import merge_into as _with_sectors
+        checks.append(stack.enter_context(
+            recorded_sector_lookup(unavailable, _with_sectors(_recording))))
         # Board item 202, the last two unrecorded inputs. The settling run of
         # 2026-10-01 was voided by 11 blocked attempts and every one of them
         # was FRED or a news/reference feed. They are now served from their
