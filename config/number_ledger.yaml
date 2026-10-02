@@ -5531,10 +5531,23 @@ numbers:
         on the following attempt is independent of the delay waited, the delay
         is buying nothing, and this rung goes -- with the retry becoming
         immediate -- rather than being re-picked at another round number.
-  - id: src.execution.broker_parts.stop_place._FRACTIONAL_QTY_EPSILON
+  - id: src.execution.order_idempotency._CLIENT_ORDER_ID_MAX_LEN
+    value: 48
+    status: not-trade-governing
+    site: src/execution/order_idempotency.py
+    note: >-
+      Length ceiling for the deterministic client_order_id (the order
+      idempotency key). Cited, not chosen: Alpaca publishes 128 characters
+      in the Trading API POST /v2/orders reference
+      (https://docs.alpaca.markets/reference/postorder) and 48 in its own
+      docs repository's Broker API orders reference; the stricter figure is
+      honoured so the key is valid under both. Decides nothing about
+      whether, how much or at what price to trade: a longer key is hashed
+      down to this length and behaves identically.
+  - id: src.execution.order_gates._FRACTIONAL_QTY_EPSILON
     value: 1.0e-9
     status: not-trade-governing
-    site: src/execution/broker_parts/stop_place.py
+    site: src/execution/order_gates.py
     note: >-
       Floating-point tolerance used only to tell a genuine sub-share
       remainder from float representation error (src/execution/broker.py:
@@ -7969,7 +7982,7 @@ numbers:
     note: >-
       Board item 39, attempt 3. Not a trading threshold: it is the length of
       the field this text has to fit in. `_build_sell` stores
-      `reasoning[:500]` (src/portfolio_constructor/stops.py:851, :3198, :3411),
+      `reasoning[:500]` (src/portfolio_constructor/orders.py:133, :189, :411),
       so a rotation reason longer than that loses its LAST clause - which is
       the one naming what the sale was cleared on, or that the close is
       contingent on the replacement buy. Read from the truncation it has to
