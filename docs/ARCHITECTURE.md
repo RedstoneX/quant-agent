@@ -23,6 +23,8 @@ ExitEngineMixin, RiskGateMixin, AdmissionMixin, ResearchContinuityMixin,
 IntradayMixin, ...)`. A `grep -rn '^class \w*Mixin' src/` returns exactly eight
 mixin class definitions, one per file.
 
+**The broker's in-place stop amend is a boundary (2026-10-02, first broker instalment).** `src/execution/broker_parts/stop_amend.py` holds `StopAmender` (the amend-one-stop, classify-after-dead-replacement and amend-resting-stops bodies, lifted verbatim with the `_quantize_price` / `_is_terminal_broker_rejection` helpers and the `_AMEND_NOT_ATTEMPTED` sentinel); `AlpacaBroker` keeps same-named thin shims and re-exports the helpers so every patch target still resolves. Witness: `tests/test_broker_parts_boundary.py`. `broker.py` is 6,673 lines after it; later instalments follow the same package.
+
 **Five protection pieces now ARE boundaries (2026-10-02).** `src/protection/`
 holds `OwnerAlerts`, `SellFinalization`, `FillReconciler`, `RepegDrain` and
 `CoverageElection`, each a standalone class taking every collaborator as a
