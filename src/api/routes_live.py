@@ -151,6 +151,22 @@ def _session_lock_active() -> bool | None:
 _DRIFT_SNAPSHOT_MAX_AGE_H = 26
 
 
+def _llm_balance_state() -> dict:
+    """Paid-model credit runway (src/llm_balance_runway.py). Never raises."""
+    try:
+        from src.api.deps import get_config, get_db_path
+        from src.llm_balance_runway import read_state
+
+        cc = get_config().llm_cost_circuit
+        return read_state(
+            get_db_path(),
+            topup_usd=cc.openrouter_topup_usd,
+            topup_date=cc.openrouter_topup_date,
+        )
+    except Exception:  # noqa: BLE001
+        return {"status": "unknown", "message": "The credit check could not run."}
+
+
 def _deploy_drift_state() -> dict:
     """Read the deploy-drift snapshot written by scripts/check_deploy_drift.py.
 
@@ -248,6 +264,7 @@ def get_health() -> HealthResponse:
         # git call on a request path). A snapshot that is missing or stale
         # is reported as such rather than as healthy.
         deploy_drift = _deploy_drift_state()
+        llm_balance = _llm_balance_state()
 
         broker_reachable = check_broker_reachable()
         recent_pm_status = (llm_health or {}).get("recent_pm_status")
@@ -323,9 +340,12 @@ def get_health() -> HealthResponse:
                 "deploy drift "
                 + str((deploy_drift or {}).get("status") or "unknown")
             )
+        if (llm_balance or {}).get("status") == "low":
+            degraded_causes.append(llm_balance["message"])
         overall_status = (
             "degraded"
-            if (not db_reachable or broker_reachable is False
+            if ((llm_balance or {}).get("status") == "low"
+                or not db_reachable or broker_reachable is False
                 or decision_path_status != "ok"
                 or alert_channel_degraded
                 or deploy_drift_degraded)
@@ -345,6 +365,7 @@ def get_health() -> HealthResponse:
             llm_circuit=llm_health,
             alert_channel=alert_channel,
             deploy_drift=deploy_drift,
+            llm_balance=llm_balance,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
     except Exception:

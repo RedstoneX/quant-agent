@@ -180,6 +180,8 @@ def refresh_all(force: bool = False) -> RefreshOutcome:
     # would go back to the network, and a stale cache is already an alert.
     priced = bool(refresh_openrouter_pricing(force=False)) if is_current else False
     litellm_ok = refresh_pricing(force=force)
+    from src.llm_balance_runway import record_provider_balance
+    record_provider_balance()  # best-effort; the dashboard derives it if refused
     return RefreshOutcome(
         openrouter_call_ok=bool(openrouter_ok),
         openrouter_age_hours=age_hours,

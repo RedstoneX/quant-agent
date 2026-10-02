@@ -138,6 +138,9 @@ function updateHealthIndicator(health) {
   } else if (health.llm_circuit?.recent_recovery) {
     dot.className = "health-dot health-ok";
     label.textContent = "paid analysis rearmed — checks passed";
+  } else if (health.llm_balance?.status === "low") {
+    dot.className = "health-dot health-degraded";
+    label.textContent = health.llm_balance.message;
   } else {
     dot.className = "health-dot health-ok";
     label.textContent = "all systems reachable";
@@ -394,6 +397,7 @@ async function loadHealth() {
       : circuit.recent_recovery
       ? "rearmed · checks passed"
       : "ready";
+    const balanceText = data.llm_balance?.message || "Paid-model credit left: balance unknown.";
     const runs = Object.entries(data.last_run_files || {})
       .map(([mode, ts]) => `${mode}: ${ts ? fmtTime(ts) : "—"}`)
       .join("  ·  ");
@@ -415,7 +419,8 @@ async function loadHealth() {
         ? `Last recovery — ${circuit.recent_recovery.release_reason}`
         : "",
     });
-    body.replaceChildren(grid, circuitLine, runsLine);
+    const balanceLine = el("div", { className: `state-message${data.llm_balance?.status === "low" ? " error" : ""}`, text: balanceText });
+    body.replaceChildren(grid, balanceLine, circuitLine, runsLine);
     const degraded = Boolean((circuit && !circuit.available) || circuit?.requires_operator_reset || circuit?.suspended || quotaHoldCount);
     setPanelState("panel-health", degraded ? "degraded" : "ok", degraded ? "degraded" : "ok");
     stampUpdated();
