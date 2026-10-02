@@ -24,6 +24,7 @@ from src.data.earnings_deep_dive import (
     _truncate,
     load_earnings_deep_dive,
 )
+from tests.pipeline_factory import build_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -447,8 +448,7 @@ def test_thesis_health_context_includes_earnings_deep_dive(tmp_path):
     analysis_path = tmp_path / "AAPL" / "analysis_10-Q_2026-01-30.md"
     _write_analysis_file(analysis_path, _full_analysis_payload())
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = Database(str(tmp_path / "t.db"))
+    p = build_pipeline(db=Database(str(tmp_path / "t.db")))
     p.db.initialize()
     entry_d = et_today() - timedelta(days=10)
     p.db.conn.execute(
@@ -502,8 +502,7 @@ def test_thesis_health_context_deep_dive_none_when_no_analysis(tmp_path):
     from src.pipeline import TradingPipeline
     from src.storage.db import Database
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = Database(str(tmp_path / "t.db"))
+    p = build_pipeline(db=Database(str(tmp_path / "t.db")))
     p.db.initialize()
     p.market = MagicMock()
     p.market.get_valuation_metrics.return_value = {
@@ -536,8 +535,7 @@ def test_thesis_health_context_deep_dive_exception_does_not_raise(tmp_path):
     from src.pipeline import TradingPipeline
     from src.storage.db import Database
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = Database(str(tmp_path / "t.db"))
+    p = build_pipeline(db=Database(str(tmp_path / "t.db")))
     p.db.initialize()
     p.market = MagicMock()
     p.market.get_valuation_metrics.return_value = {
@@ -586,8 +584,7 @@ def test_thesis_health_context_holding_time_is_in_trading_sessions(tmp_path):
     fri = date(2026, 9, 18)   # Friday entry
     mon = date(2026, 9, 21)   # Monday review
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = Database(str(tmp_path / "t.db"))
+    p = build_pipeline(db=Database(str(tmp_path / "t.db")))
     p.db.initialize()
     p.db.conn.execute(
         "INSERT INTO trades (symbol, action, qty, price, reasoning, "
