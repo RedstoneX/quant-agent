@@ -182,7 +182,10 @@ def test_the_score_is_always_an_exact_integer():
 
 _WEIGHT_SCAN_FILES = (
     "src/risk/rules.py",
-    "src/portfolio_constructor.py",
+    "src/portfolio_constructor/__init__.py",
+    "src/portfolio_constructor/config.py",
+    "src/portfolio_constructor/stops.py",
+    "src/portfolio_constructor/orders.py",
 )
 
 

@@ -37,7 +37,7 @@
 #     listed it twice -- and a third site (src/config.py:770) was invisible to
 #     the scanner because its default was bound to a NAME.
 #
-# It also cited a comment at src/portfolio_constructor.py:480-488 as calling
+# It also cited a comment at src/portfolio_constructor/config.py:480-488 as calling
 # that 0.50% "a constructor default nobody chose". That comment is about
 # `risk_budget_pct`'s prior value, a legacy NOTIONAL target -- a different
 # quantity that shares a digit. Every one of those five claims was one grep
@@ -1409,7 +1409,7 @@ numbers:
       this desk's own rule is not a source for the point. CORRECTION
       2026-09-18: the first version of this entry attributed the phrase "a
       doctrine-grounded placeholder, not a permanent constant" to this site.
-      That phrase is at src/portfolio_constructor.py, not here.
+      That phrase is at src/portfolio_constructor/config.py, not here.
       ITEM 90 PASS 2026-09-30, REVISED after an adversary pass found the
       first version of this note asserted a false history. The VALUE is
       unchanged and stays `arbitrary`. What changed: the old open question
@@ -1612,7 +1612,7 @@ numbers:
       MOVED 2026-10-01, board item 216: this is the SAME number, unchanged in
       value, re-homed from src.config.RiskConfig.short_gap_risk_multiple to
       the one place that now defines AND applies it. It previously had a
-      second ledger row (src.portfolio_constructor.ConstructorConfig.
+      second ledger row (src.portfolio_constructor.config.ConstructorConfig.
       short_gap_risk_multiple, `derived`); that row is deleted rather than
       kept in sync, because a mirror kept in sync is the same defect waiting
       to recur. The literal existed four times and the haircut was APPLIED at
@@ -1693,7 +1693,7 @@ numbers:
       overnight-gap magnitude relative to its own stop distance, so a
       tight-stopped name is haircut harder than a wide-stopped one. That read
       is BLOCKED ON DATA and on nothing else. Verified 2026-09-30 at the two
-      live sizing sites (src/portfolio_constructor.py, the short branch and
+      live sizing sites (src/portfolio_constructor/config.py, the short branch and
       the risk-plan loop): they are handed `analysis.atr_14` and a stop
       price, never bars, and the database still holds no OHLCV table, so the
       gap term cannot be read at sizing time. Writing the gap as some
@@ -3165,7 +3165,7 @@ numbers:
     value: 5
     status: derived
     site: src/pipeline_stages.py
-    derived_from: src.portfolio_constructor.ConstructorConfig.risk_budget_pct
+    derived_from: src.portfolio_constructor.config.ConstructorConfig.risk_budget_pct
     base_value: 5
     note: >-
       The fallback used when the configured risk budget cannot be read.
@@ -3276,10 +3276,10 @@ numbers:
       analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
-  - id: src.portfolio_constructor.ConstructorConfig.absolute_min_stop_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple
     value: 1
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.absolute_min_stop_atr_multiple
     base_value: 1
     note: >-
@@ -3290,10 +3290,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.breakout_projection_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.breakout_projection_atr_multiple
     value: 1
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.breakout_projection_atr_multiple
     base_value: 1
     note: >-
@@ -3304,10 +3304,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_cluster_risk_share_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_cluster_risk_share_pct
     value: 40
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_cluster_risk_share_pct
     base_value: 40
     note: >-
@@ -3318,10 +3318,10 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_gross_exposure_x
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_gross_exposure_x
     value: 2
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_gross_exposure_x
     base_value: 2
     note: >-
@@ -3332,10 +3332,10 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_portfolio_risk_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_portfolio_risk_pct
     value: 25
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_portfolio_risk_pct
     base_value: 25
     note: >-
@@ -3346,10 +3346,10 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_position_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_position_pct
     value: 65
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Single-name ceiling, moved to 65 by owner override on 2026-09-11
       (docs/INCIDENT_HISTORY.md, the prompt_limits defect). Ratified,
@@ -3382,10 +3382,10 @@ numbers:
         percentile turns that tolerance into a notional share. The ceiling is then
         that computed share. Until both halves exist the desk pays a round 65 nobody
         derived; the open mandate half belongs to board item 186
-  - id: src.portfolio_constructor.ConstructorConfig.max_sector_hard_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct
     value: 90
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       The soft sector target and the hard sector ceiling. Owner-accepted
       figures with no measurement behind either; approval does not make a flat
@@ -3417,10 +3417,10 @@ numbers:
       closes_when: >-
         the base row's recording shows the realised maximum sector share and
         both definition sites are moved together to a bound above it
-  - id: src.portfolio_constructor.ConstructorConfig.max_sector_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_pct
     value: 75
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       The soft sector target and the hard sector ceiling. Owner-accepted
       figures with no measurement behind either; approval does not make a flat
@@ -3452,10 +3452,10 @@ numbers:
         reach that tolerance, the soft target is DELETED rather than re-picked,
         because then it is a diversification number the mandate does not want. Board
         item 104 separately owns the prompt wording defect
-  - id: src.portfolio_constructor.ConstructorConfig.max_target_horizon_sessions
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_target_horizon_sessions
     value: 60
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_target_horizon_sessions
     base_value: 60
     note: >-
@@ -3466,10 +3466,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.max_target_reach_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.max_target_reach_atr_multiple
     value: 1.5
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.max_target_reach_atr_multiple
     base_value: 1.5
     note: >-
@@ -3480,10 +3480,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.structural_stop_buffer_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.structural_stop_buffer_pct
     value: 0.005
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       How far BELOW a structural level (ABOVE it for a short) the protective
       stop is placed when it must be READ from price structure because there is
@@ -3527,10 +3527,10 @@ numbers:
         recording states how often it was too tight -- pierced without the level
         breaking -- so the cost is at least a measured number instead of an
         assumption
-  - id: src.portfolio_constructor.ConstructorConfig.min_level_touches_for_stop_honor
+  - id: src.portfolio_constructor.config.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.min_level_touches_for_stop_honor
     base_value: 5
     note: >-
@@ -3541,10 +3541,10 @@ numbers:
       version claimed the 0.50% floor existed in one place while listing it in
       two. Base-drift now fails the build if the pair stops agreeing, which
       nothing previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.min_risk_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.min_risk_pct
     value: 0.5
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     prior_source: >-
       Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335).
       docs/OUTCOME.md:84 states it as "Min risk per trade | 0.5% - below this,
@@ -3554,13 +3554,13 @@ numbers:
       said the number was absent from settings.yaml, absent from every
       document and absent from any ratification record. All three were false
       and each was one grep from being disproved. It also cited the comment at
-      src/portfolio_constructor.py:480-488 as calling this 0.5% "a constructor
+      src/portfolio_constructor/config.py:480-488 as calling this 0.5% "a constructor
       default nobody chose" - that comment is about `risk_budget_pct`'s prior
       value, a legacy NOTIONAL target. A 0.5% notional budget and a 0.5%
       minimum-risk floor are different quantities that share a digit.
     note: >-
       Every new trade plan sized under 0.50% of the account is DENIED OUTRIGHT
-      rather than shrunk (src/portfolio_constructor.py:488). One of three
+      rather than shrunk (src/portfolio_constructor/config.py:488). One of three
       sites holding the same ratified number; the other two are
       src/risk/constants.py:144 and src/config.py:770.
     open_question: >-
@@ -3603,10 +3603,10 @@ numbers:
         ratified. If after a year of sessions no row has ever been written,
         the floor governs nothing the seat ever asks for, and the row leaves
         `arbitrary` by reformulation rather than by derivation.
-  - id: src.portfolio_constructor.ConstructorConfig.min_stop_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.min_stop_atr_multiple
     value: 2.5
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.min_stop_atr_multiple
     base_value: 2.5
     note: >-
@@ -3631,10 +3631,10 @@ numbers:
       `arbitrary` with open questions. The arbitrary content of the desk is
       unchanged by item 185; only the number of independent literals fell.
       Board item 185 therefore STAYS OPEN.
-  - id: src.portfolio_constructor.ConstructorConfig.min_target_atr_multiple
+  - id: src.portfolio_constructor.config.ConstructorConfig.min_target_atr_multiple
     value: 1
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.min_target_atr_multiple
     base_value: 1
     note: >-
@@ -3645,10 +3645,10 @@ numbers:
       claimed the 0.50% floor existed in one place while listing it in two.
       Base-drift now fails the build if the pair stops agreeing, which nothing
       previously checked.
-  - id: src.portfolio_constructor.ConstructorConfig.risk_budget_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.risk_budget_pct
     value: 5
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       The 5% single-position risk envelope, owner-ratified 2026-08-27.
       Ratified and unsourced. ITEM 222, reconciled 2026-10-01: the most the
@@ -3686,10 +3686,10 @@ numbers:
         in which case the per-name formula replaces it and this row leaves the
         ledger. Never set by searching for the envelope that would have performed
         best on this desk's own fills
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[0][1]
     value: 1.2
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Macro-regime stop-width scalers, owner-ratified appetite 2026-09-25
       (delegated to the adversary): the DIRECTION (a risk-off tape widens
@@ -3739,7 +3739,7 @@ numbers:
       per-name volatility reading today, which is why this stays open.
     cost_while_unanswered: >-
       Every stop in a high-volatility regime is widened by a scaler no
-      measurement supports (src/portfolio_constructor.py:636-646 says exactly
+      measurement supports (src/portfolio_constructor/config.py:636-646 says exactly
       that).
     settles_by:
       kind: measurement
@@ -3761,10 +3761,10 @@ numbers:
         for this bucket is indistinguishable from 1.0 the rung is DELETED rather
         than kept at its present figure. Never set from which scaler would have
         traded best on this desk's own record, which docs/OUTCOME.md bars outright
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[1][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[1][1]
     value: 1.1
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Macro-regime stop-width scalers, owner-ratified appetite 2026-09-25
       (delegated to the adversary): the DIRECTION (a risk-off tape widens
@@ -3800,10 +3800,10 @@ numbers:
         for this bucket is indistinguishable from 1.0 the rung is DELETED rather
         than kept at its present figure. Never set from which scaler would have
         traded best on this desk's own record, which docs/OUTCOME.md bars outright
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[2][1]
     value: 0.95
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Macro-regime stop-width scalers, owner-ratified appetite 2026-09-25
       (delegated to the adversary): the DIRECTION (a risk-off tape widens
@@ -3839,22 +3839,22 @@ numbers:
         this bucket is indistinguishable from 1.0 the rung is DELETED rather than
         kept at its present figure. Never set from which scaler would have traded
         best on this desk's own record, which docs/OUTCOME.md bars outright
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[0][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[0][1]
     value: 1
     status: sourced
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     source: >-
-      src/portfolio_constructor.py:640-646. 1.0 here is the declared absence
+      src/portfolio_constructor/config.py:640-646. 1.0 here is the declared absence
       of a scaler, not a chosen magnitude - the sibling range rung 0.90
       carries the arbitrary entry.
     note: >-
-      The breakout rung of the setup scaler. src/portfolio_constructor.py:642
+      The breakout rung of the setup scaler. src/portfolio_constructor/config.py:642
       states it explicitly: breakout runs AT THE BASE, because no measurement
       supports widening beyond it.
-  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[1][1]
+  - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[1][1]
     value: 0.9
     status: arbitrary
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       The range-setup stop-width scaler. The definition site is explicit: the
       DIRECTION (range tighter than breakout) is doctrine, but 0.90 is "a
@@ -3869,7 +3869,7 @@ numbers:
       Does a range setup warrant a tighter stop than a breakout, and by how
       much, measured per setup type?
     cost_while_unanswered: >-
-      src/portfolio_constructor.py:644 calls it "a modest tightening off the
+      src/portfolio_constructor/config.py:644 calls it "a modest tightening off the
       base, not a specific measured number" - and it multiplies into every
       range trade's stop and therefore its size.
     settles_by:
@@ -3891,10 +3891,10 @@ numbers:
         and range setups take the base width, rather than keeping a 0.90 the
         definition site itself calls 'not a specific measured number'. Never set
         from this desk's own trade outcomes
-  - id: src.portfolio_constructor.ConstructorConfig.target_divergence_warn_pct
+  - id: src.portfolio_constructor.config.ConstructorConfig.target_divergence_warn_pct
     value: 25
     status: derived
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     derived_from: src.config.RiskConfig.target_divergence_warn_pct
     base_value: 25
     note: >-
@@ -3922,7 +3922,7 @@ numbers:
     source: >-
       docs/board_notes/:1198 (section "## item 218 — Arithmetically losing
       geometry is refused (owner ruling 2026-10-01)") records the ruling
-      verbatim, and src/portfolio_constructor.py:517 carries it beside the
+      verbatim, and src/portfolio_constructor/config.py:517 carries it beside the
       constant that applies it. Owner ruling 2026-10-01, verbatim: "For now,
       let's refuse a bad risk
       reward ratio. See if that improves the desk purchases." He was shown
@@ -3991,7 +3991,7 @@ numbers:
       said the number was absent from settings.yaml, absent from every
       document and absent from any ratification record. All three were false
       and each was one grep from being disproved. It also cited the comment at
-      src/portfolio_constructor.py:480-488 as calling this 0.5% "a constructor
+      src/portfolio_constructor/config.py:480-488 as calling this 0.5% "a constructor
       default nobody chose" - that comment is about `risk_budget_pct`'s prior
       value, a legacy NOTIONAL target. A 0.5% notional budget and a 0.5%
       minimum-risk floor are different quantities that share a digit.
@@ -5544,10 +5544,10 @@ numbers:
       well below a real fractional remainder (which is never smaller than a
       broker-tradable fraction of one share) produces identical behaviour,
       so this is a precision guard rather than a policy choice.
-  - id: src.portfolio_constructor._NO_REAL_WEIGHT_DELTA_PCT
+  - id: src.portfolio_constructor.config._NO_REAL_WEIGHT_DELTA_PCT
     value: 1.0e-9
     status: not-trade-governing
-    site: src/portfolio_constructor.py
+    site: src/portfolio_constructor/config.py
     note: >-
       Floating-point tolerance, added 2026-09-30 (owner ruling, board item
       183) when the picked `min_trade_weight_delta` churn floor (0.5%) was
@@ -7969,7 +7969,7 @@ numbers:
     note: >-
       Board item 39, attempt 3. Not a trading threshold: it is the length of
       the field this text has to fit in. `_build_sell` stores
-      `reasoning[:500]` (src/portfolio_constructor.py:3142, :3198, :3411),
+      `reasoning[:500]` (src/portfolio_constructor/stops.py:851, :3198, :3411),
       so a rotation reason longer than that loses its LAST clause - which is
       the one naming what the sale was cleared on, or that the close is
       contingent on the replacement buy. Read from the truncation it has to
@@ -8041,7 +8041,7 @@ numbers:
     note: >-
       Default portfolio risk ceiling of the allocator
       (src/risk/budget.py:193). Every caller passes it
-      (src/portfolio_constructor.py:1630-1635,
+      (src/portfolio_constructor/__init__.py:705-710,
       src/agents/portfolio_manager.py:1870-1873); same 25 as the deployed
       ceiling.
   - id: src.risk.budget.allocate_risk_budget(cluster_share_pct)
