@@ -689,12 +689,13 @@ class ExitEngineMixin:
                     "falling back to the last opening row",
                     symbol, e,
                 )
-            try:
-                current_stop = self.broker.get_current_stop_price(symbol)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("trail: stop lookup failed for %s: %s", symbol, e)
-                _note(symbol, "live_stop_lookup_failed", str(e))
+            from src.execution.stop_read import read_stop
+            _stop_read = read_stop(self.broker, symbol, db=self.db,
+                                   context="deterministic trail")
+            if _stop_read.unreadable:
+                _note(symbol, "live_stop_lookup_failed", _stop_read.reason)
                 continue
+            current_stop = None if _stop_read.absent else _stop_read.price
 
             # Only bars SINCE ENTRY matter: a swing low from before the
             # position existed is not a level this trade ever defended.
@@ -2172,17 +2173,10 @@ class ExitEngineMixin:
                     # Old stop is broker truth; if it is missing/unreadable the
                     # floor cannot be computed, so this establishes protection
                     # rather than blocking it (the RC1 clamps still apply).
-                    try:
-                        raw_old_stop = self.broker.get_current_stop_price(symbol)
-                        old_stop = (
-                            float(raw_old_stop) if raw_old_stop is not None else None
-                        )
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "Midday: TRAIL_STOP %s — live stop unreadable "
-                            "(%s); min-ratchet floor not applied", symbol, e,
-                        )
-                        old_stop = None
+                    from src.execution.stop_read import read_stop
+                    _old_read = read_stop(self.broker, symbol, db=self.db,
+                                          context="midday min-ratchet floor")
+                    old_stop = _old_read.price if _old_read.found else None
                     if old_stop is not None and old_stop > 0:
                         from src.risk.trailing import MIN_RATCHET_PCT
                         min_new_stop = old_stop * (1.0 + MIN_RATCHET_PCT / 100.0)

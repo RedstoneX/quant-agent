@@ -55,6 +55,9 @@ PROTECTIVE_STOP_BLOCKED_KIND = "protective_stop_blocked"
 #: protective stops at once, so "which legs actually moved" has to survive.
 STOP_SHIFT_KIND = "stop_shift_legs"
 
+#: One row per live stop the desk could not read from the broker.
+STOP_READ_UNREADABLE_KIND = "stop_read_unreadable"
+
 #: `agent_name` on every row here. The deterministic desk, not a model seat.
 RECORD_AGENT = "pipeline"
 
@@ -300,3 +303,13 @@ def stop_shift_incomplete_text(symbol: str, status: str, shifted: int, total: in
         f"the dividend; the rest are still at the pre-dividend level, which the "
         f"ex-dividend opening gap can trigger on its own — nothing was cancelled"
     )
+
+
+def record_stop_read_unreadable(
+    db: Any, *, symbol: str, reason: str, context: str = "",
+    run_id: str | None = None,
+) -> bool:
+    """A live stop the broker would not read: not the same as having none."""
+    return _insert(db, run_id=run_id, kind=STOP_READ_UNREADABLE_KIND,
+                   symbol=symbol, payload={"code": "stop_read_unreadable",
+                                           "reason": reason, "context": context})

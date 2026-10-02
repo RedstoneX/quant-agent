@@ -9,6 +9,7 @@ and the caches stay the broker's own dicts (the same objects, mutated here).
 from __future__ import annotations
 
 import logging
+from src.execution.stop_read import StopReadUnavailable
 from datetime import date
 
 from alpaca.trading.enums import QueryOrderStatus
@@ -721,8 +722,8 @@ class AccountReads:
         """Return the price of the current open protective stop for a symbol.
 
         Used by ex-dividend / trailing-stop logic that needs to read the
-        existing stop before replacing it. Returns None if no protective stop
-        exists or the query fails.
+        existing stop. None = broker answered, no stop; an unreadable or
+        ambiguous read raises StopReadUnavailable (use stop_read.read_stop).
 
         A long's protective stop is a SELL stop (fires as price falls); a
         short's is a BUY stop (fires as price rises) — Alpaca has no notion
@@ -743,8 +744,7 @@ class AccountReads:
                 )
             )
         except Exception as exc:
-            logger.warning("get_current_stop_price failed for %s: %s", symbol, exc)
-            return None
+            raise StopReadUnavailable(f"{symbol}: {exc}") from exc
         # Post-#102 a position can legitimately carry SEVERAL stops on its
         # protective side (one GTC stop per entry BUY, plus coverage-repair
         # top-ups). The old first-match return made "the current stop"
@@ -782,7 +782,7 @@ class AccountReads:
                 "buy-stops %s — direction is ambiguous, refusing to report "
                 "a stop", symbol, sorted(sell_stops), sorted(buy_stops),
             )
-            return None
+            raise StopReadUnavailable(f"{symbol}: both sell and buy stops rest")
         if sell_stops:
             if len(sell_stops) > 1:
                 logger.info(

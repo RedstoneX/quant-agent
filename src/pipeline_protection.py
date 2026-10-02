@@ -2327,13 +2327,12 @@ class ProtectionMixin:
             if amount <= 0:
                 continue
 
-            try:
-                current_stop = self.broker.get_current_stop_price(p.symbol)
-            except Exception as e:
-                logger.warning("ex-div: get_current_stop_price failed for %s: %s", p.symbol, e)
-                current_stop = None
-            if current_stop is None or current_stop <= 0:
-                continue  # nothing to adjust
+            from src.execution.stop_read import read_stop
+            stop_read = read_stop(self.broker, p.symbol, db=self.db,
+                                  run_id=run_id, context="ex-div shift")
+            if stop_read.unreadable or stop_read.absent:
+                continue  # unreadable was recorded+alerted; absent = nothing to adjust
+            current_stop = stop_read.price
             new_stop = round(current_stop - amount, 2)
             if new_stop <= 0 or new_stop >= p.current_price:
                 logger.warning(

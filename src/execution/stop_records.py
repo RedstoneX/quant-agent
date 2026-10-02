@@ -312,17 +312,11 @@ def reconcile_recorded_stop_levels(
         if not symbol or qty == 0 or symbol in skip:
             continue
         is_short = qty < 0
-        try:
-            live = broker.get_current_stop_price(symbol)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "stop-level reconcile: live stop lookup failed for %s: %s",
-                symbol, exc,
-            )
-            continue
-        live_px = _finite_price(live)
-        if live_px <= 0:
-            continue
+        from src.execution.stop_read import read_stop
+        _sr = read_stop(broker, symbol, context="stop-level reconcile")
+        if not _sr.found:
+            continue  # unreadable is recorded and alerted by read_stop
+        live_px = _sr.price
         opening = "SHORT" if is_short else "BUY"
         try:
             row = last_buy(symbol, action=opening) or {}

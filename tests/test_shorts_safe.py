@@ -407,15 +407,15 @@ def test_get_current_stop_price_short_reports_lowest_buy_stop(mock_tc_cls):
 
 @patch("src.execution.broker.TradingClient")
 def test_get_current_stop_price_ambiguous_both_sides_fails_closed(mock_tc_cls):
-    """A symbol can't legitimately be both long and short at once. Seeing
-    live stops on both sides means stale orders from a direction flip —
-    refuse to guess which one is real rather than report either price."""
+    """Stops on both sides (stale orders): refuse to guess; unreadable."""
     broker, client = _broker(mock_tc_cls)
     client.get_orders.return_value = [
         _mock_stop_order("s1", 340.0, "sell"),
         _mock_stop_order("b1", 360.0, "buy"),
     ]
-    assert broker.get_current_stop_price("GE") is None
+    from src.execution.stop_read import StopReadUnavailable
+    with pytest.raises(StopReadUnavailable):
+        broker.get_current_stop_price("GE")
 
 
 @patch("src.execution.broker.TradingClient")

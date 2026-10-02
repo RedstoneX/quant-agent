@@ -799,13 +799,11 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         initial_stops: dict[str, float] = {}
         for p in positions:
             sym = p.symbol
-            try:
-                live = self.broker.get_current_stop_price(sym)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("stop map: live stop lookup failed for %s: %s", sym, e)
-                live = None
-            if isinstance(live, (int, float)) and live > 0:
-                live_stops[sym] = float(live)
+            from src.execution.stop_read import read_stop
+            _live_read = read_stop(self.broker, sym, db=getattr(self, "db", None),
+                                   context="prompt stop map")
+            if _live_read.found:
+                live_stops[sym] = _live_read.price
             from src.execution.stop_records import recorded_initial_stop
             try:
                 qty = float(getattr(p, "qty", 0) or 0)
@@ -1203,12 +1201,11 @@ class PromptFactsMixin(PromptFactsReviewMixin):
             # RC1: after any TRAIL_STOP the BUY row's stop is stale-WIDE —
             # the reviewer would see a fat distance_to_stop and keep
             # ratcheting. Prefer live broker truth; fall back to the BUY row.
-            try:
-                live_stop = self.broker.get_current_stop_price(sym)
-            except Exception:  # noqa: BLE001
-                live_stop = None
-            if isinstance(live_stop, (int, float)) and live_stop > 0:
-                stop_loss = float(live_stop)
+            from src.execution.stop_read import read_stop
+            _ls_read = read_stop(self.broker, sym, db=getattr(self, "db", None),
+                                 context="prompt position facts")
+            if _ls_read.found:
+                stop_loss = _ls_read.price
 
             # days_held — from BUY timestamp; fall back to None.
             #
