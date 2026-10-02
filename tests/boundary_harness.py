@@ -71,26 +71,64 @@ def imports_module(tree: ast.AST, module: str) -> bool:
     return False
 
 
-def count_test_files_importing_pipeline(tests_dir: Path = TESTS) -> int:
-    """The ratchet metric: test files that import or name TradingPipeline in code
-    (imports, names, attributes; prose strings excluded)."""
-    n = 0
+#: Tests that are not measured: the harness's own files and the composition
+#: root. These are the ONLY files the metric skips; there is no list of
+#: current offenders, because the trunk is the list (see below).
+_UNMEASURED = ("boundary_harness.py", "test_boundary_harness.py",
+               # and the composition root,
+               "pipeline_factory.py", "test_pipeline_factory.py",
+               # and the ONE deliberate whole-system test. test_e2e_morning_session.py
+               # exists precisely to build a real TradingPipeline and drive every
+               # stage end to end; counting it would penalise the test this metric
+               # most wants to exist. Every OTHER test that needs a whole pipeline
+               # is what the ratchet is measuring.
+               "test_e2e_morning_session.py")
+
+
+def test_files_referencing_pipeline(tests_dir: Path = TESTS) -> set[str]:
+    """The ratchet metric, as IDENTITIES: the repo-relative path of every test
+    file that imports or names TradingPipeline in code (imports, names,
+    attributes; prose strings excluded)."""
+    found: set[str] = set()
     for p in sorted(tests_dir.rglob("*.py")):
-        # The harness's own files, and the ONE deliberate whole-system test.
-        # test_e2e_morning_session.py exists precisely to build a real
-        # TradingPipeline and drive every stage end to end; counting it would
-        # penalise the test this metric most wants to exist. Every OTHER test
-        # that needs a whole pipeline is what the ratchet is measuring.
-        if p.name in ("boundary_harness.py", "test_boundary_harness.py",  # and the composition root,
-                      "test_e2e_morning_session.py", "pipeline_factory.py", "test_pipeline_factory.py"):
+        if p.name in _UNMEASURED:
             continue
         try:
             tree = _parse(p)
         except SyntaxError:
             continue
         if references_pipeline(tree, strings=False):
-            n += 1
-    return n
+            found.add(p.relative_to(tests_dir.parent).as_posix())
+    return found
+
+
+def trunk_test_files_referencing_pipeline() -> set[str]:
+    """The same metric measured on ``origin/main`` at check time, stored nowhere.
+
+    Raises ``ReferenceUnavailable`` when the trunk cannot be read, so the
+    ratchet refuses rather than passes.
+    """
+    from scripts.guard_reference import ReferenceUnavailable, TRUNK, trunk_blobs, trunk_paths
+
+    paths = [p for p in trunk_paths(".py") if p.startswith("tests/")
+             and p.rsplit("/", 1)[-1] not in _UNMEASURED]
+    found: set[str] = set()
+    for path, text in trunk_blobs(paths).items():
+        try:
+            tree = ast.parse(text)
+        except SyntaxError as exc:
+            raise ReferenceUnavailable(
+                f"cannot parse {TRUNK}:{path} ({exc}), so this guard cannot measure "
+                f"what that file already contained; it refuses rather than pass."
+            ) from exc
+        if references_pipeline(tree, strings=False):
+            found.add(path)
+    return found
+
+
+def count_test_files_importing_pipeline(tests_dir: Path = TESTS) -> int:
+    """How many test files reference TradingPipeline; a report figure, never a baseline."""
+    return len(test_files_referencing_pipeline(tests_dir))
 
 
 def _self_reads_and_writes(cls: ast.ClassDef):
