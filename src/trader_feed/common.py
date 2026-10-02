@@ -197,6 +197,7 @@ def _all_symbols(*groups: Any) -> list[str]:
 _SKIP_WHO_LABELS: dict[str, str] = {
     "fat_finger_guard": "Blocked by desk safety check (not the broker)",
     "unusable_stop": "Blocked by desk safety check — unusable stop (not the broker)",
+    "bad_quantity": "Blocked by desk safety check — bad quantity (not the broker)",
     "kill_switch_halted": "Blocked by desk safety check — kill switch (not the broker)",
     "broker_rejected": "Blocked by the broker",
     "insufficient_cash": "Blocked by the desk — insufficient cash",
@@ -270,10 +271,9 @@ def _skip_who(reason: str) -> str:
 #   borrow_gate  A failed broker asset lookup is synthesised into
 #     `{"shortable": False, "reason": "asset_lookup_failed"}` and filed
 #     under this code, so an API failure would read as a borrow decision.
-#   insufficient_cash / unusable_stop / fat_finger_guard  "There was no
-#     cash", "the desk could not compute a stop" and "the safety net caught
-#     an absurd order" are all things that must be said loudly. A guard
-#     firing means something upstream produced something wrong.
+#   insufficient_cash / unusable_stop / bad_quantity / fat_finger_guard
+#     "no cash", "no usable stop", "absurd quantity", "absurd price" must all
+#     be said loudly: a guard firing means something upstream went wrong.
 _DELIBERATE_SKIP_REASONS = frozenset({
     # The $500 minimum trade size — one of the three the owner named.
     "below_min_notional",
