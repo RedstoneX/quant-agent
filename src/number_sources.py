@@ -10,16 +10,14 @@ was re-checked and every one was still live; the finding was filed as "an
 inventory, not an item / never re-audit" and nothing was assigned. A week
 later they were all still live and the count had grown.
 
-That is the real defect. Not the list — the absence of any boundary. **There
-was no mechanical check of any kind**, so the next invented number got in for
-free.
+That is the real defect: **there was no mechanical check of any kind**, so
+the next invented number got in for free.
 
 WHAT THIS MODULE DOES. It enumerates every numeric DEFINITION SITE inside a
 declared scope, and requires each one to carry an entry in a checked-in
 ledger (`config/number_ledger.yaml`) saying where the number came from. A new
 number in scope with no ledger entry fails `pytest`, which is the check
-branch protection requires. The ledger is the inventory, and because the
-build reads it, it is an inventory that cannot rot unnoticed.
+branch protection requires.
 
 WHAT IT DOES NOT DO, SAID FIRST BECAUSE IT IS THE HONEST FRAMING. This gate
 tests that a justification EXISTS, in a shape a reader can open. It does not
@@ -145,8 +143,7 @@ SEVEN THINGS THE LEDGER IS CHECKED FOR:
      ledger alongside a declared edit to the count. `MAX_ARBITRARY_ENTRIES`
      is not written by hand: it is the sum of the deltas in
      `config/number_ledger_history.yaml`, one appended entry per change,
-     each stating why. Moving the count therefore MEANS appending a reason,
-     and the two files must agree or the build fails.
+     each stating why.
   6. UNSCOPED SENTINEL — `MAX_UNSCOPED_NUMERIC_SITES`, above.
   7. CITATIONS RESOLVE — every `path:line` an entry cites must exist and
      the line must be inside the file. It cannot check that a citation
@@ -218,6 +215,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/evidence_gate.py",
     "src/verdicts.py",
     "src/data/correlation.py",
+    # 2026-10-01: the sector cluster moved out of src/execution/broker.py
+    # verbatim (sector resolution feeds the exposure ladder); same code, same scope.
+    "src/sector_reference.py",
     # 2026-09-19, board item 124: the research-defined insider purchase
     # cluster now lifts the smart-money seat's conviction, so its definition
     # is on the path from a verdict to an order.
