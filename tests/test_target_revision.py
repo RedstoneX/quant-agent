@@ -171,9 +171,6 @@ def test_pinned_target_column_is_never_written_by_a_revision():
     """`update_open_take_profit` writes the live target only. If it ever
     touched `initial_take_profit` the pinned denominator would move with the
     revision and the guard would be exposed again."""
-    # The body moved verbatim into the trade ledger; Database keeps a
-    # same-named shim, whose source says nothing about columns. Read the
-    # body where it now lives -- same function, same assertions.
     from src.storage.trades.ledger import TradeLedger
 
     src = inspect.getsource(TradeLedger.update_open_take_profit)
