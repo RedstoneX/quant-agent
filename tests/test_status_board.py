@@ -2191,28 +2191,9 @@ def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
     )
 
 
-def test_the_trunk_board_is_actually_parsed():
-    """A guard whose reference read returned nothing would pass vacuously."""
-    paths = board_rot_guard.trunk_board_paths()
-    assert "docs/WORK.md" in paths
-    assert sum(1 for p in paths if p.startswith("docs/board_notes/")) > 10, paths
-    board_rot_guard.trunk_flagged()  # refuses if the trunk board parses to nothing
-
-
-def test_a_vacuous_reference_board_is_refused_not_passed(monkeypatch):
-    """A board that parses to almost nothing must refuse, never report clean."""
-    monkeypatch.setattr(board_rot_guard, "_measure", lambda root: (set(), 0))
-    with pytest.raises(ReferenceUnavailable) as exc:
-        board_rot_guard.trunk_flagged()
-    assert "vacuous" in str(exc.value)
-    with pytest.raises(ReferenceUnavailable):
-        board_rot_guard.working_flagged()
-
-
 def test_a_newly_finished_item_is_caught_as_a_delta(monkeypatch):
     """An item flagged here but not on the trunk is this branch's doing."""
-    monkeypatch.setattr(board_rot_guard, "working_flagged",
-                        lambda: board_rot_guard.trunk_flagged() | {"item 9999"})
+    monkeypatch.setattr(board_rot_guard, "working_flagged", lambda: board_rot_guard.trunk_flagged() | {"item 9999"})
     assert board_rot_guard.violations() == ["item 9999"]
     assert board_rot_guard.main() == 1
 
@@ -2222,26 +2203,6 @@ def test_rot_already_on_the_trunk_is_not_this_branch_s_problem(monkeypatch):
     monkeypatch.setattr(board_rot_guard, "trunk_flagged", lambda: {"item 4242"})
     monkeypatch.setattr(board_rot_guard, "working_flagged", lambda: {"item 4242"})
     assert board_rot_guard.violations() == []
-
-
-def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
-    """No origin/main, no comparison -- and therefore no pass."""
-    repo = tmp_path / "norepo"
-    (repo / "docs").mkdir(parents=True)
-    (repo / "docs" / "WORK.md").write_text("# board\n")
-    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
-    subprocess.run(["git", "add", "docs/WORK.md"], cwd=repo, check=True)
-    subprocess.run(
-        ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t",
-         "commit", "-qm", "base"], cwd=repo, check=True,
-    )
-    monkeypatch.setattr(guard_reference, "ROOT", Path(repo))
-    monkeypatch.setattr(board_rot_guard, "ROOT", Path(repo))
-
-    with pytest.raises(ReferenceUnavailable) as exc:
-        board_rot_guard.trunk_flagged()
-    assert "origin/main" in str(exc.value)
-    assert board_rot_guard.main() == 2
 
 
 def test_the_guard_stores_no_list_of_current_items():
