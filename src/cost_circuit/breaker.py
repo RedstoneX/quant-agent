@@ -183,8 +183,9 @@ class LLMCostCircuitBreaker(_BreakerLatchMixin, _BreakerRetryMixin, _BreakerSess
         return conn
 
 
-# Mixin bodies below name `LLMCostCircuitBreaker` directly (staticmethod
-# calls, moved verbatim). A mixin cannot import this module without a cycle,
+# Formatter bodies in src/cost_circuit/parts/alert_formats.py name
+# `LLMCostCircuitBreaker` directly (staticmethod calls, moved verbatim). That
+# module cannot import this one without a cycle,
 # so the finished class is bound into each such namespace here.
-from src.cost_circuit import breaker_formats as _breaker_formats
-_breaker_formats.LLMCostCircuitBreaker = LLMCostCircuitBreaker
+from src.cost_circuit.parts import alert_formats as _alert_formats
+_alert_formats.LLMCostCircuitBreaker = LLMCostCircuitBreaker
