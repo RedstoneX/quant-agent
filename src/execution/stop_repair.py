@@ -216,12 +216,15 @@ def repair_stop_coverage(
     # today; anything else leaves the gap flagged for the next sweep, which
     # is the same outcome this function already produces for every other
     # unverifiable input.
+    # `LivePrice` comes from the module that DEFINES it, not from the broker
+    # facade that re-exports it: the facade would close an import cycle.
+    from src.execution.broker_parts.market_data import LivePrice
     from src.execution.stop_repair_price import read_repair_price
 
     stamped, price, price_error = read_repair_price(
         broker, symbol, stop_price=stop_price, uncovered_qty=uncovered_qty,
         is_short=is_short, caller=caller, db=db, outcome=outcome,
-        resting_stops=resting_stops, rec=rec,
+        resting_stops=resting_stops, rec=rec, live_price_cls=LivePrice,
     )
     blind = price is None and price_error is not None
     if not blind and not (isinstance(price, (int, float)) and price > 0 and math.isfinite(price)):

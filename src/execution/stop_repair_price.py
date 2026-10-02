@@ -13,9 +13,16 @@ logger = logging.getLogger("src.execution.stop_repair")
 
 def read_repair_price(
     broker, symbol, *, stop_price, uncovered_qty, is_short, caller, db,
-    outcome, resting_stops, rec,
+    outcome, resting_stops, rec, live_price_cls,
 ):
-    """`(stamped, price, price_error)`; `price_error` set => place blind."""
+    """`(stamped, price, price_error)`; `price_error` set => place blind.
+
+    `live_price_cls` is the stamped-reading type, handed in by the caller
+    rather than imported here: importing the broker from this module closed
+    an import cycle (broker -> scale_in -> coverage_watchdog -> stop_repair
+    -> here). Passing the collaborator in is the pattern used elsewhere in
+    this package and keeps the isinstance check exactly as strict.
+    """
     stamped = None
     price = None
     price_error: Exception | None = None
@@ -24,8 +31,6 @@ def read_repair_price(
     # leave shares naked (owner ruling 2026-10-02).
     for _attempt in range(2):
         try:
-            from src.execution.broker import LivePrice
-
             getter = getattr(broker, "get_latest_price_stamped", None)
             if callable(getter):
                 candidate = getter(symbol)
@@ -33,7 +38,7 @@ def read_repair_price(
                 # MagicMock broker whose auto-attributes are callable and
                 # whose return value is another MagicMock. Only a real
                 # reading may carry the freshness verdict.
-                if isinstance(candidate, LivePrice):
+                if isinstance(candidate, live_price_cls):
                     stamped = candidate
             price = stamped.price if stamped is not None else broker.get_latest_price(symbol)
             price_error = None

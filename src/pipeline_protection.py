@@ -85,9 +85,9 @@ def _market_is_open_now(broker) -> bool:
     never reaches here; the weekday check is belt-and-braces for a
     direct call.
     """
-    from src.market_session import market_open_verdict
+    from src.market_session import market_open_now
 
-    return market_open_verdict(broker, et_now())[0]
+    return market_open_now(broker, et_now)
 
 
 

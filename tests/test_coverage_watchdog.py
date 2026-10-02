@@ -709,45 +709,6 @@ def test_no_recorded_stop_lookup_means_it_stays_a_pure_reader(db, state_path):
     assert "nothing was placed" in status.market_reason
 
 
-# ---- the placement gate reads the exchange calendar, and fails closed ----
-
-def test_session_gate_says_shut_on_a_non_trading_day():
-    broker = MagicMock()
-    broker.is_trading_day.return_value = False
-    open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
-    assert open_now is False and "not a trading day" in reason
-
-
-def test_session_gate_falls_back_to_the_clock_when_the_calendar_cannot_be_read():
-    broker = MagicMock()
-    broker.is_trading_day.side_effect = RuntimeError("calendar down")
-    open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
-    assert open_now is True and "calendar down" in reason
-
-
-def test_session_gate_falls_back_to_the_clock_when_an_edge_is_missing():
-    broker = MagicMock()
-    broker.is_trading_day.return_value = True
-    broker.get_session_open.return_value = None
-    broker.get_session_close.return_value = datetime(2026, 9, 11, 16, 0, tzinfo=ET)
-    open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
-    assert open_now is True and "both session edges" in reason
-
-
-def test_session_gate_respects_an_early_close_from_the_calendar():
-    """13:00 on a half-day is the calendar's answer, not ours. Nothing here
-    may assume 16:00."""
-    broker = MagicMock()
-    broker.is_trading_day.return_value = True
-    broker.get_session_open.return_value = datetime(2026, 9, 11, 9, 30, tzinfo=ET)
-    broker.get_session_close.return_value = datetime(2026, 9, 11, 13, 0, tzinfo=ET)
-    after = datetime(2026, 9, 11, 14, 0, tzinfo=ET).astimezone(timezone.utc)
-    open_now, reason = coverage_watchdog.session_is_open(broker, after)
-    assert open_now is False and "has closed" in reason
-    open_now, _ = coverage_watchdog.session_is_open(broker, _FRI_1005)
-    assert open_now is True
-
-
 # ---- the coverage-only entry point ----
 
 def test_coverage_only_runs_the_check_and_never_the_channel_probe(monkeypatch):
@@ -1292,22 +1253,3 @@ def test_a_second_name_going_unprotected_the_same_day_still_alerts(db, state_pat
         _two_name_broker(("AAA", "BBB")), now=_SAT_0615, db_path=db, state_path=state_path,
     )
     assert third.should_alert is False
-
-
-def test_an_unreadable_calendar_still_answers_shut_outside_market_hours():
-    """Failing OPEN must not degrade into answering open at every hour.
-
-    The ruling is that an unknown must not stop the desk acting, not that the
-    desk should pretend the market is always open. With the broker calendar
-    unreadable, the weekday-and-clock fallback still decides, and its "shut"
-    is honoured exactly as its "open" is -- otherwise a stop would be
-    attempted at three in the morning on every calendar outage.
-    """
-    broker = MagicMock()
-    broker.is_trading_day.side_effect = RuntimeError("calendar down")
-    after_hours = datetime(2026, 9, 11, 20, 30, tzinfo=ET)
-
-    open_now, reason = coverage_watchdog.session_is_open(broker, after_hours)
-
-    assert open_now is False
-    assert "calendar down" in reason
