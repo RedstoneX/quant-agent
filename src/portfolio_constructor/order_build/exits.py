@@ -16,6 +16,9 @@ from src.portfolio_constructor.config import _named_reduction_trigger
 class ExitOrderBuilders:
     """`_hold_decision`, `_build_sell`, `_build_cover` (lifted verbatim)."""
 
+    def __init__(self):
+        """Collaborator-free: the exit legs are pure functions of their arguments."""
+
     @staticmethod
     def _hold_decision(target: TargetPosition) -> TradeDecision:
         """Record PM's explicit 'keep' intent as a HOLD for audit trail."""
