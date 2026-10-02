@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
+from src.risk.state_change_parser import StateChangeParser
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +287,7 @@ def holding_discipline_claim_check(
     protected: bool,
     macro_regime_today: str | None,
     macro_status: str | None,
+    state_change_parser: StateChangeParser,
     active_state_changes: str = "",
     asof: date | None = None,
     exit_trigger: object = None,
@@ -309,7 +311,7 @@ def holding_discipline_claim_check(
       (c) a claimed HIGH-conviction bearish state_change. CONTRADICTED when a
           same-day `active_state_changes` row DOES name the symbol but with a
           recorded direction that is NOT bearish (parsed via
-          `PortfolioManagerAgent._state_change_symbols_by_date`, the exact
+          the injected `state_change_parser` (PM agent's, never imported here), the exact
           function that already owns this parsing for the sub-floor catalyst
           gate — not reimplemented here); UNVERIFIABLE when no same-day row
           names the symbol at all, because the news pipeline can simply not
@@ -391,11 +393,7 @@ def holding_discipline_claim_check(
             and not claims_bearish_state_change(reason)
             else "a HIGH-conviction bearish state change"
         )
-        from src.agents.portfolio_manager import PortfolioManagerAgent
-
-        by_date = PortfolioManagerAgent._state_change_symbols_by_date(
-            active_state_changes, asof,
-        )
+        by_date = state_change_parser(active_state_changes, asof)
         try:
             from src.trading_calendar import et_today
             today_iso = str(asof) if asof is not None else str(et_today())
@@ -458,6 +456,7 @@ def holding_discipline_false_claim(
     protected: bool,
     macro_regime_today: str | None,
     macro_status: str | None,
+    state_change_parser: StateChangeParser,
     active_state_changes: str = "",
     asof: date | None = None,
 ) -> str | None:
@@ -478,6 +477,7 @@ def holding_discipline_false_claim(
         protected=protected,
         macro_regime_today=macro_regime_today,
         macro_status=macro_status,
+        state_change_parser=state_change_parser,
         active_state_changes=active_state_changes,
         asof=asof,
     )

@@ -30,6 +30,7 @@ from src.conviction_ledger import (
 )
 from src.storage.db import Database
 from tests.session_clock import todays_session_stamp
+from tests.pipeline_factory import build_pipeline
 
 
 @pytest.fixture
@@ -907,9 +908,7 @@ def _decision_stage_pipeline(db):
     from src.portfolio_constructor import PortfolioConstructor
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = db
-    p.db_mock_guard = None
+    p = build_pipeline(db=db, db_mock_guard=None)
     for name in (
         "_build_weekly_narrative", "_build_macro_trajectory",
         "_build_active_state_changes", "_build_rm_recent_verdicts",

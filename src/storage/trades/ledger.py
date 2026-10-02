@@ -1869,14 +1869,14 @@ class TradeLedger:
         except (TypeError, ValueError):
             return False
         if not target > 0:
-            _log.error(
+            logger.error(
                 "update_open_take_profit refused a non-positive target for "
                 "%s: %r", symbol, new_target,
             )
             return False
         act = (action or "").strip().upper()
         if act and act not in ("BUY", "SHORT"):
-            _log.error(
+            logger.error(
                 "update_open_take_profit refused unknown action %r for %s",
                 action, symbol,
             )
