@@ -23,6 +23,7 @@ loophole.
 import pytest
 
 from src.models import PositionAction
+from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.risk.exit_guard import compute_deltas, holding_discipline_claim_check
 from src.risk.exit_trigger import ExitTrigger, check_exit_trigger
 
@@ -150,6 +151,7 @@ def test_the_structured_trigger_makes_provable_falsity_decidable(
     kwargs = dict(
         action="SELL", reason="adverse news", symbol="COP", protected=True,
         macro_regime_today="risk-on", macro_status="ok",
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         active_state_changes=state_changes, asof=datetime.date(2026, 9, 18),
     )
     # Before: the prose made no claim either regex recognised.

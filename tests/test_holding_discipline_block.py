@@ -31,11 +31,8 @@ from src.models import (
 )
 from src.pipeline_context import RunContext
 from src.pipeline_stages import RiskStage
-from src.risk.exit_guard import (
-    StructuralProtectionCheck,
-    holding_discipline_claim_check,
-    holding_discipline_false_claim,
-)
+from src.exits.pm_claim_check import holding_discipline_claim_check, holding_discipline_false_claim
+from src.risk.exit_guard import StructuralProtectionCheck
 
 TODAY = "2026-09-04"
 
