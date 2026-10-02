@@ -40,6 +40,8 @@ import json as _json
 import logging
 import math
 
+from src.protection.coverage_book_read import read_positions_with_retry
+from src.protection.coverage_book_read import unverified_book_sweep
 from src.execution.broker import AlpacaBroker, _split_protective_qty
 from src.models import TradeDecision
 from src.pipeline_context import RunContext
@@ -280,18 +282,16 @@ class ProtectionMixin:
         separates NO STOP AT ALL from STOP MIS-SIZED (guard 3).
         """
         try:
-            positions = self.broker.get_positions()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("coverage reconcile: get_positions failed: %s", exc)
-            return []
-        if not isinstance(positions, list):
-            return []
-        try:
             pending_syms = {
                 r.get("symbol") for r in self.db.get_pending_protection_restores()
             }
         except Exception:  # noqa: BLE001
             pending_syms = set()
+        # A failed positions read used to `return []`, which every caller
+        # reads as all-clear. See src/protection/coverage_book_read.py.
+        positions, read_error = read_positions_with_retry(self.broker)
+        if positions is None:
+            return unverified_book_sweep(self, read_error or "", pending_syms)
 
         # Spec §11.1 hybrid fractional stops. Read ONCE per pass, not per
         # position: every gap in this sweep must be judged against the same
@@ -813,7 +813,7 @@ class ProtectionMixin:
                 ),
                 positions=positions,
                 sweep_symbol=sweep_symbol,
-                skip_symbols=pending_syms,
+                skip_symbols=pending_syms, db=self.db,
             )
             mismatches = write_back_live_protective_stops(self.db, mismatches)
             report_stop_level_mismatches(mismatches)
@@ -2309,13 +2309,12 @@ class ProtectionMixin:
             if amount <= 0:
                 continue
 
-            try:
-                current_stop = self.broker.get_current_stop_price(p.symbol)
-            except Exception as e:
-                logger.warning("ex-div: get_current_stop_price failed for %s: %s", p.symbol, e)
-                current_stop = None
-            if current_stop is None or current_stop <= 0:
-                continue  # nothing to adjust
+            from src.execution.stop_read import read_stop, repair_for
+            stop_read = read_stop(self.broker, p.symbol, db=self.db,
+                                  run_id=run_id, context="ex-div shift", establish=repair_for(self._repair_stop_coverage, p))
+            if stop_read.unreadable or stop_read.absent:
+                continue  # unreadable was recorded+alerted; absent = nothing to adjust
+            current_stop = stop_read.price
             new_stop = round(current_stop - amount, 2)
             if new_stop <= 0 or new_stop >= p.current_price:
                 logger.warning(

@@ -54,12 +54,24 @@ Nearly every caller discards the return value of the owner-alert send, so a
 failed delivery is indistinguishable from a successful one. Fix: make the
 callers honour the result, and prove a failed send is visible somewhere.
 
-## A broker read error reads as "no stop to adjust"
+## A broker read error reads as "no stop to adjust" -- FIXED
 
-The current-stop-price read returns nothing on ANY error, and the protection
-path treats nothing as "there is no stop here" and skips. A transient read
-failure therefore silently skips a stop adjustment on a live position. Fix:
-separate "no stop" from "could not tell", and make the second one loud.
+The stop read used to return nothing on ANY error, and the protection path
+read nothing as "no stop" and skipped. Now there are three answers (found,
+none, unreadable) in `src/execution/stop_read.py`, and unreadable is
+escalated (owner ruling 2026-10-02): two retries with a short pause, then the
+broker's full open-orders list, then the protection paths (ex-dividend shift
+and deterministic trail) re-place the stop through coverage repair, which is
+idempotent because the order key has landed; a stop that really was there may
+be duplicated, which the owner accepted. A durable row and an owner alert say
+what the desk actually did (placed, tried and failed, or only reported).
+Reporting-only reads (prompt, evening proximity, reconcile) place nothing. The
+prompt states "stop could not be read, do NOT treat as unprotected". A
+non-numeric broker answer is unreadable: the real read only returns a number or
+nothing, so anything else is a broken answer. Proven through the ex-dividend
+caller: every read failing places the stop once; failing twice then
+succeeding places nothing. All seven callers use it; the watchdog reconcile now
+passes the database it was already given.
 
 ## The cost circuit is eleven mixins, not eleven modules
 
@@ -68,17 +80,22 @@ which cannot be built or exercised on their own. Smaller files, not
 boundaries. Fix: convert them the way the sessions, exits, protection, broker
 and storage packages were done, and add witness tests.
 
+STILL OPEN, measured 2026-10-02: 11 `_Breaker*Mixin` classes are still
+composed into `LLMCostCircuitBreaker` in `src/cost_circuit/breaker.py`.
+
 ## Real boundaries still owed
 
 The position builder, the portfolio-manager seat and the prompt-facts review
 chunk are under the ceiling but are not separable pieces. Same treatment.
 
+STILL OPEN, measured 2026-10-02: `tests/test_boundary_harness.py` passes 12
+tests but covers only the pipeline mixins; mixins remain in
+`src/pipeline_prompt_facts_review.py` and
+`src/agents/portfolio_manager/prompt_evidence.py`.
+
 ## `update_open_take_profit` refuses through an undefined name
 
-`update_open_take_profit` in the storage layer reaches for a bare `_log` that
-is not defined in its module, so the refusal branch raises `NameError` instead
-of recording the refusal. Pre-existing on `main` before the database rebuild;
-the body moved verbatim into `src/storage/trades/ledger.py`, so the defect
-moved with it unchanged. Found 2026-10-02 during database instalment 3. Fix
-after the structure is sound: give the module its logger, then prove the
-refusal path records rather than raises.
+DONE 2026-10-02. The refusal branches called a bare `_log` that the ledger
+module never defined, so they raised `NameError`. They now use the module's
+`logger`; `tests/test_take_profit_refusal_names.py` drives both refusals and
+failed with `NameError: name '_log' is not defined` before the fix.

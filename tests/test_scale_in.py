@@ -34,6 +34,7 @@ from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
 from src.pipeline_stages import ExecutionStage, _alert_owner_protection_failed
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _rc() -> ReasoningChain:
@@ -727,9 +728,7 @@ def test_drain_scale_in_rearms_broker_full_short_qty_on_the_buy_side(tmp_path):
         ]),
         side="buy",
     )
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.list_open_entry_order_ids.return_value = []
     pipeline.broker.get_positions.return_value = [_short_cop_position(qty=-13.0)]
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
@@ -762,9 +761,7 @@ def test_drain_classifies_short_from_qty_sign_not_the_side_column(tmp_path):
         specs_json=json.dumps([{"id": "b1", "qty": 13, "stop_price": 110.0}]),
         side="sell",                               # deliberately WRONG column
     )
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.list_open_entry_order_ids.return_value = []
     pipeline.broker.get_positions.return_value = [_short_cop_position(qty=-13.0)]
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
@@ -913,9 +910,7 @@ def test_drain_scale_in_rearms_broker_full_qty(tmp_path):
         ]),
         side="sell",
     )
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.list_open_entry_order_ids.return_value = []
     pipeline.broker.get_positions.return_value = [_cop_position(qty=13.0)]
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
@@ -960,10 +955,7 @@ def test_deterministic_trail_skips_a_symbol_with_scale_in_wal(tmp_path):
         specs_json=json.dumps([{"id": "s1", "qty": 10, "stop_price": 90.0}]),
         side="sell",
     )
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
-    pipeline.market = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock(), market=MagicMock())
     orders = pipeline._apply_deterministic_trails(
         [_cop_position()], run_id="r1",
     )

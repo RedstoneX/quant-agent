@@ -94,7 +94,11 @@ def main(argv: list[str]) -> int:
     on_trunk = files_on_trunk()
     kept_from_trunk = []
     for path, prev in old.items():
-        if path not in result and path in on_trunk:
+        # Present HERE but excluded from `result` means it measured at or
+        # under FLOOR, so it genuinely stopped being tracked -- that drop is
+        # correct and must not be undone. Only a file this worktree does not
+        # have at all is the predates-the-branch case.
+        if path not in result and path in on_trunk and not (ROOT / path).exists():
             result[path] = prev
             kept_from_trunk.append(path)
     for path in sorted(kept_from_trunk):

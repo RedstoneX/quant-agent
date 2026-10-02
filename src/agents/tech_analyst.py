@@ -3,8 +3,8 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-
 from src.agents.base import BaseAgent, AgentResult
+from src.agents.tech_reread import TechRereadMixin
 from src.cost_circuit import OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspended
 from src.data.context import compute_market_context, format_context_block
 from src.data.levels import (
@@ -301,7 +301,7 @@ def _record_answer_hygiene(raw_text: str, rows: list, provider: str) -> None:
             parse_telemetry.record_hygiene_violation(model_name, "extra_keys")
 
 
-class TechAnalystAgent(BaseAgent):
+class TechAnalystAgent(TechRereadMixin, BaseAgent):
     # Item 157 (docs/WORK.md; from #538's write-up): the seat used to send
     # NO response_format on either route because its answer is a JSON ARRAY
     # of TechAnalysisResult (one per symbol) and OpenAI/OpenRouter/Google-
@@ -590,7 +590,7 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
               "in any order."
         )
 
-    def analyze_batch(
+    def _analyze_batch_uncached(
         self,
         symbols_data: list[dict],
         prior_ratings: dict[str, dict] | None = None,

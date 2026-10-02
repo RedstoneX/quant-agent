@@ -639,7 +639,7 @@ class IntradayMixin:
                 f"{misses} consecutive scans (~{misses * 30} min). It is being "
                 "silently excluded from intraday move detection until this "
                 "resolves — check whether the ticker is still valid/tradable "
-                "on Alpaca. Will not re-alert on this symbol for 24h."
+                "on Alpaca. Will not re-alert on this symbol for 24h.", category=_notifier.CATEGORY_OPERATIONAL,
             )
         except Exception:
             logger.warning(

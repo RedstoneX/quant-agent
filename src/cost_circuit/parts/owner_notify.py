@@ -7,6 +7,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, TypeVar
 
+from src.cost_circuit.alert_outcome import _alert_state_value, _send_alert_outcome
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,17 +117,15 @@ class OwnerNotify:
             # A Telegram outage must not hide the shutdown from local operators.
             # The DB lease remains retryable when send() returns false.
             logger.critical("\n%s", text)
-            sent = False
-            try:
-                sent = bool(self.notifier.send(text))
-            except Exception:  # notifier must never affect trading/safety
-                logger.exception("cost circuit Telegram alert failed")
+            delivered, suppressed = _send_alert_outcome(
+                self.notifier, text, "cost circuit Telegram alert failed",
+            )
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE llm_circuit_state SET alert_state=?, "
                     "updated_at=datetime('now') "
                     "WHERE singleton=1 AND alert_state=-1",
-                    (1 if sent else 0,),
+                    (_alert_state_value(delivered, suppressed),),
                 )
                 conn.commit()
         self._notify_quota_holds_if_needed()
@@ -157,17 +157,16 @@ class OwnerNotify:
                 return
             message = self.format_quota_alert(hold)
             logger.critical("\n%s", message)
-            sent = False
-            try:
-                sent = bool(self.notifier.send(message))
-            except Exception:
-                logger.exception("cost quota Telegram alert failed")
+            delivered, suppressed = _send_alert_outcome(
+                self.notifier, message, "cost quota Telegram alert failed",
+            )
+            sent = delivered or suppressed  # a drop is settled, not retried
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE llm_quota_holds SET alert_state=?, "
                     "alert_updated_at=datetime('now') "
                     "WHERE id=? AND alert_state=-1",
-                    (1 if sent else 0, hold["id"]),
+                    (_alert_state_value(delivered, suppressed), hold["id"]),
                 )
                 conn.commit()
             if not sent:
@@ -200,17 +199,16 @@ class OwnerNotify:
                 return
             message = self.format_recovery_alert(hold)
             logger.info("\n%s", message)
-            sent = False
-            try:
-                sent = bool(self.notifier.send(message))
-            except Exception:
-                logger.exception("cost quota recovery Telegram alert failed")
+            delivered, suppressed = _send_alert_outcome(
+                self.notifier, message, "cost quota recovery Telegram alert failed",
+            )
+            sent = delivered or suppressed  # a drop is settled, not retried
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE llm_quota_holds SET recovery_alert_state=?, "
                     "recovery_alert_updated_at=datetime('now') "
                     "WHERE id=? AND recovery_alert_state=-1",
-                    (1 if sent else 0, hold["id"]),
+                    (_alert_state_value(delivered, suppressed), hold["id"]),
                 )
                 conn.commit()
             if not sent:
@@ -325,17 +323,16 @@ class OwnerNotify:
                 event.update(self._episode_facts_locked(conn, event))
             message = self.format_auto_reset_alert(event)
             logger.info("\n%s", message)
-            sent = False
-            try:
-                sent = bool(self.notifier.send(message))
-            except Exception:
-                logger.exception("cost-circuit auto-reset Telegram alert failed")
+            delivered, suppressed = _send_alert_outcome(
+                self.notifier, message, "cost-circuit auto-reset Telegram alert failed",
+            )
+            sent = delivered or suppressed  # a drop is settled, not retried
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE llm_circuit_events SET recovery_alert_state=?, "
                     "recovery_alert_updated_at=datetime('now') "
                     "WHERE id=? AND recovery_alert_state=-1",
-                    (1 if sent else 0, event["id"]),
+                    (_alert_state_value(delivered, suppressed), event["id"]),
                 )
                 conn.commit()
             if not sent:

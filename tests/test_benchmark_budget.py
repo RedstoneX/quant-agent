@@ -75,7 +75,7 @@ def test_breaker_session_cap_is_budget_and_live_config_untouched(tmp_path, monke
     class _Notifier:
         enabled = True
 
-        def send(self, _message):
+        def send(self, _message, **_kwargs):
             return True
 
     trials = 6 * 5 * 2
