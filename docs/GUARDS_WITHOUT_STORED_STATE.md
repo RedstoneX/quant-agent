@@ -76,7 +76,7 @@ file that no longer exists is the clearest possible sign the file should not
 have existed.
 
 Same class, same treatment, after the five land:
-- the known-leaks list in `tests/test_no_silent_patch_targets.py`
+- ~~the known-leaks list in `tests/test_no_silent_patch_targets.py`~~ DONE — no list; the patch-target audit runs over the working tree and over `origin/main` at check time and fails on any unreachable-call-site identity that is new
 - `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`
 - ~~the offender baseline in `tests/test_no_local_day_as_exchange_day.py`~~ DONE — the hardcoded `_BASELINE` is deleted; `scripts/local_day_guard.py` scans the working tree and `origin/main` at check time and fails on any new site identity
 - ~~`tests/replay_outbound_sites_baseline.json`~~ DONE — judged a cached
