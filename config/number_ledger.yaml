@@ -1359,7 +1359,7 @@ numbers:
     settles_by:
       kind: recording
       state: built
-      where: src/storage/db.py
+      where: src/storage/trades/ledger.py
       writes:
         - trades.entry_atr
         - trades.stop_basis
@@ -3585,7 +3585,7 @@ numbers:
     settles_by:
       kind: recording
       state: built
-      where: src/storage/db.py
+      where: src/storage/trades/ledger.py
       writes:
         - trade_refusals.requested_risk_pct
       records: >-
@@ -4026,7 +4026,7 @@ numbers:
     settles_by:
       kind: recording
       state: built
-      where: src/storage/db.py
+      where: src/storage/trades/ledger.py
       writes:
         - trade_refusals.requested_risk_pct
       records: >-
