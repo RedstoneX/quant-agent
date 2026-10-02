@@ -9,7 +9,7 @@ and the caches stay the broker's own dicts (the same objects, mutated here).
 from __future__ import annotations
 
 import logging
-from src.execution.stop_read import StopReadUnavailable
+from src.execution.stop_read import StopReadUnavailable, classify_stop_orders
 from datetime import date
 
 from alpaca.trading.enums import QueryOrderStatus
@@ -745,58 +745,4 @@ class AccountReads:
             )
         except Exception as exc:
             raise StopReadUnavailable(f"{symbol}: {exc}") from exc
-        # Post-#102 a position can legitimately carry SEVERAL stops on its
-        # protective side (one GTC stop per entry BUY, plus coverage-repair
-        # top-ups). The old first-match return made "the current stop"
-        # depend on Alpaca's ordering (audit round 2). Consumers want the
-        # level that fires FIRST; qty-weighting would blur two real levels
-        # into a price nobody set.
-        sell_stops: list[float] = []
-        buy_stops: list[float] = []
-        for order in orders or []:
-            order_type = str(getattr(getattr(order, "order_type", None), "value",
-                                    getattr(order, "order_type", ""))).lower()
-            order_side = str(getattr(getattr(order, "side", None), "value",
-                                    getattr(order, "side", ""))).lower()
-            if "stop" not in order_type:
-                continue
-            try:
-                px = float(getattr(order, "stop_price", 0) or 0)
-            except (TypeError, ValueError):
-                continue
-            if px <= 0:
-                continue
-            if order_side == "sell":
-                sell_stops.append(px)
-            elif order_side == "buy":
-                buy_stops.append(px)
-        if sell_stops and buy_stops:
-            # A single symbol can't legitimately be both long and short at
-            # once, so seeing both sides means stale orders survived a
-            # direction flip. Reporting either price would be a guess about
-            # which one is "the" stop — fail closed instead so the caller
-            # treats this as needing attention rather than trusting a number
-            # that might belong to a position that no longer exists.
-            logger.error(
-                "get_current_stop_price: %s carries BOTH sell-stops %s and "
-                "buy-stops %s — direction is ambiguous, refusing to report "
-                "a stop", symbol, sorted(sell_stops), sorted(buy_stops),
-            )
-            raise StopReadUnavailable(f"{symbol}: both sell and buy stops rest")
-        if sell_stops:
-            if len(sell_stops) > 1:
-                logger.info(
-                    "get_current_stop_price: %s carries %d sell-stops %s — "
-                    "reporting the highest (first to trigger on the way "
-                    "down)", symbol, len(sell_stops), sorted(sell_stops),
-                )
-            return max(sell_stops)
-        if buy_stops:
-            if len(buy_stops) > 1:
-                logger.info(
-                    "get_current_stop_price: %s carries %d buy-stops %s — "
-                    "reporting the lowest (first to trigger on the way up)",
-                    symbol, len(buy_stops), sorted(buy_stops),
-                )
-            return min(buy_stops)
-        return None
+        return classify_stop_orders(symbol, orders)

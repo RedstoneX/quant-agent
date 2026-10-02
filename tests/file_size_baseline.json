@@ -62,7 +62,7 @@
  "src/evolution/prompt_editor.py": 1120,
  "src/evolution/quarterly_digest.py": 1282,
  "src/execution/broker.py": 1538,
- "src/execution/broker_parts/account_reads.py": 802,
+ "src/execution/broker_parts/account_reads.py": 748,
  "src/execution/broker_parts/market_data.py": 673,
  "src/execution/broker_parts/order_desk.py": 1297,
  "src/execution/broker_parts/stop_amend.py": 436,

@@ -831,7 +831,7 @@ class ProtectionMixin:
                 ),
                 positions=positions,
                 sweep_symbol=sweep_symbol,
-                skip_symbols=pending_syms,
+                skip_symbols=pending_syms, db=self.db,
             )
             mismatches = write_back_live_protective_stops(self.db, mismatches)
             report_stop_level_mismatches(mismatches)

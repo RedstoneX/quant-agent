@@ -54,22 +54,25 @@ Nearly every caller discards the return value of the owner-alert send, so a
 failed delivery is indistinguishable from a successful one. Fix: make the
 callers honour the result, and prove a failed send is visible somewhere.
 
-## A broker read error reads as "no stop to adjust" -- FIXED
+## A broker read error reads as "no stop to adjust" -- FIXED (step 3 held)
 
-The current-stop-price read used to return nothing on ANY error, and the
-protection path treated nothing as "there is no stop here" and skipped. Now
-there are three answers (found, none, unreadable) in `src/execution/stop_read.py`.
-The broker raises when it cannot tell, `read_stop` turns that into an
-`unreadable` answer whose price cannot be read by accident, and every
-unreadable answer is written to the evidence table and sent to the owner once
-per symbol per day, worded as "could not read the stop", never "no stop". All
-seven callers use it (ex-dividend shift, deterministic trail, midday
-minimum-ratchet floor, two prompt-facts reads, evening stop proximity, stop
-level reconcile). Proven: with the read raising, the ex-dividend path recorded
-nothing and alerted nobody before the fix (red) and records and alerts after;
-a genuine "no stop" still skips quietly; the ambiguous both-sides case is now
-"unreadable" too. Open: the evening proximity and reconcile callers have no
-database handle, so they alert but write no row.
+The stop read used to return nothing on ANY error, and the protection path
+read nothing as "no stop" and skipped. Now there are three answers (found,
+none, unreadable) in `src/execution/stop_read.py`, and unreadable is
+escalated, not just reported (owner ruling 2026-10-02): two retries with a
+short pause, then the broker's full open-orders list as a second source, then
+step 3 (establish protection), then a durable row and an owner alert saying
+what the desk did. Found and none behave as before; a read that fails twice
+and then succeeds places nothing and alerts nobody. The prompt now says "stop
+could not be read ... do NOT treat as unprotected" for an unreadable symbol,
+separate from the genuine UNPROTECTED line. All seven callers use it.
+STILL OPEN: step 3 is a named switch (`IDEMPOTENT_PLACEMENT_LANDED`), off,
+because a replacement stop could duplicate a real one until the order
+idempotency key lands; off, the row and alert say plainly the desk did NOT
+place a stop. To switch on: land the key, set the switch, and pass the
+coverage-repair placement as `establish` at the live callers. The coverage
+watchdog's reconcile call still passes no database handle: it is handed only a
+broker and a lookup callable, so it alerts but writes no row.
 
 ## The cost circuit is eleven mixins, not eleven modules
 

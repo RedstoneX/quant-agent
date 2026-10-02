@@ -17,6 +17,7 @@ import logging
 import re
 from pathlib import Path
 
+from src.execution.stop_read import read_stop
 from src.models import TechAnalysisResult
 from src.pipeline_context import PMFacts
 from src.pipeline_prompt_facts_pure import (  # noqa: F401  re-exports, see pipeline.py
@@ -784,24 +785,24 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         ctx.correlation_matrix = matrix
         return matrix
 
-    def _build_stop_map(self, positions) -> tuple[dict[str, float], dict[str, float]]:
-        """`(live_stops, initial_stops)` keyed by symbol.
+    def _build_stop_map(self, positions) -> tuple[dict[str, float], dict[str, float], set[str]]:
+        """`(live_stops, initial_stops, unreadable)` keyed by symbol.
 
         Live stops are broker truth (already trailed). Initial stops come from
         the last executed BUY row and are what an R-multiple's denominator must
         use — the bet that was actually made, not the one it was ratcheted to.
-        A symbol missing from `live_stops` is genuinely unprotected and
+        A symbol missing from `live_stops` and not in `unreadable` is genuinely unprotected and
         `portfolio_heat` charges it at full notional; never substitute the BUY
         row's stop for a missing broker stop, because that would report
         protection the account does not have.
         """
         live_stops: dict[str, float] = {}
         initial_stops: dict[str, float] = {}
+        unreadable: set[str] = set()
         for p in positions:
             sym = p.symbol
-            from src.execution.stop_read import read_stop
-            _live_read = read_stop(self.broker, sym, db=getattr(self, "db", None),
-                                   context="prompt stop map")
+            _live_read = read_stop(self.broker, sym, db=self.db, context="prompt stop map")
+            unreadable.update([sym] if _live_read.unreadable else [])
             if _live_read.found:
                 live_stops[sym] = _live_read.price
             from src.execution.stop_records import recorded_initial_stop
@@ -818,7 +819,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
             initial = recorded_initial_stop(buy)
             if initial > 0:
                 initial_stops[sym] = initial
-        return live_stops, initial_stops
+        return live_stops, initial_stops, unreadable
 
     def _build_portfolio_heat(self, positions, total_value: float):
         """Audit §1.3 — total capital at risk, which nothing computed before.
@@ -828,19 +829,19 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         and is not a risk position. Returns None on failure so the prompt can
         say "unknown" instead of rendering a confident zero.
         """
-        from src.risk.metrics import portfolio_heat
+        from src.risk.heat_unreadable import portfolio_heat_with_unreadable as portfolio_heat
         try:
             sweeper = self._sweeper()
             excluded = set()
             if sweeper is not None and sweeper.symbol:
                 excluded.add(str(sweeper.symbol).upper())
-            live_stops, initial_stops = self._build_stop_map(positions)
+            live_stops, initial_stops, unreadable = self._build_stop_map(positions)
             return portfolio_heat(
                 positions=positions,
                 equity=total_value,
                 stops=live_stops,
                 initial_stops=initial_stops,
-                exclude_symbols=excluded,
+                exclude_symbols=excluded, unreadable_stops=unreadable,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("portfolio heat build failed: %s", e)
@@ -1201,9 +1202,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
             # RC1: after any TRAIL_STOP the BUY row's stop is stale-WIDE —
             # the reviewer would see a fat distance_to_stop and keep
             # ratcheting. Prefer live broker truth; fall back to the BUY row.
-            from src.execution.stop_read import read_stop
-            _ls_read = read_stop(self.broker, sym, db=getattr(self, "db", None),
-                                 context="prompt position facts")
+            _ls_read = read_stop(self.broker, sym, db=self.db, context="prompt position facts")
             if _ls_read.found:
                 stop_loss = _ls_read.price
 
@@ -1434,6 +1433,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
                 # snapshots for V, CMCSA and DIS while all three were
                 # deteriorating. See `exit_guard._STOP_DEPENDENT_METRIC`.
                 "stop_loss": stop_loss or None,
+                "stop_status": "live stop COULD NOT BE READ" if _ls_read.unreadable else None,
                 "current_price": cur if cur > 0 else None,
                 # Side, so the provenance recomputation in
                 # `exit_guard.MetricDeltas._distance_move_is_price_driven`

@@ -283,7 +283,7 @@ def reconcile_recorded_stop_levels(
     last_buy: Callable[..., dict | None],
     positions: list,
     sweep_symbol: str | None = None,
-    skip_symbols: set[str] | None = None,
+    skip_symbols: set[str] | None = None, db: Any,
 ) -> list[StopLevelMismatch]:
     """Compare each holding's recorded stop to the broker's live stop.
 
@@ -313,7 +313,7 @@ def reconcile_recorded_stop_levels(
             continue
         is_short = qty < 0
         from src.execution.stop_read import read_stop
-        _sr = read_stop(broker, symbol, context="stop-level reconcile")
+        _sr = read_stop(broker, symbol, db=db, context="stop-level reconcile")
         if not _sr.found:
             continue  # unreadable is recorded and alerted by read_stop
         live_px = _sr.price

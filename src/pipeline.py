@@ -2380,7 +2380,7 @@ class TradingPipeline(
         """Thin shim: builds the standalone session and runs it (body moved to src/sessions/evening_stop_proximity_session.py)."""
         from src.execution.stop_read import read_stop
         return EveningStopProximitySession(
-            stop_reader=read_stop, atr_for_symbol=self._collab("_atr_for_symbol"),
+            stop_reader=read_stop, db=self.db, atr_for_symbol=self._collab("_atr_for_symbol"),
             sweep_symbol=self._collab("_sweep_symbol"),
             broker=self._collab("broker"),
         ).run(positions)

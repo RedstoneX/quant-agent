@@ -17,11 +17,13 @@ class EveningStopProximitySession:
         sweep_symbol,
         broker,
         stop_reader,
+        db,
     ) -> None:
         self._atr_for_symbol = atr_for_symbol
         self._sweep_symbol = sweep_symbol
         self._broker = broker
         self._stop_reader = stop_reader
+        self._db = db
 
     def run(self, positions) -> list[dict]:
         """Held positions whose live stop is less than one ordinary day's
@@ -53,7 +55,7 @@ class EveningStopProximitySession:
                     continue
                 if qty == 0 or not (math.isfinite(price) and price > 0):
                     continue
-                _sr = self._stop_reader(self._broker, symbol,
+                _sr = self._stop_reader(self._broker, symbol, db=self._db,
                                         context="evening stop proximity")
                 stop = _sr.price if _sr.found else None
                 atr = self._atr_for_symbol(symbol)

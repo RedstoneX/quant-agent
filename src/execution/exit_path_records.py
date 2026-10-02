@@ -306,10 +306,11 @@ def stop_shift_incomplete_text(symbol: str, status: str, shifted: int, total: in
 
 
 def record_stop_read_unreadable(
-    db: Any, *, symbol: str, reason: str, context: str = "",
-    run_id: str | None = None,
+    db: Any, *, symbol: str, reason: str, action: str = "",
+    context: str = "", run_id: str | None = None,
 ) -> bool:
     """A live stop the broker would not read: not the same as having none."""
     return _insert(db, run_id=run_id, kind=STOP_READ_UNREADABLE_KIND,
                    symbol=symbol, payload={"code": "stop_read_unreadable",
-                                           "reason": reason, "context": context})
+                                           "reason": reason, "action": action,
+                                           "context": context})
