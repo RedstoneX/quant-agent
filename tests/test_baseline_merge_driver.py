@@ -15,10 +15,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DRIVER = REPO_ROOT / "scripts" / "git_merge_driver_baselines.sh"
 SIZE = "tests/file_size_baseline.json"
+# Only the baselines that still exist: the file-size and __new__-pipeline
+# ratchets now compute their reference from origin/main and store nothing, so
+# they have no file for a merge driver to register
+# (docs/GUARDS_WITHOUT_STORED_STATE.md).
 BASELINES = [
-    "tests/file_size_baseline.json", "tests/import_cycle_baseline.json",
+    "tests/import_cycle_baseline.json",
     "tests/import_layers.json", "tests/silent_swallow_baseline.json",
-    "tests/pipeline_new_baseline.json",
 ]
 
 

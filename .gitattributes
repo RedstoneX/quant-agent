@@ -23,4 +23,3 @@ config/number_ledger_history.yaml merge=union
 tests/import_cycle_baseline.json merge=baselinemerge
 tests/import_layers.json merge=baselinemerge
 tests/silent_swallow_baseline.json merge=baselinemerge
-tests/pipeline_new_baseline.json merge=baselinemerge
