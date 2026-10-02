@@ -208,7 +208,7 @@ DONE WHEN:
 
 detail: docs/board_notes/item-201.md
 
-**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
+**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. 2026-10-02: the wall itself was sealed against six more routes (UDP, async/raw libcurl, curl subprocess, DNS). Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
 
 DONE WHEN:
   - [x] 2026-10-01 the run reaches the Portfolio Manager OFFLINE.
