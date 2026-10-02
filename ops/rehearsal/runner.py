@@ -466,8 +466,8 @@ def run_rehearsal(
         # was FRED or a news/reference feed. They are now served from their
         # own recording by the same patch-where-the-client-is-built pattern,
         # failures included; a gap raises rather than substituting anything.
-        from ops.rehearsal.feed_recording import load as _load_feeds
-        from ops.rehearsal.feed_recording import recorded_feeds
+        from ops.rehearsal.macro_recording import load_feeds_with_macro as _load_feeds
+        from ops.rehearsal.macro_recording import recorded_feeds_with_macro as recorded_feeds
 
         _feeds = _load_feeds()
         if not _feeds:
