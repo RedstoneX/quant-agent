@@ -29,8 +29,6 @@ mixin class definitions, one per file.
 
 **The broker's order desk and its account/calendar reads are boundaries (2026-10-02, third broker instalment).** `src/execution/broker_parts/order_desk.py` holds `OrderDesk` (`submit_order`, `replace_entry_limit`, `cancel_entry_order`, the replacement-chain follow, `wait_for_order_terminal` / `wait_for_order_at_exchange` and the polling waits, the open/filled/recent order reads and `close_position`, lifted verbatim with the module helpers those bodies read: `_outlier_refusal_detail`, `_is_terminal_submission_rejection`, `_PLAIN_PRICE_LABELS`). `src/execution/broker_parts/account_reads.py` holds `AccountReads` (account, activities, asset, shortability/fractionability, portfolio history, trading-calendar and resting-stop-price reads; the four per-process caches are passed in and mutated in place, so they stay the broker's own dicts). The stream-backed waits (`_wait_for_order_status`, `_wait_for_order_status_via_stream` and its `_locked` half) stay on the broker because they read and write the live trade-updates hub, lease slot and warm-up record; the desk reaches them as collaborators. Both factories reuse the `_stop_placer` recursion guard (`_is_broker_class_shim`) so a desk is never handed the broker's shim for a body it already owns. The number ledger rows for the moved defaults point at the new modules; both files are in the silent-swallow guard's scope. `broker.py` is 3,762 lines after it.
 
-**The cost circuit's state reads, quota holds and admission are boundaries (2026-10-02, second cost-circuit instalment).** `src/cost_circuit/parts/circuit_state.py` holds `CircuitState` (settled totals, state row, scope key, active-hold lookup, effective state and the transient-latch auto-clear), `src/cost_circuit/parts/quota_holds.py` holds `QuotaHolds` (reconcile, hold, latched-snapshot refresh, trip) and `src/cost_circuit/parts/admission.py` holds `Admission` (settled-limit enforcement, `enforce_current_limits`, `require_paid_analysis`, `begin_call`), all lifted verbatim. The three mixins keep same-named thin shims built per call and reuse `parts/shim_guard.py` so a part is never handed the mixin's own shim for a body it already owns. `Admission` reads the unavailable sentinel through a getter (a property on the part), not a construction-time copy: `enforce_current_limits` reads it after `_sync_emergency_latch` / `_run_with_infra_retry` can install it on the breaker, so a snapshot would have raised where the breaker returned the sentinel's answer. No lock moved: `enforce_current_limits` takes the infrastructure lock inside its body, exactly where it did on the mixin. Still mixins, and why: `breaker_latch`, `breaker_retry` and `breaker_operator` ASSIGN `_infrastructure_error` / `_unavailable_sentinel` on the breaker, and `breaker_session` depends on all of them, so lifting those needs a shared state holder (next instalment); `breaker_settlement` only needs `Admission` first. Witness: `tests/test_cost_circuit_parts_boundary.py`.
-
 **Five exit-engine pieces now ARE boundaries (2026-10-02).** `src/exits/`
 holds `TargetRevision`, `StructuralProtection`, `ExitSubstantiation`,
 `HoldingDiscipline` and `AlignmentExit`, each a standalone class taking every
@@ -642,3 +640,38 @@ request: upward dependency edges remaining, two-way import pairs remaining
 (8 today, measured), and test files importing `TradingPipeline` (115 of 330
 today, measured). If a step does not move at least one of them, it was not a
 conversion step.
+
+---
+
+## 8. The Sentinel seams
+
+`docs/FUTURE.md` specifies a separate watchdog ("Sentinel") on another
+provider's host, built only after the desk is operational. Its two seams go in
+during the rebuild so that build is a connection, not surgery.
+
+**Inbound — a flag, never a call.** Already built: the broker layer refuses
+every order while the file at `RiskConfig.kill_switch_path` exists
+(`src/execution/broker.py::_kill_switch_active`, existence check only, no
+content read). Not yet built: a second, exits-only flag — today the one flag
+halts entries AND exits alike, so "freeze new trades but let protection act"
+has no inbound expression.
+
+**Outward — the signed snapshot** (`src/sentinel_seam/`, L4, imports nothing
+from `src`). `build_snapshot` is a pure function of PASSED-IN state: schema
+version, heartbeat, desk code version (git short SHA, else package version,
+else the literal "unknown"), trading state, expected positions, expected
+protections, risk state, last reconciliation, recent trades, cost spent.
+`scrub_snapshot` runs before signing and removes account identifiers, keys
+and tokens, filesystem paths, hostnames, e-mail and IP addresses, by key name
+and by value shape; the committed test feeds it one of each. `sign_snapshot`
+seals the scrubbed body with HMAC-SHA256 under a key from
+`QAMC_SNAPSHOT_SIGNING_KEY`; with no key the block reads
+`{"scheme": "unsigned", "value": null}` — explicit, never a fake seal.
+`SnapshotPublisher` takes every collaborator keyword-only and drops the JSON
+atomically to a local path.
+
+**Deliberately NOT built yet:** the push to the drop point (no network call),
+any schedule or daemon, the Sentinel reader, the external dashboard, the
+exits-only flag, and the composition-root call that gathers live state and
+calls `publish()` — wiring that touches the session scheduler, so the seam
+ships unwired.
