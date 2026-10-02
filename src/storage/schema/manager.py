@@ -1111,4 +1111,4 @@ class DatabaseSchema:
                 )
             except Exception as e:
                 _log.warning("Index creation failed for %s.%s: %s", table, col, e)
-        self.conn.commit()
+        from src.storage.schema.owner_intent_tables import apply as _owner_intents; _owner_intents(self.conn)  # idempotent, commits

@@ -27,6 +27,7 @@ import pytest
 
 from src.pipeline import TradingPipeline, _WAL_SELL_SENTINEL
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _db(tmp_path) -> Database:
@@ -115,9 +116,7 @@ def test_wal_drain_restore_reports_failure_not_success_on_a_block(tmp_path):
     whether `_drain_pending_protection_restores` deletes the recovery row.
     A blocked restore must return `ok=False` so the row is kept."""
     db = _db(tmp_path)
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock())
     specs = [{"id": "s1", "qty": 10, "stop_price": 90.0}]
     # The fixed `_restore_stop_orders` behaviour: a kill-switch block is
     # reported as a failed spec, never a restored one.
@@ -141,9 +140,7 @@ def test_drain_keeps_the_row_open_when_the_kill_switch_blocks_the_restore(tmp_pa
         position_qty_before_sell=10.0,
         specs_json=__import__("json").dumps(specs), side="sell",
     )
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker._restore_stop_orders.return_value = (0, specs)
     pipeline._current_position_qty_for_finalize = MagicMock(return_value=10.0)
     pipeline._resolve_wal_row_side = MagicMock(return_value={})
@@ -171,9 +168,7 @@ def state_path(tmp_path, monkeypatch):
 def test_a_kill_switch_block_pages_the_owner(tmp_path, state_path):
     broker = _halted_broker(tmp_path)
     db = _db(tmp_path)
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = broker
-    pipeline.db = db
+    pipeline = build_pipeline(broker=broker, db=db)
     pipeline._wire_protective_stop_block_recorder()
 
     with patch("src.notifier.send_owner_alert") as send:
@@ -191,9 +186,7 @@ def test_a_kill_switch_block_pages_the_owner(tmp_path, state_path):
 def test_the_same_symbol_is_not_paged_twice_in_one_day(tmp_path, state_path):
     broker = _halted_broker(tmp_path)
     db = _db(tmp_path)
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = broker
-    pipeline.db = db
+    pipeline = build_pipeline(broker=broker, db=db)
     pipeline._wire_protective_stop_block_recorder()
 
     with patch("src.notifier.send_owner_alert") as send:
@@ -206,9 +199,7 @@ def test_the_same_symbol_is_not_paged_twice_in_one_day(tmp_path, state_path):
 def test_a_different_symbol_is_still_paged_the_same_day(tmp_path, state_path):
     broker = _halted_broker(tmp_path)
     db = _db(tmp_path)
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = broker
-    pipeline.db = db
+    pipeline = build_pipeline(broker=broker, db=db)
     pipeline._wire_protective_stop_block_recorder()
 
     with patch("src.notifier.send_owner_alert") as send:
@@ -223,9 +214,7 @@ def test_a_failing_alert_never_breaks_the_kill_switch_refusal(tmp_path, state_pa
     a Telegram outage must not turn a refusal into anything else."""
     broker = _halted_broker(tmp_path)
     db = _db(tmp_path)
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = broker
-    pipeline.db = db
+    pipeline = build_pipeline(broker=broker, db=db)
     pipeline._wire_protective_stop_block_recorder()
 
     with patch("src.notifier.send_owner_alert", side_effect=RuntimeError("down")):

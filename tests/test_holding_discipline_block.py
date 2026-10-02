@@ -33,6 +33,7 @@ from src.pipeline_context import RunContext
 from src.pipeline_stages import RiskStage
 from src.exits.pm_claim_check import holding_discipline_claim_check, holding_discipline_false_claim
 from src.risk.exit_guard import StructuralProtectionCheck
+from tests.pipeline_factory import build_pipeline
 
 TODAY = "2026-09-04"
 
@@ -216,24 +217,6 @@ def _stage_pipeline(*, decisions, protected=True, active_state_changes=""):
     block, with a pass-through hard-risk filter."""
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
-    pipeline._sweeper = MagicMock(return_value=None)
-    pipeline._filter_supported_symbols = MagicMock(return_value=(decisions, []))
-    pipeline._refuse_queued_earnings_buys = MagicMock(return_value=decisions)
-    pipeline._filter_hard_risk_decisions = MagicMock(
-        side_effect=lambda d, *a, **kw: (list(d), [], []),
-    )
-    pipeline._build_active_state_changes = MagicMock(
-        return_value=active_state_changes,
-    )
-    pipeline._structural_protection_for_holding = MagicMock(
-        return_value=StructuralProtectionCheck(
-            protected=protected,
-            basis="structural_level_intact",
-            detail="level intact on the close",
-        ),
-    )
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_rc(), reason_category="clean",
         reasoning="no objection at the book level",
@@ -241,7 +224,7 @@ def _stage_pipeline(*, decisions, protected=True, active_state_changes=""):
     rm_result = MagicMock()
     rm_result.used_fallback = False
     rm_result.raw_text = "{}"
-    pipeline.risk_manager = MagicMock()
+    pipeline = build_pipeline(db=MagicMock(), _sweeper=MagicMock(return_value=None), _filter_supported_symbols=MagicMock(return_value=(decisions, [])), _refuse_queued_earnings_buys=MagicMock(return_value=decisions), _filter_hard_risk_decisions=MagicMock( side_effect=lambda d, *a, **kw: (list(d), [], []), ), _build_active_state_changes=MagicMock( return_value=active_state_changes, ), _structural_protection_for_holding=MagicMock( return_value=StructuralProtectionCheck( protected=protected, basis="structural_level_intact", detail="level intact on the close", ), ), risk_manager=MagicMock())
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
     return pipeline
 

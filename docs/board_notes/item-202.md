@@ -277,3 +277,11 @@ shape, and FAILS THE TEST AT TEARDOWN whether or not the error was swallowed.
 No allow-list ships: nothing is left to allow. Proven both ways: a probe that
 swallows a blocked `create_connection` errors at teardown naming itself and
 `192.0.2.1:81`; the full suite is green with the guard on.
+
+### Item 202 update 8 — the wall itself had six holes (2026-10-02)
+
+Probed from inside `no_network` against TEST-NET-1 (a literal address, so an attempt reaches the wall instead of failing at DNS); each of these left the process with an EMPTY journal [measured 2026-10-02]: UDP `sendto`, UDP `sendmsg`, curl_cffi `AsyncSession`, raw `Curl.perform`, a `curl` subprocess, and `getaddrinfo` of an off-box name. The wall now journals and raises `NetworkBlocked` on all six; loopback still works. The wall moved to `ops/rehearsal/network_wall.py` (isolation.py is re-exporting it) because isolation.py was at its size ceiling.
+
+Honest limit: a subprocess is a separate process, so the wall can only stop it at the spawn, and it does that for a NAMED list of network-only executables (curl, wget, nc, ssh and similar), not for any program. Nothing in the rehearsal spawns one today.
+
+Not done: the pinned recording's zero sectors and the Alpaca asset directory are RECORDING GAPS, not escapes — they raise and are named as missing inputs. They need a fresh capture against the live providers, an operator step this pass did not take. The production-snapshot settling run was not repeated, so the last box stays open.

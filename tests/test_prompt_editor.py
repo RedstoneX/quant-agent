@@ -35,6 +35,7 @@ from src.models import (
     QuarterlyMetaReflection,
     ThemeCoverage,
 )
+from tests.pipeline_factory import build_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -586,8 +587,7 @@ def _build_pipeline_for_editor(tmp_path, evolution_cfg):
     from src.pipeline import TradingPipeline
     from src.storage.db import Database
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = Database(str(tmp_path / "t.db"))
+    p = build_pipeline(db=Database(str(tmp_path / "t.db")))
     p.db.initialize()
     p.market = MagicMock()
     p.market.get_ohlcv.return_value = []
