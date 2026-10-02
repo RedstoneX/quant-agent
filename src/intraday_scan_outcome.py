@@ -42,7 +42,12 @@ OUT_OF_CREDIT_PLAIN = {
 
 def scan_failure_banner(status: str) -> str:
     """The owner-feed sentence for a failed-scan status."""
-    return _BANNERS[status]
+    text = _BANNERS[status]
+    if status == "intraday_scan_out_of_credit":
+        from src.llm_balance_runway import balance_line
+
+        text = f"{text} {balance_line()}"
+    return text
 
 
 def failed_scan_result(e: Exception, run_id: str) -> dict:
@@ -59,9 +64,11 @@ def failed_scan_result(e: Exception, run_id: str) -> dict:
     # nothing is swallowed, nothing is retried, no number is
     # invented -- only the name is made true.
     if is_payment_refusal(e):
+        from src.llm_balance_runway import balance_line
+
         logger.error(
             "Intraday opportunity scan refused: the paid research "
-            "account is out of credit (non-fatal): %s", e,
+            "account is out of credit (non-fatal): %s. %s", e, balance_line(),
         )
         status = "intraday_scan_out_of_credit"
     else:

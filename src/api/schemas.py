@@ -70,6 +70,8 @@ class HealthResponse(BaseModel):
     # muted and a repeated message changed nothing five times in one day, so
     # the drift state must live on the board the desk already looks at.
     deploy_drift: dict | None = None
+    # Paid-model credit left and how long it lasts; plain-English `message`.
+    llm_balance: dict | None = None
     timestamp: str
 
 
