@@ -36,7 +36,6 @@
   "tests/test_meta_reflector.py",
   "tests/test_missed_opportunities.py",
   "tests/test_multi_name_exit_stop_sequencing.py",
-  "tests/test_nominations.py",
   "tests/test_one_definition_per_quantity.py",
   "tests/test_per_symbol_news.py",
   "tests/test_phase2_risk_wiring.py",

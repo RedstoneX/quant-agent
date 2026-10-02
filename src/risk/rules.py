@@ -2295,7 +2295,7 @@ class RiskRuleEngine:
         # — a separate, unrelated design choice about how orders are
         # pre-shrunk, not about whether the gate can be silently switched
         # off) — only this call site, the deterministic gate, is changed.
-        from src.execution.broker import _get_sector, _sector_resolution_status_for
+        from src.sector_reference import _get_sector, _sector_resolution_status_for
         new_sector = _get_sector(decision.symbol)
         if new_sector:
             side = decision_side(decision.action)

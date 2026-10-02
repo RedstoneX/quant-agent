@@ -44,6 +44,7 @@ BASELINE_PATH = ROOT / "tests" / "silent_swallow_baseline.json"
 #: priority: the broker adapter, then the stages that act on its answers.
 MONEY_MODULES: tuple[str, ...] = (
     "src/execution/broker.py",            # every broker call
+    "src/sector_reference.py",            # sector lookup lifted from broker.py (PR 1008)
     "src/execution/broker_parts/stop_amend.py",  # lifted from broker.py (instalment 1)
     "src/execution/broker_parts/stop_place.py",  # lifted from broker.py (instalment 2)
     "src/execution/broker_parts/order_desk.py",  # lifted from broker.py (instalment 3)
