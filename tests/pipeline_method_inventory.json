@@ -156,6 +156,7 @@
     "src/pipeline_exits.py": {
       "module_functions": [
         "_actions_with_scan_fallback",
+        "_collab_of",
         "_reason_cites_hard_trigger",
         "_reason_claims_alignment_exit"
       ],
