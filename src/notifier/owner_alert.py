@@ -8,6 +8,7 @@ from __future__ import annotations
 from src.notifier.base import (
     logger,
 )
+from src.notifier.owner_alert_delivery import deliver_with_retry
 from src.notifier.transport import (
     TelegramNotifier,
 )
@@ -83,9 +84,10 @@ def send_owner_alert(
     text = _with_pnl_header(text)
     logger.critical("OWNER ALERT\n%s", text)
     try:
-        return bool(TelegramNotifier().send(
-            text, symbols=symbols, kind="owner_alert", category=category,
-        ))
+        return deliver_with_retry(
+            TelegramNotifier(), text,
+            symbols=symbols, kind="owner_alert", category=category,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery failed")
         return False
