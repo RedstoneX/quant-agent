@@ -1096,7 +1096,7 @@ def test_partial_trim_restores_stops_when_sell_rejected(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1")
+    db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1", stop_loss=90.0)
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     # SELL is rejected by broker
@@ -1216,7 +1216,7 @@ def test_partial_trim_reprotects_residual_after_partial_trim_fills(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1")
+    db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1", stop_loss=90.0)
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.submit_order.return_value = {
@@ -1260,7 +1260,7 @@ def test_partial_trim_restores_originals_when_limit_does_not_fill(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1")
+    db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1", stop_loss=90.0)
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.submit_order.return_value = {
@@ -2125,7 +2125,7 @@ def test_partial_trim_reprotects_actual_residual_on_partial_fill(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1")
+    db.insert_trade("NVDA", "BUY", 100, 100.0, "opened", "r1", stop_loss=90.0)
 
     pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.submit_order.return_value = {
@@ -3776,7 +3776,7 @@ def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
     db.insert_trade(
         symbol="TSLA", action="BUY", qty=3.0, price=250.0,
         reasoning="rejected entry", run_id="morning-r1",
-        broker_order_id="alpaca-tsla-1", fill_status="submitted",
+        broker_order_id="alpaca-tsla-1", fill_status="submitted", stop_loss=90.0,
     )
     db.insert_trade(
         symbol="NVDA", action="REDUCE", qty=2.0, price=120.0,

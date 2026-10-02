@@ -1,0 +1,41 @@
+{
+ "captured_utc": "2026-10-02T17:22:06Z",
+ "sectors": {
+  "AAPL": "Technology",
+  "AMD": "Technology",
+  "BRK-B": "Financial Services",
+  "COP": "Energy",
+  "EQNR": "Energy",
+  "ETN": "Industrials",
+  "FLNC": "Utilities",
+  "META": "Communication Services",
+  "MRVL": "Technology",
+  "NET": "Technology",
+  "NKE": "Consumer Cyclical",
+  "NOK": "Technology",
+  "NUE": "Basic Materials",
+  "ORCL": "Technology",
+  "OXY": "Energy",
+  "RKLB": "Industrials",
+  "RSG": "Industrials",
+  "UPS": "Industrials",
+  "VLO": "Energy",
+  "XOM": "Energy"
+ },
+ "source": "yfinance Ticker(symbol).info['sector'], as src.execution.broker._get_sector reads it",
+ "symbols_with_no_sector": [
+  "SGOV",
+  "SPY",
+  "XLB",
+  "XLC",
+  "XLE",
+  "XLF",
+  "XLI",
+  "XLK",
+  "XLP",
+  "XLRE",
+  "XLU",
+  "XLV",
+  "XLY"
+ ]
+}

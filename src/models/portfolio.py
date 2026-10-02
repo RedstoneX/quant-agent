@@ -14,7 +14,7 @@ from src.models.decisions import AnalystProvenance, ReasoningChain, TradeDecisio
 #: risk. Duplicated as a literal here (rather than imported) because
 #: `TargetPosition` is an LLM-output model with no `RiskConfig` in scope at
 #: validation time; see config/number_ledger.yaml for the ledger entry this
-#: constant's inclusion in `MAX_UNSCOPED_NUMERIC_SITES` records.
+#: constant's inclusion in the unscoped-number guard (scripts/unscoped_number_guard.py) measures.
 RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT = 0.5
 
 #: Matches an EXPLICIT risk-allocation percentage claim in free prose:

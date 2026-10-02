@@ -35,7 +35,11 @@ mixin class definitions, one per file.
 
 **The whole cost circuit is parts (2026-10-02, third cost-circuit instalment).** The last five mixins are lifted verbatim: `parts/settlement.py` (`Settlement`: `before_provider_attempt`, `complete_call`, `fail_call`), `parts/emergency_latch.py` (`EmergencyLatch`: durable latch read/write/sync, best-effort snapshot), `parts/infra_retry.py` (`InfraRetry`: retry/backoff, `mark_unavailable`, `_raise_if_unavailable`), `parts/operator_controls.py` (`OperatorControls`: `status`, `reset`) and `parts/session_lifecycle.py` (`SessionLifecycle`: initialize, seed/validate the day, `activate_session`, context). The bodies that ASSIGN `_infrastructure_error` / `_unavailable_sentinel` (latch sync, `mark_unavailable`, `reset`) do so through a read/write property pair on the part backed by live getter/setter collaborators that write straight through to the breaker; the parts that only read get the getter. No lock moved: every `with self._infrastructure_lock:` and the `_emergency_file_lock()` in `reset` stay inside the moved bodies, exactly where they were, and the setter runs under that same held lock. `src/cost_circuit/breaker_*.py` are now all thin per-call shims; `LLMCostCircuitBreaker` is the composition point and nothing else.
 
+**Four cost-circuit parts are HELD, not inherited (2026-10-02, fourth cost-circuit instalment).** `LLMCostCircuitBreaker` now builds one `AlertFormats`, `EpisodeWording`, `CircuitState` and `QuotaHolds` each in `_hold_parts` (called from both `__init__` and `fail_closed`, before any latch sync or `mark_unavailable` can run through them) and every same-named breaker method delegates to that instance; `QuotaHolds` is wired to the held `CircuitState`'s own bound methods, not back through the breaker. The four shim modules `breaker_formats.py`, `breaker_wording.py`, `breaker_state.py`, `breaker_holds.py` are deleted and the four mixins are out of the MRO. Built once is safe for these four because their only non-part collaborators are `config` and the latch path (never reassigned after construction) and the session `_context` (a bound method that reads the ContextVar live). `parts/alert_formats.py` names `EpisodeWording` directly, so the old bind-the-breaker-class-into-the-module cycle is gone. Consequence for tests: a swap of `_trip_locked`, `_state_row` etc. on the breaker instance no longer reaches a call made inside a part; swap it on `breaker._quota_holds` / `breaker._circuit_state` (no existing test did either). Still inheriting per-call shims: latch, retry, session, notify, admission, settlement, operator (seven). Witness: `test_breaker_holds_the_four_parts_instead_of_inheriting_them` in `tests/test_cost_circuit_parts_boundary.py`.
+
 **The portfolio-manager seat's decision grounding is a boundary (2026-10-02, first PM-seat instalment).** `src/agents/portfolio_manager/decision_grounding.py` holds `DecisionGrounding` (reply validation, unadjudicated-conflict and sub-floor-catalyst drops, invalid-target/rejection drops, canonical targets, repair-equality check), all eleven bodies lifted verbatim from `DecisionGroundingMixin` with only `cls` -> `self`. The mixin in `grounding.py` keeps same-named thin shims built per call, hands the part the host's alias table and `build_evidence_registry`, and reuses `src/cost_circuit/parts/shim_guard.py` (plus a raw-descriptor check, because a classmethod read off a class binds fresh each time) so the part is never handed the mixin's own shim. `_DECISION_FIELDS` stays on the mixin: the agent reads it, no lifted body does. The module-level status keys and regexes moved with the bodies and are re-exported from `grounding.py`; the package's patch mirror now also covers the new module. Witness: `tests/test_portfolio_manager_parts_boundary.py`. Second instalment (2026-10-02): the other three mixins follow the same pattern -- `evidence_prompting.py` (`PromptEvidence`, ten bodies, prompt text byte-identical), `rotation_rendering.py` (`RotationSection`, three bodies) and `candidate_ranking.py` (`CandidateRanking`, five bodies). The ranking bodies read AND assign `PortfolioManagerAgent._macro_parse_failures` and call `_macro_sectors`; the part sees them through `_HostState`, a property-backed view over the getter/setter/callable the shim passes per call (never a copy), so the only extra rename there is `PortfolioManagerAgent` -> `self._host`. Former staticmethods gain `self` as their first parameter. All four PM-seat mixins now pass `check_boundary`; nothing in the seat is welded to the agent class any more.
+
+**The research change detectors are a boundary (2026-10-02, item 210 step 9, first research-continuity instalment).** `src/research_continuity/change_detectors.py` holds `ResearchChangeDetectors`: the macro regime / FRED-print change detectors (`_macro_regime_or_print_changed`, `_macro_history_regime_changed`, `_live_macro_series_prints`, `_macro_series_prints_changed`) and the news-wire peek (`_watched_research_symbols`, `_peek_news_headlines`, `_peeked_news_wire_text`, `_news_has_newer_material_wire`), lifted verbatim with `macro_store`, `macro`, `news_provider`, `news_store` and `config` as keyword-only constructor arguments. Chosen first because it is the shallowest piece left in the pipeline: read-only, no journal write, no broker import, five collaborators and one shared slot. That slot -- the wire items the expiry peek fetched, which the heal path re-asks with -- is a `last_news_peek_items` property backed by an optional getter/setter pair, so the pipeline keeps it on `_last_news_peek_items` where `_cover_healed_news_wire` finds it and a standalone part keeps it in memory; the only edit to a moved body is that rename. `ResearchContinuityMixin` keeps same-named thin shims built per call by a module-level `_change_detectors(host)` (a function, not a method, so the tests that bind one shim onto a bare object with `__get__` still reach the moved code); a host's instance-level replacement for a lifted body is passed in, the mixin's own shim never is (`shim_guard`). Witness: `tests/test_research_continuity_parts_boundary.py`. Still on the mixin: the carry-forward readers, the Form-4 backlog alert and the seat-heal path (~930 lines), which write the journal through `_persist_evidence` and read `self.db`; they are the second instalment.
 
 **Five exit-engine pieces now ARE boundaries (2026-10-02).** `src/exits/`
 holds `TargetRevision`, `StructuralProtection`, `ExitSubstantiation`,
@@ -649,7 +653,42 @@ request: upward dependency edges remaining, two-way import pairs remaining
 today, measured). If a step does not move at least one of them, it was not a
 conversion step.
 
-## 8. Sentinel seams (recorded, read by nothing yet)
+---
+
+## 8. The Sentinel seams
+
+`docs/FUTURE.md` specifies a separate watchdog ("Sentinel") on another
+provider's host, built only after the desk is operational. Its two seams go in
+during the rebuild so that build is a connection, not surgery.
+
+**Inbound — a flag, never a call.** Already built: the broker layer refuses
+every order while the file at `RiskConfig.kill_switch_path` exists
+(`src/execution/broker.py::_kill_switch_active`, existence check only, no
+content read). Not yet built: a second, exits-only flag — today the one flag
+halts entries AND exits alike, so "freeze new trades but let protection act"
+has no inbound expression.
+
+**Outward — the signed snapshot** (`src/sentinel_seam/`, L4, imports nothing
+from `src`). `build_snapshot` is a pure function of PASSED-IN state: schema
+version, heartbeat, desk code version (git short SHA, else package version,
+else the literal "unknown"), trading state, expected positions, expected
+protections, risk state, last reconciliation, recent trades, cost spent.
+`scrub_snapshot` runs before signing and removes account identifiers, keys
+and tokens, filesystem paths, hostnames, e-mail and IP addresses, by key name
+and by value shape; the committed test feeds it one of each. `sign_snapshot`
+seals the scrubbed body with HMAC-SHA256 under a key from
+`QAMC_SNAPSHOT_SIGNING_KEY`; with no key the block reads
+`{"scheme": "unsigned", "value": null}` — explicit, never a fake seal.
+`SnapshotPublisher` takes every collaborator keyword-only and drops the JSON
+atomically to a local path.
+
+**Deliberately NOT built yet:** the push to the drop point (no network call),
+any schedule or daemon, the Sentinel reader, the external dashboard, the
+exits-only flag, and the composition-root call that gathers live state and
+calls `publish()` — wiring that touches the session scheduler, so the seam
+ships unwired.
+
+## 9. Sentinel seams (recorded, read by nothing yet)
 
 Two durable records exist so the future off-box watchdog (docs/FUTURE.md,
 "Sentinel" and the erratic-behaviour breaker) has something to read. Neither
