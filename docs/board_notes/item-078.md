@@ -23,3 +23,38 @@ board and its full text here.
 - MEASURED 2026-09-30 against the live database, condition NOT met: the  ... on the narrower set of names that actually became targets the seat was still blank 5 times in 75; and criteria 2 and 3 in the docstring of `_isolate_empty_soft_exit_entries` CANNOT BE EVALUATED AT ALL because no soft-exit heal row has ever been written — all 56 `seat_heal` rows in the database carry gate `seat_heal` for the news, smart-money and technical seats and none of them is the soft-exit gate, so before this item can be judged again the soft-exit heal path must record its own outcome row (`not_attempted`, `cap_blocked`, `failed`, `paid_retry`) per name per session.
 
 - MEASURED AGAIN 2026-10-01 against the live database (specialist_eviden ... 327 technical-seat analysis rows since 2026-09-26): condition STILL NOT met, the technical seat returned a blank or `unknown` `thesis_invalid_if` on 53 of 78 stocks (68%) on 2026-09-30, after 134 of 223 on 2026-09-29 and 14 of 26 on 2026-09-28, so the blank rate has not fallen; the portfolio manager emitted a falsifier on all 2 targets it wrote on 2026-09-30, but 2 is too few to demonstrate anything; zero `soft-exit missing after retry` refusals and zero `soft_exit_heal` rows exist, so criteria 2 and 3 are still unevaluable. Do not re-measure until the soft-exit heal outcome row exists.
+
+## The blank rate is measured against the wrong denominator (2026-10-02)
+
+**Measured read-only against production (`agent_logs`/`trades`, 84 rows, latest
+2026-10-01 13:49):** 44 of 84 trade rows carry no falsifier, which is the ~52-68%
+figure this note has been quoting. That denominator is wrong. Broken out by
+action:
+
+  BUY               36 rows,  1 blank
+  SHORT              5 rows,  0 blank
+  SELL               4 rows,  4 blank
+  STOP_OUT           9 rows,  9 blank
+  TRAIL_STOP         9 rows,  9 blank
+  SWEEP_BUY          8 rows,  8 blank
+  SWEEP_SELL         6 rows,  6 blank
+  PARTIAL_SELL       3 rows,  3 blank
+  REDUCE             2 rows,  2 blank
+  HOLD               2 rows,  2 blank
+
+A falsifier is the ENTRY's statement of what would prove its thesis wrong. An
+exit, a stop-out, a trail adjustment and a sweep do not have a thesis to
+falsify, so a blank on those rows is correct and not a defect. The population
+this item is about is entries: BUY and SHORT, 41 rows, of which **40 carry a
+falsifier and 1 does not**.
+
+**The one exception predates the gate.** ORCL BUY, 2026-09-02 18:32:45, stop
+137.53, reasoning present, `thesis_invalid_if` NULL. The requirement that a
+name cannot enter the ticket book without a real "I'll sell if" shipped after
+that date, and no entry since carries a blank.
+
+So the entry-side falsifier requirement is HOLDING in production (40/41, the
+one miss pre-dating enforcement). Any remaining work on this item is about the
+QUALITY of the sentence the seat writes, not about its absence — and the heal
+built on 2026-10-02 closes a latent blanking path, not a live one, exactly as
+its author said.
