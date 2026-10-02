@@ -25,6 +25,34 @@ logger = logging.getLogger("src.execution.broker")
 _AMEND_NOT_ATTEMPTED = object()
 
 
+#: `amend_status` for the one outcome that is NOT a failure: the tape is
+#: shut, so the broker will refuse the amend (Alpaca answers HTTP 422
+#: "cannot replace order in accepted status" for every resting order after
+#: the 16:00 ET close -- measured against the paper broker 2026-10-02) and
+#: the stop could not have been triggered meanwhile anyway. Callers treat it
+#: as "not done, not lost, owed at the open", never as a completed move.
+AMEND_DEFERRED_MARKET_CLOSED = "market_closed"
+
+
+def market_is_closed(client) -> bool | None:
+    """Is the tape shut right now, per the BROKER's own clock?
+
+    `None` means the clock could not be read. The caller then ATTEMPTS the
+    amend: attempting one can only ever leave the existing stop where it is,
+    so an unreadable clock must never be the reason a stop fails to tighten
+    while the market is open.
+    """
+    try:
+        clock = client.get_clock()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not read the broker clock before an amend: %s", exc)
+        return None
+    is_open = getattr(clock, "is_open", None)
+    if is_open is None:
+        return None
+    return not bool(is_open)
+
+
 def _is_terminal_broker_rejection(exc: BaseException) -> bool:
     """True when the broker's OWN answer says retrying is pointless.
 
@@ -230,6 +258,37 @@ class StopAmender:
         shapes that measurement covered take this path; everything else falls
         back.
         """
+        if market_is_closed(self.client) is True:
+            # OWNER RULING 2026-10-02: "if the market is closed, the market
+            # is closed". A resting stop cannot be elected by a shut tape, so
+            # an amend that cannot be made now has cost the position NOTHING
+            # -- and the cancel+resubmit fallback must NOT run, because
+            # cancelling a live protective order to re-place it is a real
+            # unprotected moment traded for a harmless one. What the desk owes
+            # is UNDERSTANDING: it did not move the stop, the level it decided
+            # on is still owed, and it must be applied at the next open before
+            # anything else can expose the name. `replace_stop_and_record`
+            # turns this payload into exactly that pending row.
+            legs = [{
+                "id": str(spec.get("id") or ""), "qty": spec.get("qty"),
+                "old_stop": spec.get("stop_price"), "new_stop": new_stop_price,
+                "new_id": None, "outcome": "deferred",
+                "detail": "market closed: the broker refuses an amend while a "
+                          "resting order is in `accepted` status",
+            } for spec in stop_specs]
+            logger.warning(
+                "replace_stop_loss: the market is CLOSED, so %s's %d resting "
+                "stop leg(s) were NOT amended to $%.4f and nothing was "
+                "cancelled. The stop cannot be elected by a shut tape, so the "
+                "position is not exposed; the intended level is recorded and "
+                "applied at the next open.",
+                symbol, len(stop_specs), new_stop_price,
+            )
+            return {"id": None, "status": AMEND_DEFERRED_MARKET_CLOSED,
+                    "amend_status": AMEND_DEFERRED_MARKET_CLOSED,
+                    "symbol": symbol, "legs": legs,
+                    "intended_stop": new_stop_price,
+                    "shifted": 0, "total": len(legs)}
         if not stop_specs or len(stop_specs) != len(live_orders):
             return _AMEND_NOT_ATTEMPTED
         if not all(self._stop_order_amendable_in_place(o) for o in live_orders):

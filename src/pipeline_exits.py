@@ -879,7 +879,7 @@ class ExitEngineMixin:
                     status=_astatus, shifted=len(_ok), total=len(_legs),
                     legs=_legs, run_id=run_id,
                 )
-                if _astatus in ("partial", "refused", "unknown", "naked"):
+                if _astatus in ("partial", "refused", "unknown", "naked", "market_closed"):
                     # Telegram is muted, so this row and this alert are the
                     # whole evidence that a leg did not move.
                     try:
