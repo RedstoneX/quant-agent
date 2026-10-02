@@ -237,7 +237,7 @@ def test_no_per_seat_weight_table_exists_in_the_sizing_path(relpath):
         "weights every seat at unit magnitude (src/risk/rules.py::SEAT_WEIGHT). "
         "A confidence weight may only be DERIVED from an analyst's measured "
         f"history — at least {_CONVICTION_OUTCOME_MIN_N} resolved calls per "
-        "seat (src/storage/db.py::_CONVICTION_OUTCOME_MIN_N). The book has 7 "
+        "seat (src/storage/analytics/calibration.py::_CONVICTION_OUTCOME_MIN_N). The book has 7 "
         "closed equity round-trips, all conviction NULL, so there is nothing "
         "to derive from and this weight was chosen. See the owner decision "
         "recorded in src/conviction_ledger.py (2026-08-31)."
