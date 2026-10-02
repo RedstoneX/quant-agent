@@ -15,15 +15,20 @@ class. It costs a full test round every time it fires and it reds every open
 change at once, which is why it goes first. Fix: compare exchange day to
 exchange day, and add a guard that fails when a test reads the local date.
 
-## The evidence gate's per-name record has never been written
+## The evidence gate's per-name record has never been written -- FIXED
 
-In the name-coverage loop the recording call passes a symbol argument twice --
-once by name and once inside the unpacked details -- so every call raises a
-type error, which a broad catch turns into a log line. Verified against the
-main line; observed firing live in a test-suite log. The gate therefore has no
-per-name record at all, and anything closed against that recording was closed
-against nothing. Fix: pass the details without the duplicate key, then prove
-rows actually appear.
+In the name-coverage loop the recording call passed a symbol argument twice --
+once by name and once inside the unpacked details -- so every call raised a
+type error, which a broad catch turned into a log line. A second collision sat
+behind it: the stage was also passed twice, so removing only the symbol still
+wrote nothing. Both were reproduced before the fix: the old code logged
+"got multiple values for argument 'symbol'", and a run through the morning
+session left zero per-name rows in the store. Fix: the details now carry
+neither key. Proof: a new test runs the gate and asserts a real per-name row
+for a candidate lands in the store with the right stage and outcome. The broad
+catch stays, deliberately -- this runs on the trading path and a forensic
+record may not stop it -- but it now logs the full traceback at error level,
+and the store-level test is what keeps this class from hiding again.
 
 ## Owner alerts are sent and the result thrown away
 
