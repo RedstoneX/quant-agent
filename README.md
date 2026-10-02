@@ -599,7 +599,9 @@ quant-agent/
 │   ├── trading_calendar.py        # ET timezone + SESSION_WINDOWS + session_date_key (single source of truth)
 │   ├── scheduler.py               # APScheduler — only used by --mode live (dev/legacy)
 │                                  #   Production uses systemd timers (Linux) or launchd (macOS).
-│   ├── config.py                  # Pydantic config with API key validation
+│   ├── config/                    # Pydantic config with API key validation (public name: src.config)
+│   │   ├── __init__.py            # every *Config class, AppConfig, load_config; re-exports the rest
+│   │   └── macro.py               # MacroConfig (FRED fetch resilience), lifted verbatim
 │   ├── models/                    # Data models package (base, analysis, decisions, portfolio, risk_verdicts, macro, news, positions, earnings, smart_money, evening, meta)
 │   ├── agents/                    # 9 daily LLM agents + 1 quarterly meta_reflector
 │   ├── rotation.py                # Opportunity-cost rotation (execution.rotation_enabled)

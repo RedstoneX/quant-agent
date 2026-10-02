@@ -509,7 +509,7 @@ marks a large sale routine). A routine purchase can no longer make a symbol
 `admission_eligible`, narrowing the lane described above; no other admission
 check changed. Every threshold (sell-materiality fraction, calendar years,
 cadence window, history retention) is a `SmartMoneyConfig` field in
-`src/config.py` (prefixed `insider_`), not a hardcoded constant. Re-measured
+`src/config/__init__.py` (prefixed `insider_`), not a hardcoded constant. Re-measured
 on the live cache 2026-08-28: 57.3% of open-market P/S rows routine (2,742
 rows) — consistent with the original 56.2%-of-2,188 figure a day earlier —
 but zero of those matched the calendar test in either measurement, since the
@@ -983,7 +983,7 @@ says the published schedule spans the whole horizon; every other case reads UNKN
 - Live-capital promotion without separate explicit authorization.
 
 Live-capital activation is mechanically gated, not merely prohibited in prose:
-`AlpacaConfig._enforce_paper_only` (`src/config.py`) will not build a non-paper
+`AlpacaConfig._enforce_paper_only` (`src/config/__init__.py`) will not build a non-paper
 config unless `config.LIVE_TRADING_AUTHORIZED` has been flipped in a reviewed
 change AND the live-capital pre-flight gate
 (`src/live_capital_preflight.py`, board item 150) reports every condition
