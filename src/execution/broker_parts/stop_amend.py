@@ -10,6 +10,8 @@ import logging
 
 from alpaca.trading.requests import ReplaceOrderRequest
 
+from src.execution.broker_parts.stop_dead_replacement import classify_after_dead_replacement
+
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
 logger = logging.getLogger("src.execution.broker")
@@ -102,86 +104,9 @@ class StopAmender:
                 "symbol": symbol, "legs": legs,
                 "shifted": len(amended), "total": len(legs)}
 
-    def _classify_after_dead_replacement(
-        self, *, symbol: str, spec: dict, new_price: float, leg: dict,
-    ) -> str:
-        """Read the book after a replacement came back dead. Never guess.
-
-        ASSUMED, NOT VERIFIED: that a replace moves the original order to
-        REPLACED before the replacement is accepted. If that is how it works,
-        a rejected or cancelled REPLACEMENT can mean the symbol has NO
-        protective stop at all — so "the original is still resting" must be
-        read off the broker, not inferred. What would settle the assumption:
-        a rehearsal that forces a replacement to be rejected and then lists
-        the symbol's open orders.
-
-        Returns "refused" (the original is confirmed still resting),
-        "amended" (something IS resting at the new level), "naked" (the book
-        shows no protective stop for this symbol) or "unknown" (the book
-        could not be read, or shows a level that is neither).
-        """
-        errors: list = []
-        try:
-            sells, buys = self._list_open_stop_orders_by_side(symbol, errors=errors)
-            live_orders = list(sells or []) + list(buys or [])
-        except Exception as exc:  # noqa: BLE001
-            leg["detail"] += f"; the book could not be re-read ({exc})"
-            return "unknown"
-        if errors:
-            leg["detail"] += "; the book could not be re-read"
-            return "unknown"
-        live = [spec_ for spec_ in (self._snapshot_stop_order(o) for o in live_orders)
-                if spec_ is not None]
-        if not live:
-            # A replacement is also rejected when the ORIGINAL already
-            # triggered: the book is then empty because the position is gone,
-            # and calling that UNPROTECTED would alert about a flat symbol.
-            try:
-                held = [
-                    abs(float(getattr(pos, "qty", 0) or 0))
-                    for pos in (self.client.get_all_positions() or [])
-                    if getattr(pos, "symbol", None) == symbol
-                ]
-            except Exception as exc:  # noqa: BLE001
-                leg["detail"] += (
-                    f"; the book is empty and the position could not be "
-                    f"re-read ({exc}) — treating it as UNPROTECTED"
-                )
-                return "naked"
-            if not held or sum(held) <= 0:
-                leg["detail"] += (
-                    "; the book is empty because the position is FLAT — the "
-                    "original stop most likely filled, so there is nothing "
-                    "left to protect"
-                )
-                return "flat"
-            # HONEST LIMIT, no settle window: a replace that is still pending
-            # at the broker can also present as an empty book for a moment.
-            # The two are indistinguishable from one read, so this reports the
-            # LOUD direction — a false UNPROTECTED alert costs attention, a
-            # missed one costs the position. What would settle it: a rehearsal
-            # that lists open orders during a pending replace.
-            leg["detail"] += (
-                "; the broker shows NO resting protective stop while the "
-                "position is still open — UNPROTECTED (a replace still "
-                "pending at the broker can look the same from one read)"
-            )
-            return "naked"
-        if any(str(s["id"]) == str(spec.get("id")) for s in live):
-            leg["detail"] += "; the ORIGINAL order was read back, still resting"
-            return "refused"
-        at_new = [s for s in live if abs(s["stop_price"] - new_price) <= 1e-9]
-        if at_new:
-            leg["new_id"] = at_new[0]["id"]
-            leg["detail"] += (
-                "; a stop was read back at the NEW level despite the dead "
-                "replacement"
-            )
-            return "amended"
-        leg["detail"] += (
-            "; a stop is resting but at neither the old nor the new level"
-        )
-        return "unknown"
+    def _classify_after_dead_replacement(self, **kw) -> str:
+        """Body moved to stop_dead_replacement.py (see its docstring)."""
+        return classify_after_dead_replacement(self, **kw)
 
     def _amend_one_stop_price(self, *, symbol: str, spec: dict, new_price: float,
                               new_qty: int | None = None) -> dict:
@@ -262,6 +187,9 @@ class StopAmender:
         # pull its OCO sibling. UNMEASURED; a refusal leaves the original resting.
         if getattr(order, "legs", None):
             return False
+        # `order_class` and `legs` sit on the PARENT on Alpaca, so a child leg
+        # can present as class "" with no legs; `parent_id` is populated ON the
+        # child. Children now amend (above), so this only informs the reader.
         # A stop-LIMIT leg amends stop AND limit, so both must be readable.
         otype = getattr(order, "order_type", None) or getattr(order, "type", None)
         otype = str(getattr(otype, "value", otype) or "").lower()
@@ -289,8 +217,10 @@ class StopAmender:
         when this path does not apply and the caller should run the legacy
         cancel+resubmit fallback.
 
-        A whole-share QUANTITY amend was measured working 2026-09-30; a
-        FRACTIONAL one is refused, so only that still takes the fallback.
+        A whole-share QUANTITY amend was ALSO measured working on 2026-09-30
+        (3 shares to 2, one open stop); only a FRACTIONAL quantity amend is
+        refused, which is why a coverage-repairing size change still goes to
+        the fallback. A bracket/OTO child is UNMEASURED, not known-unamendable.
 
         Measured against the broker on rehearsal account <redacted-rehearsal-account> on
         2026-09-30: `replace_order_by_id(id, ReplaceOrderRequest(stop_price=X))`
@@ -304,8 +234,19 @@ class StopAmender:
             return _AMEND_NOT_ATTEMPTED
         if not all(self._stop_order_amendable_in_place(o) for o in live_orders):
             return _AMEND_NOT_ATTEMPTED
-        # MULTI-LEG (item 201): 9 of 11 positions are fractional [measured
-        # 2026-10-01]; that each carries the two-leg pair is ASSUMED.
+        # MULTI-LEG (item 201). 9 of the 11 open positions are fractional
+        # [measured 2026-10-01, production quant_agent.db, read-only]. That a
+        # fractional position carries the spec 11.1 hybrid PAIR — a durable GTC
+        # whole-share leg plus a DAY sliver leg — is ASSUMED, not measured: the
+        # production database holds positions, not an order book. What would
+        # settle it: one read of the open orders for a fractional holding. Restricting the atomic path to
+        # exactly ONE resting order therefore left the trailing stop cancelling
+        # and resubmitting on most of the book while the ex-dividend shift no
+        # longer did, which is protection moving in two directions at once.
+        # Each leg keeps its own id, quantity and time-in-force under a
+        # price-only amend, so moving them all to the new trigger does to the
+        # LEVEL exactly what the cancel+resubmit fallback already did, minus
+        # the unprotected window.
         try:
             covered = sum(abs(float(spec["qty"])) for spec in stop_specs)
         except (TypeError, ValueError, KeyError):
@@ -323,9 +264,12 @@ class StopAmender:
                     and position_qty == int(position_qty) and position_qty >= 1):
                 new_qty = int(position_qty)
             else:
-                logger.info("replace_stop_loss: %s stops cover %s of %s shares; no "
-                            "in-place amend applies, cancel+resubmit (window "
-                            "recorded)", symbol, covered, position_qty)
+                logger.info(
+                    "replace_stop_loss: %s's %d resting stop(s) cover %s of %s held "
+                    "shares, so the in-place amend is skipped and the "
+                    "cancel+resubmit path runs to repair coverage.",
+                    symbol, len(stop_specs), covered, position_qty,
+                )
                 return _AMEND_NOT_ATTEMPTED
         price = _quantize_price(new_stop_price)
         if price is None or price <= 0:
