@@ -8,35 +8,29 @@ import logging
 import os
 import sqlite3
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
 logger = logging.getLogger(__name__)
 
 PAUSE, RESUME = "PAUSE", "RESUME"
-NEVER_TOUCH_ADD, NEVER_TOUCH_REMOVE = "NEVER_TOUCH_ADD", "NEVER_TOUCH_REMOVE"
 
 
 @dataclass(frozen=True)
 class Flags:
     paused: bool = False
-    never_touch: frozenset = field(default_factory=frozenset)
     unknown: bool = False  # could not read, no last known set
     stale: bool = False    # read failed; this is the last known set
 
 
 def current_flags(conn) -> Flags:
-    paused, never = False, set()
+    paused = False
     for action, sym in conn.execute(
             "SELECT action, symbol FROM owner_intents WHERE state='acted' ORDER BY id"):
         if action == PAUSE:
             paused = True
         elif action == RESUME:
             paused = False
-        elif action == NEVER_TOUCH_ADD:
-            never.add(sym)
-        elif action == NEVER_TOUCH_REMOVE:
-            never.discard(sym)
-    return Flags(paused, frozenset(never))
+    return Flags(paused)
 
 
 _CACHE: dict = {}
@@ -54,7 +48,7 @@ def _remember(db_path, flags: Flags) -> None:
     try:
         tmp = _cache_file(db_path) + ".tmp"
         with open(tmp, "w") as fh:
-            json.dump({"paused": flags.paused, "never_touch": sorted(flags.never_touch)}, fh)
+            json.dump({"paused": flags.paused}, fh)
         os.replace(tmp, _cache_file(db_path))
     except OSError as exc:
         logger.warning("owner flag cache not written: %s", exc)
@@ -66,7 +60,7 @@ def _recall(db_path):
     try:
         with open(_cache_file(db_path)) as fh:
             d = json.load(fh)
-        return Flags(bool(d["paused"]), frozenset(d["never_touch"]))
+        return Flags(bool(d["paused"]))
     except (OSError, ValueError, KeyError):
         return None
 

@@ -1,4 +1,4 @@
-"""The owner intent record and the two flag-only actions (panel instalment 1).
+"""The owner intent record and the one flag-only action, pause/resume (panel instalment 1).
 
 DESK-SIDE ONLY. `src/api/` must never import this: it writes the database,
 and tests/test_api_cannot_trade.py forbids that by construction. A future
@@ -11,10 +11,12 @@ broker door reads `current_flags` (see src/execution/owner_flags_gate.py).
 Staleness has no time constant. An intent is stale when the owner gave it an
 `expires_at` that has passed by the time the desk picks it up (EXPIRED, with
 that reason). A row naming an action this desk does not know is REFUSED, with
-its reason. Pause, resume and never-touch name no position, so replaying them
+its reason. Pause and resume name no position, so replaying them
 in raised order is always correct.
 
-There is no per-position "hands off": the desk manages every position it holds.
+There is no per-position "hands off" and no never-touch list: the desk manages
+every position it holds. An owner action is an instruction the desk carries out
+and keeps managing, recorded as his decision, never an exemption.
 """
 import json
 import logging
@@ -22,15 +24,13 @@ import sqlite3
 from datetime import datetime, timezone
 
 from src.owner_flags import (  # noqa: F401
-    NEVER_TOUCH_ADD, NEVER_TOUCH_REMOVE, PAUSE, RESUME,
+    PAUSE, RESUME,
     Flags, current_flags, read_flags,
 )
 
 logger = logging.getLogger(__name__)
 
-DESK_WIDE = {PAUSE, RESUME}
-SYMBOL_ACTIONS = {NEVER_TOUCH_ADD, NEVER_TOUCH_REMOVE}
-ACTIONS = DESK_WIDE | SYMBOL_ACTIONS
+ACTIONS = {PAUSE, RESUME}
 
 
 def _now() -> datetime:
@@ -47,10 +47,6 @@ def raise_intent(conn, action, *, symbol=None, params=None, reason=None,
     if action not in ACTIONS:
         raise ValueError(f"unknown owner action {action!r}")
     sym = symbol.strip().upper() if isinstance(symbol, str) and symbol.strip() else None
-    if action in SYMBOL_ACTIONS and sym is None:
-        raise ValueError(f"{action} needs a symbol")
-    if action in DESK_WIDE:
-        sym = None
     cur = conn.execute(
         "INSERT INTO owner_intents (action, symbol, params_json, raised_at, reason, expires_at)"
         " VALUES (?,?,?,?,?,?)",
