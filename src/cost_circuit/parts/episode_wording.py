@@ -1,6 +1,6 @@
 """src.cost_circuit.parts.episode_wording -- Episode coalescing and self-clear-window wording for the cost circuit.
 
-Bodies moved verbatim from src/cost_circuit/breaker_wording.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_wording.py shim (originally src/cost_circuit.py); held by LLMCostCircuitBreaker.
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations

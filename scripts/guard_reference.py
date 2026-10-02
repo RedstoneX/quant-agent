@@ -8,11 +8,26 @@ that reference cannot be read.
 
 Nothing here caches to disk. One ``git ls-tree`` plus one ``git cat-file
 --batch`` reads every trunk blob a measurement needs in two processes.
+
+COMPARE IDENTITIES, NEVER TOTALS
+--------------------------------
+A delta expressed as a count has a hole: a change that removes one offender and
+adds a different one nets to zero and passes, so the new defect lands unnoticed
+(found 2026-10-02 when proving a guard red needed TWO added offenders because
+the branch had removed one). So every guard names each offending site by an
+identity that survives line shifts -- the path, the kind, the enclosing scope
+and the site's own source text -- and ``added_sites`` fails any identity the
+working tree holds MORE copies of than the trunk. Removals are never a failure.
 """
 from __future__ import annotations
 
+import ast
 import subprocess
+from collections import Counter
 from pathlib import Path
+from typing import Hashable, Iterable, Mapping, TypeVar
+
+Identity = TypeVar("Identity", bound=Hashable)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -92,3 +107,48 @@ def trunk_blobs(paths: list[str]) -> dict[str, str]:
         blobs[path] = data[pos:pos + size].decode("utf-8", errors="replace")
         pos += size + 1  # trailing newline git appends after the payload
     return blobs
+
+
+def added_sites(
+    now: Iterable[Identity] | Mapping[Identity, int],
+    before: Iterable[Identity] | Mapping[Identity, int],
+) -> list[tuple[Identity, int, int]]:
+    """Every identity the working tree holds more copies of than ``origin/main``.
+
+    Each side is either the identities themselves (one per occurrence) or a
+    mapping ``{identity: occurrences}``; both become a multiset. Returns
+    ``(identity, copies_now, copies_on_trunk)`` sorted by identity. An
+    identity that disappeared is never reported; an identity that is new, or
+    that now occurs more often, always is -- even when some unrelated site was
+    removed in the same change, which is exactly the case a total would hide.
+    """
+    have, had = Counter(now), Counter(before)
+    return sorted(
+        (key, n, had.get(key, 0)) for key, n in have.items() if n > had.get(key, 0)
+    )
+
+
+def enclosing_scopes(tree: ast.AST) -> dict[int, str]:
+    """Map ``id(node)`` to the dotted name of the def/class that encloses it.
+
+    Module-level nodes map to ``"<module>"``. Guards use this so a site's
+    identity is "which function, which source text", which survives the line
+    shifts that a line number would not.
+    """
+    scopes: dict[int, str] = {}
+
+    def walk(node: ast.AST, qual: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            scopes[id(child)] = qual
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                walk(child, f"{qual}.{child.name}" if qual != "<module>" else child.name)
+            else:
+                walk(child, qual)
+
+    walk(tree, "<module>")
+    return scopes
+
+
+def site_identity(node: ast.AST, scopes: dict[int, str]) -> tuple[str, str]:
+    """``(enclosing scope, source text)`` for one offending AST node."""
+    return scopes.get(id(node), "<module>"), ast.unparse(node)

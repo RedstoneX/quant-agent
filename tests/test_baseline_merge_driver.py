@@ -19,7 +19,6 @@ SIZE = "tests/file_size_baseline.json"
 # file-size and import-cycle guards store nothing now, so neither is listed.
 BASELINES = [
     "tests/import_layers.json", "tests/silent_swallow_baseline.json",
-    "tests/pipeline_new_baseline.json",
 ]
 
 

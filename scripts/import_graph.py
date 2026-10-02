@@ -6,7 +6,7 @@ type-only import is not a true dependency and is ignored by every check).
 
 The cycle guard stores NOTHING: it builds the graph from the working tree,
 builds it again from ``origin/main`` at check time, and reports only the DELTA
-(docs/GUARDS_WITHOUT_STORED_STATE.md). If the trunk cannot be read it REFUSES
+by edge identity, never by a total (docs/GUARDS_WITHOUT_STORED_STATE.md). If the trunk cannot be read it REFUSES
 rather than pass. ``tests/import_layers.json`` is NOT a cached measurement --
 it is the hand-written layering policy -- so it stays.
 
@@ -25,6 +25,7 @@ from scripts.guard_reference import (
     ROOT,
     ReferenceUnavailable,
     TRUNK,
+    added_sites,
     trunk_blobs,
     trunk_paths,
 )
@@ -264,7 +265,10 @@ def new_cycle_edges():
     now = cycle_edges(nodes, rt)
     t_nodes, t_rt, _, _ = graph_from_sources(trunk_sources())
     before = cycle_edges(t_nodes, t_rt)
-    return sorted(now - before), now, sites
+    # Identity comparison (scripts/guard_reference.py): each cycle edge is named
+    # by (importer, imported); a change that breaks one cycle and closes a
+    # different one is still an addition, never a wash.
+    return [edge for edge, _, _ in added_sites(now, before)], now, sites
 
 
 def new_cycle_report() -> list[str]:
