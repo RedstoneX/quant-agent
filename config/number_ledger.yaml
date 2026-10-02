@@ -7060,7 +7060,7 @@ numbers:
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
       (src/agents/portfolio_manager/ranking.py:332-337).
-  - id: src.agents.portfolio_manager.__init__.PortfolioManagerAgent.decide(max_portfolio_risk_pct)
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(max_portfolio_risk_pct)
     value: 25
     status: derived
     site: src/agents/portfolio_manager/ranking.py
@@ -7071,7 +7071,7 @@ numbers:
       (src/agents/portfolio_manager/__init__.py:406). Same 25 as the deployed ceiling;
       a second inline 25.0 fallback sits at
       src/agents/portfolio_manager/__init__.py:1307-1308, which no rule sees.
-  - id: src.agents.portfolio_manager.__init__.PortfolioManagerAgent.decide(rr_floor)
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(rr_floor)
     value: 1.5
     status: derived
     site: src/agents/portfolio_manager/__init__.py
@@ -7083,7 +7083,7 @@ numbers:
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
       (src/agents/portfolio_manager/ranking.py:332-337).
-  - id: src.agents.portfolio_manager.__init__.PortfolioManagerAgent.decide(starter_risk_pct)
+  - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(starter_risk_pct)
     value: 0.5
     status: derived
     site: src/agents/portfolio_manager/ranking.py
@@ -7793,7 +7793,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_prompt_facts_review.py
     note: >-
-      Dead default (src/pipeline.py:3340): every caller in src/ passes this
+      Dead default (src/pipeline.py:2344): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7851,7 +7851,7 @@ numbers:
     note: >-
       Research pre-filter: a symbol whose MA20/MA50 spread is under 0.5 x
       ATR14 counts as having an actionable signal and is sent to the technical
-      seat (src/pipeline.py:2959-2962). The same function has further inline
+      seat (src/pipeline.py:2198-2201). The same function has further inline
       thresholds (50% volume change, 2% MA spread) that no rule sees because
       they are comparisons, not multipliers. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive 0.5 from the ledgered noise-band multiple of 1.25 ATR as a half-band. FAILED -- the noise band bounds a STOP against daily range, this bounds a moving-average SPREAD; they share a unit and nothing else. Attempt (2): treat it as a sort-key position with no magnitude, the shape that explained eight rows in tranche 1. FAILED -- checked at the definition site and it is a genuine magnitude: it is compared against a computed spread and decides inclusion, it is not a position in any ordering. Value unchanged.
     open_question: >-
