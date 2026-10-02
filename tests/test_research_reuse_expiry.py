@@ -14,7 +14,7 @@ from src.evidence_kind import (
     STATUS_REMEMBERED,
     same_session_from_date,
 )
-from src.pipeline import TradingPipeline
+from src.pipeline_research_continuity import ResearchContinuityMixin
 from src.trading_calendar import et_today
 
 
@@ -65,48 +65,48 @@ class _NewsStore:
 
 
 def _bind_reuse(obj):
-    obj._carry_forward_macro = TradingPipeline._carry_forward_macro.__get__(obj)
-    obj._latest_news_read_today = TradingPipeline._latest_news_read_today.__get__(obj)
-    obj._carry_forward_news = TradingPipeline._carry_forward_news.__get__(obj)
-    obj._carry_forward_insider = TradingPipeline._carry_forward_insider.__get__(obj)
+    obj._carry_forward_macro = ResearchContinuityMixin._carry_forward_macro.__get__(obj)
+    obj._latest_news_read_today = ResearchContinuityMixin._latest_news_read_today.__get__(obj)
+    obj._carry_forward_news = ResearchContinuityMixin._carry_forward_news.__get__(obj)
+    obj._carry_forward_insider = ResearchContinuityMixin._carry_forward_insider.__get__(obj)
     obj._macro_regime_or_print_changed = (
-        TradingPipeline._macro_regime_or_print_changed.__get__(obj)
+        ResearchContinuityMixin._macro_regime_or_print_changed.__get__(obj)
     )
     obj._macro_history_regime_changed = (
-        TradingPipeline._macro_history_regime_changed.__get__(obj)
+        ResearchContinuityMixin._macro_history_regime_changed.__get__(obj)
     )
     obj._macro_series_prints_changed = (
-        TradingPipeline._macro_series_prints_changed.__get__(obj)
+        ResearchContinuityMixin._macro_series_prints_changed.__get__(obj)
     )
     obj._live_macro_series_prints = (
-        TradingPipeline._live_macro_series_prints.__get__(obj)
+        ResearchContinuityMixin._live_macro_series_prints.__get__(obj)
     )
     obj._news_has_newer_material_wire = (
-        TradingPipeline._news_has_newer_material_wire.__get__(obj)
+        ResearchContinuityMixin._news_has_newer_material_wire.__get__(obj)
     )
     obj._watched_research_symbols = (
-        TradingPipeline._watched_research_symbols.__get__(obj)
+        ResearchContinuityMixin._watched_research_symbols.__get__(obj)
     )
-    obj._peek_news_headlines = TradingPipeline._peek_news_headlines.__get__(obj)
-    obj._form4_freshness = TradingPipeline._form4_freshness.__get__(obj)
-    obj._insider_same_session = TradingPipeline._insider_same_session.__get__(obj)
+    obj._peek_news_headlines = ResearchContinuityMixin._peek_news_headlines.__get__(obj)
+    obj._form4_freshness = ResearchContinuityMixin._form4_freshness.__get__(obj)
+    obj._insider_same_session = ResearchContinuityMixin._insider_same_session.__get__(obj)
     obj._specialist_insider_as_of = (
-        TradingPipeline._specialist_insider_as_of.__get__(obj)
+        ResearchContinuityMixin._specialist_insider_as_of.__get__(obj)
     )
     obj._load_remembered_insider_findings = (
-        TradingPipeline._load_remembered_insider_findings.__get__(obj)
+        ResearchContinuityMixin._load_remembered_insider_findings.__get__(obj)
     )
-    obj._form4_known_accessions = TradingPipeline._form4_known_accessions.__get__(obj)
+    obj._form4_known_accessions = ResearchContinuityMixin._form4_known_accessions.__get__(obj)
     obj._findings_from_specialist_evidence = (
-        TradingPipeline._findings_from_specialist_evidence.__get__(obj)
+        ResearchContinuityMixin._findings_from_specialist_evidence.__get__(obj)
     )
     return obj
 
 
 def test_research_reuse_peeks_exist_on_the_pipeline():
     """The getattr call sites used to resolve to None. They must be real."""
-    assert callable(getattr(TradingPipeline, "_peek_news_headlines", None))
-    assert callable(getattr(TradingPipeline, "_load_remembered_insider_findings", None))
+    assert callable(getattr(ResearchContinuityMixin, "_peek_news_headlines", None))
+    assert callable(getattr(ResearchContinuityMixin, "_load_remembered_insider_findings", None))
 
 
 def test_same_session_requires_a_trustworthy_date():

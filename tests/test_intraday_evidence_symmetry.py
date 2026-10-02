@@ -123,30 +123,30 @@ class _NewsStore:
 
 
 def _pipeline(macro=None, news=None):
-    from src.pipeline import TradingPipeline
+    from src.pipeline_research_continuity import ResearchContinuityMixin
 
     obj = _Pipeline(macro, news)
-    obj._carry_forward_macro = TradingPipeline._carry_forward_macro.__get__(obj)
-    obj._latest_news_read_today = TradingPipeline._latest_news_read_today.__get__(obj)
-    obj._carry_forward_news = TradingPipeline._carry_forward_news.__get__(obj)
+    obj._carry_forward_macro = ResearchContinuityMixin._carry_forward_macro.__get__(obj)
+    obj._latest_news_read_today = ResearchContinuityMixin._latest_news_read_today.__get__(obj)
+    obj._carry_forward_news = ResearchContinuityMixin._carry_forward_news.__get__(obj)
     obj._macro_regime_or_print_changed = (
-        TradingPipeline._macro_regime_or_print_changed.__get__(obj)
+        ResearchContinuityMixin._macro_regime_or_print_changed.__get__(obj)
     )
     obj._macro_history_regime_changed = (
-        TradingPipeline._macro_history_regime_changed.__get__(obj)
+        ResearchContinuityMixin._macro_history_regime_changed.__get__(obj)
     )
     obj._macro_series_prints_changed = (
-        TradingPipeline._macro_series_prints_changed.__get__(obj)
+        ResearchContinuityMixin._macro_series_prints_changed.__get__(obj)
     )
     obj._live_macro_series_prints = (
-        TradingPipeline._live_macro_series_prints.__get__(obj)
+        ResearchContinuityMixin._live_macro_series_prints.__get__(obj)
     )
     obj._news_has_newer_material_wire = (
-        TradingPipeline._news_has_newer_material_wire.__get__(obj)
+        ResearchContinuityMixin._news_has_newer_material_wire.__get__(obj)
     )
-    obj._peek_news_headlines = TradingPipeline._peek_news_headlines.__get__(obj)
+    obj._peek_news_headlines = ResearchContinuityMixin._peek_news_headlines.__get__(obj)
     obj._watched_research_symbols = (
-        TradingPipeline._watched_research_symbols.__get__(obj)
+        ResearchContinuityMixin._watched_research_symbols.__get__(obj)
     )
     return obj
 
