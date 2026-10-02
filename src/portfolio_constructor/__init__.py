@@ -1178,7 +1178,7 @@ class PortfolioConstructor(_StopMixin, _OrderBuildMixin):
         # clusters present) must degrade the SAME way as a total one: ceilings
         # unenforced, per-position sizing still applies. See
         # `_book_risk_inputs` in `src/pipeline_stages.py`.
-        allocation = allocate_risk_budget(
+        allocation = self.last_risk_allocation = allocate_risk_budget(
             requests,
             existing_pct=existing_risk_pct,
             clusters=clusters,
