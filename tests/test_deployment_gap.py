@@ -19,10 +19,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from src.models import Position, TradeDecision
-from src.pipeline import TradingPipeline
 from src.pipeline_context import PMFacts
 from src.risk.rules import DESK_INVESTED_TARGET_PCT, RiskRuleEngine
 from src.config import RiskConfig
+from tests.pipeline_factory import build_pipeline
 
 
 def test_mandate_is_fully_invested():
@@ -107,8 +107,7 @@ def test_pm_facts_render_no_target_no_section():
 
 
 def test_build_pm_facts_gap_is_against_mandate_not_macro():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
     pipeline.db.compute_trade_calibration.return_value = {}
     pipeline.db.get_recent_agent_outputs.return_value = []
     pipeline._build_position_history = MagicMock(return_value={})
@@ -129,12 +128,7 @@ def test_build_pm_facts_gap_is_against_mandate_not_macro():
 
 
 def _engine_pipeline():
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=50, max_total_position_pct=200,
-        max_sector_pct=100,
-        require_stop_loss=True, allow_margin=False,
-    ))
+    pipeline = build_pipeline(risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=50, max_total_position_pct=200, max_sector_pct=100, require_stop_loss=True, allow_margin=False, )))
     return pipeline
 
 

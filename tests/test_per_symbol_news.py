@@ -22,6 +22,7 @@ import pytest
 
 import src.data.news as news_mod
 from src.data.news import NewsDataProvider, NewsItem
+from tests.pipeline_factory import build_pipeline
 
 
 @pytest.fixture(autouse=True)
@@ -123,24 +124,19 @@ def test_run_news_update_orders_held_positions_before_candidates_deterministical
     """TradingPipeline._run_news_update builds the per-symbol list as held
     positions first, then the run's admitted candidates, deduped while
     preserving that order — never raw set iteration."""
-    from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline = build_pipeline(news_provider=MagicMock(), news_store=MagicMock(), news_analyst=MagicMock(), db=MagicMock())
     pipeline.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["SPY"]),
         news=SimpleNamespace(max_prompt_items=50),
     )
-    pipeline.news_provider = MagicMock()
     pipeline.news_provider.fetch_news.return_value = ([], None)
     pipeline.news_provider.format_for_prompt.return_value = "no news"
     pipeline.news_provider.tag_symbol_mentions.return_value = {}
-    pipeline.news_store = MagicMock()
     pipeline.news_store.load_macro_narrative.return_value = None
-    pipeline.news_analyst = MagicMock()
     pipeline.news_analyst.analyze.return_value = (
         None, MagicMock(user_message="m"),
     )
-    pipeline.db = MagicMock()
 
     pipeline._run_news_update(
         "run1", session="morning",

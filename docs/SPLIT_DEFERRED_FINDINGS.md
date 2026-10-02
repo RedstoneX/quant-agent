@@ -80,17 +80,22 @@ which cannot be built or exercised on their own. Smaller files, not
 boundaries. Fix: convert them the way the sessions, exits, protection, broker
 and storage packages were done, and add witness tests.
 
+STILL OPEN, measured 2026-10-02: 11 `_Breaker*Mixin` classes are still
+composed into `LLMCostCircuitBreaker` in `src/cost_circuit/breaker.py`.
+
 ## Real boundaries still owed
 
 The position builder, the portfolio-manager seat and the prompt-facts review
 chunk are under the ceiling but are not separable pieces. Same treatment.
 
+STILL OPEN, measured 2026-10-02: `tests/test_boundary_harness.py` passes 12
+tests but covers only the pipeline mixins; mixins remain in
+`src/pipeline_prompt_facts_review.py` and
+`src/agents/portfolio_manager/prompt_evidence.py`.
+
 ## `update_open_take_profit` refuses through an undefined name
 
-`update_open_take_profit` in the storage layer reaches for a bare `_log` that
-is not defined in its module, so the refusal branch raises `NameError` instead
-of recording the refusal. Pre-existing on `main` before the database rebuild;
-the body moved verbatim into `src/storage/trades/ledger.py`, so the defect
-moved with it unchanged. Found 2026-10-02 during database instalment 3. Fix
-after the structure is sound: give the module its logger, then prove the
-refusal path records rather than raises.
+DONE 2026-10-02. The refusal branches called a bare `_log` that the ledger
+module never defined, so they raised `NameError`. They now use the module's
+`logger`; `tests/test_take_profit_refusal_names.py` drives both refusals and
+failed with `NameError: name '_log' is not defined` before the fix.

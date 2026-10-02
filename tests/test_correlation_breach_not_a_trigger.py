@@ -37,6 +37,7 @@ WHAT MUST NOT REGRESS
 import pytest
 
 from src.pipeline import _HARD_TRIGGER_KEYWORDS, _reason_cites_hard_trigger
+from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.risk.exit_guard import (
     EXTERNAL_INFORMATION_PATTERNS,
     cites_external_information,
@@ -84,6 +85,7 @@ def test_correlation_claim_is_invisible_to_the_holding_discipline_checker():
     item's own description: the checker returns "ok", not "unverifiable".
     There is no branch to make verifiable, so nothing was ever logged."""
     check = holding_discipline_claim_check(
+        state_change_parser=PortfolioManagerAgent._state_change_symbols_by_date,
         action="SELL",
         reason="correlation breach across the book",
         symbol="AAA",

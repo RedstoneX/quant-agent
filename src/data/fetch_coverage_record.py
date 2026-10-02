@@ -9,6 +9,17 @@ from __future__ import annotations
 import json
 
 from src.data.macro import MacroCoverage
+from src.data.macro_coverage_views import stale_age_days
+
+
+def _series_entry(f) -> dict:
+    """A missing series keeps its original two-key shape; a STALE one (value
+    held, served with its age) is tagged so a reader never infers "no value"."""
+    age = stale_age_days(f.reason)
+    entry = {"series": f.series_id, "reason": f.reason}
+    if age is not None:
+        entry.update(state="stale", age_days=age)
+    return entry
 
 
 def build_row(run_id, macro_coverage, event_coverage) -> dict:
@@ -28,7 +39,7 @@ def build_row(run_id, macro_coverage, event_coverage) -> dict:
         row["series_configured"] = macro_coverage.configured
         row["series_succeeded"] = macro_coverage.succeeded
         row["series_failed"] = json.dumps(
-            [{"series": f.series_id, "reason": f.reason}
+            [_series_entry(f)
              for f in macro_coverage.failed if f.series_id not in never_ids])
         row["series_not_attempted"] = json.dumps(sorted(never_ids))
         series_ok = macro_coverage.complete
