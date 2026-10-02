@@ -275,21 +275,13 @@ _DELEGATION_MARKER = "# drop-reason:"
 
 def _class_nodes():
     out = [(n, t.splitlines()) for p in sorted(_SOURCE.glob("*.py")) for t in [p.read_text()]
-           for n in ast.parse(t).body if isinstance(n, ast.ClassDef) and n.name in {"PortfolioConstructor", "_StopMixin", "_OrderBuildMixin", "OrderBuilders"}]
-    assert len(out) == 4, [n.name for n, _ in out]  # the class body + its two mixins + the lifted order builders
+           for n in ast.parse(t).body if isinstance(n, ast.ClassDef) and n.name in {"PortfolioConstructor", "_StopMixin", "_OrderBuildMixin", "OrderBuilders", "StopGeometry"}]
+    assert len(out) == 5, [n.name for n, _ in out]  # the class body + its two mixins + the lifted order builders + the lifted stop geometry
     return out
 
 
-def _is_thin_shim(fn: ast.FunctionDef) -> bool:
-    """A same-named shim left behind by a lift (body moved to a standalone
-    class). Scanning the shim instead of the body would pass vacuously."""
-    doc = ast.get_docstring(fn) or ""
-    return doc.startswith("Thin shim")
-
-
-def _methods(lines=False):
-    return {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body
-            if isinstance(n, ast.FunctionDef) and not _is_thin_shim(n)}
+def _methods(lines=False):  # skips "Thin shim" docstrings: a lift's same-named shim would pass vacuously; the moved body is scanned via its class above
+    return {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body if isinstance(n, ast.FunctionDef) and not (ast.get_docstring(n) or "").startswith("Thin shim")}
 
 
 def _drop_sites(fn):
