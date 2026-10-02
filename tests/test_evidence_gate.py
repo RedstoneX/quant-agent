@@ -17,6 +17,7 @@ import pytest
 
 from src import evidence_gate
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -399,11 +400,7 @@ def test_an_intra_result_carries_the_seat_states_out_to_the_alert():
     have to, because a lost seat there halted the run instead. Now that an
     advisory loss proceeds, the one alert a mode's noise policy cannot
     suppress reads that field and must find it."""
-    p = TradingPipeline.__new__(TradingPipeline)
-    p._last_evidence_freshness = evidence_gate.freshness(
-        {"tech": "ok", "news": "failed"}
-    ).to_evidence()
-    p._last_decision_data_status = {"tech": "ok", "news": "failed"}
+    p = build_pipeline(_last_evidence_freshness=evidence_gate.freshness( {"tech": "ok", "news": "failed"} ).to_evidence(), _last_decision_data_status={"tech": "ok", "news": "failed"})
     result = {"status": "intraday_no_trades", "run_id": "intra_check-1"}
     p._attach_evidence_freshness(result)
     assert result["data_status"] == {"tech": "ok", "news": "failed"}
@@ -495,8 +492,7 @@ def test_proceed_short_handed_message_carries_the_mark_but_a_skip_does_not():
 # ---------- the wiring ----------
 
 def _pipeline(data_status: dict):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p._is_trading_day = lambda: True
+    p = build_pipeline(_is_trading_day=lambda: True, db=MagicMock(), broker=MagicMock(), risk_engine=MagicMock(), morning_research_stage=MagicMock(), decision_stage=MagicMock())
     # A clean run drains nothing and reconciles no broker stop-out (item 101):
     # return the real "nothing to surface" values so _surface_reconcile_outcomes
     # correctly stays silent, rather than a bare MagicMock (which coerces to a
@@ -507,14 +503,10 @@ def _pipeline(data_status: dict):
     p._reconcile_stop_coverage = MagicMock(return_value=[])
     p._reconcile_fills = MagicMock()
     p._force_delever = MagicMock(return_value=[])
-    p.db = MagicMock()
-    p.broker = MagicMock()
     p.broker.get_account.return_value = {
         "cash": 50_000.0, "portfolio_value": 100_000.0, "last_equity": 100_000.0,
     }
     p.broker.get_positions.return_value = []
-    p.risk_engine = MagicMock()
-    p.morning_research_stage = MagicMock()
 
     def _research(ctx):
         analysis = MagicMock()
@@ -523,7 +515,6 @@ def _pipeline(data_status: dict):
         ctx.data_status = dict(data_status)
 
     p.morning_research_stage.run.side_effect = _research
-    p.decision_stage = MagicMock()
     p._decision_stage = MagicMock()
     p._check_late_breach_and_emergency_liquidate = MagicMock(return_value=None)
     return p

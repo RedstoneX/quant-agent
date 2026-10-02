@@ -171,10 +171,9 @@ def test_reprotect_still_places_the_most_protective_usable_stop():
     extreme is the HIGHEST trigger."""
     from src.pipeline import TradingPipeline
 
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=None)
     pipeline.broker._list_open_sell_stop_orders.return_value = []
     pipeline.broker._submit_protective_stop_retrying.return_value = {"id": "s1"}
-    pipeline.db = None
     assert pipeline._reprotect_residual_after_partial_sell(
         "X", 4.0,
         [{"id": "a", "stop_price": 0.0},

@@ -30,13 +30,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 from src.storage.db import Database, _trail_stop_reduced_position
 
 
 def _mk_pipeline(db: Database, broker, lookback_days: int = 7) -> TradingPipeline:
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = broker
+    pipeline = build_pipeline(db=db, broker=broker)
     pipeline.config = types.SimpleNamespace(
         reconciliation=types.SimpleNamespace(stop_out_lookback_days=lookback_days),
     )
@@ -440,10 +439,8 @@ def test_reconcile_stop_out_fills_noop_without_config(tmp_path):
     db.initialize()
     db.insert_trade("ONDS", "BUY", 17, 8.53, "entry", "r1", fill_status="filled")
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
-    # No pipeline.config at all.
+    pipeline = build_pipeline(db=db, broker=MagicMock())
+    del pipeline.config  # the real constructor always sets it; force the defensive branch
 
     assert pipeline._reconcile_stop_out_fills(run_id="r1") == []
     pipeline.broker.get_positions.assert_not_called()
