@@ -113,3 +113,9 @@ item-227 predicate applies.
   desk closed earlier the same exchange day for failing its own entry bar,
   read off the desk's own durable record. No cooldown, no holding period,
   no new number — the same exchange-day window the SELL-side guard uses.
+
+### 2026-10-02 — the dashboard gets its own Pruning Pass panel
+
+MEASURED: before this change the pass reached the dashboard only inside one run's detail, so the owner had to know which run to open. Now `GET /pruning-passes` (`src/api/routes_pruning.py`, read-only, `mode=ro`) lists every pass recorded on the newest day that has one, with a verdict and a reason per examined name, rendered by the "Pruning Pass" panel. A pass that cut nothing still shows what it examined. No threshold or lookback was added: the window is the newest day with a record. Limit: a name below the bar but not cut carries "the record does not say which rule held it back", because the durable row stores reasons only for the cut name. Telegram stays muted. The live-run confirmation box on the board stays OPEN until a production session is observed.
+
+The "record does not say" gap is closed at the source: `src/rotation_dispositions.py` writes a run-scoped `rotation`/`dispositions` row recording, per below-bar name, the conviction reasons it fails on and, where the pass never reached it, "not reached: <why>". Names the pass reached and refused keep their existing `rotation`/`skipped` row, which the panel joins. A run recorded before this change says so explicitly.

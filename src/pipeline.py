@@ -47,9 +47,9 @@ from src.risk.rules import (
 )
 from src.execution.broker import (
     AlpacaBroker,
-    _get_sector,
     _split_protective_qty,
 )
+from src.sector_reference import _get_sector
 from src.pipeline_context import PMFacts, RunContext, SessionType
 # Step 1 of docs/PIPELINE_SPLIT_PLAN.md: these moved to a mixin module and are
 # re-exported here because tests and other modules import them from `src.pipeline`.
@@ -139,7 +139,6 @@ from src.models import (
 )
 
 logger = logging.getLogger(__name__)
-
 
 class SessionTerminated(BaseException):
     """The wrapper's `timeout` sent SIGTERM; unwind so `finally` blocks run.
@@ -874,7 +873,7 @@ class TradingPipeline(
         self.broker = AlpacaBroker(
             api_key=config.api_keys.alpaca_key,
             secret_key=config.api_keys.alpaca_secret,
-            paper=config.alpaca.paper,
+            paper=config.alpaca.paper, max_position_pct=config.risk.max_position_pct,
             kill_switch_path=str(self._kill_switch_path),
             trade_updates_lease_path=str(trade_updates_lease_path),
             # ON since 2026-09-18. The only site that threads this
@@ -1921,14 +1920,14 @@ class TradingPipeline(
         # message is a different renderer) keeps its alert unchanged.
         if session == "morning":
             try:
-                from src.notifier import describe_skipped_decision, send_owner_alert
+                from src.notifier import CATEGORY_OPERATIONAL, describe_skipped_decision, send_owner_alert
 
                 # Plain words only — no run id, no seat key, no state token
                 # and no `verdict.reason`. The machine reason is unchanged in
                 # the result dict, the event rows and the log line above.
                 send_owner_alert("\n".join(
                     describe_skipped_decision(verdict.lost, verdict.data_status)
-                ))
+                ), category=CATEGORY_OPERATIONAL)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("evidence gate: owner alert failed: %s", exc)
         return {
@@ -2379,8 +2378,9 @@ class TradingPipeline(
         ).run()
     def _evening_stop_proximity(self, positions) -> list[dict]:
         """Thin shim: builds the standalone session and runs it (body moved to src/sessions/evening_stop_proximity_session.py)."""
+        from src.execution.stop_read import read_stop
         return EveningStopProximitySession(
-            atr_for_symbol=self._collab("_atr_for_symbol"),
+            stop_reader=read_stop, db=self.db, atr_for_symbol=self._collab("_atr_for_symbol"),
             sweep_symbol=self._collab("_sweep_symbol"),
             broker=self._collab("broker"),
         ).run(positions)

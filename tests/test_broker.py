@@ -1150,12 +1150,12 @@ def test_submit_order_sell_ignores_stop_loss_price(mock_tc_cls):
     mock_client.submit_order.return_value = MagicMock(
         id="ord-sell", status="accepted", symbol="NVDA",
     )
+    mock_client.get_all_positions.return_value = [MagicMock(symbol="NVDA", qty="10")]  # sell gate
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     broker.submit_order(
-        symbol="NVDA", qty=10, side="sell",
-        limit_price=420.0,
+        symbol="NVDA", qty=10, side="sell", limit_price=420.0,
         stop_loss_price=400.0,  # accidentally provided
     )
     req = mock_client.submit_order.call_args[0][0]
@@ -1766,14 +1766,14 @@ def test_a_market_order_skips_the_fat_finger_guard(mock_tc_cls):
     mock_order.status = "accepted"
     mock_order.symbol = "NVDA"
     mock_client.submit_order.return_value = mock_order
+    mock_client.get_all_positions.return_value = [MagicMock(symbol="NVDA", qty="10")]  # sell gate
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
     # A stale $300 reference against a name that has gapped to ~$80 (73% away):
     # a LIMIT there would be rejected as an outlier, but a MARKET order submits.
     result = broker.submit_order(
-        symbol="NVDA", qty=10, side="sell",
-        limit_price=None, reference_price=300.0,
+        symbol="NVDA", qty=10, side="sell", limit_price=None, reference_price=300.0,
     )
     assert result["status"] == "accepted"
     assert result["id"] == "order-mkt"
@@ -2649,11 +2649,11 @@ def test_replace_stop_loss_refused_amend_leaves_original_resting(mock_tc_cls):
 
 
 @patch("src.execution.broker.TradingClient")
-def test_replace_stop_loss_falls_back_for_bracket_leg(mock_tc_cls):
-    """A bracket/OTO leg was never measured, so it keeps the old
-    cancel+resubmit path rather than being amended blind."""
+def test_replace_stop_loss_falls_back_for_bracket_parent_with_legs(mock_tc_cls):
+    """A bracket/OTO PARENT (it carries `legs`) is not a stop and is never
+    amended; it keeps the cancel+resubmit path."""
     leg = _plain_resting_stop()
-    leg.order_class = "bracket"
+    leg.order_class, leg.legs = "bracket", [object()]
 
     new_order = MagicMock()
     new_order.id = "new-stop"

@@ -13,6 +13,7 @@ from src.seat_heal import (
     restore_stated_soft_exits,
 )
 from src.models import MacroAnalysis, MacroPositionGuidance, MacroReasoningChain
+from tests.pipeline_factory import build_pipeline
 
 
 def _chain(**overrides):
@@ -176,15 +177,13 @@ def test_pipeline_does_not_repay_remembered_good_or_empty_store():
     from src.pipeline import TradingPipeline
     from src.pipeline_context import RunContext
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock(), macro_analyst=MagicMock())
     # The paid retry now also consults a DURABLE per-ET-day count, because
     # RunContext.heal_paid_retries only spans one tick and intra_check runs
     # every 30 minutes (production shows 8 paid news heals on 2026-09-18).
     # A bare MagicMock int()s to 1, i.e. "already spent today", which is not
     # what this test is about.
     p.db.count_paid_seat_heals_today.return_value = 0
-    p.macro_analyst = MagicMock()
     p._require_paid_analysis = MagicMock()
     p._record_heal = MagicMock()
     ctx = RunContext.start("intra_check")
@@ -219,17 +218,14 @@ def test_pipeline_paid_retry_is_one_shot_and_requires_inputs():
         ),
         summary="risk on",
     )
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock(), macro_analyst=MagicMock(), news_analyst=MagicMock())
     # The paid retry now also consults a DURABLE per-ET-day count, because
     # RunContext.heal_paid_retries only spans one tick and intra_check runs
     # every 30 minutes (production shows 8 paid news heals on 2026-09-18).
     # A bare MagicMock int()s to 1, i.e. "already spent today", which is not
     # what this test is about.
     p.db.count_paid_seat_heals_today.return_value = 0
-    p.macro_analyst = MagicMock()
     p.macro_analyst.analyze.return_value = (analysis, MagicMock())
-    p.news_analyst = MagicMock()
     p._require_paid_analysis = MagicMock()
     p._record_heal = MagicMock()
 

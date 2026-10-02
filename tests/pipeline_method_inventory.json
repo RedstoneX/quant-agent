@@ -238,6 +238,7 @@
           "_missed_ops_held_set",
           "_missed_ops_macro_sector_map",
           "_missed_ops_news_signal",
+          "_missed_ops_signals",
           "_missed_ops_tech_signal",
           "_missed_ops_theme_tags",
           "_thesis_news_events_map",
