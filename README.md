@@ -590,13 +590,17 @@ quant-agent/
 │   ├── stage_risk.py             # RiskStage + its 5 private helpers (moved verbatim)
 │   ├── stage_execution.py        # ExecutionStage (moved verbatim, item 210 step 10)
 │   ├── pipeline_context.py        # RunContext dataclass — explicit shared state across stages
-│   ├── notifier.py                # Telegram session-status push (opt-in via env vars; per-mode noise policy)
-│   ├── portfolio_constructor.py   # Deterministic Target → TradeDecision translator (risk-budget sizing)
+│   ├── notifier/                  # Telegram session-status push (opt-in via env vars; per-mode noise policy)
+│   ├── portfolio_constructor/     # Deterministic Target → TradeDecision translator (risk-budget sizing)
+│   │   ├── __init__.py            # PortfolioConstructor core: targets, risk plan, sector dial; re-exports the whole package
+│   │   ├── config.py              # ConstructorConfig, RiskPlan, every refusal/rule constant
+│   │   ├── stops.py               # stop + reward-to-risk resolution mixin
+│   │   └── orders.py              # buy/sell/short/cover leg builders mixin
 │   ├── trading_calendar.py        # ET timezone + SESSION_WINDOWS + session_date_key (single source of truth)
 │   ├── scheduler.py               # APScheduler — only used by --mode live (dev/legacy)
 │                                  #   Production uses systemd timers (Linux) or launchd (macOS).
 │   ├── config.py                  # Pydantic config with API key validation
-│   ├── models.py                  # Data models (ReasoningChain, MacroNarrative, etc.)
+│   ├── models/                    # Data models package (base, analysis, decisions, portfolio, risk_verdicts, macro, news, positions, earnings, smart_money, evening, meta)
 │   ├── agents/                    # 9 daily LLM agents + 1 quarterly meta_reflector
 │   ├── rotation.py                # Opportunity-cost rotation (execution.rotation_enabled)
 │   ├── nominations.py             # Per-seat candidate nomination + capping

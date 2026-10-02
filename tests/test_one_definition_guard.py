@@ -329,25 +329,15 @@ def find_deployable_cash_definitions(tree: ast.AST, path: Path) -> list[Finding]
             if not any("deployable" in (_name(t) or "") for t in targets):
                 continue
             value = node.value
-            if isinstance(value, ast.Constant):
-                continue  # a default, not a definition
-            # A CALL to the sanctioned function is the fix, not the defect.
-            # Both the old engine-private owner and the shared one count.
+            if isinstance(value, (ast.Constant, ast.Name)):
+                continue  # a default or a bare binding, not a definition
+            # A call to / alias of a NAMED owner is the fix; no bare-Name blanket.
             owners = {"_compute_deployable_cash", "compute_deployable_cash",
                       "deployable_cash", "cash_above_reserve"}
             calls = _calls(value)
-            if calls & owners:
-                continue  # delegates to the owner
-            # Holding a REFERENCE to the owner is not a second definition:
-            # `self._compute_deployable_cash = compute_deployable_cash` binds
-            # the sanctioned function so it can be called later, and no
-            # arithmetic happens, so there is no second number to disagree
-            # with the first. Exempting EVERY bare name would be too wide --
-            # pointing a `deployable*` name at some OTHER function is exactly
-            # the two-numbers-one-name failure this guard exists to catch --
-            # so the identifier must be one of the sanctioned owners above.
-            if isinstance(value, (ast.Name, ast.Attribute)) and _name(value) in owners:
-                continue  # an alias of the owner, not a re-implementation
+            if calls & owners or (isinstance(value, ast.Attribute)
+                                  and _name(value) in owners):
+                continue  # delegates to / aliases the owner
             out.append(
                 Finding(_rel(path), node.lineno, fn.name,
                         ast.unparse(value)[:72], "second definition")

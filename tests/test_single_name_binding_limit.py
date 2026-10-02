@@ -28,7 +28,7 @@ from src.portfolio_constructor import (
 )
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-CONSTRUCTOR = REPO / "src" / "portfolio_constructor.py"
+CONSTRUCTOR = REPO / "src" / "portfolio_constructor" / "orders.py"
 SETTINGS = REPO / "config" / "settings.yaml"
 LEDGER = REPO / "config" / "number_ledger.yaml"
 
@@ -192,7 +192,7 @@ def test_all_three_ledger_rows_state_the_same_answer():
 
     for ident in (
         "src.config.RiskConfig.max_position_risk_pct",
-        "src.portfolio_constructor.ConstructorConfig.risk_budget_pct",
+        "src.portfolio_constructor.config.ConstructorConfig.risk_budget_pct",
     ):
         text = " ".join(str(v) for v in by_id[ident].values())
         for mark in answer_marks:
@@ -202,7 +202,7 @@ def test_all_three_ledger_rows_state_the_same_answer():
             )
 
     ceiling_row = " ".join(
-        str(v) for v in by_id["src.portfolio_constructor.ConstructorConfig.max_position_pct"].values()
+        str(v) for v in by_id["src.portfolio_constructor.config.ConstructorConfig.max_position_pct"].values()
     )
     assert "item 222" in ceiling_row.lower()
     assert f"{crossover:.2f}%" in ceiling_row
