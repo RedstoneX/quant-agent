@@ -1292,3 +1292,22 @@ def test_a_second_name_going_unprotected_the_same_day_still_alerts(db, state_pat
         _two_name_broker(("AAA", "BBB")), now=_SAT_0615, db_path=db, state_path=state_path,
     )
     assert third.should_alert is False
+
+
+def test_an_unreadable_calendar_still_answers_shut_outside_market_hours():
+    """Failing OPEN must not degrade into answering open at every hour.
+
+    The ruling is that an unknown must not stop the desk acting, not that the
+    desk should pretend the market is always open. With the broker calendar
+    unreadable, the weekday-and-clock fallback still decides, and its "shut"
+    is honoured exactly as its "open" is -- otherwise a stop would be
+    attempted at three in the morning on every calendar outage.
+    """
+    broker = MagicMock()
+    broker.is_trading_day.side_effect = RuntimeError("calendar down")
+    after_hours = datetime(2026, 9, 11, 20, 30, tzinfo=ET)
+
+    open_now, reason = coverage_watchdog.session_is_open(broker, after_hours)
+
+    assert open_now is False
+    assert "calendar down" in reason
