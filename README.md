@@ -591,7 +591,11 @@ quant-agent/
 │   ├── stage_execution.py        # ExecutionStage (moved verbatim, item 210 step 10)
 │   ├── pipeline_context.py        # RunContext dataclass — explicit shared state across stages
 │   ├── notifier/                  # Telegram session-status push (opt-in via env vars; per-mode noise policy)
-│   ├── portfolio_constructor.py   # Deterministic Target → TradeDecision translator (risk-budget sizing)
+│   ├── portfolio_constructor/     # Deterministic Target → TradeDecision translator (risk-budget sizing)
+│   │   ├── __init__.py            # PortfolioConstructor core: targets, risk plan, sector dial; re-exports the whole package
+│   │   ├── config.py              # ConstructorConfig, RiskPlan, every refusal/rule constant
+│   │   ├── stops.py               # stop + reward-to-risk resolution mixin
+│   │   └── orders.py              # buy/sell/short/cover leg builders mixin
 │   ├── trading_calendar.py        # ET timezone + SESSION_WINDOWS + session_date_key (single source of truth)
 │   ├── scheduler.py               # APScheduler — only used by --mode live (dev/legacy)
 │                                  #   Production uses systemd timers (Linux) or launchd (macOS).

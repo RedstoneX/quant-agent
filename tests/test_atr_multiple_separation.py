@@ -32,7 +32,7 @@ _EXIT_GUARD_IDS = (
 )
 _MIN_STOP_ID = "src.config.RiskConfig.absolute_min_stop_atr_multiple"
 _MIN_STOP_MIRROR_ID = (
-    "src.portfolio_constructor.ConstructorConfig.absolute_min_stop_atr_multiple"
+    "src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple"
 )
 
 

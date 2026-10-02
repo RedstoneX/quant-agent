@@ -879,7 +879,7 @@ def test_trimming_the_held_book_has_exactly_one_owner():
                 (kw.value for kw in node.keywords if kw.arg == "emit_trims"), None,
             )
             disabled = isinstance(emit, ast.Constant) and emit.value is False
-            (sizing_callers if disabled else trim_owners).append(path.name)
+            (sizing_callers if disabled else trim_owners).append(path.relative_to(src).as_posix())
 
     # Item 112 kept this EXACT: one call site, not one module. The conviction
     # de-lever does not call `apply_gross_ceiling` itself — it delegates to
@@ -888,7 +888,7 @@ def test_trimming_the_held_book_has_exactly_one_owner():
     assert trim_owners == ["pipeline_delever.py"], (
         f"exactly one caller may author de-lever orders; found {trim_owners}"
     )
-    assert sizing_callers == ["portfolio_constructor.py"], (
+    assert sizing_callers == ["portfolio_constructor/__init__.py"], (
         f"the sizing gate must pass emit_trims=False; found {sizing_callers}"
     )
 

@@ -211,7 +211,7 @@ SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 #: A directory entry covers every `.py` under it.
 SCOPED_PATHS: tuple[str, ...] = (
     "src/risk",
-    "src/portfolio_constructor.py",
+    "src/portfolio_constructor",
     "src/rotation.py",
     "src/nominations.py",
     "src/evidence_gate.py",
