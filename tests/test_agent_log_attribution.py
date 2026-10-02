@@ -526,7 +526,7 @@ def test_earnings_preprocess_persists_actual_model_on_failover(tmp_path):
 def test_evening_analyst_persists_actual_model_on_failover():
     """evening (audit site pipeline.py:6668) must persist AgentResult.model,
     not config.llm.evening_analyst_model."""
-    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), db=MagicMock(), macro=MagicMock(), evening_analyst=MagicMock(), _run_news_update=MagicMock(return_value=(None, None)), _load_earnings_analyses=MagicMock(return_value=([], [])))
     pipeline.config = _mock_config()
 
     pipeline.broker.is_trading_day.return_value = True

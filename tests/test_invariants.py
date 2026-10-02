@@ -470,7 +470,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     from types import SimpleNamespace
     from src.config import IntradayScanConfig
 
-    p = build_pipeline()
+    p = build_pipeline(sec_form4_provider=MagicMock(), earnings_provider=MagicMock(), news_provider=MagicMock())
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
         storage=SimpleNamespace(

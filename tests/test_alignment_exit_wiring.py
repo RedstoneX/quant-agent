@@ -99,7 +99,6 @@ def _market(**methods):
 
 
 def _pipeline_stub(monkeypatch, *, basis, broken_level, closes, atr=1.0):
-    from src.pipeline import TradingPipeline
 
     bars = [_Bar(i, c) for i, c in enumerate(closes)]
     p = build_pipeline(market=_market(get_ohlcv=lambda s, n: bars))
@@ -173,7 +172,6 @@ def test_unreadable_chart_is_unparseable_never_a_silent_clear(kwargs, code):
 
 
 def test_chart_read_failure_degrades_to_unparseable(monkeypatch):
-    from src.pipeline import TradingPipeline
 
     p = build_pipeline(market=_market(
         get_ohlcv=lambda s, n: (_ for _ in ()).throw(RuntimeError("feed down")),
@@ -216,7 +214,6 @@ def test_tolerance_is_ledgered_as_arbitrary_not_sourced():
 def _scan_pipeline(verdicts: dict):
     """A pipeline whose only real behaviour is the scan; the chart read is
     replaced by a per-symbol canned verdict."""
-    from src.pipeline import TradingPipeline
 
     p = build_pipeline()
     seen = []
@@ -285,7 +282,6 @@ def test_scan_raises_nothing_on_hold_or_unreadable_chart():
 
 
 def test_scan_failure_holds_and_does_not_stop_the_other_names():
-    from src.pipeline import TradingPipeline
 
     p = build_pipeline()
 
@@ -346,7 +342,6 @@ def test_scan_supersedes_hold_because_the_chart_decides_not_the_prose():
 
 
 def test_verdict_is_read_once_per_position_per_run():
-    from src.pipeline import TradingPipeline
 
     p = build_pipeline()
     calls = []
@@ -372,7 +367,6 @@ def test_scanned_sale_reaches_the_real_sell_path_with_the_reason_voiced():
     from unittest.mock import MagicMock
 
     from src.models import PositionReasoningChain, PositionReview
-    from src.pipeline import TradingPipeline
 
     p = build_pipeline()
     p.broker = MagicMock()
@@ -417,7 +411,6 @@ def test_scanned_sale_reaches_the_real_sell_path_with_the_reason_voiced():
 
 def _scan_shell(*, status="EXIT", buy_ts="2020-01-01 10:00:00", calls=None):
     """A pipeline shell with only what `_alignment_exit_scan` touches."""
-    from src.pipeline import TradingPipeline
 
     p = build_pipeline()
     verdict = types.SimpleNamespace(
@@ -562,14 +555,14 @@ def test_older_position_is_still_eligible():
 
 # --- Defect 5: the two callers of the shared memo pass identical inputs. --
 def test_scan_and_confirmer_resolve_stop_loss_identically():
-    """Both key the SAME per-run memo and `stop_loss` decides whether a
-    broken-level mark exists, so the two call sites must resolve it the
-    same way or one reads a verdict built from a stop it never passed."""
+    """Both key the SAME per-run memo and `stop_loss` decides whether a broken-level mark
+    exists, so both call sites must resolve it the same way; the scan body is in `AlignmentExit`."""
     import inspect
 
+    from src.exits.alignment_exit import AlignmentExit
     from src.pipeline import TradingPipeline
 
-    scan_src = inspect.getsource(TradingPipeline._alignment_exit_scan)
+    scan_src = inspect.getsource(AlignmentExit._alignment_exit_scan)
     exec_src = inspect.getsource(TradingPipeline._midday_execute_llm_actions)
     needle = 'or facts.get("stop_loss")'
     assert needle in scan_src

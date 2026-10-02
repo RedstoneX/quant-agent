@@ -26,6 +26,8 @@ from src.feature_flags import (
     collect_switches,
     effective_values,
     load_declarations,
+    config_location,
+    _appconfig_sections,
 )
 
 # --------------------------------------------------------------------------
@@ -295,3 +297,33 @@ def test_appconfig_itself_defines_no_switches(tmp_path: Path) -> None:
     exclusion deliberately, not by accident of the suffix rule."""
     ids = {s.class_name for s in collect_switches()}
     assert "AppConfig" not in ids
+
+
+def test_a_switch_in_a_second_config_module_is_found(tmp_path: Path) -> None:
+    """The configuration may be a `src/config/` package. A switch lifted into
+    any module of it must still be scanned — the scanner follows the tree, it
+    does not assume one file. Fails on the old scanner (`src/config.py` only).
+    """
+    pkg = tmp_path / "src" / "config"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text(textwrap.dedent("""
+        from src.config.widget import WidgetConfig
+
+
+        class GadgetConfig:
+            armed: bool = True
+
+
+        class AppConfig:
+            widget: WidgetConfig
+            gadget: GadgetConfig
+    """))
+    (pkg / "widget.py").write_text(textwrap.dedent("""
+        class WidgetConfig:
+            enabled: bool = False
+    """))
+    ids = {s.flag_id for s in collect_switches(config_location(tmp_path))}
+    assert ids == {"src.config.GadgetConfig.armed", "src.config.WidgetConfig.enabled"}
+    assert _appconfig_sections(tmp_path) == {"WidgetConfig": "widget", "GadgetConfig": "gadget"}
+    with pytest.raises(FileNotFoundError):
+        config_location(tmp_path / "nowhere")

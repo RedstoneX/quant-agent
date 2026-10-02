@@ -29,8 +29,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests.pipeline_factory import build_pipeline
-
+from tests.pipeline_factory import build_pipeline, test_config
 from src.config import IntradayScanConfig
 from src.cost_circuit import PaidAnalysisSuspended
 from src.models import MacroNarrative, NewsIntelligenceReport, Position, TechAnalysisResult, TechReasoningChain
@@ -101,12 +100,7 @@ def _todays_news_dump():
 def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
                        move_threshold_pct=3.0, cooldown_hours=3.0,
                        max_candidates=5, cooldown_rows=None, db_path=None):
-    from tests.pipeline_factory import test_config
-
-    # The REAL constructor, on production settings with only the scan's own
-    # knobs overridden. The scan takes an advisory flock next to the DB file;
-    # point it at a per-test temp dir so tests never contend or write into
-    # the repo.
+    # REAL constructor, production settings; the scan's advisory flock gets a per-test temp dir.
     config = test_config(
         trading={"universe": list(universe), "lookback_days": 100},
         storage={"db_path": str(db_path or (Path(tempfile.mkdtemp()) / "t.db"))},
@@ -121,18 +115,12 @@ def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
         "non_marginable_buying_power": 10_000.0,
     }
     broker.get_positions.return_value = []
-    db = MagicMock()
-    db.get_trades.return_value = cooldown_rows or []
-    market = MagicMock()
-    market.get_ohlcv.return_value = [MagicMock()]  # non-empty; compute_indicators is patched
-    macro_store = MagicMock()
-    macro_store.load_last_state.return_value = _todays_macro_state()
-    news_store = MagicMock()
-    news_store.load_daily_report.return_value = _todays_news_dump()
-    tech_store = MagicMock()
-    tech_store.load.return_value = {}
-    tech_store.compute_ages.return_value = {}
-    pipeline = build_pipeline(
+    db = MagicMock(**{"get_trades.return_value": cooldown_rows or []})
+    market = MagicMock(**{"get_ohlcv.return_value": [MagicMock()]})  # non-empty; indicators patched
+    macro_store = MagicMock(**{"load_last_state.return_value": _todays_macro_state()})
+    news_store = MagicMock(**{"load_daily_report.return_value": _todays_news_dump()})
+    tech_store = MagicMock(**{"load.return_value": {}, "compute_ages.return_value": {}})
+    return build_pipeline(
         config, broker=broker, db=db, market=market, macro_store=macro_store,
         news_store=news_store, tech_store=tech_store,
         tech_analyst=MagicMock(), decision_stage=MagicMock(),
@@ -141,7 +129,6 @@ def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
         earnings_provider=MagicMock(name="earnings_provider"),
         news_provider=MagicMock(name="news_provider"),
     )
-    return pipeline
 
 
 def _snapshot(last, prev, *, trade_at="today"):
@@ -230,9 +217,7 @@ def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     # Intentional skip (earnings not re-fetched) is not a lost answer —
     # the gate must still let the PM run. Empty/failed carry-forward is
     # a different word and is tested separately.
-    # The live desk always has an earnings provider; with nothing cached the
-    # real carry-forward reports "chose_not_to_refetch" (same gate category and
-    # freshness as the "not_run_intraday" a provider-less test double gave).
+    # A real earnings provider with nothing cached reports "chose_not_to_refetch" (was "not_run_intraday").
     assert ctx.data_status["earnings"] == "chose_not_to_refetch"
     assert ctx.data_status["macro"] == "carried_from_morning"
     assert ctx.data_status["news"] == "carried_from_morning"
@@ -1196,9 +1181,7 @@ def test_empty_morning_carry_forward_is_advisory_and_is_disclosed(
     assert result["status"] != "evidence_gate_skip"
     assert ctx.data_status["macro"] == "carry_forward_empty"
     assert ctx.data_status["news"] == "carry_forward_empty"
-    # The live desk always has an earnings provider; with nothing cached the
-    # real carry-forward reports "chose_not_to_refetch" (same gate category and
-    # freshness as the "not_run_intraday" a provider-less test double gave).
+    # A real earnings provider with nothing cached reports "chose_not_to_refetch" (was "not_run_intraday").
     assert ctx.data_status["earnings"] == "chose_not_to_refetch"
     p.decision_stage.run.assert_called()
     write_status.assert_not_called()

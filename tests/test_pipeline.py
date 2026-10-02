@@ -851,7 +851,7 @@ def test_pipeline_midday_skips_non_trading_day():
 
 
 def test_pipeline_midday_preserves_protective_orders():
-    pipeline = build_pipeline(broker=MagicMock())
+    pipeline = build_pipeline(broker=MagicMock(), news_provider=MagicMock(), sec_form4_provider=MagicMock(), earnings_provider=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
     pipeline.broker.get_positions.return_value = []

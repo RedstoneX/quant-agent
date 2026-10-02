@@ -696,7 +696,7 @@ def test_f7b_schema_comment_matches_the_corrected_meaning() -> None:
     """The schema still described `valuation_context` as 'is the market
     pricing this fairly' — the exact question the seat cannot answer, left
     contradicting the prompt that had just been corrected."""
-    src = (_REPO_ROOT / "src" / "models.py").read_text()
+    src = (_REPO_ROOT / "src" / "models" / "earnings.py").read_text()
     assert "# is the market pricing this fairly given the above?" not in src, (
         "the trailing schema comment still defines valuation_context as a "
         "price judgement, contradicting the prompt"
