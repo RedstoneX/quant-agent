@@ -38,7 +38,7 @@ shared write.
 reference is available in CI today. A local run fetches `origin/main` or
 refuses.
 
-## The four rules
+## The five rules
 
 1. **Store nothing.** No baseline file, no pinned set, no known-offenders list
    committed to the repo.
@@ -48,6 +48,16 @@ refuses.
    is the single most likely way to get this rebuild wrong.
 4. **Report the delta, not the absolute.** The message says what this change
    made worse, which is the only thing the author can act on.
+5. **Compare identities, never totals.** A delta expressed as a count has a
+   hole: a change that removes one offender and adds a different one nets to
+   zero and passes, so the new defect lands unnoticed (found 2026-10-02 when
+   proving one guard red needed two added offenders because the branch had
+   removed one). Every scanning guard names each site — path, kind, enclosing
+   scope, the site's own source text — and fails any identity the working tree
+   holds more copies of than `origin/main` (`guard_reference.added_sites`).
+   Removals are never a failure. The file-size guard is numeric by nature; its
+   identity is the path, so a shrink in one file never offsets growth in
+   another.
 
 ## What comes out
 
@@ -56,8 +66,8 @@ refuses.
 | ~~`tests/file_size_baseline.json`~~ | DONE — deleted with `scripts/regen_file_size_baseline.py` and `test_regen_baseline_cannot_drop_a_trunk_file`; replaced by `scripts/file_size_guard.py` + `scripts/guard_reference.py`, which measure the working tree and `origin/main` at check time |
 | `tests/import_cycle_baseline.json` | `test_import_layering`, `scripts/import_graph` |
 | `tests/import_layers.json` | `scripts/import_graph` |
-| ~~`tests/pipeline_new_baseline.json`~~ | DONE — deleted; `scripts/pipeline_new_guard.py` now counts `TradingPipeline.__new__` sites in the working tree and on `origin/main` at check time and reports the delta |
-| ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now scans the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on the per-file delta |
+| ~~`tests/pipeline_new_baseline.json`~~ | DONE — deleted; `scripts/pipeline_new_guard.py` now names each `TradingPipeline.__new__` site in the working tree and on `origin/main` at check time and fails on any new site identity |
+| ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now names each silent-swallow site in the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on any new site identity (never on a total, so a swap of one offender for another still fails) |
 
 All five are also read by `tests/test_baseline_merge_driver.py` and
 `scripts/resolve_baseline_conflict.py` — both exist ONLY to manage collisions
@@ -68,9 +78,14 @@ have existed.
 Same class, same treatment, after the five land:
 - the known-leaks list in `tests/test_no_silent_patch_targets.py`
 - `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`
-- the offender baseline in `tests/test_no_local_day_as_exchange_day.py`
-- `tests/replay_outbound_sites_baseline.json`
-- the unscoped-number ceiling in the number-sources guard
+- ~~the offender baseline in `tests/test_no_local_day_as_exchange_day.py`~~ DONE — the hardcoded `_BASELINE` is deleted; `scripts/local_day_guard.py` scans the working tree and `origin/main` at check time and fails on any new site identity
+- ~~`tests/replay_outbound_sites_baseline.json`~~ DONE — judged a cached
+  measurement (an AST scan of `src/` frozen on 2026-10-02, no human
+  reasoning in any entry), so it is never created; `scripts/replay_outbound_guard.py`
+  scans `src/` in the working tree and on `origin/main` at check time and
+  reports the delta. The policy half — the list of module names that mean
+  "this can leave the box" — stays in code, where it is reviewed.
+- ~~the unscoped-number ceiling in the number-sources guard~~ DONE — `MAX_UNSCOPED_NUMERIC_SITES` and its pinning test are deleted; `scripts/unscoped_number_guard.py` runs the unscoped scan on the working tree and on `origin/main` at check time and reports the delta
 
 Not in this class: `config/number_ledger.yaml`. That is real content — the
 desk's justification for numbers that govern money — not a cached measurement.
@@ -109,3 +124,5 @@ to be skipped is a guard that gets skipped.
 Convert ONE guard end to end first — the size ratchet, which causes most of the
 pain — and prove all four acceptance criteria on it before touching the others.
 A half-converted set is worse than either the old one or the new one.
+
+Also done: ~~`tests/pipeline_method_inventory.json`~~ (a script-regenerated measurement, not policy) is deleted with its `--write` mode; `scripts/pipeline_method_guard.py` names each owner of a method defined on 2+ of `TradingPipeline` and its mixins, in the working tree and on `origin/main`, and fails any new identity. A move that leaves one copy never fails.

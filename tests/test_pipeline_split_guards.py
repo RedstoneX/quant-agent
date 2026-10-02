@@ -2,12 +2,9 @@
 
 Three things are guarded here and nothing is moved:
 
-1. The METHOD INVENTORY. What each tracked module contains -- module-level
-   functions and the method names of every class -- is frozen in
-   `tests/pipeline_method_inventory.json`, read from the AST. A later step that
-   moves a method must show the move by updating that file in the same change;
-   a method dropped or duplicated during a move fails the build instead of
-   vanishing quietly.
+1. The DUPLICATE-METHOD guard (`scripts/pipeline_method_guard.py`). A method
+   defined on two of TradingPipeline and its mixins is compared against
+   `origin/main` at check time; nothing is stored.
 2. The LEDGER-ID / `SCOPED_PATHS` MIGRATION HELPER (`src/ledger_move.py`),
    exercised on a SYNTHETIC move against copies of the real files, so the
    helper is proved to rewrite ids rather than merely to exist.
@@ -25,18 +22,11 @@ check is run against a synthetic patch of a real re-exported name.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
-from scripts.pipeline_method_inventory import (
-    INVENTORY_PATH,
-    TRACKED_MODULES,
-    current_inventory,
-    module_inventory,
-    recorded_inventory,
-)
+from scripts.pipeline_method_inventory import module_inventory
 from src.ledger_move import (
     MoveSpec,
     apply_move,
@@ -49,81 +39,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LEDGER_PATH = REPO_ROOT / "config" / "number_ledger.yaml"
 NUMBER_SOURCES_PATH = REPO_ROOT / "src" / "number_sources.py"
 
-_FIX_IT = (
-    "\n\nWHAT TO DO:\n"
-    "  * If you MOVED a method or function on purpose, record the move: run\n"
-    "    `python -m scripts.pipeline_method_inventory --write` in the SAME change\n"
-    "    that moves it, and the diff of tests/pipeline_method_inventory.json is the\n"
-    "    reviewable statement of what moved where.\n"
-    "  * If you did NOT mean to change this set, a method has VANISHED or been\n"
-    "    DUPLICATED -- that is a bug in the move, not a stale fixture. Do not\n"
-    "    regenerate the file to make this pass.\n"
-)
+def test_no_new_duplicated_pipeline_method_against_trunk() -> None:
+    """Mixin MRO risk (plan 5.4): two mixins defining one name is a silent win for
+    whichever is first in the bases list. Measured against origin/main at check
+    time (identity, not totals); REFUSES if the trunk cannot be read."""
+    from scripts.pipeline_method_guard import violations
 
-
-def _diff(recorded: dict, current: dict) -> str:
-    was = set(recorded.get("module_functions", []))
-    now = set(current["module_functions"])
-    lines = []
-    if was != now:
-        lines.append(f"  module functions added:   {sorted(now - was)}")
-        lines.append(f"  module functions removed: {sorted(was - now)}")
-    rec_classes = recorded.get("classes", {})
-    cur_classes = current["classes"]
-    for name in sorted(set(rec_classes) | set(cur_classes)):
-        old = set(rec_classes.get(name, []))
-        new = set(cur_classes.get(name, []))
-        if old != new:
-            lines.append(f"  class {name}: added {sorted(new - old)}")
-            lines.append(f"  class {name}: removed {sorted(old - new)}")
-    return "\n".join(lines) or "  (ordering or structure changed)"
-
-
-@pytest.mark.parametrize("relpath", TRACKED_MODULES)
-def test_method_inventory_matches_the_recorded_one(relpath: str) -> None:
-    recorded = recorded_inventory()
-    assert relpath in recorded, (
-        f"{relpath} is tracked by the split guard but absent from the recorded "
-        f"inventory.{_FIX_IT}"
-    )
-    current = current_inventory()[relpath]
-    assert recorded[relpath] == current, (
-        f"The method inventory of {relpath} has changed:\n"
-        f"{_diff(recorded[relpath], current)}{_FIX_IT}"
-    )
-
-
-def test_recorded_inventory_tracks_exactly_the_tracked_modules() -> None:
-    assert sorted(recorded_inventory()) == sorted(TRACKED_MODULES), (
-        "A module was added to or dropped from TRACKED_MODULES without the "
-        f"recorded inventory following it.{_FIX_IT}"
-    )
-
-
-def test_method_names_are_unique_across_the_recorded_classes() -> None:
-    """Mixin MRO risk (plan §5.4): two mixins defining one name is a silent win for
-    whichever is first in the bases list. Today there is one class per name; the day
-    a method is moved into a mixin this is what catches a copy left behind."""
-    owners: dict[str, list[str]] = {}
-    for relpath, inventory in recorded_inventory().items():
-        for class_name, methods in inventory["classes"].items():
-            if class_name != "TradingPipeline" and not class_name.endswith("Mixin"):
-                # The four stage classes each implement a common `run`/`__init__`
-                # interface on purpose; they are not bases of one object, so they
-                # cannot collide in an MRO. Only TradingPipeline and the mixins
-                # the split creates are combined into a single class.
-                continue
-            for method in methods:
-                if method.startswith("__") and method.endswith("__"):
-                    # Dunders are legitimately defined per class and are not
-                    # what an MRO collision between two mixins would look like.
-                    continue
-                owners.setdefault(method, []).append(f"{relpath}::{class_name}")
-    clashes = {name: where for name, where in owners.items() if len(where) > 1}
-    assert not clashes, (
-        "The same method name is defined on more than one class in the split "
-        f"modules; under mixins the first base silently wins: {clashes}{_FIX_IT}"
-    )
+    assert not violations()
 
 
 def test_inventory_guard_can_actually_fail(tmp_path: Path) -> None:
@@ -169,12 +91,6 @@ def test_inventory_guard_can_actually_fail(tmp_path: Path) -> None:
         n for n in dropped["module_functions"] if n != first_module_function
     ]
     assert dropped != baseline, "removing a module function must be visible"
-
-
-def test_recorded_inventory_file_is_valid_json_with_the_regenerate_hint() -> None:
-    payload = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
-    assert payload["_regenerate"].endswith("--write")
-    assert payload["modules"]
 
 
 # --------------------------------------------------------------------------
@@ -412,3 +328,25 @@ def test_dead_patch_target_detector_can_fail():
     assert dead_patch_targets(synthetic, compat_names) == {victim}
     # A name the old module still uses is NOT flagged.
     assert dead_patch_targets('patch("src.pipeline.TradingPipeline")', compat_names) == set()
+
+
+def test_duplicate_guard_identity_catches_net_zero_swap() -> None:
+    """Removing one duplicate and adding a different one must still be red."""
+    from scripts.guard_reference import added_sites
+    from scripts.pipeline_method_guard import duplicate_sites
+
+    def texts(a_methods: str, b_methods: str) -> dict[str, str]:
+        return {
+            "src/pipeline.py": f"class TradingPipeline:\n{a_methods}",
+            "src/pipeline_x.py": f"class XMixin:\n{b_methods}",
+        }
+
+    body = lambda *names: "".join(f"    def {n}(self): pass\n" for n in names) or "    pass\n"  # noqa: E731
+    trunk = duplicate_sites(texts(body("a", "b"), body("a")))
+    assert [n for n, _ in trunk] == ["a", "a"]
+    # a moved (not duplicated) method is no offender
+    assert duplicate_sites(texts(body("b"), body("a"))) == []
+    # drop duplicate `a`, add duplicate `b`: same count, different identity
+    swapped = duplicate_sites(texts(body("a", "b"), body("b")))
+    assert len(swapped) == len(trunk)
+    assert {s[0] for s, _, _ in added_sites(swapped, trunk)} == {"b"}

@@ -3,7 +3,7 @@
 See scripts/silent_swallow_guard.py for the pattern, what counts as a durable
 record in this codebase, and the money-module scope. The guard stores nothing:
 it scans the working tree, scans the same modules on ``origin/main``, and fails
-on the DELTA. When the trunk cannot be read it REFUSES rather than passes
+on the DELTA by site IDENTITY (never a total). When the trunk cannot be read it REFUSES rather than passes
 (docs/GUARDS_WITHOUT_STORED_STATE.md).
 """
 from __future__ import annotations
@@ -43,16 +43,33 @@ def test_nothing_stored_on_disk():
 
 def test_delta_report_names_the_file_and_counts_what_it_gained():
     """Rule 4: the message is a delta, not an absolute count."""
-    text = g.delta_report({"src/execution/broker.py::f#1": 10,
-                           "src/execution/broker.py::g#1": 20})
+    text = g.delta_report([
+        (("src/execution/broker.py", "f", "except Exception:\n    return None"), 10, 1, 0),
+        (("src/execution/broker.py", "g", "except Exception:\n    return []"), 20, 2, 1),
+    ])
     assert "src/execution/broker.py: gained 2 silently-swallowed exception(s)" in text
-    assert "::g#1  (line 20)" in text
+    assert "src/execution/broker.py::g  (line 20, 2 here vs 1 on origin/main)" in text
+
+
+def test_swapping_one_offender_for_another_is_still_an_addition(monkeypatch):
+    """The net-zero hole: remove one swallow, add a different one, same total.
+    Identity comparison still reports the new one."""
+    before = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n"
+    after = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return []\n"
+    monkeypatch.setattr(g, "trunk_blobs", lambda paths: {"x.py": before})
+    monkeypatch.setattr(g, "scan", lambda rel: g.scan_text(rel, after))
+    new = g.added(("x.py",))
+    assert [(site[1], site[2].splitlines()[-1].strip(), n, was) for site, _, n, was in new] == [
+        ("f", "return []", 1, 0)
+    ]
+    monkeypatch.setattr(g, "scan", lambda rel: g.scan_text(rel, before))
+    assert g.added(("x.py",)) == []
 
 
 # --- self-tests: the guard fires on the pattern and stays quiet on a durable record ---
 
 def _hits(src: str) -> list[str]:
-    return [k for k, _ in g.scan_text("x.py", src)]
+    return [f"{rel}::{scope}" for (rel, scope, _), _ in g.scan_text("x.py", src)]
 
 
 def test_fires_on_log_only_swallow_returning_empty():
@@ -64,13 +81,13 @@ def test_fires_on_log_only_swallow_returning_empty():
             "        logger.warning('x %s', exc)\n"
             f"        return {empty}\n"
         )
-        assert _hits(src) == ["x.py::f#1"], f"guard missed `return {empty}`"
+        assert _hits(src) == ["x.py::f"], f"guard missed `return {empty}`"
 
 
 def test_fires_on_bare_except_and_baseexception():
     for clause in ("except:", "except BaseException:", "except (ValueError, Exception):"):
         src = f"def f(b):\n    try:\n        return b.stop()\n    {clause}\n        return None\n"
-        assert _hits(src) == ["x.py::f#1"], f"guard missed `{clause}`"
+        assert _hits(src) == ["x.py::f"], f"guard missed `{clause}`"
 
 
 def test_quiet_when_handler_records_durably():
@@ -103,7 +120,7 @@ def test_quiet_on_reraise_narrow_except_or_non_empty_return():
 
 def test_keys_are_stable_across_line_shifts():
     body = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n"
-    assert _hits(body) == _hits("# moved\n\n\n" + body) == ["x.py::f#1"]
+    assert _hits(body) == _hits("# moved\n\n\n" + body) == ["x.py::f"]
 
 
 def test_scoped_modules_are_all_tracked_paths():

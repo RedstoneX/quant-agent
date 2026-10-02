@@ -29,8 +29,10 @@ tests/silent_swallow_baseline.json was one shared shrink-only file that every
 open change had to edit, so changes jammed each other. At check time the scan
 runs twice -- once over the working tree, once over the same modules as they
 stand on ``origin/main`` -- and the guard reports the DELTA: which handlers this
-change ADDED. If ``origin/main`` cannot be read it REFUSES; it never passes by
-default.
+change ADDED. Sites are compared by IDENTITY (path, enclosing scope, handler
+source text), never by a total or an ordinal, so removing one offender and
+adding another in the same function still fails. If ``origin/main`` cannot be
+read it REFUSES; it never passes by default.
 
 Run it directly: ``python -m scripts.silent_swallow_guard``.
 """
@@ -43,6 +45,9 @@ from scripts.guard_reference import (
     ROOT,
     ReferenceUnavailable,
     TRUNK,
+    added_sites,
+    enclosing_scopes,
+    site_identity,
     trunk_blobs,
 )
 
@@ -155,80 +160,94 @@ def _swallows_and_returns_empty(handler: ast.ExceptHandler) -> bool:
     return returns_empty
 
 
+Site = tuple[str, str, str]  #: (module path, enclosing scope, handler source text)
+
+
 class _Finder(ast.NodeVisitor):
-    def __init__(self, rel: str) -> None:
-        self.rel, self.scope, self.hits, self.ordinal = rel, [], [], {}
+    """Collect every broad handler that swallows and returns empty.
 
-    def _enter(self, node):
-        self.scope.append(node.name)
-        self.generic_visit(node)
-        self.scope.pop()
+    Each hit is named by its IDENTITY -- path, enclosing def/class and the
+    handler's own source text -- never by an ordinal or a line number, so a
+    change that removes one offender and adds a different one in the same
+    function is still seen as an addition (scripts/guard_reference.py).
+    """
 
-    visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _enter
+    def __init__(self, rel: str, scopes: dict[int, str]) -> None:
+        self.rel, self.scopes, self.hits = rel, scopes, []
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if is_broad(node) and _swallows_and_returns_empty(node):
-            qual = ".".join(self.scope) or "<module>"
-            k = (self.rel, qual)
-            self.ordinal[k] = self.ordinal.get(k, 0) + 1
-            self.hits.append((f"{self.rel}::{qual}#{self.ordinal[k]}", node.lineno))
+            scope, src = site_identity(node, self.scopes)
+            self.hits.append(((self.rel, scope, src), node.lineno))
         self.generic_visit(node)
 
 
-def scan_text(rel: str, text: str) -> list[tuple[str, int]]:
-    """Return (stable key, line) for each violation in one module's source text."""
-    f = _Finder(rel)
-    f.visit(ast.parse(text, filename=rel))
+def scan_text(rel: str, text: str) -> list[tuple[Site, int]]:
+    """Return (site identity, line) for each violation in one module's source text."""
+    tree = ast.parse(text, filename=rel)
+    f = _Finder(rel, enclosing_scopes(tree))
+    f.visit(tree)
     return f.hits
 
 
-def scan(rel: str) -> list[tuple[str, int]]:
-    """Return (stable key, current line) for each violation in one module."""
+def scan(rel: str) -> list[tuple[Site, int]]:
+    """Return (site identity, current line) for each violation in one module."""
     path = ROOT / rel
     if not path.exists():
         return []
     return scan_text(rel, path.read_text())
 
 
-def violations(modules: tuple[str, ...] = MONEY_MODULES) -> dict[str, int]:
-    """Silent swallows in the WORKING TREE, keyed by stable key -> line number."""
-    out: dict[str, int] = {}
+def violations(modules: tuple[str, ...] = MONEY_MODULES) -> list[tuple[Site, int]]:
+    """Silent swallows in the WORKING TREE: every occurrence, with its line."""
+    out: list[tuple[Site, int]] = []
     for rel in modules:
-        out.update(scan(rel))
+        out.extend(scan(rel))
     return out
 
 
-def trunk_violations(modules: tuple[str, ...] = MONEY_MODULES) -> set[str]:
-    """Silent swallows on ``origin/main``, as stable keys.
+def trunk_violations(modules: tuple[str, ...] = MONEY_MODULES) -> list[Site]:
+    """Silent swallows on ``origin/main``, one identity per occurrence.
 
     Raises ``ReferenceUnavailable`` when the trunk cannot be read: this guard
     compares and stores nothing, so an unreadable reference is a refusal, never
     a pass. A module absent from the trunk is simply new, not an error.
     """
-    keys: set[str] = set()
+    sites: list[Site] = []
     for rel, text in trunk_blobs(list(modules)).items():
         try:
-            keys.update(k for k, _ in scan_text(rel, text))
+            sites.extend(k for k, _ in scan_text(rel, text))
         except SyntaxError as exc:  # trunk file we cannot parse -> cannot compare
             raise ReferenceUnavailable(
                 f"cannot parse {rel} as it stands on {TRUNK}: {exc}"
             ) from exc
-    return keys
+    return sites
 
 
-def added(modules: tuple[str, ...] = MONEY_MODULES) -> dict[str, int]:
-    """Silent swallows this working tree added relative to ``origin/main``."""
+def added(modules: tuple[str, ...] = MONEY_MODULES) -> list[tuple[Site, int, int, int]]:
+    """Silent swallows this working tree holds MORE copies of than ``origin/main``.
+
+    Returns ``(site, line, copies_now, copies_on_trunk)``. Identity comparison
+    via ``guard_reference.added_sites``: removals never offset an addition.
+    """
     now = violations(modules)
-    before = trunk_violations(modules)
-    return {k: ln for k, ln in now.items() if k not in before}
+    lines: dict[Site, int] = {}
+    for site, line in now:
+        lines.setdefault(site, line)
+    return [
+        (site, lines[site], n, was)
+        for site, n, was in added_sites([s for s, _ in now], trunk_violations(modules))
+    ]
 
 
-def delta_report(new: dict[str, int]) -> str:
+def delta_report(new: list[tuple[Site, int, int, int]]) -> str:
     """Per-file delta lines: 'this file gained N silently-swallowed exceptions'."""
     per_file: dict[str, list[str]] = {}
-    for key, line in sorted(new.items()):
-        rel = key.split("::")[0]
-        per_file.setdefault(rel, []).append(f"      {key}  (line {line})")
+    for (rel, scope, src), line, n, was in sorted(new):
+        head = src.splitlines()[0]
+        per_file.setdefault(rel, []).append(
+            f"      {rel}::{scope}  (line {line}, {n} here vs {was} on {TRUNK}): {head}"
+        )
     return "\n".join(
         f"  {rel}: gained {len(rows)} silently-swallowed exception(s) against {TRUNK}\n"
         + "\n".join(rows)

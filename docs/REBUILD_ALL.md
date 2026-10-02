@@ -78,7 +78,8 @@ git ls-tree -r --name-only origin/main src | grep '\.py$' |
 - The composition root of `src/pipeline.py` (its `__init__`) is its own piece
   of work, after the ceiling.
 - Real boundaries, not just smaller files, are still owed by the cost
-  circuit's eleven `_Breaker*Mixin` modules, the position builder, the
+  circuit's seven remaining `_Breaker*Mixin` modules (four of eleven are
+  now held instances, 2026-10-02), the position builder, the
   portfolio-manager seat and the prompt-facts review chunk.
 
 ## Appendix — measured inventory taken before the two rebuilds

@@ -275,6 +275,7 @@ def run_rehearsal(
         recorded_sector_lookup,
     )
     from ops.rehearsal.clock import frozen_clock
+    from ops.rehearsal.stand_in import assert_stand_in_answered
     from ops.rehearsal.isolation import (
         ProductionWitness, assert_broker_is_stubbed, assert_hermetic,
         assert_isolated, no_network,
@@ -502,16 +503,15 @@ def run_rehearsal(
     for symbol in getattr(pipeline.broker._data_client, "missing_price_symbols", []):
         unavailable.append(f"a current price for {symbol}")
 
-    # The hermeticity verdict, taken AFTER the session has run, because a
-    # blocked call is swallowed by every HTTP client in this dependency set
-    # and only the journal survives it (board item 202). The report is still
-    # built on a breach — the operator needs to see WHAT the run did before it
-    # is thrown away — and then the exception is raised carrying it.
+    # Hermeticity AND stand-in verdicts, taken AFTER the session: HTTP clients
+    # swallow a blocked call and the desk swallows an unanswered broker call on
+    # its money paths, so only the journals survive (board item 202). The
+    # report is still built (the operator sees WHAT ran), then raised with it.
     hermetic_breach = None
     try:
-        checks.append(assert_hermetic(
-            network_attempts, unavailable, allow_degraded=allow_degraded,
-        ))
+        checks.append(assert_hermetic(network_attempts, unavailable,
+                                      allow_degraded=allow_degraded))
+        checks.append(assert_stand_in_answered(trading_stub))
     except Exception as exc:
         hermetic_breach = exc
         checks.append(f"NOT HERMETIC: {exc}")
