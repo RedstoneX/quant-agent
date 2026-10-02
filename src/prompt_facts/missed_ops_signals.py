@@ -23,6 +23,29 @@ from src.trading_calendar import et_today
 logger = logging.getLogger("src.pipeline")
 
 
+class _MissingCollaborator:
+    """Stands in for a collaborator the pipeline never had, so the moved body fails
+    at the exact point of use with the same AttributeError it raised before the lift
+    (no default is invented; the body never gains a None to run on)."""
+
+    def __init__(self, owner: str, name: str) -> None:
+        object.__setattr__(self, "_msg", f"'{owner}' object has no attribute '{name}'")
+
+    def __getattr__(self, _attr):
+        raise AttributeError(object.__getattribute__(self, "_msg"))
+
+    def __bool__(self):
+        raise AttributeError(object.__getattribute__(self, "_msg"))
+
+
+def _collab_or_raise(obj, name: str):
+    """`obj.<name>` when present; otherwise a stand-in that raises on first use."""
+    try:
+        return getattr(obj, name)
+    except AttributeError:
+        return _MissingCollaborator(type(obj).__name__, name)
+
+
 class MissedOpsSignals:
     """Tech/news/earnings/theme/sector signals for the missed-ops digest and thesis-health review."""
 

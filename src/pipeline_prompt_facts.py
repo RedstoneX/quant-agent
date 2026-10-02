@@ -26,7 +26,7 @@ from src.pipeline_prompt_facts_pure import (  # noqa: F401  re-exports, see pipe
     _valuation_signal_from,
 )
 from src.pipeline_prompt_facts_review import PromptFactsReviewMixin
-from src.prompt_facts.missed_ops_signals import MissedOpsSignals
+from src.prompt_facts.missed_ops_signals import MissedOpsSignals, _collab_or_raise
 from src.quantities import avg_dollar_volume, dollar_volumes
 from src.risk.metrics import drift_flag as _drift_flag_check
 from src.risk.metrics import unrealized_pnl_pct
@@ -453,7 +453,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         # no constructor is attached (a bare pipeline in a test) or when a
         # MagicMock config auto-creates a non-numeric attribute.
         cstr_cfg = getattr(
-            getattr(self, "portfolio_constructor", None), "cfg", None,
+            _collab_or_raise(self, "portfolio_constructor"), "cfg", None,
         )
 
         def _dial(name: str) -> float:
@@ -534,7 +534,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         # is measured; it is no longer applied to a projected book, which
         # cannot be computed here (see below).
         target_pct = getattr(
-            getattr(self, "risk_engine", None), "config", None,
+            _collab_or_raise(self, "risk_engine"), "config", None,
         )
         target_pct = getattr(target_pct, "max_sector_pct", None) or 75.0
         overweight = [
@@ -627,14 +627,14 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         is passed back in: none of these helpers calls another, so there is nothing
         for the shim to overwrite (see src/cost_circuit/parts/shim_guard.py)."""
         return MissedOpsSignals(
-            db=getattr(self, "db", None),
-            news_store=getattr(self, "news_store", None),
-            earnings_provider=getattr(self, "earnings_provider", None),
-            macro_store=getattr(self, "macro_store", None),
-            parse_logged_agent_response=getattr(self, "_parse_logged_agent_response", None),
-            broker=getattr(self, "broker", None),
-            market=getattr(self, "market", None),
-            config=getattr(self, "config", None),
+            db=_collab_or_raise(self, "db"),
+            news_store=_collab_or_raise(self, "news_store"),
+            earnings_provider=_collab_or_raise(self, "earnings_provider"),
+            macro_store=_collab_or_raise(self, "macro_store"),
+            parse_logged_agent_response=_collab_or_raise(self, "_parse_logged_agent_response"),
+            broker=_collab_or_raise(self, "broker"),
+            market=_collab_or_raise(self, "market"),
+            config=_collab_or_raise(self, "config"),
         )
 
     def _missed_ops_held_set(self, *args, **kwargs):
@@ -1007,7 +1007,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
                 f.invested_pct - DESK_INVESTED_TARGET_PCT, 1,
             )
             f.deployment_gap_band_pct = deployment_gap_band_pct(
-                getattr(self, "config", None)
+                _collab_or_raise(self, "config")
             )
 
         # Audit §1.3/§1.4 — the book's real risk, and each position's
@@ -1016,7 +1016,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         f.heat = self._build_portfolio_heat(positions, total_value)
         # getattr-guarded for the ~58 tests that build TradingPipeline via
         # __new__() without __init__ — same convention as `_sweeper`.
-        risk_cfg = getattr(getattr(self, "config", None), "risk", None)
+        risk_cfg = getattr(_collab_or_raise(self, "config"), "risk", None)
         ceiling = getattr(risk_cfg, "max_portfolio_risk_pct", None)
         if isinstance(ceiling, (int, float)) and ceiling > 0:
             f.risk_ceiling_pct = float(ceiling)

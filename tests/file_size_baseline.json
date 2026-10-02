@@ -103,7 +103,7 @@
  "src/portfolio_constructor/orders.py": 672,
  "src/portfolio_constructor/stops.py": 1522,
  "src/prompt_bindings.py": 405,
- "src/prompt_facts/missed_ops_signals.py": 735,
+ "src/prompt_facts/missed_ops_signals.py": 758,
  "src/protection/fill_reconciler.py": 767,
  "src/protection/owner_alerts.py": 540,
  "src/protection/sell_finalization.py": 799,
