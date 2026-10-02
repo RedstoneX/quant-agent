@@ -7292,10 +7292,10 @@ numbers:
       No caller in src/, and the docstring (src/pipeline_research_continuity.py:1114-1120)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(lookback_days)
     value: 21
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Window of the PM's 'names you keep proposing and never get' memory
       (src/pipeline_intraday.py:847-861). Its only caller passes nothing, so this
@@ -7322,10 +7322,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(max_lines)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(max_lines)
     value: 5
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Maximum blocked names shown to the PM in that memory
       (src/pipeline_intraday.py:847-861). Its only caller passes nothing, so this
@@ -7352,10 +7352,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_blocked_proposals(min_proposals)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(min_proposals)
     value: 3
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Proposal count before a blocked name is shown to the PM in that memory
       (src/pipeline_intraday.py:847-861). Its only caller passes nothing, so this
@@ -7382,10 +7382,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_calibration_note(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_calibration_note(lookback_days)
     value: 45
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Window of the PM's own hit-rate/return calibration note
       (src/pipeline_intraday.py:739-744). Its only caller passes nothing, so this
@@ -7509,7 +7509,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many previous position-reviewer sessions the reviewer is shown
-      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:3573-3577). Its only caller
+      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:2142-2146). Its only caller
       passes nothing, so this default is live. Same class as the smart-money
       prompt-truncation caps classified arbitrary on 2026-09-19: it decides
       what evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7563,19 +7563,19 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_post_exit_reality(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_post_exit_reality(lookback_days)
     value: 14
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_research_continuity.py:766-768): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_post_exit_reality(max_symbols)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_post_exit_reality(max_symbols)
     value: 12
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Maximum exits audited in that post-exit block
       (src/pipeline_research_continuity.py:889-897). Its only caller passes nothing, so this
@@ -7602,10 +7602,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_post_exit_reality(min_age_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_post_exit_reality(min_age_days)
     value: 2
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Minimum age of an exit before its after-the-fact move is shown to the
       position reviewer (src/pipeline_research_continuity.py:889-897). Its only caller passes
@@ -7632,19 +7632,19 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_buys_for_grading(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_buys_for_grading(lookback_days)
     value: 5
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_research_continuity.py:474-479): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_loss_pits(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_loss_pits(lookback_days)
     value: 14
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Window of the PM's repeat-loss-cause memory (src/pipeline_intraday.py:770-779).
       Its only caller passes nothing, so this default is live. Same class as
@@ -7671,10 +7671,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_missed_lessons(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_missed_lessons(lookback_days)
     value: 14
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Window of the PM's recurring-missed-theme memory
       (src/pipeline_research_continuity.py:979-989). Its only caller passes nothing, so this
@@ -7701,28 +7701,28 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_outlook_calibration(lookback)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_outlook_calibration(lookback)
     value: 10
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_intraday.py:1222): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_outlook_calibration._fwd_cumulative(n)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_outlook_calibration._fwd_cumulative(n)
     value: 5
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_intraday.py:1268): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_recent_sells_for_grading(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_sells_for_grading(lookback_days)
     value: 2
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline_research_continuity.py:401-406): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
@@ -7788,10 +7788,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_trade_grade_summary(lookback_days)
+  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_trade_grade_summary(lookback_days)
     value: 14
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/pipeline_prompt_facts_review.py
     note: >-
       Dead default (src/pipeline.py:3340): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
