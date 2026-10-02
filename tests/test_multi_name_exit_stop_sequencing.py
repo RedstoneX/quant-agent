@@ -32,6 +32,7 @@ from src.models import (
 from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
 from src.pipeline_stages import ExecutionStage
+from tests.pipeline_factory import build_pipeline
 
 
 def _pos(symbol: str, qty: float, entry: float, price: float) -> Position:
@@ -92,8 +93,7 @@ def _assert_no_symbol_left_naked_while_another_is_touched(events):
 # ---------------------------------------------------------------------------
 
 def _midday_pipeline(events):
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(broker=MagicMock())
     _wire_broker_seams(pipeline.broker, events)
     pipeline.db = MagicMock()
     pipeline.db.has_pending_action_for_symbol.return_value = False

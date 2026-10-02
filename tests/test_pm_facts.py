@@ -73,7 +73,7 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
 
     # Seed 3 closed trades (meets calibration threshold ≥3)
     db.insert_trade("NVDA", "BUY", 10, 100, "x", "r1",
-                    broker_order_id="b1", fill_status="filled")
+                    broker_order_id="b1", fill_status="filled", stop_loss=90.0)
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-15 days') WHERE broker_order_id='b1'")
     db.conn.commit()
     db.insert_trade("NVDA", "SELL", 10, 115, "x", "r2",
@@ -81,7 +81,7 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-5 days') WHERE broker_order_id='s1'")
     db.conn.commit()
     db.insert_trade("AAPL", "BUY", 5, 200, "x", "r1",
-                    broker_order_id="b2", fill_status="filled")
+                    broker_order_id="b2", fill_status="filled", stop_loss=90.0)
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-14 days') WHERE broker_order_id='b2'")
     db.conn.commit()
     db.insert_trade("AAPL", "SELL", 5, 180, "x", "r2",
@@ -89,7 +89,7 @@ def test_pm_facts_builder_populates_from_positions_and_calibration(tmp_path):
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-4 days') WHERE broker_order_id='s2'")
     db.conn.commit()
     db.insert_trade("JPM", "BUY", 10, 150, "x", "r1",
-                    broker_order_id="b3", fill_status="filled")
+                    broker_order_id="b3", fill_status="filled", stop_loss=90.0)
     db.conn.execute("UPDATE trades SET timestamp=datetime('now', '-10 days') WHERE broker_order_id='b3'")
     db.conn.commit()
     db.insert_trade("JPM", "SELL", 10, 160, "x", "r2",

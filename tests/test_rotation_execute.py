@@ -53,8 +53,8 @@ from src.risk.exit_guard import (
     StructuralProtectionCheck,
     claims_bearish_state_change,
     claims_regime_flip,
-    holding_discipline_claim_check,
 )
+from src.exits.pm_claim_check import holding_discipline_claim_check
 from src.rotation import RotationOpportunity, RotationPrecheck, rotation_sell_reason
 from src.storage.db import Database
 
@@ -63,6 +63,7 @@ BROKEN_DETAIL = (
     "structural level 100.0 backing the stop has closed beyond it on two "
     "consecutive trading days: close 95.0 vs level 100.0 (break margin 0.05)"
 )
+from tests.pipeline_factory import build_pipeline
 
 
 def _opportunity(tier: str = "ineligible_hold") -> RotationOpportunity:
@@ -127,13 +128,11 @@ class _ProtectionProbe:
 def _pipeline(tmp_path, *, enabled=True, precheck=None, protected=False):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
+    pipeline = build_pipeline(db=db, portfolio_manager=SimpleNamespace(
+        last_rotation_precheck=precheck if precheck is not None else _precheck(_opportunity()),
+    ))
     pipeline.config = SimpleNamespace(
         execution=SimpleNamespace(rotation_enabled=enabled),
-    )
-    pipeline.portfolio_manager = SimpleNamespace(
-        last_rotation_precheck=precheck if precheck is not None else _precheck(_opportunity()),
     )
     probe = _ProtectionProbe(protected=protected)
     pipeline._structural_protection_for_holding = probe
@@ -479,7 +478,7 @@ def test_held_symbol_bought_today_is_never_rotated(tmp_path):
     pipeline, db, probe = _pipeline(tmp_path)
     db.insert_trade(
         symbol="OLD", action="BUY", qty=10.0, price=100.0, reasoning="entry",
-        run_id="run-0", broker_order_id="ord-b", fill_status="filled",
+        run_id="run-0", broker_order_id="ord-b", fill_status="filled", stop_loss=90.0,
     )
     ctx = _ctx()
     decision = _decision(_buy_new())
@@ -972,12 +971,10 @@ def _refusal_precheck(point="book_not_constrained", **over):
 def _refusal_pipeline(tmp_path, precheck, *, enabled=False):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
+    pipeline = build_pipeline(db=db, portfolio_manager=SimpleNamespace(last_rotation_precheck=precheck))
     pipeline.config = SimpleNamespace(
         execution=SimpleNamespace(rotation_enabled=enabled),
     )
-    pipeline.portfolio_manager = SimpleNamespace(last_rotation_precheck=precheck)
     return pipeline, db
 
 

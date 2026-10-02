@@ -146,12 +146,6 @@ DONE WHEN:
   - [ ] half one is already DONE (2026-09-18): the ledger gate exists and the build fails on an unsourced trade-governing number. Its honest limit stands recorded — it proves a reason was WRITTEN, never that the reason is TRUE — and that limit is not something this item can close.
 detail: docs/board_notes/item-090.md
 
-**203. A provider success with no usable cost or token telemetry — carried over from item 147 (2026-09-30), zero occurrences measured across all of  as of that date.**
-
-DONE WHEN:
-  - [x] a success whose provider request DID happen but returned no usable token or cost telemetry is understood and either priced from a fallback source or proven free and excluded from unknown-cost counting, the same evidentiary standard item 147 set for cache hits.
-detail: docs/board_notes/item-203.md
-
 **177. Paid intraday tick: trigger, cadence and held-book context are ONE decision, filed 2026-09-23. Item 90 half two tranche one; do not re-file the pieces.** The trigger decides whether a tick is paid, the cadence how many, the held book what a paid one costs [measured 09-21/22; `docs/INCIDENT_HISTORY.md`].
 
 DONE WHEN:
@@ -193,7 +187,7 @@ DONE WHEN:
 
 detail: docs/board_notes/
 
-**201. The rest of the cancel+resubmit stop path — filed 2026-09-30 alongside the in-place amend fix. Detail: `docs/board_notes/` ("item 201"). OPEN: the conversions are in and the failure branch is honest, but no production evidence yet shows a two-leg amend landing.** The ex-dividend shift and the trailing re-price now share BOTH the measured-safe shape test and the failure classification, amend every resting leg in place, confirm each replacement id, and record the per-leg outcome as a durable row; a partial or an unanswered amend carries no order id, so nothing is written back and the owner is told. What still cancels then resubmits: a coverage-repairing FRACTIONAL quantity change (measured refused 2026-09-30), the stop-LIMIT fallback leg, a bracket/OTO child (UNMEASURED, not known-unamendable), and the lot-consolidating fallback, which is a design choice about per-lot levels rather than a broker limit.
+**201. The rest of the cancel+resubmit stop path — filed 2026-09-30 alongside the in-place amend fix. Detail: `docs/board_notes/` ("item 201"). OPEN: the conversions are in and the failure branch is honest, but no production evidence yet shows a two-leg amend landing.** The ex-dividend shift and the trailing re-price now share BOTH the measured-safe shape test and the failure classification, amend every resting leg in place, confirm each replacement id, and record the per-leg outcome as a durable row; a partial or an unanswered amend carries no order id, so nothing is written back and the owner is told. 2026-10-02: stop-LIMIT, bracket child and whole-share coverage repair now amend in place; a FRACTIONAL quantity change and lot consolidation still cancel, each recorded as a `stop_unprotected_window` row.
 
 DONE WHEN:
   - [x] each remaining cancel+resubmit stop path is either converted to an in-place amend, or documented as genuinely unable to amend — converted: `shift_stops_down`, and `replace_stop_loss`'s multi-leg case (9 of the 11 open positions are fractional and every one carries the two-leg hybrid pair) [measured 2026-10-01, production `quant_agent.db`, read-only]. Documented as unable: a FRACTIONAL quantity amend (measured refused), and the stop-LIMIT leg (a stop_price-only amend would leave its limit behind). Documented as NOT unable but deliberately kept on the fallback: the lot-consolidating replace, which is a choice about per-lot levels. Documented as UNMEASURED: a bracket/OTO child. The partial-sell reprotect is NOT in this item (branch `fix/reprotect-cancelled-id`)
@@ -208,7 +202,7 @@ DONE WHEN:
 
 detail: docs/board_notes/item-201.md
 
-**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
+**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30. EIGHT of nine boxes are ticked and no code fix remains; the only open box needs a production rehearsal run, which the desk being OFF blocks. Do not dispatch build work on this item.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. 2026-10-02: the wall itself was sealed against six more routes (UDP, async/raw libcurl, curl subprocess, DNS). Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
 
 DONE WHEN:
   - [x] 2026-10-01 the run reaches the Portfolio Manager OFFLINE.

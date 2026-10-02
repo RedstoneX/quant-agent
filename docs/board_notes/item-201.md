@@ -23,3 +23,16 @@ Five assumptions that are NOT established, each named at the code that rests on 
 Open. No production evidence yet shows both hybrid legs amending. It cannot be produced by a desk session (placing a broker order is forbidden) and no amend outcome was ever recorded before this change. Waiting on an ex-dividend was an unbounded wait — 0 of the 80 production trades between 2026-09-02 and 2026-09-30 were ex-dividend shifts — so the trailing path records the same per-leg row on every re-price, and the closing condition is a `stop_shift_legs` row with one whole-share and one sub-share leg, both amended, with distinct replacement ids.
 
 
+
+
+### 2026-10-02: the four remaining paths, settled
+
+- Stop-LIMIT leg: CAN amend. The replace request takes `limit_price` beside `stop_price`, so the leg now amends both and keeps its own limit distance from the trigger. UNMEASURED against the broker as a combined amend; a refusal leaves the original resting.
+- Bracket/OTO child: CAN be attempted. Settled from the library, not the broker: one `PATCH /orders/{id}` serves every order and `ReplaceOrderRequest` excludes no class (`stop_price` is "required if type of order being replaced is stop or stop_limit"). Cancelling a child would also pull its OCO sibling, so a refusal (original left resting) is strictly safer. Only a PARENT carrying `legs` still goes to the fallback. Still unmeasured; no desk code submits a bracket.
+- Coverage repair: a WHOLE-share quantity change on one leg now amends quantity and price together in place (whole-share quantity amend measured working 2026-09-30). A FRACTIONAL quantity change genuinely cannot (measured refused 2026-09-30) and stays on cancel+resubmit.
+- Every remaining cancel+resubmit is timed and written as a `stop_unprotected_window` row (reason, cancelled ids, seconds, outcome) and logged as a warning, so the window is counted. Reasons: `fractional_quantity_change`, `lot_consolidation`, `unamendable_shape`, `quantity_change_not_amendable`, `position_unread`, `stop_unreadable`.
+- Not done: the post-cancel position re-read is kept inside the window on purpose (it stops a phantom stop being re-attached to a closed position); dropping it would shorten the window by one round trip at that cost.
+
+Lot-consolidating fallback (design choice, behaviour NOT changed). When several stop legs do not sum to the position, the fallback cancels every leg and resubmits one stop at the single new level. It costs two things: it collapses per-lot levels (can tighten a lot the desk chose to keep wide) and it opens a window across ALL legs, not one. Recommendation: repair the shortfall by adding a stop for the missing quantity (no cancel) and amend the existing legs at their own levels, so geometry and protection both survive; that needs an owner ruling because it changes what a consolidating replace means.
+
+Still open: no production row shows a two-leg amend landing (desk is off); that box stays unticked.

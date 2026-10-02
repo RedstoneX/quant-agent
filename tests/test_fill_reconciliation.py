@@ -20,7 +20,7 @@ def test_insert_trade_with_broker_order_id_sets_submitted_status(tmp_path):
         symbol="NVDA", action="BUY", qty=10, price=100.0,
         reasoning="test", run_id="r1",
         broker_order_id="ord-abc-123",
-        fill_status="submitted",
+        fill_status="submitted", stop_loss=90.0,
     )
     assert row_id > 0
 
@@ -37,7 +37,7 @@ def test_update_trade_fill_marks_row_reconciled(tmp_path):
     db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.0,
         reasoning="test", run_id="r1",
-        broker_order_id="ord-1", fill_status="submitted",
+        broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
     )
 
     n = db.update_trade_fill(
@@ -65,7 +65,7 @@ def test_get_symbol_last_buy_ignores_canceled_buys(tmp_path):
     db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.0,
         reasoning="never filled", run_id="r1",
-        broker_order_id="ord-bad", fill_status="submitted",
+        broker_order_id="ord-bad", fill_status="submitted", stop_loss=90.0,
     )
     db.update_trade_fill(broker_order_id="ord-bad", fill_status="canceled")
 
@@ -81,7 +81,7 @@ def test_legacy_null_fill_status_treated_as_filled(tmp_path):
     # Insert a row without broker_order_id / fill_status — simulates legacy
     db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.0,
-        reasoning="legacy", run_id="r1",
+        reasoning="legacy", run_id="r1", stop_loss=90.0,
     )
     row = db.get_symbol_last_buy("NVDA")
     assert row is not None
@@ -100,7 +100,7 @@ def test_executed_only_excludes_hold_audit_rows(tmp_path):
     db.insert_trade(
         symbol="AAPL", action="BUY", qty=10.0, price=180.0,
         reasoning="filled buy", run_id="r1",
-        broker_order_id="ord-buy", fill_status="filled",
+        broker_order_id="ord-buy", fill_status="filled", stop_loss=90.0,
     )
 
     rows = db.get_trades(symbol="AAPL", executed_only=True)
@@ -118,7 +118,7 @@ def test_reconcile_fills_updates_filled_orders(tmp_path):
     db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.0,
         reasoning="test", run_id="r1",
-        broker_order_id="ord-1", fill_status="submitted",
+        broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
     )
 
     broker = MagicMock()
@@ -152,7 +152,7 @@ def test_reconcile_fills_flags_canceled_orders(tmp_path):
     db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.0,
         reasoning="stale limit", run_id="r1",
-        broker_order_id="ord-2", fill_status="submitted",
+        broker_order_id="ord-2", fill_status="submitted", stop_loss=90.0,
     )
 
     broker = MagicMock()
@@ -177,7 +177,7 @@ def test_reconcile_fills_preserves_partial_terminal_fill(tmp_path):
     db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.0,
         reasoning="partially filled then canceled", run_id="r1",
-        broker_order_id="ord-partial", fill_status="submitted",
+        broker_order_id="ord-partial", fill_status="submitted", stop_loss=90.0,
     )
 
     broker = MagicMock()
@@ -210,7 +210,7 @@ def test_reconcile_fills_leaves_non_terminal_for_next_pass(tmp_path):
     db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.0,
         reasoning="still pending", run_id="r1",
-        broker_order_id="ord-3", fill_status="submitted",
+        broker_order_id="ord-3", fill_status="submitted", stop_loss=90.0,
     )
 
     broker = MagicMock()
@@ -413,7 +413,7 @@ def test_compute_trade_calibration_excludes_unfilled(tmp_path):
 
     # Filled pair: won + lost (FIFO)
     db.insert_trade("NVDA", "BUY", 10, 100.0, "x", "r1",
-                    broker_order_id="buy-1", fill_status="filled")
+                    broker_order_id="buy-1", fill_status="filled", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE broker_order_id='buy-1'"
     )
@@ -427,12 +427,12 @@ def test_compute_trade_calibration_excludes_unfilled(tmp_path):
 
     # Another pair, but canceled - should NOT appear in stats
     db.insert_trade("AAPL", "BUY", 10, 200.0, "x", "r1",
-                    broker_order_id="buy-2", fill_status="canceled")
+                    broker_order_id="buy-2", fill_status="canceled", stop_loss=90.0)
     db.insert_trade("AAPL", "SELL", 10, 190.0, "x", "r2",
                     broker_order_id="sell-2", fill_status="canceled")
 
     # Third pair with legacy NULL fill_status — treated as filled
-    db.insert_trade("JPM", "BUY", 5, 180.0, "x", "r1")
+    db.insert_trade("JPM", "BUY", 5, 180.0, "x", "r1", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-7 days') WHERE symbol='JPM' AND action='BUY'"
     )
@@ -445,7 +445,7 @@ def test_compute_trade_calibration_excludes_unfilled(tmp_path):
 
     # Fourth pair filled — calibration needs ≥3 closed trades to report.
     db.insert_trade("MSFT", "BUY", 10, 300.0, "x", "r1",
-                    broker_order_id="buy-3", fill_status="filled")
+                    broker_order_id="buy-3", fill_status="filled", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-12 days') WHERE broker_order_id='buy-3'"
     )
@@ -472,7 +472,7 @@ def test_compute_trade_calibration_counts_reduce_and_take_profit(tmp_path):
 
     # BUY 10 @ 100, then partial TAKE_PROFIT 3 @ 110 (+10% on 3 shares)
     db.insert_trade("AAPL", "BUY", 10, 100.0, "x", "r1",
-                    broker_order_id="b1", fill_status="filled")
+                    broker_order_id="b1", fill_status="filled", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE broker_order_id='b1'"
     )
@@ -484,7 +484,7 @@ def test_compute_trade_calibration_counts_reduce_and_take_profit(tmp_path):
 
     # BUY 5 @ 200, then midday REDUCE 5 @ 220 (full trim, +10%)
     db.insert_trade("MSFT", "BUY", 5, 200.0, "x", "r1",
-                    broker_order_id="b2", fill_status="filled")
+                    broker_order_id="b2", fill_status="filled", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-8 days') WHERE broker_order_id='b2'"
     )
@@ -496,7 +496,7 @@ def test_compute_trade_calibration_counts_reduce_and_take_profit(tmp_path):
 
     # BUY 4 @ 50, full SELL at 55 — third pair to cross the n>=3 threshold
     db.insert_trade("JPM", "BUY", 4, 50.0, "x", "r1",
-                    broker_order_id="b3", fill_status="filled")
+                    broker_order_id="b3", fill_status="filled", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-7 days') WHERE broker_order_id='b3'"
     )
@@ -525,7 +525,7 @@ def _insert_orphan(db: Database, *, symbol="NVDA", qty=10, age_seconds=3600) -> 
     row_id = db.insert_trade(
         symbol=symbol, action="BUY", qty=qty, price=100.0,
         reasoning="write-ahead intent", run_id="r-old",
-        broker_order_id=None, fill_status="pending_submit",
+        broker_order_id=None, fill_status="pending_submit", stop_loss=90.0,
     )
     db.execute(
         "UPDATE trades SET timestamp = datetime('now', ?) WHERE id = ?",
@@ -549,17 +549,17 @@ def test_get_orphaned_pending_submits_age_gate(tmp_path):
     # Fresh pending_submit (same-process in-flight) — must be EXCLUDED.
     fresh = db.insert_trade(
         symbol="AAPL", action="BUY", qty=5, price=10.0, reasoning="x",
-        run_id="r1", broker_order_id=None, fill_status="pending_submit",
+        run_id="r1", broker_order_id=None, fill_status="pending_submit", stop_loss=90.0,
     )
     # A normal submitted row + a pending_submit that DID get an id —
     # neither is an orphan.
     db.insert_trade(
         symbol="MSFT", action="BUY", qty=5, price=10.0, reasoning="x",
-        run_id="r1", broker_order_id="ord-1", fill_status="submitted",
+        run_id="r1", broker_order_id="ord-1", fill_status="submitted", stop_loss=90.0,
     )
     db.insert_trade(
         symbol="JPM", action="BUY", qty=5, price=10.0, reasoning="x",
-        run_id="r1", broker_order_id="ord-2", fill_status="pending_submit",
+        run_id="r1", broker_order_id="ord-2", fill_status="pending_submit", stop_loss=90.0,
     )
     assert db.get_orphaned_pending_submits() == []
 
@@ -694,7 +694,7 @@ def test_submit_failed_row_is_invisible_to_orphan_sweep(tmp_path):
     hidden_id = db.insert_trade(
         symbol="NVDA", action="BUY", qty=10, price=100.0,
         reasoning="simulating old mark-on-exception behavior",
-        run_id="r-old", broker_order_id=None, fill_status="submit_failed",
+        run_id="r-old", broker_order_id=None, fill_status="submit_failed", stop_loss=90.0,
     )
     # Backdate so it would clear the age gate if it were eligible.
     db.execute(

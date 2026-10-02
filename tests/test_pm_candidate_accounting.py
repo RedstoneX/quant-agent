@@ -42,6 +42,7 @@ from src.pm_accounting import (
     plain_reason,
 )
 from src.refusal_signature import signature_key
+from tests.pipeline_factory import build_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +98,7 @@ def _pipeline(decide_returns):
     """
     from src.pipeline import TradingPipeline
 
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.db = MagicMock()
+    p = build_pipeline(db=MagicMock())
     p.db.get_latest_insights.return_value = None
     p._sweeper = MagicMock(return_value=None)
     for name in ("_compute_recent_performance", "_build_position_history"):

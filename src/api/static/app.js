@@ -1485,7 +1485,34 @@ async function loadMutedBacklog() {
 /* Orchestration                                                           */
 /* ---------------------------------------------------------------------- */
 
+/* Pruning pass panel (item 219): every held name reviewed, verdict and reason. */
+async function loadPruning() {
+  const body = document.querySelector("#panel-pruning [data-body]");
+  try {
+    const data = await fetchJSON("/pruning-passes");
+    body.replaceChildren();
+    body.appendChild(el("div", { className: "dim", text: data.note }));
+    data.passes.forEach((p) => {
+      body.appendChild(el("h3", { text: `Run ${p.run_id} - ${p.recorded_at || ""} - examined ${p.examined_count}` }));
+      p.lines.forEach((line) => body.appendChild(el("div", { className: "rotation-line", text: line })));
+      const rows = p.verdicts.map((v) =>
+        el("tr", {}, [
+          el("td", { text: v.symbol }),
+          el("td", { text: v.verdict.replace(/_/g, " ") }),
+          el("td", { text: v.reason }),
+        ])
+      );
+      if (rows.length) body.appendChild(el("table", {}, rows));
+    });
+    setPanelState("panel-pruning", "ok", "ok");
+  } catch (err) {
+    showMessage(body, `Could not load the pruning passes: ${err.message}`, true);
+    setPanelState("panel-pruning", "error", "unreachable");
+  }
+}
+
 function refreshAll() {
+  loadPruning();
   loadAccount();
   loadPositions();
   loadOrders();

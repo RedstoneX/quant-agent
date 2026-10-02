@@ -19,8 +19,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 def _pipeline(
@@ -32,8 +32,7 @@ def _pipeline(
     symbol="VST",
     last_buy=None,
 ):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock(), db=MagicMock())
     p.broker.get_positions.return_value = [
         MagicMock(symbol=symbol, qty=held_qty),
     ]
@@ -42,7 +41,6 @@ def _pipeline(
     )
     p.broker.get_latest_price.return_value = price
     p.broker.STOP_LIMIT_BUFFER_PCT = 0.03
-    p.db = MagicMock()
     p.db.get_pending_protection_restores.return_value = []
     if last_buy is not None:
         p.db.get_symbol_last_buy.side_effect = last_buy
@@ -306,14 +304,12 @@ def test_naked_short_repair_through_a_real_short_row(tmp_path):
         reasoning="opened short", run_id="r1", stop_loss=220.0,
         fill_status="filled",
     )
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock()
+    p = build_pipeline(broker=MagicMock(), db=db)
     p.broker.get_positions.return_value = [MagicMock(symbol="TSLA", qty=-40.0)]
     p.broker.snapshot_protective_stops.return_value = (True, [])
     p.broker.get_latest_price.return_value = 200.0
     p.broker.STOP_LIMIT_BUFFER_PCT = 0.03
     p.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-1"}
-    p.db = db
     p.cash_sweeper = None
     gaps = p._reconcile_stop_coverage()
     assert len(gaps) == 1 and gaps[0]["repaired"] is True
@@ -743,8 +739,8 @@ def test_the_worst_elected_trigger_is_the_one_reported(shared_marker):
 
 
 def _evening_pipeline(qty, price, stop, atr=2.0):
-    p = TradingPipeline.__new__(TradingPipeline)
-    p.broker = MagicMock(); p.db = MagicMock()
+    p = build_pipeline(broker=MagicMock())
+    p.db = MagicMock()
     p.broker.get_current_stop_price.return_value = stop
     p._sweep_symbol = lambda: None
     p._atr_for_symbol = lambda _sym: atr

@@ -2649,11 +2649,11 @@ def test_replace_stop_loss_refused_amend_leaves_original_resting(mock_tc_cls):
 
 
 @patch("src.execution.broker.TradingClient")
-def test_replace_stop_loss_falls_back_for_bracket_leg(mock_tc_cls):
-    """A bracket/OTO leg was never measured, so it keeps the old
-    cancel+resubmit path rather than being amended blind."""
+def test_replace_stop_loss_falls_back_for_bracket_parent_with_legs(mock_tc_cls):
+    """A bracket/OTO PARENT (it carries `legs`) is not a stop and is never
+    amended; it keeps the cancel+resubmit path."""
     leg = _plain_resting_stop()
-    leg.order_class = "bracket"
+    leg.order_class, leg.legs = "bracket", [object()]
 
     new_order = MagicMock()
     new_order.id = "new-stop"
