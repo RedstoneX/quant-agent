@@ -33,7 +33,7 @@ bindings:
     code:
       - file: src/risk/metrics.py
         symbol: drift_flag
-      - file: src/agents/portfolio_manager.py
+      - file: src/agents/portfolio_manager/__init__.py
         symbol: PortfolioManagerAgent._fmt_position
     prose:
       - file: config/prompts/position_reviewer.md
