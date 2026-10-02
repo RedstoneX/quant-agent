@@ -650,12 +650,12 @@ def test_no_stop_at_all_outranks_stop_unreadable_in_every_renderer():
     """
     import inspect
 
-    from src import pipeline as _pipeline
+    from src.protection import owner_alerts as _owner_alerts
 
     sources = {
         "notifier": inspect.getsource(notifier._append_coverage_gap_banner),
         "feed": inspect.getsource(trader_feed._append_coverage_gaps),
-        "alert": inspect.getsource(_pipeline.TradingPipeline._alert_owner_no_stop),
+        "alert": inspect.getsource(_owner_alerts.OwnerAlerts._alert_owner_no_stop),
         "text": inspect.getsource(coverage_watchdog.unreadable_stop_text),
     }
     for name in ("notifier", "feed", "alert"):

@@ -4342,10 +4342,10 @@ numbers:
       swing-low must also break) under the owner mandate 2026-09-24 trend-scaled
       exit; below it, the default two-close floor. The only ADX threshold used —
       Wilder's published value, not a discretionary pick.
-  - id: src.risk.exit_guard._NEGATION_LOOKBACK_CHARS
+  - id: src.risk.exit_guard_claims._NEGATION_LOOKBACK_CHARS
     value: 40
     status: not-trade-governing
-    site: src/risk/exit_guard.py
+    site: src/risk/exit_guard_claims.py
     note: >-
       A character window for string matching inside the exit-reason phrase
       check. It parses English, not price.
