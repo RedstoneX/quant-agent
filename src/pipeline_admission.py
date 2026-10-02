@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable
 from datetime import date
 
-from src.execution.broker import _get_sector
+from src.sector_reference import _get_sector
 from src.models import TechAnalysisResult, TradeDecision
 from src.ports.event_journal import EventJournal
 from src.quantities import avg_dollar_volume
@@ -205,7 +205,7 @@ class AdmissionService:
     def _universe_screen_sources(self, deadline: float, listed: dict | None = None):
         """The screen's read path: broker asset directory, yfinance bars and
         company profile, SEC filing history. Every source is read-only."""
-        from src.execution.broker import _canonicalize_sector
+        from src.sector_reference import _canonicalize_sector
         from src.universe_screen import HISTORY_FETCH_DAYS, ScreenSources
 
         def _profile(symbol: str):
