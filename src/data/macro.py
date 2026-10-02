@@ -11,6 +11,7 @@ from fredapi import Fred
 from src.data.fred_publication_days import roll_to_publication_day
 from src.data.macro_series_cache import MacroSeriesCache
 from src.trading_calendar import et_now, et_today
+from src.data.macro_coverage_views import STALE_PREFIX, split_failed, stale_prompt_text, stamp_note
 from src.data.macro_cache_serve import serve_from_cache, serve_last_good
 
 logger = logging.getLogger(__name__)
@@ -336,10 +337,7 @@ class MacroCoverage:
         state = {"ok": "complete", "partial": "partial", "failed": "failed"}[self.status]
         if state == "complete":
             return state, ""
-        names = ", ".join(f.series_id for f in self.failed)
-        return state, (
-            f"{self.succeeded}/{self.configured} FRED series; missing: {names}"
-        )
+        return state, stamp_note(self.succeeded, self.configured, self.failed)
 
     def describe(self) -> str:
         """Human-readable one-liner for the macro analyst's prompt and log
@@ -363,7 +361,8 @@ class MacroCoverage:
                 f"Macro coverage: {self.succeeded}/{self.configured} FRED "
                 f"series returned data. Full coverage." + overdue_text
             )
-        names = ", ".join(f"{f.series_id} ({f.reason})" for f in self.failed)
+        stale, missing = split_failed(self.failed)
+        names = ", ".join(f"{f.series_id} ({f.reason})" for f in missing)
         # A series that was never asked is called out separately from one
         # that was asked and failed (board item 119). Both are holes, but
         # only the first says the desk ran out of budget before its turn —
@@ -379,10 +378,11 @@ class MacroCoverage:
             )
         return (
             f"Macro coverage: {self.succeeded}/{self.configured} FRED series "
-            f"returned data this run. FAILED: {names}. Treat this as a "
+            f"returned fresh data this run. MISSING (no value at all): "
+            f"{names or 'none'}. Treat missing as a "
             f"coverage GAP, not a confirmed reading — a missing indicator is "
             f"not evidence that indicator is calm."
-            + unattempted_text + overdue_text
+            + stale_prompt_text(stale) + unattempted_text + overdue_text
         )
 
 
@@ -698,7 +698,7 @@ class MacroDataProvider:
         is never `complete` and the seat is told the value is old."""
         series, age_days = last
         self._note_coverage(series_id, ok=False, reason=(
-            f"stale_last_good_served_age_{age_days}d_after:{failure_reason}"))
+            f"{STALE_PREFIX}{age_days}d_after:{failure_reason}"))
         self._record_freshness(series_id, series)
         return series
 

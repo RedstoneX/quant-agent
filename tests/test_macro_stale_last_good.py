@@ -56,8 +56,8 @@ def test_incomplete_set_is_visible_to_consumers_and_counted(fred_cls, _s, tmp_pa
     cov = MacroCoverage(configured=p._run_configured, succeeded=p._run_succeeded,
                         failed=list(p._run_failed))
     assert not cov.complete and cov.status == "failed"
-    assert "stale_last_good_served_age_3d" in cov.describe()
-    assert "VIXCLS" in cov.verdict_stamp()[1]
+    assert "3d old" in cov.describe()
+    assert "VIXCLS" in cov.verdict_stamp()[1] and "MISSING" not in cov.verdict_stamp()[1]
     row = build_row(1, cov, None)  # the counted durable row
     assert row["full_coverage"] == 0 and "VIXCLS" in row["series_failed"]
 
@@ -68,3 +68,40 @@ def test_prefetch_mode_never_serves_stale(fred_cls, tmp_path):
     _seed(cache, "VIXCLS", {}, 5)
     p._prefetch_mode = True
     assert len(p._safe_get_series("VIXCLS")) == 0
+
+
+def _cov(p):
+    from src.data.macro import MacroCoverage
+    return MacroCoverage(configured=2, succeeded=0, failed=list(p._run_failed))
+
+
+@patch("src.data.macro.time.sleep")
+@patch("src.data.macro.Fred")
+def test_stale_served_is_not_missing_in_stamp_prompt_or_row(fred_cls, _s, tmp_path):
+    p, _f, cache = _provider(tmp_path, fred_cls, TimeoutError("fetch_deadline_exceeded"))
+    _seed(cache, "VIXCLS", {}, 4)
+    p._safe_get_series("VIXCLS")
+    cov = _cov(p)
+    note = cov.verdict_stamp()[1]
+    assert "STALE" in note and "VIXCLS" in note and "4d" in note
+    assert "MISSING" not in note
+    text = cov.describe()
+    assert "MISSING (no value at all): none" in text
+    assert "VIXCLS (last-good value, 4d old)" in text
+    import json
+    entry = json.loads(build_row(1, cov, None)["series_failed"])[0]
+    assert entry["state"] == "stale" and entry["age_days"] == 4
+
+
+@patch("src.data.macro.time.sleep")
+@patch("src.data.macro.Fred")
+def test_absent_series_is_missing_in_stamp_prompt_and_row(fred_cls, _s, tmp_path):
+    p, _f, _c = _provider(tmp_path, fred_cls, TimeoutError("fetch_deadline_exceeded"))
+    p._safe_get_series("VIXCLS")
+    cov = _cov(p)
+    note = cov.verdict_stamp()[1]
+    assert "MISSING (no value): VIXCLS" in note and "STALE" not in note
+    assert "MISSING (no value at all): VIXCLS" in cov.describe()
+    import json
+    entry = json.loads(build_row(1, cov, None)["series_failed"])[0]
+    assert "state" not in entry and "age_days" not in entry
