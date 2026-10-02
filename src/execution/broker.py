@@ -27,7 +27,8 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
-from src.models import Position, _ALLOWED_SECTORS, _SECTOR_ALIASES
+from src.models import Position
+from src import sector_reference as _sector_reference
 # THE stop-value judgement (docs/WORK.md item 88). `src.execution.stop_records`
 # imports nothing from this module, so this is a leaf dependency.
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
@@ -35,12 +36,14 @@ from src.execution.broker_parts.stop_amend import (  # noqa: F401 (re-exports ke
     StopAmender, _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
 )
 from src.execution.broker_parts.stop_place import (  # noqa: F401 (re-exports keep patch targets)
-    StopPlacer, _STOP_PLACEMENT_MAX_ATTEMPTS, _STOP_PLACEMENT_BACKOFF_S, _FRACTIONAL_QTY_EPSILON, PROTECTIVE_ORDER_ACTIVE_STATUSES, _is_held_for_orders_error, _is_unsupported_stop_market_rejection, _split_protective_qty, _derive_stop_tif, _alpaca_symbol, _internal_symbol, real_broker_order_id,
+    StopPlacer, PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES, PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES, _STOP_PLACEMENT_MAX_ATTEMPTS, _STOP_PLACEMENT_BACKOFF_S, _FRACTIONAL_QTY_EPSILON, PROTECTIVE_ORDER_ACTIVE_STATUSES, _is_held_for_orders_error, _is_unsupported_stop_market_rejection, _split_protective_qty, _derive_stop_tif, _alpaca_symbol, _internal_symbol, real_broker_order_id,
 )
 from src.execution.broker_parts.order_desk import (  # noqa: F401 (re-exports keep patch targets)
     OrderDesk, _PLAIN_PRICE_LABELS, _outlier_refusal_detail, _is_terminal_submission_rejection,
 )
 from src.execution.broker_parts.account_reads import AccountReads
+from src.execution.order_gates import BadOrderQuantity, QTY_REJECTED, check_order_quantity  # noqa: F401 (re-exports keep patch targets)
+from src.execution.order_idempotency import _client_order_id, _is_dead_stop_result, _session_date_key  # noqa: F401 (re-exports keep patch targets)
 from src.execution.broker_parts.trade_stream import (  # noqa: F401 (re-exports keep patch targets)
     TradeStreamAuthRejected, TradeStreamGaveUp, TradeStreamWarmup, _ALPACA_STREAM_AUTH_DEADLINE_S,
     _ALPACA_STREAM_RECONNECT_MAX_S, _ALPACA_STREAM_RECONNECT_MIN_S, _HubWaiter,
@@ -68,39 +71,7 @@ logger = logging.getLogger(__name__)
 # The trade_updates stream plumbing moved to src/execution/broker_parts/trade_stream.py (re-exported above).
 
 
-# Index ETFs that have no single sector — bucket them as "Broad".
-_INDEX_ETFS = {"SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "IVV"}
-
-# Sector / thematic ETFs → their canonical sector bucket.
-#
-# WHY (2026-07-16 audit): yfinance's `.info` carries no `sector` key for ETFs,
-# so _get_sector fell through to "Unknown" for every one of them. Two silent
-# failures followed: (1) `max_sector_pct` is gated on `new_sector != "Unknown"`
-# (risk/rules.py), so a BUY of XLV/SMH/... skipped the sector cap ENTIRELY;
-# (2) a held ETF carries sector="Unknown", so it contributed $0 to the sector
-# bucket of a same-sector single name — a book that is 30% XLV would let an
-# LLY BUY through as if Healthcare exposure were zero. Both directions of the
-# cap were dead for these symbols despite the universe being ~20% ETFs.
-#
-# Deterministic table, consulted BEFORE the network fetch: an ETF's sector is
-# a fact about the product, not something to rediscover per process.
-_ETF_SECTORS = {
-    # SPDR sector suite
-    "XLF": "Financial Services", "XLE": "Energy", "XLV": "Healthcare",
-    "XLI": "Industrials", "XLP": "Consumer Defensive", "XLY": "Consumer Cyclical",
-    "XLU": "Utilities", "XLRE": "Real Estate", "XLB": "Basic Materials",
-    "XLK": "Technology", "XLC": "Communication Services",
-    # Semiconductor / AI thematics
-    "SMH": "Technology", "SOXX": "Technology", "DRAM": "Technology",
-    "CHPX": "Technology",
-    # Inverse / leveraged index ETFs track a BROAD index — they have no sector
-    # of their own. (Their leverage is handled separately by the signed/gross
-    # multipliers in risk/rules.py.)
-    "SH": "Broad", "SDS": "Broad", "PSQ": "Broad", "SQQQ": "Broad",
-}
-
 # `_BROKER_HTTP_TIMEOUT` moved to src/execution/broker_parts/market_data.py (re-exported above).
-_SECTOR_LOOKUP_TIMEOUT_S = 10  # per-symbol ceiling on yfinance .info hang in _get_sector
 
 # 2026-09-10: 15 -> 30 -> 90. `wait_for_order_terminal` now watches Alpaca's
 # real-time trade_updates stream first (see that method) — a fill is
@@ -156,166 +127,6 @@ _ENTRY_FILL_TIMEOUT_S = 90.0
 
 # `_install_http_timeout` moved to src/execution/broker_parts/market_data.py (re-exported above).
 
-# Cache sector lookups to avoid repeated API calls
-_sector_cache: dict[str, str] = {}
-_sector_lock = threading.Lock()
-
-# WHY (2026-09-01 audit): a symbol whose sector never resolves reads
-# identically to one with no exception at all — both come back "Unknown"
-# from `_get_sector` with no further detail. That is fine for the two
-# existing consumers (they only needed a sector string), but it is not
-# enough for an owner-facing alert: "the network is having a bad day, this
-# will self-heal" and "this instrument has no sector to find" are different
-# situations and should not read the same. Best-effort, advisory only —
-# NOT part of the caching contract above (an unresolved symbol is still
-# never cached; see `_get_sector`'s docstring), keyed the same way as
-# `_sector_cache`, and simply absent/stale when `_get_sector` itself is
-# mocked out wholesale (tests) — `_sector_resolution_status_for` defaults
-# to "unknown_reason" rather than guessing.
-_sector_resolution_status: dict[str, str] = {}
-
-
-def _sector_resolution_status_for(symbol: str) -> str:
-    """Best-effort reason the last `_get_sector(symbol)` call in THIS
-    process came back "Unknown". One of:
-
-      "resolved"       - moot; the symbol has a real sector.
-      "lookup_failed"  - network error, timeout, or an empty response with
-                          no error — yfinance returning nothing for a real
-                          symbol is usually transient (see
-                          test_sector_canonicalization.py). Will retry.
-      "no_sector"      - the fetch itself succeeded and returned real data,
-                          just no `sector` field — this symbol may
-                          genuinely be unclassifiable (e.g. an ETF outside
-                          `_ETF_SECTORS`), not a network problem.
-      "unknown_reason" - no attempt recorded yet for this symbol in this
-                          process (fresh process, or a test/caller mocked
-                          `_get_sector` directly instead of going through
-                          the real fetch below).
-    """
-    with _sector_lock:
-        return _sector_resolution_status.get(symbol, "unknown_reason")
-
-
-def _canonicalize_sector(raw: str | None) -> str:
-    """Normalize yfinance / LLM sector strings to the 12-value canonical enum.
-
-    Returns "Unknown" for anything that can't be mapped — callers must decide
-    whether to skip or fall back. The MacroAnalysis pydantic model uses the
-    same alias table to self-heal LLM output.
-    """
-    if not raw:
-        return "Unknown"
-    s = str(raw).strip()
-    if s in _ALLOWED_SECTORS:
-        return s
-    canon = _SECTOR_ALIASES.get(s.lower())
-    if canon in _ALLOWED_SECTORS:
-        return canon
-    return "Unknown"
-
-
-def _get_sector(symbol: str) -> str:
-    """Look up sector for a symbol using yfinance. Thread-safe, cached per process.
-
-    Output is canonicalized to the 12-value MacroSectorGuidance enum (or "Unknown"
-    for un-classifiable names), so macro sector_guidance and position.sector share
-    a namespace.
-
-    Caching policy: only KNOWN sectors are cached. "Unknown" is returned but
-    NOT cached, so a transient yfinance outage gets re-diagnosed on every
-    call instead of freezing a stale verdict. Codex r11 P1: a one-shot
-    lookup miss in --mode live used to leave the symbol cap-exempt until
-    process restart. Re-querying yfinance on every call for an unresolved
-    symbol is a small overhead vs. silently disabling a hard risk rule.
-
-    2026-09-01 audit: "Unknown" used to mean EXEMPT from
-    `RiskRuleEngine.check`'s sector cap (rule 5 skipped the check outright).
-    80 of 101 universe symbols depend on this lookup with no offline
-    fallback, so a network blip silently switched the sector cap off for
-    most of the book. The gate now pools "Unknown" like any other sector
-    (`sector_side_gross(..., include_unknown=True)`) and checks it against
-    the same soft/hard cap pair instead of skipping it — see
-    `_sector_resolution_status_for` below for WHY a given call came back
-    "Unknown", which the gate surfaces as an owner-visible alert.
-    """
-    # _sector_lock guards ONLY the cache dict — never a network call.
-    # audit F3: the old code held _sector_lock for the entire function
-    # including the yfinance fetch, so one stuck symbol froze every
-    # sector lookup process-wide (risk/position sizing all serialize
-    # through _get_sector).
-    with _sector_lock:
-        cached = _sector_cache.get(symbol)
-    if cached is not None:
-        return cached
-    if symbol.upper() in _INDEX_ETFS:
-        with _sector_lock:
-            _sector_cache[symbol] = "Broad"
-        return "Broad"
-    # Sector/thematic ETFs: yfinance .info has no `sector` for ETFs, so
-    # without this table they resolve to "Unknown" and silently switch the
-    # sector cap OFF (see _ETF_SECTORS). Deterministic, offline, before the fetch.
-    etf_sector = _ETF_SECTORS.get(symbol.upper())
-    if etf_sector is not None:
-        with _sector_lock:
-            _sector_cache[symbol] = etf_sector
-        return etf_sector
-
-    # Set from inside the worker thread when the fetch itself raises — read
-    # back on the calling thread only after `.result()` returns (timeout
-    # aside, where we already know the answer without consulting this).
-    # Best-effort/advisory like the status table it feeds; not a
-    # correctness dependency of the timeout/lock guarantees below.
-    fetch_error = {"raised": False}
-
-    def _fetch():
-        try:
-            return yf.Ticker(symbol).info or {}
-        except Exception as e:
-            logger.warning("yfinance sector fetch raised for %s: %s", symbol, e)
-            fetch_error["raised"] = True
-            return {}
-
-    # yfinance .info has no hard upper bound — a stuck socket can hang
-    # for far longer than _SECTOR_LOOKUP_TIMEOUT_S. audit F3: do NOT use
-    # `with ThreadPoolExecutor(...)`; its __exit__ calls
-    # shutdown(wait=True), which re-blocks on the hung worker after the
-    # .result() timeout fires, making the ceiling illusory.
-    # shutdown(wait=False, cancel_futures=True) returns immediately. A
-    # still-running fetch leaks one worker thread — accepted vs. the
-    # prior behaviour of stalling the whole session.
-    ex = ThreadPoolExecutor(max_workers=1)
-    timed_out = False
-    try:
-        info = ex.submit(_fetch).result(timeout=_SECTOR_LOOKUP_TIMEOUT_S)
-    except FuturesTimeout:
-        logger.warning("yfinance sector lookup timed out for %s", symbol)
-        info = {}
-        timed_out = True
-    finally:
-        ex.shutdown(wait=False, cancel_futures=True)
-
-    raw = info.get("sector", "") if isinstance(info, dict) else ""
-    canonical = _canonicalize_sector(raw)
-    if canonical != "Unknown":
-        with _sector_lock:
-            _sector_cache[symbol] = canonical
-        return canonical
-
-    # Unresolved. Record WHY — never cached (see docstring above), same as
-    # the "Unknown" return itself, so a self-heal on the next call is
-    # re-diagnosed fresh rather than repeating a stale verdict.
-    # `not info` (fetch technically completed, no exception, but returned
-    # nothing) is bucketed with "lookup_failed": per
-    # test_sector_canonicalization.py's own finding, an empty response for
-    # a real symbol is usually transient, not proof the symbol lacks a
-    # sector. "no_sector" is reserved for a fetch that came back with real
-    # data and simply had no `sector` field in it.
-    status = "lookup_failed" if (timed_out or fetch_error["raised"] or not info) else "no_sector"
-    with _sector_lock:
-        _sector_resolution_status[symbol] = status
-    return canonical
-
 
 #: Entry sides `place_entry_protection` will derive a protective side from.
 #: Anything else is refused rather than guessed — see the fail-closed note in
@@ -324,18 +135,7 @@ _ENTRY_SIDES = frozenset({"buy", "sell", "sell_short"})
 
 # `PROTECTIVE_ORDER_ACTIVE_STATUSES` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
-#: Broker order states in which an order has been ACCEPTED BY US to the
-#: broker but is not yet working on the book. Alpaca's own enum names them:
-#: `pending_new` (received, not yet routed) and `accepted_for_bidding`.
-#:
-#: These are deliberately NOT in the set above. That set answers "is this
-#: resting order real protection right now?" and its reader
-#: (`replace_stop_loss`'s failure path) is looking at the AGED order book —
-#: an order that has been sitting there and is still `pending_new` is a
-#: stuck order, not coverage.
-PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES = frozenset(
-    {"pending_new", "accepted_for_bidding"}
-)
+# `PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES` moved to src/execution/broker_parts/stop_place.py (re-exported above).
 
 #: The set for the OTHER question: "would submitting another stop here
 #: create a SECOND live order against the same shares?"
@@ -393,6 +193,9 @@ class AlpacaBroker:
     #: reads None rather than raising; `_kill_switch_active` already treats
     #: None as "no switch configured", i.e. inert.
     _kill_switch_path: "Path | None" = None
+    #: Set in __init__ (RiskConfig via src/pipeline.py). None = no notional
+    #: check; declared here so an instance built without __init__ reads None.
+    _max_position_pct: "float | None" = None
     #: Called with the facts of every protective stop the kill switch
     #: refuses (see `_submit_stop_limit_order`). The broker holds no
     #: database, so the owner of one wires this — `TradingPipeline` does, to
@@ -414,8 +217,10 @@ class AlpacaBroker:
     def __init__(self, api_key: str, secret_key: str, paper: bool = True,
                  kill_switch_path: str | None = None,
                  trade_updates_lease_path: str | None = None,
-                 fill_stream_enabled: bool = False):
+                 fill_stream_enabled: bool = False,
+                 max_position_pct: float | None = None):
         self.api_key = api_key
+        self._max_position_pct = max_position_pct  # RiskConfig via src/pipeline.py; None = no notional check
         self.secret_key = secret_key
         self._paper = paper
         self.client = TradingClient(api_key, secret_key, paper=paper)
@@ -562,7 +367,7 @@ class AlpacaBroker:
                 market_value=float(p.market_value),
                 unrealized_pnl=float(p.unrealized_pl),
                 unrealized_intraday_pnl=float(getattr(p, "unrealized_intraday_pl", 0) or 0),
-                sector=_get_sector(symbol),
+                sector=_sector_reference._get_sector(symbol),
             ))
         return positions
 
@@ -660,6 +465,9 @@ class AlpacaBroker:
             order_terminal_states=self._ORDER_TERMINAL_STATES,
             order_replaceable_states=self._ORDER_REPLACEABLE_STATES,
             max_replacement_hops=self._MAX_REPLACEMENT_HOPS,
+            get_fractionability=self.get_fractionability,
+            get_account=self.get_account,
+            max_position_pct=self._max_position_pct,
             # Four collaborators below are themselves moved bodies, so the desk
             # already owns them. Passing this broker's same-named shim would
             # overwrite the desk's own method with a function that calls
@@ -1450,7 +1258,7 @@ class AlpacaBroker:
             kill_switch_active=self._kill_switch_active,
             kill_switch_path=self._kill_switch_path,
             protective_stop_block_recorder=self.protective_stop_block_recorder,
-            stop_limit_buffer_pct=self.STOP_LIMIT_BUFFER_PCT,
+            stop_limit_buffer_pct=self.STOP_LIMIT_BUFFER_PCT, window_log=self.__dict__.setdefault("_unprotected_windows", []),
             # Six collaborators below are themselves moved bodies, so the
             # placer already owns them. Passing this broker's same-named shim
             # would overwrite the placer's own method with a function that
@@ -1650,9 +1458,9 @@ class AlpacaBroker:
         """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
         return self._stop_amender()._classify_after_dead_replacement(symbol=symbol, spec=spec, new_price=new_price, leg=leg)
 
-    def _amend_one_stop_price(self, *, symbol: str, spec: dict, new_price: float) -> dict:
+    def _amend_one_stop_price(self, **kw) -> dict:
         """Thin shim: body moved to src/execution/broker_parts/stop_amend.py."""
-        return self._stop_amender()._amend_one_stop_price(symbol=symbol, spec=spec, new_price=new_price)
+        return self._stop_amender()._amend_one_stop_price(**kw)
 
     _stop_order_amendable_in_place = staticmethod(StopAmender._stop_order_amendable_in_place)
 
@@ -1678,7 +1486,18 @@ import types as _types
 from src.execution.broker_parts import market_data as _market_data_part
 from src.execution.broker_parts import trade_stream as _trade_stream_part
 
-_MIRRORED_PARTS = (_trade_stream_part, _market_data_part)
+# Sector cluster: OWNED by `src.sector_reference` (L0). Its names stay reachable
+# here so tests that patch `src.execution.broker.<name>` keep working; a write
+# is mirrored into the owning module (via _MIRRORED_PARTS) and a read is always
+# live from it. The copy kept in this module's dict exists so `unittest.mock.patch`
+# sees the name as local and restores it with a plain setattr, which writes through.
+_SECTOR_MIRROR_NAMES = frozenset({
+    "_get_sector", "_sector_resolution_status_for", "_canonicalize_sector",
+    "_sector_cache", "_sector_lock", "_sector_resolution_status",
+    "_INDEX_ETFS", "_ETF_SECTORS", "_SECTOR_LOOKUP_TIMEOUT_S",
+    "_ALLOWED_SECTORS", "_SECTOR_ALIASES",
+})
+_MIRRORED_PARTS = (_trade_stream_part, _market_data_part, _sector_reference)
 _FORWARDED_GLOBALS = {
     "_stream_auth_deprecation_logged": _trade_stream_part,
     "_stream_current_auth_format_logged": _trade_stream_part,
@@ -1706,5 +1525,13 @@ class _MirrorModule(_types.ModuleType):
             return
         super().__delattr__(name)
 
+    def __getattribute__(self, name):
+        if name in _SECTOR_MIRROR_NAMES:
+            return getattr(_sector_reference, name)
+        return _types.ModuleType.__getattribute__(self, name)
+
 
 _sys.modules[__name__].__class__ = _MirrorModule
+for _n in _SECTOR_MIRROR_NAMES:
+    _types.ModuleType.__setattr__(_sys.modules[__name__], _n, getattr(_sector_reference, _n))
+del _n

@@ -29,6 +29,7 @@ from unittest.mock import MagicMock
 from src.models import Position, TargetPosition, TechAnalysisResult, TechReasoningChain
 from src.portfolio_constructor import PortfolioConstructor
 from src.risk.metrics import portfolio_heat, position_risk, r_multiple
+from tests.pipeline_factory import build_pipeline
 
 
 def _pos(symbol: str, qty: float, entry: float, price: float,
@@ -482,10 +483,8 @@ def _mk_pipeline():
     # numbers as before.
     from src.trading_calendar import trading_sessions_held as _weekday_sessions_held
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock(), broker=MagicMock())
     pipeline.config = MagicMock()
-    pipeline.broker = MagicMock()
     pipeline.broker.trading_sessions_held.side_effect = _weekday_sessions_held
     return pipeline
 

@@ -68,11 +68,14 @@ from src.portfolio_constructor.config import (
 class _OrderBuildMixin:
     """Per-leg order builders for `PortfolioConstructor`.
 
-    Bodies lifted VERBATIM to src/portfolio_constructor/order_builders.py
-    (`OrderBuilders`). Each shim builds the object PER CALL so a collaborator
-    swapped on the host after construction is what the body sees. No
-    collaborator passed below is itself a lifted method, so the shim cannot
-    call back into itself.
+    Bodies lifted VERBATIM into the `src/portfolio_constructor/order_build/`
+    package, one standalone piece per leg: `LongEntryBuilder._build_buy`
+    (long_entry.py), `ShortEntryBuilder._build_short` (short_entry.py) and the
+    collaborator-free `ExitOrderBuilders` (`_build_sell`, `_build_cover`,
+    `_hold_decision`; exits.py). Each entry shim builds its object PER CALL so
+    a collaborator swapped on the host after construction is what the body
+    sees. No collaborator passed below is itself a lifted method, so the shim
+    cannot call back into itself.
     """
 
     _ORDER_BUILDER_COLLABORATORS = (
@@ -86,36 +89,41 @@ class _OrderBuildMixin:
         ("target_note", "_target_note"),
     )
 
-    def _order_builders(self):
-        """Build the standalone OrderBuilders from this host's collaborators."""
-        from src.portfolio_constructor.order_builders import OrderBuilders
-        return OrderBuilders(**{
-            param: getattr(self, attr)
-            for param, attr in self._ORDER_BUILDER_COLLABORATORS
-        })
+    def _order_builder_collaborators(self) -> dict:
+        return {param: getattr(self, attr) for param, attr in self._ORDER_BUILDER_COLLABORATORS}
+
+    def _long_entry_builder(self):
+        """Build the standalone LongEntryBuilder from this host's collaborators."""
+        from src.portfolio_constructor.order_build.long_entry import LongEntryBuilder
+        return LongEntryBuilder(**self._order_builder_collaborators())
+
+    def _short_entry_builder(self):
+        """Build the standalone ShortEntryBuilder from this host's collaborators."""
+        from src.portfolio_constructor.order_build.short_entry import ShortEntryBuilder
+        return ShortEntryBuilder(**self._order_builder_collaborators())
 
     @staticmethod
     def _hold_decision(*args, **kwargs):
-        """Thin shim: body moved to src/portfolio_constructor/order_builders.py."""
-        from src.portfolio_constructor.order_builders import OrderBuilders
-        return OrderBuilders._hold_decision(*args, **kwargs)
+        """Thin shim: body moved to src/portfolio_constructor/order_build/exits.py."""
+        from src.portfolio_constructor.order_build.exits import ExitOrderBuilders
+        return ExitOrderBuilders._hold_decision(*args, **kwargs)
 
     @staticmethod
     def _build_sell(*args, **kwargs):
-        """Thin shim: body moved to src/portfolio_constructor/order_builders.py."""
-        from src.portfolio_constructor.order_builders import OrderBuilders
-        return OrderBuilders._build_sell(*args, **kwargs)
+        """Thin shim: body moved to src/portfolio_constructor/order_build/exits.py."""
+        from src.portfolio_constructor.order_build.exits import ExitOrderBuilders
+        return ExitOrderBuilders._build_sell(*args, **kwargs)
 
     @staticmethod
     def _build_cover(*args, **kwargs):
-        """Thin shim: body moved to src/portfolio_constructor/order_builders.py."""
-        from src.portfolio_constructor.order_builders import OrderBuilders
-        return OrderBuilders._build_cover(*args, **kwargs)
+        """Thin shim: body moved to src/portfolio_constructor/order_build/exits.py."""
+        from src.portfolio_constructor.order_build.exits import ExitOrderBuilders
+        return ExitOrderBuilders._build_cover(*args, **kwargs)
 
     def _build_buy(self, *args, **kwargs):
-        """Thin shim: body moved to src/portfolio_constructor/order_builders.py."""
-        return self._order_builders()._build_buy(*args, **kwargs)
+        """Thin shim: body moved to src/portfolio_constructor/order_build/long_entry.py."""
+        return self._long_entry_builder()._build_buy(*args, **kwargs)
 
     def _build_short(self, *args, **kwargs):
-        """Thin shim: body moved to src/portfolio_constructor/order_builders.py."""
-        return self._order_builders()._build_short(*args, **kwargs)
+        """Thin shim: body moved to src/portfolio_constructor/order_build/short_entry.py."""
+        return self._short_entry_builder()._build_short(*args, **kwargs)

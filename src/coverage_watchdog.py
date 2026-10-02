@@ -728,40 +728,16 @@ def _notional(position: Any, qty: float) -> float:
 # ---------------------------------------------------------------------------
 
 def session_is_open(broker: Any, now: datetime) -> tuple[bool, str]:
-    """`(open_now, reason)` from the calendar the BROKER publishes.
+    """`(open_now, reason)` — delegates to the ONE shared answer.
 
-    Both edges are read (`get_session_open` / `get_session_close`) rather
-    than assumed: 09:30-16:00 is the usual session, not a guaranteed one, and
-    a number typed here would be exactly the invented threshold this desk
-    refuses. `is_trading_day` rules out weekends and holidays first.
-
-    FAILS CLOSED. Any unreadable edge returns False: a protective stop is
-    worth placing only when we know the market will accept it, and this
-    module has no measurement of what Alpaca does with a fractional DAY stop
-    submitted into a shut market. "We could not tell" is reported as a
-    reason, never rounded up to "go ahead".
+    `src.market_session.market_open_verdict` reads the broker calendar twice,
+    falls back to the weekday-and-clock check, and only then answers OPEN.
+    This used to fail CLOSED, which left a naked position naked whenever the
+    calendar read blipped; a positive "shut" is still honoured.
     """
-    today = now.astimezone(ET).date()
-    try:
-        if not broker.is_trading_day(today):
-            return False, f"{today} is not a trading day"
-    except Exception as exc:  # noqa: BLE001
-        return False, f"trading-calendar lookup failed ({exc})"
-    try:
-        opens = broker.get_session_open(today)
-        closes = broker.get_session_close(today)
-    except Exception as exc:  # noqa: BLE001
-        return False, f"session-hours lookup failed ({exc})"
-    if opens is None or closes is None:
-        return False, "the broker's calendar did not give both session edges"
-    try:
-        if now < opens:
-            return False, f"the session has not opened yet (opens {opens:%H:%M %Z})"
-        if now >= closes:
-            return False, f"the session has closed (closed {closes:%H:%M %Z})"
-    except TypeError as exc:  # noqa: BLE001 - naive/aware mismatch
-        return False, f"session-hours comparison failed ({exc})"
-    return True, f"the session is open until {closes:%H:%M %Z}"
+    from src.market_session import market_open_verdict
+
+    return market_open_verdict(broker, now)
 
 
 # ---------------------------------------------------------------------------
@@ -1957,7 +1933,7 @@ def check_coverage(
             mismatches = reconcile_recorded_stop_levels(
                 broker=broker, last_buy=last_buy, positions=positions,
                 sweep_symbol=sweep_symbol,
-                skip_symbols=scale_in_skip,
+                skip_symbols=scale_in_skip, db=db,
             )
             # Log every pass; do not page from this 30-minute unit. An
             # out-of-band mismatch is never write-back-cleared, so paging

@@ -13,6 +13,7 @@ from src.data.news_store import NewsStore
 from src.data.tech_store import TechStore
 from src.models import Position
 from src.util.time import et_today
+from tests.pipeline_factory import build_pipeline
 
 
 def _pos(symbol="NVDA"):
@@ -185,8 +186,7 @@ def test_rm_verdicts_builder_parses_agent_logs(tmp_path):
     )
     db.conn.commit()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
+    pipeline = build_pipeline(db=db)
     out = pipeline._build_rm_recent_verdicts(limit=5)
     # Category surfaced for both verdicts
     assert "cat=oversized" in out
@@ -211,10 +211,7 @@ def test_handle_ex_dividends_lowers_stop_day_before(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.market = MagicMock()
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, market=MagicMock(), broker=MagicMock())
 
     # Position: held JPM, current price $200, existing stop at $185
     jpm = Position(
@@ -257,10 +254,7 @@ def test_handle_ex_dividends_skips_when_ex_div_is_today(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.market = MagicMock()
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, market=MagicMock(), broker=MagicMock())
 
     p = Position(
         symbol="JPM", qty=50, avg_entry=180, current_price=200,
@@ -286,14 +280,7 @@ def test_run_intra_check_ok_when_within_loss_budget(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.risk_engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=20, max_total_position_pct=90,
-        max_sector_pct=40,
-        require_stop_loss=False,
-    ))
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, risk_engine=RiskRuleEngine(RiskConfig( max_position_pct=20, max_total_position_pct=90, max_sector_pct=40, require_stop_loss=False, )), broker=MagicMock())
     pipeline.broker.is_trading_day.return_value = True
     pipeline.broker.get_account.return_value = {
         "portfolio_value": 99_000.0, "last_equity": 100_000.0, "cash": 10_000.0,
@@ -394,8 +381,7 @@ def test_pm_memory_builders_warn_on_corrupt_json(caplog):
     from unittest.mock import MagicMock
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
+    pipeline = build_pipeline(db=MagicMock())
 
     corrupt_insights_row = {
         "date": "2026-05-10",
@@ -446,10 +432,8 @@ def test_build_recent_sells_joins_current_prices(tmp_path):
     )
     db.conn.commit()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
     # Mock broker to return a specific current price
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.get_latest_price = MagicMock(return_value=530.0)
 
     out = pipeline._build_recent_sells_for_grading(lookback_days=2)
@@ -479,9 +463,7 @@ def test_build_recent_sells_includes_reduce_action(tmp_path):
     )
     db.conn.commit()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock())
     pipeline.broker.get_latest_price = MagicMock(return_value=327.0)
 
     out = pipeline._build_recent_sells_for_grading(lookback_days=2)
@@ -631,8 +613,7 @@ def test_pm_decisions_builder_parses_own_history(tmp_path):
     )
     db.conn.commit()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
+    pipeline = build_pipeline(db=db)
     out = pipeline._build_pm_recent_decisions(limit=3)
     assert "BUY NVDA 8.0%" in out
     assert "high conviction on AI capex" in out
@@ -673,8 +654,7 @@ def test_pm_decisions_builder_tags_the_unit_on_targets_schema(tmp_path):
     )
     db.conn.commit()
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
+    pipeline = build_pipeline(db=db)
     out = pipeline._build_pm_recent_decisions(limit=3)
     assert "NVDA→1.2%r(h)" in out
     assert "JPM→5.0%w(m)" in out
@@ -755,7 +735,7 @@ def test_trade_calibration_matches_fifo_and_buckets(tmp_path):
     db.initialize()
 
     # Large winner: buy 100 @ 100 (entry = $10k), sell 100 @ 115 → +15%
-    db.insert_trade("NVDA", "BUY", 100, 100, "large", "r1")
+    db.insert_trade("NVDA", "BUY", 100, 100, "large", "r1", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-15 days') "
         "WHERE symbol='NVDA' AND action='BUY'"
@@ -769,7 +749,7 @@ def test_trade_calibration_matches_fifo_and_buckets(tmp_path):
     db.conn.commit()
 
     # Medium loser: buy 100 @ 60 (entry = $6k), sell 100 @ 54 → -10%
-    db.insert_trade("XOM", "BUY", 100, 60, "medium", "r3")
+    db.insert_trade("XOM", "BUY", 100, 60, "medium", "r3", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-20 days') "
         "WHERE symbol='XOM' AND action='BUY'"
@@ -783,7 +763,7 @@ def test_trade_calibration_matches_fifo_and_buckets(tmp_path):
     db.conn.commit()
 
     # Small winner: buy 10 @ 200 (entry = $2k), sell 10 @ 220 → +10%
-    db.insert_trade("JPM", "BUY", 10, 200, "small", "r5")
+    db.insert_trade("JPM", "BUY", 10, 200, "small", "r5", stop_loss=90.0)
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-8 days') "
         "WHERE symbol='JPM' AND action='BUY'"
@@ -816,7 +796,7 @@ def test_trade_calibration_returns_empty_below_threshold(tmp_path):
 
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("NVDA", "BUY", 10, 100, "x", "r1")
+    db.insert_trade("NVDA", "BUY", 10, 100, "x", "r1", stop_loss=90.0)
     db.insert_trade("NVDA", "SELL", 10, 105, "x", "r2")
     stats = db.compute_trade_calibration(lookback_days=45)
     assert stats == {}
@@ -904,12 +884,7 @@ def _projection_pipeline(target_pct: float | None = None):
     from types import SimpleNamespace
     from src.pipeline import TradingPipeline
 
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline._last_symbol_sectors = {
-        "NVDA": "Technology",
-        "AMD": "Technology",
-        "AAPL": "Technology",
-    }
+    pipeline = build_pipeline(_last_symbol_sectors={ "NVDA": "Technology", "AMD": "Technology", "AAPL": "Technology", })
     if target_pct is not None:
         pipeline.risk_engine = SimpleNamespace(
             config=SimpleNamespace(max_sector_pct=target_pct),
@@ -1161,8 +1136,7 @@ def test_preview_dials_come_from_the_constructors_own_defaults():
         if isinstance(n, ast.Constant) and isinstance(n.value, (int, float))
         and not isinstance(n.value, bool) and n.value != 0
     ], "a flat sizing literal is back in the preview's dial reader"
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline._last_symbol_sectors = {}
+    pipeline = build_pipeline(_last_symbol_sectors={})
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
             [], _tech_buy_analyses({"NVDA": 50.0, "AMD": 50.0,
@@ -1348,13 +1322,13 @@ def test_db_get_symbol_last_buy_returns_most_recent_buy(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
     # Insert an OLD buy then a newer one; last_buy should return the newer
-    db.insert_trade("NVDA", "BUY", 5, 180, "first entry", "r-1")
+    db.insert_trade("NVDA", "BUY", 5, 180, "first entry", "r-1", stop_loss=90.0)
     # Force timestamp backdate
     db.conn.execute(
         "UPDATE trades SET timestamp = datetime('now', '-10 days') WHERE reasoning='first entry'"
     )
     db.conn.commit()
-    db.insert_trade("NVDA", "BUY", 5, 195, "second entry, 3/4 aligned", "r-2")
+    db.insert_trade("NVDA", "BUY", 5, 195, "second entry, 3/4 aligned", "r-2", stop_loss=90.0)
     last = db.get_symbol_last_buy("NVDA")
     assert last is not None
     assert last["price"] == 195
@@ -1403,7 +1377,7 @@ def test_db_insert_trade_round_trips_thesis_invalid_if(tmp_path):
     db.initialize()
     db.insert_trade(
         "NVDA", "BUY", 10, 200.0, "AI capex supercycle", "r-1",
-        thesis_invalid_if=_LONG_CONDITION_FOR_DB,
+        thesis_invalid_if=_LONG_CONDITION_FOR_DB, stop_loss=90.0,
     )
     last = db.get_symbol_last_buy("NVDA")
     assert last is not None
@@ -1416,7 +1390,7 @@ def test_db_insert_trade_thesis_invalid_if_defaults_to_none(tmp_path):
     from src.storage.db import Database
     db = Database(str(tmp_path / "t.db"))
     db.initialize()
-    db.insert_trade("AAPL", "BUY", 5, 180.0, "legacy caller", "r-1")
+    db.insert_trade("AAPL", "BUY", 5, 180.0, "legacy caller", "r-1", stop_loss=90.0)
     last = db.get_symbol_last_buy("AAPL")
     assert last is not None
     assert last["thesis_invalid_if"] is None
@@ -1425,9 +1399,7 @@ def test_db_insert_trade_thesis_invalid_if_defaults_to_none(tmp_path):
 def _pipeline_for_position_history():
     from unittest.mock import MagicMock
     from src.pipeline import TradingPipeline
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = MagicMock()
-    pipeline.tech_store = MagicMock()
+    pipeline = build_pipeline(db=MagicMock(), tech_store=MagicMock())
     pipeline.tech_store.get_history.return_value = []
     return pipeline
 

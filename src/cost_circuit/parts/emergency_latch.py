@@ -220,6 +220,7 @@ class EmergencyLatch:
                     # undelivered/zero -- nothing has attempted to notify
                     # the operator about THIS incident yet.
                     "alert_delivered": False,
+                    "alert_suppressed": False,
                     "alert_attempts": 0,
                     "last_alert_attempt_at": None,
                 },

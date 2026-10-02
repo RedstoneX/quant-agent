@@ -113,3 +113,19 @@ item-227 predicate applies.
   desk closed earlier the same exchange day for failing its own entry bar,
   read off the desk's own durable record. No cooldown, no holding period,
   no new number — the same exchange-day window the SELL-side guard uses.
+
+### 2026-10-02 — the dashboard gets its own Pruning Pass panel
+
+MEASURED: before this change the pass reached the dashboard only inside one run's detail, so the owner had to know which run to open. Now `GET /pruning-passes` (`src/api/routes_pruning.py`, read-only, `mode=ro`) lists every pass recorded on the newest day that has one, with a verdict and a reason per examined name, rendered by the "Pruning Pass" panel. A pass that cut nothing still shows what it examined. No threshold or lookback was added: the window is the newest day with a record. Limit: a name below the bar but not cut carries "the record does not say which rule held it back", because the durable row stores reasons only for the cut name. Telegram stays muted. The live-run confirmation box on the board stays OPEN until a production session is observed.
+
+The "record does not say" gap is closed at the source: `src/rotation_dispositions.py` writes a run-scoped `rotation`/`dispositions` row recording, per below-bar name, the conviction reasons it fails on and, where the pass never reached it, "not reached: <why>". Names the pass reached and refused keep their existing `rotation`/`skipped` row, which the panel joins. A run recorded before this change says so explicitly.
+
+## Rehearsal assessment, 2026-10-02
+
+Evidence kind: OFFLINE REHEARSAL runs of 2026-10-02 against a snapshot of the production database. These are NOT production sessions and no box was ticked on them.
+Observed runs (ops/rehearsal/run.py, replay pinned automatically, sudo-user snapshot, production file byte-identical after each):
+- morning: VERDICT FAIL and "REHEARSAL VOID -- HermeticBreach": the harness blocked outbound connections to the FRED host because no FRED or news feed is recorded on this box (board item 202); 0/15 macro series and 0/20 news feeds returned data; the recording holds ONE portfolio_manager answer and the session asked twice, so every route raised "all 1 recorded response(s) were already replayed" and the session raised in the decision stage.
+- midday: VERDICT PASS but "REHEARSAL VOID -- HermeticBreach" (outbound attempts to the FRED host and the Yahoo client blocked).
+- intra_check: first run VOID (101 inputs absent from the recording); re-run with --allow-degraded completed, VERDICT PASS, not void, 0 trades, 8.4s, $0.00.
+Row read back from the rehearsal intra_check report (sandbox database): run_id rehearsal-intra_check-20261002, evidence_freshness = None. The tick found no candidates, so no seat was read and no stamp was written; the two preceding real intra_check rows (2026-10-01) also carry none.
+Last box (a real session's stored report read back carrying the pruning block on both surfaces, against a run the desk actually made): NEEDS-REAL-SESSION. The box asks for a run the desk made; a rehearsal run is by definition not one, and the morning session that runs the pass is void offline. The rendering-from-stored-run path is already covered by tests/test_pruning_pass_reaches_both_surfaces.py. Box left open.

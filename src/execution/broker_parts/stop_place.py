@@ -20,10 +20,26 @@ import time
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
 
+from src.execution.broker_parts.stop_shift import ShiftStopsMixin
+from src.execution.broker_parts.stop_window import UnprotectedWindow, fallback_reason
 from src.execution.broker_parts.stop_amend import (
     _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
 )
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
+# Quantity rules + the quantity gate live in src/execution/order_gates.py (a
+# leaf); the two names are re-exported here because callers patch them here.
+from src.execution.order_gates import (  # noqa: F401 (re-exports keep patch targets)
+    _FRACTIONAL_QTY_EPSILON, _split_protective_qty, _derive_stop_tif, BadOrderQuantity,
+    check_order_quantity,
+)
+from src.execution.order_statuses import (  # noqa: F401 (re-exports keep patch targets)
+    PROTECTIVE_ORDER_ACTIVE_STATUSES, PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES,
+    PROTECTIVE_ORDER_PLACEMENT_PENDING_STATUSES,
+)
+from src.execution import order_idempotency as _idem  # session key read via the module so one patch target serves every path
+from src.execution.order_idempotency import (
+    _is_dead_stop_result, _submit_stop_request_idempotent,
+)
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
@@ -61,32 +77,8 @@ _STOP_PLACEMENT_MAX_ATTEMPTS = 3
 
 _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
 
-# Spec §11.1 HYBRID FRACTIONAL STOPS. Measured 2026-09-01 against the live
-# paper account — treat as broker capability, not account state:
-#
-#   * a fractional-quantity order MUST be time_in_force=DAY. A fractional
-#     GTC order is refused outright: "fractional orders must be DAY orders"
-#     (code 42210000).
-#   * a fractional order must be market, limit, stop or stop_limit. A
-#     fractional TRAILING stop is refused at EVERY tif.
-#   * ACCEPTED fractional: STOP/DAY, STOP_LIMIT/DAY, LIMIT/DAY.
-#   * whole-share GTC stops are unaffected (control probe accepted).
-#
-# So a position of N.f shares cannot be covered by one durable order. It is
-# covered by TWO: a GTC stop over floor(N.f) — which survives the close —
-# and a DAY stop over the sub-share remainder, which lapses at 16:00 ET by
-# design and is re-placed at the start of the next session. The remainder is
-# a deliberate overnight exposure the owner accepted in exchange for being
-# able to hold expensive names at all on a ~$10k account. NOT bounded under
-# one share — a position that is itself sub-one-share lapses in full (see
-# config/settings.yaml), and "the next session" only exists while the desk
-# is running: `src/coverage_watchdog.py` is what says so when it is not.
-#
-# `_derive_stop_tif` is where that rule is MECHANICALLY enforced: every stop
-# this class submits goes through `_submit_stop_limit_order`, and the tif is
-# derived from the quantity there rather than chosen by each caller. A path
-# that forgets the rule cannot exist, because no path gets to state it.
-_FRACTIONAL_QTY_EPSILON = 1e-9
+# Spec §11.1 hybrid fractional stops: the measured broker rule, `_FRACTIONAL_QTY_EPSILON`,
+# `_split_protective_qty` and `_derive_stop_tif` live in src/execution/order_gates.py (re-exported above).
 
 def _is_held_for_orders_error(exc: BaseException) -> bool:
     """True when the broker refused because shares are reserved by an open order.
@@ -139,49 +131,6 @@ def _is_unsupported_stop_market_rejection(exc: BaseException) -> bool:
     return any(term in text for term in type_terms)
 
 
-def _split_protective_qty(qty) -> tuple[float, float]:
-    """Split a protective-stop quantity into (whole_shares, sub_share_remainder).
-
-    The whole part is what a durable GTC stop can cover; the remainder is what
-    only a DAY stop can. Both are returned as non-negative magnitudes — a
-    short's signed qty is normalised by its callers long before this.
-
-    The remainder is rounded to 9dp before the epsilon test so that float
-    representation error (10.5 - 10.0 landing at 0.5000000000000007, or a qty
-    of 7.000000000000001 arriving from a fill) cannot mint a phantom
-    sub-share leg for a position that is really whole.
-    """
-    try:
-        value = abs(float(qty))
-    except (TypeError, ValueError):
-        return 0.0, 0.0
-    if not math.isfinite(value) or value <= 0:
-        return 0.0, 0.0
-    whole = float(math.floor(value))
-    frac = round(value - whole, 9)
-    if frac <= _FRACTIONAL_QTY_EPSILON:
-        return whole, 0.0
-    if frac >= 1.0:  # only reachable via the round() above on a near-integer
-        return whole + 1.0, 0.0
-    return whole, frac
-
-
-def _derive_stop_tif(qty) -> TimeInForce:
-    """The ONLY place a protective stop's time_in_force is decided.
-
-    Whole share count → GTC, the durable order that survives 16:00 ET and is
-    what every pre-fractional path already got. Fractional → DAY, because the
-    broker refuses any other tif for a fractional quantity (see the block
-    comment above). This is derived from the quantity rather than passed in
-    by the caller on purpose: a caller that could ask for a fractional GTC
-    would just be asking for a rejection, and the one thing this desk cannot
-    afford is a protective order that was refused while the code believed it
-    was placed.
-    """
-    _whole, frac = _split_protective_qty(qty)
-    return TimeInForce.DAY if frac > 0 else TimeInForce.GTC
-
-
 def _alpaca_symbol(symbol: str) -> str:
     """Translate the universe's yfinance class-share spelling at Alpaca's edge.
 
@@ -199,19 +148,8 @@ def _internal_symbol(symbol: str) -> str:
     return re.sub(r"^([A-Z]+)\.([A-Z])$", r"\1-\2", value)
 
 
-#: Broker order states in which a resting order is REAL protection.
-#:
-#: One definition, two readers. `AlpacaBroker`'s scale-in reprotect used a
-#: local literal set; `TradingPipeline._finalize_protection_restore` needed
-#: exactly the same judgement and, on 2026-09-30, was given a second copy of
-#: the same four strings. Two copies of one rule is how this desk ended up
-#: with four different spellings of "a trigger was named", so they are one
-#: name now. Anything outside this set -- notably `pending_cancel`, which is
-#: what a just-cancelled stop still reports for a moment -- is a dying order
-#: and must never be counted as a stop that protects the position.
-PROTECTIVE_ORDER_ACTIVE_STATUSES = frozenset(
-    {"new", "accepted", "held", "partially_filled"}
-)
+# The protective-order status vocabulary lives in src/execution/order_statuses.py (re-exported above).
+
 
 def real_broker_order_id(value: object) -> str:
     """The broker order id in `value`, or "" when there ISN'T one.
@@ -230,7 +168,7 @@ def real_broker_order_id(value: object) -> str:
 
 
 
-class StopPlacer:
+class StopPlacer(ShiftStopsMixin):
     """Place, submit, restore and replace protective stops. Every collaborator is explicit.
 
     The six cluster-internal collaborators default to this object's own bodies;
@@ -259,8 +197,10 @@ class StopPlacer:
         submit_stop_limit_order=None,
         submit_stop_legs=None,
         restore_stop_orders=None,
+        window_log=None,
     ):
         self.client = client
+        self._window_log = window_log if window_log is not None else []
         self._list_open_stop_orders_by_side = list_open_stop_orders_by_side
         self._list_open_protective_stop_orders = list_open_protective_stop_orders
         self._list_open_sell_stop_orders = list_open_sell_stop_orders
@@ -374,6 +314,18 @@ class StopPlacer:
                         attempt, attempts,
                     )
                     break
+                if attempt < attempts:
+                    delay = _STOP_PLACEMENT_BACKOFF_S[
+                        min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
+                    ]
+                    time.sleep(delay)
+                continue
+            if _is_dead_stop_result(order, PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES):
+                # Adversary 2026-10-01: a dead-status response holds no shares.
+                logger.error("protective stop [%s] attempt %d/%d for %s came back with "
+                             "status %r — not a live stop; not reporting it as placed.",
+                             leg, attempt, attempts, symbol, order.get("status"))
+                last_exc = None
                 if attempt < attempts:
                     delay = _STOP_PLACEMENT_BACKOFF_S[
                         min(attempt - 1, len(_STOP_PLACEMENT_BACKOFF_S) - 1)
@@ -651,6 +603,9 @@ class StopPlacer:
                 "It lapses at the close and is re-placed by the next session's "
                 "coverage sweep.", symbol, qty,
             )
+        qty_refusal = check_order_quantity(qty, side=side)
+        if qty_refusal is not None:  # same contract: refused = raised
+            raise BadOrderQuantity(f"{symbol}: {qty_refusal}")
         stop_price_q = _quantize_price(stop_price)
         # The limit is computed EAGERLY but used ONLY by the stop-limit
         # fallback below — the primary protective order is a stop-MARKET and
@@ -665,15 +620,27 @@ class StopPlacer:
             )
             limit_price_q = _quantize_price(stop_price * buffer_mult)
         # PRIMARY: stop-MARKET (guaranteed exit) — owner ratified 2026-09-25.
-        market_req = StopOrderRequest(
-            symbol=_alpaca_symbol(symbol),
-            qty=qty,
-            side=order_side,
-            time_in_force=time_in_force,
-            stop_price=stop_price_q,
-        )
+        # Idempotency keys + duplicate read-back: src/execution/order_idempotency.py
+        # (trigger price is in the key, so a ratcheted trail is a NEW intent).
+        session_date = _idem._session_date_key()
+
+        def _market_request(client_order_id: str) -> StopOrderRequest:
+            return StopOrderRequest(
+                symbol=_alpaca_symbol(symbol),
+                qty=qty,
+                side=order_side,
+                time_in_force=time_in_force,
+                stop_price=stop_price_q,
+                client_order_id=client_order_id,
+            )
+
         try:
-            order = self.client.submit_order(market_req)
+            order = _submit_stop_request_idempotent(
+                self.client, _market_request, purpose="STP",
+                alpaca_symbol=_alpaca_symbol(symbol), side=side,
+                session_date=session_date, qty=qty, price=stop_price_q,
+                holds_shares_statuses=PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES,
+            )
         except Exception as exc:  # noqa: BLE001
             if not _is_unsupported_stop_market_rejection(exc):
                 # NOT a type/tif refusal — held_for_orders, buying-power,
@@ -693,15 +660,23 @@ class StopPlacer:
                 "stop-LIMIT (limit $%s) so the position stays protected.",
                 symbol, qty, stop_price_q, exc, limit_price_q,
             )
-            limit_req = StopLimitOrderRequest(
-                symbol=_alpaca_symbol(symbol),
-                qty=qty,
-                side=order_side,
-                time_in_force=time_in_force,
-                stop_price=stop_price_q,
-                limit_price=limit_price_q,
+            def _limit_request(client_order_id: str) -> StopLimitOrderRequest:
+                return StopLimitOrderRequest(
+                    symbol=_alpaca_symbol(symbol),
+                    qty=qty,
+                    side=order_side,
+                    time_in_force=time_in_force,
+                    stop_price=stop_price_q,
+                    limit_price=limit_price_q,
+                    client_order_id=client_order_id,
+                )
+
+            order = _submit_stop_request_idempotent(
+                self.client, _limit_request, purpose="STL",
+                alpaca_symbol=_alpaca_symbol(symbol), side=side,
+                session_date=session_date, qty=qty, price=stop_price_q,
+                holds_shares_statuses=PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES,
             )
-            order = self.client.submit_order(limit_req)
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),
@@ -896,6 +871,14 @@ class StopPlacer:
             # (the WAL drain, and replace_stop_loss's own rollback) then
             # treated the position as re-covered and discharged its
             # recovery row over a stop that was never sent to the broker.
+            if _is_dead_stop_result(restore_result, PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES):
+                # Adversary 2026-10-01: a dead-status restore is NOT coverage.
+                logger.critical("replace_stop_loss: restore of prior stop for %s @ $%.2f came "
+                                "back with status %r — NOT a live stop; NOT counting this as "
+                                "restored; the position stays flagged uncovered.",
+                                symbol, spec["stop_price"], restore_result.get("status"))
+                failed_specs.append(spec)
+                continue
             from src.execution.exit_path_records import is_kill_switch_block
             if is_kill_switch_block(restore_result):
                 logger.critical(
@@ -921,180 +904,6 @@ class StopPlacer:
                     restored, len(stop_specs), symbol,
                 )
         return restored, failed_specs
-
-    def shift_stops_down(self, symbol: str, amount: float) -> dict | None:
-        """Lower EVERY open sell-stop for `symbol` by `amount`, preserving
-        each stop's own level and qty.
-
-        Ex-dividend flow (audit round 2): the old path read ONE stop level
-        (first-match) and replace_stop_loss'd ALL stops with a single
-        consolidated order — with per-BUY GTC stops now the steady state,
-        that collapsed distinct per-lot levels into one and could TIGHTEN a
-        wide lot's stop to the tightest lot's level. Shifting each spec
-        keeps the per-lot geometry and just absorbs the mechanical gap.
-
-        Item 201: a shift moves PRICE only, so when every resting stop is the
-        measured-safe shape each one is AMENDED IN PLACE and nothing is ever
-        cancelled — the position is protected before, during and after. The
-        cancel+resubmit below is now the fallback for shapes the measurement
-        did not cover, and `mode` in the return says which path ran.
-
-        Returns {"id", "status", "symbol", "shifted", "total", "mode"} or None
-        when nothing was shifted. Best-effort with rollback: on the fallback,
-        cancel failures roll back already-cancelled stops and re-place failures
-        restore the ORIGINAL spec for that stop; on the amend path a failure
-        leaves that stop resting at its old level, which is tighter than
-        intended but never absent.
-
-        SELL-stops only, deliberately not generalised to a short's BUY-stop
-        (shorts-safe, Stage 2): the caller (`pipeline._handle_ex_dividends`)
-        already excludes shorts before reaching this method, because the
-        economics are genuinely different, not just the arithmetic sign — a
-        long owns the shares and receives the dividend (the mechanical
-        gap-down needs absorbing); a short instead OWES the dividend to the
-        lender, a cash liability with no corresponding price-gap-absorption
-        logic here. Mirroring the sign without modelling that liability
-        would be a guess, not a fix.
-        """
-        if amount <= 0:
-            return None
-        specs: list[dict] = []
-        orders: list = []
-        for order in self._list_open_sell_stop_orders(symbol):
-            spec = self._snapshot_stop_order(order)
-            if spec is None:
-                logger.warning(
-                    "shift_stops_down: cannot snapshot stop %s for %s — aborting",
-                    getattr(order, "id", "<unknown>"), symbol,
-                )
-                return None
-            specs.append(spec)
-            orders.append(order)
-        if not specs:
-            return None
-        shifted = [{
-            **spec,
-            "stop_price": _quantize_price(spec["stop_price"] - amount),
-            "limit_price": (_quantize_price(spec["limit_price"] - amount)
-                            if spec.get("limit_price") else None),
-        } for spec in specs]
-        if any(not s.get("stop_price") or s["stop_price"] <= 0 for s in shifted):
-            logger.error(
-                "shift_stops_down: shifting %s's stop(s) by %s would put a stop "
-                "at or below zero — aborting, the existing stops stay resting",
-                symbol, amount,
-            )
-            return None
-
-        # IN-PLACE AMEND FIRST (item 201). A shift changes each stop's PRICE and
-        # nothing else, which is exactly the operation the 2026-09-30 rehearsal
-        # measurement established `replace_order_by_id(stop_price=...)` performs
-        # atomically. Cancelling every stop and re-placing them left the whole
-        # position naked for the width of that round trip, on a path that runs
-        # on ordinary ex-dividend days against real open positions.
-        #
-        # All-or-nothing on the DECISION, per spec on the EXECUTION: if any one
-        # resting order is not the measured-safe shape (a stop-limit fallback
-        # leg, a bracket child), the legacy cancel+resubmit runs for the symbol
-        # exactly as before rather than half the stops moving one way and half
-        # the other.
-        if all(self._stop_order_amendable_in_place(o) for o in orders):
-            legs: list[dict] = []
-            for spec, target in zip(specs, shifted):
-                leg = self._amend_one_stop_price(
-                    symbol=symbol, spec=spec, new_price=target["stop_price"],
-                )
-                legs.append(leg)
-                if leg["outcome"] == "amended":
-                    logger.info(
-                        "shift_stops_down: %s stop %s AMENDED IN PLACE $%.4f -> "
-                        "$%.4f, qty %s unchanged, new id %s (no cancel)",
-                        symbol, leg["id"], leg["old_stop"], leg["new_stop"],
-                        leg["qty"], leg["new_id"],
-                    )
-                elif leg["outcome"] == "refused":
-                    # NOT a conservative outcome: across an ex-dividend open the
-                    # un-shifted level is wrong by exactly the dividend, in the
-                    # direction that TRIGGERS it. The caller records and alerts.
-                    logger.error(
-                        "shift_stops_down: %s stop %s was REFUSED the shift to "
-                        "$%.4f (%s) — it is still resting at $%.4f, which the "
-                        "ex-dividend opening gap may trigger on its own; "
-                        "nothing cancelled", symbol, leg["id"], leg["new_stop"],
-                        leg["detail"], leg["old_stop"],
-                    )
-                elif leg["outcome"] == "flat":
-                    logger.info(
-                        "shift_stops_down: %s stop %s could not be shifted and "
-                        "the position is FLAT (%s) — nothing left to protect",
-                        symbol, leg["id"], leg["detail"],
-                    )
-                elif leg["outcome"] == "naked":
-                    logger.error(
-                        "shift_stops_down: %s stop %s is GONE after a dead "
-                        "replacement (%s) — the broker shows NO protective "
-                        "stop for this symbol; the position is UNPROTECTED, "
-                        "and this session's coverage repair has already run, "
-                        "so the gap persists until the NEXT intra sweep",
-                        symbol, leg["id"], leg["detail"],
-                    )
-                else:
-                    logger.error(
-                        "shift_stops_down: %s stop %s amend outcome UNKNOWN (%s) "
-                        "— the desk does NOT know whether it rests at $%.4f or "
-                        "$%.4f; nothing cancelled, re-read the book",
-                        symbol, leg["id"], leg["detail"], leg["old_stop"],
-                        leg["new_stop"],
-                    )
-            amended = [l for l in legs if l["outcome"] == "amended"]
-            unknown = [l for l in legs if l["outcome"] == "unknown"]
-            if any(l["outcome"] == "naked" for l in legs):
-                status = "naked"
-            elif unknown:
-                status = "unknown"
-            elif legs and all(l["outcome"] == "flat" for l in legs):
-                status = "flat"
-            elif len(amended) == len(legs):
-                status = "accepted"
-            elif amended:
-                status = "partial"
-            else:
-                status = "refused"
-            logger.info(
-                "shift_stops_down: %s — %d/%d stop(s) CONFIRMED amended in "
-                "place, %d unknown, 0 cancelled (status=%s)",
-                symbol, len(amended), len(legs), len(unknown), status,
-            )
-            return {
-                # Only a CONFIRMED full shift carries an order id. A partial, a
-                # refusal or an unknown must not read as an accepted stop order,
-                # or the caller writes every leg back at the shifted level and
-                # files a trade row for a stop that never moved.
-                "id": amended[0]["new_id"] if status == "accepted" else None,
-                "status": status, "symbol": symbol,
-                "shifted": len(amended), "total": len(legs),
-                "mode": "amend", "legs": legs,
-            }
-
-        if not self.cancel_snapshotted_stops(symbol, specs):
-            return None   # rollback already handled inside
-        restored, failed = self._restore_stop_orders(symbol, shifted)
-        if failed:
-            # Put the ORIGINAL levels back for whatever couldn't be shifted —
-            # protection at the old level beats no protection.
-            originals = [s for s in specs if any(
-                f.get("qty") == s["qty"] and abs(f.get("stop_price", 0) -
-                (s["stop_price"] - amount)) < 0.02 for f in failed)]
-            if originals:
-                self._restore_stop_orders(symbol, originals)
-            logger.error(
-                "shift_stops_down: %d/%d stop(s) failed to shift for %s — "
-                "originals restored where possible", len(failed), len(specs), symbol,
-            )
-        if restored <= 0:
-            return None
-        return {"id": f"shift-{symbol}", "status": "accepted", "symbol": symbol,
-                "shifted": restored, "total": len(specs), "mode": "cancel_resubmit"}
 
     def replace_stop_loss(
         self,
@@ -1253,11 +1062,15 @@ class StopPlacer:
         if amended is not _AMEND_NOT_ATTEMPTED:
             return amended
 
+        # Genuinely un-amendable from here: the window is timed and RECORDED.
+        window = UnprotectedWindow(symbol, fallback_reason(stop_specs, abs(float(fresh[0].qty)) if fresh else None), self._window_log)
+
         cancelled_specs: list[dict] = []
         for spec in stop_specs:
             try:
                 self.client.cancel_order_by_id(spec["id"])
                 cancelled_specs.append(spec)
+                window.cancelled(spec["id"])
             except Exception as exc:
                 logger.warning("replace_stop_loss: cancel failed for order %s: %s", spec["id"], exc)
                 # Always restore whatever we already cancelled. The previous
@@ -1275,6 +1088,7 @@ class StopPlacer:
                         "stop(s) for %s after partial cancel failure",
                         restored, len(cancelled_specs), symbol,
                     )
+                    window.close("cancel_failed_restored" if restored else "cancel_failed_no_stop_confirmed")
                 return None
 
         # Re-read position right before submit — in the sub-second window
@@ -1290,6 +1104,7 @@ class StopPlacer:
                 "NOT restoring old stops (position no longer exists)",
                 symbol,
             )
+            window.close("position_closed")
             return None
         # Order qty is always the unsigned share count — the SIDE parameter
         # carries direction. `fresh_positions[0].qty` is negative for a
@@ -1309,6 +1124,7 @@ class StopPlacer:
                 "stop @ $%.2f across %d leg(s)",
                 symbol, len(cancelled_specs), side, new_stop_price, len(legs),
             )
+            window.close("replaced")
             return order
         except Exception as exc:
             logger.error("replace_stop_loss: failed to submit new stop for %s: %s", symbol, exc)
@@ -1353,6 +1169,7 @@ class StopPlacer:
                     "replace_stop_loss: %d active stop(s) cover %.4f >= position %.4f for %s after submit failure; leaving stop state unchanged",
                     len(live_stops), covered_qty, position_qty, symbol,
                 )
+                window.close("covered_by_other_stop")
                 return None
             if live_stops:
                 logger.warning(
@@ -1365,4 +1182,5 @@ class StopPlacer:
                     "replace_stop_loss: %s has no confirmed stop protection after replacement failure",
                     symbol,
                 )
+            window.close("restored" if restored else "no_stop_confirmed")
             return None

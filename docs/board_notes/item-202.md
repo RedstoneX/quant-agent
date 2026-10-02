@@ -277,3 +277,17 @@ shape, and FAILS THE TEST AT TEARDOWN whether or not the error was swallowed.
 No allow-list ships: nothing is left to allow. Proven both ways: a probe that
 swallows a blocked `create_connection` errors at teardown naming itself and
 `192.0.2.1:81`; the full suite is green with the guard on.
+
+### Item 202 update 8 — the wall itself had six holes (2026-10-02)
+
+Probed from inside `no_network` against TEST-NET-1 (a literal address, so an attempt reaches the wall instead of failing at DNS); each of these left the process with an EMPTY journal [measured 2026-10-02]: UDP `sendto`, UDP `sendmsg`, curl_cffi `AsyncSession`, raw `Curl.perform`, a `curl` subprocess, and `getaddrinfo` of an off-box name. The wall now journals and raises `NetworkBlocked` on all six; loopback still works. The wall moved to `ops/rehearsal/network_wall.py` (isolation.py is re-exporting it) because isolation.py was at its size ceiling.
+
+Honest limit: a subprocess is a separate process, so the wall can only stop it at the spawn, and it does that for a NAMED list of network-only executables (curl, wget, nc, ssh and similar), not for any program. Nothing in the rehearsal spawns one today.
+
+Not done: the pinned recording's zero sectors and the Alpaca asset directory are RECORDING GAPS, not escapes — they raise and are named as missing inputs. They need a fresh capture against the live providers, an operator step this pass did not take. The production-snapshot settling run was not repeated, so the last box stays open.
+
+### Item 202 update 9 — the source-level guard (2026-10-02)
+
+Re-measured by running the production-snapshot replay (the cost-ceiling acceptance test, `--runxfail`): the journal of outbound attempts was EMPTY, no `HermeticBreach` fired, and the run reached the Portfolio Manager offline [measured 2026-10-02]. What the run still hits are RECORDING GAPS that raise loudly and are named: 20 of 20 news feeds had "no recorded response" for the selected recording, so the news seat reports failed and the Portfolio Manager's grounding check then rejects its decision. Nothing falls back to live. The test's old xfail reason (PM not reached, live MarketDataProvider) is stale; it was left untouched.
+
+New guard `tests/test_replay_outbound_sites_guard.py` with baseline `tests/replay_outbound_sites_baseline.json` (AST scan of src/: every file importing an HTTP, socket or provider-SDK client, 88 lines of JSON, adopted as-is so it is green on arrival). A new client import in src/ fails the test until the rehearsal has a seam for it; a vanished import must be removed from the baseline (shrink-only). Proved red by adding `import requests` to a scratch src file: `NEW outbound-client import(s) in src/ that a replay has no named seam for: {'src/zz_leak_probe.py': ['requests']}`.

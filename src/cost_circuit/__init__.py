@@ -110,6 +110,11 @@ from src.cost_circuit.clock import (  # noqa: F401
 from src.cost_circuit.schema import (  # noqa: F401
     ensure_cost_circuit_schema,
 )
+from src.cost_circuit.alert_outcome import (  # noqa: F401
+    ALERT_STATE_SUPPRESSED,
+    _alert_state_value,
+    _send_alert_outcome,
+)
 from src.cost_circuit.alert_ledger import (  # noqa: F401
     UnavailableLLMCostCircuit,
     _durable_alert_surface_ok,
@@ -136,11 +141,7 @@ _SUBMODULES = (
     "src.cost_circuit.breaker_latch",
     "src.cost_circuit.breaker_retry",
     "src.cost_circuit.breaker_session",
-    "src.cost_circuit.breaker_state",
-    "src.cost_circuit.breaker_holds",
-    "src.cost_circuit.breaker_wording",
     "src.cost_circuit.breaker_notify",
-    "src.cost_circuit.breaker_formats",
     "src.cost_circuit.parts.alert_formats",
     "src.cost_circuit.parts.episode_wording",
     "src.cost_circuit.parts.owner_notify",

@@ -35,6 +35,10 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+from src.stop_price_classification import (  # re-export mirror: defined there, still importable from here
+    STOP_ABSENT, STOP_UNUSABLE, STOP_USABLE, classify_stop_price,
+)
+
 # ---------------------------------------------------------------------------
 # THE one place a stop VALUE is judged usable (docs/WORK.md item 88).
 # ---------------------------------------------------------------------------
@@ -54,36 +58,6 @@ logger = logging.getLogger(__name__)
 #
 # No number is chosen here. Positive-and-finite is the arithmetic
 # precondition for a price to be a price at all.
-STOP_ABSENT = "absent"
-STOP_UNUSABLE = "unusable"
-STOP_USABLE = "usable"
-
-
-def classify_stop_price(value: Any) -> tuple[str, float]:
-    """Name what a caller is holding: an absent stop, an unusable one, or a price.
-
-    Returns ``(STOP_ABSENT | STOP_UNUSABLE | STOP_USABLE, price)`` where
-    `price` is the usable float and 0.0 otherwise.
-
-    * ``STOP_ABSENT``   — nothing was supplied (None, or an empty string
-      from a JSON/DB round-trip). The caller decides whether a stopless
-      order is legal on its path; only the cash-sweep park says yes.
-    * ``STOP_UNUSABLE`` — something WAS supplied and it cannot be a stop:
-      zero, negative, NaN, ±Inf, or unparseable. Never silently treated
-      as absence.
-    * ``STOP_USABLE``   — a finite, positive price.
-    """
-    if value is None:
-        return STOP_ABSENT, 0.0
-    if isinstance(value, str) and not value.strip():
-        return STOP_ABSENT, 0.0
-    try:
-        price = float(value)
-    except (TypeError, ValueError):
-        return STOP_UNUSABLE, 0.0
-    if not math.isfinite(price) or price <= 0:
-        return STOP_UNUSABLE, 0.0
-    return STOP_USABLE, price
 
 
 def usable_stop_prices(values: Any) -> list[float]:
@@ -246,12 +220,12 @@ def replace_stop_and_record(
 ) -> dict | None:
     """The replacement funnel: broker replace, then archive write-back.
 
-    Callers that used to talk to `AlpacaBroker.replace_stop_loss` directly
-    (deterministic trail, midday TRAIL_STOP) go through here so a successful
-    replace cannot silently leave `trades.stop_loss` on the entry level.
-    A failed or refused replace writes nothing.
+    Callers go through here so a successful replace cannot silently leave
+    `trades.stop_loss` on the entry level. A failed replace writes no level.
     """
     order = broker.replace_stop_loss(symbol, new_stop_price, **kwargs)
+    from src.execution.broker_parts.stop_window import record_unprotected_windows
+    record_unprotected_windows(broker, db, symbol)  # even a failed replace
     if accepted_stop_order(order):
         recorded = write_back_stop_loss(
             db, symbol, new_stop_price,
@@ -283,7 +257,7 @@ def reconcile_recorded_stop_levels(
     last_buy: Callable[..., dict | None],
     positions: list,
     sweep_symbol: str | None = None,
-    skip_symbols: set[str] | None = None,
+    skip_symbols: set[str] | None = None, db: Any,
 ) -> list[StopLevelMismatch]:
     """Compare each holding's recorded stop to the broker's live stop.
 
@@ -312,17 +286,11 @@ def reconcile_recorded_stop_levels(
         if not symbol or qty == 0 or symbol in skip:
             continue
         is_short = qty < 0
-        try:
-            live = broker.get_current_stop_price(symbol)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "stop-level reconcile: live stop lookup failed for %s: %s",
-                symbol, exc,
-            )
-            continue
-        live_px = _finite_price(live)
-        if live_px <= 0:
-            continue
+        from src.execution.stop_read import read_stop
+        _sr = read_stop(broker, symbol, db=db, context="stop-level reconcile")
+        if not _sr.found:
+            continue  # unreadable is recorded and alerted by read_stop
+        live_px = _sr.price
         opening = "SHORT" if is_short else "BUY"
         try:
             row = last_buy(symbol, action=opening) or {}

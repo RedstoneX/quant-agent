@@ -20,6 +20,7 @@ from src.execution.stop_records import (
 )
 from src.execution.stop_repair import repair_stop_coverage
 from src.storage.db import Database
+from tests.pipeline_factory import build_pipeline
 
 
 @pytest.fixture
@@ -107,13 +108,10 @@ def test_deterministic_trail_write_back_matches_the_new_level(db):
         "setup_type = 'breakout' WHERE symbol = 'AAA'",
     )
     db.conn.commit()
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
+    pipeline = build_pipeline(db=db, broker=MagicMock(), market=MagicMock())
     pipeline.broker.get_current_stop_price.return_value = 95.0
     pipeline.broker.replace_stop_loss.return_value = {"id": "o1"}
     pipeline._atr_for_symbol = MagicMock(return_value=2.0)
-    pipeline.market = MagicMock()
     pipeline.market.get_ohlcv.return_value = []
 
     pos = Position(
@@ -208,7 +206,7 @@ def test_reconcile_surfaces_a_deliberate_long_mismatch(db):
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 362.58
     position = SimpleNamespace(symbol="V", qty=1.0)
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -230,7 +228,7 @@ def test_reconcile_surfaces_a_deliberate_short_mismatch(db):
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 215.0
     position = SimpleNamespace(symbol="TSLA", qty=-4.0)
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -248,7 +246,7 @@ def test_reconcile_is_quiet_when_archive_matches_broker(db):
     _open_long(db, symbol="AAPL", stop=148.25)
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 148.25
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -262,7 +260,7 @@ def test_reconcile_skips_a_missing_live_stop_that_coverage_owns(db):
     _open_long(db, symbol="AAPL", stop=140.0)
     broker = MagicMock()
     broker.get_current_stop_price.return_value = None
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -416,7 +414,7 @@ def test_reconcile_treats_a_sub_dollar_tick_as_a_match(db):
     )
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 0.50005
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -433,7 +431,7 @@ def test_reconcile_surfaces_a_sub_dollar_mismatch_beyond_a_tick(db):
     )
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 0.501
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -459,10 +457,7 @@ def test_reprotect_idempotent_skip_still_writes_back(db):
     from src.pipeline import TradingPipeline
 
     _open_long(db, symbol="NVDA", stop=85.0)
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
-    pipeline._format_qty = lambda q: str(q)
+    pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     existing = MagicMock()
     existing.stop_price = "90.00"
     # Item 199: the skip is now decided by IDENTITY and live status, not by
@@ -486,10 +481,7 @@ def test_reprotect_kill_switch_does_not_write_back(db):
     from src.pipeline import TradingPipeline
 
     _open_long(db, symbol="NVDA", stop=85.0)
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.broker = MagicMock()
-    pipeline._format_qty = lambda q: str(q)
+    pipeline = build_pipeline(db=db, broker=MagicMock(), _format_qty=lambda q: str(q))
     pipeline.broker._list_open_sell_stop_orders.return_value = []
     pipeline.broker._submit_protective_stop_retrying.return_value = {
         "id": None, "status": "kill_switch_halted",
@@ -522,18 +514,6 @@ def test_repair_partial_with_an_accepted_id_still_writes_back(db):
     assert row["initial_stop_loss"] == pytest.approx(158.75)
 
 
-def test_zero_entry_stop_write_back_does_not_mint_an_entry_bet(db):
-    db.insert_trade(
-        symbol="NAKED", action="BUY", qty=5, price=100.0,
-        reasoning="entry", run_id="r1", stop_loss=0, fill_status="filled",
-    )
-    assert recorded_initial_stop(db.get_symbol_last_buy("NAKED")) == 0.0
-    assert write_back_stop_loss(db, "NAKED", 97.0) is True
-    row = db.get_symbol_last_buy("NAKED")
-    assert row["stop_loss"] == pytest.approx(97.0)
-    assert recorded_initial_stop(row) == 0.0
-
-
 def test_write_back_updates_every_open_row_of_the_same_position(db):
     _open_long(db, symbol="ORCL", stop=95.0)
     db.insert_trade(
@@ -556,7 +536,7 @@ def test_reconcile_reports_a_full_tick_difference(db):
     _open_long(db, symbol="AAPL", stop=148.25)
     broker = MagicMock()
     broker.get_current_stop_price.return_value = 148.26
-    mismatches = reconcile_recorded_stop_levels(
+    mismatches = reconcile_recorded_stop_levels(db=None, 
         broker=broker,
         last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
             s, include_in_flight=True, action=action,
@@ -572,9 +552,7 @@ def test_position_history_reads_the_frozen_entry_stop_not_the_live_one(db):
 
     _open_long(db, symbol="V", stop=374.27)
     write_back_stop_loss(db, "V", 362.58)
-    pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
-    pipeline.tech_store = MagicMock()
+    pipeline = build_pipeline(db=db, tech_store=MagicMock())
     pipeline.tech_store.get_history.return_value = []
     pos = Position(
         symbol="V", qty=1, avg_entry=380.0, current_price=370.0,

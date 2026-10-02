@@ -74,7 +74,7 @@ _DELETED = (
             # The tombstone in the constant's own docstring block.
             "src/portfolio_constructor/config.py",
             "src/portfolio_constructor/stops.py",
-            "src/portfolio_constructor/stop_geometry.py",
+            "src/portfolio_constructor/entry_stop/resolver.py",
             # `MAX_ARBITRARY_ENTRIES`'s running history IS the register of
             # retired ledger rows; naming a deleted one there is the point.
             "src/number_sources.py",

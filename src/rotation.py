@@ -1753,7 +1753,7 @@ def pruning_pass_lines(record: dict | None) -> list[str]:
         )
     # (c) The names it considered and KEPT. A silent pass is
     # indistinguishable from a pass that never ran.
-    kept = [s for s in examined if s != cut]
+    kept = [s for s in examined if s != cut and s not in below]
     if kept:
         lines.append(
             f"   Considered and kept: {', '.join(kept)} \u2014 each still "
@@ -1762,8 +1762,8 @@ def pruning_pass_lines(record: dict | None) -> list[str]:
         )
     if below:
         lines.append(
-            f"   Below the desk's own entry bar today, and would not be "
-            f"bought now: {', '.join(below)}."
+            f"   Below the desk's own entry bar today, and would not be bought now: {', '.join(below)}. "
+            f"Not cut this pass: {', '.join(s for s in below if s != cut) or 'none'}."
         )
     else:
         lines.append(

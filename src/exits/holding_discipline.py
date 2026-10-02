@@ -98,6 +98,9 @@ class HoldingDiscipline:
             claims_thesis_invalidation,
             holding_discipline_claim_check,
         )
+        from src.agents.portfolio_manager import (
+            PortfolioManagerAgent as _PortfolioManagerAgent,
+        )
         from src.risk.exit_trigger import ExitTrigger, normalize_trigger
 
         if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
@@ -275,6 +278,7 @@ class HoldingDiscipline:
             protected=protection.protected,
             macro_regime_today=macro_regime_today,
             macro_status=macro_status,
+            state_change_parser=_PortfolioManagerAgent._state_change_symbols_by_date,
             active_state_changes=active_state_changes,
             exit_trigger=exit_trigger,
         )

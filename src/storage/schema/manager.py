@@ -1087,7 +1087,6 @@ class DatabaseSchema:
             self.conn.commit()
         except Exception as e:
             _log.error("Schema migration failed for specialist_evidence: %s", e)
-
         # Indexes for prune queries. Both prune_trades and prune_agent_logs
         # scan WHERE timestamp < ?. 5-year retention on trades (~10-20k rows
         # before pruning) and 2-year retention on agent_logs (~15-25k rows
@@ -1111,4 +1110,5 @@ class DatabaseSchema:
                 )
             except Exception as e:
                 _log.warning("Index creation failed for %s.%s: %s", table, col, e)
-        self.conn.commit()
+        from src.storage.schema.owner_intent_tables import apply as _owner_intents; _owner_intents(self.conn)  # idempotent, commits
+        from src.storage.schema.sentinel_tables import ensure_sentinel_tables; ensure_sentinel_tables(conn=self.conn)  # Sentinel seams, appended 2026-10-02; idempotent
