@@ -1498,6 +1498,7 @@ async function loadChoppingBlock() {
         el("td", { text: h.standing === "below_bar" ? "below the bar" : "clears the bar" }),
         el("td", { text: h.headline }),
         el("td", { text: h.reason }),
+        el("td", { text: h.margins.map((m) => `${m.rule}: ${m.now} ${m.unit} (${m.direction.replace(/_/g, " ")}${m.previous === null ? "" : ", was " + m.previous})`).join("; ") || "no margin recorded" }),
       ])
     );
     if (rows.length) body.appendChild(el("table", {}, rows));

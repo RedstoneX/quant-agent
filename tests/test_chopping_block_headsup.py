@@ -59,3 +59,25 @@ def test_read_passes_reads_rows_and_joins_dispositions():
                   (rid, json.dumps(d)))
     r = build_rows(read_passes(c))
     assert r.holdings[0].reason.endswith("R2 neutral rating")
+
+
+def test_clearing_name_closing_in_is_flagged_with_margin_and_no_cutoff():
+    def mp(ts, net, steps=1):
+        p = _p(ts, ["ZZA", "ZZB"], [])
+        p["margins"] = {"ZZA": {"r2_steps_from_neutral": steps, "r5_net_evidence": net},
+                        "ZZB": {"r2_steps_from_neutral": 1, "r5_net_evidence": 3}}
+        return p
+    r = build_rows([mp("2026-09-30T10", 3), mp("2026-10-01T10", 2), mp("2026-10-02T10", 1)])
+    assert r.holdings[0].symbol == "ZZA" and r.holdings[0].direction == "closing_in"
+    m = {x.rule: x for x in r.holdings[0].margins}["net evidence"]
+    assert (m.now, m.previous, m.first) == (1, 2, 3)
+    assert r.holdings[1].direction == "steady"
+
+
+def test_margins_for_uses_the_desks_own_net_score():
+    from types import SimpleNamespace as N
+    from src.rotation_margins import margins_for
+    a = [N(symbol="ZZA", rating="buy"), N(symbol="ZZB", rating="neutral")]
+    out = margins_for(["ZZA", "ZZB", "ZZC"], a, {"ZZA": {}}, None, None)
+    assert out["ZZA"] == {"rating": "buy", "r2_steps_from_neutral": 1, "r5_net_evidence": 0}
+    assert "r5_net_evidence" not in out["ZZB"] and "ZZC" not in out

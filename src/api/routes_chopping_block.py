@@ -9,10 +9,14 @@ reads it. No threshold, danger band or day-count is introduced.
 What it reads: the durable `rotation`/`precheck` rows (held set examined and
 the held names below the entry bar, one per session) and, where present, the
 run-scoped `rotation`/`dispositions` row that stores WHY a below-bar name fails.
-Distance to the bar is therefore categorical (clears it / below it) - the
-margin by which a healthy name clears it is not recorded anywhere, and the
-panel says so. Direction is derived from the same rows: how long the name has
-held its current standing and when it last changed.
+For a name that still clears the bar, the run-scoped `rotation`/`margins` row
+(`src/rotation_margins.py`) records how far it sits from failing the two rules
+that have a distance: R2 in rating steps from neutral and R5 in independent
+net-evidence points above failing. Direction of travel is each rule's value on
+the latest recorded day against the day before. Nothing here is a threshold:
+any fall is reported as closing in, any rise as widening, and the owner judges.
+R3, R6 and R7 are membership tests with no distance. Standing and its streak
+come from the `precheck` rows as before.
 """
 from __future__ import annotations
 
@@ -31,16 +35,31 @@ _UNREADABLE = (
     "holding being healthy."
 )
 _NO_MARGIN = (
-    "Standing is whether a holding clears the desk's own entry bar. How far "
-    "above the bar a healthy name sits is not recorded, so a healthy name "
-    "cannot be shown drifting until it actually crosses."
+    "Margins are rating steps from neutral (rule R2) and independent "
+    "net-evidence points above failing (rule R5), compared day against day. "
+    "The other entry rules are yes-or-no and have no distance. A day with no "
+    "margin record shows no margin rather than a guess."
 )
+_RULES = (
+    ("r2_steps_from_neutral", "rating", "steps from neutral"),
+    ("r5_net_evidence", "net evidence", "independent points above failing"),
+)
+
+
+class Margin(BaseModel):
+    rule: str
+    unit: str
+    now: int
+    previous: int | None
+    first: int
+    direction: str  # "closing_in" | "widening" | "steady" | "first_record"
 
 
 class ChoppingBlockRow(BaseModel):
     symbol: str
     standing: str  # "below_bar" | "clears_bar"
-    direction: str  # "slipped" | "recovered" | "steady" | "first_seen"
+    direction: str  # "slipped" | "recovered" | "steady" | "first_seen" | "closing_in"
+    margins: list[Margin] = []
     headline: str
     reason: str
 
@@ -82,6 +101,32 @@ def _reason(sym: str, record: dict, disposition: dict) -> str:
         return f"fails the entry bar on: {why}"
     return ("below the entry bar; the record does not say which rule it "
             "fails, because the pass stored reasons only for the name it cut")
+
+
+def _margins(sym: str, passes: list[dict]) -> list[Margin]:
+    """Each rule's latest value against the previous recorded DAY's value."""
+    out: list[Margin] = []
+    for key, label, unit in _RULES:
+        by_day: dict[str, int] = {}
+        for p in passes:  # oldest first, so the last pass of a day wins
+            v = (p.get("margins") or {}).get(sym, {}).get(key)
+            if isinstance(v, int) and not isinstance(v, bool):
+                by_day[_day(p["ts"])] = v
+        if not by_day:
+            continue
+        vals = list(by_day.values())
+        now, prev = vals[-1], (vals[-2] if len(vals) > 1 else None)
+        d = ("first_record" if prev is None else
+             "closing_in" if now < prev else "widening" if now > prev else "steady")
+        out.append(Margin(rule=label, unit=unit, now=now, previous=prev,
+                          first=vals[0], direction=d))
+    return out
+
+
+def _closing_text(ms: list[Margin]) -> str:
+    return "; ".join(
+        f"{m.rule} fell from {m.previous} to {m.now} {m.unit}"
+        for m in ms if m.direction == "closing_in")
 
 
 def build_rows(passes: list[dict]) -> ChoppingBlockResponse:
@@ -130,10 +175,17 @@ def build_rows(passes: list[dict]) -> ChoppingBlockResponse:
                 direction = "steady"
                 head = (f"Clears the entry bar on every recorded pass since "
                         f"{_day(streak['ts'])}.")
+        ms = _margins(sym, passes)
+        closing = _closing_text(ms)
+        if standing == "clears_bar" and closing:
+            direction = "closing_in"
+            head = (f"Still clears the entry bar but is closing in on it: "
+                    f"{closing}. " + head)
         rows.append(ChoppingBlockRow(
-            symbol=sym, standing=standing, direction=direction,
+            symbol=sym, standing=standing, direction=direction, margins=ms,
             headline=head, reason=why))
-    rows.sort(key=lambda r: (r.standing != "below_bar", r.symbol))
+    rows.sort(key=lambda r: (
+        r.standing != "below_bar", r.direction != "closing_in", r.symbol))
     return ChoppingBlockResponse(
         as_of=latest["ts"], holdings=rows,
         note=_NO_MARGIN + " Holdings are those the latest pass examined; a "
@@ -147,6 +199,7 @@ def read_passes(conn: sqlite3.Connection) -> list[dict]:
         "AND evidence_json LIKE '%\"rotation\"%' ORDER BY id ASC"
     ).fetchall()
     dispositions: dict[str, dict] = {}
+    margin_rows: dict[str, dict] = {}
     passes: list[dict] = []
     for row in rows:
         try:
@@ -157,11 +210,17 @@ def read_passes(conn: sqlite3.Connection) -> list[dict]:
             continue
         if data.get("outcome") == "dispositions":
             dispositions[row["run_id"]] = data
+        elif data.get("outcome") == "margins":
+            try:
+                margin_rows[row["run_id"]] = json.loads(data.get("held_margins") or "{}")
+            except (TypeError, ValueError):
+                pass
         elif data.get("outcome") == "precheck" and "held_examined" in data:
             passes.append({"run_id": row["run_id"], "ts": row["timestamp"],
                            "record": data})
     for p in passes:
         p["disposition"] = dispositions.get(p["run_id"], {})
+        p["margins"] = margin_rows.get(p["run_id"], {})
     return passes
 
 
