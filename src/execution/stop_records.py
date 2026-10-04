@@ -33,6 +33,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from src.execution.pending_stop_amends import record_deferred_amend
 logger = logging.getLogger(__name__)
 
 from src.stop_price_classification import (  # re-export mirror: defined there, still importable from here
@@ -223,14 +224,13 @@ def replace_stop_and_record(
     `trades.stop_loss` on the entry level. A failed replace writes no level.
     """
     order = broker.replace_stop_loss(symbol, new_stop_price, **kwargs)
-    from src.execution.broker_parts.stop_window import record_unprotected_windows; from src.execution.pending_stop_amends import record_deferred_amend
+    from src.execution.broker_parts.stop_window import record_unprotected_windows
     record_unprotected_windows(broker, db, symbol)  # even a failed replace
-    if isinstance(order, dict) and order.get("amend_status") == "market_closed": return record_deferred_amend(db, broker, symbol, new_stop_price, order)
+    if isinstance(order, dict) and order.get("amend_status") == "market_closed":
+        return record_deferred_amend(db, symbol, new_stop_price, order, is_short=bool(_holding_is_short(broker, symbol)))
     if accepted_stop_order(order):
         recorded = write_back_stop_loss(
-            db, symbol, new_stop_price,
-            is_short=_holding_is_short(broker, symbol),
-        )
+            db, symbol, new_stop_price, is_short=_holding_is_short(broker, symbol))
         if not recorded:
             logger.error(
                 "stop replace accepted for %s @ $%.4f but archive write-back "

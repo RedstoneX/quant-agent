@@ -299,7 +299,7 @@ class ProtectionMixin:
         # clock, or a sweep straddling 16:00 ET could call one symbol's
         # lapse expected and the next symbol's identical lapse a failure.
         market_open = _market_is_open_now(self.broker)
-        if market_open: from src.execution.pending_stop_amends import drain_safely; drain_safely(self.broker, self.db)  # owed out-of-hours stop levels land FIRST
+        if market_open: from src.execution.stop_repair import drain_owed_stop_levels; drain_owed_stop_levels(self.broker, self.db)  # owed out-of-hours stop levels land FIRST
         gaps: list[dict] = []
         # Positions whose protective stop has been elected and has not
         # filled. Kept OUT of `gaps`: every consumer of that list buckets a

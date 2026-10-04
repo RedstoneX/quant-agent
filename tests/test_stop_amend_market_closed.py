@@ -15,8 +15,9 @@ from __future__ import annotations
 import pytest
 
 from src.execution.broker_parts.stop_amend import StopAmender
-from src.execution.pending_stop_amends import (
-    drain_pending_stop_amends, intent_is_protective,
+from src.execution.pending_stop_amends import intent_is_protective
+from src.execution.pending_stop_drain import (
+    drain_pending_stop_amends,
 )
 
 
@@ -88,8 +89,8 @@ class _FakeStore:
 
 @pytest.fixture(autouse=True)
 def _fake_store(monkeypatch):
-    from src.execution import pending_stop_amends
-    monkeypatch.setattr(pending_stop_amends, "_store", _FakeStore)
+    from src.execution import pending_stop_drain
+    monkeypatch.setattr(pending_stop_drain, "_store", _FakeStore)
 
 
 class _Broker:
