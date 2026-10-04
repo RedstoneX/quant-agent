@@ -52,6 +52,10 @@ Nearly every caller discards the return value of the owner-alert send, so a
 failed delivery is indistinguishable from a successful one. Fix: make the
 callers honour the result, and prove a failed send is visible somewhere.
 
+FIXED 2026-10-04 -- the 2026-10-02 verdict was WRONG, and recorded is not surfaced. A failed send does land in `notifier_sends` with status `failed`, but exactly one query reads that table for the owner's dashboard (`get_muted_backlog`) and it selected `status IN ('muted','filtered')`. Telegram is hard-muted, so a failed owner alert -- including the naked-position page -- reached NO surface the owner has, while its caller discarded the False. The enumeration had already drifted once (`filtered` was missing until #978); the read now selects by exclusion (`status <> 'sent'`), so non-delivery is defined once and a future status cannot fall through it. `failed_total`/`failed_count` are reported alongside the two deliberate drops and the dashboard line names them. Proof: `tests/test_muted_backlog.py::test_a_failed_owner_alert_reaches_the_backlog` fails with the old status list restored and passes with the fix. Measured exposure: in production `notifier_sends` from 2026-09-18 to 2026-10-01, 221 rows, statuses only `sent` (213) and `muted` (8); 39 owner alerts, all sent -- so this has not yet fired in the recorded window.
+
+Residual, unchanged and still open: nothing RETRIES or escalates a failed alert. Not fixed here because with the global mute on, a retry cannot succeed through the same channel -- the surface is the channel, which is what this change repairs.
+
 VERDICT 2026-10-02 (isolation pass): NOT A DEFECT as written -- the note's consequence is false. 22 of 34 `send_owner_alert` call sites do discard the return, but a failed delivery is NOT invisible: `send_owner_alert` logs CRITICAL before sending, and the transport records every attempt in `notifier_sends` with status `failed` and the reason. Reproduced with the real transport and a forced connection error against a temp DB: returned False, CRITICAL line logged, row `('owner_alert', 'failed', 'boom')`. The function's docstring says callers treat the result as information by design. Residual (a design question, not a bug): nothing retries or escalates a failed alert; the only trace is the row and the log.
 
 ## A broker read error reads as "no stop to adjust" -- FIXED
@@ -95,10 +99,12 @@ VERDICT 2026-10-02 (isolation pass): INCORRECT. Earlier verdict read only the `c
 The position builder, the portfolio-manager seat and the prompt-facts review
 chunk are under the ceiling but are not separable pieces. Same treatment.
 
-STILL OPEN, measured 2026-10-02: `tests/test_boundary_harness.py` passes 12
-tests but covers only the pipeline mixins; mixins remain in
-`src/pipeline_prompt_facts_review.py` and
-`src/agents/portfolio_manager/prompt_evidence.py`.
+UPDATE 2026-10-04: `PromptFactsReviewMixin` is now shims only; its eleven bodies
+live as five constructed parts under `src/prompt_facts/review/`, each witnessed in
+`tests/test_prompt_facts_parts_boundary.py`. `PromptEvidenceMixin` bodies already
+live on `PromptEvidence` (witnessed); the agent still INHERITS the shim class, and
+61 test sites call those names on the agent class, so dropping the inheritance is a
+separate change.
 
 DONE 2026-10-04 for `PromptEvidenceMixin`: `PortfolioManagerAgent` no longer inherits it. `hold_prompt_evidence` builds one `PromptEvidence` and installs classmethod delegates on the agent (61 class-level test call sites counted, all still resolving, none rewritten); `tests/test_portfolio_manager_parts_boundary.py` builds and runs the part on a bare class. Three mixins remain on the seat (`DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`) plus `PromptFactsReviewMixin`.
 

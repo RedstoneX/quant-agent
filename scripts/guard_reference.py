@@ -18,10 +18,37 @@ the branch had removed one). So every guard names each offending site by an
 identity that survives line shifts -- the path, the kind, the enclosing scope
 and the site's own source text -- and ``added_sites`` fails any identity the
 working tree holds MORE copies of than the trunk. Removals are never a failure.
+
+ONE MOMENT ON BOTH SIDES
+------------------------
+A ratchet is only meaningful when the "before" and the "after" are the same
+moment's trunk. On ``pull_request`` CI, ``actions/checkout`` with no ``ref:``
+checks out GitHub's *merge ref* -- the branch merged into whatever main was
+when GitHub last computed it -- while a fresh fetch of ``origin/main`` resolves
+to main's CURRENT tip. Measured 2026-10-04 on PRs 1158 and 1172: the tested
+tree's main-side parent was ten commits behind main, so the tested tree held
+``src/pipeline.py`` at 2529 lines while main held 1894, and the ratchet
+reported a 600-line growth on a file neither branch touched. The same phantom
+offender appeared on 17 of 18 red changes. That is not a strict rule biting; it
+is a stale tree measured against a fresh trunk.
+
+So ``trunk_rev()`` reads the main-side parent of the merge commit actually
+under test -- the branch is judged against the real main it was merged with --
+and falls back to ``origin/main`` everywhere else (direct push, local run). The
+fallback is the strict direction: it can only make the comparison harsher,
+never easier. The parent is trusted only when every one of these holds, so a
+branch can never nominate its own reference: the run is a ``pull_request``
+event, HEAD is a two-parent merge, HEAD's second parent is exactly the PR head
+commit GitHub reports, and HEAD's first parent is an ancestor of the current
+``origin/main``. This is deliberately NOT "compare against the merge base": a
+merge base is a commit the branch picks by not merging, which would let a
+branch delete something today's main still needs and pass.
 """
 from __future__ import annotations
 
 import ast
+import json
+import os
 import subprocess
 from collections import Counter
 from pathlib import Path
@@ -46,24 +73,71 @@ def _git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
 
 
-def require_trunk() -> str:
-    """Return the resolved ``origin/main`` commit, or raise ``ReferenceUnavailable``."""
-    out = _git("rev-parse", "--verify", "--quiet", f"{TRUNK}^{{commit}}")
-    sha = out.stdout.strip()
-    if out.returncode != 0 or not sha:
+def _rev_parse(rev: str) -> str:
+    out = _git("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}")
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def _merge_ref_main_parent() -> str:
+    """Main-side parent of the merge commit CI is testing, or "" if not one.
+
+    Every condition below must hold; any doubt returns "" and the caller falls
+    back to the current ``origin/main``, which is the stricter reference.
+    """
+    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+        return ""
+    event_path = os.environ.get("GITHUB_EVENT_PATH") or ""
+    try:
+        with open(event_path, encoding="utf-8") as fh:
+            head_sha = json.load(fh)["pull_request"]["head"]["sha"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+    out = _git("rev-list", "--parents", "-n", "1", "HEAD")
+    parts = out.stdout.split()
+    if out.returncode != 0 or len(parts) != 3:  # not "<merge> <p1> <p2>"
+        return ""
+    _, main_side, branch_side = parts
+    if branch_side != str(head_sha):  # HEAD is not GitHub's merge of THIS head
+        return ""
+    if not _rev_parse(main_side):
+        return ""
+    # The reference must be a commit main actually contains, never one the
+    # branch could have fabricated.
+    if _git("merge-base", "--is-ancestor", main_side, TRUNK).returncode != 0:
+        return ""
+    return main_side
+
+
+def trunk_rev() -> str:
+    """The commit this tree is judged against: one moment on both sides.
+
+    Resolved afresh on every call -- nothing is cached, because a cached
+    reference outlives the repository state it was read from. Raises
+    ``ReferenceUnavailable`` when ``origin/main`` cannot be read at all: a
+    guard that passes without a reference is decoration. The merge-ref
+    refinement below is only ever applied to a trunk that WAS read; it can
+    never stand in for one that could not be.
+    """
+    tip = _rev_parse(TRUNK)
+    if not tip:
         raise ReferenceUnavailable(
             f"cannot read {TRUNK}: this guard compares the working tree against the "
             f"trunk and stores nothing, so without {TRUNK} it REFUSES rather than "
             "pass. Fix: `git fetch origin main` locally; in CI, check out with "
-            "fetch-depth: 0. git said: " + (out.stderr.strip() or "ref not found")
+            "fetch-depth: 0. git said: ref not found"
         )
-    return sha
+    return _merge_ref_main_parent() or tip
+
+
+def require_trunk() -> str:
+    """Return the resolved trunk commit, or raise ``ReferenceUnavailable``."""
+    return trunk_rev()
 
 
 def trunk_paths(suffix: str = "") -> list[str]:
     """Every path tracked on ``origin/main``, optionally filtered by suffix."""
     require_trunk()
-    out = _git("ls-tree", "-r", "--name-only", TRUNK)
+    out = _git("ls-tree", "-r", "--name-only", trunk_rev())
     if out.returncode != 0:
         raise ReferenceUnavailable(f"git ls-tree {TRUNK} failed: {out.stderr.strip()}")
     return sorted(p for p in out.stdout.splitlines() if p.endswith(suffix))
@@ -86,7 +160,8 @@ def trunk_blobs(paths: list[str]) -> dict[str, str]:
     require_trunk()
     if not paths:
         return {}
-    request = "".join(f"{TRUNK}:{p}\n" for p in paths).encode()
+    rev = trunk_rev()
+    request = "".join(f"{rev}:{p}\n" for p in paths).encode()
     proc = subprocess.run(
         ["git", "cat-file", "--batch"], cwd=ROOT, input=request, capture_output=True
     )
