@@ -153,11 +153,16 @@ def main() -> None:
                 rng = random.Random(CONTROL_SEED + int(mult * 100) + horizon)
                 for s in syms:
                     a, b_, c, d = _outcomes(data[s], atrs[s], mult, horizon, bar_floor)
-                    e += a; h += b_; r += c; j += d
+                    e += a
+                    h += b_
+                    r += c
+                    j += d
                     a2, b2, c2, _ = _outcomes(
                         data[s], atrs[s], mult, horizon, bar_floor, rng=rng,
                     )
-                    ce += a2; ch += b2; cr += c2
+                    ce += a2
+                    ch += b2
+                    cr += c2
                 if not e:
                     continue
                 print(f"{mult:7.2f} {e:8d} {100*h/e:7.2f} "
