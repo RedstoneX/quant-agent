@@ -104,26 +104,54 @@ OTHER DECLARED SIMPLIFICATIONS
   days cannot evaluate live rationing. The share is not a discount you
   can apply to the other numbers: who got funded changes later equity,
   later size, and later outcomes.
+
+  Every run ALSO reports `contested_budget_days`: the strictly narrower
+  count of days on which two or more new candidates competed AND at
+  least one was cut. Those are the days the alphabetical tie-break
+  actually arbitrated between names. A day with a single candidate
+  trimmed by already-held risk binds the budget but decides nothing by
+  spelling, and production would have trimmed it the same way, so it is
+  not contested. A run with ZERO contested days has no alphabetical
+  arbitration anywhere in it and is therefore settleable; one with any
+  contested day is reported as a NON-RESULT by the tool itself rather
+  than left for a reader to disqualify. Zero is the line because this
+  engine compounds equity off realized P&L: one funding call decided by
+  spelling moves every later size and every later outcome, so there is
+  no share of contested days that can be treated as noise around an
+  otherwise sound number.
+
+NOT SUBSTITUTED — why the asks stay equal
+------------------------------------------
+Production's `requested_pct` is `combined_override.value`
+(src/portfolio_constructor/__init__.py), a conviction multiplier built
+from the analyst and PM verdicts. There is no deterministic quantity in
+this engine's reach that reproduces it. Making the asks differ per
+candidate here would mean inventing a quality score, which is the one
+thing this tool refuses to do, so the asks stay equal and the
+consequence is DECLARED and COUNTED instead of disguised.
 """
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from datetime import date
 from types import SimpleNamespace
 
+from src.backtest.budget_days import _budget_binds, _tie_break_arbitrated  # noqa: F401
+from src.backtest.exit_rules import (  # noqa: F401
+    _check_exit, _existing_risk_pct, _size_position,
+)
 from src.config import AppConfig
 from src.data.correlation import build_correlation_matrix, correlation_clusters
 from src.data.technical import compute_indicators
 from src.backtest.structural_stops import (  # noqa: F401
     _resolve_structural_stop_and_target, _setup_type_for,
 )
+from src.backtest.records import Trade, _OpenPosition, _fill_price  # noqa: F401
 from src.models import OHLCV
 from src.pipeline import TradingPipeline
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
-from src.risk.budget import BudgetAllocation, RiskRequest, allocate_risk_budget
-from src.risk.rules import _gross_multiplier
+from src.risk.budget import RiskRequest, allocate_risk_budget
 from src.risk.trailing import compute_trailing_stop
 
 #: Trading days of history a symbol needs before this engine will evaluate it
@@ -154,46 +182,6 @@ class BacktestParams:
     min_bars_for_signal: int = MIN_BARS_FOR_SIGNAL
 
 
-@dataclass
-class _OpenPosition:
-    symbol: str
-    direction: str  # "long" | "short"
-    signal_date: date
-    entry_date: date
-    entry_index: int
-    entry_price: float  # fill price (slippage-adjusted)
-    stop_initial: float
-    stop: float  # current (possibly trailed) stop
-    target: float | None
-    setup_type: str
-    shares: float
-    risk_pct: float
-
-
-@dataclass(frozen=True)
-class Trade:
-    """One closed round-trip. Every price here is a FILL price (slippage
-    applied) except `stop_price` / `target_price`, which are the structural
-    price LEVELS the trade was managed against."""
-
-    symbol: str
-    direction: str  # "long" | "short"
-    signal_date: date
-    entry_date: date
-    entry_price: float
-    stop_price: float
-    target_price: float | None
-    exit_date: date
-    exit_price: float
-    exit_reason: str  # "stop" | "target" | "horizon" | "end_of_data"
-    shares: float
-    risk_pct: float
-    setup_type: str
-    hold_days: int
-    pnl: float
-    r_multiple: float
-
-
 @dataclass(frozen=True)
 class BacktestRunResult:
     trades: list[Trade]
@@ -212,19 +200,20 @@ class BacktestRunResult:
     #: ticker tie-break is the order they are served. That is not a
     #: ranking, and it is not production's `rank_verdicts` spend-down.
     binding_budget_days: int
+    #: Days on which TWO OR MORE new candidates competed and at least one
+    #: was cut — the days the alphabetical tie-break actually arbitrated
+    #: between names. Strictly a subset of `binding_budget_days`. Any
+    #: value above zero makes the run a NON-RESULT for settling a
+    #: parameter: see the module docstring for why zero is the line.
+    contested_budget_days: int
 
-
-def _fill_price(raw_price: float, direction: str, side: str, slippage_bps: float) -> float:
-    """Apply a flat slippage assumption in the ADVERSE direction only.
-
-    `side` is "open" (establishing the position) or "close" (exiting it).
-    Buying always costs slippage; selling always gives it up. A long open
-    and a short close are both buys; a long close and a short open are both
-    sells.
-    """
-    frac = slippage_bps / 10_000.0
-    buying = (direction == "long" and side == "open") or (direction == "short" and side == "close")
-    return raw_price * (1 + frac) if buying else raw_price * (1 - frac)
+    @property
+    def is_settleable(self) -> bool:
+        """Whether a parameter conclusion may be read off this run at
+        all. False whenever ticker spelling arbitrated any funding
+        decision, because compounding carries that choice into every
+        later size and outcome."""
+        return self.contested_budget_days == 0
 
 
 def _resolve_stop_for_signal(
@@ -255,7 +244,11 @@ def _resolve_stop_for_signal(
     `computed_level_touches` is the touch count behind each of those prices
     (2026-09-03) — without it `_level_backing_stop` would honour every
     level regardless of `risk.min_level_touches_for_stop_honor`, which is
-    not the rule the live path runs. `computed_level_bars` is the pivot-bar
+    not the rule the live path runs. The bar those counts are judged
+    against is `config.risk.min_level_touches_for_stop_honor`, wired into
+    this engine's `ConstructorConfig` in `run_backtest` — it was not wired
+    before 2026-10-04, so this paragraph described a rule the engine was
+    not actually running. `computed_level_bars` is the pivot-bar
     ranges behind those same prices — `_level_backing_stop` fails closed
     without them, so omitting it would make this engine refuse every
     level-backed stop that live honours.
@@ -298,77 +291,6 @@ def _resolve_stop_for_signal(
     return stop
 
 
-def _size_position(
-    *, equity: float, granted_risk_pct: float, fill_entry: float,
-    stop: float, symbol: str, max_position_pct: float,
-) -> tuple[int, float]:
-    """§2.1 formula: shares = equity x risk_pct/100 / |entry - stop|,
-    clamped by the single-name notional ceiling on a GROSS-leverage basis
-    (mirrors `PortfolioConstructor`'s single-name trim — see
-    src/portfolio_constructor.py around the `max_position_pct` comment).
-    Returns (whole shares, the risk_pct actually consumed after rounding
-    down to a whole share and after any clamp)."""
-    risk_per_share = abs(fill_entry - stop)
-    if risk_per_share <= 0 or granted_risk_pct <= 0 or equity <= 0:
-        return 0, 0.0
-    risk_dollars = equity * granted_risk_pct / 100.0
-    shares = risk_dollars / risk_per_share
-    notional = shares * fill_entry
-    gross_mul = _gross_multiplier(symbol)
-    gross_notional = notional * gross_mul
-    max_notional = equity * max_position_pct / 100.0
-    if max_notional > 0 and gross_notional > max_notional:
-        shares *= max_notional / gross_notional
-    shares_int = math.floor(shares)
-    if shares_int < 1:
-        return 0, 0.0
-    effective_risk_pct = shares_int * risk_per_share / equity * 100.0
-    return shares_int, effective_risk_pct
-
-
-def _existing_risk_pct(pos: _OpenPosition, equity: float) -> float:
-    """Risk % of equity an open position is currently consuming, based on
-    its LIVE (possibly trailed) stop. Once a stop trails to or past entry,
-    the position stops consuming budget — same behaviour `trailing.py`
-    documents ("this position stops consuming risk budget")."""
-    if pos.direction == "long":
-        risk_per_share = max(0.0, pos.entry_price - pos.stop)
-    else:
-        risk_per_share = max(0.0, pos.stop - pos.entry_price)
-    if equity <= 0:
-        return 0.0
-    return pos.shares * risk_per_share / equity * 100.0
-
-
-def _check_exit(
-    pos: _OpenPosition, bar: OHLCV, idx: int, max_hold_days: int,
-) -> tuple[str | None, float | None]:
-    """Whether today's bar closes `pos`, and at what raw (pre-slippage)
-    price. Returns `(None, None)` when the position stays open.
-
-    STOP-FIRST ORDERING: when a day's range could have touched both the
-    stop and the target, the stop is assumed to have been hit first — see
-    the module docstring ("EXIT ORDERING"). Factored out from the main loop
-    so it is directly unit-testable for both directions without needing the
-    signal-generation machinery around it.
-    """
-    if pos.direction == "long":
-        if bar.low <= pos.stop:
-            return "stop", pos.stop
-        if pos.target is not None and bar.high >= pos.target:
-            return "target", pos.target
-    else:
-        if bar.high >= pos.stop:
-            return "stop", pos.stop
-        if pos.target is not None and bar.low <= pos.target:
-            return "target", pos.target
-
-    hold_days = idx - pos.entry_index
-    if hold_days >= max_hold_days:
-        return "horizon", bar.close
-    return None, None
-
-
 def _close_trade(pos: _OpenPosition, exit_idx: int, exit_date_: date, raw_exit: float,
                   exit_reason: str, slippage_bps: float) -> Trade:
     fill = _fill_price(raw_exit, pos.direction, "close", slippage_bps)
@@ -387,22 +309,6 @@ def _close_trade(pos: _OpenPosition, exit_idx: int, exit_date_: date, raw_exit: 
         shares=pos.shares, risk_pct=round(pos.risk_pct, 4), setup_type=pos.setup_type,
         hold_days=exit_idx - pos.entry_index, pnl=round(pnl, 2),
         r_multiple=round(r_multiple, 4),
-    )
-
-
-def _budget_binds(allocation: BudgetAllocation) -> bool:
-    """True when at least one new request was not granted in full.
-
-    That is a day the total ceiling or a cluster cap bound. A bind can
-    be two equal asks competing (alphabetical among them) or a lone
-    candidate cut by held risk — the count is the bind, not a claim
-    that ticker spelling decided every one. The report labels the
-    tie-break as alphabetical because this engine never passes
-    `priority` and every ask is the same size.
-    """
-    return any(
-        grant.requested_pct > 0.0 and grant.limited_by is not None
-        for grant in allocation.grants.values()
     )
 
 
@@ -430,6 +336,17 @@ def run_backtest(
         # own width, read from `src.data.levels.CLUSTER_TOLERANCE_PCT`, so
         # live and backtest get it from the same place by construction.
         absolute_min_stop_atr_multiple=config.risk.absolute_min_stop_atr_multiple,
+        # The §12.1 trust bar itself. Until 2026-10-04 this line was
+        # MISSING while the two docstrings below claimed the engine ran
+        # the live touch rule: the constructor fell back to
+        # `ConstructorConfig`'s own default, so `risk.min_level_touches_
+        # for_stop_honor` in the YAML changed nothing and an A/B sweep of
+        # it returned byte-identical results. The level branch was always
+        # reached (measured: 32 entries into `_level_backing_stop` over a
+        # five-symbol 2026 run); what was unreachable was the CONFIGURED
+        # bar. Wired here for the same reason every other `config.risk.*`
+        # field above is wired — so changing the YAML IS the experiment.
+        min_level_touches_for_stop_honor=config.risk.min_level_touches_for_stop_honor,
         # Target-derivation tunables (2026-09-01). Wired for parity with
         # live, though this engine does not reach `_derive_target`: it
         # computes its own nearest-level target in
@@ -464,6 +381,7 @@ def run_backtest(
     skipped_symbol_days = 0
     entry_days = 0
     binding_budget_days = 0
+    contested_budget_days = 0
 
     for i, day in enumerate(calendar):
         # ---- 1. Exits, then trailing-stop updates, for open positions ----
@@ -596,6 +514,8 @@ def run_backtest(
         entry_days += 1
         if _budget_binds(allocation):
             binding_budget_days += 1
+        if _tie_break_arbitrated(allocation, len(requests)):
+            contested_budget_days += 1
 
         for c in candidates:
             granted = allocation.granted(c["symbol"])
@@ -641,4 +561,5 @@ def run_backtest(
         final_equity=round(params.initial_equity + realized_pnl, 2),
         entry_days=entry_days,
         binding_budget_days=binding_budget_days,
+        contested_budget_days=contested_budget_days,
     )
