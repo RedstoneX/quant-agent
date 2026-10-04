@@ -341,3 +341,100 @@ def test_the_risk_seat_can_see_whether_the_macro_audit_happened() -> None:
         "schema, so a blank one must banner as NOT PERFORMED"
     )
     assert "macro" in label.lower() and "audit" in label.lower()
+
+
+# --- Cost: the all-zero agreement rows ------------------------------------
+#
+# MEASURED on a recorded production briefing (2026-10-04): 38 of the block's
+# 82 rows read `0 aligned / 0 opposed` on BOTH sides, 6,768 of 87,234
+# characters (7.8%), at the seat that is 91% of all model spend. A row that
+# states no source took either side states nothing. It is omitted and
+# COUNTED, so the seat can still tell "no coverage either way" from "this
+# symbol is not in the registry". The deterministic refusal is untouched by
+# this: `PortfolioConstructor` re-derives `signed_source_score` from the
+# registry object, never from the text rendered here.
+_EMPTY_ROW_REGISTRY = {
+    "AAA": {"technical": "buy", "news": "bearish"},
+    "BBB": {"news": "neutral"},
+    "CCC": {"technical": "neutral", "news": "mixed"},
+    "DDD": {"smart_money": "bullish"},
+}
+_INFORMATIVE_ROWS = (
+    "- AAA: 1 aligned / 1 opposed = net +0 if long, "
+    "1 aligned / 1 opposed = net +0 if short "
+    "(of 2 source(s) with current coverage)",
+    "- DDD: 1 aligned / 0 opposed = net +1 if long, "
+    "0 aligned / 1 opposed = net -1 if short "
+    "(of 1 source(s) with current coverage)",
+)
+
+
+def _render_with_registry(monkeypatch, registry) -> str:
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "build_evidence_registry",
+        lambda self, **kwargs: dict(registry),
+    )
+    sel = _LEVEL_LESS.raw
+    account = sel["account"]
+    memory = sel["memory"]
+    agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
+    return agent.build_user_message(
+        analyses=_LEVEL_LESS.analyses,
+        positions=_LEVEL_LESS.positions,
+        macro_analysis=sel["macro_analysis"],
+        cash_balance=account["cash_balance"],
+        reserve_balance=account["reserve_balance"],
+        total_value=account["total_value"],
+        news_intel=_LEVEL_LESS.news,
+        earnings_analyses=sel["earnings_analyses"],
+        recent_performance=sel["recent_performance"],
+        position_history=sel["position_history"],
+        yesterday_insights=sel["yesterday_insights"],
+        weekly_narrative=memory["weekly_narrative"],
+        macro_trajectory=memory["macro_trajectory"],
+        active_state_changes=memory["active_state_changes"],
+        rm_recent_verdicts=memory["rm_recent_verdicts"],
+        pm_recent_decisions=memory["pm_recent_decisions"],
+        projected_portfolio=memory["projected_portfolio"],
+        calibration_note=memory["calibration_note"],
+        recent_missed_lessons=memory["recent_missed_lessons"],
+        recent_loss_pits=memory["recent_loss_pits"],
+        allow_margin=account["allow_margin"],
+        session_type=account["session_type"],
+        allowed_buy_symbols=set(sel["allowed_buy_symbols"]),
+        transient_admitted_symbols=set(sel["transient_admitted_symbols"]),
+    )
+
+
+def test_rows_with_no_source_on_either_side_are_omitted_and_counted(monkeypatch):
+    """Both informative rows survive byte-for-byte, both all-zero rows are
+    gone, and one line states how many were omitted and why."""
+    agreement = _section(
+        _render_with_registry(monkeypatch, _EMPTY_ROW_REGISTRY),
+        "Independent Source Agreement",
+    )
+    for row in _INFORMATIVE_ROWS:
+        assert row in agreement
+    assert "- BBB:" not in agreement
+    assert "- CCC:" not in agreement
+    assert "0 aligned / 0 opposed" not in agreement
+    assert (
+        "- (2 further symbol(s) are present in the registry above but have "
+        "no aligned and no opposed source on either side — net +0 long and "
+        "net +0 short — so their rows are omitted here; omitted does NOT "
+        "mean absent.)"
+    ) in agreement
+
+
+def test_no_omission_line_when_every_row_says_something(monkeypatch):
+    """The count line must not appear when nothing was dropped."""
+    agreement = _section(
+        _render_with_registry(
+            monkeypatch,
+            {k: v for k, v in _EMPTY_ROW_REGISTRY.items() if k in ("AAA", "DDD")},
+        ),
+        "Independent Source Agreement",
+    )
+    assert "further symbol(s)" not in agreement
+    for row in _INFORMATIVE_ROWS:
+        assert row in agreement

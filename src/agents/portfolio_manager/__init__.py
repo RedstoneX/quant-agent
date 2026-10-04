@@ -202,7 +202,7 @@ class PortfolioManagerAgent(
         # a broad contested one. Showing the net is not optional — a ceiling
         # the PM cannot predict is the 2026-08-20 incident class, where the
         # constructor silently sized against the PM's own stated reasoning.
-        def _agreement_line(symbol: str, sources: dict[str, str]) -> str:
+        def _agreement_line(symbol: str, sources: dict[str, str]) -> str | None:
             ignored = stale_sources.get(symbol)
             broadcast = non_corroborating_sources.get(symbol)
             # Each caveat states its OWN reason. A merged "A or B" line let a
@@ -245,6 +245,17 @@ class PortfolioManagerAgent(
                 symbol, sources, "short", ignored_sources=ignored,
                 non_corroborating_sources=broadcast,
             )
+            # MEASURED 2026-10-04 on a recorded production briefing: 38 of
+            # the 82 rows read `0 aligned / 0 opposed` on BOTH sides with no
+            # caveat attached — 6,768 of 87,234 characters (7.8%) carrying no
+            # fact at all, at the seat that is 91% of model spend. They are
+            # omitted here and COUNTED on one line below, so the model can
+            # never read an omission as the symbol being absent. A row with a
+            # stale or broadcast caveat is NOT empty and is always kept.
+            if not notes and not any(
+                (long_for, long_against, short_for, short_against)
+            ):
+                return None
             return (
                 f"- {symbol}: {long_for} aligned / {long_against} opposed = "
                 f"net {long_net:+d} if long, "
@@ -253,10 +264,21 @@ class PortfolioManagerAgent(
                 f"(of {len(sources)} source(s) with current coverage{stale_note})"
             )
 
-        agreement_lines = [
+        rendered_agreement = [
             _agreement_line(symbol, sources)
             for symbol, sources in sorted(evidence_registry.items())
         ]
+        agreement_lines = [line for line in rendered_agreement if line is not None]
+        omitted_agreement_rows = sum(
+            1 for line in rendered_agreement if line is None
+        )
+        if omitted_agreement_rows:
+            agreement_lines.append(
+                f"- ({omitted_agreement_rows} further symbol(s) are present in "
+                "the registry above but have no aligned and no opposed source "
+                "on either side — net +0 long and net +0 short — so their rows "
+                "are omitted here; omitted does NOT mean absent.)"
+            )
         agreement_text = (
             "\n".join(agreement_lines) if agreement_lines
             else "No symbols with current coverage."
