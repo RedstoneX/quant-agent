@@ -12,6 +12,8 @@ import json as _json
 
 #: Logs under `src.pipeline`, as the bodies did before the move;
 #: binding the name rather than `__name__` keeps log records byte-identical.
+from src.sentinel.guarded import record_guarded_pass
+from src.protection.wal_restore_write import write_ahead_restore_row
 logger = logging.getLogger("src.pipeline")
 
 # audit F1: a pending_protection_restores row written BEFORE the SELL is
@@ -70,12 +72,10 @@ class SellFinalization:
         """
         try:
             positions = self.broker.get_positions()
+            record_guarded_pass((self.db, self.broker), "sell_finalization.position_qty_for_finalize")
         except Exception as exc:
-            logger.warning(
-                "get_positions failed during finalize for %s: %s — "
-                "falling back to cached residual math",
-                symbol, exc,
-            )
+            record_guarded_pass((self.db, self.broker), "sell_finalization.position_qty_for_finalize", exc,
+                           log=logger, context={"effect": "cached residual math"})
             return None
         if not isinstance(positions, list):
             return None
@@ -553,29 +553,7 @@ class SellFinalization:
         drain path (``_drain_pending_protection_restores``) doesn't have
         to guess it back from live broker state later.
         """
-        if not specs:
-            return None
-        try:
-            row_id = self.db.insert_pending_protection_restore(
-                symbol=symbol,
-                sell_order_id=_WAL_SELL_SENTINEL,
-                position_qty_before_sell=position_qty_before_sell,
-                specs_json=_json.dumps(specs),
-                side=side,
-            )
-            logger.info(
-                "WAL: wrote protection-restore intent for %s (row %d, "
-                "%d stop(s)) before cancel/submit", symbol, row_id,
-                len(specs),
-            )
-            return row_id
-        except Exception as exc:
-            logger.error(
-                "WAL: failed to write protection-restore intent for %s: "
-                "%s — proceeding without crash-safety for this SELL "
-                "(no worse than pre-F1)", symbol, exc,
-            )
-            return None
+        return write_ahead_restore_row(self.db, logger, _WAL_SELL_SENTINEL, symbol, position_qty_before_sell, specs, side)
 
     def _restore_after_unconfirmed_sell(
         self,
