@@ -121,9 +121,12 @@ def send_naked_position_alert(notifier, result: dict | None) -> bool:
             if g.get("symbol")
         ]
         run_id = result.get("run_id") if isinstance(result, dict) else None
-        return bool(notifier.send(
-            text, symbols=symbols, kind="no_stop_at_all", run_id=run_id,
-        ))
+        from src.notifier.owner_alert_delivery import deliver_with_retry
+
+        return deliver_with_retry(
+            notifier, text, symbols=symbols, kind="no_stop_at_all",
+            run_id=run_id,
+        )
     except Exception as exc:  # noqa: BLE001
         import logging
 
