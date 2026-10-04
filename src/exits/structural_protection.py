@@ -30,6 +30,67 @@ class StructuralProtection:
         self.market = market
         self.risk_engine = risk_engine
 
+    def _entry_date_for_noise_band(self, symbol: str, entry_date: str | None) -> str | None:
+        """The ISO session the position was opened, for the noise band's
+        running-extreme anchor only.
+
+        Prefers what the caller already holds; otherwise reads the symbol's
+        last buy, the same row `_opened_today` reads its date from. Any
+        failure is None, which leaves the band ENTRY-anchored rather than
+        taking the extreme over a made-up window.
+        """
+        if isinstance(entry_date, str) and entry_date.strip():
+            return entry_date.strip()[:10]
+        try:
+            row = self.db.get_symbol_last_buy(symbol) or {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "structural protection: no entry date for %s (%s) — the "
+                "noise band stays anchored on entry price", symbol, e,
+            )
+            return None
+        ts = str((row or {}).get("timestamp") or "")[:10]
+        return ts or None
+
+    def _extreme_since_entry(
+        self, symbol: str, sorted_bars: list, entry_date: str | None, *, is_short: bool,
+    ) -> float | None:
+        """The position's RUNNING EXTREME since entry — highest high for a
+        long, lowest low for a short — over the daily bars from the entry
+        session onward, or None when it cannot be read.
+
+        This is the noise band's anchor in `check_structural_protection`'s
+        fallback (MEASURED 2026-10-04: 54 blocks removed, none added). It is
+        computable ONLY from a real entry DATE: with no entry session there is
+        no honest window to take an extreme over, and picking a lookback would
+        be exactly the invented number this desk refuses. None then means "no
+        extreme", and the band falls back to the entry anchor with the
+        recorded row saying `anchor_kind=entry`. Never raises.
+        """
+        ent_date = self._entry_date_for_noise_band(symbol, entry_date)
+        if not ent_date or not sorted_bars:
+            return None
+        try:
+            vals = []
+            for b in sorted_bars:
+                if str(getattr(b, "date", "")) [:10] < ent_date:
+                    continue
+                v = b.low if is_short else b.high
+                if v is None:
+                    continue
+                v = float(v)
+                if v == v and v not in (float("inf"), float("-inf")) and v > 0:
+                    vals.append(v)
+        except (TypeError, ValueError) as e:
+            logger.warning(
+                "structural protection: unreadable bar extreme for %s (%s) — "
+                "the noise band stays anchored on entry price", symbol, e,
+            )
+            return None
+        if not vals:
+            return None
+        return min(vals) if is_short else max(vals)
+
     def _structural_protection_for_holding(
         self,
         *,
@@ -40,6 +101,7 @@ class StructuralProtection:
         is_short: bool,
         run_id: str,
         persist: bool = True,
+        entry_date: str | None = None,
     ):
         """Fresh, close-based structural-protection read for one held
         position, including the cross-day confirmation lookup and the
@@ -56,6 +118,19 @@ class StructuralProtection:
         into an allowed one on the following session — a loosening, by
         side-effect, of a gate this repo deliberately keeps tight
         (docs/WORK.md item 60).
+
+        `entry_date` (ISO `YYYY-MM-DD`) is the session the position was
+        opened, and it exists for ONE reason: the noise-band fallback at the
+        bottom of `check_structural_protection` is anchored on the position's
+        RUNNING EXTREME since entry, which cannot be computed from entry
+        PRICE alone. Given it, the extreme is read off the daily bars this
+        method already fetched (highest high for a long, lowest low for a
+        short, entry session included). Omitted or unreadable, it is looked
+        up from the symbol's last buy, and failing that the fallback stays
+        ENTRY-anchored — the pre-2026-10-04 behaviour, never a guessed
+        lookback window. MEASURED 2026-10-04: re-anchoring this home removes
+        54 blocks of 383 and adds none. The midday position reviewer is NOT
+        re-anchored (there it is a measured regression) and is untouched.
 
         Spec item 25 (2026-09-03/04, corrected same day) — replaces the
         flat `days_held < 5` holding-discipline window with a data-driven
@@ -98,6 +173,11 @@ class StructuralProtection:
         computed_level_zones: dict[float, list[float]] = {}
         computed_level_bars: dict[float, list[tuple[float, float]]] = {}
         atr = ma_20 = ma_50 = ma_200 = ma_200_prior = adx = close_price = bar_date = None
+        extreme_since_entry: float | None = None
+        # Held outside the try below so the running-extreme anchor survives an
+        # indicator/level failure: the bars are sorted before any of that runs,
+        # and the extreme needs nothing else.
+        sorted_bars: list = []
         # The completed trading sessions strictly before today's close, most
         # recent first, taken from THIS position's own daily bars — the
         # authoritative trading calendar (weekends/holidays already removed).
@@ -145,6 +225,12 @@ class StructuralProtection:
         # never manufacture a false confirmation regardless of the date
         # it's filed under.
         effective_bar_date = bar_date or str(et_today())
+
+        # THE NOISE BAND'S ANCHOR for this home (2026-10-04). Computed from
+        # the bars already fetched above; None leaves the band entry-anchored.
+        extreme_since_entry = self._extreme_since_entry(
+            symbol, sorted_bars, entry_date, is_short=is_short,
+        )
 
         # Read the per-session break RECORDS for this position (most recent
         # first), so the exit guard can reconstruct the CONSECUTIVE-confirming-
@@ -194,6 +280,7 @@ class StructuralProtection:
             adx=adx,
             prior_break_records=prior_break_records,
             prior_session_dates=prior_session_dates,
+            extreme_since_entry=extreme_since_entry,
         )
 
         try:

@@ -29,11 +29,11 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
+from src.api.margin_interest_view import _compute_margin_interest
 from src.api.broker_reads import (
     check_broker_reachable,
     read_account,
     read_live_quotes,
-    read_margin_interest,
     read_orders,
     read_positions,
     read_price_bars,
@@ -68,8 +68,6 @@ from src.api.schemas import (
     LiquidityBreakdown,
     LiveQuote,
     LiveQuotesResponse,
-    MarginInterestCumulative,
-    MarginInterestEstimate,
     OrderItem,
     OrdersResponse,
     PositionItem,
@@ -149,6 +147,22 @@ def _session_lock_active() -> bool | None:
 #: Reported as `stale`, which is degraded — the same treatment the alert
 #: channel gets, and for the same reason.
 _DRIFT_SNAPSHOT_MAX_AGE_H = 26
+
+
+def _llm_balance_state() -> dict:
+    """Paid-model credit runway (src/llm_balance_runway.py). Never raises."""
+    try:
+        from src.api.deps import get_config, get_db_path
+        from src.llm_balance_runway import read_state
+
+        cc = get_config().llm_cost_circuit
+        return read_state(
+            get_db_path(),
+            topup_usd=cc.openrouter_topup_usd,
+            topup_date=cc.openrouter_topup_date,
+        )
+    except Exception:  # noqa: BLE001
+        return {"status": "unknown", "message": "The credit check could not run."}
 
 
 def _deploy_drift_state() -> dict:
@@ -248,6 +262,7 @@ def get_health() -> HealthResponse:
         # git call on a request path). A snapshot that is missing or stale
         # is reported as such rather than as healthy.
         deploy_drift = _deploy_drift_state()
+        llm_balance = _llm_balance_state()
 
         broker_reachable = check_broker_reachable()
         recent_pm_status = (llm_health or {}).get("recent_pm_status")
@@ -323,9 +338,12 @@ def get_health() -> HealthResponse:
                 "deploy drift "
                 + str((deploy_drift or {}).get("status") or "unknown")
             )
+        if (llm_balance or {}).get("status") == "low":
+            degraded_causes.append(llm_balance["message"])
         overall_status = (
             "degraded"
-            if (not db_reachable or broker_reachable is False
+            if ((llm_balance or {}).get("status") == "low"
+                or not db_reachable or broker_reachable is False
                 or decision_path_status != "ok"
                 or alert_channel_degraded
                 or deploy_drift_degraded)
@@ -345,6 +363,7 @@ def get_health() -> HealthResponse:
             llm_circuit=llm_health,
             alert_channel=alert_channel,
             deploy_drift=deploy_drift,
+            llm_balance=llm_balance,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
     except Exception:
@@ -502,43 +521,6 @@ def _compute_risk_limits() -> RiskLimits:
         max_gross_exposure_x=getattr(limits, "max_gross_exposure_x", None),
     )
 
-
-def _compute_margin_interest(cash: float | None) -> MarginInterestEstimate:
-    """Degrades to an honest all-`None` `MarginInterestEstimate()` on any
-    read failure — mirrors `_compute_liquidity`/`_compute_risk_limits`'s
-    fail-closed-to-empty posture, and is also the correct rendering of
-    today's actual state (no debit balance, `allow_margin` is `False`)."""
-    try:
-        data = read_margin_interest(cash)
-    except Exception as exc:
-        logger.warning("routes_live._compute_margin_interest failed: %s", exc)
-        return MarginInterestEstimate(error=str(exc))
-    cumulative_data = data.get("cumulative")
-    cumulative = (
-        MarginInterestCumulative(
-            this_week_usd=cumulative_data.get("this_week_usd"),
-            current_month_usd=cumulative_data.get("current_month_usd"),
-            current_month_label=cumulative_data.get("current_month_label"),
-            prior_months=cumulative_data.get("prior_months") or [],
-            all_time_usd=cumulative_data.get("all_time_usd"),
-            all_time_since=cumulative_data.get("all_time_since"),
-            is_estimate=cumulative_data.get("is_estimate"),
-            source=cumulative_data.get("source"),
-        )
-        if cumulative_data else None
-    )
-    return MarginInterestEstimate(
-        debit_balance=data.get("debit_balance"),
-        rate_pct=data.get("rate_pct"),
-        daily_usd=data.get("daily_usd"),
-        annual_usd=data.get("annual_usd"),
-        label=data.get("label"),
-        broker_check_note=data.get("broker_check_note"),
-        days_charged=data.get("days_charged"),
-        period_usd=data.get("period_usd"),
-        error=data.get("error"),
-        cumulative=cumulative,
-    )
 
 # NOTE (§11.2): Mission Control still does NOT compute the de-levering
 # ladder or distance-to-forced-liquidation — those need `src.risk.rules`,

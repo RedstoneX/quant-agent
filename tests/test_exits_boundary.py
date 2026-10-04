@@ -70,3 +70,51 @@ def test_target_revision_with_nothing_flagged_and_nothing_held_adjudicates_nothi
     )
     assert out == []
     file_row.assert_not_called()
+
+
+# --- The second lift: the exit records, built and run with no pipeline behind them.
+# (The trails and the AI risk review stay on the mixin: the broker-seam importer
+# freeze and the import-cycle guard both refuse them as standalone modules.)
+
+from datetime import datetime, timezone  # noqa: E402
+
+from src.exits.exit_records import ExitRecords  # noqa: E402
+from tests.boundary_harness import check_boundary  # noqa: E402
+
+SECOND_LIFT = [ExitRecords]
+SECOND_LIFT_MODULES = ["src.exits.exit_records"]
+
+
+@pytest.mark.parametrize("cls", SECOND_LIFT)
+def test_second_lift_piece_is_constructible_from_stubs(cls):
+    _build(cls)
+    params = inspect.signature(cls).parameters
+    assert params and all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+@pytest.mark.parametrize("module", SECOND_LIFT_MODULES)
+def test_second_lift_module_passes_the_boundary_check(module):
+    verdict = check_boundary(module)
+    assert verdict.passed, verdict.failures
+
+
+def test_trail_cooldown_reads_only_the_db_collaborator():
+    fresh = datetime.now(timezone.utc).isoformat()
+    tightened = _build(ExitRecords, db=_Db([{"action": "TRAIL_STOP", "timestamp": fresh}]))
+    assert tightened._trail_tightened_recently("AAPL") is True
+    quiet = _build(ExitRecords, db=_Db([]))
+    assert quiet._trail_tightened_recently("AAPL") is False
+
+
+def test_exit_review_approvals_record_only_the_unvetoed_symbols():
+    record = MagicMock(name="record_exit_refusal")
+    rec = _build(ExitRecords, record_exit_refusal=record)
+    decisions = [MagicMock(symbol="AAA", action="SELL"), MagicMock(symbol="BBB", action="REDUCE")]
+    rec._record_exit_review_approvals(
+        decisions, {"BBB"}, MagicMock(reason_category="x", reasoning="fine"),
+        run_id="r1", original_action_by_symbol={},
+    )
+    assert record.call_count == 1
+    assert record.call_args.kwargs["symbol"] == "AAA"
+    assert record.call_args.kwargs["dropped"] is False
+

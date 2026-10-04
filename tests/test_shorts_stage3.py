@@ -792,14 +792,14 @@ def test_protective_stop_failure_on_a_short_triggers_immediate_market_cover():
 
 
 # ==========================================================================
-# 7. D8 — the gap-risk sizing haircut
+# 7. D8 — short/long sizing PARITY (the gap haircut was deleted)
 # ==========================================================================
 
-def test_short_gap_risk_haircut_produces_a_strictly_smaller_position_than_a_long():
+def test_short_and_long_are_sized_identically_at_equal_risk_and_geometry():
     """Same risk allocation (0.5%), same $12.50/share stop distance, same
-    entry $250 and gross multiplier (1x) for both a long and a short. The
-    only difference is direction, and the only thing that should differ is
-    the short's sizing haircut (default short_gap_risk_multiple=1.5)."""
+    entry $250 and gross multiplier (1x) for both a long and a short. Owner
+    ruling 2026-10-04 deleted the short-side haircut, so direction is the
+    only difference and NOTHING about the size may differ."""
     constructor = PortfolioConstructor()
 
     long_decisions = constructor.construct_orders(
@@ -824,14 +824,12 @@ def test_short_gap_risk_haircut_produces_a_strictly_smaller_position_than_a_long
     long_alloc = long_decisions[0].allocation_pct
     short_alloc = short_decisions[0].allocation_pct
 
-    # THE numeric assertion: same risk allocation, same stop distance —
-    # the short is sized at exactly long / short_gap_risk_multiple (1.5).
+    # THE numeric assertion: same risk allocation, same stop distance,
+    # same size. Previously this asserted long / 1.5 == 6.67.
     assert long_alloc == 10.0
-    assert short_alloc == round(long_alloc / 1.5, 2)
-    assert short_alloc == 6.67
-    assert short_alloc < long_alloc, (
-        "a short must open strictly smaller than an equivalent long at the "
-        "same risk allocation"
+    assert short_alloc == long_alloc, (
+        "a short must open the SAME size as an equivalent long at the same "
+        "risk allocation (owner ruling 2026-10-04: no different math)"
     )
 
 
