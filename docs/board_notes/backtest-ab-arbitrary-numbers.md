@@ -89,3 +89,49 @@ equal-ask design makes the budget bind on every entry day. The prerequisite for
 any future A/B here is a deterministic, non-alphabetical ordering for the
 engine's `RiskRequest`s — or a run configuration in which the budget does not
 bind — and neither is invented here.
+
+## 2026-10-04 — the non-binding-budget route works, and the first settleable runs
+
+**READ THIS FIRST: every number in this section was produced with the portfolio
+risk budget deliberately made UNCONSTRAINED (`risk.max_portfolio_risk_pct: 100`,
+`risk.max_cluster_risk_share_pct: 100`, in throwaway config copies — no repo
+default was changed). It is NOT the desk's real-world expectation and must
+never be quoted as one. The live desk runs a 25% ceiling with a 40% cluster
+share; a result measured without those ceilings says nothing about what the
+rationed book would have earned.**
+
+What it does buy: with both arms unconstrained, the engine's own arbitrated-day
+counter reported **0 of 66 entry days binding, in BOTH arms** (AAPL/MSFT/NVDA/
+AMZN/GOOGL, 2025-01-01..2025-09-30, yfinance). Zero binding days means zero days
+decided by the allocator's alphabetical ticker tie-break, so the difference
+between two arms is attributable to the one field that differs. The engine
+printed no non-result for these runs. This is the condition the previous section
+said was the prerequisite, and it is reachable — the ceilings are the only thing
+that was in the way, not the engine's design.
+
+Two A/Bs were run under that condition, same universe, same window, 85 trades in
+every arm:
+
+| field changed | arm A | arm B | total return A | total return B | delta |
+| --- | --- | --- | --- | --- | --- |
+| `risk.breakout_projection_atr_multiple` | 1.0 | 2.0 | -4.73% | -4.73% | 0.00pp (all twelve metrics identical) |
+| `risk.max_position_pct` | 65 | 33 | -4.73% | -1.33% | +3.40pp |
+
+The second run is the positive control: it proves the harness does register a
+difference when one exists, which is what makes the first run's zero credible as
+INERT rather than as broken plumbing. `breakout_projection_atr_multiple` joins
+`max_target_reach_atr_multiple` as a row this engine cannot settle — the engine
+derives its own nearest-level target and never reaches the live projection path.
+
+`max_position_pct` is not an arbitrary row (65 is a dated owner ruling), so its
++3.40pp is reported as a method check, not as a recommendation to move it.
+
+CAVEATS THAT STILL STAND, and they are not small. Survivorship bias: the universe
+is a present-day five-name list, so anything delisted in the window is absent and
+the result is biased upward. Flat slippage: 40 bps on both fills from
+`execution.max_entry_slippage_bps`, with no commission or fee model. Deterministic
+stop substitution: the nearest structural level stands in for the Tech Analyst's
+stop choice, and `setup_type` is substituted from `is_consolidating`. Unconstrained
+budget: as stated above. Taken together these make any single arm's P&L a
+NON-RESULT as a forecast; what survives is the DIFFERENCE between two arms that
+share all four caveats, and only for an unrationed book.
