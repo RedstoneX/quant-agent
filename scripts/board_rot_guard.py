@@ -44,8 +44,14 @@ from scripts.guard_reference import (
 WORK_MD = "docs/WORK.md"
 BOARD_NOTES = "docs/board_notes"
 
-#: Below this the board did not really parse, and an empty delta means nothing.
-MIN_OPEN_ITEMS = 20
+#: The board parser's own stop markers for the funnel queue, in the order it
+#: tries them. The queue is the last numbered section of the board, so a copy
+#: whose queue is never closed by one of these was cut off part-way: the parser
+#: would still return every item ABOVE the cut and the delta would look clean.
+#: (Until 2026-10-04 this guard inferred "did not parse" from a picked floor on
+#: the open-item count, which made a board that legitimately shrank below the
+#: floor indistinguishable from one the parser could not read.)
+_QUEUE_STOPS = ("### Re-measure gate", "\n## ", "\n### ")
 
 #: A flagged string starts with the item's own reference; the rest is the
 #: retirement procedure, which is identical for every item and would make two
@@ -63,29 +69,57 @@ def _refs(flagged: list[str]) -> set[str]:
     return refs
 
 
-def _measure(root: Path) -> tuple[set[str], int]:
-    """(flagged refs, open items parsed) for one copy of the board.
+def _board_structure_problems(work: Path) -> list[str]:
+    """Plain-English reasons this copy of the board is not structurally whole.
 
-    The item count is the anti-vacuity half: a board that parses to nothing
-    flags nothing, which would make the delta trivially empty forever.
+    Direct checks only, each on the file's own shape: the parser's own
+    "problem" sentences for both numbered sections, plus whether the funnel
+    queue is closed by one of the parser's stop markers rather than running
+    off the end of the file. The number of items is deliberately not asked
+    about -- an empty gate or a short queue is a legitimate state of a board
+    that has had its work finished, and must stay representable.
+    """
+    problems: list[str] = []
+    notes = sb.load_board_notes(work.parent / Path(BOARD_NOTES).name)
+    for loader in (sb.load_funnel_queue, sb.load_pm_gate):
+        _items, problem = loader(work, notes=notes)
+        if problem:
+            problems.append(problem)
+    if work.exists():
+        text = work.read_text(encoding="utf-8")
+        if sb._QUEUE_HEADING in text:
+            tail = text.split(sb._QUEUE_HEADING, 1)[1]
+            if not any(stop in tail for stop in _QUEUE_STOPS):
+                problems.append(
+                    f"the {sb._QUEUE_HEADING.lstrip('# ')!r} section is never "
+                    f"closed by a following heading, so the file is truncated "
+                    f"part-way through the queue."
+                )
+    return problems
+
+
+def _measure(root: Path) -> tuple[set[str], list[str]]:
+    """(flagged refs, structure problems) for one copy of the board.
+
+    The problems are the anti-vacuity half: a board the parser could not read
+    flags nothing, which would make the delta trivially empty forever, so the
+    caller refuses whenever this list is non-empty.
     """
     work, notes_dir = root / WORK_MD, root / BOARD_NOTES
-    notes = sb.load_board_notes(notes_dir)
-    parsed = 0
-    for items, _problem in (sb.load_funnel_queue(work, notes=notes),
-                            sb.load_pm_gate(work, notes=notes)):
-        parsed += sum(1 for item in items if not item.done)
-    return _refs(sb.find_finished_items_still_on_board(work, notes_dir)), parsed
+    problems = _board_structure_problems(work)
+    if problems:
+        return set(), problems
+    return _refs(sb.find_finished_items_still_on_board(work, notes_dir)), []
 
 
 def working_flagged() -> set[str]:
     """Items this working tree declares finished while still on the board."""
-    flagged, parsed = _measure(ROOT)
-    if parsed < MIN_OPEN_ITEMS:
+    flagged, problems = _measure(ROOT)
+    if problems:
         raise ReferenceUnavailable(
-            f"only {parsed} open board item(s) parsed out of {WORK_MD} in this "
-            f"working tree; the measurement is vacuous, so this guard refuses "
-            f"rather than report an empty delta."
+            f"{WORK_MD} in this working tree did not parse as a board "
+            f"({' '.join(problems)}); the measurement is vacuous, so this guard "
+            f"refuses rather than report an empty delta."
         )
     return flagged
 
@@ -123,10 +157,10 @@ def trunk_flagged() -> set[str]:
             dest = root / path
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(text, encoding="utf-8")
-        flagged, parsed = _measure(root)
-    if parsed < MIN_OPEN_ITEMS:
+        flagged, problems = _measure(root)
+    if problems:
         raise ReferenceUnavailable(
-            f"only {parsed} open board item(s) parsed out of {TRUNK}:{WORK_MD}; "
+            f"{TRUNK}:{WORK_MD} did not parse as a board ({' '.join(problems)}); "
             f"the reference measurement is vacuous, so this guard refuses rather "
             f"than compare against nothing."
         )
