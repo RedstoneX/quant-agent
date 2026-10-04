@@ -110,15 +110,44 @@ def test_a_run_that_built_nothing_records_that_fact_not_zero_concentration(db):
     assert row["entry_orders_built"] == 0
 
 
-def test_a_reducing_only_run_also_records_an_empty_list_not_null(db):
+def test_a_reducing_only_run_records_the_sector_and_side_of_what_it_built(db):
     db.record_realised_sector_weights(
-        decisions=[_decision("SELL", "AAA", 50.0)],
-        sectors={"AAA": "Energy"}, total_value=10_000.0, run_id="run-4b",
+        decisions=[_decision("SELL", "AAA", 50.0),
+                   _decision("COVER", "BBB", 20.0)],
+        sectors={"AAA": "Energy", "BBB": "Tech"}, total_value=10_000.0,
+        run_id="run-4b",
     )
     row = _row(db)[0]
-    assert row["weights_json"] == "[]"
     assert row["entry_orders_built"] == 0
-    assert row["reducing_orders_built"] == 1
+    assert row["reducing_orders_built"] == 2
+    stored = {(r["sector"], r["side"]): r for r in json.loads(row["weights_json"])}
+    assert set(stored) == {("Energy", "long"), ("Tech", "short")}
+    assert stored[("Energy", "long")]["kind"] == "reduce"
+    assert stored[("Energy", "long")]["weight_pct"] == pytest.approx(50.0)
+
+
+def test_constructor_resolves_sectors_for_reducing_orders(monkeypatch):
+    import src.sector_reference as sector_reference
+    from src.portfolio_constructor import PortfolioConstructor
+    monkeypatch.setattr(
+        sector_reference, "_get_sector", lambda s: {"AAA": "Energy"}.get(s, "Unknown"),
+    )
+    c = PortfolioConstructor()
+    c._note_reducing_order_sectors(
+        [_decision("SELL", "AAA", 50.0), _decision("SELL", "ZZZ", 10.0)])
+    assert c.last_order_sectors == {"AAA": "Energy", "ZZZ": None}
+
+
+def test_a_missing_sector_source_raises_instead_of_recording_nothing(db):
+    from types import SimpleNamespace
+
+    from src.pipeline_entry_orders import _record_realised_sector_weights
+    pipeline = SimpleNamespace(db=db, portfolio_constructor=SimpleNamespace())
+    with pytest.raises(AttributeError):
+        _record_realised_sector_weights(
+            pipeline, SimpleNamespace(run_id="r"),
+            SimpleNamespace(decisions=[]), 1000)
+    assert _row(db) == []
 
 
 def test_no_recording_call_can_ever_write_a_null_weights_row(db):

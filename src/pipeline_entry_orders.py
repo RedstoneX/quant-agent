@@ -956,15 +956,17 @@ def _record_realised_sector_weights(
     sizes after each order is built, so anything recorded earlier would be
     what was hoped for rather than what was built. Never raises.
     """
+    db = getattr(pipeline, "db", None)
+    if db is None or not hasattr(db, "record_realised_sector_weights"):
+        return
+    # Plain attribute access, deliberately OUTSIDE the try and with NO default:
+    # a renamed or removed `last_order_sectors` must raise here, not silently
+    # record an empty column for the life of the feature.
+    sectors = pipeline.portfolio_constructor.last_order_sectors
     try:
-        db = getattr(pipeline, "db", None)
-        if db is None or not hasattr(db, "record_realised_sector_weights"):
-            return
         db.record_realised_sector_weights(
             decisions=list(getattr(portfolio_decision, "decisions", None) or []),
-            sectors=getattr(
-                pipeline.portfolio_constructor, "last_order_sectors", None,
-            ),
+            sectors=sectors,
             total_value=total_value,
             run_id=getattr(ctx, "run_id", None),
         )

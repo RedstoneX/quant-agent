@@ -487,12 +487,14 @@ class Database:
         sectors = sectors or {}
         entries: list = []
         reducing = 0
+        reducers: list = []
         for d in (decisions or ()):
             action = getattr(d, "action", None)
             if action in ("BUY", "SHORT"):
                 entries.append(d)
             elif action in ("SELL", "COVER"):
                 reducing += 1
+                reducers.append(d)
 
         def _num(x):
             try:
@@ -519,9 +521,26 @@ class Database:
             w = _num(getattr(d, "allocation_pct", None))
             if w is not None:
                 slot["weight_pct"] += w
+        # Reducing orders (SELL closes a long, COVER closes a short) are
+        # recorded under kind "reduce" so a reduce-only session is not an
+        # empty row; entry buckets are unchanged and carry no "kind".
+        for d in reducers:
+            sym = getattr(d, "symbol", None)
+            sector = sectors.get(sym)
+            sector = (sector or None) if isinstance(sector, str) else None
+            side = "short" if getattr(d, "action", None) == "COVER" else "long"
+            slot = buckets.setdefault(
+                (sector, side, "reduce"),
+                {"sector": sector, "side": side, "kind": "reduce",
+                 "weight_pct": 0.0, "orders": 0},
+            )
+            slot["orders"] += 1
+            w = _num(getattr(d, "allocation_pct", None))
+            if w is not None:
+                slot["weight_pct"] += w
         rows = sorted(
             buckets.values(),
-            key=lambda r: (r["sector"] or "", r["side"]),
+            key=lambda r: (r["sector"] or "", r["side"], r.get("kind", "")),
         )
         for r in rows:
             r["weight_pct"] = round(r["weight_pct"], 6)

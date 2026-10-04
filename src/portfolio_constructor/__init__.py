@@ -420,12 +420,27 @@ class PortfolioConstructor:
         self.last_side_flips = {}
         self.last_order_sectors = {}
         try:
-            return self._construct_orders_impl(*args, **kwargs)
+            orders = self._construct_orders_impl(*args, **kwargs)
+            self._note_reducing_order_sectors(orders)
+            return orders
         finally:
             logger.removeHandler(capture)
             self.last_drop_reasons = {
                 sym: " | ".join(msgs) for sym, msgs in capture.reasons.items()
             }
+
+    def _note_reducing_order_sectors(self, orders) -> None:
+        """Board item 224: a session that only REDUCED still records the
+        `(sector, side)` of what it built. Entries are noted while sizing;
+        SELL/COVER orders never pass through sizing, so resolve theirs here
+        with the same lookup and the same None-means-unknown rule."""
+        from src.sector_reference import _get_sector
+        for d in (orders or ()):
+            if getattr(d, "action", None) in ("SELL", "COVER"):
+                sector = _get_sector(d.symbol)
+                self.last_order_sectors[d.symbol] = (
+                    sector if sector and sector != "Unknown" else None
+                )
 
     def _construct_orders_impl(
         self,
