@@ -1121,6 +1121,28 @@ numbers:
       reasons recorded in docs/WORK.md item 55 rather than glossed. The value
       stays at 5 because moving it would be inventing a number; the status no
       longer claims a measurement that stands.
+      THIRD RE-DERIVATION, 2026-10-04, also NEGATIVE, and it is the first one
+      run against the post-item-55 level definition. Walked forward over the
+      desk's own committed daily bars (ops/rehearsal/recordings/market_bars.json.gz,
+      400 sessions, 33 symbols of which 32 carry data), a touch episode is a bar
+      trading into a computed support zone and closing above it, and the level is
+      "respected" if no close in the next five sessions sits below it. 2,196 real
+      episodes against 7,735 from three shuffled-returns controls per symbol that
+      preserve each symbol's return distribution and each bar's relative range.
+      Respect rate at 2/3/4/5+ touches: real 0.859 / 0.906 / 0.935 / 0.934;
+      control 0.903 / 0.928 / 0.946 / 0.937. The curve RISES with touch count in
+      both series by almost exactly the same amount, and the real series is at or
+      BELOW the control in every bucket, so the rise is geometry and volatility
+      clustering rather than structure. The 5+ bucket's 95% intervals overlap
+      ([0.913, 0.955] real against [0.926, 0.948] control). This does not meet the
+      closes_when test's deletion condition either, because that asks for a flat
+      curve and this one is not flat; it is a curve the control reproduces. Sample
+      caveats stated rather than buried: one hold horizon, one respect definition,
+      roughly fourteen months, and the seven heaviest symbols supply 40% of the
+      episodes. So the number is UNMEASURABLE TODAY on this evidence, the row
+      stays `arbitrary`, and the gate is now counted instead
+      (src/portfolio_constructor/level_touch_record.py) so the next attempt can
+      start from how often it actually binds in production.
     source: >-
       In-repo measured study at src/config/__init__.py::RiskConfig (Phase 12.1, 2026-09-03,
       docs/RESEARCH_FINDINGS.md section 7): a real-vs-shuffled bounce-probability
