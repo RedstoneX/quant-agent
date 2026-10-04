@@ -74,7 +74,7 @@ from src.portfolio_constructor.config import (
 
 
 from src.portfolio_constructor.entry_stop.resolver import EntryStopResolver
-from src.portfolio_constructor import level_touch_record as touch_gate
+import src.portfolio_constructor.level_touch_record as touch_gate
 from src.portfolio_constructor.stop_width import stop_atr_multiple
 
 
