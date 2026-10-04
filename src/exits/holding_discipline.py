@@ -181,6 +181,10 @@ class HoldingDiscipline:
             symbol=symbol_u,
             thesis_invalid_if=hist.get("thesis_invalid_if"),
             entry_price=hist.get("entry_price"),
+            # The entry SESSION, for the noise-band fallback's running-extreme
+            # anchor; entry price alone cannot locate the extreme. Absent, the
+            # callee looks it up, and failing that the band stays entry-anchored.
+            entry_date=hist.get("entry_date"),
             stop_loss=hist.get("stop_loss"),
             is_short=bool(pos is not None and pos.qty < 0),
             run_id=run_id,

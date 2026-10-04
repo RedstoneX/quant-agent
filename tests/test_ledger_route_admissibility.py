@@ -89,12 +89,12 @@ def test_report_says_so_when_there_is_nothing_to_say() -> None:
     assert "No inadmissible" in report([])
 
 
-def test_the_live_ledger_still_carries_the_two_barred_envelope_routes() -> None:
-    """max_position_risk_pct records two routes and NEITHER can settle it."""
+def test_the_live_ledger_still_carries_the_barred_envelope_routes() -> None:
+    """max_position_risk_pct still has barred route text; the duplicate is gone."""
     text = Path(DEFAULT_LEDGER).read_text()
     kinds = {
         f.kind
         for f in inspect(text)
         if f.row_id == "src.config.RiskConfig.max_position_risk_pct"
     }
-    assert kinds == {"BARRED-EXTREME", "BARRED-APPETITE", "DEAD-ROUTE"}
+    assert kinds == {"BARRED-EXTREME", "BARRED-APPETITE"}
