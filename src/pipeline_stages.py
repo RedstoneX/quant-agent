@@ -695,6 +695,10 @@ def _record_scale_in_window_closed(pipeline, ctx, spec: dict, *, covered: bool) 
     Nothing is emitted when no cancel happened: a naked add has no window.
     """
     from src.execution.scale_in import unprotected_window_seconds
+    # The recorder moved to src/pipeline_candidate_records.py; a module-level
+    # __getattr__ does not serve a bare global read inside a function, so bind
+    # the name here (patches on this module are mirrored onto that one).
+    from src.pipeline_candidate_records import _record_pipeline_event
     seconds = unprotected_window_seconds(spec.get("cancel_confirmed_at"))
     if seconds is None:
         return

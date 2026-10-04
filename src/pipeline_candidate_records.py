@@ -69,7 +69,9 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
     through this module's `_persist_evidence` on purpose, so a test that
     patches that name still sees every event, exactly as before.
     """
-    if stage == "order": record_order_attempt_from_event(db=pipeline.db, symbol=symbol, outcome=outcome, reason=reason, run_id=ctx.run_id, details=details)  # one Sentinel attempt row per order event
+    if stage == "order":
+        # one Sentinel attempt row per order event
+        record_order_attempt_from_event(db=pipeline.db, symbol=symbol, outcome=outcome, reason=reason, run_id=ctx.run_id, details=details)
     _persist_evidence(pipeline.db, **pipeline_event_fields(
         run_id=ctx.run_id, decision_id=ctx.decision_id, symbol=symbol,
         stage=stage, outcome=outcome, reason=reason, details=details,
