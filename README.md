@@ -648,6 +648,8 @@ quant-agent/
 
 ## Tests
 
+**Hermetic end-to-end sessions** (`tests/test_e2e_*.py`, owner ruling 2026-10-04: hand-written, replacing the frozen offline replay rig). Each drives a whole production session — morning, midday, close, evening, rotation, shorts, de-levering, partial fills — through the real pipeline with only the edges stood in (rehearsal broker, frozen clock, scripted model seats, socket wall). Three layers, one harness: SHAPE (`test_e2e_morning_session.py`, stages in order), ORDERS (`test_e2e_morning_protection.py`, `test_e2e_close_existing_book.py`: what reached the broker and nothing else), and RECORD (`test_e2e_position_review_record.py`, `test_e2e_morning_record.py`: the ledger, `session_reports` and `agent_logs` rows a later surface reads, re-read through the read-only replay reader). Extend an existing file's harness (`_run_session`, `_run_close`, `e2e_held_book_support.run_held_book`) rather than writing a second style; a new file must be seen RED by breaking production once before it merges.
+
 ```bash
 pytest tests/ -v    # full suite (see "Tested" above for why no count is pinned here)
 ```
