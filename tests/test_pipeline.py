@@ -61,7 +61,7 @@ def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
     """
     specs = list(specs)
     broker.snapshot_protective_stops.return_value = (snapshot_ok, specs)
-    broker.cancel_snapshotted_stops.return_value = cancel_ok
+    broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=cancel_ok, coverage_shrank=False)
     cleared = snapshot_ok and cancel_ok
     broker.cancel_protective_stops.return_value = (
         cleared, specs if cleared else [],
@@ -3320,7 +3320,7 @@ def test_cancel_stops_with_write_ahead_persists_before_cancel(tmp_path):
 
     def _cancel(sym, sp):
         seen_at_cancel["rows"] = db.get_pending_protection_restores()
-        return True
+        return MagicMock(cleared=True)
 
     pipe.broker.cancel_snapshotted_stops.side_effect = _cancel
 
@@ -3362,7 +3362,7 @@ def test_cancel_stops_with_write_ahead_discharges_row_on_cancel_failure(tmp_path
     pipe = _wal_pipe(db)
     specs = [{"id": "s1", "qty": 10, "stop_price": 90.0}]
     pipe.broker.snapshot_protective_stops.return_value = (True, specs)
-    pipe.broker.cancel_snapshotted_stops.return_value = False  # rolled back
+    pipe.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=False, coverage_shrank=False)  # rolled back
 
     ok, out_specs, wal_id = pipe._cancel_stops_with_write_ahead("NVDA", 10.0)
 
