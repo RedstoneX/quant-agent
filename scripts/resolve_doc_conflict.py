@@ -1231,38 +1231,37 @@ def build_refusal_artefact(base: str, ours: str, theirs: str,
     # Rule 1, mechanically. `git merge-file` is not supposed to drop a line,
     # but "not supposed to" is what the last three data-loss incidents had in
     # common, so it is checked rather than trusted.
-    missing = _lines_lost(text, ours, theirs)
+    missing = _lines_lost(text, ours, theirs, base)
     if missing:
+        # ONE well-formed diff3 region, never two terminators for one opener.
+        # The previous shape opened with `<<<<<<<` and closed with TWO
+        # `>>>>>>>` lines, using the first as a mid-region divider. That is
+        # not conflict syntax: every parser — git's own, the editors, and a
+        # human told to "resolve every region" — ends the region at the first
+        # terminator and silently drops everything after it, which was the
+        # whole `theirs` copy [reproduced 2026-10-04 against a real stale
+        # branch merge of docs/WORK.md].
         text += (
             f"<<<<<<< CONTENT NOT ACCOUNTED FOR — {len(missing)} line(s) of the "
-            "two sides did not survive git's line merge\n"
-            "||||||| both sides follow in full; nothing below has been merged\n"
-            "=======\n"
+            "two sides did not survive git's line merge; both sides follow in "
+            "full and nothing below has been merged\n"
             + ours
-            + ">>>>>>> --- the other side follows ---\n"
+            + "||||||| merge base, for reference\n"
+            + base
+            + "=======\n"
             + theirs
             + ">>>>>>> CONTENT NOT ACCOUNTED FOR — end of the unmerged copies\n"
         )
     return text
 
 
-def _lines_lost(text: str, ours: str, theirs: str) -> list[str]:
-    """Non-blank lines present on either side and absent from `text`.
-
-    Counted, not just set-tested: a line that appears three times on one side
-    and once in the result has lost two copies, and for a document whose
-    entries are paragraphs of prose that is a real loss.
-    """
-    from collections import Counter
-
-    have = Counter(ln.rstrip() for ln in text.splitlines() if ln.strip())
-    lost: list[str] = []
-    for side in (ours, theirs):
-        want = Counter(ln.rstrip() for ln in side.splitlines() if ln.strip())
-        for ln, n in want.items():
-            if have[ln] < n:
-                lost.extend([ln] * (n - have[ln]))
-    return lost
+# `_lines_lost` lives in scripts/docmerge/lines_lost.py; loaded by path like
+# `status_board` above, so every import spelling of this script still works.
+_LINES_LOST_SPEC = importlib.util.spec_from_file_location(
+    "docmerge_lines_lost", Path(__file__).resolve().parent / "docmerge" / "lines_lost.py")
+_lines_lost_mod = importlib.util.module_from_spec(_LINES_LOST_SPEC)
+_LINES_LOST_SPEC.loader.exec_module(_lines_lost_mod)  # type: ignore[union-attr]
+_lines_lost = _lines_lost_mod._lines_lost
 
 
 def write_refusal_artefact(out: Path, base: str, ours: str, theirs: str,
