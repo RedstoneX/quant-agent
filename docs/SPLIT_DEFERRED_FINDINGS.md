@@ -15,6 +15,8 @@ VERDICT 2026-10-02 (isolation pass): NOT A DEFECT as written -- the note's conse
 
 CLOSED 2026-10-04: the residual was fixed by #1104 (found already on main, not re-done here). `send_owner_alert` runs every caller through `deliver_with_retry`: retry on the desk's transient-fault policy, then one counted `owner_alert_undelivered` row with a running total. A deliberate mute is settled, never retried. The dashboard's muted-backlog read selects every `notifier_sends` row whose status is not 'sent', so an undelivered alert reaches the owner's only channel. Section kept: a caller that builds its own notifier and bypasses the funnel would escape this, and no guard forbids that yet.
 
+WIRING PINNED 2026-10-04: the funnel itself was unpinned -- replacing `send_owner_alert`'s `deliver_with_retry` call with a single direct notifier send left all six delivery tests green, so the discipline could be deleted unnoticed. Two witness tests now drive `send_owner_alert` itself and both go red under that mutation. The section still stands on its stated residual only: six sites build their own `TelegramNotifier()` and send outside the funnel, and no guard forbids that; closing it means routing or refusing those, which is its own instalment.
+
 ## The cost circuit is eleven mixins, not eleven modules
 
 It sits under the ceiling, but eleven of its nineteen pieces are mixin groups,
