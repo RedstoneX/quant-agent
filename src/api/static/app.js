@@ -1490,6 +1490,30 @@ async function loadMutedBacklog() {
 /* Orchestration                                                           */
 /* ---------------------------------------------------------------------- */
 
+/* Chopping-block heads-up (item 228): every holding, visibility only. */
+async function loadChoppingBlock() {
+  const body = document.querySelector("#panel-chopping-block [data-body]");
+  try {
+    const data = await fetchJSON("/chopping-block");
+    body.replaceChildren();
+    body.appendChild(el("div", { className: "dim", text: data.note }));
+    const rows = data.holdings.map((h) =>
+      el("tr", {}, [
+        el("td", { text: h.symbol }),
+        el("td", { text: h.standing === "below_bar" ? "below the bar" : "clears the bar" }),
+        el("td", { text: h.headline }),
+        el("td", { text: h.reason }),
+        el("td", { text: h.margins.map((m) => `${m.rule}: ${m.now} ${m.unit} (${m.direction.replace(/_/g, " ")}${m.previous === null ? "" : ", was " + m.previous})`).join("; ") || "no margin recorded" }),
+      ])
+    );
+    if (rows.length) body.appendChild(el("table", {}, rows));
+    setPanelState("panel-chopping-block", "ok", "ok");
+  } catch (err) {
+    showMessage(body, `Could not load the chopping-block heads-up: ${err.message}`, true);
+    setPanelState("panel-chopping-block", "error", "unreachable");
+  }
+}
+
 /* Pruning pass panel (item 219): every held name reviewed, verdict and reason. */
 async function loadPruning() {
   const body = document.querySelector("#panel-pruning [data-body]");
@@ -1525,6 +1549,7 @@ function refreshAll() {
   loadCandidates();
   loadMutedBacklog();
   loadHealth();
+  loadChoppingBlock();
 }
 
 document.getElementById("orders-status").addEventListener("change", loadOrders);

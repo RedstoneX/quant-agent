@@ -1,6 +1,6 @@
 """src.cost_circuit.parts.operator_controls -- OperatorControls for the cost circuit (status, operator reset).
 
-Bodies moved verbatim from src/cost_circuit/breaker_operator.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_operator.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations

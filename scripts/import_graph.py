@@ -4,19 +4,41 @@ Pure standard library. Builds the graph of internal ``src.*`` imports with
 ``ast``, separating runtime imports from ``TYPE_CHECKING``-only imports (a
 type-only import is not a true dependency and is ignored by every check).
 
-CLI:  PYTHONPATH=. .venv/bin/python -m scripts.import_graph   (prints a report)
+The cycle guard stores NOTHING: it builds the graph from the working tree,
+builds it again from ``origin/main`` at check time, and reports only the DELTA
+by edge identity, never by a total (docs/GUARDS_WITHOUT_STORED_STATE.md). If the trunk cannot be read it REFUSES
+rather than pass. The layering half works the same way: the rule (below) lives
+in code, and the set of modules that import across it is measured on both sides.
+
+CLI:  PYTHONPATH=. .venv/bin/python -m scripts.import_graph          (report)
+      PYTHONPATH=. .venv/bin/python -m scripts.import_graph --check  (guard)
 """
 from __future__ import annotations
 
 import ast
-import json
+import sys
 from collections import defaultdict, deque
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from scripts.guard_reference import (
+    ROOT,
+    ReferenceUnavailable,
+    TRUNK,
+    added_sites,
+    trunk_blobs,
+    trunk_paths,
+)
+
 SRC = ROOT / "src"
-BASELINE_PATH = ROOT / "tests" / "import_cycle_baseline.json"
-LAYERS_PATH = ROOT / "tests" / "import_layers.json"
+
+# One-way rule, in code not in a file: src.execution is the broker seam (it can
+# move real money), so no module outside it may GAIN a runtime import of it.
+# Existing importers are whatever origin/main has, measured at check time.
+LAYER_RULES = (
+    {"name": "broker-seam", "target_prefix": "src.execution",
+     "allowed_importers": ("src.execution",),
+     "why": "src.execution is the broker seam (it can move real money) and the set of modules reaching it must not widen."},
+)
 
 Edge = tuple[str, str]
 
@@ -58,19 +80,40 @@ def _collect(tree: ast.AST):
     yield from walk(tree, False)
 
 
-def build_graph(src_dir: Path = SRC):
-    """Return (modules, runtime_edges, type_only_edges, edge_sites).
+def _module_of(rel: str) -> str:
+    """``src/pkg/mod.py`` -> ``src.pkg.mod``; a package __init__ names the package."""
+    parts = rel[:-len(".py")].split("/")
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
 
-    edge_sites maps an edge to ``"path:line"`` of its first import statement.
+
+def disk_sources(src_dir: Path = SRC) -> dict[str, str]:
+    """Every ``src/**/*.py`` in the working tree, keyed by repo-relative path."""
+    return {
+        f.relative_to(ROOT).as_posix(): f.read_text(encoding="utf-8")
+        for f in sorted(src_dir.rglob("*.py"))
+    }
+
+
+def trunk_sources() -> dict[str, str]:
+    """The same files as they stand on ``origin/main``. Raises if it cannot read them."""
+    return trunk_blobs([p for p in trunk_paths(".py") if p.startswith("src/")])
+
+
+def graph_from_sources(sources: dict[str, str]):
+    """Return (modules, runtime_edges, type_only_edges, edge_sites) for a source map.
+
+    Taking text rather than a directory is what lets the guard measure the trunk
+    without checking it out, so nothing has to be cached in the repo.
     """
-    files = sorted(src_dir.rglob("*.py"))
-    modules = {module_name(f): f for f in files}
+    modules = {_module_of(rel): rel for rel in sorted(sources)}
     runtime: set[Edge] = set()
     type_only: set[Edge] = set()
     sites: dict[Edge, str] = {}
-    for mod, f in modules.items():
-        is_pkg = f.name == "__init__.py"
-        tree = ast.parse(f.read_text(encoding="utf-8"), filename=str(f))
+    for mod, rel in modules.items():
+        is_pkg = rel.endswith("/__init__.py") or rel == "__init__.py"
+        tree = ast.parse(sources[rel], filename=rel)
         for node, t_only in _collect(tree):
             targets: list[str] = []
             if isinstance(node, ast.Import):
@@ -91,9 +134,14 @@ def build_graph(src_dir: Path = SRC):
                 if t in modules and t != mod:
                     edge = (mod, t)
                     (type_only if t_only else runtime).add(edge)
-                    sites.setdefault(edge, f"{f.relative_to(ROOT)}:{node.lineno}")
+                    sites.setdefault(edge, f"{rel}:{node.lineno}")
     type_only -= runtime
     return set(modules), runtime, type_only, sites
+
+
+def build_graph(src_dir: Path = SRC):
+    """The working tree's graph. edge_sites maps an edge to ``"path:line"``."""
+    return graph_from_sources(disk_sources(src_dir))
 
 
 def adjacency(edges) -> dict[str, set[str]]:
@@ -170,56 +218,92 @@ def shortest_cycles(edges) -> list[list[str]]:
     return sorted(found.values(), key=lambda c: (len(c), c))
 
 
-def load_json(path: Path, default):
-    return json.loads(path.read_text()) if path.exists() else default
+def _under(mod, prefix):
+    return mod == prefix or mod.startswith(prefix + ".")
 
 
-def layer_violations(runtime_edges, sites, config) -> list[str]:
-    """Check declared rules. Config: {"rules": [{"name", "target_prefix",
-    "allowed_importers": [prefixes], "why"}]}. An importer is allowed if its
-    module equals or starts with ``prefix + "."`` for some allowed prefix."""
-    def under(mod, prefix):
-        return mod == prefix or mod.startswith(prefix + ".")
+def crossing_edges(runtime_edges, rule) -> set[Edge]:
+    """Runtime edges that reach the rule's target from outside its allowed importers."""
+    return {
+        (a, b) for a, b in runtime_edges
+        if _under(b, rule["target_prefix"])
+        and not any(_under(a, p) for p in rule["allowed_importers"])
+    }
 
+
+def new_layer_violations(rules=LAYER_RULES) -> list[str]:
+    """Rule-crossing imports this tree has that ``origin/main`` does not.
+
+    Stores nothing; raises ``ReferenceUnavailable`` when the trunk is unreadable.
+    Identity is (importer, imported), so swapping one importer for another is
+    still an addition.
+    """
+    _, rt, _, sites = build_graph()
+    _, t_rt, _, _ = graph_from_sources(trunk_sources())
     out = []
-    for rule in config.get("rules", []):
-        if rule.get("exact_importers"):
-            allowed = set(rule["exact_importers"])
-            rule = dict(rule, allowed_importers=sorted(allowed) + rule.get("allowed_importers", []))
-        for a, b in sorted(runtime_edges):
-            if under(b, rule["target_prefix"]) and not any(
-                under(a, p) for p in rule["allowed_importers"]
-            ):
-                out.append(
-                    f"[{rule['name']}] {sites[(a, b)]}: {a} imports {b}. "
-                    f"{rule['why']} Fix: route this through one of "
-                    f"{rule['allowed_importers']} instead of importing {b} directly "
-                    f"(or, if the architecture genuinely changed, edit "
-                    f"tests/import_layers.json in the same PR and say why)."
-                )
+    for rule in rules:
+        for edge, _, _ in added_sites(crossing_edges(rt, rule), crossing_edges(t_rt, rule)):
+            a, b = edge
+            out.append(
+                f"[{rule['name']}] {sites[edge]}: {a} imports {b}. {rule['why']} "
+                f"Fix: route this through {list(rule['allowed_importers'])} instead of "
+                f"importing {b} directly. There is no allowlist to add it to: this "
+                f"compares the working tree against {TRUNK} every time it runs.")
     return out
 
 
-def stale_allowlist_entries(runtime_edges, config) -> list[str]:
-    """Ratchet for ``exact_importers``: entries that no longer import the target."""
-    out = []
-    for rule in config.get("rules", []):
-        for m in rule.get("exact_importers", []):
-            if not any(a == m and (b == rule["target_prefix"] or b.startswith(rule["target_prefix"] + "."))
-                       for a, b in runtime_edges):
-                out.append(f"[{rule['name']}] {m} no longer imports {rule['target_prefix']}. "
-                           f"Fix: delete it from exact_importers in tests/import_layers.json (the allowlist only shrinks).")
-    return out
+def new_cycle_edges():
+    """Cycle edges this working tree has that ``origin/main`` does not.
+
+    Both sides are measured here and now; nothing is read from or written to a
+    committed file, so two unrelated changes can never collide over this guard.
+    Raises ``ReferenceUnavailable`` when the trunk cannot be read -- the guard
+    refuses rather than passing by default.
+    """
+    nodes, rt, _, sites = build_graph()
+    now = cycle_edges(nodes, rt)
+    t_nodes, t_rt, _, _ = graph_from_sources(trunk_sources())
+    before = cycle_edges(t_nodes, t_rt)
+    # Identity comparison (scripts/guard_reference.py): each cycle edge is named
+    # by (importer, imported); a change that breaks one cycle and closes a
+    # different one is still an addition, never a wash.
+    return [edge for edge, _, _ in added_sites(now, before)], now, sites
 
 
-def shrink_baseline() -> None:
-    """Rewrite the baseline to the intersection with today's cycle edges. Never grows it."""
-    nodes, rt, _, _ = build_graph()
-    now = {list(e).__repr__() for e in cycle_edges(nodes, rt)}
-    data = load_json(BASELINE_PATH, {"edges": []})
-    keep = [e for e in data["edges"] if repr(list(e)) in now and tuple(e) in cycle_edges(nodes, rt)]
-    data["edges"] = sorted(keep)
-    BASELINE_PATH.write_text(json.dumps(data, indent=1) + "\n")
+def new_cycle_report() -> list[str]:
+    """One human line per newly introduced cycle edge, naming the loop it closes."""
+    new, now, sites = new_cycle_edges()
+    if not new:
+        return []
+    cycles = shortest_cycles(now)
+    lines = []
+    for a, b in new:
+        cyc = next((c for c in cycles if (a, b) in zip(c, c[1:] + c[:1])), None)
+        loop = " -> ".join(cyc + [cyc[0]]) if cyc else "(cycle)"
+        lines.append(f"  {sites[(a, b)]}: {a} imports {b}, which closes the cycle {loop}")
+    return lines
+
+
+CYCLE_FIX_HINT = (
+    "\nFix: remove or invert that import (move the shared piece into a lower module "
+    "both can import, or import lazily at the call site only if the dependency is "
+    "truly one-way). There is no baseline to add it to: this guard stores nothing "
+    f"and compares the working tree against {TRUNK} every time it runs."
+)
+
+
+def check(argv: list[str] | None = None) -> int:
+    try:
+        lines = new_cycle_report() + new_layer_violations()
+    except ReferenceUnavailable as exc:
+        print(f"REFUSING: {exc}", file=sys.stderr)
+        return 2
+    if lines:
+        print("NEW import cycle(s) or layer crossing(s) introduced against %s:\n%s%s"
+              % (TRUNK, "\n".join(lines), CYCLE_FIX_HINT), file=sys.stderr)
+        return 1
+    print(f"import-cycle guard: this tree adds no import cycle against {TRUNK}.")
+    return 0
 
 
 def report() -> str:
@@ -239,16 +323,7 @@ def report() -> str:
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    import sys
-    if "--shrink-baseline" in sys.argv:
-        shrink_baseline()
-    elif "--seed-baseline" in sys.argv:  # one-time seeding only; the test forbids growth by review
-        nodes, rt, _, _ = build_graph()
-        BASELINE_PATH.write_text(json.dumps({
-            "_comment": "Import-cycle edges that existed when the guard was introduced. This list may only SHRINK: "
-                        "run `PYTHONPATH=. .venv/bin/python -m scripts.import_graph --shrink-baseline` after breaking a cycle. "
-                        "Never add an edge here; break the cycle instead.",
-            "edges": sorted([a, b] for a, b in cycle_edges(nodes, rt))}, indent=1) + "\n")
-    else:
-        print(report())
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    if "--check" in sys.argv:
+        raise SystemExit(check())
+    print(report())

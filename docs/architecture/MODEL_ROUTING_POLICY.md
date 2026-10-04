@@ -745,6 +745,152 @@ sessions live on the VPS at
 - Failed both: meta/muse-spark-1.3 and z-ai/glm-5.3 (misstated evidence counts, e.g. "claims 3/3 aligned but provenance proves 2/3" — rejected by live grounding), deepseek/deepseek-v4-flash-0731 (ungrounded targets), qwen/qwen3.8-flash (truncated at 16000 tokens).
 - Open decision for the owner: rule-following narrows the PM to five reliable models; choosing among them on decision QUALITY needs outcomes (e.g. shadow-tracking picks forward), not another rules exam.
 
+---
+
+## `midday_exit` re-examination, 2026-10-02 — the exam is invalid, not the model
+
+**Verdict: `gemini-3.5-flash-lite` did not review positions worse. It was
+marked down for obeying the live prompt.** Cost of this investigation:
+**$0.00** — no model call was made (see "why no re-run" below).
+
+### The August scores, checked against the committed files
+
+The summary that prompted this ("2.5 = 1.0/1.0, 3.5 = 0.325 mean / 0.0 worst,
+two runs each") is **partly right and materially incomplete**:
+
+| Model | Runs committed 2026-08-31 | Scores | Mean | Worst |
+|---|---|---|---|---|
+| `google/gemini-2.5-flash-lite` (OpenRouter, paid) | 4 (`merged.json`, `sweep-b.json`) | 1.00, 1.00, 1.00, 1.00 | 1.00 | 1.00 |
+| `gemini-3.5-flash-lite` (Google direct, free) | 4 (`gemini35-midday-*`, `gemini35-fullsweep-*`) | 0.65, 0.65, 0.65, 0.00 | **0.4875** | 0.00 |
+
+So "0.325 mean" is the mean of *one* of the two committed 3.5 files, not of
+the evidence on disk. Across all four runs 3.5 means 0.4875. The 1.0/1.0 for
+2.5 is confirmed.
+
+The summary's other claim — that the score is "dominated by a binary
+`parsed_and_grounded` check" — **is wrong for this scenario**. `midday_exit`
+has no such check. `_review_grade` (`ops/model_policy/scenarios.py`) weighs:
+
+| Check | Weight | Kind |
+|---|---|---|
+| `parsed` | 0.30 | schema |
+| `cot_complete` | 0.10 | schema |
+| `acts_on_broken_thesis` | **0.35** | judgement |
+| `does_not_cut_the_winner` | 0.25 | judgement |
+
+### Why each sub-1.0 run of 3.5 lost its point
+
+**Three of four runs (0.65 each): lost `acts_on_broken_thesis` only.** Schema
+passed, chain-of-thought passed, the winner was correctly held. The single
+lost check requires AMD to be `SELL`/`REDUCE`/`TRAIL_STOP` because it sits
+0.25×ATR from its stop. 3.5 answered `HOLD`, reasoning:
+
+> "AMD's distance-to-stop is 0.4% (0.25 ATR), sitting inside the critical
+> zone where broker execution is imminent; however, pre-empting the stop is
+> discouraged unless a hard trigger is cited."
+
+That is the live prompt restated. `config/prompts/position_reviewer.md`:
+
+> "**`to_stop` is ADVISORY DISTANCE, never a trigger: only the broker fills
+> stops.** 'Close to stop' or 'will gap through the stop overnight' is NOT a
+> reason to SELL ahead of it — pre-empting the stop converts protection into
+> a realized whipsaw (GS 2026-05-18: sold at +0.4%-to-stop 'before the gap';
+> no gap came, the stock ran)."
+
+**The grader's heaviest check rewards the exact behaviour the prompt bans,
+and cites a real logged loss as the reason it is banned.** 3.5 lost 0.35 for
+being right.
+
+**The incumbent's perfect score is a score for a prompt violation.** 2.5's
+winning answer:
+
+> "AMD is underperforming significantly, is stalled, and is close to its hard
+> stop. Given the risk-off macro and lack of thesis progress, a REDUCE action
+> is warranted."
+
+"Close to its hard stop" is the banned trigger, named explicitly.
+
+**One of four runs (0.00): schema failure, not reasoning.** `parsed` was
+false; the model produced 750 output tokens against a 16,000 cap, so it was
+not truncated by the cap. The precise defect is **not recoverable** from the
+committed record — the trial's `error` field is empty and `sample_output` is
+stored clipped at 1,500 characters. What is certain is the category: it is a
+formatting/validation failure, not a judgement failure. 3.5 is not alone
+here — `openai/gpt-5-nano` and `deepseek-v4-pro-0813` each produced a
+`parsed`-false run on this same scenario, which is the harness's known
+run-to-run instability, not a property of one model.
+
+### Why no re-run was performed
+
+`midday_exit` is **BLOCKED** by `refusal_reason` in `scenarios.py` and the
+run is refused before any call is made, on either route, paid or free:
+
+> `REFUSED midday_exit: BLOCKED — positions, stops and entry rows are
+> invented; ... The grader's main check rewards SELL/REDUCE/TRAIL_STOP on a
+> position near its stop, which config/prompts/position_reviewer.md says is
+> never a trigger ...`
+
+The repo had already diagnosed this defect. Twenty repeats would have
+produced twenty numbers from a grader whose heaviest check is known-wrong, at
+no gain in resolution — a tighter confidence interval around an invalid
+measurement. Bypassing the fixture gate to obtain them would also break the
+raw-public-facts-only owner rule of 2026-09-14.
+
+### What this does and does not establish
+
+- **Established:** the August verdict does not support holding
+  `position_reviewer` on the paid route. The quality gap it rests on is a
+  grader defect in 3.5's favour.
+- **Not established:** that 3.5 is *affirmatively* safe at this seat. One
+  schema failure in four runs is real and its cause is unrecovered. No valid
+  exam for this seat currently exists.
+- **Fix size — small.** Inverting `acts_on_broken_thesis` to match the prompt
+  (reward `HOLD` absent a named non-`to_stop` trigger) is a few lines. It is
+  *not* sufficient on its own: the scenario stays BLOCKED for its invented
+  positions and its `risk_off` macro regime, which is not a `MacroAnalysis`
+  value. A valid exam needs the fixture rebuilt too.
+
+No seat routing was changed by this investigation.
+
+### Can the seat move pass `test_decision_seats_run_a_model_measured_at_that_seat`? No.
+
+The gate (`tests/test_model_routing_policy.py`) requires, for
+`position_reviewer|midday_exit`, a committed pair with `runs >= 2` and
+`quality_min == 1.0`. **It cannot be satisfied today, and it should not be
+weakened to let the seat move.** Three independent blockers:
+
+1. **No result can be produced at all.** `midday_exit` is BLOCKED; the
+   harness refuses before any call, on the free Google-direct route exactly
+   as on the paid one. The block is not about cost.
+2. **The key would be right, but there is nothing to key.** The gate looks up
+   `f"{model}|{scenario}"` where `model` is the configured seat id —
+   bare `gemini-3.5-flash-lite` on the Google-direct route. The harness keys
+   results from whatever `--models` is given (`benchmark_models.py`,
+   `pairs[f"{t.model}|{t.scenario}"]`), so running
+   `--models gemini-3.5-flash-lite` files them under the bare id with **no
+   code change needed**. The August files are keyed
+   `google/gemini-3.5-flash-lite|midday_exit` because they were run over
+   OpenRouter, where the vendor prefix is part of the id. That mismatch is
+   real and would make the gate report "no committed benchmark result".
+3. **The existing worst run is 0.00, so the gate would fail on score anyway.**
+   Note the supersede rule — `_benchmark_pairs` takes later files by sorted
+   filename, so `gemini35-midday-…` overrides `gemini35-fullsweep-…` and the
+   effective committed pair is `runs=2, quality_min=0.0, quality_mean=0.325`.
+   That is where the "0.325 / 0.0" summary comes from; it is the superseding
+   file, not the whole evidence.
+
+**Honest outcome: `gemini-3.5-flash-lite` cannot be shown to pass this seat's
+gate, and the gate is right to hold.** The 0.65 runs are the grader's fault,
+but the 0.00 run is a genuine schema failure on a seat that decides whether
+to exit a live position, and `quality_min` exists precisely to catch "fine
+most days, unparseable on the others". The unblock is to rebuild the exam —
+correct `acts_on_broken_thesis` to match the prompt, replace the invented
+positions, fix the `risk_off` regime — then run it free on Google direct
+under the bare id. Until then the seat stays where it is on evidence, not on
+preference.
+
+*Update: the exam rebuild described above has since landed (#1160): `midday_exit` now uses a recorded book and grades the desk's own stop rule. The routing decision above is unchanged.*
+
 ## 2026-10-02 — CAPACITY (503) demotions: measured cause
 
 Investigation of the 37 recorded demotions, asking whether the CAPACITY

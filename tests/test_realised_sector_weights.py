@@ -93,12 +93,101 @@ def test_unknown_sector_is_null_never_other(db):
 
 
 def test_a_run_that_built_nothing_records_that_fact_not_zero_concentration(db):
+    """Nothing built writes `[]`, NEVER NULL.
+
+    A NULL here could not be told apart from "the recorder failed to write
+    its content", so a count-based check reported "populating" over a
+    contentless row. `[]` plainly means no entry orders, and
+    `entry_orders_built` 0 on the same row still separates that from a
+    book with zero concentration.
+    """
     db.record_realised_sector_weights(
         decisions=[], sectors={}, total_value=10_000.0, run_id="run-4",
     )
     row = _row(db)[0]
-    assert row["weights_json"] is None
+    assert row["weights_json"] == "[]"
+    assert json.loads(row["weights_json"]) == []
     assert row["entry_orders_built"] == 0
+
+
+def test_a_reducing_only_run_also_records_an_empty_list_not_null(db):
+    db.record_realised_sector_weights(
+        decisions=[_decision("SELL", "AAA", 50.0)],
+        sectors={"AAA": "Energy"}, total_value=10_000.0, run_id="run-4b",
+    )
+    row = _row(db)[0]
+    assert row["weights_json"] == "[]"
+    assert row["entry_orders_built"] == 0
+    assert row["reducing_orders_built"] == 1
+
+
+def test_no_recording_call_can_ever_write_a_null_weights_row(db):
+    """The write path must have no input that yields NULL weights."""
+    cases = [
+        dict(decisions=[], sectors={}, total_value=None, run_id="n-1"),
+        dict(decisions=None, sectors=None, total_value=0.0, run_id="n-2"),
+        dict(decisions=[_decision("SELL", "AAA", 1.0)], sectors=None,
+             total_value=1.0, run_id="n-3"),
+        dict(decisions=[_decision("BUY", "AAA", 1.0)], sectors={},
+             total_value=float("nan"), run_id="n-5"),
+    ]
+    for kw in cases:
+        assert db.record_realised_sector_weights(**kw) is True, kw
+    rows = _row(db)
+    assert len(rows) == len(cases)
+    nulls = [r["run_id"] for r in rows if r["weights_json"] is None]
+    assert not nulls, nulls
+
+
+def test_the_schema_itself_refuses_a_null_weights_row(db):
+    """Not a convention — the column is NOT NULL, so NULL is unwritable."""
+    with pytest.raises(sqlite3.IntegrityError):
+        db.conn.execute(
+            "INSERT INTO realised_sector_weights "
+            "(timestamp, run_id, weights_json, denominator) "
+            "VALUES ('2026-10-02 00:00:00', 'direct', NULL, 'd')"
+        )
+
+
+def test_legacy_null_rows_are_backfilled_on_open(tmp_path):
+    """A database written before the constraint must not keep NULL rows."""
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        """
+        CREATE TABLE realised_sector_weights (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            run_id TEXT,
+            session_date TEXT,
+            weights_json TEXT,
+            denominator TEXT NOT NULL,
+            total_value REAL,
+            entry_orders_built INTEGER,
+            reducing_orders_built INTEGER,
+            unknown_sector_orders INTEGER,
+            UNIQUE (run_id)
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO realised_sector_weights "
+        "(timestamp, run_id, weights_json, denominator, entry_orders_built) "
+        "VALUES ('2026-10-01 14:18:07', 'intra_check-1bc036f2', NULL, 'd', 0)"
+    )
+    conn.commit()
+    conn.close()
+
+    d = Database(str(path))
+    d.initialize()
+    rows = _row(d)
+    assert [r["weights_json"] for r in rows] == ["[]"]
+    with pytest.raises(sqlite3.IntegrityError):
+        d.conn.execute(
+            "INSERT INTO realised_sector_weights "
+            "(timestamp, run_id, weights_json, denominator) "
+            "VALUES ('2026-10-02 00:00:00', 'x', NULL, 'd')"
+        )
 
 
 def test_one_row_per_run(db):
@@ -132,7 +221,8 @@ def test_recording_is_reachable_from_executable_product_code():
     # the split instead of being weakened by it.
     callers = []
     for module in ("pipeline_stages.py", "stage_decision.py",
-                   "pipeline_entry_orders.py", "pipeline_rotation_exec.py"):
+                   "pipeline_entry_orders.py", "pipeline_rotation_exec.py",
+                   "pipeline_risk_budget_recording.py"):
         callers += [
             n for n in ast.walk(ast.parse((SRC / module).read_text()))
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)

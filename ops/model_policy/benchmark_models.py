@@ -51,6 +51,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.agents.llm_providers import _is_google_model  # noqa: E402
 from ops.model_policy.scenarios import (  # noqa: E402
     Check, DEFAULT_SCENARIOS, Scenario, SCENARIOS, SCENARIOS_BY_KEY, refusal_reason,
 )
@@ -73,12 +74,11 @@ GOOGLE_DIRECT_PREFIX = "google-direct:"
 def parse_benchmark_model(model: str) -> tuple[str, str]:
     """(effective_model_id, provider) for a `--models` entry.
 
-    Strips `GOOGLE_DIRECT_PREFIX` when present and routes to "google";
-    otherwise unchanged and routed to "openrouter", exactly as before this
-    prefix existed.
+    Strips `GOOGLE_DIRECT_PREFIX` and routes to "google"; a BARE Google id (no "vendor/", so never an OpenRouter id) routes there too, filed under its bare id; else "openrouter".
     """
     if model.startswith(GOOGLE_DIRECT_PREFIX):
         return model[len(GOOGLE_DIRECT_PREFIX):], "google"
+    if "/" not in model and _is_google_model(model): return model, "google"
     return model, "openrouter"
 
 BASELINE_MODEL = "openai/gpt-5.5"

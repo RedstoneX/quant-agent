@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.agents.portfolio_manager import prompt_evidence, ranking, rotation_section
+from src.agents.portfolio_manager import PortfolioManagerAgent, prompt_evidence, ranking, rotation_section
 from src.agents.portfolio_manager.candidate_ranking import CandidateRanking, _HostState
 from src.agents.portfolio_manager.decision_grounding import DecisionGrounding
 from src.agents.portfolio_manager.evidence_prompting import PromptEvidence
@@ -113,7 +113,6 @@ def test_shim_signatures_cover_every_body():
 
 #: (shim module, mixin, part, one body the part reads through `self.`)
 _INSTALMENT_2 = [
-    (prompt_evidence, prompt_evidence.PromptEvidenceMixin, PromptEvidence, "_collapse_stances"),
     (rotation_section, rotation_section.RotationSectionMixin, RotationSection, "_rotation_constraint_line"),
     (ranking, ranking.CandidateRankingMixin, CandidateRanking, "candidate_eligibility"),
 ]
@@ -141,7 +140,7 @@ def test_prompt_text_is_the_same_through_the_shim_and_the_part():
     """Prompt text is code that can rot: the mixin's shim and the bare part must
     render byte-identical text (the lift moved the bodies verbatim)."""
     rows: list[dict] = []  # the empty roll-up; richer rows need a fixture the proof script covers
-    assert (prompt_evidence.PromptEvidenceMixin._render_earnings_no_call_rollup(rows)
+    assert (PortfolioManagerAgent._render_earnings_no_call_rollup(rows)
             == PromptEvidence()._render_earnings_no_call_rollup(rows))
 
 
@@ -229,3 +228,33 @@ def test_instalment_2_shim_signatures_cover_every_body(module, mixin, part, body
     shims = {n for n, f in vars(mixin).items() if isinstance(f, classmethod) and n != builder}
     assert bodies == shims
     assert set(module._OWN_BODIES) <= bodies
+
+
+# --- The agent HOLDS the prompt-evidence part; it no longer inherits it -----------
+
+def test_agent_holds_prompt_evidence_instead_of_inheriting():
+    assert not any(c.__name__ == "PromptEvidenceMixin" for c in PortfolioManagerAgent.__mro__)
+    assert type(PortfolioManagerAgent._prompt_evidence) is PromptEvidence
+    for name in prompt_evidence.DELEGATED:
+        assert isinstance(inspect.getattr_static(PortfolioManagerAgent, name), classmethod), name
+        assert not hasattr(PromptEvidence, name) or callable(getattr(PromptEvidence, name))
+    assert PortfolioManagerAgent._collapse_stances(["bullish", "bullish"]) == "bullish"
+
+
+def test_prompt_evidence_part_is_built_and_exercised_without_the_agent():
+    """Constructed from nothing, exercised, and held on a bare class: no agent built."""
+    class Bare:
+        pass
+
+    prompt_evidence.hold_prompt_evidence(Bare)
+    assert set(prompt_evidence.DELEGATED) <= set(vars(Bare))
+    assert Bare._collapse_stances(["bullish", "bullish"]) == "bullish"
+    assert Bare._sector_guidance_rows(None) == []
+    swapped = PromptEvidence(collapse_stances=lambda v: "SWAPPED")
+    assert prompt_evidence.hold_prompt_evidence(Bare, swapped)._collapse_stances([]) == "SWAPPED"
+
+
+def test_delegates_cover_every_prompt_evidence_body():
+    bodies = {n for n, f in vars(PromptEvidence).items()
+              if n != "__init__" and (inspect.isfunction(f) or isinstance(f, (classmethod, staticmethod)))}
+    assert bodies == set(prompt_evidence.DELEGATED)
