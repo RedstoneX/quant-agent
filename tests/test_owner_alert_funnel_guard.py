@@ -44,6 +44,33 @@ def test_guard_refuses_a_new_file_that_builds_the_bot_api_url(monkeypatch):
     assert any(NEW_URL_FILE in b for b in bad), bad
 
 
+def test_guard_does_not_scan_itself_but_still_scans_lookalikes(monkeypatch):
+    class Done:
+        returncode = 0
+        stderr = ""
+        stdout = "\0".join(
+            [g.GUARD_FILE, "scripts/owner_alert_funnel_guard2.py",
+             "src/scripts/owner_alert_funnel_guard.py", g.FUNNEL_FILE]
+        )
+
+    monkeypatch.setattr(g.subprocess, "run", lambda *a, **k: Done())
+    got = g.scanned_paths()
+    assert g.GUARD_FILE not in got
+    assert "scripts/owner_alert_funnel_guard2.py" in got
+    assert "src/scripts/owner_alert_funnel_guard.py" in got
+
+
+def test_guard_still_bites_a_bypass_in_a_file_named_like_the_guard(monkeypatch):
+    lookalike = "scripts/owner_alert_funnel_guard_copy.py"
+    monkeypatch.setattr(g, "scanned_paths", lambda: [lookalike, g.FUNNEL_FILE])
+    monkeypatch.setattr(
+        g, "read",
+        lambda p: f"requests.post('https://{g.TELEGRAM_URL_MARKER}X/sendMessage')",
+    )
+    monkeypatch.setattr(g, "sender_classes", lambda paths: set())
+    assert any(lookalike in b for b in g.violations())
+
+
 def test_guard_refuses_a_new_stand_in_notifier_class(monkeypatch):
     monkeypatch.setattr(g, "scanned_paths", lambda: [])
     monkeypatch.setattr(g, "url_sites", lambda paths: set(g.EXEMPT_URL_SITES))

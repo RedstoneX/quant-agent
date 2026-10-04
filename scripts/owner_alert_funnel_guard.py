@@ -77,6 +77,12 @@ SCAN_DIRS = ("src", "ops", "scripts")
 FUNNEL_FILE = "src/notifier/transport.py"
 FUNNEL_PACKAGE = "src/notifier/"
 
+#: This file's own path. Its docstring and advice quote a Bot API URL and a
+#: ``notifier.send(...)`` example to explain the rule, so scanning it would
+#: report the guard as its own violation. Exactly this one exact path is
+#: skipped -- not a directory, not a pattern.
+GUARD_FILE = "scripts/owner_alert_funnel_guard.py"
+
 TELEGRAM_URL_MARKER = "api.telegram.org/bot"
 
 TRUNK = "origin/main"
@@ -136,7 +142,7 @@ def scanned_paths() -> list[str]:
             f"{', '.join(SCAN_DIRS)}; that cannot be right, so this guard "
             "REFUSES rather than report a clean tree."
         )
-    return sorted(paths)
+    return sorted(p for p in paths if p != GUARD_FILE)
 
 
 def read(path: str) -> str:
