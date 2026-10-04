@@ -29,6 +29,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from src.api.deps import get_db_path
+from src.api.holding_entry_evidence import entry_evidence
 from src.trading_calendar import et_today
 
 ET = ZoneInfo("America/New_York")
@@ -1302,24 +1303,10 @@ def get_holding_why(symbol: str) -> dict | None:
         if entry is None:
             return None
         entry = dict(entry)
-        evidence = [
-            dict(row) for row in conn.execute(
-                # The entry run's evidence is written BEFORE the fill (the
-                # Form 4 admission precedes the order by minutes), so the
-                # review-metrics cutoff must not be applied to it.
-                #
-                # `target_revision` rows are pulled on the same
-                # after-the-entry basis as `review_metrics`: a re-derived
-                # take-profit, or a named refusal to re-derive one, happens
-                # in a LATER session than the entry, and the holding view
-                # must show which number it is currently displaying and why.
-                "SELECT * FROM specialist_evidence WHERE symbol = ? AND "
-                "(run_id = ? OR (kind IN ('review_metrics', 'target_revision') "
-                "AND timestamp >= ?)) "
-                "ORDER BY id",
-                (symbol, entry.get("run_id") or "", entry.get("timestamp") or ""),
-            ).fetchall()
-        ]
+        # Including the run that OPENED the position: see
+        # `src/api/holding_entry_evidence.py` for why an add's own run is
+        # not enough to say who raised the name.
+        evidence = entry_evidence(conn, symbol, entry)
         interim: list[dict] = []
         position_id = entry.get("position_id")
         if position_id:
