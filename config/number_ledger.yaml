@@ -7920,7 +7920,7 @@ numbers:
     note: >-
       Board item 39, attempt 3. Not a trading threshold: it is the length of
       the field this text has to fit in. `_build_sell` stores
-      `reasoning[:500]` (src/portfolio_constructor/orders.py:133, :189, :411),
+      `reasoning[:500]` (src/portfolio_constructor/order_build/: ExitOrderBuilders._build_sell, ExitOrderBuilders._build_cover, LongEntryBuilder._build_buy, ShortEntryBuilder._build_short),
       so a rotation reason longer than that loses its LAST clause - which is
       the one naming what the sale was cleared on, or that the close is
       contingent on the replacement buy. Read from the truncation it has to

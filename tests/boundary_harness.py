@@ -91,7 +91,9 @@ def test_files_referencing_pipeline(tests_dir: Path = TESTS) -> set[str]:
     attributes; prose strings excluded)."""
     found: set[str] = set()
     for p in sorted(tests_dir.rglob("*.py")):
-        if p.name in _UNMEASURED:
+        # Any tests/test_e2e_*.py is a deliberate whole-system test (policy widened on main;
+        # the permitted count is NOT raised): counting it would penalise the tests this metric wants.
+        if p.name in _UNMEASURED or (p.name.startswith("test_e2e_") and p.suffix == ".py"):
             continue
         try:
             tree = _parse(p)
