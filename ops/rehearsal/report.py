@@ -26,7 +26,6 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from ops.rehearsal.replay import SESSION_RUN_PREFIX as REPLAY_PREFIX
-from src.intraday_scan_outcome import OUT_OF_CREDIT_PLAIN
 from src.status_plain_extra import EXTRA_PLAIN
 
 # --------------------------------------------------------------- phrasebook
@@ -306,7 +305,7 @@ STATUS_PLAIN = {
         "The session ran all the way through and analyzed the new "
         "earnings filings it found."
     ),
-} | OUT_OF_CREDIT_PLAIN | EXTRA_PLAIN
+} | EXTRA_PLAIN
 
 # Why an approved BUY died at the last moment, in the execution stage.
 SKIP_PLAIN = {
