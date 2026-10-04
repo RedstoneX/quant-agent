@@ -18,7 +18,7 @@ out, never an exemption from management.
 `install` REFUSES TO LOAD if a write-capable method has no entry in `_REFUSALS`,
 so a new broker verb cannot silently bypass the flag.
 """
-from src.sentinel.swallow_record import record_swallow
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import functools
 import logging
 
@@ -88,7 +88,7 @@ def _verdict(name):
             try:
                 unknown_state_recorder(f"{name}: {why}")
             except Exception as exc:  # noqa: BLE001 - recording never decides
-                record_swallow("owner_flags_gate.unknown_state_recorder", exc)
+                record_guarded_pass(NO_LEDGER, "owner_flags_gate.unknown_state_recorder", exc)
         return why if name in UNKNOWN_BLOCKS else None
     if flags.paused and name in PAUSE_BLOCKS:
         return "desk is paused by the owner"

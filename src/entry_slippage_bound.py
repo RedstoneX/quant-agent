@@ -27,7 +27,7 @@ never affects the order. Read the rows back with
 """
 from __future__ import annotations
 
-from src.sentinel.swallow_record import record_swallow
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import json
 import logging
 from typing import Any, NamedTuple
@@ -60,7 +60,7 @@ def latest_daily_range_pct(bars: Any) -> float | None:
         low = float(last["low"] if isinstance(last, dict) else last.low)
         close = float(last["close"] if isinstance(last, dict) else last.close)
     except Exception as exc:  # noqa: BLE001
-        record_swallow("entry_slippage_bound.bar_shape", exc)
+        record_guarded_pass(NO_LEDGER, "entry_slippage_bound.bar_shape", exc)
         return None
     if not close > 0 or high < low:
         return None

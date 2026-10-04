@@ -48,7 +48,7 @@ which outcome a row is.
 
 from __future__ import annotations
 
-from src.sentinel.swallow_record import record_swallow
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import json
 import logging
 from typing import Any, Callable, Literal
@@ -178,7 +178,7 @@ def classify_trigger_reason(
             return "named"
         return "unnamed"
     except Exception as exc:  # noqa: BLE001 — matcher failure is uncertainty
-        record_swallow("exit_refusal.matcher", exc)
+        record_guarded_pass(NO_LEDGER, "exit_refusal.matcher", exc)
         return "uncertain"
 
 

@@ -39,7 +39,7 @@ unknown is never repaired against a guessed level.
 """
 from __future__ import annotations
 
-from src.sentinel.swallow_record import record_swallow
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import logging
 import time
 from typing import Any, Callable
@@ -125,8 +125,9 @@ def unverified_book_rows(
         if not isinstance(ledger, dict):
             raise TypeError(f"ledger read returned {type(ledger).__name__}")
         ledger = dict(ledger)
+        record_guarded_pass(db, "coverage_book_read.ledger_read")
     except Exception as exc:  # noqa: BLE001
-        record_swallow("coverage_book_read.ledger_read", exc)
+        record_guarded_pass(db, "coverage_book_read.ledger_read", exc)
         rows[0]["read_error"] += (
             f" — except the ledger could not be read either ({exc}), so not "
             "even the list of held names is known"
@@ -175,8 +176,9 @@ pipeline: Any, read_error: str, pending_syms: set,
             sweeper.symbol if sweeper is not None
             else pipeline._retired_cash_park_symbol()
         )
+        record_guarded_pass(pipeline, "coverage_book_read.sweep_symbol")
     except Exception as exc:  # noqa: BLE001
-        record_swallow("coverage_book_read.sweep_symbol", exc)
+        record_guarded_pass(pipeline, "coverage_book_read.sweep_symbol", exc)
         sweep_symbol = None
     rows = unverified_book_rows(
         # `getattr`: a half-built pipeline with no `db` must still get
@@ -199,8 +201,9 @@ pipeline: Any, read_error: str, pending_syms: set,
                 str(row["symbol"]), abs(float(row["held_qty"])),
                 is_short=bool(row.get("is_short")), outcome=row,
             )
+            record_guarded_pass(pipeline, "coverage_book_read.repair", context={"symbol": str(row.get("symbol"))})
         except Exception as exc:  # noqa: BLE001
-            record_swallow("coverage_book_read.repair", exc, symbol=str(row.get("symbol")))
+            record_guarded_pass(pipeline, "coverage_book_read.repair", exc, context={"symbol": str(row.get("symbol"))})
             row["repaired"] = False
             row["repair_refusal"] = f"the repair itself failed: {exc}"
     try:
