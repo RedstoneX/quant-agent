@@ -774,6 +774,67 @@ These are not implementation suggestions; they define the currently authorized s
 - directional capability must remain inside the supported instrument/risk contracts and must not bypass deterministic safety;
 - keep the system small enough to understand, operate and evaluate rather than turning it into a bespoke platform.
 
+## Every money number is expressed against the stock's own movement
+
+**Owner ruling, 2026-10-04:** *"The 2.5 is not a made up number, it is
+specific to its own stock move. It's the way we should be handling
+everything."*
+
+A value scaled to the instrument is NOT an arbitrary constant, because the
+instrument supplies the scale. 2.5 times a stock's own typical daily move is
+automatically wide on a volatile name and tight on a quiet one, so there is no
+single "right" number to go and measure, and six attempts to measure one all
+failed for that reason.
+
+The converse is the design rule: a flat percentage is the same mistake as a
+flat dollar amount. It means one thing on a sleepy name and something else on
+a jumpy one. When a flat constant governs money, the fix is usually to
+re-express it as a multiple of that stock's own behaviour rather than to hunt
+for a better constant.
+
+Account-level and book-level ceilings are the exception. There is no single
+instrument to scale them to, so they remain owner rulings and are filed as
+such, not as unsourced numbers.
+
+## The protective stop width is settled at 2.5 ATR
+
+**Owner ruling, 2026-10-04:** the answer is 2.5 times the stock's own typical
+daily move. It reopens only on evidence from live paper trading that it is
+doing real damage - not on a backtest, not on a re-derivation, and not on a
+percentile of past trades.
+
+Where a support or resistance level backs the stop, that level is honoured
+however tight, down to the absolute floor of one times the daily move. The
+2.5 applies only when nothing computed backs the stop.
+
+Do not route this to the owner again. It has been reopened six times.
+
+## A short is treated exactly like a long
+
+**Owner ruling, 2026-10-04:** *"A short is not riskier than long... ATR
+measurements should be the same. Support and resistance measurements should be
+the same. A short should be treated the same as a long, no different math no
+different behavior."*
+
+The 1.5 overnight gap haircut that sized every short smaller is DELETED, not
+set to a neutral value - a neutral dial is something a later change re-tunes.
+Sizing, stop distance and level construction run byte-identical arithmetic in
+both directions.
+
+Two supports for this, beyond the ruling itself. Measured over 17,252 daily
+bars across 38 symbols: overnight up-gaps are not systematically worse than
+down-gaps, with only 22 of 38 symbols showing a fatter up-tail, so the premise
+the haircut rested on is not in the data. And the unlimited-loss argument
+assumes a name that can run away overnight, which the universe filter exists
+to exclude.
+
+The borrow gate stays: the desk still refuses to short what the broker will
+not lend. That is a gate, not arithmetic.
+
+An overnight gap is not a risk appetite question and must never be put to the
+owner as one. The market is closed, nothing can be done, and everyone
+understands that.
+
 ## Design freedom
 
 Everything else is challengeable during discovery and post-validation iteration.
