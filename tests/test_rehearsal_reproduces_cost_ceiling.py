@@ -126,6 +126,7 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+from tests.test_rehearsal_sandbox_reclaim import _reclaim_sandboxes_after, _recording_started_utc  # noqa: F401
 from datetime import datetime, timezone
 
 import pytest
@@ -240,22 +241,6 @@ def _settled_before_agent(db_path, run_id: str, agent_prefix: str) -> float:
     return float(row[0] or 0.0)
 
 
-def _recording_started_utc(db_path, run_id: str) -> str:
-    """When the recorded run this rehearsal replays actually began (UTC).
-
-    `agent_logs.timestamp` is SQLite's `datetime('now')`, i.e. UTC — the same
-    assumption `select_replay_run` documents and orders on.
-    """
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    try:
-        row = conn.execute(
-            "SELECT MIN(timestamp) FROM agent_logs WHERE run_id = ?", (run_id,),
-        ).fetchone()
-    finally:
-        conn.close()
-    return str((row or [None])[0] or "")
-
-
 def _reached_provider(report, agent: str) -> bool:
     """True when `agent` got past the circuit and asked replay for an answer.
 
@@ -269,7 +254,6 @@ def _reached_provider(report, agent: str) -> bool:
         f["kind"] == "missing_recorded_response" and f["agent"] == agent
         for f in report.findings
     ) or any(a["agent"] == agent for a in report.agents_ran)
-
 
 @pytest.mark.xfail(
     reason=(

@@ -312,3 +312,4 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     import src.api.db_reads as _db_reads
 
     monkeypatch.setattr(_db_reads, "SUPPRESSION_STATE_PATHS", (heartbeat, drift))
+

@@ -80,3 +80,25 @@ def test_funnel_never_raises_when_notifier_cannot_build(monkeypatch):
         raise RuntimeError("no token")
     monkeypatch.setattr(owner_alert, "TelegramNotifier", _bad)
     assert owner_alert.send_owner_alert("x\ny") is False
+
+
+def test_send_owner_alert_goes_through_the_retry_funnel(monkeypatch):
+    """The public funnel must retry, not send once: pins the wiring itself.
+
+    Without this, removing `deliver_with_retry` from `send_owner_alert` and
+    calling the notifier directly leaves every test in this file green, so
+    the discipline the ~30 discarding call sites rely on could be deleted
+    unnoticed.
+    """
+    f = _Fake([False, True])
+    monkeypatch.setattr(owner_alert, "TelegramNotifier", lambda: f)
+    assert owner_alert.send_owner_alert("heading\nbody") is True
+    assert f.calls == 2
+
+
+def test_send_owner_alert_records_undelivered_when_every_attempt_fails(monkeypatch):
+    f = _Fake([False] * d.MAX_ATTEMPTS)
+    monkeypatch.setattr(owner_alert, "TelegramNotifier", lambda: f)
+    assert owner_alert.send_owner_alert("heading\nbody") is False
+    assert f.calls == d.MAX_ATTEMPTS
+    assert [r["status"] for r in f.rows] == [d.UNDELIVERED_STATUS]
