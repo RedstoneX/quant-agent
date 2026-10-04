@@ -184,31 +184,34 @@ def test_the_stamps_survive_a_real_round_trip_through_storage(tmp_path):
     assert news.age_seconds == 9000
 
 
-def test_the_gate_stamps_what_it_persists(tmp_path, monkeypatch):
+def test_the_gate_stamps_what_it_persists(tmp_path):
     """The gate's own disclosure must carry the stamp, or the row above is
     never written in production.
 
-    Runs the gate on a pipeline built through the shared test factory (the
-    real constructor, a real in-memory database) and reads the outcome, so
-    it fails when the stamp or the prior-read lookup stops happening and not
-    merely when a word disappears from the source.
+    Calls the function-only gate directly with a stub owner holding just a
+    real in-memory-file database, and reads the outcome, so it fails when
+    the stamp or the prior-read lookup stops happening and not merely when a
+    word disappears from the source. No pipeline object is built.
     """
     from types import SimpleNamespace
 
-    from tests.pipeline_factory import build_pipeline
+    from src import pipeline_halt_gates
+    from src.storage.db import Database
 
-    monkeypatch.chdir(tmp_path)
-    pipeline = build_pipeline()
-    pipeline.db.initialize()
-    pipeline.db.save_session_report(
+    db = Database(str(tmp_path / "desk.db"))
+    db.initialize()
+    db.save_session_report(
         mode="morning", date="2026-10-01", run_id="morning-aaa",
         payload={"evidence_freshness": _morning().to_evidence()},
     )
+    owner = SimpleNamespace(db=db, _record_name_coverage=lambda *a, **k: None)
     ctx = SimpleNamespace(
-        run_id="intra-bbb", session="intra_check", analyses=[], decision_id=None,
+        run_id="intra-bbb", session="intra_check", analyses=[],
+        decision_id=None,
         data_status={"tech": "ok", "news": "carried_from_morning"},
     )
-    pipeline._evidence_gate_skip(ctx, "intra-bbb", session="intra_check")
+    pipeline_halt_gates._evidence_gate_skip(
+        owner, ctx, "intra-bbb", session="intra_check")
 
     record = ctx.evidence_freshness
     assert record["stamped_run_id"] == "intra-bbb"
