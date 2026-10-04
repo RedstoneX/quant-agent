@@ -140,7 +140,7 @@ def _format_number(value: float) -> str:
 
     `float` is what pydantic gives back for every one of these fields even
     when settings.yaml wrote an integer, and `max_position_pct=65.0` in a
-    prompt reads as spurious precision next to `short_gap_risk_multiple=1.5`
+    prompt reads as spurious precision next to `max_gross_exposure_x=2.0`
     where the decimal is real.
     """
     if isinstance(value, bool):  # bool is an int subclass; never a limit

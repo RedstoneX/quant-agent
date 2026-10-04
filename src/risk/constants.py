@@ -259,33 +259,9 @@ Consumers (must stay aligned — if you edit one, verify the others):
 
 
 
-SHORT_GAP_RISK_MULTIPLE_DEFAULT = 1.5
-"""The short-side gap-risk SIZING haircut, in one place (board item 216).
-
-A short gaps through its stop upward with no bound, so the same nominal
-risk allocation must open a SMALLER short than an equivalent long at the
-same stop distance. SIZING ONLY — never applied to stop placement.
-
-The value is NOT re-derived here and is unchanged from what shipped: it is
-the deployed `risk.short_gap_risk_multiple` default. Whether 1.5 is the
-right magnitude is board item 186's question, not this constant's.
-
-Before 2026-10-01 this literal existed four times (`RiskConfig`,
-`ConstructorConfig`, the pipeline's config read and the execution-time
-risk-budget read) and the haircut was APPLIED at three separate sites, each
-with its own copy of the multiply. Execution sizes a position as
-`min(qty_by_alloc, qty_by_risk)`, so a change to one application site was
-silently a half-change to the quantity that actually reaches the market.
-Both legs now call `gap_adjusted_risk_per_share` below, and
-`tests/test_one_definition_per_quantity.py` fails if a second application
-of this multiple reappears anywhere under `src/`.
-"""
-
-
 def risk_budget_allocation_pct(
     *, entry_price: float, stop_price: float, total_value: float,
-    risk_budget_pct: float, is_short: bool = False,
-    short_gap_risk_multiple: float | None = None,
+    risk_budget_pct: float,
 ) -> float | None:
     """How big this ONE name's OWN stop distance lets it be, as a RAW
     notional percentage of equity. `None` when the geometry cannot bound it.
@@ -311,9 +287,12 @@ def risk_budget_allocation_pct(
         position_$    = qty_by_risk * entry_price
         allocation_%  = position_$ / total_value * 100
 
-    `risk_per_share` is UNSIGNED (D4: a short's stop sits ABOVE its entry),
-    and the D8 short-side gap haircut is applied through the one
-    application site below, never re-implemented.
+    `risk_per_share` is UNSIGNED (D4: a short's stop sits ABOVE its entry).
+    A short and an otherwise identical long get the SAME arithmetic: the
+    short-side gap haircut was DELETED by owner ruling 2026-10-04 ("a short
+    should be treated the same as a long, no different math no different
+    behavior"), along with its parameter, so there is no neutral dial left
+    for anyone to re-tune.
     """
     try:
         entry = float(entry_price)
@@ -327,38 +306,11 @@ def risk_budget_allocation_pct(
         return None
     if equity <= 0:
         return None
-    risk_per_share = gap_adjusted_risk_per_share(
-        abs(entry - stop), is_short=is_short, multiple=short_gap_risk_multiple,
-    )
+    risk_per_share = abs(entry - stop)
     if risk_per_share <= 0:
         return None
     risk_dollars_allowed = equity * budget / 100
     return risk_dollars_allowed * entry / risk_per_share / equity * 100
-
-
-def gap_adjusted_risk_per_share(
-    risk_per_share: float, *, is_short: bool, multiple: float | None = None,
-) -> float:
-    """Risk-per-share with the short-side gap haircut applied, or unchanged.
-
-    THE one application site. Callers pass the configured multiple when they
-    hold one; `None` (or anything that is not a real number greater than 1 —
-    a MagicMock config attribute, most often) falls back to
-    `SHORT_GAP_RISK_MULTIPLE_DEFAULT`. That Mock-safety check used to be
-    written out separately at the execution-time call site; it lives here now
-    so the two legs cannot disagree about what an unreadable config means.
-    """
-    if not is_short:
-        return risk_per_share
-    usable = (
-        not isinstance(multiple, bool)
-        and isinstance(multiple, (int, float))
-        and multiple > 1.0
-    )
-    gap_multiple = (
-        float(multiple) if usable else SHORT_GAP_RISK_MULTIPLE_DEFAULT
-    )
-    return risk_per_share * gap_multiple
 
 
 def live_constructor_cfg_or_none(constructor):
