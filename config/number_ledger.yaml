@@ -4140,6 +4140,32 @@ numbers:
       The settlement recording for this number therefore exists in code but
       has recorded nothing yet, and the board's headline "7 of 8 discretionary
       exits blocked" is NOT reproducible from that table.
+
+      STRUCTURAL CAUSE FOUND AND FIXED 2026-10-04 (recording only, no
+      behaviour change). The emptiness was not only the desk being off. The
+      recording was CENSORED BY CONSTRUCTION: in `src/pipeline_exits.py` the
+      payload was written only on the branch where the band BLOCKED an exit,
+      so every adverse move the band judged large enough to let through was
+      discarded, and the band's SECOND home, the `check_structural_protection`
+      fallback in `src/risk/exit_guard.py`, emitted no `rule=` payload at all.
+      A sample truncated at exactly the threshold under examination can never
+      locate that threshold -- it would have contained only moves below 1.0
+      ATR and would have been consistent with any multiple whatsoever. Both
+      outcomes are now written, tagged `blocked=` / `inside_band=`, and the
+      adverse move is carried as an ATR MULTIPLE as well as in dollars, which
+      is the unit this constant is denominated in and the only unit in which
+      the two homes are comparable. The payload also exposes an asymmetry no
+      record previously stated: the midday home widens the band by
+      sqrt(sessions held) while the fallback home passes no hold length and
+      stays flat at 1.0, so one named constant produced two different widths
+      for the same holding on the same day. NOT YET SETTLED: the recording can
+      now accrue, but it has still accrued nothing, because the desk is off.
+      WHAT WOULD SETTLE IT: the distribution of `adverse_atr_multiple` across
+      both outcomes at the moment of a reviewer-approved exit, paired with
+      what the position did afterwards -- specifically, the multiple above
+      which an adverse move from entry was followed by further adverse travel
+      rather than recovery. That requires live sessions with exits in them and
+      cannot be manufactured from the 334 rows now on disk.
   - id: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     settles_by:
       kind: recording
