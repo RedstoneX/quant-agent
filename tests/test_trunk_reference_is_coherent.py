@@ -74,9 +74,7 @@ def stale_merge_ref(tmp_path, monkeypatch):
 
     monkeypatch.setattr(guard_reference, "ROOT", repo)
     monkeypatch.setattr(file_size_guard, "ROOT", repo)
-    guard_reference.trunk_rev.cache_clear()
     yield repo, finish
-    guard_reference.trunk_rev.cache_clear()
 
 
 def _arm_pr_event(monkeypatch, tmp_path: Path, head_sha: str) -> None:
@@ -84,7 +82,6 @@ def _arm_pr_event(monkeypatch, tmp_path: Path, head_sha: str) -> None:
     payload.write_text(json.dumps({"pull_request": {"head": {"sha": head_sha}}}))
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(payload))
-    guard_reference.trunk_rev.cache_clear()
 
 
 def test_mains_own_later_commits_are_not_charged_to_the_branch(
@@ -134,7 +131,6 @@ def test_a_push_build_is_judged_against_the_current_trunk(
     finish()
     monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
     monkeypatch.delenv("GITHUB_EVENT_PATH", raising=False)
-    guard_reference.trunk_rev.cache_clear()
 
     assert guard_reference.trunk_rev() == _git(repo, "rev-parse", "origin/main")
 
@@ -146,9 +142,15 @@ def test_it_still_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
     _write(repo, "m.py", 3)
     _commit(repo, "base")
     monkeypatch.setattr(guard_reference, "ROOT", repo)
-    guard_reference.trunk_rev.cache_clear()
-    try:
-        with pytest.raises(guard_reference.ReferenceUnavailable):
-            guard_reference.trunk_rev()
-    finally:
-        guard_reference.trunk_rev.cache_clear()
+    with pytest.raises(guard_reference.ReferenceUnavailable):
+        guard_reference.trunk_rev()
+
+
+def test_a_trunk_read_once_is_not_remembered_once_it_becomes_unreadable(monkeypatch):
+    """The failure shape that matters most: a reference read earlier in the
+    process must not be served after the trunk stops being readable. CI 2026-10-04
+    caught exactly this -- a cached tip let the refusal test pass silently."""
+    assert guard_reference.trunk_rev()  # a successful read first
+    monkeypatch.setattr(guard_reference, "TRUNK", "origin/no-such-branch-for-test")
+    with pytest.raises(guard_reference.ReferenceUnavailable):
+        guard_reference.trunk_rev()

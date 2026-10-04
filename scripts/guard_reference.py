@@ -51,7 +51,6 @@ import json
 import os
 import subprocess
 from collections import Counter
-from functools import lru_cache
 from pathlib import Path
 from typing import Hashable, Iterable, Mapping, TypeVar
 
@@ -109,12 +108,15 @@ def _merge_ref_main_parent() -> str:
     return main_side
 
 
-@lru_cache(maxsize=8)
-def _trunk_rev(_root: str, _event: str, _payload: str) -> str:
-    """Resolve the reference. Keyed by what it depends on, so nothing goes stale.
+def trunk_rev() -> str:
+    """The commit this tree is judged against: one moment on both sides.
 
-    Raises ``ReferenceUnavailable`` when ``origin/main`` cannot be read at all,
-    because a guard that passes without a reference is decoration.
+    Resolved afresh on every call -- nothing is cached, because a cached
+    reference outlives the repository state it was read from. Raises
+    ``ReferenceUnavailable`` when ``origin/main`` cannot be read at all: a
+    guard that passes without a reference is decoration. The merge-ref
+    refinement below is only ever applied to a trunk that WAS read; it can
+    never stand in for one that could not be.
     """
     tip = _rev_parse(TRUNK)
     if not tip:
@@ -125,18 +127,6 @@ def _trunk_rev(_root: str, _event: str, _payload: str) -> str:
             "fetch-depth: 0. git said: ref not found"
         )
     return _merge_ref_main_parent() or tip
-
-
-def trunk_rev() -> str:
-    """The commit this tree is judged against: one moment on both sides."""
-    return _trunk_rev(
-        str(ROOT),
-        os.environ.get("GITHUB_EVENT_NAME", ""),
-        os.environ.get("GITHUB_EVENT_PATH", ""),
-    )
-
-
-trunk_rev.cache_clear = _trunk_rev.cache_clear  # type: ignore[attr-defined]
 
 
 def require_trunk() -> str:

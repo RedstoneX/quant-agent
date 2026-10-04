@@ -130,7 +130,10 @@ event payload names, and HEAD's first parent is an ancestor of the current
 `origin/main`. Anything else — a direct push, a local run, a missing or
 mismatched payload — falls back to `origin/main`'s tip, which is the stricter
 reference, so no branch gains anything by making the detection fail. Nothing is
-stored either way.
+stored either way — not even in memory: the reference is resolved afresh on
+every call, because a cached tip read earlier in the process let the refusal
+test pass with an unreadable trunk (CI, 2026-10-04). The refinement only ever
+applies to a trunk that WAS read; it never stands in for one that could not be.
 
 ## Acceptance — proven, not asserted
 
