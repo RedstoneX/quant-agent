@@ -8,3 +8,13 @@ filing author's prose is changed, and nothing is added to it here.
 
 DONE WHEN:
 - [ ] one durable row per run carries the realised `(sector, side)` weights of the orders the constructor built that session, written from executable product code with its call site named, and classified POPULATING rather than UNPROVEN against a real session
+
+---
+
+## STATUS 2026-10-02 -- built, proven in test, live row count UNPROVEN
+
+The recording shipped in #958: `PortfolioConstructor` keeps `last_order_sectors`, `_record_realised_sector_weights` (src/pipeline_entry_orders.py) is called once from `DecisionStage` (src/stage_decision.py) right after `construct_orders`, and writes the `realised_sector_weights` table through `Database.record_realised_sector_weights` (one row per run, unique on run id).
+
+- UNPROVEN (not POPULATING): an orchestrator reported the live store holds 3 rows [measured 2026-10-02 by the orchestrator against the production database at the desk user's data directory; not independently re-read by the author of this note].
+- Verified in code and test by the author: one row per run, `(sector, side)` weights, the named call site, and a real `construct_orders` run landing a populated row in a real store (`test_a_real_construct_orders_run_lands_a_populated_row_in_the_store`).
+- An earlier version of this note called the item UNPROVEN because the author read a different database file (the checkout's copy, not the live one); that was wrong and is corrected here.

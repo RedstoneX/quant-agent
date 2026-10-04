@@ -2347,7 +2347,7 @@ class ProtectionMixin:
                     total=int(order.get("total") or 0),
                     legs=order.get("legs"), run_id=run_id,
                 )
-                if shift_status in ("partial", "refused", "unknown", "naked"):
+                if shift_status in ("partial", "refused", "unknown", "naked", "market_closed"):
                     # An un-shifted stop across an ex-dividend open is wrong by
                     # exactly the dividend IN THE DIRECTION THAT TRIGGERS IT, so
                     # this is an owner-visible change in protection, not a nit.
