@@ -34,12 +34,25 @@ stayed: everything that imports the broker seam (`src.execution`, a frozen
 importer list), everything reading `_market_is_open_now`/`et_today` that tests
 patch on this module, and the protected sell with its write-ahead cancel, which
 hands `_last_stop_clear_refusal` between two methods through the pipeline.
+
+2026-10-04: those followed too. `CoverageRepair`, `ProtectedSell`, `ExitRelief`,
+`RestoreDrain`, `ReprotectRecords` and `ExDividends` live under `src/protection/`;
+the two bodies over the 400-line ceiling for a new file (`StopCoverageReconciler`,
+`ReprotectResidual`) stay here as standalone classes built the same way. Every
+builder reads the host LIVE per call; host attributes a body assigns or reads with
+a default go through `_HostState`, never a copy. The mixin is shims only.
 """
 
 import json as _json
 import logging
 import math
 
+from src.protection.coverage_repair import CoverageRepair
+from src.protection.protected_sell import ProtectedSell
+from src.protection.exit_relief import ExitRelief
+from src.protection.restore_drain import RestoreDrain
+from src.protection.reprotect_records import ReprotectRecords
+from src.protection.ex_dividends import ExDividends
 from src.protection.coverage_book_read import read_positions_with_retry
 from src.protection.coverage_book_read import unverified_book_sweep
 from src.sentinel.reconciliation import record_reconciliation
@@ -204,21 +217,47 @@ def _build_coverage_election(host):
     )
 
 
-class ProtectionMixin:
-    """See the module docstring. Methods are the moved text, byte-for-byte."""
+class _HostState:
+    """Live get/set view of the host attributes a part reads with a default or assigns (never a copy)."""
 
-    # Statuses Alpaca uses for terminal/non-terminal orders. Kept as a
-    # class attribute so tests can introspect the exact set the
-    # finalizer treats as "done".
-    _TERMINAL_ORDER_STATUSES = {
-        "filled", "canceled", "cancelled", "expired", "rejected",
-        "done_for_day", "replaced",
-    }
+    def __init__(self, host) -> None:
+        self._host = host
 
-    def _current_position_qty_for_finalize(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._current_position_qty_for_finalize(_build_sell_finalization(self), *args, **kwargs)
+    def get(self, name: str):
+        return getattr(self._host, name)
+
+    def set(self, name: str, value) -> None:
+        setattr(self._host, name, value)
+
+
+class StopCoverageReconciler:
+    """The broker-truth stop-coverage audit; standalone, built from explicit collaborators."""
+
+    def __init__(
+        self, *,
+        broker=None,
+        db=None,
+        sweeper=None,
+        retired_cash_park_symbol=None,
+        alert_owner_elected_unfilled=None,
+        alert_owner_no_stop=None,
+        alert_owner_repair_resolved=None,
+        alert_owner_session_repair_failed=None,
+        alert_owner_unreadable_stop=None,
+        elected_unfilled_stop_row=None,
+        repair_stop_coverage=None,
+    ) -> None:
+        self.broker = broker
+        self.db = db
+        self._sweeper = sweeper
+        self._retired_cash_park_symbol = retired_cash_park_symbol
+        self._alert_owner_elected_unfilled = alert_owner_elected_unfilled
+        self._alert_owner_no_stop = alert_owner_no_stop
+        self._alert_owner_repair_resolved = alert_owner_repair_resolved
+        self._alert_owner_session_repair_failed = alert_owner_session_repair_failed
+        self._alert_owner_unreadable_stop = alert_owner_unreadable_stop
+        self._elected_unfilled_stop_row = elected_unfilled_stop_row
+        self._repair_stop_coverage = repair_stop_coverage
 
     def _reconcile_stop_coverage(self) -> list[dict]:
         """Broker-truth stop-coverage audit, independent of the WAL queue.
@@ -821,799 +860,35 @@ class ProtectionMixin:
             logger.error("stop-level reconcile failed: %s", exc)
         return record_reconciliation(db=self.db, kind="stop_coverage", result=gaps)
 
-    def _elected_unfilled_stop_row(self, *args, **kwargs):
-        """Thin shim -> CoverageElection (src/protection/coverage_election.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.coverage_election import CoverageElection
-        return CoverageElection._elected_unfilled_stop_row(_build_coverage_election(self), *args, **kwargs)
 
-    @staticmethod
-    def _alert_owner_elected_unfilled(*args, **kwargs):
-        """Thin shim -> OwnerAlerts._alert_owner_elected_unfilled (static; src/protection/owner_alerts.py)."""
-        from src.protection.owner_alerts import OwnerAlerts
-        return OwnerAlerts._alert_owner_elected_unfilled(*args, **kwargs)
+class ReprotectResidual:
+    """The residual re-protection after a partial sell; standalone, built from explicit collaborators."""
 
-    def _still_uncovered(self, *args, **kwargs):
-        """Thin shim -> OwnerAlerts (src/protection/owner_alerts.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.owner_alerts import OwnerAlerts
-        return OwnerAlerts._still_uncovered(_build_owner_alerts(self), *args, **kwargs)
-
-    def _alert_owner_session_repair_failed(self, *args, **kwargs):
-        """Thin shim -> OwnerAlerts (src/protection/owner_alerts.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.owner_alerts import OwnerAlerts
-        return OwnerAlerts._alert_owner_session_repair_failed(_build_owner_alerts(self), *args, **kwargs)
-
-    @staticmethod
-    def _alert_owner_repair_resolved(*args, **kwargs):
-        """Thin shim -> OwnerAlerts._alert_owner_repair_resolved (static; src/protection/owner_alerts.py)."""
-        from src.protection.owner_alerts import OwnerAlerts
-        return OwnerAlerts._alert_owner_repair_resolved(*args, **kwargs)
-
-    @staticmethod
-    def _alert_owner_no_stop(*args, **kwargs):
-        """Thin shim -> OwnerAlerts._alert_owner_no_stop (static; src/protection/owner_alerts.py)."""
-        from src.protection.owner_alerts import OwnerAlerts
-        return OwnerAlerts._alert_owner_no_stop(*args, **kwargs)
-
-    @staticmethod
-    def _alert_owner_stop_pending_acceptance(*args, **kwargs):
-        """Thin shim -> OwnerAlerts._alert_owner_stop_pending_acceptance (static; src/protection/owner_alerts.py)."""
-        from src.protection.owner_alerts import OwnerAlerts
-        return OwnerAlerts._alert_owner_stop_pending_acceptance(*args, **kwargs)
-
-    @staticmethod
-    def _alert_owner_unreadable_stop(*args, **kwargs):
-        """Thin shim -> OwnerAlerts._alert_owner_unreadable_stop (static; src/protection/owner_alerts.py)."""
-        from src.protection.owner_alerts import OwnerAlerts
-        return OwnerAlerts._alert_owner_unreadable_stop(*args, **kwargs)
-
-    @staticmethod
-    def _alert_owner_exit_declined(*args, **kwargs):
-        """Thin shim -> OwnerAlerts._alert_owner_exit_declined (static; src/protection/owner_alerts.py)."""
-        from src.protection.owner_alerts import OwnerAlerts
-        return OwnerAlerts._alert_owner_exit_declined(*args, **kwargs)
-
-    def _wire_protective_stop_block_recorder(self) -> None:
-        """The broker holds no database, so a protective stop its kill
-        switch refuses is recorded through this pipeline's one
-        (`kind='protective_stop_blocked'`, `src/execution/exit_path_records.py`).
-        Also pages the owner (`_alert_owner_kill_switch_blocked`) — a
-        recorded row nobody reads is not an alert, and until this was
-        wired a kill-switch refusal left the position naked with no owner
-        notice at all. `self.db` is read at call time, not captured, so a
-        later swap of the handle is honoured."""
-        from src.execution.exit_path_records import record_protective_stop_blocked
-
-        def _on_blocked(**facts) -> None:
-            record_protective_stop_blocked(self.db, **facts)
-            self._alert_owner_kill_switch_blocked(**facts)
-
-        self.broker.protective_stop_block_recorder = _on_blocked
-
-    @staticmethod
-    def _alert_owner_kill_switch_blocked(
-        *, symbol: str, qty: float = 0.0, stop_price: float = 0.0,
-        side: str = "", kill_switch_path: str = "", **_ignored,
+    def __init__(
+        self, *,
+        broker=None,
+        format_qty=None,
+        alert_owner_reprotect_left_naked=None,
+        alert_owner_stop_pending_acceptance=None,
+        alert_owner_unreadable_stop=None,
+        record_reprotect_identity_gap=None,
+        state=None,
     ) -> None:
-        """Page the owner the first time today the desk's own kill switch
-        blocks a protective stop for `symbol`. Never raises — see
-        `AlpacaBroker._submit_stop_limit_order`, which already swallows
-        whatever this callback does.
+        self.broker = broker
+        self._format_qty = format_qty
+        self._alert_owner_reprotect_left_naked = alert_owner_reprotect_left_naked
+        self._alert_owner_stop_pending_acceptance = alert_owner_stop_pending_acceptance
+        self._alert_owner_unreadable_stop = alert_owner_unreadable_stop
+        self._record_reprotect_identity_gap = record_reprotect_identity_gap
+        self._state = state  # live get/set view of the host's attributes this part reads and assigns
 
-        Deduped per symbol per trading day (`claim_kill_switch_block_alert`)
-        the same way the repair-failure and elected-unfilled alerts are: a
-        kill switch left on all session would otherwise page once per
-        retry of every symbol it touches.
-        """
-        try:
-            from src import notifier as _notifier
-            from src.coverage_watchdog import claim_kill_switch_block_alert
-            from src.execution.exit_path_records import kill_switch_blocked_text
+    @property
+    def db(self):
+        return self._state.get('db')
 
-            fresh = claim_kill_switch_block_alert([symbol])
-            if not fresh:
-                return
-            _notifier.send_owner_alert(
-                "🔴 KILL SWITCH BLOCKED A PROTECTIVE STOP\n"
-                f"{kill_switch_blocked_text(symbol)}\n"
-                f"qty={qty} side={side} stop=${stop_price}\n"
-                "Nothing was sent to the broker, so nothing is standing "
-                "watch over this position right now. Turn off the kill "
-                "switch and place the stop by hand, or flatten the "
-                "position. Reported at most once per trading day.",
-                symbols=fresh,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "kill-switch-block owner alert failed for %s: %s", symbol, exc,
-            )
-
-    def _repair_stop_coverage(
-        self, symbol: str, uncovered_qty: float, *, is_short: bool,
-        outcome: dict | None = None, resting_stops: list | None = None,
-    ) -> bool:
-        """Best-effort: re-place protective stop coverage on an uncovered
-        position using the stop level recorded on its last opening row
-        (BUY for a long, SHORT for a short). Returns True when the gap
-        was actually closed.
-
-        `outcome`, when given, is the caller's gap dict: a refusal stamps
-        `repair_refusal` on it with a plain sentence saying WHY nothing was
-        placed (docs/WORK.md item 88). Before that, the caller received a
-        bare False and the owner alert could only say the repair "could not
-        restore one" — a corrupt recorded stop, a level already through the
-        tape and three exhausted broker retries all read identically.
-
-        THE BODY MOVED to `src.execution.stop_repair.repair_stop_coverage`
-        and this is now a delegate — see that module for the whole design,
-        including why the recorded opening level is not a policy invention and
-        why the fractional split needs no special case here. It moved
-        because `src/coverage_watchdog.py` needs the SAME re-placement when
-        it finds an uncovered sub-share remainder while the trading timers
-        are stopped (docs/INCIDENT_HISTORY.md, item 53), and a second copy
-        of an order-placement path is how one behaviour ends up with two
-        homes. The caller still owns the decision of WHETHER to call this at
-        the current hour.
-        """
-        from src.execution.stop_repair import repair_stop_coverage
-
-        opening = "SHORT" if is_short else "BUY"
-        return repair_stop_coverage(
-            broker=self.broker,
-            # include_in_flight: a same-session open still at fill_status=
-            # 'submitted' is the row whose stop we want — under the strict
-            # executed predicate the repair either no-op'd or read a months-
-            # old prior row's stop level (audit round 2).
-            last_buy=lambda sym, action=opening: self.db.get_symbol_last_buy(
-                sym, include_in_flight=True, action=action,
-            ),
-            symbol=symbol,
-            uncovered_qty=uncovered_qty,
-            is_short=is_short,
-            db=self.db,
-            outcome=outcome,
-            resting_stops=resting_stops,
-            caller="session_coverage_reconcile",
-        )
-
-    def _submit_protected_sell(
-        self,
-        *,
-        symbol: str,
-        qty: float,
-        limit_price: float | None,
-        reference_price: float,
-        position_qty_before_sell: float,
-        label: str,
-        side: str = "sell",
-        escalate_to_market_on_reject: bool = False,
-    ) -> tuple[dict, dict] | None:
-        """Head half of the SELL/COVER discipline: clear protective stops
-        (write-ahead) → submit the order → guarantee stops are restored if
-        the order never reaches the broker.
-
-        Returns ``(order, pending_protection)`` on broker acceptance, or
-        ``None`` when the symbol must be skipped — stop-clear failed, the
-        submit raised, or the broker rejected. In every skip case the
-        protective stops are already restored (or were never cancelled), so
-        the caller just ``continue``s with no naked-position window.
-
-        The caller owns qty/price selection, ``insert_trade``, the orders list,
-        and any accounting (projected_proceeds, sell_order_ids); this owns the
-        cancel → submit → accept → restore-on-failure invariant so no SELL path
-        can silently skip a step (CLAUDE.md's longest convention). ``label`` is
-        both the order's action tag and the log context (e.g. 'EMERGENCY_SELL',
-        'FORCE_DELEVER', 'SELL').
-
-        ``position_qty_before_sell`` is the FULL held qty (drives the WAL +
-        finalize residual math); ``qty`` is the order quantity (may be a
-        partial / reduce / trim). Both are always non-negative magnitudes —
-        never the broker's signed position qty — so every comparison and
-        every arithmetic step downstream (WAL specs, fill_qty, residual math)
-        stays identical in shape whether this is closing a long or covering
-        a short.
-
-        ``side`` (forced-close support, added alongside the emergency-
-        liquidation short-close gap fix): the CLOSING order's side —
-        ``'sell'`` (default, unchanged for every pre-existing caller — none
-        of them pass this) flattens a long; ``'buy'`` covers a short. It
-        doubles as the STOP order's own side to cancel/restore, because a
-        long's protective stop and its closing order are BOTH 'sell', and a
-        short's protective stop and its closing order (a BUY-to-cover) are
-        BOTH 'buy' — one parameter, not two, so there's no way for the
-        closing side and the stop-clearing side to disagree.
-        """
-        # audit F1 review #1: snapshot → persist WAL → cancel, so the recovery
-        # row is durable BEFORE any broker mutation.
-        #
-        # Full exits also cancel the day's resting entry BUY for the SAME
-        # symbol first (audit round 2): a still-working DAY entry limit would
-        # silently re-open a position the reviewer/breaker just decided to
-        # close — and can trip Alpaca's wash-trade rejection of this SELL.
-        # Best-effort + symbol-scoped; partial trims (REDUCE, PARTIAL_SELL,
-        # TAKE_PROFIT, SWEEP_SELL) keep their entries — trimming isn't exiting.
-        # EMERGENCY_COVER is the short-side twin of EMERGENCY_SELL added
-        # here: it runs the same entry-order cancel a long exit does.
-        # `cancel_open_entry_orders` (src/execution/broker.py) now cancels
-        # a resting entry order on EITHER side — BUY-to-open-long or
-        # SELL-to-open-short — so an EMERGENCY_COVER here also stops a
-        # still-live SHORT entry from re-opening the position it just
-        # covered (previously flagged, fixed alongside the review-path
-        # COVER gap).
-        if label in ("SELL", "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER"):
-            try:
-                self.broker.cancel_open_entry_orders(symbol=symbol)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("%s: entry-order cancel failed for %s: %s",
-                               label, symbol, exc)
-        stop_side_kwargs = {} if side == "sell" else {"side": side}
-        ok, stop_specs, wal_row_id = self._cancel_stops_with_write_ahead(
-            symbol, position_qty_before_sell, **stop_side_kwargs,
-        )
-        if not ok:
-            # WHY THE DESK STILL DECLINES THE EXIT, and why it is no longer
-            # silent about it.
-            #
-            # Rejection is the MEASURED outcome of selling into a resting
-            # protective stop on this desk: 2026-04-25, AMZN, a REDUCE
-            # rejected with the trail stop holding all 51 shares. An
-            # OVERSOLD or reversed position is evidenced by nothing — no
-            # entry in `docs/INCIDENT_HISTORY.md`, none in the git log, and
-            # Alpaca's documented model is reservation then rejection
-            # (`Position.qty_available` is "total shares minus open orders
-            # / locked"). But that documentation covers longs; nothing
-            # fetched covers a BUY-to-cover against a resting BUY stop, and
-            # `docs/OUTCOME.md` makes broker protections fail CLOSED. An
-            # unbounded, unmeasured harm on one side beats a bounded,
-            # measured one on the other, so the desk declines.
-            #
-            # What was actually wrong was never the decline — it was that
-            # the decline was silent and that this line asserted ONE cause
-            # for two different states. The listing failing means nobody
-            # knows whether a stop is resting; the cancel rolling back
-            # means one verifiably is. Only the second supports the
-            # held_for_orders claim, and this said it for both.
-            refusal = getattr(self, "_last_stop_clear_refusal", "") or "unknown"
-            if refusal == "cancel_rolled_back":
-                why = (
-                    "its protective stop could not be cancelled and was "
-                    "rolled back, so the stop is still resting and the "
-                    "broker would reject the "
-                    f"{side.upper()} on held_for_orders"
-                )
-            elif refusal == "unreadable":
-                why = (
-                    "the broker's open-order listing failed after retries, "
-                    "so whether a protective stop is resting on these "
-                    "shares is UNKNOWN — the desk will not submit an exit "
-                    "against a picture of the broker it could not read"
-                )
-            else:
-                why = "the protective-stop clear failed for a reason it did not record"
-            logger.warning("%s: skipping %s — %s", label, symbol, why)
-            # A skipped exit reaches the owner BY SYMBOL, on the same path
-            # and the same once-per-symbol-per-day claim as the unreadable
-            # stop itself. Five call sites upstream do `if sale is None:
-            # continue`, so without this the desk decides not to leave a
-            # position and nobody is told — and after the account-level
-            # halt was removed, one of those call sites is the de-levering
-            # ladder, which would then trim less than it reports.
-            self._alert_owner_exit_declined(symbol, side=side, why=why)
-            return None
-        try:
-            order = self.broker.submit_order(
-                symbol=symbol, qty=qty, side=side,
-                limit_price=limit_price, reference_price=reference_price,
-            )
-        except Exception as exc:  # noqa: BLE001
-            # Submit raised → the position is intact but its stops are
-            # cancelled. Restore them in-session rather than waiting for the
-            # next drain (this used to vary by site — only the since-deleted
-            # auto take-profit restored; the others rode naked until drain).
-            logger.error("%s: submit failed for %s: %s", label, symbol, exc)
-            if stop_specs:
-                self.broker._restore_stop_orders(
-                    symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
-                )
-            return None
-        if not self._order_accepted(order, symbol, side):
-            # A MUST-FILL emergency de-lever cannot afford to skip a name here.
-            # A wide-spread live quote (e.g. a LULD halt-reopen or a thin /
-            # inverse name in a fast market) can make the marketable limit
-            # deviate >20% from the mid, so the broker's own fat-finger guard
-            # returns `rejected_outlier`. Skipping the name would re-open
-            # exactly the over-ceiling / uncleared-deficit miss the de-lever
-            # exists to kill. So the de-lever callers pass
-            # `escalate_to_market_on_reject=True`: on a NON-accept of the
-            # marketable LIMIT, escalate once to a MARKET order — the
-            # guaranteed fill, which carries no limit and so skips the guard.
-            # Every other caller keeps the prior skip-on-reject behaviour
-            # (default False). The stops are still cancelled and the rejected
-            # order did not fill, so the position is intact; submit the market
-            # order against the SAME cancelled stops (no restore in between)
-            # and let finalize rebuild coverage on its fill, exactly as for the
-            # limit.
-            if escalate_to_market_on_reject and limit_price is not None:
-                rejected_status = (
-                    order.get("status") if isinstance(order, dict) else order
-                )
-                logger.warning(
-                    "%s: marketable-limit exit for %s was not accepted (%s) — "
-                    "escalating to a MARKET order (guaranteed fill).",
-                    label, symbol, rejected_status,
-                )
-                try:
-                    order = self.broker.submit_order(
-                        symbol=symbol, qty=qty, side=side,
-                        limit_price=None, reference_price=reference_price,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "%s: MARKET escalation submit failed for %s: %s",
-                        label, symbol, exc,
-                    )
-                    if stop_specs:
-                        self.broker._restore_stop_orders(
-                            symbol, stop_specs, check_idempotency=False,
-                            **stop_side_kwargs,
-                        )
-                    return None
-            if not self._order_accepted(order, symbol, side):
-                # Broker rejected (no escalation, or the market order itself was
-                # not accepted) — restore the stops we just cancelled.
-                if stop_specs:
-                    self.broker._restore_stop_orders(
-                        symbol, stop_specs, check_idempotency=False, **stop_side_kwargs,
-                    )
-                return None
-        # audit F5: tag the order dict so the notifier's intervention banner +
-        # inline action labels fire (broker.submit_order returns no 'action').
-        if isinstance(order, dict):
-            order.setdefault("action", label)
-        # Defer the reprotect/restore decision to finalize (after the wait) —
-        # an accepted limit can still cancel/expire without filling, in which
-        # case the FULL original protection is what the position needs.
-        prot = {
-            "order_id": order["id"], "symbol": symbol,
-            "position_qty_before_sell": position_qty_before_sell,
-            # How much this order asked the broker to shed. Needed to net an
-            # order still working out of a later gross re-measure — see
-            # `_register_exit_settlement`.
-            "submitted_qty": abs(float(qty or 0.0)),
-            "specs": stop_specs, "wal_row_id": wal_row_id, "side": side,
-        }
-        return order, prot
-
-    #: Exit orders this process submitted and waited on that did NOT reach a
-    #: terminal broker state: {order_id: {symbol, submitted_qty}}.
-    #: `wait_for_order_terminal` has a 15s ceiling and returns the LAST KNOWN
-    #: status, so a marketable limit that does not fill in time leaves the
-    #: order working while the code moves on and re-reads the book from the
-    #: broker. That refreshed book still carries exposure already on its way
-    #: out, and anything that then re-measures gross would shed it twice.
-    #: Registered centrally in `_finalize_pending_protections` so EVERY exit
-    #: path is covered by construction — the cash-deficit safety net, the
-    #: gross-ceiling de-lever, the position reviewer's sells, the execution
-    #: stage and the cash sweep — rather than by remembering to flag each one.
-    _unsettled_exit_orders: dict[str, dict]
-
-    def _register_exit_settlement(self, prot: dict) -> None:
-        """Record or clear one exit order in the unsettled register."""
-        order_id = str(prot.get("order_id") or "")
-        if not order_id:
-            return
-        register = getattr(self, "_unsettled_exit_orders", None)
-        if register is None:
-            register = {}
-            self._unsettled_exit_orders = register
-        status = str(prot.get("terminal_status") or "").lower()
-        if status in AlpacaBroker._ORDER_TERMINAL_STATES:
-            register.pop(order_id, None)
-            return
-        register[order_id] = {
-            "symbol": str(prot.get("symbol") or "").strip().upper(),
-            "submitted_qty": abs(float(prot.get("submitted_qty") or 0.0)),
-        }
-
-    def _open_exit_relief(self, positions) -> tuple[list, bool]:
-        """Exits still WORKING at the broker, as SELL decisions, plus whether
-        any of them could not be measured.
-
-        Re-polls every order in `_unsettled_exit_orders` (a settled one is
-        dropped, so the register self-heals) and expresses each remaining
-        open quantity as an ordinary SELL `TradeDecision`.
-        `apply_gross_ceiling`'s STEP 1 already subtracts planned exits from
-        the book before it judges anything, so handing these in makes a
-        later pass cut the TRUE residual instead of re-cutting exposure that
-        is already on its way out. That is the measured answer; refusing the
-        whole pass was the blunt one, and refusing is worst exactly when this
-        fires — a marketable limit that misses in fifteen seconds means a
-        gap, a halt or a vanished book.
-
-        The second return value is True when an order's state could not be
-        read at all. Nothing is guessed there: the caller refuses to re-cut,
-        because an unmeasurable in-flight exit is precisely the case where
-        netting nothing would double the shed.
-        """
-        register = getattr(self, "_unsettled_exit_orders", None) or {}
-        if not register:
-            return [], False
-        held = {
-            str(getattr(p, "symbol", "") or "").strip().upper(): p
-            for p in (positions or [])
-        }
-        relief: list = []
-        unmeasurable = False
-        for order_id, row in list(register.items()):
-            try:
-                info = self.broker.get_order_fill_info(order_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("open-exit re-poll failed for %s: %s", order_id, exc)
-                info = None
-            if info is None:
-                unmeasurable = True
-                continue
-            status = str(info.get("status") or "").lower()
-            if status in AlpacaBroker._ORDER_TERMINAL_STATES:
-                register.pop(order_id, None)
-                continue
-            symbol = row.get("symbol") or ""
-            position = held.get(symbol)
-            held_qty = abs(float(getattr(position, "qty", 0.0) or 0.0)) if position else 0.0
-            open_qty = max(
-                0.0,
-                float(row.get("submitted_qty") or 0.0)
-                - float(info.get("filled_qty") or 0.0),
-            )
-            if open_qty <= 0:
-                continue
-            if held_qty <= 0:
-                # Still working against a position the book no longer shows:
-                # nothing to net it against, and nothing safe to assume.
-                unmeasurable = True
-                continue
-            relief.append(TradeDecision(
-                action="SELL", symbol=symbol,
-                allocation_pct=min(100.0, open_qty / held_qty * 100.0),
-                entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                reasoning=(
-                    f"Exit order {order_id} is still working at the broker "
-                    f"({open_qty:g} of {held_qty:g}); it is netted out of the "
-                    f"gross re-measure so the book is not sold down twice."
-                ),
-            ))
-        return relief, unmeasurable
-
-    def _finalize_pending_protections(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._finalize_pending_protections(_build_sell_finalization(self), *args, **kwargs)
-
-    def _finalize_protection_after_sell(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._finalize_protection_after_sell(_build_sell_finalization(self), *args, **kwargs)
-
-    def _finalize_protection_after_sell_core(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._finalize_protection_after_sell_core(_build_sell_finalization(self), *args, **kwargs)
-
-    def _cancel_stray_stops_on_flat(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._cancel_stray_stops_on_flat(_build_sell_finalization(self), *args, **kwargs)
-
-    def _write_ahead_protection_restore(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._write_ahead_protection_restore(_build_sell_finalization(self), *args, **kwargs)
-
-    def _cancel_stops_with_write_ahead(
-        self, symbol: str, position_qty_before_sell: float,
-        *, side: str = "sell",
-    ) -> tuple[bool, list[dict], int | None]:
-        """Snapshot protective stops -> persist WAL recovery intent ->
-        THEN cancel the stops. audit F1 review #1: true write-ahead.
-
-        The previous F1 fix wrote the WAL row AFTER
-        cancel_protective_stops, which had already cancelled the stops
-        at the broker — a kill inside / just after that call left a
-        naked position with no recovery intent. Ordering snapshot →
-        persist → cancel guarantees the recovery row is durable BEFORE
-        any broker mutation. A kill before the cancel is harmless (stops
-        still live; drain's sentinel path re-reads the position and the
-        idempotent restore is a no-op). A kill during/after the cancel
-        is recoverable from the row.
-
-        ``side`` is the STOP order's own side — 'sell' (default, byte-
-        identical to every call site before shorts existed) snapshots the
-        SELL stops protecting a long; 'buy' snapshots the BUY stops
-        protecting a short. Passed through unchanged to
-        ``snapshot_protective_stops``.
-
-        Returns ``(ok, specs, wal_row_id)``. ``ok=False`` ⇒ skip the
-        SELL: either the snapshot failed, or the cancel failed and was
-        rolled back (position still protected, SELL would be rejected on
-        held_for_orders anyway). When there were no stops to begin with,
-        returns ``(True, [], None)`` — nothing to protect, SELL proceeds.
-        """
-        snapshot_kwargs = {} if side == "sell" else {"side": side}
-        ok, specs = self.broker.snapshot_protective_stops(symbol, **snapshot_kwargs)
-        if not ok:
-            # STATE ONE of the two `ok=False` means: the broker's order
-            # listing failed (already retried inside the snapshot), so
-            # whether a stop is resting is UNKNOWN. Distinguished from
-            # state two below, because the two states support different
-            # statements and the log line used to make the same one for
-            # both. Stamped so the caller can say only what is established
-            # and can page the owner by symbol.
-            self._last_stop_clear_refusal = "unreadable"
-            return False, [], None
-        if not specs:
-            return True, [], None
-        wal_row_id = self._write_ahead_protection_restore(
-            symbol, position_qty_before_sell, specs, side=side,
-        )
-        cancel = self.broker.cancel_snapshotted_stops(symbol, specs)
-        if not cancel.cleared:
-            # STATE THREE: rollback failed, shares naked NOW, WAL row is the repair.
-            from src.stop_cancel_outcome import keep_lost_coverage_row
-            if cancel.coverage_shrank and keep_lost_coverage_row(self, symbol, wal_row_id, cancel, logger):
-                return False, [], None
-            if wal_row_id is not None:
-                try:
-                    self.db.delete_pending_protection_restore(wal_row_id)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "WAL: failed to discharge row %d after cancel "
-                        "rollback for %s: %s (drain will idempotently "
-                        "no-op it)", wal_row_id, symbol, exc,
-                    )
-            # The stops are verified resting, so "the broker would reject
-            # the SELL on held_for_orders" is an evidenced statement here —
-            # measured live 2026-04-25 on AMZN, where a REDUCE was rejected
-            # with the trail stop holding all 51 shares.
-            self._last_stop_clear_refusal = "cancel_rolled_back"
-            return False, [], None
-        self._last_stop_clear_refusal = ""
-        return True, specs, wal_row_id
-
-    def _restore_after_unconfirmed_sell(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._restore_after_unconfirmed_sell(_build_sell_finalization(self), *args, **kwargs)
-
-    def _persist_orphaned_protection_restore(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._persist_orphaned_protection_restore(_build_sell_finalization(self), *args, **kwargs)
-
-    def _derive_close_side_for_drain(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._derive_close_side_for_drain(_build_sell_finalization(self), *args, **kwargs)
-
-    def _resolve_wal_row_side(self, *args, **kwargs):
-        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.sell_finalization import SellFinalization
-        return SellFinalization._resolve_wal_row_side(_build_sell_finalization(self), *args, **kwargs)
-
-    def _drain_pending_repegs(self, *args, **kwargs):
-        """Thin shim -> RepegDrain (src/protection/repeg_drain.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.repeg_drain import RepegDrain
-        return RepegDrain._drain_pending_repegs(_build_repeg_drain(self), *args, **kwargs)
-
-    def _delete_repeg_row(self, *args, **kwargs):
-        """Thin shim -> RepegDrain (src/protection/repeg_drain.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
-        from src.protection.repeg_drain import RepegDrain
-        return RepegDrain._delete_repeg_row(_build_repeg_drain(self), *args, **kwargs)
-
-    def _drain_pending_protection_restores(self) -> int:
-        """Re-attempt orphaned protection restores from previous sessions.
-
-        For each persisted row: re-query the SELL's terminal status. If
-        terminal, run finalize from the persisted specs; on success,
-        delete the row. If still non-terminal, leave the row for next
-        session. Returns the number of rows successfully drained.
-
-        Called at the start of each pipeline session so a single bail
-        doesn't leave a position permanently unprotected.
-        """
-        try:
-            rows = self.db.get_pending_protection_restores()
-        except Exception as exc:
-            logger.warning("drain_pending_protection_restores: DB read failed: %s", exc)
-            return 0
-        if not rows:
-            return 0
-
-        import json as _json
-        drained = 0
-        for row in rows:
-            row_id = row["id"]
-            symbol = row["symbol"]
-            order_id = row["sell_order_id"]
-
-            from src.execution.scale_in import WAL_SCALE_IN_SENTINEL, drain_scale_in_row
-            if order_id == WAL_SCALE_IN_SENTINEL:
-                try:
-                    ok = drain_scale_in_row(self.broker, self.db, row)
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "drain: scale-in WAL restore raised for %s row %d: %s "
-                        "— leaving for next session",
-                        symbol, row_id, exc,
-                    )
-                    continue
-                if ok:
-                    try:
-                        self.db.delete_pending_protection_restore(row_id)
-                    except Exception:
-                        pass
-                    drained += 1
-                    logger.info(
-                        "drain: scale-in recovery rebuilt coverage for %s "
-                        "(row %d cleared)", symbol, row_id,
-                    )
-                continue
-
-            # audit F1: a write-ahead row whose SELL was never confirmed
-            # submitted (crash in the cancel→submit→record window). There
-            # is no SELL order to query — restore coverage from the
-            # broker's CURRENT position instead.
-            if order_id == _WAL_SELL_SENTINEL:
-                try:
-                    wal_specs = _json.loads(row["specs_json"])
-                except Exception as exc:
-                    logger.error(
-                        "drain: WAL row %d has unparseable specs_json (%s) "
-                        "— deleting orphan to unblock the queue", row_id, exc,
-                    )
-                    try:
-                        self.db.delete_pending_protection_restore(row_id)
-                    except Exception:
-                        pass
-                    continue
-                # Stage 3 (shorts): the row now carries its own `side` —
-                # written at creation time by whoever closed the position,
-                # so this is no longer a guess reconstructed from live
-                # broker state. `_resolve_wal_row_side` prefers that
-                # persisted value and only falls back to the live-broker
-                # derivation (`_derive_close_side_for_drain`, defaulting to
-                # 'sell' when unreadable) for a row written BEFORE this
-                # column existed (`side IS NULL`) — logged when that
-                # fallback fires. The premise this comment used to state —
-                # "shorts cannot be opened through this system, so the gap
-                # is moot" — is no longer true now that they can be.
-                side_kwargs = self._resolve_wal_row_side(row, symbol) if wal_specs else {}
-                try:
-                    ok, retry = self._restore_after_unconfirmed_sell(
-                        symbol,
-                        float(row["position_qty_before_sell"]),
-                        wal_specs,
-                        **side_kwargs,
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "drain: WAL restore raised for %s row %d: %s — "
-                        "leaving for next session", symbol, row_id, exc,
-                    )
-                    continue
-                if ok:
-                    try:
-                        self.db.delete_pending_protection_restore(row_id)
-                    except Exception:
-                        pass
-                    drained += 1
-                    logger.info(
-                        "drain: WAL recovery rebuilt coverage for %s "
-                        "(row %d cleared)", symbol, row_id,
-                    )
-                elif retry and len(retry) < len(wal_specs):
-                    try:
-                        self.db.update_pending_protection_restore_specs(
-                            row_id, _json.dumps(retry),
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "drain: failed to narrow WAL row %d: %s",
-                            row_id, exc,
-                        )
-                continue
-
-            try:
-                fill_info = self.broker.get_order_fill_info(order_id) or {}
-            except Exception as exc:
-                logger.warning(
-                    "drain: broker query failed for %s (order %s): %s — "
-                    "leaving row %d for next session",
-                    symbol, order_id, exc, row_id,
-                )
-                continue
-            status = (fill_info.get("status") or "").lower()
-            if status not in self._TERMINAL_ORDER_STATUSES:
-                logger.info(
-                    "drain: %s (order %s) still non-terminal (status=%s) — "
-                    "leaving row %d for next session",
-                    symbol, order_id, status, row_id,
-                )
-                continue
-            try:
-                cancelled_specs = _json.loads(row["specs_json"])
-            except Exception as exc:
-                logger.error(
-                    "drain: row %d has unparseable specs_json (%s) — "
-                    "deleting orphan to unblock the queue",
-                    row_id, exc,
-                )
-                try:
-                    self.db.delete_pending_protection_restore(row_id)
-                except Exception:
-                    pass
-                continue
-            # Same persisted-side-first resolution as the sentinel branch
-            # above (see `_resolve_wal_row_side`): a row written after the
-            # Stage 3 migration carries its own real side; only a legacy
-            # `side IS NULL` row falls back to the live-broker derivation.
-            finalize_side_kwargs = self._resolve_wal_row_side(row, symbol) if cancelled_specs else {}
-            # Order is terminal; replay finalize from persisted specs.
-            # finalize itself reads fill_info again — same broker call,
-            # cheap. ``from_drain=True`` so finalize doesn't re-persist
-            # if it bails (the row already exists). Only delete the row
-            # when finalize CONFIRMS coverage was actually rebuilt — if
-            # restore_stop_orders submits 0/N or reprotect raises, the
-            # row stays and the next session retries. Codex r8 #3.
-            try:
-                ok, retry_specs = self._finalize_protection_after_sell(
-                    order_id=order_id,
-                    symbol=symbol,
-                    position_qty_before_sell=float(row["position_qty_before_sell"]),
-                    cancelled_specs=cancelled_specs,
-                    from_drain=True,
-                    **finalize_side_kwargs,
-                )
-                if not ok:
-                    # Narrow the row to retry_specs if a partial restore
-                    # made progress: re-submitting an already-alive stop
-                    # next pass would create duplicates / hit
-                    # held_for_orders. Codex r10 #1.
-                    if retry_specs and len(retry_specs) < len(cancelled_specs):
-                        try:
-                            self.db.update_pending_protection_restore_specs(
-                                row_id, _json.dumps(retry_specs),
-                            )
-                            logger.info(
-                                "drain: row %d narrowed from %d to %d "
-                                "spec(s) (partial restore made progress)",
-                                row_id, len(cancelled_specs), len(retry_specs),
-                            )
-                        except Exception as exc:
-                            logger.warning(
-                                "drain: failed to narrow row %d after "
-                                "partial restore: %s",
-                                row_id, exc,
-                            )
-                    logger.warning(
-                        "drain: finalize for %s row %d did not rebuild "
-                        "coverage — leaving row for next session",
-                        symbol, row_id,
-                    )
-                    continue
-                self.db.delete_pending_protection_restore(row_id)
-                drained += 1
-                logger.info(
-                    "drain: replayed protection finalize for %s (order %s, "
-                    "row %d cleared)", symbol, order_id, row_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "drain: finalize replay failed for %s row %d: %s — "
-                    "leaving row for next session",
-                    symbol, row_id, exc,
-                )
-        if drained:
-            logger.info("drain: cleared %d orphaned protection-restore row(s)", drained)
-        return drained
+    @db.setter
+    def db(self, value) -> None:
+        self._state.set('db', value)
 
     def _reprotect_residual_after_partial_sell(
         self, symbol: str, residual_qty: float, cancelled_specs: list[dict],
@@ -2153,38 +1428,277 @@ class ProtectionMixin:
         )
         return True
 
-    def _record_reprotect_identity_gap(self, symbol: str, detail: str) -> None:
-        """Durable, append-only, per-symbol record of a reprotect ambiguity.
 
-        Adversary round 2, defect 4: the reason this path could not prove
-        what rests at the broker was a log WARNING and nothing else, so it
-        existed only in a rotated file nobody reads per symbol. It is now
-        written through `src/risk/exit_refusal.py`, the desk's existing
-        append-only per-symbol refusal record, so the next reader of the
-        symbol sees why a duplicate may rest or why an intent survived.
+def _build_coverage_repair(host):
+    """Builds the standalone CoverageRepair from the host pipeline's collaborators, read LIVE at each call."""
+    return CoverageRepair(
+        broker=_collab_of(host, 'broker'),
+        db=_collab_of(host, 'db'),
+        alert_owner_kill_switch_blocked=_collab_of(host, '_alert_owner_kill_switch_blocked'),
+    )
 
-        The run id is synthesised from the symbol and the UTC instant
-        because this function runs inside broker restore/drain, which
-        carries no run context to thread one from; the row is forensic and
-        keyed by symbol, not joined to a pipeline run. Never raises: the
-        SELL already succeeded and a forensic write must not unwind it.
-        """
-        try:
-            from datetime import datetime, timezone
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-            self._record_exit_refusal(
-                symbol=symbol,
-                run_id=f"reprotect-{str(symbol).strip().upper()}-{stamp}",
-                action="REPROTECT",
-                code="reprotect_broker_state_unprovable",
-                dropped=False,
-                detail=detail,
-                layer="execution",
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "reprotect ambiguity record failed for %s: %s", symbol, exc,
-            )
+
+def _build_protected_sell(host):
+    """Builds the standalone ProtectedSell from the host pipeline's collaborators, read LIVE at each call."""
+    return ProtectedSell(
+        broker=_collab_of(host, 'broker'),
+        db=_collab_of(host, 'db'),
+        alert_owner_exit_declined=_collab_of(host, '_alert_owner_exit_declined'),
+        order_accepted=_collab_of(host, '_order_accepted'),
+        write_ahead_protection_restore=_collab_of(host, '_write_ahead_protection_restore'),
+        cancel_stops_with_write_ahead=_collab_of(host, '_cancel_stops_with_write_ahead'),
+        state=_HostState(host),
+    )
+
+
+def _build_exit_relief(host):
+    """Builds the standalone ExitRelief from the host pipeline's collaborators, read LIVE at each call."""
+    return ExitRelief(
+        broker=_collab_of(host, 'broker'),
+        state=_HostState(host),
+    )
+
+
+def _build_restore_drain(host):
+    """Builds the standalone RestoreDrain from the host pipeline's collaborators, read LIVE at each call."""
+    return RestoreDrain(
+        broker=_collab_of(host, 'broker'),
+        db=_collab_of(host, 'db'),
+        terminal_order_statuses=_collab_of(host, '_TERMINAL_ORDER_STATUSES'),
+        finalize_protection_after_sell=_collab_of(host, '_finalize_protection_after_sell'),
+        resolve_wal_row_side=_collab_of(host, '_resolve_wal_row_side'),
+        restore_after_unconfirmed_sell=_collab_of(host, '_restore_after_unconfirmed_sell'),
+    )
+
+
+def _build_reprotect_records(host):
+    """Builds the standalone ReprotectRecords from the host pipeline's collaborators, read LIVE at each call."""
+    return ReprotectRecords(
+        record_exit_refusal=_collab_of(host, '_record_exit_refusal'),
+    )
+
+
+def _build_ex_dividends(host):
+    """Builds the standalone ExDividends from the host pipeline's collaborators, read LIVE at each call."""
+    return ExDividends(
+        broker=_collab_of(host, 'broker'),
+        db=_collab_of(host, 'db'),
+        market=_collab_of(host, 'market'),
+        repair_stop_coverage=_collab_of(host, '_repair_stop_coverage'),
+    )
+
+
+def _build_stop_coverage_reconciler(host):
+    """Builds the standalone StopCoverageReconciler from the host pipeline's collaborators, read LIVE at each call."""
+    return StopCoverageReconciler(
+        broker=_collab_of(host, 'broker'),
+        db=_collab_of(host, 'db'),
+        sweeper=_collab_of(host, '_sweeper'),
+        retired_cash_park_symbol=_collab_of(host, '_retired_cash_park_symbol'),
+        alert_owner_elected_unfilled=_collab_of(host, '_alert_owner_elected_unfilled'),
+        alert_owner_no_stop=_collab_of(host, '_alert_owner_no_stop'),
+        alert_owner_repair_resolved=_collab_of(host, '_alert_owner_repair_resolved'),
+        alert_owner_session_repair_failed=_collab_of(host, '_alert_owner_session_repair_failed'),
+        alert_owner_unreadable_stop=_collab_of(host, '_alert_owner_unreadable_stop'),
+        elected_unfilled_stop_row=_collab_of(host, '_elected_unfilled_stop_row'),
+        repair_stop_coverage=_collab_of(host, '_repair_stop_coverage'),
+    )
+
+
+def _build_reprotect_residual(host):
+    """Builds the standalone ReprotectResidual from the host pipeline's collaborators, read LIVE at each call."""
+    return ReprotectResidual(
+        broker=_collab_of(host, 'broker'),
+        format_qty=_collab_of(host, '_format_qty'),
+        alert_owner_reprotect_left_naked=_collab_of(host, '_alert_owner_reprotect_left_naked'),
+        alert_owner_stop_pending_acceptance=_collab_of(host, '_alert_owner_stop_pending_acceptance'),
+        alert_owner_unreadable_stop=_collab_of(host, '_alert_owner_unreadable_stop'),
+        record_reprotect_identity_gap=_collab_of(host, '_record_reprotect_identity_gap'),
+        state=_HostState(host),
+    )
+
+
+
+class ProtectionMixin:
+    """See the module docstring. Methods are the moved text, byte-for-byte."""
+
+    # Statuses Alpaca uses for terminal/non-terminal orders. Kept as a
+    # class attribute so tests can introspect the exact set the
+    # finalizer treats as "done".
+    _TERMINAL_ORDER_STATUSES = {
+        "filled", "canceled", "cancelled", "expired", "rejected",
+        "done_for_day", "replaced",
+    }
+
+    def _current_position_qty_for_finalize(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._current_position_qty_for_finalize(_build_sell_finalization(self), *args, **kwargs)
+
+    def _reconcile_stop_coverage(self, *args, **kwargs):
+        """Thin shim -> StopCoverageReconciler (this module; body over the 400-line ceiling for a new file); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return StopCoverageReconciler._reconcile_stop_coverage(_build_stop_coverage_reconciler(self), *args, **kwargs)
+
+    def _elected_unfilled_stop_row(self, *args, **kwargs):
+        """Thin shim -> CoverageElection (src/protection/coverage_election.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.coverage_election import CoverageElection
+        return CoverageElection._elected_unfilled_stop_row(_build_coverage_election(self), *args, **kwargs)
+
+    @staticmethod
+    def _alert_owner_elected_unfilled(*args, **kwargs):
+        """Thin shim -> OwnerAlerts._alert_owner_elected_unfilled (static; src/protection/owner_alerts.py)."""
+        from src.protection.owner_alerts import OwnerAlerts
+        return OwnerAlerts._alert_owner_elected_unfilled(*args, **kwargs)
+
+    def _still_uncovered(self, *args, **kwargs):
+        """Thin shim -> OwnerAlerts (src/protection/owner_alerts.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.owner_alerts import OwnerAlerts
+        return OwnerAlerts._still_uncovered(_build_owner_alerts(self), *args, **kwargs)
+
+    def _alert_owner_session_repair_failed(self, *args, **kwargs):
+        """Thin shim -> OwnerAlerts (src/protection/owner_alerts.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.owner_alerts import OwnerAlerts
+        return OwnerAlerts._alert_owner_session_repair_failed(_build_owner_alerts(self), *args, **kwargs)
+
+    @staticmethod
+    def _alert_owner_repair_resolved(*args, **kwargs):
+        """Thin shim -> OwnerAlerts._alert_owner_repair_resolved (static; src/protection/owner_alerts.py)."""
+        from src.protection.owner_alerts import OwnerAlerts
+        return OwnerAlerts._alert_owner_repair_resolved(*args, **kwargs)
+
+    @staticmethod
+    def _alert_owner_no_stop(*args, **kwargs):
+        """Thin shim -> OwnerAlerts._alert_owner_no_stop (static; src/protection/owner_alerts.py)."""
+        from src.protection.owner_alerts import OwnerAlerts
+        return OwnerAlerts._alert_owner_no_stop(*args, **kwargs)
+
+    @staticmethod
+    def _alert_owner_stop_pending_acceptance(*args, **kwargs):
+        """Thin shim -> OwnerAlerts._alert_owner_stop_pending_acceptance (static; src/protection/owner_alerts.py)."""
+        from src.protection.owner_alerts import OwnerAlerts
+        return OwnerAlerts._alert_owner_stop_pending_acceptance(*args, **kwargs)
+
+    @staticmethod
+    def _alert_owner_unreadable_stop(*args, **kwargs):
+        """Thin shim -> OwnerAlerts._alert_owner_unreadable_stop (static; src/protection/owner_alerts.py)."""
+        from src.protection.owner_alerts import OwnerAlerts
+        return OwnerAlerts._alert_owner_unreadable_stop(*args, **kwargs)
+
+    @staticmethod
+    def _alert_owner_exit_declined(*args, **kwargs):
+        """Thin shim -> OwnerAlerts._alert_owner_exit_declined (static; src/protection/owner_alerts.py)."""
+        from src.protection.owner_alerts import OwnerAlerts
+        return OwnerAlerts._alert_owner_exit_declined(*args, **kwargs)
+
+    def _wire_protective_stop_block_recorder(self, *args, **kwargs):
+        """Thin shim -> CoverageRepair (src/protection/coverage_repair.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return CoverageRepair._wire_protective_stop_block_recorder(_build_coverage_repair(self), *args, **kwargs)
+
+    @staticmethod
+    @staticmethod
+    def _alert_owner_kill_switch_blocked(*args, **kwargs):
+        """Thin shim -> CoverageRepair._alert_owner_kill_switch_blocked (static; src/protection/coverage_repair.py)."""
+        return CoverageRepair._alert_owner_kill_switch_blocked(*args, **kwargs)
+
+    def _repair_stop_coverage(self, *args, **kwargs):
+        """Thin shim -> CoverageRepair (src/protection/coverage_repair.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return CoverageRepair._repair_stop_coverage(_build_coverage_repair(self), *args, **kwargs)
+
+    def _submit_protected_sell(self, *args, **kwargs):
+        """Thin shim -> ProtectedSell (src/protection/protected_sell.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return ProtectedSell._submit_protected_sell(_build_protected_sell(self), *args, **kwargs)
+
+    #: Exit orders this process submitted and waited on that did NOT reach a
+    #: terminal broker state: {order_id: {symbol, submitted_qty}}.
+    #: `wait_for_order_terminal` has a 15s ceiling and returns the LAST KNOWN
+    #: status, so a marketable limit that does not fill in time leaves the
+    #: order working while the code moves on and re-reads the book from the
+    #: broker. That refreshed book still carries exposure already on its way
+    #: out, and anything that then re-measures gross would shed it twice.
+    #: Registered centrally in `_finalize_pending_protections` so EVERY exit
+    #: path is covered by construction — the cash-deficit safety net, the
+    #: gross-ceiling de-lever, the position reviewer's sells, the execution
+    #: stage and the cash sweep — rather than by remembering to flag each one.
+    _unsettled_exit_orders: dict[str, dict]
+
+    def _register_exit_settlement(self, *args, **kwargs):
+        """Thin shim -> ExitRelief (src/protection/exit_relief.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return ExitRelief._register_exit_settlement(_build_exit_relief(self), *args, **kwargs)
+
+    def _open_exit_relief(self, *args, **kwargs):
+        """Thin shim -> ExitRelief (src/protection/exit_relief.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return ExitRelief._open_exit_relief(_build_exit_relief(self), *args, **kwargs)
+
+    def _finalize_pending_protections(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._finalize_pending_protections(_build_sell_finalization(self), *args, **kwargs)
+
+    def _finalize_protection_after_sell(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._finalize_protection_after_sell(_build_sell_finalization(self), *args, **kwargs)
+
+    def _finalize_protection_after_sell_core(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._finalize_protection_after_sell_core(_build_sell_finalization(self), *args, **kwargs)
+
+    def _cancel_stray_stops_on_flat(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._cancel_stray_stops_on_flat(_build_sell_finalization(self), *args, **kwargs)
+
+    def _write_ahead_protection_restore(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._write_ahead_protection_restore(_build_sell_finalization(self), *args, **kwargs)
+
+    def _cancel_stops_with_write_ahead(self, *args, **kwargs):
+        """Thin shim -> ProtectedSell (src/protection/protected_sell.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return ProtectedSell._cancel_stops_with_write_ahead(_build_protected_sell(self), *args, **kwargs)
+
+    def _restore_after_unconfirmed_sell(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._restore_after_unconfirmed_sell(_build_sell_finalization(self), *args, **kwargs)
+
+    def _persist_orphaned_protection_restore(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._persist_orphaned_protection_restore(_build_sell_finalization(self), *args, **kwargs)
+
+    def _derive_close_side_for_drain(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._derive_close_side_for_drain(_build_sell_finalization(self), *args, **kwargs)
+
+    def _resolve_wal_row_side(self, *args, **kwargs):
+        """Thin shim -> SellFinalization (src/protection/sell_finalization.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.sell_finalization import SellFinalization
+        return SellFinalization._resolve_wal_row_side(_build_sell_finalization(self), *args, **kwargs)
+
+    def _drain_pending_repegs(self, *args, **kwargs):
+        """Thin shim -> RepegDrain (src/protection/repeg_drain.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.repeg_drain import RepegDrain
+        return RepegDrain._drain_pending_repegs(_build_repeg_drain(self), *args, **kwargs)
+
+    def _delete_repeg_row(self, *args, **kwargs):
+        """Thin shim -> RepegDrain (src/protection/repeg_drain.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        from src.protection.repeg_drain import RepegDrain
+        return RepegDrain._delete_repeg_row(_build_repeg_drain(self), *args, **kwargs)
+
+    def _drain_pending_protection_restores(self, *args, **kwargs):
+        """Thin shim -> RestoreDrain (src/protection/restore_drain.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return RestoreDrain._drain_pending_protection_restores(_build_restore_drain(self), *args, **kwargs)
+
+    def _reprotect_residual_after_partial_sell(self, *args, **kwargs):
+        """Thin shim -> ReprotectResidual (this module; body over the 400-line ceiling for a new file); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return ReprotectResidual._reprotect_residual_after_partial_sell(_build_reprotect_residual(self), *args, **kwargs)
+
+    def _record_reprotect_identity_gap(self, *args, **kwargs):
+        """Thin shim -> ReprotectRecords (src/protection/reprotect_records.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return ReprotectRecords._record_reprotect_identity_gap(_build_reprotect_records(self), *args, **kwargs)
 
     def _alert_owner_reprotect_left_naked(self, *args, **kwargs):
         """Thin shim -> OwnerAlerts (src/protection/owner_alerts.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
@@ -2230,171 +1744,6 @@ class ProtectionMixin:
         from src.protection.fill_reconciler import FillReconciler
         return FillReconciler._surface_reconcile_outcomes(_build_fill_reconciler(self), *args, **kwargs)
 
-    def _handle_ex_dividends(self, positions, run_id: str) -> list[dict]:
-        """Lower stops by the upcoming dividend amount the day before ex-div.
-
-        On ex-div day, the stock's open drops by approximately the dividend
-        per share — a mechanical move, not a thesis break. A tight stop set
-        against normal price action can trigger for no real reason and kick
-        us out of a winner. This runs at midday the day BEFORE ex-div and
-        lowers each relevant position's stop by the dividend amount so the
-        mechanical gap doesn't touch it.
-
-        Idempotent per ET date: if we already adjusted this symbol today
-        (tagged 'ex-div' in reasoning), skip. Detects "tomorrow is ex-div"
-        in ET.
-        """
-        from datetime import timedelta as _td
-        orders: list[dict] = []
-        today = et_today()
-        # NEXT TRADING day, not calendar tomorrow (2026-07-16 audit): sessions
-        # only run Mon-Fri, so `today + 1 day` can never BE a Monday — every
-        # Monday ex-div silently went unadjusted, and Friday's sessions (the
-        # last chance to act) computed Saturday. Same hole for any ex-div the
-        # day after a holiday. Fall back to calendar+1 if the calendar lookup
-        # fails — degrading to today's behavior beats crashing the session.
-        next_trading_day = today + _td(days=1)
-        for _ in range(7):
-            try:
-                if self.broker.is_trading_day(next_trading_day):
-                    break
-            except Exception as e:  # noqa: BLE001
-                logger.warning("ex-div: is_trading_day failed (%s) — falling back "
-                               "to calendar+1", e)
-                next_trading_day = today + _td(days=1)
-                break
-            next_trading_day += _td(days=1)
-
-        for p in positions:
-            # Deliberately long-only, not just "not yet generalised" — a
-            # short OWES the dividend to the share lender (a cash liability)
-            # rather than receiving it, so there is no mechanical gap-down
-            # here for a stop-shift to absorb. See broker.shift_stops_down's
-            # docstring for the fuller reasoning (shorts-safe, Stage 2).
-            if p.qty <= 0:
-                continue
-            # Check today's trades for a prior ex-div adjustment — idempotent
-            try:
-                today_trades = self.db.get_trades(
-                    symbol=p.symbol, today_only=True, limit=20,
-                )
-            except Exception as e:
-                logger.warning("ex-div: today trades lookup failed for %s: %s", p.symbol, e)
-                continue
-            already = any(
-                (t.get("action") or "").upper() == "TRAIL_STOP"
-                and "ex-div" in (t.get("reasoning") or "").lower()
-                for t in today_trades
-            )
-            if already:
-                continue
-
-            try:
-                div = self.market.get_upcoming_ex_dividend(p.symbol)
-            except Exception as e:
-                logger.warning("ex-div: fetch failed for %s: %s", p.symbol, e)
-                continue
-            if not div:
-                continue
-            div_date = div.get("date")
-            if not (div_date and today < div_date <= next_trading_day):
-                # Only act on the session BEFORE ex-div. On ex-div day itself
-                # the gap has already happened at open — adjustment is too
-                # late — and "day after" is wrong (the stock is re-pricing
-                # back to normal vol). The window is (today, next_trading_day]
-                # so a Monday ex-div is caught by Friday's sessions.
-                continue
-            amount = div.get("amount") or 0
-            if amount <= 0:
-                continue
-
-            from src.execution.stop_read import read_stop, repair_for
-            stop_read = read_stop(self.broker, p.symbol, db=self.db,
-                                  run_id=run_id, context="ex-div shift", establish=repair_for(self._repair_stop_coverage, p))
-            if stop_read.unreadable or stop_read.absent:
-                continue  # unreadable was recorded+alerted; absent = nothing to adjust
-            current_stop = stop_read.price
-            new_stop = round(current_stop - amount, 2)
-            if new_stop <= 0 or new_stop >= p.current_price:
-                logger.warning(
-                    "ex-div: %s skipped — new_stop $%.2f not protective vs current $%.2f",
-                    p.symbol, new_stop, p.current_price,
-                )
-                continue
-            try:
-                # Shift EVERY stop down by the dividend, preserving per-lot
-                # levels/qty (audit round 2: with per-BUY GTC stops a
-                # consolidating replace could TIGHTEN a wide lot's stop to
-                # the tightest lot's level minus the dividend).
-                order = self.broker.shift_stops_down(p.symbol, amount)
-            except Exception as e:
-                logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
-                continue
-            from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
-            if isinstance(order, dict):
-                # Item 201: the per-leg outcome is a ROW, not a log line, and it
-                # is written whatever the outcome — a shift that refused is the
-                # case that most needs to survive the session.
-                from src.execution.exit_path_records import (
-                    record_stop_shift_legs, stop_shift_incomplete_text,
-                )
-                shift_status = str(order.get("status") or "")
-                record_stop_shift_legs(
-                    self.db, symbol=p.symbol, amount=amount,
-                    mode=str(order.get("mode") or ""), status=shift_status,
-                    shifted=int(order.get("shifted") or 0),
-                    total=int(order.get("total") or 0),
-                    legs=order.get("legs"), run_id=run_id,
-                )
-                if shift_status in ("partial", "refused", "unknown", "naked", "market_closed"):
-                    # An un-shifted stop across an ex-dividend open is wrong by
-                    # exactly the dividend IN THE DIRECTION THAT TRIGGERS IT, so
-                    # this is an owner-visible change in protection, not a nit.
-                    try:
-                        from src.notifier import send_owner_alert
-                        send_owner_alert(
-                            stop_shift_incomplete_text(
-                                p.symbol, shift_status,
-                                int(order.get("shifted") or 0),
-                                int(order.get("total") or 0),
-                            ),
-                            symbols=[p.symbol],
-                        )
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("ex-div: owner alert failed for %s: %s", p.symbol, e)
-            if not order or (
-                isinstance(order, dict) and not accepted_stop_order(order)
-            ):
-                # A partial, a refusal or an unknown carries no order id, so no
-                # stop level is written back and no TRAIL_STOP row is filed —
-                # the desk must not record a stop it did not confirm moving.
-                continue
-            try:
-                write_back_stop_loss(self.db, p.symbol, new_stop, is_short=False)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("ex-div: stop write-back failed for %s: %s", p.symbol, e)
-            try:
-                self.db.insert_trade(
-                    symbol=p.symbol, action="TRAIL_STOP", qty=p.qty,
-                    price=new_stop,
-                    reasoning=(
-                        f"ex-div adjustment: ex-div {div['date']}, div ${amount:.4f}/share. "
-                        f"Shifted {order.get('shifted', '?')} stop(s) down by the dividend "
-                        f"(highest {current_stop:.2f} → {new_stop:.2f}) to absorb the "
-                        f"mechanical open gap."
-                    ),
-                    run_id=run_id,
-                    stop_loss=new_stop,
-                    broker_order_id=order.get("id"),
-                    fill_status="submitted",
-                )
-            except Exception as e:
-                logger.warning("ex-div: audit log failed for %s: %s", p.symbol, e)
-            if isinstance(order, dict):
-                order.setdefault("action", "TRAIL_STOP")  # audit F5
-            orders.append(order)
-            logger.info(
-                "Ex-div adjust: %s ex-div %s div $%.4f → stop $%.2f → $%.2f",
-                p.symbol, div["date"], amount, current_stop, new_stop,
-            )
-        return orders
+    def _handle_ex_dividends(self, *args, **kwargs):
+        """Thin shim -> ExDividends (src/protection/ex_dividends.py); calls the class method so the collaborator of the same name on the built object is never re-entered."""
+        return ExDividends._handle_ex_dividends(_build_ex_dividends(self), *args, **kwargs)

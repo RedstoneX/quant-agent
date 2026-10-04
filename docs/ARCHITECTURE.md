@@ -73,12 +73,16 @@ holds `OwnerAlerts`, `SellFinalization`, `FillReconciler`, `RepegDrain` and
 keyword-only constructor argument (the `src/sessions/` pattern);
 `ProtectionMixin` keeps a thin same-named shim per method. All five pass
 `check_boundary`; `tests/test_protection_boundary.py` is the witness. What
-stayed in the mixin: the stop-coverage reconciler, the residual re-protection,
-the restore drain, the ex-dividend handler and the kill-switch wiring (all
-import the broker seam `src.execution`, a frozen importer list; the first two
-also read `_market_is_open_now`/`et_today`, which tests patch on
-`src.pipeline_protection`), and the protected sell with its write-ahead cancel,
-which pass `_last_stop_clear_refusal` between each other through the pipeline.
+followed on 2026-10-04: `CoverageRepair`, `ProtectedSell`, `ExitRelief`,
+`RestoreDrain`, `ReprotectRecords` and `ExDividends` joined `src/protection/`
+(`tests/test_protection_parts_boundary.py` is the witness; the ex-dividend tests
+now patch `et_today` on `src.protection.ex_dividends`). Two bodies are over the
+400-line ceiling for a new file and stay in `src/pipeline_protection.py` as
+standalone classes built the same way: `StopCoverageReconciler` (600 lines; reads
+`_market_is_open_now`, which tests patch there) and `ReprotectResidual` (537
+lines). Host attributes a body assigns or reads with a default
+(`_last_stop_clear_refusal`, `_unsettled_exit_orders`, `db`) go through a live
+get/set view (`_HostState`), never a copy.
 
 **No mixin can be constructed alone.** `grep -n 'def __init__'` across
 `src/pipeline_protection.py`, `src/pipeline_exits.py`, `src/pipeline_intraday.py`
