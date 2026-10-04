@@ -1111,4 +1111,4 @@ class DatabaseSchema:
             except Exception as e:
                 _log.warning("Index creation failed for %s.%s: %s", table, col, e)
         from src.storage.schema.owner_intent_tables import apply as _owner_intents; _owner_intents(self.conn)  # idempotent, commits
-        from src.storage.schema.sentinel_tables import ensure_sentinel_tables; ensure_sentinel_tables(conn=self.conn)  # Sentinel seams, appended 2026-10-02; idempotent
+        from src.storage.schema.sentinel_tables import ensure_sentinel_tables; ensure_sentinel_tables(conn=self.conn); from src.storage.schema.pending_stop_amend_tables import ensure_pending_stop_amend_table; ensure_pending_stop_amend_table(conn=self.conn)  # Sentinel seams + owed stop amends; idempotent
