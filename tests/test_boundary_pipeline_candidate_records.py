@@ -1,13 +1,14 @@
-"""Clause-5 witness for src.pipeline_candidate_records: exercised with stand-ins, no trading pipeline built."""
+"""Clause-5 witness for src.pipeline_candidate_records and src.pipeline_soft_exit_records: exercised with stand-ins, no trading pipeline built."""
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import src.pipeline_candidate_records as records
+import src.pipeline_soft_exit_records as soft_exit_records
 from src.pipeline_candidate_records import (
     _record_heal_safely,
     _record_pipeline_event,
-    _soft_exit_heal_detail,
 )
+from src.pipeline_soft_exit_records import _soft_exit_heal_detail
 
 
 def test_soft_exit_heal_detail_reads_the_recorded_outcome_off_a_bare_context():
@@ -45,6 +46,14 @@ def test_record_pipeline_event_routes_through_persist_evidence_with_the_stand_in
 def test_every_moved_name_is_the_same_object_through_the_old_import_path():
     import src.pipeline_stages as stages
 
-    for name in ("_account_for_pm_candidates", "_isolate_empty_soft_exit_entries",
-                 "_record_pipeline_event", "_PM_ACCOUNTING_SEAT"):
+    for name in ("_account_for_pm_candidates", "_record_pipeline_event", "_PM_ACCOUNTING_SEAT"):
         assert getattr(stages, name) is getattr(records, name)
+    for name in ("_isolate_empty_soft_exit_entries", "_soft_exit_heal_detail"):
+        assert getattr(stages, name) is getattr(soft_exit_records, name)
+
+
+def test_soft_exit_missing_after_retry_records_through_the_stand_in_event_row():
+    ctx = SimpleNamespace(run_id="run-1", decision_id="dec-1", soft_exit_heals={})
+    with patch.object(soft_exit_records, "_record_pipeline_event") as event:
+        soft_exit_records._record_soft_exit_missing_after_retry(SimpleNamespace(db=object()), ctx, "ABC")
+    assert event.call_count == 1
