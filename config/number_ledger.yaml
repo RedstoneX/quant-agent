@@ -1001,6 +1001,8 @@ numbers:
     value: 60
     status: arbitrary
     site: src/config/__init__.py
+    narrowed: >-
+      NARROWED 2026-10-04 (LIVE, not dead; value NOT settled). Ran the live level finder over 1176 fixture windows with only this cap changed [measured]: 60 to 250 changed the output in 11 windows (0.9%), 60 to 20 in 150 (12.8%). The cap is consulted by the level finder, the target derivation, admission and the touch-probability log, so it is a live cap whose UPPER side barely binds on this data; the harness feeds the constant, not a per-analysis stated horizon. Pinned by tests/test_dead_branch_narrowing_levels.py.
     note: >-
       The longest horizon a target may claim before the desk stops believing
       it, owner-ratified appetite 2026-09-25 (delegated to the adversary).
@@ -1039,6 +1041,8 @@ numbers:
     value: 1.5
     status: arbitrary
     site: src/config/__init__.py
+    narrowed: >-
+      NARROWED 2026-10-04 (LIVE, not dead; value NOT settled). Ran the live level finder over 1176 fixture windows with only this reach multiple changed [measured]: 1.5 to 5.0 changed the output in 11 windows (0.9%, the same 11 windows as the horizon cap above), 1.5 to 0.5 in 490 (41.7%). So the cap binds hard from below and almost never from above on this data; the engine-blind finding in this row is about the backtest, not the live finder, which does consult it. Pinned by tests/test_dead_branch_narrowing_levels.py.
     note: >-
       The reach caps, split out of one number -- board item 56 owns the
       question and records that the split made them CONSISTENT without making
@@ -1072,6 +1076,8 @@ numbers:
     value: 5
     status: arbitrary
     site: src/config/__init__.py
+    narrowed: >-
+      NARROWED 2026-10-04 (LIVE, not dead; value NOT settled). Ran the live level finder over every 60-bar window of the committed daily-bar fixture (1176 windows, 7 symbols, 1886 levels) [measured]: touch counts were 2:1345, 3:432, 4:94, 5:15, none above 5. So the bar of 5 sits at the very top of what the data produces: 15 of 1886 levels (0.8%) clear it, a bar of 6 would make the tight-stop exemption unreachable on this data, a bar of 4 would admit 109. Pinned by tests/test_dead_branch_narrowing_levels.py.
     downgraded: >-
       WAS `sourced`. DOWNGRADED 2026-10-01 (docs/WORK.md item 55), because the
       input its source was measured on no longer exists. The table below was
@@ -3107,6 +3113,14 @@ numbers:
     status: arbitrary
     site: src/portfolio_constructor/config.py
     note: >-
+      NARROWED 2026-10-04 (branch reachability only; the value is NOT
+      settled): the only consumer is the no-ATR branch, entered when the
+      analysis carries no ATR(14). Running the live indicator function over
+      every 40-bar window of the committed daily-bar fixture (1197 windows,
+      7 symbols) produced an ATR in all of them [measured]; it is absent only
+      under 15 bars of history, so this branch is NEVER EXERCISED on that
+      data -- not proven safe, not proven broken. Pinned by
+      tests/test_no_atr_branch_reachability.py. No other consumer reads it.
       How far BELOW a structural level (ABOVE it for a short) the protective
       stop is placed when it must be READ from price structure because there is
       no ATR reading -- `_derive_structural_stop_no_atr`, added for board item

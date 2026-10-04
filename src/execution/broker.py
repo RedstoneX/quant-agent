@@ -268,9 +268,8 @@ class AlpacaBroker:
         self._trade_hub: _TradeUpdatesHub | None = None
         self._trade_hub_lock = threading.Lock()
         self._trade_lease = _TradeUpdatesLease(
-            Path(trade_updates_lease_path)
-            if trade_updates_lease_path
-            else _default_trade_updates_lease_path()
+            Path(trade_updates_lease_path or _default_trade_updates_lease_path()),
+            owner=self,
         )
         self._trade_slot_held = False
         self._trade_lease_contended = False
