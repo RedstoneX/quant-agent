@@ -52,10 +52,10 @@ git ls-tree -r --name-only origin/main src | grep '\.py$' |
 - **Build a package, never siblings.** `tests/import_layers.json` matches
   importers by prefix, so `src/x/y.py` stays inside `src/x`'s existing
   allowance while `src/x_y.py` does not.
-- **`FLOOR = 400` in `scripts/regen_file_size_baseline.py` is not a size cap
-  on new files.** It only decides which files are tracked. Record new files
-  with `--allow-growth`; a new key is not baseline growth. Two agents misread
-  this and one abandoned a whole file as impossible.
+- **`FLOOR = 400` in `scripts/file_size_guard.py` is the cap on a file that is
+  not on `origin/main`.** Files already on the trunk are judged only by whether
+  they GREW against it; there is no recorded baseline to edit any more, and
+  nothing to regenerate.
 - **Baselines may only shrink for existing keys.** Verify in Python against
   `origin/main` before every push. A branch cut before another landed will
   otherwise hand back every line that one removed.
@@ -77,9 +77,10 @@ git ls-tree -r --name-only origin/main src | grep '\.py$' |
   import cycle through the scale-in path.
 - The composition root of `src/pipeline.py` (its `__init__`) is its own piece
   of work, after the ceiling.
-- Real boundaries, not just smaller files, are still owed by the cost
-  circuit's eleven `_Breaker*Mixin` modules, the position builder, the
-  portfolio-manager seat and the prompt-facts review chunk.
+- Real boundaries, not just smaller files, are still owed by the position
+  builder, the portfolio-manager seat and the prompt-facts review chunk (the
+  cost circuit is done: all eleven parts are held instances, no mixin
+  remains, 2026-10-02).
 
 ## Appendix — measured inventory taken before the two rebuilds
 

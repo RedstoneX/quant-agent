@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from src.config import IntradayScanConfig
-from src.pipeline import TradingPipeline
+from tests.pipeline_factory import build_pipeline
 
 # ---------- an empty research account is not a crash (2026-10-01) ----------
 
@@ -31,24 +31,21 @@ def test_payment_refusal_is_named_out_of_credit_not_crashed():
     preserved on the machine line. Nothing is swallowed, nothing is retried,
     and no threshold, timeout or budget number is introduced.
     """
-    p = TradingPipeline.__new__(TradingPipeline)
+    p = build_pipeline(broker=MagicMock(), db=MagicMock(), risk_engine=MagicMock())
     p.config = SimpleNamespace(
         trading=SimpleNamespace(universe=["AAPL"], lookback_days=100),
         intraday_scan=IntradayScanConfig(enabled=True),
     )
-    p.broker = MagicMock()
     p.broker.is_trading_day.return_value = True
     p.broker.get_account.return_value = {
         "cash": 10000.0, "portfolio_value": 10100.0, "last_equity": 10000.0,
         "non_marginable_buying_power": 10000.0,
     }
     p.broker.get_positions.return_value = []
-    p.db = MagicMock()
     p._drain_pending_protection_restores = MagicMock()
     p._reconcile_stop_coverage = MagicMock(return_value=[])
     p._reconcile_orphan_pending_submits = MagicMock()
     p._is_trading_day = MagicMock(return_value=True)
-    p.risk_engine = MagicMock()
     p._run_intraday_opportunity_scan = MagicMock(
         side_effect=_OutOfCreditError(
             "Error code: 402 - This request requires more credits"

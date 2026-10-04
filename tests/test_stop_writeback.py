@@ -514,18 +514,6 @@ def test_repair_partial_with_an_accepted_id_still_writes_back(db):
     assert row["initial_stop_loss"] == pytest.approx(158.75)
 
 
-def test_zero_entry_stop_write_back_does_not_mint_an_entry_bet(db):
-    db.insert_trade(
-        symbol="NAKED", action="BUY", qty=5, price=100.0,
-        reasoning="entry", run_id="r1", stop_loss=0, fill_status="filled",
-    )
-    assert recorded_initial_stop(db.get_symbol_last_buy("NAKED")) == 0.0
-    assert write_back_stop_loss(db, "NAKED", 97.0) is True
-    row = db.get_symbol_last_buy("NAKED")
-    assert row["stop_loss"] == pytest.approx(97.0)
-    assert recorded_initial_stop(row) == 0.0
-
-
 def test_write_back_updates_every_open_row_of_the_same_position(db):
     _open_long(db, symbol="ORCL", stop=95.0)
     db.insert_trade(

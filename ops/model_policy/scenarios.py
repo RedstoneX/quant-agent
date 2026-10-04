@@ -1497,87 +1497,8 @@ def _tech_full_grade(analyses: dict | None) -> list[Check]:
     return checks
 
 
-# --------------------------------------------------------------------------
-# 6. position_reviewer — the midday exit path
-# --------------------------------------------------------------------------
-
-# Two positions with opposite, unambiguous dispositions:
-#   AMD  — thesis broken. Deep loss, 0.4% above a stop that sits 0.25 ATRs
-#          away (well inside daily noise, which the prompt calls out), no
-#          progress toward target in 21 days. Leaving this untouched means
-#          the broker stop fires on the next tick of noise.
-#   NVDA — thesis working. Ahead of pace, comfortably above its stop.
-#          Selling it is the classic cut-the-winner error the prompt warns
-#          against, so a SELL/REDUCE here is graded as a miss.
-_REVIEW_POSITIONS = [
-    Position(symbol="AMD", qty=95, avg_entry=178.40, current_price=151.75,
-             market_value=14_416.25, unrealized_pnl=-2_531.75,
-             unrealized_intraday_pnl=-310.0, sector="Technology"),
-    Position(symbol="NVDA", qty=120, avg_entry=142.00, current_price=163.90,
-             market_value=19_668.00, unrealized_pnl=2_628.00,
-             unrealized_intraday_pnl=180.0, sector="Technology"),
-]
-
-_REVIEW_FACTS = {
-    "AMD": {
-        "days_held": 21, "thesis_progress_pct": -12.0, "pace": 0.0,
-        "distance_to_stop_pct": 0.4, "distance_to_target_pct": 24.6,
-        "atr_pct": 1.6, "stop_distance_atrs": 0.25, "weight_pct": 34.3,
-    },
-    "NVDA": {
-        "days_held": 34, "thesis_progress_pct": 62.0, "pace": 1.8,
-        "distance_to_stop_pct": 11.2, "distance_to_target_pct": 9.4,
-        "atr_pct": 2.1, "stop_distance_atrs": 5.3, "weight_pct": 46.8,
-    },
-}
 
 
-def _review_invoke(agent):
-    review, _ = agent.review(
-        positions=_REVIEW_POSITIONS,
-        macro_summary=_MACRO_SUMMARY,
-        cash_balance=7_900.0,
-        total_value=42_000.0,
-        session_type="midday",
-        position_facts=_REVIEW_FACTS,
-        macro_analysis=_PM_MACRO,
-        allow_margin=False,
-    )
-    return review
-
-
-def _review_grade(review) -> list[Check]:
-    checks: list[Check] = []
-    checks.append(Check("parsed", 0.30, review is not None, "PositionReview validated"))
-    if review is None:
-        return checks
-
-    chain = review.reasoning_chain.model_dump()
-    checks.append(Check(
-        "cot_complete", 0.10,
-        all(str(v).strip() for v in chain.values()),
-        f"{sum(1 for v in chain.values() if str(v).strip())}/{len(chain)} steps",
-    ))
-
-    actions = {a.symbol.upper(): a for a in review.actions}
-    amd = actions.get("AMD")
-    checks.append(Check(
-        "acts_on_broken_thesis", 0.35,
-        amd is not None and amd.action in ("SELL", "REDUCE", "TRAIL_STOP"),
-        f"AMD action={getattr(amd, 'action', None)} "
-        f"(stop 0.25xATR away, -12% thesis progress in 21d)",
-    ))
-
-    nvda = actions.get("NVDA")
-    checks.append(Check(
-        "does_not_cut_the_winner", 0.25,
-        nvda is None or nvda.action in ("HOLD", "TRAIL_STOP"),
-        f"NVDA action={getattr(nvda, 'action', None)} (1.8x pace, 11% above stop)",
-    ))
-    return checks
-
-
-# --------------------------------------------------------------------------
 # External-source seat exams (owner rule 2026-09-14)
 # --------------------------------------------------------------------------
 #
@@ -2214,6 +2135,16 @@ def _pm_public_day_grade(decision: PortfolioDecision | None) -> list[Check]:
 # Registry
 # --------------------------------------------------------------------------
 
+def _review_invoke(agent):
+    from ops.model_policy.scenarios_midday_exit import _review_invoke as run  # lazy: that module reads this one
+    return run(agent)
+
+
+def _review_grade(review) -> list[Check]:
+    from ops.model_policy.scenarios_midday_exit import _review_grade as grade
+    return grade(review)
+
+
 SCENARIOS: list[Scenario] = [
     Scenario(
         key="earnings_filing",
@@ -2401,17 +2332,12 @@ SCENARIOS: list[Scenario] = [
         agent_path="src.agents.position_reviewer:PositionReviewerAgent",
         invoke=_review_invoke,
         grade=_review_grade,
-        blocked_reason=(
-            "positions, stops and entry rows are invented; the live ones are desk "
-            "data, and the live call (src/pipeline.py:11698) also passes the news, "
-            "earnings and macro seats' outputs and the reviewer's own prior "
-            "metrics. The grader's main check rewards SELL/REDUCE/TRAIL_STOP on a "
-            "position near its stop, which config/prompts/position_reviewer.md:247 "
-            "says is never a trigger and the executor drops without a named one "
-            "(src/pipeline.py:9585); its macro regime 'risk_off' is not a "
-            "MacroAnalysis value (src/models.py:2258)"
+        fixture="run_bba4d4f3_pm_input.json",
+        description=(
+            "Recorded 2026-09-02 book (run-bba4d4f3). Grades the exit path "
+            "against the desk's own rule: distance to stop is advisory "
+            "context, never by itself a reason to sell."
         ),
-        description="Synthetic broken thesis + working winner. BLOCKED.",
     ),
 ]
 
