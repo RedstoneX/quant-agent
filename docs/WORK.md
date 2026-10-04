@@ -364,6 +364,14 @@ detail: docs/board_notes/item-219.md
 - retired queue: 190
 - retired queue: 211
 - retired queue: 17
+**232. The ledger's rewritten citations may point at the WRONG place and now read as verified -- OPEN, filed 2026-10-04. [BOARD STATE: 0 of 4 ticked; blocked on PR 1081 (fix/ledger-citations-225) merging, because the rows to correct only exist in its version of the file.]** PR 1081 replaced every file-and-line citation in the number ledger with a named symbol or pinned text, and a guard now proves each one can be found. The rewrite was done by machine from the line numbers as they stood, so any citation whose line had ALREADY drifted was pinned to whatever sat at that stale line; the guard proves the target exists, not that it is the right target, so that rot now looks verified and nothing will flag it again. FIRST MEASUREMENT 2026-10-04: 12 hand-checked citations (spread across the file) -- 6 right, 5 wrong, 1 cannot tell. The wrong ones: the stream-attempt ceiling row cites the broker constructor but the 200-per-minute source is in `src/execution/broker_parts/trade_stream.py` at `_STREAM_ATTEMPT_CEILING_PER_DAY`; the dead emergency-cushion row cites `src/pipeline_admission.py` but the constant is `TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT` in `src/pipeline.py`; the risk-budget row cites the constructor's refusal call but the call is `allocate_risk_budget(` in `src/portfolio_constructor/__init__.py`; the noise-band row cites a docstring about unattributable cases but the sqrt widening is `noise_band_atr` and the comment above `NOISE_BAND_ATR_MULTIPLE` in `src/risk/exit_guard.py`; the blocked-proposals window row cites `_intraday_paid_scan_skip` in `src/pipeline_intraday.py` but the method is `_build_blocked_proposals` in `src/pipeline_prompt_facts_review.py`. The cannot-tell one is the dead-default claim for `_build_trade_grade_summary` pinned to the pipeline's collaborator wiring. Mechanically, all 174 symbol citations and 94 of 95 pinned-text citations do contain the old line, so the rewrite itself was faithful; the rot predates it.
+
+DONE WHEN:
+- [ ] PR 1081 has merged and the five named rows are corrected to the places above, each re-read against the number it justifies
+- [ ] EVERY remaining rewritten citation (not a sample) is checked by hand or by a test that compares the cited text to the row's number, and the count right / wrong / cannot-tell is recorded here
+- [ ] the guard (or a second one) fails when a citation resolves to a symbol that never mentions the row's value or id, proved red against one of the five wrong rows first
+- [ ] no citation is left as cannot-tell: each is either confirmed or replaced with a source that settles it
+
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
