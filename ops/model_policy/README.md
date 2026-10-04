@@ -75,10 +75,9 @@ before any paid call. As of 2026-09-14:
   directly, not re-derived), and `reasoning_chain` schema completeness —
   no judgement answer key, opt-in like `pm_selection`.
 - **Blocked** (see each `Scenario.blocked_reason` for the exact citation):
-  `risk_rr_breach`, `risk_drawdown_discipline`, `midday_exit`,
-  `tech_batch_full`.
+  `risk_rr_breach`, `risk_drawdown_discipline`, `tech_batch_full`.
 - **Quarantined** (fixture is a desk recording, kept not deleted):
-  `pm_selection`.
+  `pm_selection`, `midday_exit`.
 - **No exam at all:** `evening_analyst`, `meta_reflector` — see
   `NO_EXAM_SEATS` in `scenarios.py`.
 
@@ -152,9 +151,34 @@ prompt already states: `risk_rr_breach` contains a range BUY at 0.42R that is
 also the largest line in the plan at 18% of the book (the pair is the
 finding — the desk has had no universal reward:risk floor since 2026-09-11,
 `docs/WORK.md` item 1(d)), `pm_constrained` cannot fund new weight without
-trimming, `midday_exit` has one position pinned 0.25 ATRs from its stop,
-`risk_drawdown_discipline` has a BUY sized at the full base while
+trimming, `risk_drawdown_discipline` has a BUY sized at the full base while
 `in_drawdown=true` requires it halved.
+
+> **`midday_exit` REBUILT 2026-10-02 — and it inverted its own verdict
+> before that.** Its `acts_on_broken_thesis` check (weight 0.35) REWARDED a
+> SELL/REDUCE on a position whose only fault was sitting 0.25 ATRs from its
+> stop. `config/prompts/position_reviewer.md:307-312` says the opposite in
+> terms: "`to_stop` is ADVISORY DISTANCE, never a trigger: only the broker
+> fills stops" — a rule added after the logged GS 2026-05-18 loss, where the
+> desk sold at +0.4%-to-stop "before the gap", no gap came, and the stock
+> ran. `:61` then lists the only classes of new information an exit may rest
+> on, and proximity is not among them. So the exam marked a model DOWN for
+> obeying the desk and UP for breaking it: `google/gemini-2.5-flash-lite`
+> scored 1.00 twice by answering REDUCE and naming "close to its hard stop"
+> as the reason, while `google/gemini-3.5-flash-lite` scored 0.65 three times
+> for answering HOLD and restating the rule. **Every committed
+> `midday_exit` score in `results/` was earned against that inverted rubric
+> and certifies nothing about this seat** — including the `quality_min 1.0`
+> the incumbent's gate currently reads. The rebuilt scenario grades
+> `holds_on_stop_proximity_alone` (0.35) instead, on the recorded 2026-09-02
+> book, and is QUARANTINED rather than blocked: its inputs are the live
+> position book and the upstream seats' outputs, which is desk-recorded data
+> that `fixture_policy` refuses outright. It cannot be run until the owner
+> sets `DESK_DATA_TRUSTED_FROM` (with the `docs/INCIDENT_HISTORY.md`
+> justification that `tests/test_fixture_policy.py` requires) AND the
+> agent-output ban is reconciled with the fact that this seat's real
+> production inputs ARE other seats' outputs. No synthetic substitute exists:
+> a position book cannot be fetched from SEC or yfinance.
 
 > **STALE 2026-09-20.** `risk_drawdown_discipline` grades against a rule that
 > no longer exists: the account-level loss alarms, including the

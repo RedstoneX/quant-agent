@@ -696,11 +696,10 @@ class DatabaseSchema:
         # (`reducing_orders_built`) so the row never implies the session
         # built only entries.
         #
-        # UNKNOWN STAYS NULL. A session that built no entry orders writes
-        # `weights_json` NULL with `entry_orders_built` 0 — the fact that
-        # nothing was built, which is not the same fact as a book with zero
-        # concentration. A name whose sector the desk could not determine
-        # is recorded with `sector` null inside the JSON, never as "other".
+        # UNKNOWN SECTOR STAYS NULL inside the JSON (never "other"), but
+        # `weights_json` ITSELF IS NEVER NULL: a run with no entry orders writes
+        # `[]` with `entry_orders_built` 0, so a contentless row cannot read as
+        # "populating". NOT NULL makes that shape unwritable.
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS realised_sector_weights (
@@ -708,7 +707,7 @@ class DatabaseSchema:
                 timestamp TEXT NOT NULL,
                 run_id TEXT,
                 session_date TEXT,
-                weights_json TEXT,
+                weights_json TEXT NOT NULL,
                 denominator TEXT NOT NULL,
                 total_value REAL,
                 entry_orders_built INTEGER,
@@ -722,6 +721,7 @@ class DatabaseSchema:
             "CREATE INDEX IF NOT EXISTS idx_realised_sector_weights_date "
             "ON realised_sector_weights (session_date)"
         )
+        from src.storage.schema.realised_sector_weights_migration import ensure_not_null; ensure_not_null(self.conn)  # backfill + rebuild old nullable tables
         _ensure_column("insights", "tomorrow_bias", "tomorrow_bias TEXT DEFAULT 'neutral'")
         _ensure_column("insights", "tomorrow_conviction", "tomorrow_conviction TEXT DEFAULT 'medium'")
         _ensure_column("insights", "tomorrow_key_risks", "tomorrow_key_risks TEXT DEFAULT '[]'")
