@@ -53,6 +53,10 @@ class LLMCostCircuitConfig(BaseModel):
     require_telegram_alerts: bool = True
     session_cost_limit_usd: float = Field(default=0.90, gt=0, allow_inf_nan=False)
     daily_cost_limit_usd: float = Field(default=1.50, gt=0, allow_inf_nan=False)
+    # Last OpenRouter top-up (amount, ET date). Only used when the provider
+    # will not report a balance; see src/llm_balance_runway.py.
+    openrouter_topup_usd: float | None = None
+    openrouter_topup_date: str | None = None
     # Item 14 (OWNER-APPROVED 2026-09-02, docs/WORK.md): the per-call cost
     # RESERVATION layer -- and every exposure ceiling / per-mode allowance /
     # afternoon reserve / free-failure-session backstop that existed only
