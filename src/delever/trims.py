@@ -17,7 +17,8 @@ logger = logging.getLogger("src.pipeline")
 
 
 class DeleverTrims:
-    """Ceiling trim submission, the by-conviction variant and the deferred discharge; standalone, built from explicit collaborators."""
+    """Ceiling trim submission, the by-conviction variant and the deferred discharge; standalone, built from explicit
+    collaborators."""
 
     def __init__(
         self, *,

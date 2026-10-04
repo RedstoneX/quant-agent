@@ -1,4 +1,5 @@
-"""src.delever.ladder -- the ceiling ladder -- live de-lever price, the drawdown-resolved ceiling and the margin-floor breach test.
+"""src.delever.ladder -- the ceiling ladder -- live de-lever price, the drawdown-resolved ceiling and the
+margin-floor breach test.
 
 Bodies moved verbatim from src/pipeline_delever.py (`DeleverMixin`), which keeps
 same-named thin shims built per call. Every collaborator is an explicit keyword-only
@@ -30,7 +31,8 @@ logger = logging.getLogger("src.pipeline")
 
 
 class DeleverLadder:
-    """The ceiling ladder -- live de-lever price, the drawdown-resolved ceiling and the margin-floor breach test; standalone, built from explicit collaborators."""
+    """The ceiling ladder -- live de-lever price, the drawdown-resolved ceiling and the margin-floor breach test;
+    standalone, built from explicit collaborators."""
 
     def __init__(
         self, *,
