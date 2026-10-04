@@ -49,7 +49,6 @@ from src.models import (
 )
 from src.risk.constants import (
     REWARD_RISK_PARITY,
-    gap_adjusted_risk_per_share,
     reward_risk_floor_applies,
     risk_budget_allocation_pct,
     reward_risk_parity_refuses,
