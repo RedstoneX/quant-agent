@@ -33,11 +33,21 @@ under test and nothing else. The one piece with no live counterpart to call
 is "which structural level would the Tech Analyst have picked as the stop":
 in production an LLM chooses among the levels `find_structural_levels`
 reports. This engine substitutes a fixed, deterministic rule — the nearest
-support below the signal-day close for a long (nearest resistance above it
-for a short) becomes the analyst's `stop_loss`, and the opposite side's
-nearest level becomes `reference_target` — and then feeds that through the
-REAL `_resolve_stop` / `_widen_stop_past_noise`, exactly as the live
-constructor would if the analyst had reported those numbers. `setup_type`
+support below the NEXT DAY'S OPEN — the price this engine actually fills
+at — for a long (nearest resistance above it for a short) becomes the
+analyst's `stop_loss`, and the nearest level on the other side of that same
+open becomes `reference_target`. ONE reference price for the whole entry
+decision: the level partition, the ATR noise band, the reward:risk check
+and the sizing all read the same number. No look-ahead is added — the stop
+was already resolved against that open before sizing; only the level
+partition used to disagree, against the signal-day close. When no level
+defends the entry the stop is no longer refused: `None` goes to the real
+`_widen_stop_past_noise`, which reads the stop from the instrument (the
+wider of the ATR noise band and the signal bar's far edge, `signal_bar_low`
+/ `signal_bar_high` set here from the SIGNAL day's bar), exactly as live.
+Whatever comes out is fed through the REAL `_resolve_stop` /
+`_widen_stop_past_noise`, exactly as the live constructor would if the
+analyst had reported those numbers. `setup_type`
 ("range" vs "breakout") is likewise substituted deterministically from
 `MarketContext.is_consolidating` (src/data/context.py) rather than an LLM's
 chart read. Both substitutions are declared here, not hidden in a helper.
@@ -227,17 +237,27 @@ def _setup_type_for(bars_through_signal: list[OHLCV]) -> str:
 
 
 def _resolve_structural_stop_and_target(
-    bars_through_signal: list[OHLCV], direction: str,
+    bars_through_signal: list[OHLCV], direction: str, entry_price: float,
 ) -> tuple[
     float | None, float | None, list[float], dict[float, int],
     dict[float, list[tuple[float, float]]],
 ]:
-    """Nearest structural level on the protective side becomes the stop
-    candidate; the nearest level on the other side becomes the reference
-    target. Returns (None, None, [], {}) when there is no level to defend a
-    stop with — `find_structural_levels` already returns "no structure"
-    honestly (empty lists) rather than inventing one, and this engine
-    declines the signal on the same terms the live analyst is told to.
+    """Nearest structural level on the protective side of `entry_price`
+    becomes the stop candidate; the nearest level on the other side of it
+    becomes the reference target. A `None` stop is NOT a refusal: it means
+    no level defends this entry, and the caller hands `None` to the real
+    `_widen_stop_past_noise`, which reads the stop from the instrument —
+    exactly what `_resolve_stop` does live (item 54).
+
+    ONE REFERENCE PRICE. `entry_price` is the NEXT day's open, the price
+    this engine actually fills at, and it is the only price the levels are
+    partitioned against. It was previously the signal day's close for the
+    level partition and the next open everywhere else (sizing, the noise
+    band, the reward:risk check), so a gap through a level put the stop on
+    the wrong side of what was paid. This is NOT look-ahead: the engine
+    already resolved the whole stop against this same next-day open before
+    sizing, and the level choice is part of that same at-the-open decision.
+    The LEVELS themselves still come only from bars through the signal day.
 
     The third element is every computed level, supports and resistances
     unioned — the same shape `TechAnalysisResult.computed_levels` carries in
@@ -264,22 +284,19 @@ def _resolve_structural_stop_and_target(
     touches = {lv.price: lv.touches for lv in all_level_objs}
     level_bars = {lv.price: list(lv.pivot_bars) for lv in all_level_objs}
     # The stop candidate is the nearest level on the stop side of the
-    # last close. KNOWN DIVERGENCE from the live desk, pre-existing and
-    # flagged rather than fixed here (docs/WORK.md item 54, 2026-09-12):
-    # this engine still DECLINES a signal with no level on the stop side,
-    # while the live constructor reads a fallback stop from the instrument
-    # (the wider of the ATR noise band and the signal bar's edge) and gates
-    # on width instead. The one-day "no floor, no trade" rule that briefly
-    # made these agree was replaced on sourced research; bringing the
-    # engine to the live behaviour is a separate change.
-    close = bars_through_signal[-1].close
-    stop = structural_floor(all_levels, close, direction)
-    if stop is None:
-        return None, None, [], {}, {}
+    # ENTRY. A `None` here is passed on, not refused: the live constructor
+    # reads a fallback stop from the instrument (the wider of the ATR noise
+    # band and the signal bar's far edge) and gates on width, and this
+    # engine now does the same through the same function.
+    stop = structural_floor(all_levels, entry_price, direction)
     if direction == "long":
-        target = min((lv.price for lv in resistances), default=None)
+        target = min(
+            (lv.price for lv in resistances if lv.price > entry_price), default=None,
+        )
     else:
-        target = max((lv.price for lv in supports), default=None)
+        target = max(
+            (lv.price for lv in supports if lv.price < entry_price), default=None,
+        )
     return stop, target, all_levels, touches, level_bars
 
 
@@ -288,11 +305,13 @@ def _resolve_stop_for_signal(
     *,
     symbol: str,
     direction: str,
-    structural_stop: float,
+    structural_stop: float | None,
     target: float | None,
     atr_14: float | None,
     setup_type: str,
     ref_entry: float,
+    signal_bar_low: float | None = None,
+    signal_bar_high: float | None = None,
     computed_levels: list[float] | None = None,
     computed_level_touches: dict[float, int] | None = None,
     computed_level_bars: dict[float, list[tuple[float, float]]] | None = None,
@@ -333,8 +352,12 @@ def _resolve_stop_for_signal(
         computed_levels=list(computed_levels or []),
         computed_level_touches=dict(computed_level_touches or {}),
         computed_level_bars=dict(computed_level_bars or {}),
+        signal_bar_low=signal_bar_low, signal_bar_high=signal_bar_high,
     )
-    target_shim = SimpleNamespace(suggested_stop_price=None)
+    # `symbol` is read by `_resolve_stop`'s no-typed-stop log line, which
+    # only runs now that a stopless signal is passed through instead of
+    # being dropped (GAP 2).
+    target_shim = SimpleNamespace(suggested_stop_price=None, symbol=symbol)
     stop = constructor._resolve_stop(target_shim, analysis, ref_entry)
     if direction == "long":
         stop = constructor._widen_stop_past_noise(
@@ -588,32 +611,27 @@ def run_backtest(
                 continue
 
             direction = "long"  # see module docstring: real-data run is long-only
-            (
-                structural_stop, target, computed_levels,
-                computed_level_touches, computed_level_bars,
-            ) = _resolve_structural_stop_and_target(bars_through_today, direction)
-            if structural_stop is None:
-                continue
             setup_type = _setup_type_for(bars_through_today)
             next_idx = idx_map[next_day]
             ref_entry = bars_sorted[symbol][next_idx].open
             if not ref_entry or ref_entry <= 0:
                 continue
-            # The target was picked relative to the SIGNAL day's close; the
-            # actual entry is the NEXT day's open, which can gap past it. A
-            # "target" behind the real entry is not a profit objective any
-            # more (a long's target must sit above what was actually paid),
-            # so drop it rather than manage the trade against a number that
-            # no longer means what it says.
-            if target is not None:
-                if direction == "long" and target <= ref_entry:
-                    target = None
-                elif direction == "short" and target >= ref_entry:
-                    target = None
+            # Levels from bars through the signal day only; partitioned
+            # against the price actually paid at the next open, which is
+            # the same reference every other part of this decision already
+            # used. See `_resolve_structural_stop_and_target`.
+            (
+                structural_stop, target, computed_levels,
+                computed_level_touches, computed_level_bars,
+            ) = _resolve_structural_stop_and_target(
+                bars_through_today, direction, ref_entry,
+            )
+            signal_bar = bars_through_today[-1]
             stop = _resolve_stop_for_signal(
                 constructor, symbol=symbol, direction=direction,
                 structural_stop=structural_stop, target=target,
                 atr_14=indicators.atr_14, setup_type=setup_type, ref_entry=ref_entry,
+                signal_bar_low=signal_bar.low, signal_bar_high=signal_bar.high,
                 computed_levels=computed_levels,
                 computed_level_touches=computed_level_touches,
                 computed_level_bars=computed_level_bars,
