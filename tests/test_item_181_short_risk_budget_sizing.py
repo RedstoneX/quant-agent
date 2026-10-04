@@ -95,6 +95,9 @@ def _run_exec(pipeline, decision, monkeypatch):
         reasoning_chain=_pm_rc(), decisions=[decision], portfolio_view="t",
     )
     ExecutionStage(pipeline=pipeline).run(ctx)
+    submitted = pipeline.broker.submit_order.call_args
+    if submitted is not None:
+        captured["limit_price"] = submitted.kwargs.get("limit_price")
     return captured
 
 
@@ -112,11 +115,17 @@ def test_short_risk_budget_sizes_off_the_print_not_a_stale_higher_entry(monkeypa
     captured = _run_exec(pipeline, short, monkeypatch)
     # BUG (pre-fix): sizing_price == 104.0 (the entry), risk_per_share == 16,
     # understating the correct 20 -> qty_by_risk 25% over the ratified budget.
-    # FIX: risk-budget divisor is the today print, 100.0.
-    assert captured["sizing_price"] == 100.0
+    # The item 181 guarantee STANDS and is now stronger (2026-10-04): the
+    # divisor is the marketable floor actually submitted, which is derived
+    # from the today print and is never the stale analyst entry. Sizing
+    # against the submitted limit is what makes the realised fill-to-stop
+    # risk equal the risk the share count was computed from — see
+    # tests/test_risk_sized_against_submitted_limit.py.
+    assert captured["sizing_price"] == captured["limit_price"]
+    assert captured["sizing_price"] < 100.0  # never the 104 analyst entry
     assert captured["stop_price"] == 120.0
     risk_per_share = abs(captured["sizing_price"] - captured["stop_price"])
-    assert risk_per_share == 20.0  # not 16.0 (stop - stale entry)
+    assert risk_per_share > 20.0  # not 16.0 (stop - stale entry)
 
 
 def test_short_risk_budget_unaffected_when_entry_is_at_or_below_the_print(monkeypatch):
@@ -130,7 +139,10 @@ def test_short_risk_budget_unaffected_when_entry_is_at_or_below_the_print(monkey
         reasoning="short new name, entry below print",
     )
     captured = _run_exec(pipeline, short, monkeypatch)
-    assert captured["sizing_price"] == 100.0
+    # Now anchored to the submitted marketable floor (itself computed off
+    # the print), so the entry still cannot reach the divisor.
+    assert captured["sizing_price"] == captured["limit_price"]
+    assert captured["sizing_price"] < 100.0
 
 
 def test_buy_risk_budget_still_sizes_off_the_max_conservative_divisor(monkeypatch):
@@ -145,4 +157,9 @@ def test_buy_risk_budget_still_sizes_off_the_max_conservative_divisor(monkeypatc
         reasoning="buy new name, entry above print",
     )
     captured = _run_exec(pipeline, buy, monkeypatch)
-    assert captured["sizing_price"] >= 103.0
+    # 2026-10-04: the BUY divisor is the submitted ceiling — the WORST price
+    # this order can actually fill at. `max(print, entry)` was a price the
+    # order could never pay, so it was never the right divisor; the ceiling
+    # is, and both directions use the same rule.
+    assert captured["sizing_price"] == captured["limit_price"]
+    assert captured["sizing_price"] > 100.0  # above the print, as a buy must be
