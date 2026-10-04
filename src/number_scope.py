@@ -72,14 +72,16 @@ SCOPED_PATHS: tuple[str, ...] = (
     # longer exists — that gate refuses the BUY instead of sizing it (board
     # item 186, 2026-10-01) — and the rule stays because the shape recurs.
     "src/pipeline.py",
-    "src/pipeline_delever.py",
+    "src/pipeline_delever.py", "src/delever/forced.py", "src/delever/ladder.py", "src/delever/conviction.py",
+    "src/delever/enforce.py", "src/delever/trims.py", "src/delever/risk_number.py",
     # The held-position exit engine and the exit-trigger vocabulary -- moved
     # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
     # Every trail multiple and every exit threshold it carries stays scoped.
     "src/pipeline_exits.py", "src/exits/exit_records.py",  # the trail cooldown lifted verbatim 2026-10-04
     # The intra-check session and the intraday opportunity scan -- moved here
     # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
-    "src/pipeline_intraday.py", "src/intraday",  # 2026-10-04: its bodies are parts under src/intraday/; the directory entry covers them all
+    # 2026-10-04: the intraday bodies are parts under src/intraday/; the directory entry covers them all.
+    "src/pipeline_intraday.py", "src/intraday",
     # 2026-10-01, board item 210 step 6: the universe-admission cluster --
     # the external-nomination gates, the screen and its admission -- moved
     # here out of `src/pipeline.py`. Its dollar-volume and price floors stay

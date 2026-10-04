@@ -29,6 +29,7 @@ from src.intraday.gating import IntradayGating
 from src.intraday.safety import IntradaySafety
 from src.intraday.session import IntradaySession
 from src.pipeline_context import RunContext
+from src.sentinel.guarded_site import record_site as _site
 from src.pipeline_stages import _persist_evidence, _record_pipeline_event
 
 # --- ONE mirror block: names the moved bodies used to resolve through this module ---
@@ -219,11 +220,7 @@ class IntradayScanBody:
                 ctx.total_value = account.get("portfolio_value", ctx.total_value)
                 self._sync_positions_from_broker(positions)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Intraday scan: post-wait broker refresh failed (%s) — "
-                    "skipping paid discovery rather than sizing on a "
-                    "pre-fill snapshot", exc,
-                )
+                _site(self, "post_wait_refresh", exc, log=logger)
                 return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
             candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
 
@@ -253,10 +250,7 @@ class IntradayScanBody:
                     detail=f"move_pct={move_by_symbol[symbol]:.4f}",
                 )
             except Exception as exc:
-                logger.warning(
-                    "Intraday evaluation ledger write failed for %s (%s) — "
-                    "skipping it to avoid unbounded repeat spend", symbol, exc,
-                )
+                _site(self, "evaluation_ledger", exc, context={"symbol": symbol}, log=logger)
                 continue
             ledgered_symbols.append(symbol)
             _record_pipeline_event(
@@ -296,7 +290,7 @@ class IntradayScanBody:
             try:
                 bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days)
             except Exception as e:  # noqa: BLE001
-                logger.warning("Intraday scan: bar fetch failed for %s: %s", symbol, e)
+                _site(self, "bar_fetch", e, context={"symbol": symbol}, log=logger)
                 _record_pipeline_event(
                     self, ctx, symbol, "specialist", "failed",
                     "market_data_exception", detail=str(e),
@@ -323,12 +317,14 @@ class IntradayScanBody:
         try:
             prior_macro_state = self.macro_store.load_last_state() or {}
         except Exception as e:  # noqa: BLE001
-            logger.warning("Intraday scan: prior macro state load failed: %s", e)
+            _site(self, "macro_state_load", e)
         prior_ratings: dict = {}
         try:
             prior_ratings = self.tech_store.load()
         except Exception as e:  # noqa: BLE001
-            logger.warning("Intraday scan: tech store load failed: %s", e)
+            _site(self, "tech_store_load", e)
+        else:
+            _site(self, "tech_store_load")
 
         # Truthful current-session evidence for exactly the names being
         # analyzed (2026-08-19): the scan detects on live prices, so Tech
@@ -371,10 +367,7 @@ class IntradayScanBody:
             # unparseable response) crashed the whole intraday tick
             # instead of being recorded as a LOST tech seat like every
             # other failure mode this scan already handles.
-            logger.error(
-                "Intraday scan: tech_analyst.analyze_batch raised: %s. "
-                "Tech seat LOST this tick.", e,
-            )
+            _site(self, "tech_batch", e, log=logger)
             analyses_map, ta_result = {}, None
         # analyses_map carries every candidate symbol as a key (2026-08-19
         # Tech batch-response symbol-loss fix) — None marks a symbol
@@ -408,7 +401,7 @@ class IntradayScanBody:
                     **agent_log_kwargs(ta_result),
                 )
             except Exception as e:  # noqa: BLE001
-                logger.warning("Intraday scan: tech_analyst agent_log insert failed: %s", e)
+                _site(self, "tech_agent_log", e)
             for analysis in analyses:
                 _persist_evidence(
                     self.db, run_id=ctx.run_id, agent_name="tech_analyst",
@@ -435,7 +428,7 @@ class IntradayScanBody:
                     if analysis.symbol in ages:
                         analysis.signal_age_days = ages[analysis.symbol]
             except Exception as e:  # noqa: BLE001
-                logger.warning("Intraday scan: tech store update failed: %s", e)
+                _site(self, "tech_store_update", e)
 
         # Item 20 (board): deliberately no early "no analyses" return here.
         # `symbols_data` was already confirmed non-empty above, so zero
@@ -539,8 +532,8 @@ class IntradayScanBody:
             if callable(stop_updates):
                 try:
                     stop_updates()
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    _site(self, "stop_updates", exc, log=logger)
             return early_exit
 
         orders = self.execution_stage.run(ctx)
@@ -576,6 +569,7 @@ class IntradayMixin:
     def _intraday_safety(self) -> IntradaySafety:
         """The IntradaySafety part, wired to this host live; bodies in src/intraday/safety.py."""
         return IntradaySafety(
+            db=getattr(self, "db", None),
             is_trading_day=getattr(self, "_is_trading_day", None),
             kill_switch_halt_result=getattr(self, "_kill_switch_halt_result", None),
             blocking_owner_session=getattr(self, "_blocking_owner_session", None),

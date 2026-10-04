@@ -1,4 +1,5 @@
-"""src.intraday.candidates -- the paid scan's wrapper and its inputs: the process-locked entry, held-technical refresh, mover candidates, the ATR move context and the two skip records.
+"""src.intraday.candidates -- the paid scan's wrapper and its inputs: the process-locked entry,
+held-technical refresh, mover candidates, the ATR move context and the two skip records.
 
 Bodies moved verbatim from src/pipeline_intraday.py (`IntradayMixin`), which keeps
 same-named thin shims built per call. Every collaborator is an explicit keyword-only
@@ -10,6 +11,7 @@ hands in), never a construction-time copy.
 import logging
 
 from src.pipeline_context import RunContext
+from src.sentinel.guarded_site import record_site as _site
 from src.pipeline_stages import _record_pipeline_event
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -18,7 +20,10 @@ logger = logging.getLogger("src.pipeline")
 
 
 class IntradayCandidates:
-    """The paid scan's wrapper and its inputs: the process-locked entry, held-technical refresh, mover candidates, the ATR move context and the two skip records. Standalone, built from explicit collaborators."""
+    """The paid scan's wrapper and its inputs: the process-locked entry, held-technical refresh, mover
+    candidates, the ATR move context and the two skip records. Standalone, built from explicit
+    collaborators.
+    """
 
     def __init__(
         self, *,
@@ -244,10 +249,7 @@ class IntradayCandidates:
                 detail=detail,
             )
         except Exception as exc:  # noqa: BLE001 — measurement, never the scan
-            logger.warning(
-                "Intraday trigger ATR context not recorded for %s (%s) — the "
-                "scan is unaffected", upper, exc,
-            )
+            _site(self, "trigger_atr_context", exc, context={"symbol": upper})
 
     def _intraday_paid_scan_skip(self, ctx: RunContext, movers: list[str]) -> dict:
         """Durable skip: lock still held, movers named, no silent drop."""
@@ -263,11 +265,8 @@ class IntradayCandidates:
                     self, ctx, symbol, "opportunity", "skipped",
                     "intraday_scan_lock_contended", detail=reason,
                 )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Intraday scan: could not persist skip reason for %s",
-                    symbol, exc_info=True,
-                )
+            except Exception as exc:  # noqa: BLE001
+                _site(self, "skip_reason_lock_contended", exc, context={"symbol": symbol})
         return {
             "status": "intraday_scan_lock_contended",
             "run_id": ctx.run_id,
@@ -296,11 +295,8 @@ class IntradayCandidates:
                     self, ctx, symbol, "opportunity", "skipped",
                     "intraday_scan_open_overlap", detail=reason,
                 )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Intraday scan: could not persist skip reason for %s",
-                    symbol, exc_info=True,
-                )
+            except Exception as exc:  # noqa: BLE001
+                _site(self, "skip_reason_open_overlap", exc, context={"symbol": symbol})
         return {
             "status": "intraday_scan_open_overlap",
             "run_id": ctx.run_id,

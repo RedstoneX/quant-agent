@@ -12,6 +12,7 @@ import logging
 from src.cost_circuit import PaidAnalysisSuspended
 from src.intraday_scan_outcome import failed_scan_result
 from src.pipeline_context import RunContext
+from src.sentinel.guarded_site import record_site as _site
 from src.trading_calendar import session_date_key
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -20,7 +21,9 @@ logger = logging.getLogger("src.pipeline")
 
 
 class IntradaySession:
-    """The FREE intra-check session: the check itself, its body and its report. Standalone, built from explicit collaborators."""
+    """The FREE intra-check session: the check itself, its body and its report. Standalone, built from
+    explicit collaborators.
+    """
 
     def __init__(
         self, *,
@@ -117,9 +120,9 @@ class IntradaySession:
                 run_id=run_id, date=session_date_key(), payload=result,
             )
         except Exception as exc:  # noqa: BLE001 — never break the push
-            logger.warning(
-                "intra_check report persistence failed (non-fatal): %s", exc,
-            )
+            _site(self, "report_persist", exc)
+        else:
+            _site(self, "report_persist")
 
     def _run_intra_check_body(self) -> dict:
         """Lightweight intra-session maintenance tick (no LLM calls).
@@ -178,7 +181,7 @@ class IntradaySession:
             account = self.broker.get_account()
             positions = self.broker.get_positions()
         except Exception as e:
-            logger.error("Intra check: broker query failed: %s", e)
+            _site(self, "broker_query", e, log=logger)
             return {"status": "broker_error", "run_id": run_id, "error": str(e),
                     "stop_coverage_gaps": coverage_gaps}
 
@@ -236,6 +239,7 @@ class IntradaySession:
             # dict (mirroring the `paid_analysis_suspended` shape
             # above) makes the crash visible through the same nested
             # path, while the tick itself still completes normally.
+            _site(self, "intraday_scan", e, log=logger)
             scan_result = failed_scan_result(e, run_id)
         if scan_result is not None:
             result["intraday_scan"] = scan_result

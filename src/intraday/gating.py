@@ -1,4 +1,5 @@
-"""src.intraday.gating -- the gates around the paid scan: cooldown memory, the owner-session lock, the paid-scan slot, the single-scan process lock and snapshot-health tracking.
+"""src.intraday.gating -- the gates around the paid scan: cooldown memory, the owner-session lock,
+the paid-scan slot, the single-scan process lock and snapshot-health tracking.
 
 Bodies moved verbatim from src/pipeline_intraday.py (`IntradayMixin`), which keeps
 same-named thin shims built per call. Every collaborator is an explicit keyword-only
@@ -11,13 +12,18 @@ import contextlib
 import logging
 from pathlib import Path
 
+from src.sentinel.guarded_site import record_site as _site
+
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
 logger = logging.getLogger("src.pipeline")
 
 
 class IntradayGating:
-    """The gates around the paid scan: cooldown memory, the owner-session lock, the paid-scan slot, the single-scan process lock and snapshot-health tracking. Standalone, built from explicit collaborators."""
+    """The gates around the paid scan: cooldown memory, the owner-session lock, the paid-scan slot, the
+    single-scan process lock and snapshot-health tracking. Standalone, built from explicit
+    collaborators.
+    """
 
     def __init__(
         self, *,
@@ -63,10 +69,7 @@ class IntradayGating:
                 symbol, cooldown_hours=cooldown_hours,
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Intraday cooldown ledger failed for %s (%s) — skipping scan "
-                "for this symbol fail-closed", symbol, e,
-            )
+            _site(self, "cooldown_ledger", e, context={"symbol": symbol}, log=logger)
             return True
         if isinstance(rows, list):
             return bool(rows)
@@ -76,7 +79,8 @@ class IntradayGating:
         # Production Database always returns a real list above.
         try:
             legacy_rows = self.db.get_trades(symbol=symbol, limit=10)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            _site(self, "cooldown_legacy_trades", exc, context={"symbol": symbol})
             return True
         from datetime import datetime as _dt, timedelta, timezone
         cutoff = _dt.now(timezone.utc) - timedelta(hours=cooldown_hours)
@@ -267,10 +271,7 @@ class IntradayGating:
                     "lock — skipping this tick (no concurrent position sizing)",
                 )
         except Exception as e:  # noqa: BLE001 — unknowable lock state must not scan
-            logger.warning(
-                "Intraday scan: could not establish the process lock (%s) — "
-                "skipping this tick (fail-closed)", e,
-            )
+            _site(self, "scan_lock", e, log=logger)
         try:
             # Keep the yield outside the acquisition exception handler.  An
             # exception raised by the protected scan body is injected here by
@@ -282,8 +283,8 @@ class IntradayGating:
             if fh is not None:
                 try:
                     fh.close()   # releases the flock
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    _site(self, "scan_lock_release", exc)
 
     def _track_intraday_snapshot_ok(self, symbol: str) -> None:
         """Reset a symbol's consecutive-miss streak. Never raises — a

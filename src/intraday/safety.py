@@ -1,4 +1,5 @@
-"""src.intraday.safety -- the FREE intra-check safety pass: the reconcile-and-drain preamble and the session that runs it alone.
+"""src.intraday.safety -- the FREE intra-check safety pass: the reconcile-and-drain preamble and
+the session that runs it alone.
 
 Bodies moved verbatim from src/pipeline_intraday.py (`IntradayMixin`), which keeps
 same-named thin shims built per call. Every collaborator is an explicit keyword-only
@@ -10,6 +11,7 @@ hands in), never a construction-time copy.
 import logging
 
 from src.pipeline_context import RunContext
+from src.sentinel.guarded_site import record_site as _site
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -17,10 +19,13 @@ logger = logging.getLogger("src.pipeline")
 
 
 class IntradaySafety:
-    """The FREE intra-check safety pass: the reconcile-and-drain preamble and the session that runs it alone. Standalone, built from explicit collaborators."""
+    """The FREE intra-check safety pass: the reconcile-and-drain preamble and the session that runs it
+    alone. Standalone, built from explicit collaborators.
+    """
 
     def __init__(
         self, *,
+        db=None,
         is_trading_day=None,
         kill_switch_halt_result=None,
         blocking_owner_session=None,
@@ -36,6 +41,7 @@ class IntradaySafety:
         run_intra_safety_preamble=None,
         state=None,
     ) -> None:
+        self.db = db
         self._is_trading_day = is_trading_day
         self._kill_switch_halt_result = kill_switch_halt_result
         self._blocking_owner_session = blocking_owner_session
@@ -161,7 +167,9 @@ class IntradaySafety:
                 try:
                     coverage_gaps = self._reconcile_stop_coverage()
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
+                    _site(self, "coverage_reconcile", exc, log=logger)
+                else:
+                    _site(self, "coverage_reconcile", log=logger)
                 # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
                 self._release_retired_cash_park(run_id)
                 self._reconcile_orphan_pending_submits()  # audit F4
@@ -196,7 +204,9 @@ class IntradaySafety:
                 try:
                     self._reconcile_fills()
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
+                    _site(self, "fill_reconcile", exc, log=logger)
+                else:
+                    _site(self, "fill_reconcile", log=logger)
                 # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
                 # every ~30 min, so this is the tightest window this reconciler
                 # runs on — a stop that fires mid-session is written back within
@@ -206,7 +216,9 @@ class IntradaySafety:
                 try:
                     reco = self._reconcile_stop_out_fills(run_id)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
+                    _site(self, "stop_out_reconcile", exc, log=logger)
+                else:
+                    _site(self, "stop_out_reconcile", log=logger)
                 # Item 101: surface a broker-made stop-out / re-protection to
                 # owner — intra is the tightest cadence, so this is where a
                 # mid-session stop-out reaches him fastest.
