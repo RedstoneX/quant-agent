@@ -136,6 +136,7 @@ from src.data.context import compute_market_context
 from src.data.correlation import build_correlation_matrix, correlation_clusters
 from src.data.levels import find_structural_levels, structural_floor
 from src.data.technical import compute_indicators
+from src.backtest.records import Trade, _OpenPosition, _fill_price  # noqa: F401
 from src.models import OHLCV
 from src.pipeline import TradingPipeline
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
@@ -170,46 +171,6 @@ class BacktestParams:
     min_bars_for_signal: int = MIN_BARS_FOR_SIGNAL
 
 
-@dataclass
-class _OpenPosition:
-    symbol: str
-    direction: str  # "long" | "short"
-    signal_date: date
-    entry_date: date
-    entry_index: int
-    entry_price: float  # fill price (slippage-adjusted)
-    stop_initial: float
-    stop: float  # current (possibly trailed) stop
-    target: float | None
-    setup_type: str
-    shares: float
-    risk_pct: float
-
-
-@dataclass(frozen=True)
-class Trade:
-    """One closed round-trip. Every price here is a FILL price (slippage
-    applied) except `stop_price` / `target_price`, which are the structural
-    price LEVELS the trade was managed against."""
-
-    symbol: str
-    direction: str  # "long" | "short"
-    signal_date: date
-    entry_date: date
-    entry_price: float
-    stop_price: float
-    target_price: float | None
-    exit_date: date
-    exit_price: float
-    exit_reason: str  # "stop" | "target" | "horizon" | "end_of_data"
-    shares: float
-    risk_pct: float
-    setup_type: str
-    hold_days: int
-    pnl: float
-    r_multiple: float
-
-
 @dataclass(frozen=True)
 class BacktestRunResult:
     trades: list[Trade]
@@ -242,19 +203,6 @@ class BacktestRunResult:
         decision, because compounding carries that choice into every
         later size and outcome."""
         return self.contested_budget_days == 0
-
-
-def _fill_price(raw_price: float, direction: str, side: str, slippage_bps: float) -> float:
-    """Apply a flat slippage assumption in the ADVERSE direction only.
-
-    `side` is "open" (establishing the position) or "close" (exiting it).
-    Buying always costs slippage; selling always gives it up. A long open
-    and a short close are both buys; a long close and a short open are both
-    sells.
-    """
-    frac = slippage_bps / 10_000.0
-    buying = (direction == "long" and side == "open") or (direction == "short" and side == "close")
-    return raw_price * (1 + frac) if buying else raw_price * (1 - frac)
 
 
 def _setup_type_for(bars_through_signal: list[OHLCV]) -> str:
@@ -350,7 +298,11 @@ def _resolve_stop_for_signal(
     `computed_level_touches` is the touch count behind each of those prices
     (2026-09-03) — without it `_level_backing_stop` would honour every
     level regardless of `risk.min_level_touches_for_stop_honor`, which is
-    not the rule the live path runs. `computed_level_bars` is the pivot-bar
+    not the rule the live path runs. The bar those counts are judged
+    against is `config.risk.min_level_touches_for_stop_honor`, wired into
+    this engine's `ConstructorConfig` in `run_backtest` — it was not wired
+    before 2026-10-04, so this paragraph described a rule the engine was
+    not actually running. `computed_level_bars` is the pivot-bar
     ranges behind those same prices — `_level_backing_stop` fails closed
     without them, so omitting it would make this engine refuse every
     level-backed stop that live honours.
@@ -434,6 +386,17 @@ def run_backtest(
         # own width, read from `src.data.levels.CLUSTER_TOLERANCE_PCT`, so
         # live and backtest get it from the same place by construction.
         absolute_min_stop_atr_multiple=config.risk.absolute_min_stop_atr_multiple,
+        # The §12.1 trust bar itself. Until 2026-10-04 this line was
+        # MISSING while the two docstrings below claimed the engine ran
+        # the live touch rule: the constructor fell back to
+        # `ConstructorConfig`'s own default, so `risk.min_level_touches_
+        # for_stop_honor` in the YAML changed nothing and an A/B sweep of
+        # it returned byte-identical results. The level branch was always
+        # reached (measured: 32 entries into `_level_backing_stop` over a
+        # five-symbol 2026 run); what was unreachable was the CONFIGURED
+        # bar. Wired here for the same reason every other `config.risk.*`
+        # field above is wired — so changing the YAML IS the experiment.
+        min_level_touches_for_stop_honor=config.risk.min_level_touches_for_stop_honor,
         # Target-derivation tunables (2026-09-01). Wired for parity with
         # live, though this engine does not reach `_derive_target`: it
         # computes its own nearest-level target in
