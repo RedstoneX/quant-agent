@@ -184,15 +184,41 @@ def test_the_stamps_survive_a_real_round_trip_through_storage(tmp_path):
     assert news.age_seconds == 9000
 
 
-def test_the_pipeline_stamps_what_it_persists():
+def test_the_gate_stamps_what_it_persists(tmp_path):
     """The gate's own disclosure must carry the stamp, or the row above is
-    never written in production."""
-    import inspect
+    never written in production.
 
-    # The body moved to the function-only halt-gates module 2026-10-04; the
-    # class keeps a one-line shim, so read the body where it now lives.
+    Calls the function-only gate directly with a stub owner holding just a
+    real in-memory-file database, and reads the outcome, so it fails when
+    the stamp or the prior-read lookup stops happening and not merely when a
+    word disappears from the source. No pipeline object is built.
+    """
+    from types import SimpleNamespace
+
     from src import pipeline_halt_gates
+    from src.storage.db import Database
 
-    source = inspect.getsource(pipeline_halt_gates._evidence_gate_skip)
-    assert ".stamped(" in source
-    assert "last_fresh_seat_reads" in source
+    db = Database(str(tmp_path / "desk.db"))
+    db.initialize()
+    db.save_session_report(
+        mode="morning", date="2026-10-01", run_id="morning-aaa",
+        payload={"evidence_freshness": _morning().to_evidence()},
+    )
+    owner = SimpleNamespace(db=db, _record_name_coverage=lambda *a, **k: None)
+    ctx = SimpleNamespace(
+        run_id="intra-bbb", session="intra_check", analyses=[],
+        decision_id=None,
+        data_status={"tech": "ok", "news": "carried_from_morning"},
+    )
+    pipeline_halt_gates._evidence_gate_skip(
+        owner, ctx, "intra-bbb", session="intra_check")
+
+    record = ctx.evidence_freshness
+    assert record["stamped_run_id"] == "intra-bbb"
+    assert record["stamped_mode"] == "intra_check"
+    tech = evidence_gate.seat_read_state(record, "tech", run_id="intra-bbb")
+    assert tech.state == evidence_gate.READ_REFRESHED
+    # The prior-read lookup ran: the carried seat names the morning run.
+    news = evidence_gate.seat_read_state(record, "news", run_id="intra-bbb")
+    assert news.state == evidence_gate.READ_CARRIED
+    assert news.run_id == "morning-aaa"

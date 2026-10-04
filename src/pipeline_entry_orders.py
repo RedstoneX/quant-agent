@@ -938,39 +938,6 @@ def _record_constructor_side_flips(pipeline, ctx) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("constructor side-flip recording failed: %s", exc)
 
-def _record_realised_sector_weights(
-    pipeline, ctx, portfolio_decision, total_value,
-) -> None:
-    """One durable row per run with the REALISED `(sector, side)` weights of
-    the orders the constructor actually built this session.
-
-    Board item 224 (2026-10-01). RECORDING ONLY: nothing may read this back
-    into a sizing, ordering or refusal decision, and it may NEVER be swept
-    for the sector cap that would have performed best — see the
-    `realised_sector_weights` note in `src/storage/db.py::_migrate` for the
-    unit, the denominator and the full bar on its use.
-
-    Called here, immediately after `construct_orders` has returned, because
-    this is the first point at which the FINISHED order list exists: the
-    gross-exposure rationing inside the constructor runs last and changes
-    sizes after each order is built, so anything recorded earlier would be
-    what was hoped for rather than what was built. Never raises.
-    """
-    try:
-        db = getattr(pipeline, "db", None)
-        if db is None or not hasattr(db, "record_realised_sector_weights"):
-            return
-        db.record_realised_sector_weights(
-            decisions=list(getattr(portfolio_decision, "decisions", None) or []),
-            sectors=getattr(
-                pipeline.portfolio_constructor, "last_order_sectors", None,
-            ),
-            total_value=total_value,
-            run_id=getattr(ctx, "run_id", None),
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("realised sector-weight recording failed: %s", exc)
-
 def _apply_repeg(
     pipeline, ctx, *, symbol, order_id: str, trade_row_id, target: float,
     requested_qty, ceiling: float, ask: float | None = None,

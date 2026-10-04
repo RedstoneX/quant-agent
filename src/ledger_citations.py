@@ -1,4 +1,9 @@
-"""Ledger citation guard (rule 7, board item 225). Resolves each citation."""
+"""Ledger citation guard (rule 7, board items 225 and 232), in two layers.
+
+Layer 1, `unresolved_citations`: does the citation point at something real?
+Layer 2, `unsubstantiated_citations`: does what it points at justify a number?
+`broken_citations` is both, for the callers that want the whole verdict.
+"""
 
 from __future__ import annotations
 
@@ -49,6 +54,45 @@ def _python_symbols(source: str) -> set[str]:
     return found
 
 
+_IMPORT_RE = re.compile(r"^\s*(import\s+\S|from\s+\S+\s+import\b)")
+_OPENERS = {"(": ")", "[": "]", "{": "}"}
+_PREFIX_OK = re.compile(r"^[\s#>*|\-\"'`/]*$")
+_ASSIGN_PREFIX = re.compile(r"^\s*[\w.\[\]]+\s*(:[^=]+)?=\s*$")
+
+
+def _unbalanced(text: str) -> bool:
+    stack: list[str] = []
+    for ch in text:
+        if ch in _OPENERS:
+            stack.append(_OPENERS[ch])
+        elif ch in _OPENERS.values():
+            if not stack or stack.pop() != ch:
+                return True
+    return bool(stack)
+
+
+def _cannot_substantiate_text(snip: str, body: str) -> str | None:
+    """Why a text pin proves nothing, or None. An import line, an unbalanced
+    fragment, or text that starts mid-sentence says nothing about a number."""
+    if _IMPORT_RE.match(snip):
+        return "text pin is an import statement"
+    if _unbalanced(snip):
+        return "text pin has unbalanced brackets (a mid-sentence fragment)"
+    tokens = snip.split()
+    if not tokens:
+        return "text pin is empty"
+    hit = re.search(r"\s+".join(re.escape(t) for t in tokens), body)
+    if hit is None:
+        return None
+    line_start = body.rfind("\n", 0, hit.start()) + 1
+    before = body[line_start : hit.start()]
+    if _PREFIX_OK.match(before) or re.search(r"[.:;!?]\s+$", before):
+        return None
+    if _ASSIGN_PREFIX.match(before):
+        return None
+    return "text pin begins mid-sentence, not at a statement or sentence boundary"
+
+
 def _string_fields(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -59,10 +103,11 @@ def _string_fields(value: Any) -> list[str]:
     return []
 
 
-def broken_citations(
+def unresolved_citations(
     ledger: dict[str, dict[str, Any]], root: Path
 ) -> list[tuple[str, str, str]]:
-    """Repo citations in the ledger that are false or unverifiable:
+    """LAYER 1 (resolves). Repo citations in the ledger that are false or
+    unverifiable:
     `(site_id, why, cite)`.
 
     Every string field of a row is read. A symbol citation must resolve in
@@ -106,3 +151,51 @@ def broken_citations(
                 if _normalise_text(match.group("snip")) not in _normalise_text(body):
                     out.append((site_id, "cited text not found in that file", match.group(0)))
     return out
+
+
+def unsubstantiated_citations(
+    ledger: dict[str, dict[str, Any]], root: Path
+) -> list[tuple[str, str, str]]:
+    """LAYER 2 (substantiates), item 232: `(site_id, why, cite)` for citations
+    that may resolve yet cannot justify a number - an import line, a module
+    dunder such as `__all__`, or a text pin that starts mid-sentence. Missing
+    files and symbols are layer 1's business and are skipped here."""
+    out: list[tuple[str, str, str]] = []
+    bodies: dict[str, str | None] = {}
+    for site_id, entry in ledger.items():
+        text = " ".join(_string_fields(entry))
+        for match in _CITATION_RE.finditer(text):
+            rel = match.group(1)
+            if rel not in bodies:
+                target = root / rel
+                bodies[rel] = (
+                    target.read_text(encoding="utf-8") if target.is_file() else None
+                )
+            body = bodies[rel]
+            if body is None:
+                continue
+            sym = match.group("sym")
+            if sym:
+                sym = sym.rstrip(".")
+                if "." not in sym and sym.startswith("__") and sym.endswith("__"):
+                    out.append(
+                        (
+                            site_id,
+                            "module-level dunder (e.g. __all__) substantiates nothing",
+                            match.group(0),
+                        )
+                    )
+            elif match.group("snip"):
+                if _normalise_text(match.group("snip")) not in _normalise_text(body):
+                    continue
+                why = _cannot_substantiate_text(match.group("snip"), body)
+                if why:
+                    out.append((site_id, why, match.group(0)))
+    return out
+
+
+def broken_citations(
+    ledger: dict[str, dict[str, Any]], root: Path
+) -> list[tuple[str, str, str]]:
+    """Both layers: everything wrong with a citation, resolving or substantiating."""
+    return unresolved_citations(ledger, root) + unsubstantiated_citations(ledger, root)

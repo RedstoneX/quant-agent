@@ -27,6 +27,7 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
+from src.stop_cancel_outcome import (StopCancelOutcome, StopCoverageLost, settle_cancel)
 from src.models import Position
 from src import sector_reference as _sector_reference
 # THE stop-value judgement (docs/WORK.md item 88). `src.execution.stop_records`
@@ -591,23 +592,29 @@ class AlpacaBroker:
 
     def cancel_snapshotted_stops(
         self, symbol: str, specs: list[dict],
-    ) -> bool:
+    ) -> StopCancelOutcome:
         """Cancel pre-snapshotted protective stops by id.
 
-        Same partial-failure discipline as the original
-        cancel_protective_stops: if any cancel raises, the ones that
-        did cancel are restored and False is returned (the caller won't
-        proceed with the SELL, so leaving coverage shrunk for no gain
-        would be strictly worse). Returns True iff every stop was
-        cancelled (or there were none).
+        Returns a :class:`StopCancelOutcome`, never a bool. Three states the
+        caller MUST distinguish: ``cleared`` (SELL may proceed), not cleared
+        with ``coverage_shrank`` False (nothing moved on net, every share is
+        still covered), and ``coverage_shrank`` True (a cancel failed, the
+        rollback also failed, and ``outcome.unprotected`` names the shares
+        that are naked at the broker right now — skip the SELL AND keep the
+        recovery row for them). That third state is what the old bare
+        ``False`` hid: two callers read it as "nothing moved" and deleted
+        the only durable intent that could re-attach the missing stops.
         """
         if not specs:
-            return True
+            return StopCancelOutcome.nothing_to_do(symbol)
         cancelled: list[dict] = []
-        failed = 0
+        untouched: list[dict] = []
+        cancel_failed: list[dict] = []
         for spec in specs:
             sid = spec.get("id")
             if not sid:
+                # Never sent to the broker: still alive, still covering.
+                untouched.append(spec)
                 continue
             try:
                 self.client.cancel_order_by_id(sid)
@@ -617,40 +624,11 @@ class AlpacaBroker:
                     "cancel_snapshotted_stops: cancel failed for %s order "
                     "%s: %s", symbol, sid, exc,
                 )
-                failed += 1
-        if failed > 0:
-            restored = 0
-            rollback_failed: list[dict] = []
-            if cancelled:
-                # _restore_stop_orders returns (restored_count, failed_specs)
-                # — the old code DISCARDED it, so a rollback that itself
-                # failed left the position with shrunk coverage and reported
-                # only a bare False. The SELL is skipped either way, but the
-                # operator (and the next session's coverage reconcile, which
-                # now auto-repairs) must be able to see it (2026-07-16 audit).
-                restored, rollback_failed = self._restore_stop_orders(symbol, cancelled)
-            if rollback_failed:
-                logger.error(
-                    "cancel_snapshotted_stops: %d/%d cancel(s) failed for %s AND "
-                    "the rollback could not restore %d of %d cancelled stop(s) — "
-                    "%s is now UNDER-PROTECTED; next session's coverage reconcile "
-                    "must repair it. SELL won't proceed.",
-                    failed, len(specs), symbol, len(rollback_failed), len(cancelled),
-                    symbol,
-                )
-            else:
-                logger.warning(
-                    "cancel_snapshotted_stops: %d/%d cancel(s) failed for %s "
-                    "(rolled back %d/%d that succeeded); SELL won't proceed",
-                    failed, len(specs), symbol, restored, len(cancelled),
-                )
-            return False
-        if cancelled:
-            logger.info(
-                "Cancelled %d protective stop(s) for %s",
-                len(cancelled), symbol,
-            )
-        return True
+                cancel_failed.append(spec)
+        return settle_cancel(
+            symbol, specs, cancelled, untouched, cancel_failed,
+            self._restore_stop_orders, logger,
+        )
 
     def cancel_protective_stops(self, symbol: str) -> tuple[bool, list[dict]]:
         """Cancel all open SELL stop orders for one symbol so a fresh exit
@@ -696,7 +674,13 @@ class AlpacaBroker:
             return False, []
         if not specs:
             return True, []
-        if not self.cancel_snapshotted_stops(symbol, specs):
+        outcome = self.cancel_snapshotted_stops(symbol, specs)
+        if not outcome.cleared:
+            if outcome.coverage_shrank:
+                # This composite has no channel for a partial loss, so it
+                # must not quietly answer "nothing happened". Direct callers
+                # get the specs they now have to re-protect.
+                raise StopCoverageLost(outcome)
             return False, []
         return True, specs
 

@@ -905,7 +905,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py::RiskConfig and src/data/levels.py@`def cluster_span(`. 1.0 means the
+      src/config/__init__.py::RiskConfig and src/data/levels.py::cluster_span. 1.0 means the
       projection IS the instrument's typical excursion over the stated horizon
       and nothing more, so the claim is read off the instrument rather than
       chosen. Note the documented interaction with min_stop_atr_multiple at
@@ -2769,7 +2769,7 @@ numbers:
     site: src/data/levels.py
     note: >-
       Bars either side of a candidate swing point for the LEVEL scan. Levels
-      place stops, so this reaches a trade. src/risk/trailing.py::__all__ records
+      place stops, so this reaches a trade. src/risk/trailing.py::PIVOT_WINDOW records
       that this is 5 while the trailing-stop pivot window is 3, that nothing
       downstream compares a level from here against a pivot from there, and
       that tests/test_pivot_window_independence.py pins both facts.
@@ -2853,7 +2853,7 @@ numbers:
       fix actually shipped instead reserves a small, bounded number of
       `max_observations` slots so a genuinely clustered symbol cannot be
       crowded out entirely by unrelated higher-dollar buys on OTHER symbols
-      (`_reserve_cluster_symbols`). 5 is an undderived round number picked
+      (`reserve_cluster_symbols`). 5 is an undderived round number picked
       only to keep the reservation small relative to `max_observations`
       (=40): nothing measures how many genuine same-day clusters occur on a
       typical day, so this cap could as easily starve a legitimately busy
@@ -2899,7 +2899,7 @@ numbers:
       Wilder's original lookback, as published in J. Welles Wilder, New
       Concepts in Technical Trading Systems (1978), and the period every chart
       package means by "ATR(14)". Definition site and reasoning:
-      src/data/technical.py@`from src.models import OHLCV, TechnicalIndicator`.
+      src/data/technical.py::ATR_PERIOD.
     note: >-
       The ATR lookback. Every stop, every noise band and every ATR multiple in
       this ledger is a multiple of THIS unit, and it was out of scope while
@@ -2939,8 +2939,8 @@ numbers:
       constant had TWO uses and the schema carries one status per site: USE ONE
       (the `rolling(200)` moving-average window) is sourced -- 200 is a
       conventional published trend reference, named here not chosen here -- but
-      USE TWO, the constructor's `_require_sufficient_history` young-listing
-      refusal, read the same 200 as a data-sufficiency gate with no citation
+      USE TWO, the constructor's young-listing
+      refusal (a since-removed function), read the same 200 as a data-sufficiency gate with no citation
       anywhere, so the row took the weaker use's status. The owner has now
       DROPPED that refusal (a young listing is judged on whether a protective
       stop is readable from whatever bars exist, via the existing
@@ -3088,7 +3088,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       Below this many resolved symbols a share is noise - one empty result out
-      of three is 33% and means nothing (src/pipeline_stages.py@`from src.config import AppConfig`). It
+      of three is 33% and means nothing (src/pipeline_stages.py::LEVELS_COVERAGE_MIN_SAMPLE). It
       only suppresses a false ALARM on small or degenerate universes (tests, a
       misconfigured owner universe); production runs 100+ symbols so it never
       binds there, and it changes no trade either way.
@@ -3821,7 +3821,7 @@ numbers:
     note: >-
       One dollar of cash deficit, below which negative cash is treated as
       rounding noise - fill rounding, commission leftovers, mid-vs-fill drift
-      (src/risk/constants.py@`import math`). It decides whether a cash-only-policy
+      (src/risk/constants.py::MARGIN_DEFICIT_FLOOR_USD). It decides whether a cash-only-policy
       ACTION fires on what is arithmetically dust; it does not size, price,
       gate or exit a trade.
   - id: src.risk.constants.REWARD_RISK_PARITY
@@ -4262,15 +4262,20 @@ numbers:
       The two-consecutive-day close filter for a level break in Edwards & Magee,
       Technical Analysis of Stock Trends: a level breaks on a decisive close and
       is confirmed on the NEXT day's close, with a reclaim in between resetting
-      (a Wyckoff spring). Definition and regime use: src/risk/exit_guard.py@`BREAK_CONFIRMATION_ATR_MULTIPLE = 1.0`
+      (a Wyckoff spring). Definition: src/risk/exit_guard.py@`TREND_CONFIRMING_CLOSES = 2`
       and the module note at src/risk/exit_guard.py::TREND_CONFIRMING_CLOSES.
     note: >-
       Consecutive confirmed closes required to treat ANY break as real, in BOTH
       regimes, under the owner mandate 2026-09-24 trend-scaled exit — the
       ratified two-close spring floor, nothing exits faster. The strong-with-
       trend regime adds a STRUCTURAL condition (the prior swing-low must also
-      break) on top, never a larger close count. The break MARGIN is always
-      NOISE_BAND_ATR_MULTIPLE.
+      break) on top, never a larger close count. This row governs the CLOSE COUNT
+      only. The break MARGIN is a separate quantity and is always
+      BREAK_CONFIRMATION_ATR_MULTIPLE, which the 2026-09-26 split (board item
+      70) made a distinct constant from NOISE_BAND_ATR_MULTIPLE; the two share
+      a value of 1.0 but not a source, and may not be re-collapsed. This note
+      said NOISE_BAND_ATR_MULTIPLE until 2026-10-04 — it predated the split
+      and contradicted src/risk/exit_guard.py::check_structural_protection.
   - id: src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD
     value: 25
     status: sourced
@@ -4727,7 +4732,7 @@ numbers:
     site: src/risk/size_override.py
     note: >-
       An ordinal in the size-override absorbing algebra (`no_trading > close >
-      reduce_only > multiplier`, src/risk/size_override.py@`from typing import Literal`). `combine()`
+      reduce_only > multiplier`, src/risk/size_override.py::_RANK). `combine()`
       keeps the operand with the lower rank. The VALUE carries no magnitude -
       only the ordering does, and the ordering is item 13's, not this file's.
       Any strictly increasing encoding behaves identically.
@@ -5015,7 +5020,7 @@ numbers:
       `arbitrary` rather than being dressed up as sourced.
     open_question: >-
       How many bars either side make a swing point a swing point?
-      src/risk/trailing.py::__all__ records that the level scan uses 5 and this
+      src/risk/trailing.py::PIVOT_WINDOW records that the level scan uses 5 and this
       uses 3 with no shared consumer.
     cost_while_unanswered: >-
       Trailing stops are placed on pivots found by a window nothing measured,
@@ -5214,7 +5219,7 @@ numbers:
     status: sourced
     site: src/verdicts.py
     source: >-
-      src/verdicts.py@`from __future__ import annotations`. The maximum of a scale defined as 0..1.
+      src/verdicts.py::CONVICTION_SCORE. The maximum of a scale defined as 0..1.
     note: >-
       The top of the same 0..1 encoding.
   - id: src.verdicts.CONVICTION_SCORE['medium']
@@ -5222,7 +5227,7 @@ numbers:
     status: sourced
     site: src/verdicts.py
     source: >-
-      src/verdicts.py@`from __future__ import annotations`: equal spacing on a three-point scale puts the
+      src/verdicts.py::CONVICTION_SCORE: equal spacing on a three-point scale puts the
       midpoint at 0.5 by construction, and the comment states nothing measured
       justifies anything else. The spacing is read off the scale; whether the
       scale should be equally spaced is the open question on the SEAT_WEIGHT
@@ -5250,7 +5255,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
+      src/verdicts.py::SEAT_WEIGHT cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here post-earnings-announcement drift (Ball &
       Brown 1968; Bernard & Thomas 1989/1990). The MAGNITUDE is not: nothing
@@ -5263,7 +5268,7 @@ numbers:
       20-resolved-call bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
+      spacing silently reorders the book; src/verdicts.py@`The amendment: use a real, externally published prior now, on outside literature about the general reliability of each TYPE of analysis (not a claim about how good THIS desk's specific analyst prompts are) — and let it be overridden the moment the desk's own conviction ledger clears the 20-resolved-call bar per seat` already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['macro']
     settles_by:
@@ -5284,7 +5289,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
+      src/verdicts.py::SEAT_WEIGHT cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here macro forecast effects fitting in-sample
       and failing out-of-sample (Benhenda 2026). The MAGNITUDE is not: nothing
@@ -5297,7 +5302,7 @@ numbers:
       bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
+      spacing silently reorders the book; src/verdicts.py@`The amendment: use a real, externally published prior now, on outside literature about the general reliability of each TYPE of analysis (not a claim about how good THIS desk's specific analyst prompts are) — and let it be overridden the moment the desk's own conviction ledger clears the 20-resolved-call bar per seat` already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['news']
     value: 1
@@ -5328,7 +5333,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
+      src/verdicts.py::SEAT_WEIGHT cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here insider edges living almost entirely in the
       pre-disclosure window. The MAGNITUDE is not: nothing in that literature
@@ -5341,7 +5346,7 @@ numbers:
       20-resolved-call bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
+      spacing silently reorders the book; src/verdicts.py@`The amendment: use a real, externally published prior now, on outside literature about the general reliability of each TYPE of analysis (not a claim about how good THIS desk's specific analyst prompts are) — and let it be overridden the moment the desk's own conviction ledger clears the 20-resolved-call bar per seat` already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['technical']
     settles_by:
@@ -5362,7 +5367,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
+      src/verdicts.py::SEAT_WEIGHT cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here cross-sectional momentum (Jegadeesh &
       Titman 1993; replicated by Rouwenhorst 1998). The MAGNITUDE is not:
@@ -5375,14 +5380,14 @@ numbers:
       20-resolved-call bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
+      spacing silently reorders the book; src/verdicts.py@`The amendment: use a real, externally published prior now, on outside literature about the general reliability of each TYPE of analysis (not a claim about how good THIS desk's specific analyst prompts are) — and let it be overridden the moment the desk's own conviction ledger clears the 20-resolved-call bar per seat` already
       commits to overriding it with measured history.
   - id: src.verdicts._DEFAULT_SEAT_WEIGHT
     value: 1
     status: sourced
     site: src/verdicts.py
     source: >-
-      src/verdicts.py::__all__: unweighted, never zero, so a seat added before
+      src/verdicts.py::_DEFAULT_SEAT_WEIGHT: unweighted, never zero, so a seat added before
       its own literature review lands is never silently muted. 1.0 is the
       unweighted baseline the table itself is expressed against, not a chosen
       magnitude.
@@ -7351,10 +7356,10 @@ numbers:
       No caller in src/, and the docstring (src/pipeline_intraday.py::IntradayMixin._another_session_recently_active)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(lookback_days)
+  - id: src.prompt_facts.review.blocked.ReviewBlocked._build_blocked_proposals(lookback_days)
     value: 21
     status: arbitrary
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/blocked.py
     note: >-
       Window of the PM's 'names you keep proposing and never get' memory
       (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
@@ -7381,10 +7386,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(max_lines)
+  - id: src.prompt_facts.review.blocked.ReviewBlocked._build_blocked_proposals(max_lines)
     value: 5
     status: arbitrary
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/blocked.py
     note: >-
       Maximum blocked names shown to the PM in that memory
       (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
@@ -7411,10 +7416,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_blocked_proposals(min_proposals)
+  - id: src.prompt_facts.review.blocked.ReviewBlocked._build_blocked_proposals(min_proposals)
     value: 3
     status: arbitrary
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/blocked.py
     note: >-
       Proposal count before a blocked name is shown to the PM in that memory
       (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
@@ -7441,10 +7446,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_calibration_note(lookback_days)
+  - id: src.prompt_facts.review.calibration.ReviewCalibration._build_calibration_note(lookback_days)
     value: 45
     status: arbitrary
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/calibration.py
     note: >-
       Window of the PM's own hit-rate/return calibration note
       (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates). Its only caller passes nothing, so this
@@ -7622,22 +7627,22 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_post_exit_reality(lookback_days)
+  - id: src.prompt_facts.review.exits.ReviewExits._build_post_exit_reality(lookback_days)
     value: 14
     status: not-trade-governing
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/exits.py
     note: >-
-      Dead default (src/pipeline_prompt_facts_review.py::PromptFactsReviewMixin._build_post_exit_reality): every caller in src/ passes
+      Dead default (src/prompt_facts/review/exits.py::ReviewExits._build_post_exit_reality): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_post_exit_reality(max_symbols)
+  - id: src.prompt_facts.review.exits.ReviewExits._build_post_exit_reality(max_symbols)
     value: 12
     status: arbitrary
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/exits.py
     note: >-
       Maximum exits audited in that post-exit block
-      (src/pipeline_prompt_facts_review.py::PromptFactsReviewMixin._build_post_exit_reality). Its only caller passes nothing, so this
+      (src/prompt_facts/review/exits.py::ReviewExits._build_post_exit_reality). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7661,13 +7666,13 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_post_exit_reality(min_age_days)
+  - id: src.prompt_facts.review.exits.ReviewExits._build_post_exit_reality(min_age_days)
     value: 2
     status: arbitrary
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/exits.py
     note: >-
       Minimum age of an exit before its after-the-fact move is shown to the
-      position reviewer (src/pipeline_prompt_facts_review.py::PromptFactsReviewMixin._build_post_exit_reality). Its only caller passes
+      position reviewer (src/prompt_facts/review/exits.py::ReviewExits._build_post_exit_reality). Its only caller passes
       nothing, so this default is live. Same class as the smart-money prompt-
       truncation caps classified arbitrary on 2026-09-19: it decides what
       evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7691,19 +7696,19 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_buys_for_grading(lookback_days)
+  - id: src.prompt_facts.review.grading.ReviewGrading._build_recent_buys_for_grading(lookback_days)
     value: 5
     status: not-trade-governing
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/pipeline_prompt_facts_review.py::PromptFactsReviewMixin._build_recent_buys_for_grading): every caller in src/ passes
+      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_recent_buys_for_grading): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_loss_pits(lookback_days)
+  - id: src.prompt_facts.review.exits.ReviewExits._build_recent_loss_pits(lookback_days)
     value: 14
     status: arbitrary
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/exits.py
     note: >-
       Window of the PM's repeat-loss-cause memory (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates).
       Its only caller passes nothing, so this default is live. Same class as
@@ -7730,13 +7735,13 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_missed_lessons(lookback_days)
+  - id: src.prompt_facts.review.exits.ReviewExits._build_recent_missed_lessons(lookback_days)
     value: 14
     status: arbitrary
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/exits.py
     note: >-
       Window of the PM's recurring-missed-theme memory
-      (src/pipeline_prompt_facts_review.py::PromptFactsReviewMixin._build_recent_missed_lessons). Its only caller passes nothing, so this
+      (src/prompt_facts/review/exits.py::ReviewExits._build_recent_missed_lessons). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7760,30 +7765,30 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_outlook_calibration(lookback)
+  - id: src.prompt_facts.review.calibration.ReviewCalibration._build_recent_outlook_calibration(lookback)
     value: 10
     status: not-trade-governing
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/calibration.py
     note: >-
       Dead default (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_outlook_calibration._fwd_cumulative(n)
+  - id: src.prompt_facts.review.calibration.ReviewCalibration._build_recent_outlook_calibration._fwd_cumulative(n)
     value: 5
     status: not-trade-governing
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/calibration.py
     note: >-
       Dead default (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_recent_sells_for_grading(lookback_days)
+  - id: src.prompt_facts.review.grading.ReviewGrading._build_recent_sells_for_grading(lookback_days)
     value: 2
     status: not-trade-governing
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/pipeline_prompt_facts_review.py::PromptFactsReviewMixin._build_recent_sells_for_grading): every caller in src/ passes
+      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_recent_sells_for_grading): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
@@ -7847,10 +7852,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts_review.PromptFactsReviewMixin._build_trade_grade_summary(lookback_days)
+  - id: src.prompt_facts.review.grading.ReviewGrading._build_trade_grade_summary(lookback_days)
     value: 14
     status: not-trade-governing
-    site: src/pipeline_prompt_facts_review.py
+    site: src/prompt_facts/review/grading.py
     note: >-
       Dead default (src/pipeline.py::TradingPipeline._run_evening_body): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
@@ -7993,7 +7998,7 @@ numbers:
     note: >-
       Window of the quarterly meta-reflection digest
       (src/pipeline_intraday.py::IntradayMixin._intraday_open_overlap_skip). Its output reaches a prompt only as a
-      STAGED edit a human applies: config/settings.yaml@`# (launchd fires it every 30-min tick across 09:` deploys
+      STAGED edit a human applies: config/settings.yaml@`dry_run: true # explicit (was relying on the schema default)` deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.stage_execution.ExecutionStage._run_session:factor[0]
     settles_by:
