@@ -1183,6 +1183,39 @@ def _record_soft_exit_missing_after_retry(
     )
 
 
+def _record_soft_exit_refusal_count(pipeline, ctx, symbols) -> None:
+    """COUNT the blank-falsifier refusals this run made. Never raises.
+
+    Board item 78. The per-name `deterministic_gate` rows say WHICH names
+    were refused before the ticket book. Nothing counted them, so a run
+    that quietly refused four names looked, to any later reader, exactly
+    like a run that refused none — which is "skip and continue" as the
+    product, the thing the owner explicitly rejected.
+
+    One counted row per run carries the count and the heal outcome that
+    preceded each refusal, so the reason is counted alongside the
+    refusal. Recording only: nothing reads it back into a decision and it
+    may never be swept for a threshold.
+    """
+    try:
+        from src.soft_exit_never_blank import (
+            REFUSAL_COUNT_REASON, REFUSAL_COUNT_STAGE, refusal_tally,
+        )
+
+        tally = refusal_tally(
+            symbols, getattr(ctx, "soft_exit_heals", None),
+        )
+        if not tally["refused_count"]:
+            return
+        _record_pipeline_event(
+            pipeline, ctx, None, REFUSAL_COUNT_STAGE,
+            str(tally["refused_count"]), REFUSAL_COUNT_REASON,
+            **tally,
+        )
+    except Exception as exc:  # noqa: BLE001 — a recording never blocks a trade
+        logger.error("soft-exit refusal count recording failed: %s", exc)
+
+
 def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[str]:
     """Refuse BUY/SHORT names still missing a real falsifier after heal+retry.
 
@@ -1270,6 +1303,7 @@ def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[
         if symbol not in existing:
             existing.append(symbol)
     portfolio_decision.constructor_dropped = existing
+    _record_soft_exit_refusal_count(pipeline, ctx, unique)
     return unique
 
 

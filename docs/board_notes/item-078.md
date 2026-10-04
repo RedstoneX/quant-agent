@@ -58,3 +58,29 @@ one miss pre-dating enforcement). Any remaining work on this item is about the
 QUALITY of the sentence the seat writes, not about its absence — and the heal
 built on 2026-10-02 closes a latent blanking path, not a live one, exactly as
 its author said.
+
+## The never-blank path is live (2026-10-04)
+
+**Box 1 of 4 ticked.** The three behaviours now all exist on the live path,
+and the two that were missing were missing for the same reason: the heal
+could only see one of the ways a falsifier gets blanked, and the refusal
+was never counted.
+
+- **Healed from the model's own sentence.** The existing mechanical heal
+  runs inside the null-drop validator, so it can only repair a wipe that
+  happens inside that validator. A blank produced anywhere else left the
+  sentence the model actually wrote sitting unread in the raw seat output,
+  and the desk's only remaining moves were to pay for a sentence it already
+  had, or to refuse a name the seat had in fact answered. The heal now also
+  runs one level up, against the raw payload, immediately before any spend.
+  It copies a stated string and nothing else.
+- **Re-asked once, paid.** Unchanged. The paid re-ask is now reached only
+  when the sentence genuinely does not exist anywhere.
+- **Refused before the book, and COUNTED.** The per-name rows said which
+  names were refused; nothing counted them, so a run that refused four
+  names read exactly like a run that refused none. One counted row per run
+  now carries the count and the heal outcome behind each refusal.
+
+Nothing here invents a falsifier, and no refusal was converted into a
+silent skip. The other three boxes stay unticked: each needs a live session
+or a live-database measurement, and the desk is off.

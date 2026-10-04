@@ -1668,7 +1668,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         """
         from src.cost_circuit import PaidAnalysisSuspended
         from src.seat_heal import (
-            HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_NOT_ATTEMPTED, HEAL_PAID_RETRY,
+            HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_MECHANICAL,
+            HEAL_NOT_ATTEMPTED, HEAL_PAID_RETRY,
             merge_retry_falsifiers,
         )
 
@@ -1691,6 +1692,48 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         ]
         if not missing:
             return decision, result
+
+        # MECHANICAL HEAL OF LAST RESORT, BEFORE ANY SPEND (board item 78).
+        # `restore_stated_soft_exits` only heals a wipe that happens inside
+        # the null-drop validator, because it runs inside it. A blank
+        # produced anywhere else — a later assignment that re-runs the
+        # validator and leaves the field unset, a rebuilt target list, a
+        # parse that never carried the key onto the canonical field — left
+        # the sentence the model actually wrote sitting unread in the raw
+        # JSON, and the desk's only remaining moves were to PAY for a
+        # sentence it already had or to refuse a name the seat had in fact
+        # answered. Both are wrong. Copies a stated string and nothing
+        # else; never invents, never overwrites a stated falsifier.
+        from src.soft_exit_never_blank import heal_targets_from_raw
+
+        try:
+            raw_payload = result.parse_json() if result is not None else None
+        except Exception:  # noqa: BLE001 — an unparseable raw just means no heal
+            raw_payload = None
+        healed, healed_symbols = heal_targets_from_raw(
+            list(getattr(decision, "targets", None) or []), raw_payload,
+        )
+        if healed_symbols:
+            decision.targets = healed
+            logger.info(
+                "Soft-exit mechanical heal restored thesis_invalid_if from "
+                "the model's own raw output for %s — not invented and not "
+                "paid for", healed_symbols,
+            )
+            self._record_soft_exit_heal(
+                healed_symbols, HEAL_MECHANICAL,
+                "the falsifier the model itself already wrote was restored "
+                "from the raw seat output after a later wipe blanked it; no "
+                "text was invented and no retry was bought",
+            )
+            healed_set = {str(s).strip().upper() for s in healed_symbols}
+            missing = [
+                s for s in missing
+                if str(s).strip().upper() not in healed_set
+            ]
+            if not missing:
+                return decision, result
+
         if retry_already_used:
             self._record_soft_exit_heal(
                 missing, HEAL_NOT_ATTEMPTED,

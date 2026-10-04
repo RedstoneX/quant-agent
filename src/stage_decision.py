@@ -39,6 +39,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     _record_rotation_precheck,
     _record_seat_stances,
     _record_soft_exit_heals,
+    _record_soft_exit_refusal_count,
     _record_soft_exit_missing_after_retry,
     _rotation_execution_enabled,
     _rotation_ranked_margin_enabled,
@@ -680,6 +681,7 @@ class DecisionStage:
         )
         for symbol in refused_soft_exit:
             _record_soft_exit_missing_after_retry(pipeline, ctx, symbol)
+        _record_soft_exit_refusal_count(pipeline, ctx, refused_soft_exit)
         if refused_soft_exit:
             logger.warning(
                 "Refusing %d open target(s) %s before the ticket book: %s",
