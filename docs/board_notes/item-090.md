@@ -301,3 +301,51 @@ The 2026-10-01 pass left all four portfolio/cluster ceilings in state 3 (`arbitr
 WHY A RECORDING AND NOT A DERIVATION. Both ceilings are global dials, and the owner's 2026-09-30 ruling says risk is read per name, never off a global constant. That rules out re-deriving a better 25 or a better 40 — a derived global dial is still a global dial — and it equally rules out DELETING them today, because they are the only thing standing between the book and unbounded correlated at-risk while the per-name read does not exist. The honest third option is to stop asserting the concentration and start observing it. The ceilings stay at their ratified values, unchanged, and the desk now writes down what its realised concentration actually was.
 
 WHAT IS STILL NOT SETTLED. The 50% correlated-cluster advisory (`max_correlated_cluster_pct`) and the 75/90 sector pair keep their `specified` routes; both are owned by this item's measurement half, not by the recording built here. `short_gap_risk_multiple` (1.5) stays BLOCKED on stored daily bars the desk does not keep. No value in any of the four moved.
+
+## item 90 — the 2026-10-04 route-admissibility audit (no value changed)
+
+Every routing tranche above records, for each `arbitrary` number, what would
+have to be measured before the number stops being a pick. This pass asked a
+different question: can the recorded route actually settle the number, or is
+the route itself barred? It is a read-only audit; it changes no value, and the
+answer is reproducible by running
+`scripts/measure_ledger_route_admissibility.py`.
+
+**The structural defect, and it is not small.** Sixteen ledger rows carry TWO
+`settles_by` blocks, and one carries seven. YAML keeps the last of two
+identical mapping keys and discards the earlier ones without a word, so every
+one of those rows has exactly one live route and at least one dead one — and
+because the newer routing pass was appended ABOVE the older block, the route
+that is silently discarded is the NEWER decision. Anything downstream that
+loads the ledger has only ever seen the older route. The report lists all
+sixteen; this pass repaired none of them, because choosing which route
+survives is a routing decision per row rather than a mechanical edit.
+
+**The single-name risk envelope cannot be settled by either route it records.**
+Its live route (the older tranche-seven block) closes on the worst observed gap
+multiple, and an extreme of a sample is not a reproducible quantity: it moves
+every time the sample grows. Its newer, silently-dropped route closes on the
+owner stating a per-name dollar loss he will accept, which the 2026-09-30
+ruling withdrew along with the other risk dials. The row's own
+`ruling_check_2026_10_02` paragraph already reached the right conclusion — a
+per-name cap must be read off the name — and no recorded route implements it.
+Status unchanged: arbitrary, now with the reason recorded.
+
+**The hard stop floor has an admissible route that cannot be run here.** The
+whipsaw-rate-against-ATR-distance measurement names no extreme and asks the
+owner nothing, so neither bar touches it. It needs daily bars across a tradable
+universe, and this repository commits none: every measurement script already in
+`scripts/` is handed a bar file from outside the tree. The blocker is a
+committed bar set, recorded here so the next pass does not rediscover it.
+
+**The alignment give-back band contradicts itself, and the measurement wins.**
+Its route closes when the give-back distributions of a resumed trend and a
+finished one separate; its older `open_question` calls the same number an owner
+dial that no research can settle. The 2026-09-30 withdrawal of the risk dials
+decides which half is stale. The value is untouched.
+
+**Barred routes found in total:** seven rows close on an extreme of a sample,
+nine close by asking the owner for a loss or a dial. Those two counts are the
+remaining debt behind the headline `arbitrary` count: a row with a barred route
+is further from settled than the count suggests, because running its route
+would produce a number no more defensible than the one it replaces.

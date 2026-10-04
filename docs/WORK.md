@@ -319,10 +319,10 @@ DONE WHEN:
 detail: docs/board_notes/item-219.md
 
 
-**232. The ledger's rewritten citations may point at the WRONG place and now read as verified -- OPEN, filed 2026-10-04. [BOARD STATE: 0 of 4 ticked. PR 1081 (fix/ledger-citations-225) MERGED 2026-10-04, so the rows to correct are on the trunk and the item is no longer blocked.]** First measurement: 12 hand-checked citations -- 6 right, 5 wrong, 1 cannot tell; the five wrong rows and where each should point are in the note.
+**232. The ledger's rewritten citations may point at the WRONG place and now read as verified -- OPEN, filed 2026-10-04. [BOARD STATE: 1 of 4 ticked. PR 1081 (fix/ledger-citations-225) MERGED 2026-10-04, so the rows to correct are on the trunk and the item is no longer blocked.]** First measurement: 12 hand-checked citations -- 6 right, 5 wrong, 1 cannot tell; the five wrong rows and where each should point are in the note.
 
 DONE WHEN:
-- [ ] the five named rows (see the note) are corrected on the trunk, each re-read against the number it justifies; PR 1081 itself merged 2026-10-04
+- [x] the five named rows (see the note) are corrected on the trunk, each re-read against the number it justifies; PR 1081 itself merged 2026-10-04 (corrected 2026-10-04 on branch fix/item-232-citations-point-right, plus 16 more wrong rows found outward; see note)
 - [ ] EVERY remaining rewritten citation (not a sample) is checked by hand or by a test that compares the cited text to the row's number, and the count right / wrong / cannot-tell is recorded here
 - [ ] the guard (or a second one) fails when a citation resolves to a symbol that never mentions the row's value or id, proved red against one of the five wrong rows first
 - [ ] no citation is left as cannot-tell: each is either confirmed or replaced with a source that settles it
