@@ -41,6 +41,7 @@ import os
 import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
+from src.data_paths import alerting_dir
 
 # The variable systemd sets for a unit that declares LoadCredential= or
 # LoadCredentialEncrypted=. Its absence is the normal, supported case: it means
@@ -326,7 +327,7 @@ def describe_delivery(
 # use — no new mechanism, no tunable number. The log line is UNCHANGED and still
 # written on every single start; only the push is rationed.
 STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "credential_placeholder.json"
+    alerting_dir() / "credential_placeholder.json"
 )
 
 

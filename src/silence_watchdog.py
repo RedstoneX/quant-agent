@@ -133,17 +133,18 @@ from pathlib import Path
 from typing import Any
 
 from src.trading_calendar import ET, SESSION_WINDOWS
+from src.data_paths import alerting_dir, db_path
 
 #: Same database every session and `src/alert_watchdog.py` already write to.
 #: Resolved from the project root, not the working directory, for the same
 #: reason `alert_watchdog.DB_PATH` is: sessions are started both by systemd
 #: (which sets WorkingDirectory) and by hand from anywhere.
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
+DB_PATH = db_path()
 
 #: `data/` is gitignored — this record can never dirty the checkout, exactly
 #: like `scripts/alert_heartbeat.py`'s `data/alerting/heartbeat.json`.
 STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "silence_heartbeat.json"
+    alerting_dir() / "silence_heartbeat.json"
 )
 
 #: Separate on-box record for the paused-desk notice. Deliberately NOT the
@@ -152,7 +153,7 @@ STATE_PATH = (
 #: not), and sharing one file would mean a pause episode could silently
 #: overwrite the `last_known_session_at` the silence check depends on.
 PAUSED_STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "paused_desk.json"
+    alerting_dir() / "paused_desk.json"
 )
 
 TABLE = "alert_channel_checks"

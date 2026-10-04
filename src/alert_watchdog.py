@@ -74,6 +74,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from src.data_paths import db_path
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ logger = logging.getLogger(__name__)
 #: snapshot, resolved from the project root rather than the working
 #: directory — sessions are started both by systemd (which sets
 #: WorkingDirectory) and by hand from anywhere.
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
+DB_PATH = db_path()
 
 TABLE = "alert_channel_checks"
 

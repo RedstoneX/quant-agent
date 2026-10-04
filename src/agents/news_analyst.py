@@ -12,6 +12,7 @@ from src.agents.base import BaseAgent, AgentResult
 from src.models import (
     NewsIntelligenceReport, StateChange, StockNewsItem, parse_telemetry,
 )
+from src.data_paths import parse_failure_dir
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "news
 # (see earnings_analyst._save_analysis), is the simplest mechanism that is
 # both durable and trivially inspectable (`ls`, `cat`, `jq`) without a DB
 # migration.
-PARSE_FAILURE_DIR = Path(__file__).parent.parent.parent / "data" / "parse_failures"
+PARSE_FAILURE_DIR = parse_failure_dir()
 
 
 def _persist_parse_failure(*, agent_name: str, session: str, raw_text: str,
