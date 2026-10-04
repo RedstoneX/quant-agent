@@ -1,4 +1,5 @@
 
+
 # QAMC Current Work
 
 ## Active finish line
@@ -195,15 +196,6 @@ DONE WHEN:
   - [ ] ONE morning open (N = 1, the number this item already stated) recorded in the production table `fred_fetch_coverage_runs` with `full_coverage = 1`: all configured series returned, `series_not_attempted` empty, and every configured release returned with `releases_from_cache` equal to `releases_configured`. Check: `SELECT * FROM fred_fetch_coverage_runs ORDER BY id DESC`. Rows exist only from the first open after this deploys; a row with `full_coverage = 0` does not count, and a missing row is not a pass.
 detail: docs/board_notes/item-187.md
 
-**188. The decision seats' last-resort route is now a small free model, and nobody has measured it at those seats — filed 2026-09-30. [BOARD STATE: 2 of 3 ticked; the 1 open box is buildable now (the alternative of making the seats refuse when only the free route is left needs no production data).]**
-
-DONE WHEN:
-  - [x] no seat has every reachable route on one provider, enforced mechanically against `config/settings.yaml` rather than by reading the config by eye
-  - [x] DONE 2026-10-01: every decision seat persists, beside the responding model, whether its answer passed that seat's own acceptance gate and WHY it did not — the acceptance columns existed but carried one collapsed word per seat, so the portfolio manager, risk manager and position reviewer now each store the gate's own machine-readable reason (previously prose in a log line only). RECORDING ONLY; nothing reads it back. UNPROVEN: the production rows for these three seats are still all NULL, so the third criterion stays open until sessions produce rows — the database, not a paid benchmark, is what makes the substitute measurable (2026-09-30: only 3 free-model answers exist at these seats and no acceptance verdict is stored beside ANY model, so no rate is computable; 2026-10-01 re-read: still exactly 1 per seat, all three well-formed with every required field but n=1 proves nothing, so this recording is now the ONLY closing condition and the measurement box waits on it)
-  - [ ] with that recording in place, the substitute is either measured at the three decision seats from the desk's own rows, or the seats are made to refuse rather than answer when only that route is left — decided on the measurement, not on a guess about how bad it is
-
-detail: docs/board_notes/
-
 **201. Rest of the cancel+resubmit stop path — filed 2026-09-30. Detail: `docs/board_notes/` ("item 201"). OPEN: no production proof of a two-leg amend. [7 of 9 ticked; both open boxes production-blocked (desk OFF).]** The ex-dividend shift and the trailing re-price now share BOTH the measured-safe shape test and the failure classification, amend every resting leg in place, confirm each replacement id, and record the per-leg outcome as a durable row; a partial or an unanswered amend carries no order id, so nothing is written back and the owner is told. 2026-10-02: stop-LIMIT, bracket child and whole-share coverage repair now amend in place; a FRACTIONAL quantity change and lot consolidation still cancel, each recorded as a `stop_unprotected_window` row.
 
 DONE WHEN:
@@ -384,3 +376,4 @@ detail: docs/board_notes/item-232.md
 DONE WHEN:
 - [x] one shared date+time formatter exists and every previously time-only owner-facing site calls it. (`fmt_time_12h` serves trader_feed, notifier and now the health report window, which used to say "5:00am to 9:00am today"; `inflight.py` already shows the full date; the log_health state-file stamp is machine-read, not owner-facing.)
 - [x] a test fails if any owner-facing timestamp is emitted without a date. (`tests/test_owner_timestamps_carry_date.py` now actually scans `log_health.py` and `inflight.py`; before, it looked for directories of those names, found none, and silently covered nothing.)
+- retired queue: 188
