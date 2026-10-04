@@ -7001,6 +7001,18 @@ numbers:
       No caller in src/, and the docstring (src/pipeline_intraday.py::IntradayMixin._another_session_recently_active)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
+  - id: src.intraday.gating.IntradayGating._another_session_recently_active(within_minutes)
+    value: 15
+    status: not-trade-governing
+    site: src/intraday/gating.py
+    note: >-
+      The body of src/pipeline_intraday.py::IntradayMixin._another_session_recently_active
+      moved here AST-identical on 2026-10-04 (intraday parts conversion); the
+      mixin's shim keeps the same default at the trunk site so the row above
+      stays true. No caller in src/, and the docstring
+      (src/intraday/gating.py::IntradayGating._another_session_recently_active)
+      records the parameter 'is kept for callers but no longer gates a
+      finished session' -- the owner lock decides.
   - id: src.prompt_facts.review.blocked.ReviewBlocked._build_blocked_proposals(lookback_days)
     value: 21
     status: arbitrary

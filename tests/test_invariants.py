@@ -547,14 +547,14 @@ def test_invariant_intraday_scan_reuses_shared_stages_not_its_own_chain():
     the same instances run_morning uses — rather than constructing its own
     decision path that could drift from the audited one."""
     import inspect
-    from src.pipeline import TradingPipeline as _TP
-
     # The scan is a thin concurrency-guard wrapper delegating to a body;
     # inspect both so the invariant can't be dodged by moving code between
     # them.
+    from src.intraday.candidates import IntradayCandidates as _IC
+    from src.pipeline_intraday import IntradayScanBody as _ISB
     src = (
-        inspect.getsource(_TP._run_intraday_opportunity_scan)
-        + inspect.getsource(_TP._intraday_opportunity_scan_body)
+        inspect.getsource(_IC._run_intraday_opportunity_scan)
+        + inspect.getsource(_ISB._intraday_opportunity_scan_body)
     )
     assert "self.decision_stage.run(ctx)" in src
     assert "self.risk_stage.run(ctx)" in src
@@ -569,13 +569,13 @@ def test_invariant_intraday_scan_adds_no_shorting_or_margin_path():
     already-approved inverse ETFs in the configured universe — never by
     emitting a short/sell-to-open action or enabling margin."""
     import inspect
-    from src.pipeline import TradingPipeline as _TP
-
+    from src.intraday.candidates import IntradayCandidates as _IC
+    from src.pipeline_intraday import IntradayScanBody as _ISB
     src = (
-        inspect.getsource(_TP._run_intraday_opportunity_scan)
-        + inspect.getsource(_TP._intraday_opportunity_scan_body)
-        + inspect.getsource(_TP._intraday_scan_mover_candidates)
-        + inspect.getsource(_TP._intraday_held_tech_symbols)
+        inspect.getsource(_IC._run_intraday_opportunity_scan)
+        + inspect.getsource(_ISB._intraday_opportunity_scan_body)
+        + inspect.getsource(_IC._intraday_scan_mover_candidates)
+        + inspect.getsource(_IC._intraday_held_tech_symbols)
     )
     for forbidden in ("sell_short", "short_sell", "allow_margin", "SHORT"):
         assert forbidden not in src, f"intraday scan must not reference {forbidden}"
