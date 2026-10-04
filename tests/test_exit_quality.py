@@ -152,24 +152,24 @@ def test_trail_cooldown_counts_superseded_rows_but_not_old_ones():
 # The position_reviewer prompt states `new_stop_price >= old_stop_price × 1.02`
 # as a hard schema rule, but the TRAIL_STOP validation block never enforced it:
 # an under-2% raise reached the broker, paying cancel/replace churn. These lock
-# the floor. It is single-sourced from src.risk.trailing.MIN_RATCHET_PCT and,
+# the floor. It is single-sourced from src.risk.trailing.min_ratchet_floor and,
 # unlike the noise band / cooldown, is NOT bypassable by a hard trigger.
 
-from src.risk.trailing import MIN_RATCHET_PCT  # noqa: E402
+from src.risk.trailing import min_ratchet_floor, venue_tick  # noqa: E402
 
 
 def _floor_over(old_stop: float) -> float:
-    return old_stop * (1.0 + MIN_RATCHET_PCT / 100.0)
+    return min_ratchet_floor(old_stop)
 
 
 def test_trail_below_min_ratchet_floor_rejected_prior_stop_kept():
-    """A raise that clears the live stop by less than 2% is rejected and the
-    existing (looser, valid) broker stop is left untouched — protection is
-    never removed, only left where it was."""
+    """A raise that does not clear the live stop by one venue tick is the
+    same stop price, so it is rejected and the existing broker stop is left
+    untouched — protection is never removed, only left where it was."""
     pipeline = _mk_pipeline(GE)
     pipeline.broker.get_current_stop_price.return_value = 340.0
     pipeline._atr_for_symbol = lambda s: 1.0  # noise floor 358.75, irrelevant
-    new_stop = _floor_over(340.0) - 0.5  # ~$346.30, a 1.85% raise
+    new_stop = 340.0 + venue_tick(340.0) / 4.0  # a quarter-tick: same price
     orders = pipeline._midday_execute_llm_actions(
         positions=[GE], run_id="r-1",
         review=_trail_review("GE", new_stop, "TARGET_BREACH — locking in gains"),
@@ -182,7 +182,7 @@ def test_trail_at_or_above_min_ratchet_floor_passes():
     pipeline = _mk_pipeline(GE)
     pipeline.broker.get_current_stop_price.return_value = 340.0
     pipeline._atr_for_symbol = lambda s: 1.0
-    new_stop = _floor_over(340.0) + 1.0  # comfortably above the 2% floor
+    new_stop = _floor_over(340.0) + 1.0  # comfortably above the tick floor
     orders = pipeline._midday_execute_llm_actions(
         positions=[GE], run_id="r-1",
         review=_trail_review("GE", new_stop, "TARGET_BREACH — locking in gains"),
@@ -192,7 +192,7 @@ def test_trail_at_or_above_min_ratchet_floor_passes():
 
 
 def test_trail_exactly_at_min_ratchet_floor_passes():
-    """Boundary: exactly old_stop × 1.02 is accepted (the prompt's `≥`)."""
+    """Boundary: exactly one tick above the live stop is accepted."""
     pipeline = _mk_pipeline(GE)
     pipeline.broker.get_current_stop_price.return_value = 340.0
     pipeline._atr_for_symbol = lambda s: 1.0

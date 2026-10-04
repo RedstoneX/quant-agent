@@ -69,9 +69,9 @@ above the lowest low since entry where structure is unclear.)
 Invariants, all of them enforced below:
   - **Ratchet toward less risk only.** Up for a long, down for a short. A
     stop never moves the wrong way. Ever.
-  - A move must clear the existing stop by `MIN_RATCHET_PCT` to be worth an
-    order at all — otherwise every session nudges the stop a few cents and the
-    cooldown is doing all the work.
+  - A move must clear the existing stop by `MIN_RATCHET_TICKS` venue ticks —
+    the smallest price increment the venue will accept — to be a different
+    stop at all. Anything smaller is the same price after quantization.
   - A new stop is never placed inside `NOISE_BAND_ATR_MULTIPLE` ATRs of
     current price. That is the same floor the discretionary path already
     clamps to, applied at the source instead of after the fact.
@@ -99,7 +99,9 @@ __all__ = [
     "TrailEvaluation",
     "compute_trailing_stop",
     "evaluate_trailing_stop",
-    "MIN_RATCHET_PCT",
+    "MIN_RATCHET_TICKS",
+    "venue_tick",
+    "min_ratchet_floor",
     "CHANDELIER_ATR_MULTIPLE",
     "NOISE_BAND_ATR_MULTIPLE",
     "PIVOT_WINDOW",
@@ -108,70 +110,6 @@ __all__ = [
     "RANGE_SECOND_RATCHET_LOCK_R",
 ]
 
-#: A proposed stop must sit at least this far above the live stop. Mirrors the
-#: reviewer's historical ">= 1.02x old stop" min-bump rule so the deterministic
-#: path does not churn orders the discretionary one would have skipped.
-#:
-#: **2026-09-30: an attempt to re-express this as a reading off the instrument
-#: FAILED, and the constant stays at 2.0 with the failure recorded.** The desk's
-#: standing doctrine bars a flat picked percentage on a stop or exit, and this
-#: one is squarely in scope — so the attempt was made, measured, and is written
-#: down here rather than quietly abandoned.
-#:
-#: The complaint is real and is now MEASURED, not asserted. Expressing "2% of
-#: the live stop" in each name's own ATR(14), over the six positions this gate
-#: actually refused in production between 2026-09-21 and 2026-09-29:
-#:   MRVL 0.31 ATR | NET 0.33 ATR | RKLB 0.34 ATR | AMD 0.47 ATR
-#:   META 0.52 ATR | AAPL 0.91 ATR
-#: The same nominal rule demands a ratchet nearly three times larger on AAPL
-#: than on MRVL. That is exactly the incoherence the doctrine names.
-#:
-#: The natural repair is `k * ATR`, the unit this module already uses for
-#: `NOISE_BAND_ATR_MULTIPLE` and `CHANDELIER_ATR_MULTIPLE`. It was measured
-#: against the same production record — the seven refused tightens whose
-#: candidate could be reconstructed from daily bars — and it does not work:
-#:   * every refused tighten fell between 0.12 and 0.50 ATR;
-#:   * any k >= 0.75 blocks ALL SEVEN, strictly MORE than the flat 2% blocks
-#:     (which lets one through), so the change would tighten the gate, not
-#:     loosen it;
-#:   * only k <= 0.5 lets anything through, and choosing 0.25 to admit three
-#:     of seven is fitting a constant to the outcomes the data happened to
-#:     like. That is barred outright, and it is the same failure mode as the
-#:     2.0 it would replace — a picked multiple re-imported through the ATR
-#:     door.
-#: No published work fetched fixes a minimum stop-adjustment size; the
-#: literature on stop placement addresses DISTANCE from price (which is what
-#: `NOISE_BAND_ATR_MULTIPLE` and the chandelier already answer), not the
-#: minimum INCREMENT worth replacing a resting order for.
-#:
-#: Deleting the gate instead was considered and rejected on a measured cost,
-#: not a preference: `AlpacaBroker.replace_stop_loss` cannot edit an Alpaca
-#: OTO stop leg in place, so every replace is a cancel-then-resubmit with a
-#: real window in which the position carries no protective order. Removing
-#: the gate would have added seven such windows across nine evaluation runs
-#: on an eleven-name book. The money cost of a replace is zero (the ledger
-#: entry establishes this); the naked-window cost is not.
-#:
-#: That rejection is CONTINGENT, and the contingency is recorded so nobody
-#: re-derives it. Open PR 806 (`fix/atomic-stop-amend`) adds
-#: `_amend_resting_stop_price` to `src/execution/broker.py`, making a price
-#: amend atomic with no unprotected instant. It is NOT on main (verified
-#: 2026-09-30), which is why this constant is unchanged. If it lands, the
-#: only cost defending this gate is gone and the honest floor becomes one
-#: venue tick (SEC Rule 612 / Alpaca's $0.01-at-or-above-$1, $0.0001-below
-#: split, already carried by `_quantize_price` and `_prices_match`) -- a
-#: reading off the instrument instead of a picked percentage. See the
-#: `src.risk.trailing.MIN_RATCHET_PCT` entry in `config/number_ledger.yaml`.
-#:
-#: What the same pass DID settle is the redundancy question the ledger left
-#: open. On THIS deterministic path there are two gates, not three: the
-#: ~2-4-session ratchet cooldown (`_trail_tightened_recently`) is reached
-#: only from the discretionary midday `TRAIL_STOP` branch and never from
-#: `_apply_deterministic_trails`. And the two that are here are NOT
-#: redundant — all seven reconstructed refusals sat OUTSIDE the 1.25-ATR
-#: noise band, so the noise band would have admitted every one of them and
-#: this gate is doing independent work.
-MIN_RATCHET_PCT = 2.0
 
 #: Chandelier distance below the highest high since entry, used only where
 #: structure is unclear. 3x ATR is the conventional setting and is deliberately
@@ -350,6 +288,9 @@ class TrailEvaluation:
 #: so `from src.risk.trailing import X` and `patch("src.risk.trailing.X")`
 #: keep working for every existing caller. ONE mirror block, never two.
 _PART_OF = {
+    "MIN_RATCHET_TICKS": "src.risk.trail_tick",
+    "venue_tick": "src.risk.trail_tick",
+    "min_ratchet_floor": "src.risk.trail_tick",
     "_swing_lows": "src.risk.trail_structure",
     "_swing_highs": "src.risk.trail_structure",
     "_structural_pivot": "src.risk.trail_structure",
