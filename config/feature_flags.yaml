@@ -83,7 +83,7 @@ flags:
       compounding per member) and still cannot alone admit a new symbol
       (`transient_admission_eligible` stays false for it).
     decided: "2026-09-20"
-    source: "owner ruling 2026-09-19; docs/INCIDENT_HISTORY.md 2026-09-20 entry; src/config/__init__.py:1436"
+    source: "owner ruling 2026-09-19; docs/INCIDENT_HISTORY.md 2026-09-20 entry; src/config/smart_money.py:142"
 
   - id: src.config.CashSweepConfig.enabled
     effective_value: false
@@ -106,7 +106,7 @@ flags:
       standing instruction this switch stays off and is not to be
       re-proposed for enabling.
     decided: "2026-08-28"
-    source: "commit 0b2982d0; src/config/__init__.py:404-407"
+    source: "commit 0b2982d0; src/config/llm.py:279-282"
 
   - id: src.config.ExecutionConfig.rotation_enabled
     effective_value: true
@@ -173,7 +173,7 @@ flags:
       explicitly opted in" -- src/config/__init__.py docstring). Flipped on in
       settings.yaml as a deliberate opt-in.
     decided: "2026-09-02"
-    source: "commit a82f761e5; config/settings.yaml:989; src/config/__init__.py:927-931"
+    source: "commit a82f761e5; config/settings.yaml:989; src/config/__init__.py:372-376"
 
   - id: src.config.RiskConfig.require_stop_loss
     effective_value: true
@@ -220,7 +220,7 @@ flags:
       any session, and the Form 4 / nomination side doors keep their
       pre-existing gates (including the dead Form 4 age gate).
     decided: "2026-09-19"
-    source: "src/config/__init__.py:1546; config/settings.yaml:1185"
+    source: "src/config/smart_money.py:252; config/settings.yaml:1185"
 
   - id: src.config.LLMCostCircuitConfig.enabled
     effective_value: true
@@ -263,7 +263,7 @@ flags:
       are staged to proposed_edits.json for an operator to read first
       (pre-QAMC, upstream yebof commit).
     decided: "2026-05-13"
-    source: "commit c8caaf3d; src/config/__init__.py:1718-1723"
+    source: "commit c8caaf3d; src/config/llm_cost.py:84-89"
 
   - id: src.config.EvolutionConfig.auto_commit
     effective_value: true
@@ -274,7 +274,7 @@ flags:
       a whole quarter's evolution has a one-shot `git revert` rollback
       (pre-QAMC, upstream yebof commit).
     decided: "2026-04-20"
-    source: "commit e84e5f3d; src/config/__init__.py:1712-1715"
+    source: "commit e84e5f3d; src/config/llm_cost.py:78-81"
 
   - id: src.config.LLMConfig.structured_output
     effective_value: true

@@ -10,7 +10,7 @@ from src.intraday_scan_outcome import _BANNERS, failed_scan_result
 from src.refusal_signature import NON_DECIDING_STATUSES
 
 # Pre-existing gaps, found 2026-10-02. Shrink-only: fill one, delete it here.
-_KNOWN_GAPS = {"disabled", "error", "kill_switch_halted", "provider_error"}
+_KNOWN_GAPS: set[str] = set()
 
 
 def test_every_failed_scan_status_has_plain_english():

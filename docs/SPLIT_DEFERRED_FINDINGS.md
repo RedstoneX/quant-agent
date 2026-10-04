@@ -5,7 +5,7 @@ behaviour change hidden in a verbatim move is unreviewable. Each entry says
 what is wrong, where, and what would prove a fix. Work them after the
 structure is sound, hardest-wearing first.
 
-## The midnight clock bug (HALF DONE -- cost-circuit half still open)
+## The midnight clock bug (CLOSED -- both halves, 2026-10-04)
 
 Between 00:00 and roughly 00:16 Eastern, tests compare an exchange trading day
 against the runner's local day and fail. Seven in the holding-discipline
@@ -25,7 +25,7 @@ fails on `date.today()`, a naive `datetime.now()`, a UTC calendar day used as
 a day, and an import-time clock stamp in a test, with a shrink-only baseline
 of the offenders that already existed.
 
-STILL OPEN: the cost-circuit half. The original entry named thirteen failing tests but provides no test names. Reproduction attempts on 2026-10-02 failed by three methods: clock simulation with Python and SQLite moved together showed zero failures; CI runs covering 00:00-00:16 ET showed no cost-circuit test failures; and direct inspection identified no named failure. This entry must not be treated as a known defect until a specific failing test is named and reproduced.
+CLOSED 2026-10-04: the cost-circuit half. Its cause (Python ET day vs SQLite's own `'now'`) was already removed by the single clock in `src/cost_circuit/clock.py`; re-measured with the clock pinned to 00:01, 00:05 and 00:15 ET and with the real UTC day differing from the ET day: 0 failures in 180 tests. What was missing was a check that nothing re-adds a second clock: `tests/test_cost_circuit_single_clock.py` now fails on any other clock read or bare `sqlite3.connect` in the package. `local_day_guard` already covered those files and compares identities, but could not see this shape (it looks for local-day calls). Earlier text kept below for history: the cost-circuit half. The original entry named thirteen failing tests but provides no test names. Reproduction attempts on 2026-10-02 failed by three methods: clock simulation with Python and SQLite moved together showed zero failures; CI runs covering 00:00-00:16 ET showed no cost-circuit test failures; and direct inspection identified no named failure. This entry must not be treated as a known defect until a specific failing test is named and reproduced.
 
 VERDICT 2026-10-02 (isolation pass): holding-discipline half -- ALREADY FIXED (module-level stamp now read at run time; `tests/test_no_local_day_as_exchange_day.py` guard passes, no import-time `str(et_today())` stamp remains in that file). Cost-circuit half -- NOT REPRODUCED (carried forward from the earlier investigation; not redone). The note names no test, so it should not be treated as a known defect.
 
@@ -82,8 +82,11 @@ which cannot be built or exercised on their own. Smaller files, not
 boundaries. Fix: convert them the way the sessions, exits, protection, broker
 and storage packages were done, and add witness tests.
 
-STILL OPEN, measured 2026-10-02: 11 `_Breaker*Mixin` classes are still
-composed into `LLMCostCircuitBreaker` in `src/cost_circuit/breaker.py`.
+CLOSED 2026-10-02 (fourth and fifth instalments): all eleven parts are HELD
+instances on `LLMCostCircuitBreaker` (`_hold_parts`, wired by `assembly.py`); every `breaker_*.py`
+shim module is deleted and the class inherits from nothing. Three
+collaborators had to be handed in live rather than snapshotted (`notifier`,
+`_connect`, the owner-notify sentinel); see docs/ARCHITECTURE.md.
 
 VERDICT 2026-10-02 (isolation pass): INCORRECT. Earlier verdict read only the `class LLMCostCircuitBreaker(...)` line; the parts ARE already standalone. `src/cost_circuit/parts/` has eleven standalone classes (merged #1064, #1066, #1070 on 2026-10-02); `tests/test_cost_circuit_parts_boundary.py` passes 35 tests, building all eleven from stubs with no breaker composition. The `breaker_*.py` files are thin per-call shims. ONE genuine gap remains: the breaker still INHERITS the shims rather than HOLDING part instances; that conversion changes every test patch target, so it is a separate deliberate instalment.
 
@@ -96,6 +99,10 @@ STILL OPEN, measured 2026-10-02: `tests/test_boundary_harness.py` passes 12
 tests but covers only the pipeline mixins; mixins remain in
 `src/pipeline_prompt_facts_review.py` and
 `src/agents/portfolio_manager/prompt_evidence.py`.
+
+DONE 2026-10-04 for `PromptEvidenceMixin`: `PortfolioManagerAgent` no longer inherits it. `hold_prompt_evidence` builds one `PromptEvidence` and installs classmethod delegates on the agent (61 class-level test call sites counted, all still resolving, none rewritten); `tests/test_portfolio_manager_parts_boundary.py` builds and runs the part on a bare class. Three mixins remain on the seat (`DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`) plus `PromptFactsReviewMixin`.
+
+DONE 2026-10-04 for the position builder: `PortfolioConstructor` inherits from nothing (`__bases__ == (object,)`). `_StopMixin` is now `StopRules` (`src/portfolio_constructor/stops.py`, keyword-only `read_cfg` getter + `entry_stop_resolver` factory, both read live) and `_OrderBuildMixin` is now `OrderBuilders` (`src/portfolio_constructor/orders.py`, one keyword-only `collaborators` callable read per call); `src/portfolio_constructor/assembly.py` holds both on the owner at construction and installs same-named thin shims on the class, so every existing call site and every instance patch still resolves. Witness: `tests/test_portfolio_constructor_parts_boundary.py` builds and exercises both parts from stubs with no `PortfolioConstructor` existing, and `check_boundary` passes for `stops`, `orders` and `assembly`. Full suite after the change: 10,150 passed, 0 failed (10,149 + the one prompt-binding anchor repointed from `_StopMixin` to `StopRules`). Honest limit: the bodies themselves did not move -- `StopRules` still carries the seven stop-rule bodies and `EntryStopResolver` (1,080 lines) remains the real mass; what changed is that the owner holds parts instead of inheriting bags. The 1,676-line `src/portfolio_constructor/__init__.py` is still the owner object and is NOT a boundary; its own split is a separate instalment.
 
 VERDICT 2026-10-02 (isolation pass): REPRODUCED (structural debt). Mixins remain: `PromptFactsReviewMixin` (`src/pipeline_prompt_facts_review.py`) and in `src/agents/portfolio_manager/`: `DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`, `PromptEvidenceMixin`; `tests/test_boundary_harness.py` passes (with the other two files run, 20 passed) but only covers pipeline mixins. The note named three pieces; the portfolio-manager seat actually has four mixins. Rebuild size: medium-large, five pieces.
 
