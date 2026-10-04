@@ -18112,6 +18112,15 @@ would be exactly the made-up number the desk bars.
 
 Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured zero rows in agent_logs where a provider request actually happened and returned no usable cost or token telemetry, so nothing needs building today; this item exists only so that case is tracked if it ever fires, rather than silently dropped when 147 was retired.
 
+## Disk growth, 2026-10-04: what fills the disk, by writer
+
+Root disk was 89% full; a daily sweep (`~/.claude/disk-sweep.sh`, outside the repo) brought it to 79-80%. Sweeping is the symptom treatment; this records the writers. All numbers [measured 2026-10-04: du, find with mtime, df].
+
+- **Orchestrator/agent scratch under `/tmp/claude-1000` is the largest writer: 18 GB of the 28 GB in `/tmp`.** One session's scratchpad holds 1905 entries (16 GB), including 62 full repo clones totalling 3.5 GB and prepared sandboxes of 678 MB each. Files in it by mtime: 2.2 GB on 2026-09-30, 2.1 GB on 10-01, 4.4 GB on 10-02. Nothing bounds it, and it is not repo code: it is whatever agents are told to put there. It was NOT deleted, because the scratchpad belongs to a live session and may hold unfinished work. The sweep only removes `*.output` files, which are a small part of it. The cause to close is the dispatch brief, not a script: an agent that clones or prepares a sandbox must remove it before it reports.
+- **pytest scratch is the second writer: 6.0 GB in `/tmp/pytest-of-ubuntu`.** The cost-ceiling rehearsal test wrote two full production-database snapshots per run (1.35 GB) and pytest keeps three runs per worker. FIXED in this change: the test removes both sandboxes when it ends (`reclaim_sandboxes`).
+- **Not the cause:** the repo checkouts (53 MB each, 223 MB in `worktrees`), `/var/log` (1.5 GB), `~/.claude` (3.2 GB), `~/.cache`. None is large enough or growing fast enough to explain the fill.
+- **Honest limit:** with 96 GB total and about 76 GB used, the box is small for the number of concurrent agent clones it hosts. No retention number for agent scratch can be derived from this data: it would have to come from the largest number of live scratch trees that agents need at once, which nobody has measured.
+
 ## A citation that resolved was treated as a citation that proved something (item 232, 2026-10-04)
 
 **What was wrong.** The ledger guard checked only that a citation POINTED somewhere real, never that what it pointed at supported the claim. The bulk conversion of item 225 therefore left rows pinned to whatever happened to sit at their stale line: an export list, a bare import statement, a mid-sentence fragment. Every one of those passed the guard, so the ledger read as fully verified while some of its provenance was meaningless.
@@ -18122,3 +18131,12 @@ Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured ze
 
 **Still open, and tracked separately under the same number.** Resolution and substantiation are different questions, and correctness is a third: whether the rewritten citations point at the RIGHT place remains open on the board as item 232, with a first measurement of 12 hand-checked citations finding 6 right, 5 wrong and 1 undecidable.
 
+## The decision seats' last-resort route was an unmeasured small free model (item 188, 2026-10-04)
+
+**What was wrong.** When a decision seat's first two model routes failed, the desk quietly fell back to a small free model that nobody had ever tested at those seats, so a weak answer could drive a real trade decision.
+
+**What changed.** A seat whose last route is that substitute now refuses to answer instead of using it, and records a counted `seat_refused` row. Routes one and two are still tried in full, and the eight specialist seats are untouched. On a refusal the session takes no decision from that seat, exactly as when every route fails. Separately, no seat may have all its reachable routes on one provider, enforced against `config/settings.yaml`, and each decision seat now stores why its answer failed its own acceptance gate.
+
+**Proof.** `src/agents/llm_route3_policy.py` with `tests/test_seat_refuses_unmeasured_route.py`.
+
+**Still open.** The substitute was never measured, because the trade seat's model choice is closed on 148 trials and benchmarking it would reopen that ruling. The production rows for the acceptance recording were still empty when this was closed, and nothing reads `llm_route_events` back yet.
