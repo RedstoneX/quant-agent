@@ -1124,47 +1124,10 @@ numbers:
       was built around it. config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any` sets the same 0.5.
   - id: src.config.RiskConfig.min_stop_atr_multiple
     value: 2.5
-    status: arbitrary
+    status: owner_ruled
+    ruled_on: '2026-10-04'
+    ruling: 'Owner: "The answer right now is 2.5 ATR. If that number proves catastrophic during paper trading we will revisit it then, otherwise I think the issue is closed for now."'
     site: src/config/__init__.py
-    settles_by:
-      kind: recording
-      state: built
-      where: src/storage/trades/ledger.py
-      writes:
-        - trades.entry_atr
-        - trades.stop_basis
-        - trades.max_adverse_excursion
-        - trades.max_favourable_excursion
-      records: >-
-        Per CLOSED trade: entry price, entry ATR, the entry stop and the basis
-        it was computed from, and the maximum ADVERSE and FAVOURABLE excursions
-        (`trades.max_adverse_excursion` and its favourable mirror, written by
-        `src/storage/db.py`), alongside the realised outcome and stop-hit
-        category already stored. The realised ATR multiple is RECOMPUTED from
-        those columns and is deliberately not stored again.
-      closes_when: >-
-        Enough closed trades carry the excursion columns to answer the only
-        question doctrine allows of them -- was the floor ever VIOLATED in
-        practice -- which falsifies the floor or leaves it standing. It may
-        NOT be optimised against: fitting a number to this desk's own trading
-        record is barred outright (docs/OUTCOME.md), and that is how the 1.5
-        was produced in the first place.
-        LIVENESS, MEASURED in production on 2026-10-01 and not
-        inferred: the columns this route depends on are EMPTY --
-        entry_atr, stop_basis, max_adverse_excursion and
-        max_favourable_excursion are non-null on 0 of the 80 rows in
-        trades. The route is therefore BUILT but has settled nothing,
-        and the reason is dated rather than unknown: the entry-side
-        write read ATR off the wrong object until it was corrected and
-        deployed late on 2026-09-30, and no entry has been written
-        since that deploy, so the recording is UNPROVEN rather than
-        demonstrated dead. The excursion columns cannot fill
-        independently of that: their accumulating UPDATE filters on
-        entry_atr IS NOT NULL, so they stay empty for every trade
-        entered before the correction. The first entry taken after it
-        is the observation that decides whether this route is alive;
-        until one exists, no reader may treat the floor as being under
-        falsification.
     note: >-
       Minimum stop distance in ATRs where no real level backs the stop, a
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
@@ -2932,7 +2895,9 @@ numbers:
       previously checked.
   - id: src.portfolio_constructor.config.ConstructorConfig.max_position_pct
     value: 65
-    status: arbitrary
+    status: owner_ruled
+    ruled_on: '2026-09-11'
+    ruling: 'Owner set 65 as his own risk-appetite call after rejecting 33 as too tight, with the gap-disaster cost on the table (config comment, clause c).'
     site: src/portfolio_constructor/config.py
     note: >-
       Single-name ceiling, moved to 65 by owner override on 2026-09-11
@@ -2949,39 +2914,6 @@ numbers:
       7.69%-of-entry crossover with the 5% risk envelope. The earlier wording
       here, "binds most real trades", was never measured and is wrong: it
       bound 4 of 38, not most.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
-      records: >-
-        the distribution of overnight and intraday gap moves against position, in
-        percent of prior close, measured off public daily bars for the eligible
-        universe over a stated window -- the no-stop-fill case this ceiling is the
-        only guard against. Measured on the instrument, over names the desk could
-        have held rather than names it did hold, so it is a property of the tape and
-        not of this desk's trade record
-      closes_when: >-
-        the overnight gap distribution is measured and the ceiling is read off it,
-        with NO owner tolerance asked for. The question this row once routed to the
-        owner (how much single-name loss he will tolerate when a stop does not fill)
-        is WITHDRAWN: a protective stop cannot trigger while the exchange is shut, so
-        an overnight gap is whatever the market does and not a tolerance anyone can
-        set, as the owner has ruled repeatedly (recorded 2026-10-04 in
-        docs/board_notes/item-186.md). The measurement, startable from this entry
-        alone: take the daily OHLC bars this repo already fetches for the eligible
-        universe (`src.data.market.MarketDataProvider.get_ohlcv_batch`; a recorded
-        400-session sample for 33 symbols sits in
-        ops/rehearsal/recordings/market_bars.json.gz), compute for every consecutive
-        session pair (open_t / close_t-1) - 1, pool the adverse gaps across names,
-        and write down the window, the universe, the gap count, the worst gap and the
-        gaps at the 1-in-100, 1-in-1,000 and 1-in-10,000 ranks. The ceiling then
-        becomes the notional share at which the WORST OBSERVED gap costs the account
-        no more than the per-name risk envelope the ledger already carries at
-        src.config.RiskConfig.max_position_risk_pct (share = envelope / |worst gap|):
-        a derivation from the tape and an existing number, with no percentile picked
-        and no tolerance chosen. The per-name reading of the same gap history is the
-        build item 186 names and supersedes this pooled bound once it exists. Until a
-        measured figure is written down the desk pays a round 65 nobody derived
   - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct
     value: 90
     status: derived

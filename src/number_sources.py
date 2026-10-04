@@ -257,7 +257,7 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
 #:   not-trade-governing — in scope structurally, does not reach a trade
 #:                      decision. Requires `note` saying why.
 VALID_STATUSES: frozenset[str] = frozenset(
-    {"instrument", "sourced", "derived", "arbitrary", "not-trade-governing"}
+    {"instrument", "sourced", "derived", "arbitrary", "not-trade-governing", "owner_ruled"}
 )
 
 #: Fields every `arbitrary` entry must carry. `docs/OUTCOME.md`'s outcome-3
@@ -486,6 +486,8 @@ def classification(
             out["not_trade_governing"].append(site_id)
         elif status in {"derived", "instrument", "measurement"}:
             out["sourced_or_measured"].append(site_id)
+        elif status == "owner_ruled":
+            out["ratified_bound"].append(site_id)
         elif status == "sourced":
             text = str(entry.get("source", "")).lower()
             key = "ratified_bound" if "ratif" in text else "sourced_or_measured"
@@ -867,6 +869,17 @@ def audit(
                     "this number cannot reach a trade decision.",
                 )
             )
+        if status == "owner_ruled":
+            for field in ("ruled_on", "ruling"):
+                if not str(entry.get(field) or "").strip():
+                    problems.append(
+                        LedgerProblem(
+                            "no-ruling",
+                            site_id,
+                            f"status 'owner_ruled' requires `{field}:` recording "
+                            f"the dated owner decision.",
+                        )
+                    )
         if status == "arbitrary":
             for field in ARBITRARY_REQUIRED_FIELDS:
                 if not str(entry.get(field) or "").strip():

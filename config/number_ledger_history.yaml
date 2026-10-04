@@ -1114,3 +1114,10 @@ changes:
       meant to source it found directional overnight-gap asymmetry at a
       median 1.01 across names, nowhere near 1.5, so the count falls by
       one with no new unsourced number entering anywhere.
+  - delta: -2
+    date: '2026-10-04'
+    why: >-
+      Two arbitrary rows are re-filed as `owner_ruled`, not sourced: the
+      stop multiple 2.5 ATR (owner, 2026-10-04, "the issue is closed for
+      now") and the 65 single-name ceiling (owner, 2026-09-11). Values
+      are unchanged; only the classification was wrong.
