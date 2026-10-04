@@ -35,6 +35,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     missing_stated_falsifier,
     open_target_missing_falsifier,
     record_refusal_count,
+    record_stage,
 )
 
 
@@ -131,7 +132,9 @@ def _record_mechanical_soft_exit_restores(pipeline, ctx) -> None:
             dropped=dropped,
         )
     except Exception as exc:  # noqa: BLE001 — a recording never blocks a trade
-        logger.error("mechanical soft-exit heal recording failed: %s", exc)
+        record_stage(pipeline, "soft_exit_restore", exc)
+    else:
+        record_stage(pipeline, "soft_exit_restore")
 
 
 def _record_soft_exit_heals(pipeline, ctx) -> None:
@@ -156,14 +159,18 @@ def _record_soft_exit_heals(pipeline, ctx) -> None:
         drain = getattr(agent, "drain_soft_exit_heals", None)
         heals = dict(drain() if callable(drain) else {})
     except Exception as exc:  # noqa: BLE001
-        logger.error("soft-exit heal drain failed: %s", exc)
+        record_stage(pipeline, "soft_exit_drain", exc)
         return
+    else:
+        record_stage(pipeline, "soft_exit_drain")
     if not heals:
         return
     try:
         ctx.soft_exit_heals = {**(getattr(ctx, "soft_exit_heals", None) or {}), **heals}
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        record_stage(pipeline, "soft_exit_attach", exc)
+    else:
+        record_stage(pipeline, "soft_exit_attach")
     for symbol, heal in heals.items():
         _record_pipeline_event(
             pipeline, ctx, symbol, "soft_exit_heal",

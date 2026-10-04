@@ -461,7 +461,7 @@ def test_the_rival_matcher_stays_off_a_different_calendar_quantity():
     # Step 1 of docs/PIPELINE_SPLIT_PLAN.md moved both rival sites, verbatim,
     # from src/pipeline.py into the prompt-facts mixin; the shape is unchanged.
     assert files == {"src/pipeline_prompt_facts.py", "src/prompt_facts/missed_ops_signals.py"}, (
-        f"the holding-time rival shape reaches beyond src/pipeline_prompt_facts.py: "
+        f"the holding-time rival shape reaches beyond src/prompt_facts/{history,position_facts}.py: "
         f"{sorted(sites)}. Narrow it, or the first unrelated calendar-day "
         f"count added anywhere in src/ blocks somebody's unrelated change."
     )

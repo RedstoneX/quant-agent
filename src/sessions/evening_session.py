@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from src.sessions.evening_record import record_evening_pass, run_evening_housekeeping
 from src.data.macro import MacroCoverage
 from src.cost_circuit import PaidAnalysisSuspended
 from src.pipeline_context import RunContext
@@ -140,7 +141,9 @@ class EveningSession:
         try:
             reco = self._reconcile_stop_out_fills(run_id)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("evening stop-out reconcile failed (non-fatal): %s", exc)
+            record_evening_pass(self, "stop_out_reconcile", exc)
+        else:
+            record_evening_pass(self, "stop_out_reconcile")
         # Item 101: surface a broker-made stop-out / re-protection to owner.
         self._surface_reconcile_outcomes(reco, drained, run_id=run_id)
 
@@ -188,8 +191,10 @@ class EveningSession:
                 risk_heat.budget_risk_dollars if risk_heat is not None else None
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning("evening: risk-capital heat build failed: %s", e)
+            record_evening_pass(self, "risk_heat", e)
             risk_capital_dollars = None
+        else:
+            record_evening_pass(self, "risk_heat")
 
 
         # Phase 4 #5: daily_pnl write is deferred to the atomic
@@ -212,7 +217,9 @@ class EveningSession:
                 if closes and closes[-1][0] == today_str:
                     equity_close = closes[-1][1]
             except Exception as close_exc:  # noqa: BLE001
-                logger.warning("suspended evening: 4pm close fetch failed: %s", close_exc)
+                record_evening_pass(self, "suspended_close_fetch", close_exc)
+            else:
+                record_evening_pass(self, "suspended_close_fetch")
             self._db.insert_daily_pnl(
                 date=today_str,
                 total_value=total_value,
@@ -264,8 +271,10 @@ class EveningSession:
         try:
             _, evening_earnings = self._load_earnings_analyses(run_id, session="evening", ctx=ctx)
         except Exception as e:  # noqa: BLE001 — evening proceeds without earnings
-            logger.error("evening: earnings load failed (continuing without): %s", e)
+            record_evening_pass(self, "earnings_load", e)
             evening_earnings = []
+        else:
+            record_evening_pass(self, "earnings_load")
 
         try:
             self._require_paid_analysis("evening_analyst")
@@ -333,18 +342,20 @@ class EveningSession:
                 current_position_symbols=held_set,
             )
         except Exception as e:
-            logger.warning("missed_ops digest failed (proceeding without it): %s", e)
+            record_evening_pass(self, "missed_ops_digest", e)
             missed_ops_snapshots = []
+        else:
+            record_evening_pass(self, "missed_ops_digest")
 
         # Value-lens upgrade (2026-04): per-position 8-week fundamentals
         # evolution — feeds the new thesis_health_review reasoning step.
         try:
             thesis_health_context = self._build_thesis_health_context(positions)
         except Exception as e:
-            logger.warning(
-                "thesis_health_context failed (proceeding without it): %s", e,
-            )
+            record_evening_pass(self, "thesis_health_context", e)
             thesis_health_context = {}
+        else:
+            record_evening_pass(self, "thesis_health_context")
 
         # Replay/shadow mechanism (2026-04 — P2 follow-up): persist the
         # full evening-analyst input set so a candidate prompt can be
@@ -373,7 +384,9 @@ class EveningSession:
                 thesis_health_context=thesis_health_context,
             )
         except Exception as e:
-            logger.warning("evening replay input persistence failed: %s", e)
+            record_evening_pass(self, "replay_input_persist", e)
+        else:
+            record_evening_pass(self, "replay_input_persist")
 
         analysis = None
         analysis_error = False
@@ -518,9 +531,13 @@ class EveningSession:
                             d, close_val,
                         )
                 except Exception as exc:
-                    logger.warning("equity_close backfill failed for %s: %s", d, exc)
+                    record_evening_pass(self, "equity_close_backfill", exc)
+                else:
+                    record_evening_pass(self, "equity_close_backfill")
         except Exception as e:
-            logger.warning("4pm snapshot fetch failed: %s — using real-time P&L", e)
+            record_evening_pass(self, "snapshot_fetch_4pm", e)
+        else:
+            record_evening_pass(self, "snapshot_fetch_4pm")
 
         # Save daily_pnl + insights atomically (Phase 4 #5). If the LLM
         # failed (analysis is None), still record the P&L number so the
@@ -588,63 +605,11 @@ class EveningSession:
                     ledger["skipped_no_stances"],
                 )
         except Exception as e:
-            logger.warning("Conviction ledger resolution failed: %s", e)
+            record_evening_pass(self, "conviction_ledger", e)
+        else:
+            record_evening_pass(self, "conviction_ledger")
 
-        # Housekeeping: drop agent_logs older than 2 years (full_response bloats the DB
-        # but 730 days supports quarter-over-quarter learning), and trades older than
-        # 5 years (keep a long audit tail but bound it).
-        try:
-            pruned = self._db.prune_agent_logs(keep_days=730)
-            if pruned:
-                logger.info("Pruned %d old agent_log rows", pruned)
-        except Exception as e:
-            logger.warning("Agent log prune failed: %s", e)
-        try:
-            pruned_t = self._db.prune_trades(keep_days=365 * 5)
-            if pruned_t:
-                logger.info("Pruned %d trades older than 5 years", pruned_t)
-        except Exception as e:
-            logger.warning("Trades prune failed: %s", e)
-        # Stage 4 (QAMC): specialist_evidence is forensic display detail for
-        # the same agent calls agent_logs already prunes — same 730-day
-        # retention, same never-block-housekeeping discipline.
-        try:
-            pruned_se = self._db.prune_specialist_evidence(keep_days=730)
-            if pruned_se:
-                logger.info("Pruned %d old specialist_evidence rows", pruned_se)
-        except Exception as e:
-            logger.warning("specialist_evidence prune failed: %s", e)
-        # Stale orphaned protection-restore rows accumulate when a
-        # sell_order_id becomes unqueryable (broker GC) or position
-        # gets liquidated by another path. Drain can't make progress on
-        # them; 30d cutoff bounds the operational noise.
-        try:
-            pruned_p = self._db.prune_pending_protection_restores(keep_days=30)
-            if pruned_p:
-                logger.info("Pruned %d stale pending_protection_restores rows", pruned_p)
-        except Exception as e:
-            logger.warning("pending_protection_restores prune failed: %s", e)
-        try:
-            pruned_rp = self._db.prune_pending_repegs(keep_days=30)
-            if pruned_rp:
-                logger.info("Pruned %d stale pending_repegs rows", pruned_rp)
-        except Exception as e:
-            logger.warning("pending_repegs prune failed: %s", e)
-        # File-store housekeeping: the news dated dirs + narrative backups grow
-        # unbounded (the DB side prunes; the file-stores didn't). Nothing reads
-        # news artifacts older than ~14 days, so 1000d is very safe headroom.
-        try:
-            pruned_n = self._news_store.prune(keep_days=1000)
-            if pruned_n:
-                logger.info("Pruned %d dated news artifact(s)", pruned_n)
-        except Exception as e:
-            logger.warning("news file-store prune failed: %s", e)
-        try:
-            pruned_e = self._earnings_provider.prune(keep_days=1000)
-            if pruned_e:
-                logger.info("Pruned %d old raw earnings filing(s)", pruned_e)
-        except Exception as e:
-            logger.warning("earnings file-store prune failed: %s", e)
+        run_evening_housekeeping(self)
 
         logger.info("Evening: value=$%.2f, PnL=$%.2f (%.2f%%), risk=%s",
                      total_value, daily_pnl, daily_return_pct,

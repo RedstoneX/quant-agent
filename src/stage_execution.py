@@ -16,6 +16,7 @@ from src.entry_evidence import (
     resolve_entry_pins as _resolve_entry_pins,
 )
 from src.entry_record import insert_pending_entry
+from src.entry_slippage_bound import entry_bound
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -872,20 +873,8 @@ class ExecutionStage:
                     sizing_price = max(sizing_print, float(decision.entry_price))
                 else:
                     sizing_price = sizing_print
-                # item 181 FIX: the RISK-BUDGET divisor must never be
-                # inflated. `sizing_price` above is the max(print, entry) —
-                # correctly conservative for the ALLOCATION path in both
-                # directions — but on the RISK-BUDGET path
-                # `risk_per_share = |price - stop|`, and for a SHORT a
-                # HIGHER price NARROWS that spread. When the analyst's entry
-                # sits above today's print, sizing the risk budget off the
-                # entry understates risk_per_share and inflates qty_by_risk
-                # past the ratified budget (bounded only by the allocation
-                # min() cap). The short actually fills near the print, so
-                # the risk budget must be measured against the print. A BUY
-                # is unaffected: there risk_per_share = price - stop GROWS
-                # with a higher divisor, which is already the conservative
-                # direction, so it keeps using `sizing_price` unchanged.
+                # item 181: a SHORT's higher divisor NARROWS |price - stop|
+                # and inflates qty_by_risk, so it falls back to the print.
                 risk_sizing_price = sizing_print if is_short else sizing_price
 
                 # Liquid-equity execution policy: cross the displayed quote
@@ -974,15 +963,10 @@ class ExecutionStage:
                     # Price protection is unchanged — `slippage_bps` still
                     # bounds the worst possible fill — it just stops being
                     # self-defeating.
-                    pinned_cap = (getattr(ctx, "approved_entry_ceiling", None) or {}).get(
-                        decision.symbol,
+                    cap, offer_limit, ask_premium_bps = entry_bound(
+                        pipeline, ctx, decision.symbol, market_price, ask,
+                        slippage_bps, is_short=False,
                     )
-                    if isinstance(pinned_cap, (int, float)) and pinned_cap > 0:
-                        cap = float(pinned_cap)
-                    else:
-                        cap = market_price * (1 + slippage_bps / 10_000.0)
-                    offer_limit = round(cap, 2 if cap >= 1 else 4)
-                    ask_premium_bps = (ask - market_price) / market_price * 10_000.0
 
                     # THE IEX ASK DOES NOT DECIDE ANYTHING HERE (board item
                     # 183, 2026-09-30). It used to: an entry was refused when
@@ -1134,16 +1118,9 @@ class ExecutionStage:
                     # toward the bid costs fills the same way VLO's shaved
                     # buy limit did. Set the limit AT the existing
                     # slippage floor and let the match happen underneath.
-                    pinned_floor = (getattr(ctx, "approved_entry_ceiling", None) or {}).get(
-                        decision.symbol,
-                    )
-                    if isinstance(pinned_floor, (int, float)) and pinned_floor > 0:
-                        floor = float(pinned_floor)
-                    else:
-                        floor = market_price * (1 - slippage_bps / 10_000.0)
-                    bid_limit = round(floor, 2 if floor >= 1 else 4)
-                    bid_discount_bps = (
-                        (market_price - bid) / market_price * 10_000.0
+                    floor, bid_limit, bid_discount_bps = entry_bound(
+                        pipeline, ctx, decision.symbol, market_price, bid,
+                        slippage_bps, is_short=True,
                     )
 
                     # Mirror of the BUY side above, and it goes for the same
@@ -1341,6 +1318,18 @@ class ExecutionStage:
                         decision.symbol, decision.entry_price, sizing_price,
                         decision.stop_loss, stop_price,
                     )
+
+                # ROOT FIX (2026-10-04, measured live): REPLACES the fallback
+                # divisor above — size the risk budget against the price the
+                # desk is ABOUT TO PAY. It was bound before the marketable
+                # limit existed, so realised fill-to-stop was WIDER than the
+                # sized distance and positions carried more than the
+                # authorised ~1% of equity: 6.1% median BUY overshoot (25%
+                # worst), 10.9% on a short. The limit is known here, so no
+                # buffer and no multiplier — the budget divides by it.
+                # Identical both ways, the worst fill either way (ruling).
+                if isinstance(limit_price, (int, float)) and limit_price > 0:
+                    risk_sizing_price = float(limit_price)
 
                 # Spec §11.1. Exact sizing when the flag is on AND the broker
                 # confirms the symbol is fractionable; whole shares otherwise.

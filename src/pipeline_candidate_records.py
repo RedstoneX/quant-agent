@@ -30,6 +30,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     logger,
     pipeline_event_fields,
     record_order_attempt_from_event,
+    record_stage,
     seat_acceptance_kwargs,
 )
 
@@ -71,7 +72,10 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
     """
     if stage == "order":
         # one Sentinel attempt row per order event
-        record_order_attempt_from_event(db=pipeline.db, symbol=symbol, outcome=outcome, reason=reason, run_id=ctx.run_id, details=details)
+        record_order_attempt_from_event(
+            db=pipeline.db, symbol=symbol, outcome=outcome, reason=reason,
+            run_id=ctx.run_id, details=details,
+        )
     _persist_evidence(pipeline.db, **pipeline_event_fields(
         run_id=ctx.run_id, decision_id=ctx.decision_id, symbol=symbol,
         stage=stage, outcome=outcome, reason=reason, details=details,
@@ -186,6 +190,7 @@ def _account_for_pm_candidates(
             **{**pm_decide_kwargs, "accounting_challenge": challenge},
         )
     except Exception as exc:  # noqa: BLE001
+        record_stage(pipeline, "accounting_reask", exc)
         _record_heal_safely(pipeline, ctx, HealResult(
             seat=_PM_ACCOUNTING_SEAT, outcome=HEAL_FAILED,
             reason=f"candidate-accounting re-ask raised: {exc}",
@@ -193,6 +198,8 @@ def _account_for_pm_candidates(
         ))
         _finish(pending, asked=True)
         return
+    else:
+        record_stage(pipeline, "accounting_reask")
 
     try:
         pipeline.db.insert_agent_log(
@@ -217,9 +224,9 @@ def _account_for_pm_candidates(
             **agent_log_kwargs(reask_result),
         )
     except Exception as e:  # noqa: BLE001
-        logger.warning(
-            "PM candidate accounting: re-ask log write failed: %s", e,
-        )
+        record_stage(pipeline, "accounting_reask_log", e)
+    else:
+        record_stage(pipeline, "accounting_reask_log")
 
     if reasked is None:
         _record_heal_safely(pipeline, ctx, HealResult(
@@ -252,11 +259,9 @@ def _account_for_pm_candidates(
                 getattr(decision, "rejections", None) or [],
             ) + gained
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "PM candidate accounting: could not attach the re-asked "
-                "rejections to the decision (%s) — they are still recorded "
-                "per symbol below", e,
-            )
+            record_stage(pipeline, "accounting_rejections", e)
+        else:
+            record_stage(pipeline, "accounting_rejections")
 
     second = account_for_candidates(
         analyses=[a for a in analyses
@@ -322,7 +327,6 @@ def _record_heal_safely(pipeline, ctx, result, alert: bool = True) -> None:
     try:
         pipeline._record_heal(ctx, result, alert=alert)
     except Exception as e:  # noqa: BLE001
-        logger.warning(
-            "PM candidate accounting: could not record the heal result "
-            "(%s): %s", getattr(result, "outcome", "?"), e,
-        )
+        record_stage(pipeline, "heal_record", e)
+    else:
+        record_stage(pipeline, "heal_record")

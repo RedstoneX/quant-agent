@@ -64,4 +64,5 @@ def test_every_moved_name_is_the_same_object_through_the_old_import_path():
 
     for name in MOVED:
         assert getattr(stages, name) is getattr(candidate_records, name), name
-    assert "_record_scale_in_window_closed" not in vars(candidate_records)  # stays behind: its body reaches the broker seam
+    # stays behind: its body reaches the broker seam
+    assert "_record_scale_in_window_closed" not in vars(candidate_records)

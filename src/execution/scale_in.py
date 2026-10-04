@@ -58,6 +58,10 @@ from __future__ import annotations
 
 import json
 from src.stop_cancel_outcome import handle_add_cancel
+from src.execution.scale_in_loud import record_scale_in, record_scale_in_fault
+from src.execution.scale_in_readers import (  # noqa: F401 (re-export)
+    WAL_SCALE_IN_SENTINEL, pending_scale_in_rows_from_path, pending_scale_in_symbols_from_path,
+)
 import logging
 import os
 import time
@@ -66,12 +70,6 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-#: Distinct from `_WAL_SELL_SENTINEL` (`__WAL_PENDING__`). Drain must NOT
-#: run the SELL-finalize math on a scale-in row: a grown position would
-#: restore the OLD stop size and leave the add naked — the partial-fill
-#: size bug this path exists to close.
-WAL_SCALE_IN_SENTINEL = "__WAL_SCALE_IN__"
 
 #: Terminal statuses that mean the protective sell is gone and did not
 #: sell shares. `filled` is deliberately NOT here: a stop that fires
@@ -188,7 +186,10 @@ def _confirm_cancels_status(broker: Any, specs: list[dict]) -> tuple[str, str]:
         try:
             status = broker.wait_for_order_terminal(order_id)
         except Exception as exc:  # noqa: BLE001
+            record_scale_in(broker, "confirm_cancels", exc, order=order_id)
             return "unconfirmed", f"cancel confirm raised for {order_id}: {exc}"
+        else:
+            record_scale_in(broker, "confirm_cancels")
         status = str(status or "").lower()
         if status in _STOP_FILLED:
             return "filled", (
@@ -222,8 +223,10 @@ def broker_position_qty(broker: Any, symbol: str) -> float | None:
     try:
         positions = broker.get_positions()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("scale-in: get_positions failed for %s: %s", symbol, exc)
+        record_scale_in(broker, "broker_position_qty", exc, symbol=symbol)
         return None
+    else:
+        record_scale_in(broker, "broker_position_qty")
     if not isinstance(positions, list):
         return None
     return held_signed_qty(positions, symbol)
@@ -326,11 +329,9 @@ def restore_cancelled_stops(
             symbol, to_restore, check_idempotency=True, side=side,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "scale-in: restore of cancelled stops failed for %s: %s",
-            symbol, exc,
-        )
+        record_scale_in(broker, "restore_cancelled_stops", exc, symbol=symbol)
         return False
+    record_scale_in(broker, "restore_cancelled_stops")
     return not failed
 
 
@@ -340,10 +341,9 @@ def discharge_scale_in_wal(db: Any, wal_row_id: int | None) -> None:
     try:
         db.delete_pending_protection_restore(wal_row_id)
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "scale-in: failed to discharge WAL row %s: %s (drain will retry)",
-            wal_row_id, exc,
-        )
+        record_scale_in(db, "discharge_wal", exc, wal_row=wal_row_id)  # the drain will retry
+    else:
+        record_scale_in(db, "discharge_wal")
 
 
 def prepare_long_add(
@@ -373,10 +373,12 @@ def prepare_long_add(
     try:
         ok, specs = broker.snapshot_protective_stops(symbol, side="sell")
     except Exception as exc:  # noqa: BLE001
-        logger.error("scale-in: snapshot failed for %s: %s", symbol, exc)
+        record_scale_in(db, "long_add.snapshot", exc, symbol=symbol)
         prep.skip_reason = "scale_in_stop_clear_failed"
         prep.skip_detail = f"could not read the resting protective sell ({exc})"
         return prep
+    else:
+        record_scale_in(db, "long_add.snapshot")
     if not ok:
         prep.skip_reason = "scale_in_stop_clear_failed"
         prep.skip_detail = "could not read the resting protective sell"
@@ -399,13 +401,12 @@ def prepare_long_add(
             side="sell",
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "scale-in: WAL write failed for %s: %s — refusing the add "
-            "rather than cancelling without crash recovery", symbol, exc,
-        )
+        record_scale_in(db, "long_add.wal_write", exc, symbol=symbol)  # the add is refused
         prep.skip_reason = "scale_in_stop_clear_failed"
         prep.skip_detail = "could not persist the protection-restore intent before cancel"
         return prep
+    else:
+        record_scale_in(db, "long_add.wal_write")
     prep.wal_row_id = wal_row_id if isinstance(wal_row_id, int) else wal_row_id
 
     cancel = broker.cancel_snapshotted_stops(symbol, live)
@@ -542,10 +543,12 @@ def prepare_short_add(
     try:
         ok, specs = broker.snapshot_protective_stops(symbol, side="buy")
     except Exception as exc:  # noqa: BLE001
-        logger.error("short scale-in: snapshot failed for %s: %s", symbol, exc)
+        record_scale_in(db, "short_add.snapshot", exc, symbol=symbol)
         prep.skip_reason = "scale_in_stop_clear_failed"
         prep.skip_detail = f"could not read the resting protective buy-stop ({exc})"
         return prep
+    else:
+        record_scale_in(db, "short_add.snapshot")
     if not ok:
         prep.skip_reason = "scale_in_stop_clear_failed"
         prep.skip_detail = "could not read the resting protective buy-stop"
@@ -568,13 +571,12 @@ def prepare_short_add(
             side="buy",
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "short scale-in: WAL write failed for %s: %s — refusing the add "
-            "rather than cancelling without crash recovery", symbol, exc,
-        )
+        record_scale_in(db, "short_add.wal_write", exc, symbol=symbol)  # the add is refused
         prep.skip_reason = "scale_in_stop_clear_failed"
         prep.skip_detail = "could not persist the protection-restore intent before cancel"
         return prep
+    else:
+        record_scale_in(db, "short_add.wal_write")
     prep.wal_row_id = wal_row_id if isinstance(wal_row_id, int) else wal_row_id
 
     cancel = broker.cancel_snapshotted_stops(symbol, live)
@@ -756,11 +758,10 @@ def list_open_entry_ids(broker: Any, symbol: str) -> list[str]:
         try:
             ids = lister(symbol)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "scale-in: list_open_entry_order_ids failed for %s: %s",
-                symbol, exc,
-            )
+            record_scale_in(broker, "list_open_entry_ids", exc, symbol=symbol)
             return []
+        else:
+            record_scale_in(broker, "list_open_entry_ids")
         if isinstance(ids, list):
             return [str(i) for i in ids if i]
         return []
@@ -786,6 +787,7 @@ def pending_scale_in_symbols(db: Any) -> set[str]:
     try:
         rows = db.get_pending_protection_restores()
     except Exception:  # noqa: BLE001
+        record_scale_in_fault(db, "pending_scale_in_symbols")
         return set()
     out: set[str] = set()
     for row in rows or []:
@@ -799,6 +801,7 @@ def pending_protection_symbols(db: Any) -> set[str]:
     try:
         rows = db.get_pending_protection_restores()
     except Exception:  # noqa: BLE001
+        record_scale_in_fault(db, "pending_protection_symbols")
         return set()
     return {str(r["symbol"]) for r in (rows or []) if r.get("symbol")}
 
@@ -846,18 +849,16 @@ def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
         try:
             broker.cancel_entry_order(order_id)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "scale-in drain: cancel of leftover entry %s for %s failed: %s",
-                order_id, symbol, exc,
-            )
+            record_scale_in(db, "drain.cancel_leftover_entry", exc, symbol=symbol, order=order_id)
+        else:
+            record_scale_in(db, "drain.cancel_leftover_entry")
         try:
             status = str(broker.wait_for_order_terminal(order_id) or "").lower()
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "scale-in drain: confirm of leftover entry %s for %s failed: %s",
-                order_id, symbol, exc,
-            )
+            record_scale_in(db, "drain.confirm_leftover_entry", exc, symbol=symbol, order=order_id)
             return False
+        else:
+            record_scale_in(db, "drain.confirm_leftover_entry")
         if status and status not in (
             _CANCEL_CONFIRMED | _STOP_FILLED | frozenset({"done_for_day"})
         ):
@@ -887,7 +888,10 @@ def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
     try:
         existing_ok, existing = broker.snapshot_protective_stops(symbol, side=stop_side)
     except Exception:
+        record_scale_in_fault(db, "drain.snapshot_existing_stops", symbol=symbol)
         existing_ok, existing = False, []
+    else:
+        record_scale_in(db, "drain.snapshot_existing_stops")
     covered = 0.0
     if existing_ok:
         for spec in existing or []:
@@ -972,13 +976,12 @@ def record_rearm_failure(
                 sort_keys=True, default=str,
             ),
         )
-        return True
     except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "scale-in rearm-failure record for %s could not be written: %s",
-            symbol, exc,
-        )
+        record_scale_in(db, "record_rearm_failure", exc, symbol=symbol)
         return False
+    else:
+        record_scale_in(db, "record_rearm_failure")
+        return True
 
 
 def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
@@ -1000,7 +1003,7 @@ def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
             return
     except Exception as exc:  # noqa: BLE001 — never swallow the page on a
         # state-file fault; err towards telling the owner twice.
-        logger.warning("rearm-failure alert claim failed (%s); sending anyway", exc)
+        record_scale_in(db, "alert_rearm.claim", exc, symbol=symbol)  # sending anyway
     body = (
         "STOP NOT REARMED AFTER A SCALE-IN\n"
         f"{symbol}: the desk cancelled the resting protective sell so it "
@@ -1014,61 +1017,6 @@ def alert_rearm_failed(*, symbol: str, qty: float, stop_price: float,
         from src import notifier as _notifier
         _notifier.send_owner_alert(body, symbols=[str(symbol)])
     except Exception as exc:  # noqa: BLE001
-        logger.error("scale-in rearm-failure owner alert failed: %s", exc)
-
-
-def pending_scale_in_rows_from_path(
-    db_path: str | os.PathLike | None,
-) -> list[dict]:
-    """Read-only lookup of the LIVE scale-in write-ahead rows, with the row's
-    own `created_at` and the quantity the cancel exposed.
-
-    Board item 193. `pending_scale_in_symbols_from_path` answers only "which
-    symbols is the watchdog to stay away from". That is the question the skip
-    needs and the wrong question for the owner, who has to be told WHICH
-    position is deliberately unguarded and for HOW LONG. `created_at` is the
-    row's write time, not the broker's cancel acknowledgement, so a duration
-    derived from it is an approximation of the window and is labelled as one
-    everywhere it is shown; the exact figure is the `unprotected_window_closed`
-    event the session itself emits when the rearm returns. Empty on any
-    failure: this is observability and must never break the sweep.
-    """
-    if not db_path:
-        return []
-    try:
-        import sqlite3
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        try:
-            rows = conn.execute(
-                "SELECT id, symbol, created_at, position_qty_before_sell "
-                "FROM pending_protection_restores WHERE sell_order_id = ? "
-                "ORDER BY created_at ASC",
-                (WAL_SCALE_IN_SENTINEL,),
-            ).fetchall()
-        finally:
-            conn.close()
-    except Exception:  # noqa: BLE001
-        return []
-    return [dict(r) for r in rows if r["symbol"]]
-
-
-def pending_scale_in_symbols_from_path(db_path: str | os.PathLike | None) -> set[str]:
-    """Read-only lookup for the coverage watchdog. Empty on any failure."""
-    if not db_path:
-        return set()
-    try:
-        import sqlite3
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        try:
-            rows = conn.execute(
-                "SELECT symbol FROM pending_protection_restores "
-                "WHERE sell_order_id = ?",
-                (WAL_SCALE_IN_SENTINEL,),
-            ).fetchall()
-        finally:
-            conn.close()
-    except Exception:  # noqa: BLE001
-        return set()
-    return {str(r["symbol"]) for r in rows if r["symbol"]}
+        record_scale_in(db, "alert_rearm.send", exc, symbol=symbol)
+    else:
+        record_scale_in(db, "alert_rearm.send")
