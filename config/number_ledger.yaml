@@ -191,45 +191,26 @@ numbers:
       and the share of the book that number silently refuses changes as equity
       changes.
   - id: src.config.CashReserveConfig.pct
-    settles_by:
-      kind: recording
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
-      records: 'every session, the cash the reserve withheld from deployment beside the cash the account
-        actually had to meet that session: broker fees, margin interest debits, settlement timing
-        and any sizing-to-fill shortfall, so the buffer is compared against a measured obligation
-        rather than a round one percent'
-      closes_when: a run of sessions shows the largest same-day cash obligation the account met, and
-        the reserve is set above that observed maximum with the observation named; it is DELETED,
-        and deployable cash becomes the whole balance, if no session ever consumes cash the reserve
-        was holding back
     value: 1
-    status: arbitrary
+    status: not-trade-governing
     site: src/config/__init__.py
     note: >-
-      % of equity the /account liquidity view reports as held back as raw
-      cash for fees, slippage and partial fills. RELOCATED 2026-10-01 (board
-      item 190) from `CashSweepConfig.reserve_pct` to its own
-      `CashReserveConfig.pct`; the VALUE and the `arbitrary` label are
-      unchanged, only the home. Why it moved rather than died with the sweep:
-      measured over this checkout, its only readers are
-      `src.api.deps.get_cash_reserve_pct` -> `routes_live._compute_liquidity`,
-      which renders `reserve_usd` and `cash_above_reserve`, and the
-      branch-preview shim that reconstructs the same two fields. The sweeper's
-      own `CashSweeper.reserve_usd` wrapper, its last in-engine reader, had no
-      production caller left once the parking buy and funding sell were
-      deleted and went with them. The deployment-gap advisory stopped reading
-      this band at item 190 step 1 (`DeploymentGapConfig.band_pct`, same
-      value). Leaving it inside the retired feature's namespace was the live
-      risk: a later cleanup reading "cash_sweep" as dead would have deleted a
-      band the account view still reports.
-    open_question: >-
-      What is the largest observed shortfall between an order's sized cost and
-      its settled cost on this account - fees, slippage and partial fills
-      together?
-    cost_while_unanswered: >-
-      Too low and a funded order fails for want of cash; too high and equity
-      sits in raw cash earning nothing.
+      RE-FILED from `arbitrary` 2026-10-04. The percent of equity the
+      /account liquidity view reports as held back (`reserve_usd`) and the cash
+      left above it (`cash_above_reserve`). EVIDENCE, by grep over src/ and
+      scripts/ on this checkout: the only reader of `cash_reserve.pct` is
+      `src.api.deps.get_cash_reserve_pct`, whose only caller is
+      `routes_live._compute_liquidity`, which passes it to
+      `src.quantities.sweep_reserve_usd` and renders the result into the
+      account response. `reserve_usd` and `cash_above_reserve` have no reader in
+      the engine, the sizing path or any gate. `src.quantities.deployable_cash`,
+      which the docstring there names as the figure Portfolio Manager sizing,
+      the Risk Manager audit and the pre-trade cash gate all use, does not take
+      a reserve argument. The deployment-gap advisory stopped reading the band
+      at board item 190 step 1. A wrong value therefore changes a number an
+      operator reads on the dashboard and no order, size or refusal. If a
+      later change makes any engine path read it, this row must go back to
+      `arbitrary` in the same change.
   - id: src.config.DeploymentGapConfig.band_pct
     settles_by:
       kind: measurement
@@ -777,6 +758,22 @@ numbers:
       every figure derived from it an ESTIMATE until the broker's own INT
       activity confirms paper accounts are charged at all.
   - id: src.config.RiskConfig.max_cluster_risk_share_pct
+    narrowed: >-
+      RECORDING VERIFIED WIRED 2026-10-04, and the one coverage hole named. The `settles_by` recording is genuinely
+      end-to-end, not a stub: `src/stage_decision.py` imports `_record_realised_concentration`, which calls
+      `_record_realised_risk_budget`, which reads the allocator's own stashed `last_risk_allocation` rather than
+      recomputing it. That attribute is assigned unconditionally inside `PortfolioConstructor._plan_risk_targets`,
+      and the constructor calls `_plan_risk_targets` on every construction whose `total_value` is above zero,
+      including a session with an empty target list, so a quiet day still records the held book's at-risk. Method:
+      static trace of the writer chain, 2026-10-04.
+      THE HOLE: the allocator result is set to None whenever `existing_risk_pct` is None, which is the documented
+      degradation when book heat is unavailable, and the row then stores `allocator_ran = 0` with `committed_pct`
+      and `cluster_shares_json` NULL. Any distribution taken off these rows must therefore be read against the
+      `allocator_ran = 0` share or it will be a distribution of entry-capable sessions mistaken for a distribution
+      of all sessions. No new counter is needed, because `allocator_ran` already makes that share readable. NOT
+      MEASURED: how many rows have accumulated. The production database could not be opened from this account
+      (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
+      distribution remain unread, not absent.
     value: 40
     status: arbitrary
     site: src/config/__init__.py
@@ -797,6 +794,11 @@ numbers:
       off, so the ruling's remedy (read it per name) does not apply and it is
       not converted into a defect. It remains owner-ratified appetite with no
       measurement behind it, which is why the status stays `arbitrary`.
+
+      The deterministic backtest cannot settle this row, for the same reason recorded against
+      max_portfolio_risk_pct: the cluster cap only bites on a binding-budget day, and the engine
+      resolves those by alphabetical ticker tie-break rather than a quality ranking, so a
+      measured delta on max_cluster_risk_share_pct would not be attributable to the cap.
     open_question: >-
       NOT AN OWNER QUESTION ANY MORE. Under the owner's 2026-09-30 ruling the
       appetite question previously routed here ("what share of the risk budget
@@ -858,6 +860,22 @@ numbers:
     status: instrument
     value: 2
   - id: src.config.RiskConfig.max_portfolio_risk_pct
+    narrowed: >-
+      RECORDING VERIFIED WIRED 2026-10-04, and the one coverage hole named. The `settles_by` recording is genuinely
+      end-to-end, not a stub: `src/stage_decision.py` imports `_record_realised_concentration`, which calls
+      `_record_realised_risk_budget`, which reads the allocator's own stashed `last_risk_allocation` rather than
+      recomputing it. That attribute is assigned unconditionally inside `PortfolioConstructor._plan_risk_targets`,
+      and the constructor calls `_plan_risk_targets` on every construction whose `total_value` is above zero,
+      including a session with an empty target list, so a quiet day still records the held book's at-risk. Method:
+      static trace of the writer chain, 2026-10-04.
+      THE HOLE: the allocator result is set to None whenever `existing_risk_pct` is None, which is the documented
+      degradation when book heat is unavailable, and the row then stores `allocator_ran = 0` with `committed_pct`
+      and `cluster_shares_json` NULL. Any distribution taken off these rows must therefore be read against the
+      `allocator_ran = 0` share or it will be a distribution of entry-capable sessions mistaken for a distribution
+      of all sessions. No new counter is needed, because `allocator_ran` already makes that share readable. NOT
+      MEASURED: how many rows have accumulated. The production database could not be opened from this account
+      (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
+      distribution remain unread, not absent.
     value: 25
     status: arbitrary
     site: src/config/__init__.py
@@ -874,6 +892,12 @@ numbers:
       off, so the ruling's remedy (read it per name) does not apply and it is
       not converted into a defect. It remains owner-ratified appetite with no
       measurement behind it, which is why the status stays `arbitrary`.
+
+      The deterministic backtest cannot settle this row. On the probe slice (AAPL/MSFT/NVDA,
+      2025-01-02 to 2025-04-30) the engine reported 16 of 26 entry days as binding-budget days,
+      and on a binding day it serves equal-size requests by alphabetical ticker because it
+      passes no priority; production spends down analyst-verdict order. Any A/B on
+      max_portfolio_risk_pct therefore measures ticker spelling, not rationing.
     open_question: >-
       NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that risk is
       never a global dial, so the appetite question previously routed here
@@ -1009,6 +1033,8 @@ numbers:
     value: 60
     status: arbitrary
     site: src/config/__init__.py
+    narrowed: >-
+      NARROWED 2026-10-04 (LIVE, not dead; value NOT settled). Ran the live level finder over 1176 fixture windows with only this cap changed [measured]: 60 to 250 changed the output in 11 windows (0.9%), 60 to 20 in 150 (12.8%). The cap is consulted by the level finder, the target derivation, admission and the touch-probability log, so it is a live cap whose UPPER side barely binds on this data; the harness feeds the constant, not a per-analysis stated horizon. Pinned by tests/test_dead_branch_narrowing_levels.py.
     note: >-
       The longest horizon a target may claim before the desk stops believing
       it, owner-ratified appetite 2026-09-25 (delegated to the adversary).
@@ -1047,10 +1073,20 @@ numbers:
     value: 1.5
     status: arbitrary
     site: src/config/__init__.py
+    narrowed: >-
+      NARROWED 2026-10-04 (LIVE, not dead; value NOT settled). Ran the live level finder over 1176 fixture windows with only this reach multiple changed [measured]: 1.5 to 5.0 changed the output in 11 windows (0.9%, the same 11 windows as the horizon cap above), 1.5 to 0.5 in 490 (41.7%). So the cap binds hard from below and almost never from above on this data; the engine-blind finding in this row is about the backtest, not the live finder, which does consult it. Pinned by tests/test_dead_branch_narrowing_levels.py.
     note: >-
       The reach caps, split out of one number -- board item 56 owns the
       question and records that the split made them CONSISTENT without making
       either RIGHT.
+
+      A deterministic A/B over src/backtest/engine.py (scripts/backtest.py, --config vs
+      --config-b differing only in max_target_reach_atr_multiple, 1.5 against 0.2,
+      AAPL/MSFT/NVDA, 2025-01-02 to 2025-04-30) returned BYTE-IDENTICAL metrics on all twelve
+      lines, so that engine cannot settle this row: it reaches its own nearest-level target
+      instead of _derive_target, as its own docstring states. The number still governs live, so
+      the status stays arbitrary; settling it needs the travel measurement this row already
+      specifies, not a backtest.
     open_question: >-
       What multiple of ATR x sqrt(sessions) does this instrument class
       actually travel at the stated horizon?
@@ -1072,6 +1108,8 @@ numbers:
     value: 5
     status: arbitrary
     site: src/config/__init__.py
+    narrowed: >-
+      NARROWED 2026-10-04 (LIVE, not dead; value NOT settled). Ran the live level finder over every 60-bar window of the committed daily-bar fixture (1176 windows, 7 symbols, 1886 levels) [measured]: touch counts were 2:1345, 3:432, 4:94, 5:15, none above 5. So the bar of 5 sits at the very top of what the data produces: 15 of 1886 levels (0.8%) clear it, a bar of 6 would make the tight-stop exemption unreachable on this data, a bar of 4 would admit 109. Pinned by tests/test_dead_branch_narrowing_levels.py.
     downgraded: >-
       WAS `sourced`. DOWNGRADED 2026-10-01 (docs/WORK.md item 55), because the
       input its source was measured on no longer exists. The table below was
@@ -1151,9 +1189,13 @@ numbers:
       was built around it. config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any` sets the same 0.5.
   - id: src.config.RiskConfig.min_stop_atr_multiple
     value: 2.5
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-10-04'
+    ruling_summary: "Owner ruled on 2026-10-04 that the minimum stop distance is 2.5 times the stock's own ATR, closing the stop-multiple question at that value; it individualises per name because ATR does."
+    ruling_record: docs/OUTCOME.md, sections 'The protective stop width is settled at 2.5 ATR' and 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)
     site: src/config/__init__.py
-    settles_by:
+    route_parked_by_ruling_2026_10_04:
+      why: the measurement route below is kept as written but parked, because the owner's dated ruling above settles the value; a ruled number owes no route, and this one is not re-derived.
       kind: recording
       state: built
       where: src/storage/trades/ledger.py
@@ -2273,6 +2315,23 @@ numbers:
       What DID change is that the number no longer defines a level: every
       level `find_structural_levels` builds from bars now carries its own
       measured zone and never consults this value.
+      MEASURED 2026-10-04 - route (2) IS DEAD. `_cluster` reaches the
+      fallback only for a pivot whose bar range is not finite, and
+      `_clean_bars` makes that unreachable on any real series: it drops every
+      bar failing `high > 0 and low > 0 and close > 0 and high >= low`, which
+      rejects NaN prints (every NaN comparison is false), zero or negative
+      lows, and inverted bars. Over 200 synthetic well-formed series of 260
+      bars each, 6147 pivots were produced and ZERO were non-measurable.
+      Injecting each corrupt-print class (NaN high, +inf high, inverted bar,
+      zero low, -inf low) one bar into a 260-bar series produced 498 pivots
+      and ZERO non-measurable in every case. The only surviving route is a
+      `+inf` high in a series of 11 to 20 bars, where `_clean_bars` returns
+      early without its local-median outlier pass while `_find_pivots` still
+      has enough bars to fire; a price feed cannot emit +inf, so this is a
+      theoretical branch, not a live one. The value is therefore NOT changed:
+      nothing was learned about what the right width is, only that this one
+      of its four consumers never asks. Routes (1), (3) and (4) are untouched
+      and the row stays `arbitrary` on their account.
     open_question: >-
       What bound should a zone-less level get, when no bar range is available
       to read one off? Unanswered; 1% is a guess standing in for a
@@ -2959,7 +3018,10 @@ numbers:
       previously checked.
   - id: src.portfolio_constructor.config.ConstructorConfig.max_position_pct
     value: 65
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-09-11'
+    ruling_summary: "Owner overrode the single-name notional ceiling to 65% of equity on 2026-09-11 after the prompt_limits defect; a dated appetite call, not a derivation."
+    ruling_record: src/portfolio_constructor/config.py, the max_position_pct comment, clause (c) dated 2026-09-11 (owner set 65 as his own risk-appetite call, costs at five real gap disasters recorded beside it); docs/INCIDENT_HISTORY.md, the prompt_limits defect
     site: src/portfolio_constructor/config.py
     note: >-
       Single-name ceiling, moved to 65 by owner override on 2026-09-11
@@ -2976,7 +3038,8 @@ numbers:
       7.69%-of-entry crossover with the 5% risk envelope. The earlier wording
       here, "binds most real trades", was never measured and is wrong: it
       bound 4 of 38, not most.
-    settles_by:
+    route_parked_by_ruling_2026_10_04:
+      why: the measurement route below is kept as written but parked, because the owner's dated ruling above settles the value; a ruled number owes no route, and this one is not re-derived.
       kind: measurement
       state: specified
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
@@ -3104,6 +3167,14 @@ numbers:
     status: arbitrary
     site: src/portfolio_constructor/config.py
     note: >-
+      NARROWED 2026-10-04 (branch reachability only; the value is NOT
+      settled): the only consumer is the no-ATR branch, entered when the
+      analysis carries no ATR(14). Running the live indicator function over
+      every 40-bar window of the committed daily-bar fixture (1197 windows,
+      7 symbols) produced an ATR in all of them [measured]; it is absent only
+      under 15 bars of history, so this branch is NEVER EXERCISED on that
+      data -- not proven safe, not proven broken. Pinned by
+      tests/test_no_atr_branch_reachability.py. No other consumer reads it.
       How far BELOW a structural level (ABOVE it for a short) the protective
       stop is placed when it must be READ from price structure because there is
       no ATR reading -- `_derive_structural_stop_no_atr`, added for board item
@@ -5567,8 +5638,11 @@ numbers:
         every time this cap binds, as a truncation row carrying the session, the
         symbol, the cap's name, the length in characters of the context text
         before truncation and the size kept, so how often it binds and by how
-        much becomes readable instead of assumed. Nothing records this today,
-        which is exactly why the cap has stood unexamined since it was written.
+        much becomes readable instead of assumed. RECORDED NOW by
+        src/agents/smart_money_cap_record.py: one SM_CAP_ROW per evaluation of
+        the cap named _MAX_CONTEXT_TEXT_CHARS, carrying bound true or false, so a row set that is
+        all false (evaluated, never cut) is distinguishable from no rows at all
+        (never ran). Read back with its summarise function; nothing is stored.
       closes_when: >-
         a run of sessions shows the distribution of the length in characters of
         the context text before truncation: if the cap never binds it governs
@@ -5599,8 +5673,11 @@ numbers:
         every time this cap binds, as a truncation row carrying the session, the
         symbol, the cap's name, the length in characters of the discount reason
         before truncation and the size kept, so how often it binds and by how
-        much becomes readable instead of assumed. Nothing records this today,
-        which is exactly why the cap has stood unexamined since it was written.
+        much becomes readable instead of assumed. RECORDED NOW by
+        src/agents/smart_money_cap_record.py: one SM_CAP_ROW per evaluation of
+        the cap named _MAX_REASON_TEXT_CHARS, carrying bound true or false, so a row set that is
+        all false (evaluated, never cut) is distinguishable from no rows at all
+        (never ran). Read back with its summarise function; nothing is stored.
       closes_when: >-
         a run of sessions shows the distribution of the length in characters of
         the discount reason before truncation: if the cap never binds it governs
@@ -7531,10 +7608,10 @@ numbers:
       caller in the trading path, and the only caller
       (scripts/watchlist_candidates.py::main) passes it explicitly. It proposes
       names for a human to add; it never adds one.
-  - id: src.pipeline_delever.DeleverMixin._force_delever:factor[0]
+  - id: src.delever.forced.DeleverForced._force_delever:factor[0]
     value: 0.97
     status: derived
-    site: src/pipeline_delever.py
+    site: src/delever/forced.py
     derived_from: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     base_value: 0.03
     note: >-
@@ -7797,6 +7874,21 @@ numbers:
       Unit default for a quantity (src/risk/metrics.py::r_multiple); every caller
       passes the real quantity.
   - id: src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)
+    narrowed: >-
+      NARROWED 2026-10-04 (wiring measured; value NOT settled). The hardcoded 50.0 is a keyword-only default on
+      `RiskRuleEngine.check` and the single production caller, `src/pipeline_risk_gate.py` line 165, never passes
+      it, so every live run uses 50.0 and no settings key or RiskConfig field can change it. This is an UNWIRED
+      KNOB, NOT an unreachable branch, and the distinction matters: the branch IS reachable, because the same caller
+      does pass `correlation_matrix`, which is built for real by `_ensure_correlation_matrix` on two live stages
+      (`src/stage_risk.py` line 601 and `src/stage_decision.py` line 168). Do NOT record this as 'never consulted'
+      and do NOT delete it on that basis.
+      It is also a DIFFERENT QUANTITY from `RiskConfig.max_cluster_risk_share_pct` (40) despite both being called a
+      cluster cap: 50 is a share of gross NOTIONAL book value, computed as (peer_value + gross_new) / total_value
+      with the gross multiplier applied, and it only appends an advisory `correlation_cluster` violation; 40 is a
+      share of the committed RISK budget and is enforcing. The two cannot be reconciled to one number and neither
+      derives the other. Method: static call-graph read of the only production caller plus the input suppliers,
+      2026-10-04. Not settled: nothing records how often the advisory fires, so its firing rate against live book
+      geometry is still unmeasured, and that counter is what this row waits on.
     settles_by:
       kind: recording
       state: specified

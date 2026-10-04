@@ -9,57 +9,16 @@ and calls it, so every existing caller and patch target is unchanged.
 
 import logging
 from src.sentinel.reconciliation import record_reconciliation
+from src.protection.fill_reconciler_records import record_fill_pass
 from src.storage.db import Database
 from src.pipeline_context import RunContext
-import math
 import json as _json
 
 #: Logs under `src.pipeline`, as the bodies did before the move;
 #: binding the name rather than `__name__` keeps log records byte-identical.
 logger = logging.getLogger("src.pipeline")
 
-def _finite_float_or_none(value) -> float | None:
-    """Coerce a broker fill field to a finite float, or None.
-
-    Rejects None, bool, non-numeric types (a MagicMock exposes ``__float__``
-    but is NOT an int/float instance — same defensive posture as
-    ``_optional_risk_number``), and NaN/inf, so a non-numeric value can never
-    reach a DB bind. ``update_trade_fill``'s ``fill_price`` column is nullable,
-    so a None price is a safe "unknown, backfill later" that the next
-    reconciliation pass replaces with the broker's numeric average.
-    """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    f = float(value)
-    return f if math.isfinite(f) else None
-
-def _reconciled_exit_action(order_type: str | None) -> str:
-    """Map a broker fill's order_type to the HONEST action to record for an
-    exit the reconciler recovered (item 173(a)).
-
-    `_reconcile_stop_out_fills` writes back exits the broker made that the
-    ledger never saw. It used to label every one STOP_OUT — a protective
-    stop — even when the broker fill was an ordinary market/limit sell.
-    That misattributes owner-facing realized-P&L cause. The broker already
-    reports each fill's order_type (`AlpacaBroker.list_filled_sell_orders`);
-    this decides the action from it and NEVER guesses STOP_OUT:
-
-      - a genuine stop / stop-limit / trailing-stop  -> STOP_OUT
-      - a market or limit sell                       -> SELL
-      - anything missing or unrecognised             -> RECONCILED_EXIT
-        (an honest 'the broker closed this, cause unattributed' marker —
-        never a protective stop the broker record can't substantiate)
-    """
-    ot = (order_type or "").strip().lower()
-    if not ot:
-        return "RECONCILED_EXIT"
-    # stop / stop_limit / trailing_stop all name a broker-resident protective
-    # stop; substring match tolerates enum spellings like "OrderType.STOP".
-    if "stop" in ot or "trailing" in ot:
-        return "STOP_OUT"
-    if ot in ("market", "limit") or ot.endswith(".market") or ot.endswith(".limit"):
-        return "SELL"
-    return "RECONCILED_EXIT"
+from src.protection.fill_reconciler_helpers import _finite_float_or_none, _reconciled_exit_action  # noqa: F401
 
 
 class FillReconciler:
@@ -129,8 +88,9 @@ class FillReconciler:
         run_id = ctx.run_id if ctx is not None else None
         try:
             rows = self.db.get_unreconciled_orders(run_id=run_id)
+            record_fill_pass(self.db, "fills.db_lookup")
         except Exception as e:
-            logger.warning("reconcile_fills: DB lookup failed: %s", e)
+            record_fill_pass(self.db, "fills.db_lookup", e)
             return
         if not rows:
             return
@@ -174,8 +134,9 @@ class FillReconciler:
                             "fill_qty": actual, "fill_price": fill_price,
                         }, sort_keys=True),
                     )
+                record_fill_pass(self.db, "fills.lifecycle_evidence")
             except Exception as e:  # evidence is never trading authority
-                logger.warning("reconcile_fills: lifecycle evidence failed: %s", e)
+                record_fill_pass(self.db, "fills.lifecycle_evidence", e)
 
         for row in rows:
             order_id = row.get("broker_order_id")
@@ -183,8 +144,9 @@ class FillReconciler:
                 continue
             try:
                 info = self.broker.get_order_fill_info(order_id)
+                record_fill_pass(self.db, "fills.broker_lookup", context={"order": order_id})
             except Exception as e:
-                logger.warning("reconcile_fills: broker lookup failed for %s: %s", order_id, e)
+                record_fill_pass(self.db, "fills.broker_lookup", e, context={"order": order_id})
                 continue
             if info is None:
                 continue
@@ -290,8 +252,9 @@ class FillReconciler:
 
         try:
             rows = self.db.get_orphaned_pending_submits()
+            record_fill_pass(self.db, "orphan.db_read")
         except Exception as exc:
-            logger.warning("orphan-sweep: DB read failed: %s", exc)
+            record_fill_pass(self.db, "orphan.db_read", exc)
             return 0
         if not rows:
             return 0
@@ -308,11 +271,9 @@ class FillReconciler:
                 want_qty = 0.0
             try:
                 candidates = self.broker.list_recent_orders(symbol, "buy", after)
+                record_fill_pass(self.db, "orphan.broker_query", context={"symbol": symbol, "row": row_id})
             except Exception as exc:
-                logger.warning(
-                    "orphan-sweep: broker query raised for %s row %d: %s — "
-                    "leaving for next session", symbol, row_id, exc,
-                )
+                record_fill_pass(self.db, "orphan.broker_query", exc, context={"symbol": symbol, "row": row_id})
                 continue
             if candidates is None:
                 # Query FAILED (not "no such order"). Marking
@@ -340,11 +301,9 @@ class FillReconciler:
                         "(BUY write-ahead survived a crash) — _reconcile_fills "
                         "will resolve its fill", bid, symbol, row_id,
                     )
+                    record_fill_pass(self.db, "orphan.adopt", context={"symbol": symbol, "row": row_id})
                 except Exception as exc:
-                    logger.error(
-                        "orphan-sweep: adopt failed for %s row %d: %s",
-                        symbol, row_id, exc,
-                    )
+                    record_fill_pass(self.db, "orphan.adopt", exc, context={"symbol": symbol, "row": row_id})
             elif not matches:
                 try:
                     self.db.mark_trade_submit_failed(row_id)
@@ -354,11 +313,9 @@ class FillReconciler:
                         "(qty=%.4f) — submit never landed; marked "
                         "submit_failed", symbol, row_id, want_qty,
                     )
+                    record_fill_pass(self.db, "orphan.mark_failed", context={"symbol": symbol, "row": row_id})
                 except Exception as exc:
-                    logger.error(
-                        "orphan-sweep: mark_submit_failed for %s row %d: %s",
-                        symbol, row_id, exc,
-                    )
+                    record_fill_pass(self.db, "orphan.mark_failed", exc, context={"symbol": symbol, "row": row_id})
             else:
                 logger.error(
                     "orphan-sweep: %d ambiguous broker orders for %s row %d "
@@ -423,8 +380,9 @@ class FillReconciler:
                 scope="symbol", symbol=symbol,
                 evidence_json=json.dumps(payload, sort_keys=True, default=str),
             )
+            record_fill_pass(self.db, "flag_anomaly", context={"symbol": symbol})
         except Exception as exc:  # noqa: BLE001 — evidence is never trading authority
-            logger.warning("stop-out reconcile: flag write failed: %s", exc)
+            record_fill_pass(self.db, "flag_anomaly", exc, context={"symbol": symbol})
 
     def _reconcile_stop_out_fills(self, run_id: str | None = None) -> list[dict]:
         """Write back exits the broker made unilaterally that the ledger
@@ -513,16 +471,18 @@ class FillReconciler:
 
         try:
             ledger_qty = self.db.get_symbols_with_open_ledger_qty()
+            record_fill_pass(self.db, "stop_out.ledger_qty")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("stop-out reconcile: ledger qty lookup failed: %s", exc)
+            record_fill_pass(self.db, "stop_out.ledger_qty", exc)
             return []
         if not ledger_qty:
             return []
 
         try:
             broker_positions = self.broker.get_positions()
+            record_fill_pass(self.db, "stop_out.broker_positions")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("stop-out reconcile: broker positions lookup failed: %s", exc)
+            record_fill_pass(self.db, "stop_out.broker_positions", exc)
             return []
         broker_qty: dict[str, float] = {}
         for p in broker_positions or []:
@@ -555,19 +515,15 @@ class FillReconciler:
 
             try:
                 known_ids = self.db.get_known_broker_order_ids(symbol)
+                record_fill_pass(self.db, "stop_out.known_ids", context={"symbol": symbol})
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "stop-out reconcile: known-order lookup failed for %s: %s",
-                    symbol, exc,
-                )
+                record_fill_pass(self.db, "stop_out.known_ids", exc, context={"symbol": symbol})
                 continue
             try:
                 fills = self.broker.list_filled_sell_orders(symbol, after=after)
+                record_fill_pass(self.db, "stop_out.fill_query", context={"symbol": symbol})
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "stop-out reconcile: broker fill query raised for %s: %s",
-                    symbol, exc,
-                )
+                record_fill_pass(self.db, "stop_out.fill_query", exc, context={"symbol": symbol})
                 continue
             if fills is None:
                 # Query FAILED (not "no fills") — same None-means-retry
@@ -607,11 +563,9 @@ class FillReconciler:
                         symbol, desk_qty=ledger_open, broker_qty=held,
                         lookback_days=lookback_days,
                     )
+                    record_fill_pass(self.db, "stop_out.disagree_alert", context={"symbol": symbol})
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "stop-out reconcile: records-disagree alert for %s "
-                        "could not be sent: %s", symbol, exc,
-                    )
+                    record_fill_pass(self.db, "stop_out.disagree_alert", exc, context={"symbol": symbol})
                 results.append({
                     "symbol": symbol, "ledger_qty": ledger_open,
                     "broker_qty": held, "matched": False, "recorded": 0,
@@ -633,12 +587,11 @@ class FillReconciler:
                         filled_at=self._parse_broker_fill_timestamp(fill.get("filled_at")),
                         run_id=run_id, action=action,
                     )
+                    record_fill_pass(
+                        self.db, "stop_out.record_fill", context={"symbol": symbol, "order": fill.get("id")})
                 except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "stop-out reconcile: failed to record %s order %s: %s "
-                        "— will retry next pass (NOT lost, just not yet "
-                        "written)", symbol, fill.get("id"), exc,
-                    )
+                    record_fill_pass(
+                        self.db, "stop_out.record_fill", exc, context={"symbol": symbol, "order": fill.get("id")})
                     continue
                 if not created:
                     # Another session's pass already recorded this exact
@@ -716,10 +669,9 @@ class FillReconciler:
             if drained_count:
                 try:
                     alert_positions_reprotected(int(drained_count))
+                    record_fill_pass(self.db, "surface.reprotect_alert")
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "reconcile surfacing: re-protection alert failed: %s", exc,
-                    )
+                    record_fill_pass(self.db, "surface.reprotect_alert", exc)
 
             for res in reco_results or []:
                 if not (res.get("matched") and res.get("recorded")):
@@ -735,12 +687,9 @@ class FillReconciler:
                 # older stop-out from a previous session/run.
                 try:
                     rows = self.db.get_trades(symbol=symbol, limit=50)
+                    record_fill_pass(self.db, "surface.trade_lookup", context={"symbol": symbol})
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "reconcile surfacing: trade lookup failed for %s: %s "
-                        "— stop-out recorded but not surfaced this pass",
-                        symbol, exc,
-                    )
+                    record_fill_pass(self.db, "surface.trade_lookup", exc, context={"symbol": symbol})
                     continue
                 surfaced = 0
                 for r in rows:
@@ -758,10 +707,9 @@ class FillReconciler:
                             realized_pnl=r.get("realized_pnl"),
                         )
                         surfaced += 1
+                        record_fill_pass(self.db, "surface.stop_out_alert", context={"symbol": symbol})
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning(
-                            "reconcile surfacing: stop-out alert failed for "
-                            "%s: %s", symbol, exc,
-                        )
+                        record_fill_pass(self.db, "surface.stop_out_alert", exc, context={"symbol": symbol})
+            record_fill_pass(self.db, "surface.outer")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("reconcile surfacing failed (non-fatal): %s", exc)
+            record_fill_pass(self.db, "surface.outer", exc)

@@ -42,10 +42,10 @@ bindings:
           - "would still leave `weight_pct >"
       - file: config/prompts/portfolio_manager.md
         contains:
-          - "| 5 | Drift trim >"
+          - "| R5 | Drift trim >"
           - "`positions_drift_flagged` — holdings with Weight >"
     code_digest: "3d00e740d9b3d2f0"
-    prose_digest: "dae1d24c36df9247"
+    prose_digest: "40e0cfecc3bdebab"
 
   - name: constructor_stop_widening
     why: >
