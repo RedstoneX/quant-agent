@@ -15,3 +15,10 @@ docs/INCIDENT_HISTORY.md merge=docsmerge
 # both append one entry at the end, and union merge keeps both instead of
 # raising a conflict on the same last line. See the header of that file.
 config/number_ledger_history.yaml merge=union
+
+# The number ledger is a list of independent `- id:` entries that branches
+# append. Union keeps both sides instead of conflicting. Safe ONLY because two
+# guards catch what union can mis-produce: src/number_sources.py raises on a
+# duplicate id (same number added twice), and tests/test_ledger_no_duplicate_keys.py
+# fails on a repeated key inside one entry (both branches edited the same line).
+config/number_ledger.yaml merge=union

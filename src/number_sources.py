@@ -217,101 +217,9 @@ LEDGER_PATH = REPO_ROOT / "config" / "number_ledger.yaml"
 #: checked against this file, because this is the value the desk trades.
 SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 
-#: The modules on the path from a verdict to a broker order. See the SCOPE
-#: rule in the module docstring; this list is the rule applied, and
-#: `scripts/unscoped_number_guard.py` is what stops it from silently lagging.
-#: A directory entry covers every `.py` under it.
-SCOPED_PATHS: tuple[str, ...] = (
-    "src/risk",
-    "src/portfolio_constructor",
-    "src/rotation.py",
-    "src/nominations.py",
-    "src/evidence_gate.py",
-    "src/verdicts.py",
-    "src/data/correlation.py",
-    # 2026-10-01: the sector cluster moved out of src/execution/broker.py
-    # verbatim (sector resolution feeds the exposure ladder); same code, same scope.
-    "src/sector_reference.py",
-    # 2026-09-19, board item 124: the research-defined insider purchase
-    # cluster now lifts the smart-money seat's conviction, so its definition
-    # is on the path from a verdict to an order.
-    "src/data/smart_money_cluster.py",
-    # The indicator and level units. Every ATR multiple and every stop the
-    # ledger tracks is a multiple of `technical.ATR_PERIOD`, and levels are
-    # where stops are placed; watching the multiplier and not the unit was
-    # the gap the scope rule above was written to close.
-    "src/data/technical.py",
-    "src/data/levels.py",
-    # Decides whether an APPROVED trade is actually sent
-    # (`MAX_ENTRY_SLIPPAGE_BPS`), and carries the sizing fallback.
-    "src/pipeline_stages.py",
-    # 2026-10-01, board item 210 step 10: the four stage classes moved out of
-    # `src/pipeline_stages.py` verbatim. Same code, same scope -- these paths
-    # keep their numbers inside the ledger instead of dropping out silently.
-    "src/stage_morning_research.py",
-    "src/stage_decision.py",
-    "src/stage_risk.py",
-    "src/stage_execution.py",
-    "src/pipeline_sizing.py",
-    "src/pipeline_earnings_quality.py",
-    # 2026-10-01, board item 210 step 12: the rotation-EXECUTION block and
-    # the entry order-placement/re-peg block moved out of
-    # `src/pipeline_stages.py` verbatim. Same code, same scope.
-    "src/pipeline_rotation_exec.py",
-    "src/pipeline_entry_orders.py",
-    "src/execution/cash_sweep.py",
-    "src/execution/stop_records.py",
-    # 2026-09-19, board item 130: `broker.py` IS the broker order -- the
-    # scope rule's own words ("every module on the path from a seat's
-    # verdict to a broker order") named this file and it was not here.
-    # `stop_repair.py` and `coverage_watchdog.py` are the repair/alarm path
-    # for a protective stop that failed to place. `stop_repair.py` still
-    # defines no module-level numeric constant (see the docstring note this
-    # entry used to require); scoping it adds nothing today but stops a
-    # future one arriving unseen.
-    "src/execution/broker.py", "src/execution/broker_parts",
-    "src/execution/stop_repair.py", "src/execution/order_gates.py", "src/execution/order_idempotency.py",
-    "src/coverage_watchdog.py",
-    # The pipeline's own decision/execution glue. The de-lever and midday
-    # order-price buffers are inline multipliers and rule (e) has seen them
-    # since 2026-09-19; rule (c) (function-parameter defaults) was added the
-    # same day for `_clamp_queued_earnings_buys`' `max_pct=5.0`, which no
-    # longer exists — that gate refuses the BUY instead of sizing it (board
-    # item 186, 2026-10-01) — and the rule stays because the shape recurs.
-    "src/pipeline.py",
-    "src/pipeline_delever.py",
-    # The held-position exit engine and the exit-trigger vocabulary -- moved
-    # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
-    # Every trail multiple and every exit threshold it carries stays scoped.
-    "src/pipeline_exits.py",
-    # The intra-check session and the intraday opportunity scan -- moved here
-    # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
-    "src/pipeline_intraday.py",
-    # 2026-10-01, board item 210 step 6: the universe-admission cluster --
-    # the external-nomination gates, the screen and its admission -- moved
-    # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
-    # scoped.
-    "src/pipeline_admission.py",
-    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py", "src/prompt_facts/missed_ops_signals.py", "src/prompt_facts/review/grading.py", "src/prompt_facts/review/exits.py", "src/prompt_facts/review/calibration.py", "src/prompt_facts/review/blocked.py", "src/prompt_facts/review/replay.py",
-    # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
-    # application moved here out of `src/pipeline.py`.
-    "src/pipeline_risk_gate.py",
-    # 2026-10-01, board item 210 step 2: the protection cluster -- stop
-    # coverage, repair, protected sells, write-ahead restore, the fill and
-    # stop-out reconcilers -- moved here out of `src/pipeline.py`. Scoped at
-    # its new address so its numbers stay under the guard.
-    "src/pipeline_protection.py",
-    # Every seat's prompt-construction and LLM-call code -- the path from
-    # evidence to a seat's verdict the scope rule names. Most of what lives
-    # here is LLM plumbing (timeouts, retries, token budgets) that is
-    # `not-trade-governing` once seen; the truncation caps and rank tables
-    # that shape what evidence a verdict is built from are not.
-    "src/agents",
-    # 2026-09-19: the universe admission screen. Every threshold that decides
-    # whether a symbol may be traded at all lives here or in
-    # `UniverseScreenConfig`.
-    "src/universe_screen.py",
-)
+#: The modules on the path from a verdict to a broker order; see
+#: src/number_scope.py (data only, re-exported here for every reader).
+from src.number_scope import SCOPED_PATHS  # noqa: E402,F401
 
 
 #: `src/config/__init__.py` holds every seat's settings in one file, most of them
@@ -348,8 +256,20 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
 #:                      write, which is what it was.
 #:   not-trade-governing — in scope structurally, does not reach a trade
 #:                      decision. Requires `note` saying why.
+#:   owner-ruled      — the owner decided this VALUE and the decision is
+#:                      dated and recorded. A decision, not a measurement and
+#:                      not a debt. Requires `ruled_on` (YYYY-MM-DD) and
+#:                      `ruling_record` (where it is written down) and
+#:                      `ruling_summary` (what was decided, in words).
 VALID_STATUSES: frozenset[str] = frozenset(
-    {"instrument", "sourced", "derived", "arbitrary", "not-trade-governing"}
+    {
+        "instrument",
+        "sourced",
+        "derived",
+        "arbitrary",
+        "not-trade-governing",
+        "owner-ruled",
+    }
 )
 
 #: Fields every `arbitrary` entry must carry. `docs/OUTCOME.md`'s outcome-3
@@ -578,6 +498,8 @@ def classification(
             out["not_trade_governing"].append(site_id)
         elif status in {"derived", "instrument", "measurement"}:
             out["sourced_or_measured"].append(site_id)
+        elif status == "owner-ruled":
+            out["ratified_bound"].append(site_id)
         elif status == "sourced":
             text = str(entry.get("source", "")).lower()
             key = "ratified_bound" if "ratif" in text else "sourced_or_measured"
@@ -767,54 +689,10 @@ def load_ledger(path: Path | None = None) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _appconfig_sections(root: Path) -> dict[str, str]:
-    """`{ConfigClassName: settings.yaml section}` read from `AppConfig`.
-
-    Read rather than hardcoded: the mapping IS the field name on `AppConfig`,
-    so a renamed section cannot desynchronise this check from the loader.
-    """
-    trees = [ast.parse(p.read_text(encoding="utf-8")) for p in config_modules(root)]
-    for node in (n for t in trees for n in ast.walk(t)):
-        if not isinstance(node, ast.ClassDef) or node.name != "AppConfig":
-            continue
-        out: dict[str, str] = {}
-        for body_node in node.body:
-            if (
-                isinstance(body_node, ast.AnnAssign)
-                and isinstance(body_node.annotation, ast.Name)
-                and isinstance(body_node.target, ast.Name)
-            ):
-                out[body_node.annotation.id] = body_node.target.id
-        return out
-    return {}
-
-
-def deployed_values(root: Path | None = None) -> dict[str, float]:
-    """`{site_id: deployed value}` for every ledger site `settings.yaml` sets.
-
-    THE BLIND SPOT THIS CLOSES. The ledger pins the CODE DEFAULT. For a
-    `src.config.*Config.<field>` site the deployed value comes from
-    `config/settings.yaml`, so `risk.max_position_risk_pct: 5` could be edited
-    to `10` with the gate entirely silent. Measured 2026-09-18: 52 sites route
-    this way. They all currently agree with their defaults — which is exactly
-    why this is cheap to start enforcing now.
-    """
-    base = root or REPO_ROOT
-    settings = base / "config" / "settings.yaml"
-    if not settings.is_file():
-        raise FileNotFoundError(str(settings))
-    sections = _appconfig_sections(base)
-    raw = yaml.safe_load(settings.read_text(encoding="utf-8")) or {}
-    out: dict[str, float] = {}
-    for class_name, section in sections.items():
-        block = raw.get(section)
-        if not isinstance(block, dict):
-            continue
-        for key, value in block.items():
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                continue
-            out[f"src.config.{class_name}.{key}"] = float(value)
-    return out
+from src.number_deployed_values import (  # noqa: E402,F401 -- lifted verbatim
+    _appconfig_sections,
+    deployed_values,
+)
 
 
 #: A `source` a non-author can open in under a minute: a URL, or a repo path
@@ -959,6 +837,36 @@ def audit(
                     "this number cannot reach a trade decision.",
                 )
             )
+        if status == "owner-ruled":
+            ruled_on = str(entry.get("ruled_on") or "").strip()
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", ruled_on):
+                problems.append(
+                    LedgerProblem(
+                        "no-ruling-date",
+                        site_id,
+                        "status 'owner-ruled' requires `ruled_on:` as a "
+                        "YYYY-MM-DD date. A ruling nobody can date is a claim, "
+                        "not a decision.",
+                    )
+                )
+            if not str(entry.get("ruling_summary") or "").strip():
+                problems.append(
+                    LedgerProblem(
+                        "no-ruling-summary",
+                        site_id,
+                        "status 'owner-ruled' requires `ruling_summary:` stating "
+                        "in plain words what the owner decided.",
+                    )
+                )
+            if not str(entry.get("ruling_record") or "").strip():
+                problems.append(
+                    LedgerProblem(
+                        "no-ruling-record",
+                        site_id,
+                        "status 'owner-ruled' requires `ruling_record:` saying "
+                        "where the ruling is written down.",
+                    )
+                )
         if status == "arbitrary":
             for field in ARBITRARY_REQUIRED_FIELDS:
                 if not str(entry.get(field) or "").strip():

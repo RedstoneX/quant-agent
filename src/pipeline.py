@@ -11,7 +11,6 @@ from src.trading_calendar import et_now, et_today, session_date_key
 from pydantic import ValidationError
 
 from src.config import AppConfig, RiskConfig
-from src.risk.constants import SHORT_GAP_RISK_MULTIPLE_DEFAULT
 from src.cash_park import CashPark
 from src.quantities import avg_dollar_volume, deployable_cash, dollar_volumes
 from src.data.market import MarketDataProvider

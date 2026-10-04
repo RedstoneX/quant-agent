@@ -14,6 +14,11 @@ from __future__ import annotations
 import logging
 import sqlite3
 
+from src.storage.schema.owner_intent_tables import apply as _owner_intents
+from src.storage.schema.pending_stop_amend_tables import ensure_pending_stop_amend_table
+from src.storage.schema.prune_indexes import ensure_prune_indexes
+from src.storage.schema.sentinel_tables import ensure_sentinel_tables
+
 logger = logging.getLogger(__name__)
 
 
@@ -903,13 +908,11 @@ class DatabaseSchema:
         # actually observed, so a NULL/absent reading is distinguishable
         # from "held, and never gapped against".
         #
-        # WHY IT EXISTS (item 186): the short-side sizing haircut
-        # (`src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT`, 1.5, the one
-        # definition since board item 216) is unsourced, and TWO
-        # attempts to read it off the instrument have failed — see the
-        # ledger row and docs/BOARD_NOTES.md item 186. Both failed for the
-        # same underlying reason: the desk has never recorded what a short
-        # actually suffers overnight. Bars are fetched live and discarded;
+        # WHY IT EXISTS (item 186): the short-side sizing haircut this
+        # column was added to inform was DELETED by owner ruling 2026-10-04
+        # ("a short should be treated the same as a long"). The column stays
+        # because what a short suffers overnight is still worth recording —
+        # the desk has never recorded it. Bars are fetched live and discarded;
         # no OHLCV table exists. This column, joined to the `entry_atr` and
         # `initial_stop_loss` already pinned on the same opening row, is the
         # evidence that would let the question ever be settled.
@@ -1087,28 +1090,8 @@ class DatabaseSchema:
             self.conn.commit()
         except Exception as e:
             _log.error("Schema migration failed for specialist_evidence: %s", e)
-        # Indexes for prune queries. Both prune_trades and prune_agent_logs
-        # scan WHERE timestamp < ?. 5-year retention on trades (~10-20k rows
-        # before pruning) and 2-year retention on agent_logs (~15-25k rows
-        # with full_response 20-40KB each) make these scans slow without
-        # an index — write lock is held for the full delete duration.
-        # IDX_IF_NOT_EXISTS is idempotent so existing DBs gain the index
-        # on the next initialize().
-        for table, col in (
-            ("trades", "timestamp"),
-            ("trades", "position_id"),
-            ("agent_logs", "timestamp"),
-            ("pending_protection_restores", "created_at"),
-            ("pending_repegs", "created_at"),
-            ("specialist_evidence", "run_id"),
-            ("specialist_evidence", "symbol"),
-            ("specialist_evidence", "decision_id"),
-        ):
-            try:
-                self.conn.execute(
-                    f"CREATE INDEX IF NOT EXISTS idx_{table}_{col} ON {table}({col})"
-                )
-            except Exception as e:
-                _log.warning("Index creation failed for %s.%s: %s", table, col, e)
-        from src.storage.schema.owner_intent_tables import apply as _owner_intents; _owner_intents(self.conn)  # idempotent, commits
-        from src.storage.schema.sentinel_tables import ensure_sentinel_tables; ensure_sentinel_tables(conn=self.conn); from src.storage.schema.pending_stop_amend_tables import ensure_pending_stop_amend_table; ensure_pending_stop_amend_table(conn=self.conn)  # Sentinel seams + owed stop amends; idempotent
+        ensure_prune_indexes(self.conn)
+        _owner_intents(self.conn)  # idempotent, commits
+        # Sentinel seams + owed stop amends; idempotent
+        ensure_sentinel_tables(conn=self.conn)
+        ensure_pending_stop_amend_table(conn=self.conn)
