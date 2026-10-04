@@ -58,16 +58,13 @@ from src.agents.portfolio_manager.grounding import (  # noqa: F401 — re-export
     _ISO_DATE_RE,
     _STATE_CHANGE_ROW_RE,
     _SYMBOL_DIRECTION_RE,
-    DecisionGroundingMixin,
 )
+from src.agents.portfolio_manager.grounding import hold_decision_grounding
 from src.agents.portfolio_manager.prompt_evidence import hold_prompt_evidence
-from src.agents.portfolio_manager.ranking import CandidateRankingMixin
-from src.agents.portfolio_manager.rotation_section import RotationSectionMixin
+from src.agents.portfolio_manager.ranking import hold_candidate_ranking
+from src.agents.portfolio_manager.rotation_section import hold_rotation_section
 
 class PortfolioManagerAgent(
-    CandidateRankingMixin,
-    RotationSectionMixin,
-    DecisionGroundingMixin,
     LiveLimitPrompt,
     BaseAgent,
 ):
@@ -1785,15 +1782,6 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         return decision, retried
 
 
-# `_collect_seat_verdicts` (ranking.py, moved verbatim) names the concrete
-# class to stash `_macro_parse_failures` and call `_macro_sectors`. It is NOT
-# free-standing on that line, so the name is wired back here after the class
-# exists rather than rewritten in the moved code.
-from src.agents.portfolio_manager import ranking as _ranking  # noqa: E402
-
-_ranking.PortfolioManagerAgent = PortfolioManagerAgent
-
-
 # --- Patch mirroring. Tests patch names on `src.agents.portfolio_manager`
 # (e.g. `et_today`) that the moved code now reads from its own submodule.
 # Same design as src/trader_feed/__init__.py: a write to this package's
@@ -1831,5 +1819,10 @@ class _PortfolioManagerMirroringModule(_types.ModuleType):
                     setattr(sub, name, pristine)
 
 
+# The seat HOLDS its four parts (one instance each, collaborators handed in live)
+# and delegates the old names to them; it inherits none of them.
 hold_prompt_evidence(PortfolioManagerAgent)
+hold_candidate_ranking(PortfolioManagerAgent)
+hold_rotation_section(PortfolioManagerAgent)
+hold_decision_grounding(PortfolioManagerAgent)
 _sys.modules[__name__].__class__ = _PortfolioManagerMirroringModule
