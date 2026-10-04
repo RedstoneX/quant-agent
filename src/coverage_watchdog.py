@@ -125,6 +125,10 @@ from typing import Any
 
 from src.silence_watchdog import KNOWN_MODES, SLACK_MINUTES
 from src.trading_calendar import ET, SESSION_WINDOWS
+from src.coverage_watchdog_records import record_watchdog_pass  # noqa: F401 -- re-export
+from src.coverage_watchdog_rows import (  # noqa: F401 -- re-export
+    _scale_in_row_age_seconds, measured_window_bound_seconds,
+)
 from src.coverage_watchdog_text import (  # noqa: F401 -- re-exported, lifted verbatim
     exit_declined_text,
     unreadable_stop_text,
@@ -470,7 +474,7 @@ def _utc_now() -> datetime:
 # which session are we judging?
 # ---------------------------------------------------------------------------
 
-def most_recent_trading_day(now: datetime, broker: Any = None) -> date:
+def most_recent_trading_day(now: datetime, broker: Any = None, db: Any = None) -> date:
     """The most recent weekday whose cash session has already ENDED (plus
     the timer slack) and that the broker's calendar confirms as a trading
     day.
@@ -503,6 +507,7 @@ def most_recent_trading_day(now: datetime, broker: Any = None) -> date:
                 if broker.is_trading_day(candidate):
                     return candidate
             except Exception as exc:  # noqa: BLE001
+                record_watchdog_pass("calendar_lookup", exc, db=db)
                 logger.warning("coverage watchdog: calendar lookup failed for %s: %s", candidate, exc)
                 return candidate
         candidate -= timedelta(days=1)
@@ -528,7 +533,7 @@ def _connect_ro(path: str) -> sqlite3.Connection:
     return conn
 
 
-def session_ran_during(day: date, db_path: str | Path | None = None) -> tuple[bool | None, str | None]:
+def session_ran_during(day: date, db_path: str | Path | None = None, db: Any = None) -> tuple[bool | None, str | None]:
     """`(ran, error)` — did ANY known scheduled mode record a completed
     session inside `day`'s cash session? `ran` is None when the database
     cannot be read; the caller treats that as not proven."""
@@ -537,6 +542,7 @@ def session_ran_during(day: date, db_path: str | Path | None = None) -> tuple[bo
     try:
         conn = _connect_ro(path)
     except Exception as exc:  # noqa: BLE001
+        record_watchdog_pass("session_ran.connect", exc, db=db)
         return None, f"database unreadable: {exc}"
     try:
         placeholders = ",".join("?" for _ in KNOWN_MODES)
@@ -545,12 +551,13 @@ def session_ran_during(day: date, db_path: str | Path | None = None) -> tuple[bo
             KNOWN_MODES,
         ).fetchall()
     except Exception as exc:  # noqa: BLE001
+        record_watchdog_pass("session_ran.query", exc, db=db)
         return None, f"query failed (table missing on a fresh database?): {exc}"
     finally:
         try:
             conn.close()
         except Exception:  # noqa: BLE001
-            pass
+            record_watchdog_pass("session_ran.close", fault=True, db=db)
     for row in rows:
         when = _parse_iso(str(row["checked_at"]))
         if when is not None and start <= when < end:
@@ -600,7 +607,7 @@ def uncovered_positions(
     broker: Any, *, sweep_symbol: str | None = None,
     skip_symbols: set[str] | None = None,
     counts: dict[str, int] | None = None,
-    unreadable: list[UnreadableStop] | None = None,
+    unreadable: list[UnreadableStop] | None = None, db: Any = None,
 ) -> tuple[list[CoverageGap], str | None]:
     """Every held position whose open protective stops cover less than the
     held quantity. Longs are checked against SELL stops, shorts against BUY
@@ -630,6 +637,7 @@ def uncovered_positions(
     try:
         positions = broker.get_positions()
     except Exception as exc:  # noqa: BLE001
+        record_watchdog_pass("uncovered.get_positions", exc, db=db)
         return [], f"get_positions failed: {exc}"
     if not isinstance(positions, list):
         return [], "get_positions returned no list"
@@ -653,6 +661,7 @@ def uncovered_positions(
                 symbol, side=("buy" if is_short else "sell"),
             )
         except Exception as exc:  # noqa: BLE001
+            record_watchdog_pass("uncovered.snapshot_stops", exc, db=db)
             _record_unreadable(
                 unreadable, symbol=str(symbol), held_qty=held,
                 is_short=is_short,
@@ -789,7 +798,9 @@ def replace_missing_stops(
             _ok, specs = broker.snapshot_protective_stops(
                 gap.symbol, side=protective_side,
             )
+            record_watchdog_pass("replace.reread_stops", db=db)
         except Exception as exc:  # noqa: BLE001
+            record_watchdog_pass("replace.reread_stops", exc, db=db)
             outcomes.append(RepairOutcome(
                 gap.symbol, gap.uncovered_qty, False,
                 f"could not re-read open stops before placing ({exc})",
@@ -824,7 +835,9 @@ def replace_missing_stops(
                 is_short=gap.is_short, db=db, outcome=repair,
                 resting_stops=list(specs or []), caller="coverage_sweep",
             )
+            record_watchdog_pass("replace.placement", db=db)
         except Exception as exc:  # noqa: BLE001
+            record_watchdog_pass("replace.placement", exc, db=db)
             outcomes.append(RepairOutcome(
                 gap.symbol, shortfall, False, f"placement raised ({exc})",
             ))
@@ -1406,6 +1419,7 @@ def release_typed_alert(
         }
         save_state(state, path)
     except Exception as exc:  # noqa: BLE001
+        record_watchdog_pass("release_typed_alert", exc)
         logger.warning(
             "release_typed_alert(%s) failed: %s — the claim stays held and "
             "today's page for those symbols will not be retried", key, exc,
@@ -1452,30 +1466,9 @@ def claim_exit_declined_alert(
     return fresh
 
 
-def _scale_in_row_age_seconds(created_at: Any, moment: datetime) -> float | None:
-    """Approximate seconds since a scale-in write-ahead row was written.
-
-    The write-ahead row's `created_at` is a DATABASE WRITE time, not the
-    broker's cancel acknowledgement, so this is an approximation of how
-    long protection has been down and is labelled as one everywhere it is
-    used. The exact figure is the `unprotected_window_closed` event the
-    session files at rearm. `None` when the stamp cannot be read — an
-    unreadable stamp must never be treated as a long window.
-    """
-    text = str(created_at or "")
-    if not text:
-        return None
-    try:
-        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except Exception:  # noqa: BLE001
-        return None
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return round(max(0.0, (moment - stamp).total_seconds()), 1)
-
-
 def _scale_in_skip(
     broker: Any, db_path: str | Path | None, *, now: datetime | None = None,
+    db: Any = None,
 ) -> set[str]:
     """Symbols mid scale-in that this watchdog must not report or repair.
 
@@ -1524,11 +1517,12 @@ def _scale_in_skip(
         path = db_path if db_path is not None else DB_PATH
         symbols = pending_scale_in_symbols_from_path(path)
     except Exception:  # noqa: BLE001
+        record_watchdog_pass("scale_in_skip.symbols", fault=True, db=db)
         return set()
     if not symbols:
         return set()
     if trading_session_lock_held():
-        stale = _scale_in_symbols_past_measured_bound(path, symbols, now=now)
+        stale = _scale_in_symbols_past_measured_bound(path, symbols, now=now, db=db)
         if not stale:
             return set(symbols)
         skip = set(symbols) - stale
@@ -1563,7 +1557,7 @@ def _scale_in_skip(
 
 def _scale_in_symbols_past_measured_bound(
     db_path: str | Path | None, symbols: set[str], *,
-    now: datetime | None = None,
+    now: datetime | None = None, db: Any = None,
 ) -> set[str]:
     """Of `symbols`, those whose window is older than every measured one.
 
@@ -1573,13 +1567,14 @@ def _scale_in_symbols_past_measured_bound(
     of those is a case where calling a window overdue would be an invented
     figure rather than a measured one.
     """
-    bound, observations = measured_window_bound_seconds(db_path)
+    bound, observations = measured_window_bound_seconds(db_path, db=db)
     if bound is None or observations <= 0:
         return set()
     try:
         from src.execution.scale_in import pending_scale_in_rows_from_path
         rows = pending_scale_in_rows_from_path(db_path)
     except Exception:  # noqa: BLE001
+        record_watchdog_pass("scale_in_bound.rows", fault=True, db=db)
         return set()
     moment = now or _utc_now()
     stale: set[str] = set()
@@ -1587,64 +1582,16 @@ def _scale_in_symbols_past_measured_bound(
         symbol = str(row.get("symbol") or "").strip()
         if not symbol or symbol not in symbols:
             continue
-        age = _scale_in_row_age_seconds(row.get("created_at"), moment)
+        age = _scale_in_row_age_seconds(row.get("created_at"), moment, db)
         if age is not None and age > bound:
             stale.add(symbol)
     return stale
 
 
-def measured_window_bound_seconds(
-    db_path: str | Path | None,
-) -> tuple[float | None, int]:
-    """The longest scale-in unprotected window the desk has MEASURED, and how
-    many measurements that is drawn from.
-
-    Board item 193. Nothing here is a chosen threshold. Every closed window
-    files an `unprotected_window_closed` event carrying its own
-    `window_seconds`, both ends read from the broker's acknowledgements; the
-    bound is the maximum of those. `(None, 0)` when no window has ever been
-    measured, and the caller must then decline to call anything overdue
-    rather than invent a figure to compare against.
-    """
-    if not db_path:
-        return None, 0
-    try:
-        import sqlite3
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        try:
-            rows = conn.execute(
-                "SELECT evidence_json FROM specialist_evidence "
-                "WHERE kind = 'pipeline_event' "
-                "AND evidence_json LIKE '%unprotected_window_closed%' "
-                "ORDER BY id DESC LIMIT 2000",
-            ).fetchall()
-        finally:
-            conn.close()
-    except Exception:  # noqa: BLE001
-        return None, 0
-    best: float | None = None
-    seen = 0
-    for (raw,) in rows:
-        try:
-            payload = json.loads(raw)
-        except Exception:  # noqa: BLE001
-            continue
-        if payload.get("outcome") != "unprotected_window_closed":
-            continue
-        value = payload.get("window_seconds")
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            continue
-        seen += 1
-        best = value if best is None else max(best, value)
-    return best, seen
-
-
 def deliberately_unguarded(
     broker: Any, db_path: str | Path | None, *,
     skip_symbols: set[str] | None = None,
-    now: datetime | None = None,
+    now: datetime | None = None, db: Any = None,
 ) -> list[UnguardedWindow]:
     """Every symbol the sweep skipped for a live scale-in, named, with how
     long its protection has been deliberately down.
@@ -1654,7 +1601,7 @@ def deliberately_unguarded(
     `uncovered_positions`), so the report can never describe a position the
     sweep in fact checked. Places no order and changes no state.
     """
-    skip = skip_symbols if skip_symbols is not None else _scale_in_skip(broker, db_path)
+    skip = skip_symbols if skip_symbols is not None else _scale_in_skip(broker, db_path, db=db)
     if not skip:
         return []
     try:
@@ -1663,9 +1610,10 @@ def deliberately_unguarded(
             db_path if db_path is not None else DB_PATH,
         )
     except Exception:  # noqa: BLE001
+        record_watchdog_pass("unguarded.rows", fault=True, db=db)
         return []
     bound, observations = measured_window_bound_seconds(
-        db_path if db_path is not None else DB_PATH,
+        db_path if db_path is not None else DB_PATH, db=db,
     )
     moment = now or _utc_now()
     out: list[UnguardedWindow] = []
@@ -1683,6 +1631,7 @@ def deliberately_unguarded(
                 max(0.0, (moment - stamp).total_seconds()), 1,
             )
         except Exception:  # noqa: BLE001
+            record_watchdog_pass("unguarded.window_seconds", fault=True, db=db)
             seconds = None
         try:
             qty = float(row.get("position_qty_before_sell") or 0.0)
@@ -1755,7 +1704,7 @@ REPAIR_LOCK_NAME = ".intraday_scan.lock"
 
 
 @contextlib.contextmanager
-def repair_lock(db_path: str | Path | None = None):
+def repair_lock(db_path: str | Path | None = None, db: Any = None):
     """Non-blocking `fcntl.flock(LOCK_EX | LOCK_NB)` on `REPAIR_LOCK_NAME`
     beside the database. Yields True when held, False when another process
     holds it or the lock cannot be established (fail closed: a repair that
@@ -1775,6 +1724,7 @@ def repair_lock(db_path: str | Path | None = None):
         except BlockingIOError:
             held = False
     except Exception as exc:  # noqa: BLE001 — unknowable lock state: do not write
+        record_watchdog_pass("repair_lock", exc, db=db)
         logger.warning("coverage sweep: could not establish the repair lock (%s)", exc)
     try:
         yield held
@@ -1783,7 +1733,7 @@ def repair_lock(db_path: str | Path | None = None):
             try:
                 fh.close()
             except Exception:  # noqa: BLE001
-                pass
+                record_watchdog_pass("repair_lock.close", fault=True, db=db)
 
 
 # ---------------------------------------------------------------------------
@@ -1819,19 +1769,19 @@ def check_coverage(
     # sweep skipped has to be the same set the report names, or the report
     # could describe a position the sweep actually checked (or miss one it
     # did not), which is exactly the untruth this item exists to remove.
-    scale_in_skip = _scale_in_skip(broker, db_path)
+    scale_in_skip = _scale_in_skip(broker, db_path, db=db)
     gaps, broker_error = uncovered_positions(
         broker, sweep_symbol=sweep_symbol, skip_symbols=scale_in_skip,
-        counts=counts, unreadable=unreadable,
+        counts=counts, unreadable=unreadable, db=db,
     )
     unguarded = deliberately_unguarded(
-        broker, db_path, skip_symbols=scale_in_skip, now=moment,
+        broker, db_path, skip_symbols=scale_in_skip, now=moment, db=db,
     )
     positions_checked = (
         None if broker_error else int(counts.get("positions_checked", 0))
     )
-    day = most_recent_trading_day(moment, broker)
-    ran, db_error = session_ran_during(day, db_path)
+    day = most_recent_trading_day(moment, broker, db)
+    ran, db_error = session_ran_during(day, db_path, db)
 
     # ---- the repair pass ----------------------------------------------
     # Only inside a session the exchange calendar confirms, only when a
@@ -1871,7 +1821,7 @@ def check_coverage(
     gaps_detected = len(gaps)
     repair_deferred = ""
     if gaps and market_open and last_buy is not None and not session_active:
-        with repair_lock(db_path) as held:
+        with repair_lock(db_path, db) as held:
             if not held:
                 repair_deferred = (
                     "another desk process holds the broker-write lock "
@@ -1888,7 +1838,7 @@ def check_coverage(
                     refreshed, refresh_error = uncovered_positions(
                         broker, sweep_symbol=sweep_symbol,
                         skip_symbols=scale_in_skip,
-                        unreadable=unreadable,
+                        unreadable=unreadable, db=db,
                     )
                     if refresh_error is None:
                         gaps = refreshed
@@ -1926,7 +1876,9 @@ def check_coverage(
             )
             try:
                 positions = broker.get_positions()
+                record_watchdog_pass("stop_level.get_positions", db=db)
             except Exception:
+                record_watchdog_pass("stop_level.get_positions", fault=True, db=db)
                 positions = []
             if not isinstance(positions, list):
                 positions = []
@@ -1944,7 +1896,9 @@ def check_coverage(
                     "STOP RECORD MISMATCH: %s — %s (short=%s)",
                     item.symbol, item.reason, item.is_short,
                 )
+            record_watchdog_pass("stop_level_reconcile", db=db)
         except Exception as exc:  # noqa: BLE001
+            record_watchdog_pass("stop_level_reconcile", exc, db=db)
             logger.error("coverage watchdog stop-level reconcile failed: %s", exc)
 
     # Suppression for a failed placement is per position and keyed on
@@ -2127,8 +2081,10 @@ def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
             kind="pipeline_event", scope="run", symbol=None,
             evidence_json=json.dumps(summary, sort_keys=True, default=str),
         )
+        record_watchdog_pass("sweep_run_record", db=db)
         return True
     except Exception as exc:  # noqa: BLE001 — a record is never trading authority
+        record_watchdog_pass("sweep_run_record", exc, db=db)
         logger.warning("%s: could not write the run record: %s", SWEEP_LOG_NAME, exc)
         return False
 

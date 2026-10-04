@@ -54,6 +54,7 @@ from src.protection.protected_sell import ProtectedSell
 from src.protection.reprotect_records import ReprotectRecords
 from src.protection.coverage_book_read import read_positions_with_retry
 from src.protection.coverage_book_read import unverified_book_sweep
+from src.pipeline_protection_record import record_protection_fault
 from src.sentinel.reconciliation import record_guarded_outcome, record_reconciliation
 from src.execution.broker import AlpacaBroker, _split_protective_qty
 from src.models import TradeDecision
@@ -345,6 +346,7 @@ class ReprotectResidual:
             else:
                 existing = self.broker._list_open_sell_stop_orders(symbol)
         except Exception as exc:  # noqa: BLE001
+            record_protection_fault(self, "reprotect.idempotency_check", exc, symbol=symbol)
             logger.warning(
                 "Reprotect idempotency check failed for %s: %s — "
                 "proceeding with submit (may duplicate if a stop already "
@@ -675,6 +677,7 @@ class ReprotectResidual:
                 limit_price=None, side=side,
             )
         except Exception as exc:  # noqa: BLE001
+            record_protection_fault(self, "reprotect.residual_submit", exc, symbol=symbol)
             logger.warning(
                 "Re-protect failed for %s residual=%s @ $%.2f: %s — position "
                 "is unprotected until the next session re-attaches a stop",
@@ -848,116 +851,13 @@ class CoverageRepair:
                 symbols=fresh,
             )
         except Exception as exc:  # noqa: BLE001
+            record_protection_fault(None, "coverage_repair.kill_switch_alert", exc, symbol=symbol)
             logger.error(
                 "kill-switch-block owner alert failed for %s: %s", symbol, exc,
             )
 
 
-class ExitRelief:
-    """Exit-settlement registration and the open-exit relief read; standalone, built from explicit collaborators."""
-
-    def __init__(
-        self, *,
-        broker=None,
-        state=None,
-    ) -> None:
-        self.broker = broker
-        self._state = state  # live get/set view of the host's attributes this part reads and assigns
-
-    @property
-    def _unsettled_exit_orders(self):
-        return self._state.get('_unsettled_exit_orders')
-
-    @_unsettled_exit_orders.setter
-    def _unsettled_exit_orders(self, value) -> None:
-        self._state.set('_unsettled_exit_orders', value)
-
-    def _register_exit_settlement(self, prot: dict) -> None:
-        """Record or clear one exit order in the unsettled register."""
-        order_id = str(prot.get("order_id") or "")
-        if not order_id:
-            return
-        register = getattr(self, "_unsettled_exit_orders", None)
-        if register is None:
-            register = {}
-            self._unsettled_exit_orders = register
-        status = str(prot.get("terminal_status") or "").lower()
-        if status in AlpacaBroker._ORDER_TERMINAL_STATES:
-            register.pop(order_id, None)
-            return
-        register[order_id] = {
-            "symbol": str(prot.get("symbol") or "").strip().upper(),
-            "submitted_qty": abs(float(prot.get("submitted_qty") or 0.0)),
-        }
-
-    def _open_exit_relief(self, positions) -> tuple[list, bool]:
-        """Exits still WORKING at the broker, as SELL decisions, plus whether
-        any of them could not be measured.
-
-        Re-polls every order in `_unsettled_exit_orders` (a settled one is
-        dropped, so the register self-heals) and expresses each remaining
-        open quantity as an ordinary SELL `TradeDecision`.
-        `apply_gross_ceiling`'s STEP 1 already subtracts planned exits from
-        the book before it judges anything, so handing these in makes a
-        later pass cut the TRUE residual instead of re-cutting exposure that
-        is already on its way out. That is the measured answer; refusing the
-        whole pass was the blunt one, and refusing is worst exactly when this
-        fires — a marketable limit that misses in fifteen seconds means a
-        gap, a halt or a vanished book.
-
-        The second return value is True when an order's state could not be
-        read at all. Nothing is guessed there: the caller refuses to re-cut,
-        because an unmeasurable in-flight exit is precisely the case where
-        netting nothing would double the shed.
-        """
-        register = getattr(self, "_unsettled_exit_orders", None) or {}
-        if not register:
-            return [], False
-        held = {
-            str(getattr(p, "symbol", "") or "").strip().upper(): p
-            for p in (positions or [])
-        }
-        relief: list = []
-        unmeasurable = False
-        for order_id, row in list(register.items()):
-            try:
-                info = self.broker.get_order_fill_info(order_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("open-exit re-poll failed for %s: %s", order_id, exc)
-                info = None
-            if info is None:
-                unmeasurable = True
-                continue
-            status = str(info.get("status") or "").lower()
-            if status in AlpacaBroker._ORDER_TERMINAL_STATES:
-                register.pop(order_id, None)
-                continue
-            symbol = row.get("symbol") or ""
-            position = held.get(symbol)
-            held_qty = abs(float(getattr(position, "qty", 0.0) or 0.0)) if position else 0.0
-            open_qty = max(
-                0.0,
-                float(row.get("submitted_qty") or 0.0)
-                - float(info.get("filled_qty") or 0.0),
-            )
-            if open_qty <= 0:
-                continue
-            if held_qty <= 0:
-                # Still working against a position the book no longer shows:
-                # nothing to net it against, and nothing safe to assume.
-                unmeasurable = True
-                continue
-            relief.append(TradeDecision(
-                action="SELL", symbol=symbol,
-                allocation_pct=min(100.0, open_qty / held_qty * 100.0),
-                entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                reasoning=(
-                    f"Exit order {order_id} is still working at the broker "
-                    f"({open_qty:g} of {held_qty:g}); it is netted out of the "
-                    f"gross re-measure so the book is not sold down twice."
-                ),
-            ))
-        return relief, unmeasurable
+from src.pipeline_protection_exit_relief import ExitRelief  # noqa: E402,F401
 
 
 class RestoreDrain:
@@ -1228,6 +1128,7 @@ class ExDividends:
                 if self.broker.is_trading_day(next_trading_day):
                     break
             except Exception as e:  # noqa: BLE001
+                record_protection_fault(self, "exdiv.is_trading_day", e)
                 logger.warning("ex-div: is_trading_day failed (%s) — falling back "
                                "to calendar+1", e)
                 next_trading_day = today + _td(days=1)
@@ -1248,6 +1149,7 @@ class ExDividends:
                     symbol=p.symbol, today_only=True, limit=20,
                 )
             except Exception as e:
+                record_protection_fault(self, "exdiv.trades_lookup", e, symbol=p.symbol)
                 logger.warning("ex-div: today trades lookup failed for %s: %s", p.symbol, e)
                 continue
             already = any(
@@ -1261,6 +1163,7 @@ class ExDividends:
             try:
                 div = self.market.get_upcoming_ex_dividend(p.symbol)
             except Exception as e:
+                record_protection_fault(self, "exdiv.fetch", e, symbol=p.symbol)
                 logger.warning("ex-div: fetch failed for %s: %s", p.symbol, e)
                 continue
             if not div:
@@ -1278,6 +1181,10 @@ class ExDividends:
                 continue
 
             from src.execution.stop_read import read_stop, repair_for
+            from src.execution.exit_path_records import (
+                record_shift_outcome, record_stop_shift_legs,
+            )
+            from src.execution.stop_records import record_unprotected_windows
             stop_read = read_stop(self.broker, p.symbol, db=self.db,
                                   run_id=run_id, context="ex-div shift", establish=repair_for(self._repair_stop_coverage, p))
             if stop_read.unreadable or stop_read.absent:
@@ -1297,40 +1204,18 @@ class ExDividends:
                 # the tightest lot's level minus the dividend).
                 order = self.broker.shift_stops_down(p.symbol, amount)
             except Exception as e:
+                record_protection_fault(self, "exdiv.stop_shift", e, symbol=p.symbol)
                 logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
                 continue
+            finally:
+                record_unprotected_windows(self.broker, self.db, p.symbol)  # Item 201: even when the shift raised
             from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
             if isinstance(order, dict):
-                # Item 201: the per-leg outcome is a ROW, not a log line, and it
-                # is written whatever the outcome — a shift that refused is the
-                # case that most needs to survive the session.
-                from src.execution.exit_path_records import (
-                    record_stop_shift_legs, stop_shift_incomplete_text,
+                record_shift_outcome(
+                    self.db, p.symbol, amount, order, run_id,
+                    lambda stage, exc: record_protection_fault(self, stage, exc, symbol=p.symbol),
+                    record_stop_shift_legs,
                 )
-                shift_status = str(order.get("status") or "")
-                record_stop_shift_legs(
-                    self.db, symbol=p.symbol, amount=amount,
-                    mode=str(order.get("mode") or ""), status=shift_status,
-                    shifted=int(order.get("shifted") or 0),
-                    total=int(order.get("total") or 0),
-                    legs=order.get("legs"), run_id=run_id,
-                )
-                if shift_status in ("partial", "refused", "unknown", "naked", "market_closed"):
-                    # An un-shifted stop across an ex-dividend open is wrong by
-                    # exactly the dividend IN THE DIRECTION THAT TRIGGERS IT, so
-                    # this is an owner-visible change in protection, not a nit.
-                    try:
-                        from src.notifier import send_owner_alert
-                        send_owner_alert(
-                            stop_shift_incomplete_text(
-                                p.symbol, shift_status,
-                                int(order.get("shifted") or 0),
-                                int(order.get("total") or 0),
-                            ),
-                            symbols=[p.symbol],
-                        )
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("ex-div: owner alert failed for %s: %s", p.symbol, e)
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
@@ -1341,6 +1226,7 @@ class ExDividends:
             try:
                 write_back_stop_loss(self.db, p.symbol, new_stop, is_short=False)
             except Exception as e:  # noqa: BLE001
+                record_protection_fault(self, "exdiv.write_back", e, symbol=p.symbol)
                 logger.warning("ex-div: stop write-back failed for %s: %s", p.symbol, e)
             try:
                 self.db.insert_trade(
@@ -1358,6 +1244,7 @@ class ExDividends:
                     fill_status="submitted",
                 )
             except Exception as e:
+                record_protection_fault(self, "exdiv.audit_log", e, symbol=p.symbol)
                 logger.warning("ex-div: audit log failed for %s: %s", p.symbol, e)
             if isinstance(order, dict):
                 order.setdefault("action", "TRAIL_STOP")  # audit F5
@@ -1367,6 +1254,7 @@ class ExDividends:
                 p.symbol, div["date"], amount, current_stop, new_stop,
             )
         return orders
+
 
 
 def _build_coverage_repair(host):
@@ -1396,6 +1284,7 @@ def _build_exit_relief(host):
     return ExitRelief(
         broker=_collab_of(host, 'broker'),
         state=_HostState(host),
+        terminal_states=AlpacaBroker._ORDER_TERMINAL_STATES,
     )
 
 
@@ -1524,7 +1413,8 @@ class ProtectionMixin:
             pending_syms = {
                 r.get("symbol") for r in self.db.get_pending_protection_restores()
             }
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            record_protection_fault(self, "coverage.pending_syms", exc)
             pending_syms = set()
         # A failed positions read used to `return []`, which every caller
         # reads as all-clear. See src/protection/coverage_book_read.py.
@@ -1614,6 +1504,7 @@ class ProtectionMixin:
                     symbol, side=("buy" if is_short else "sell"),
                 )
             except Exception as exc:  # noqa: BLE001
+                record_protection_fault(self, "coverage.snapshot", exc, symbol=symbol)
                 unreadable.append({
                     "symbol": symbol, "held_qty": qty,
                     "covered_qty": None, "coverage": "unreadable",
@@ -1748,6 +1639,7 @@ class ProtectionMixin:
                             in session_awaiting_print_symbols()
                         )
                     except Exception as exc:  # noqa: BLE001
+                        record_protection_fault(self, "coverage.awaiting_print_read", exc, symbol=symbol)
                         logger.warning(
                             "coverage sweep: could not read today's "
                             "awaiting-print names (%s) — treating %s as the "
@@ -1871,6 +1763,7 @@ class ProtectionMixin:
                             if waiting:
                                 note_awaiting_first_print(symbol)
                         except Exception as exc:  # noqa: BLE001
+                            record_protection_fault(self, "coverage.refusal_classify", exc, symbol=symbol)
                             # An unreadable marker file errs towards telling
                             # the owner, the same way the claim does.
                             logger.warning(
@@ -2029,6 +1922,7 @@ class ProtectionMixin:
                 # it had waited all session.
                 clear_awaiting_first_print(repaired_symbols)
             except Exception as exc:  # noqa: BLE001
+                record_protection_fault(self, "coverage.clear_marker", exc)
                 logger.warning(
                     "coverage sweep: could not clear the awaiting-print "
                     "marker for %s: %s", ", ".join(repaired_symbols), exc,
@@ -2058,6 +1952,7 @@ class ProtectionMixin:
             mismatches = write_back_live_protective_stops(self.db, mismatches)
             report_stop_level_mismatches(record_reconciliation(db=self.db, kind="recorded_stop_levels", result=mismatches))
         except Exception as exc:  # noqa: BLE001
+            record_protection_fault(self, "coverage.stop_level_reconcile", exc)
             logger.error("stop-level reconcile failed: %s", exc)
         return record_reconciliation(db=self.db, kind="stop_coverage", result=gaps)
 

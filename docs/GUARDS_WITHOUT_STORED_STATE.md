@@ -4,7 +4,61 @@ Owner mandate, 2026-10-02: "Yes, rip it all out. Rip all out the stored
 bookkeeping. And rebuild it properly so it's not a ticking time bomb." This is
 the specification. Nothing else is started until it is built and proven.
 
-## Why, measured
+## Status, re-measured 2026-10-04 on `origin/main`
+
+The mandate is built for every guard this document names; sections below are
+kept as history and marked DONE where they describe a stored file that is gone.
+
+- Stored baselines: none. No baseline, snapshot or known-offender file exists
+  under `scripts/` or `tests/`; the only JSON/TXT there are test fixtures.
+- Computed at check time against the trunk: 15 comparison guards
+  (`file_size_guard`, `import_graph`, `pipeline_new_guard`, `pipeline_method_guard`,
+  `silent_swallow_guard`, `local_day_guard`, `replay_outbound_guard`,
+  `unscoped_number_guard`, `board_rot_guard`, `board_item_guard`,
+  `settlement_fill_guard`, `statement_cram_guard`, `guard_weakening_gate`, the
+  boundary harness, the patch-target audit) each reference `guard_reference` or
+  `origin/main` [measured: grep for `guard_reference|trunk_rev|origin/main` in each file].
+- Absolute-rule checks with no trunk comparison and no stored list: `disk_guard`,
+  `test_undefined_name_guard`, `test_holding_discipline_guard`,
+  `test_stop_read_unknown`, `test_money_path_guards_are_loud`.
+- AMBIGUOUS: `tests/test_one_definition_guard.py` keeps a registry of
+  owner/allow pairs in code, with no trunk comparison. It reads as reviewed policy
+  (each entry carries a reason), not a cached measurement, but it is a stored list.
+  Sized follow-up: decide policy vs measurement; not changed here.
+- Config files checked against the three-way test (kept record of a decision /
+  stored baseline-allow-list a guard could compute / neither). Read 2026-10-04:
+  - `config/number_ledger.yaml`: KEPT RECORD. The register of money-governing
+    numbers and their provenance; real content, stays.
+  - `config/live_capital_preflight_attestations.yaml`: KEPT RECORD. A named
+    person's attestation of conditions a machine cannot verify; cannot be computed.
+  - `config/number_ledger_history.yaml` and `config/number_ledger_route_history.yaml`:
+    AMBIGUOUS. Each entry's `why` is a kept decision record, but the file also
+    makes a stored count (sum of deltas) that a test checks equals the live
+    count of arbitrary rows, which the tree could give directly. Whether the
+    count half is bookkeeping to remove is an open call; not changed here.
+  - `config/prompt_only_numbers.yaml`: RULED KEEP (2026-10-04). Test applied:
+    the figures present in a sheet ARE derivable (the test's shape list finds
+    them), but each row's status and open question is a human judgement that a
+    number is prompt-only and unsettled, which no scan can produce. Staleness is
+    covered both ways by the tests: a new figure with no row fails, and a row
+    whose figure left the sheet fails. REAL GAP, not a tidy close: nothing
+    detects a number that stops being prompt-only while its prose stays (for
+    example it becomes code-computed or ledgered), and a `sourced` status is
+    never checked against anything. The shape list is also a known-string
+    scan, so a reworded figure is missed (the test file says so).
+- Source-reading tests, re-counted 2026-10-04: 119 of 480 test files by a broad
+  text heuristic (AST/getsource use, or file reads combined with a source-path or
+  git-listing pattern), 44 by a strict one (AST/getsource AND a repo path)
+  [measured: grep over `git archive origin/main tests`, top-level `test_*.py`].
+  The count cannot cleanly separate reading source from running code: the broad
+  figure errs HIGH (fixture reads, patch-target strings containing `src/`), and
+  both miss tests that call a guard script which does the scanning. The 154-of-384
+  figure below used a different method on a smaller tree and is not comparable.
+- Acceptance 1-4: the size ratchet's own tests exist; the other guards were not
+  each re-proven against all four criteria in this pass, so that is unverified
+  here rather than assumed.
+
+## Why, measured (2026-10-02, original table, kept as history)
 
 A read-only sweep of all 19 then-open changes, 2026-10-02:
 
@@ -15,10 +69,10 @@ A read-only sweep of all 19 then-open changes, 2026-10-02:
 | That day's commits touching the one shared 293-entry baseline | 48% |
 | Test files reading source TEXT/AST/paths rather than running code | 154 of 384 (40%) |
 
-`test_baseline_is_tight` makes leftover headroom a FAILURE, so headroom is
-illegal by construction. Adding one line anywhere in the tree therefore forces
+(Historical, 2026-10-02; the baseline file and the test no longer exist.) `test_baseline_is_tight` made leftover headroom a FAILURE, so headroom was
+illegal by construction. Adding one line anywhere in the tree therefore forced
 an edit to a single shared file that every other open change is also editing.
-That is not bad luck; it is arithmetic, and it is why changes jam all day.
+That was not bad luck; it was arithmetic, and it is why changes jammed all day.
 
 Branch staleness was investigated and is NOT causal: merging main into a red
 change did not make it green.
@@ -141,7 +195,7 @@ applies to a trunk that WAS read; it never stands in for one that could not be.
 
 1. **Two unrelated changes at the same time never collide.** Branch twice off
    main, add a line to a different file in each, and merge both. This must
-   succeed with no conflict. Today it cannot, because both edit the baseline.
+   succeed with no conflict. (2026-10-02: it could not, because both edited the baseline.)
    This is the test the owner was promised.
 2. **Each converted guard still catches what it caught.** Before deleting a
    baseline, record what its guard currently flags; after conversion, the same
@@ -152,7 +206,7 @@ applies to a trunk that WAS read; it never stands in for one that could not be.
 4. **No tracked file sits at exactly its cap afterwards, because no cap is
    recorded.** The 291-of-292 number should become meaningless.
 
-## Order
+## Order (DONE for the size ratchet; the rest followed, see Status)
 
 Convert ONE guard end to end first — the size ratchet, which causes most of the
 pain — and prove all four acceptance criteria on it before touching the others.
@@ -171,3 +225,5 @@ Also done (2026-10-04, the settlement-recording class): `scripts/settlement_fill
 ## Compressing is the same offence as growing
 
 `tests/test_statement_cram_ratchet.py` (logic in `scripts/statement_cram_guard.py`) closes the route a change took on 2026-10-04 to satisfy the size ratchet without splitting anything: it joined statements onto shared lines (`from A import x; from B import y`, `if cond: return x`) and only the line counter moved. The guard PARSES every tracked `.py` file (the size ratchet's own scope, `working_paths("*.py")`, no second list) and names each line on which more than one statement starts, or whose block body sits on its header's line (`if`/`elif`/`except`/`else`/`finally`/`case` headers alike); semicolons inside strings, docstrings and comments are invisible to it. There is no threshold -- the measure is statements per line -- and no stored list: identities (`path`, enclosing scope, the line's text) are collected on the working tree and on `origin/main` at check time and only a NEW or more-frequent identity fails. A one-line stub body (`class Boom(Exception): pass`, `def f(self) -> int: ...`) is not cramming and is exempt. It refuses without `origin/main`; removals never fail; the ~116 pre-existing crammed lines on the trunk pass (measured 2026-10-04).
+
+**Lines are not size (2026-10-04, second route).** The same day, two changes added error logging to dozens of money-path sites, reported their files SHRANK in lines, and between them added 33 lines over 140 characters with none removed (measured from the two diffs); the project has no line-width lint, so the line ratchet was satisfied by widening. `scripts/file_size_guard.py` now ratchets two further measures of the same files, same rule, same scope, still storing nothing: (1) non-whitespace characters -- invariant under wrapping, joining and re-indenting, so no re-layout can move it; a file over the 400-line floor may not gain any against `origin/main`; (2) lines wider than `WIDTH` = 120 characters -- a file may not gain one by identity (path + the line's text), so a widened line fails and passes once wrapped, while the trunk's ~416 pre-existing wide lines pass (120 is the 99.9th percentile of the 410,999 lines in 1,022 tracked `.py` files on `origin/main`, measured 2026-10-04; p99 = 90). Run against the two changes it was built for, it names 25 and 30 new wide lines and +2,367 / +2,320 / +1,378 non-whitespace characters in files that "shrank". Tests: `test_a_line_widened_past_the_limit_fails_and_passes_once_wrapped`, `test_more_ink_in_fewer_lines_is_still_growth`, `test_a_pre_existing_wide_line_is_not_reported`.

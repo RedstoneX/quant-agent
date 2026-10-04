@@ -282,29 +282,6 @@ def record_stop_shift_legs(
                    symbol=symbol, payload=payload)
 
 
-def stop_shift_incomplete_text(symbol: str, status: str, shifted: int, total: int) -> str:
-    """The plain sentence the owner reads when a shift did not fully land."""
-    sym = str(symbol or "").upper()
-    if status == "naked":
-        return (
-            f"a protective stop on {sym} is GONE: the broker was re-read after "
-            f"a dead order replacement and shows no resting stop for it, so "
-            f"the position is UNPROTECTED until coverage repair places one"
-        )
-    if status == "unknown":
-        return (
-            f"the ex-dividend stop shift on {sym} got no answer from the broker "
-            f"for at least one of its {total} protective stop(s), so the desk "
-            f"does not know which price they are resting at — nothing was "
-            f"cancelled and nothing was written down as moved"
-        )
-    return (
-        f"only {shifted} of {total} protective stop(s) on {sym} moved down by "
-        f"the dividend; the rest are still at the pre-dividend level, which the "
-        f"ex-dividend opening gap can trigger on its own — nothing was cancelled"
-    )
-
-
 def record_stop_read_unreadable(
     db: Any, *, symbol: str, reason: str, action: str = "",
     context: str = "", run_id: str | None = None,
@@ -314,3 +291,8 @@ def record_stop_read_unreadable(
                    symbol=symbol, payload={"code": "stop_read_unreadable",
                                            "reason": reason, "action": action,
                                            "context": context})
+
+# Lifted out; re-exported (bottom, after `_insert`/`STOP_SHIFT_KIND` exist).
+from src.execution.exdiv_shift_outcome import (  # noqa: E402,F401
+    record_shift_outcome, stop_shift_incomplete_text,
+)
