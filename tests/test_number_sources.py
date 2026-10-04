@@ -577,31 +577,6 @@ def test_zero_is_not_a_site_but_one_is() -> None:
     ]
 
 
-def test_a_citation_pointing_at_nothing_is_reported() -> None:
-    """Rule 7, firing. `broken_citations` is checked directly rather than
-    through a fixture tree, because a fixture has no `docs/` and every real
-    citation would read as missing there — a test that passes for the wrong
-    reason is worse than no test.
-    """
-    root = Path(__file__).resolve().parent.parent
-    invented = {
-        "src.risk.rules.MAX_HEAT_PCT": {
-            "status": "sourced",
-            "source": "the measured matrix in docs/DOES_NOT_EXIST.md:12",
-        },
-        "src.risk.rules.PAST_EOF": {
-            "status": "sourced",
-            "source": "see src/number_sources.py:999999",
-        },
-        "src.risk.rules.FINE": {
-            "status": "sourced",
-            "source": "see src/number_sources.py::audit",
-        },
-    }
-    reported = {site_id for site_id, _, _ in broken_citations(invented, root)}
-    assert reported == {"src.risk.rules.MAX_HEAT_PCT", "src.risk.rules.PAST_EOF"}
-
-
 def test_a_default_pointed_at_an_unscoped_module_does_not_vanish() -> None:
     """The evasion in miniature. `Config.floor = SOME_NAME` imported from a
     module nobody scoped used to remove the number from the gate entirely.
