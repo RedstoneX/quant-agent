@@ -48,7 +48,7 @@ and the store-level test is what keeps this class from hiding again.
 
 VERDICT 2026-10-02 (isolation pass): ALREADY FIXED. Fixed by #1079 (fbae04e6) in `NameCoverageRecordSession`. Proof: restoring the pre-fix source makes `tests/test_name_coverage_rows_land.py` fail (1 failed); on main it passes (1 passed).
 
-## Owner alerts are sent and the result thrown away
+## Owner alerts are sent and the result thrown away -- FIXED
 
 Nearly every caller discards the return value of the owner-alert send, so a
 failed delivery is indistinguishable from a successful one. Fix: make the
