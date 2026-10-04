@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.execution.broker import AlpacaBroker
-from src.execution.stop_cancel_outcome import StopCancelOutcome
+from src.stop_cancel_outcome import StopCancelOutcome
 
 
 SPEC_A = {"id": "stop-a", "qty": 51.0, "stop_price": 248.5, "limit_price": 240.0}
@@ -147,7 +147,7 @@ def test_wal_row_is_discharged_when_rollback_fully_succeeded():
 def test_scale_in_keeps_the_wal_when_coverage_shrank():
     """The same amplifier on the scale-in path: the add is abandoned, but
     the recovery row must survive so the naked shares get re-protected."""
-    from src.execution.stop_cancel_outcome import handle_add_cancel
+    from src.stop_cancel_outcome import handle_add_cancel
 
     db, prep = MagicMock(), MagicMock(wal_row_id=42)
     cancel = StopCancelOutcome(

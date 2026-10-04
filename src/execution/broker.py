@@ -27,7 +27,7 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
-from src.execution.stop_cancel_outcome import (StopCancelOutcome, StopCoverageLost, settle_cancel)
+from src.stop_cancel_outcome import (StopCancelOutcome, StopCoverageLost, settle_cancel)
 from src.models import Position
 from src import sector_reference as _sector_reference
 # THE stop-value judgement (docs/WORK.md item 88). `src.execution.stop_records`

@@ -57,7 +57,7 @@ has a valid limit — the same buffer every other protective-stop path uses.
 from __future__ import annotations
 
 import json
-from src.execution.stop_cancel_outcome import handle_add_cancel
+from src.stop_cancel_outcome import handle_add_cancel
 import logging
 import os
 import time

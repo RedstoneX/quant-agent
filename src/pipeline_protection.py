@@ -1357,7 +1357,7 @@ class ProtectionMixin:
         cancel = self.broker.cancel_snapshotted_stops(symbol, specs)
         if not cancel.cleared:
             # STATE THREE: rollback failed, shares naked NOW, WAL row is the repair.
-            from src.execution.stop_cancel_outcome import keep_lost_coverage_row
+            from src.stop_cancel_outcome import keep_lost_coverage_row
             if cancel.coverage_shrank and keep_lost_coverage_row(self, symbol, wal_row_id, cancel, logger):
                 return False, [], None
             if wal_row_id is not None:
