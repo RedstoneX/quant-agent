@@ -312,3 +312,33 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     import src.api.db_reads as _db_reads
 
     monkeypatch.setattr(_db_reads, "SUPPRESSION_STATE_PATHS", (heartbeat, drift))
+
+
+@pytest.fixture(autouse=True)
+def _owner_flag_pointer_does_not_outlive_a_test():
+    """Restore the broker door's owner-flag pointer after every test.
+
+    `src/execution/owner_flags_gate.configure` sets a PROCESS-GLOBAL path, and
+    `main.main()` calls it with that run's watchdog database. In production a
+    process runs one session, so the pointer never outlives its database; in a
+    test run it does. Any test that drives `main.main()` (tests/test_alert_
+    watchdog.py does) therefore leaves the door aimed at a tmp_path database
+    that pytest then deletes, and every later test in that worker reads the
+    flags as UNREADABLE -> UNKNOWN and gets `owner_flag_halted` where it
+    expected `accepted`. The gate is right to refuse an unreadable flag set;
+    what is wrong is the pointer surviving the test that set it.
+
+    `owner_flags._CACHE` is restored with it: it is the same per-database state
+    one level down, keyed by paths that are likewise gone once a test ends.
+    """
+    from src import owner_flags as _of
+    from src.execution import owner_flags_gate as _gate
+
+    before_path = _gate._db_path
+    before_cache = dict(_of._CACHE)
+    try:
+        yield
+    finally:
+        _gate._db_path = before_path
+        _of._CACHE.clear()
+        _of._CACHE.update(before_cache)
