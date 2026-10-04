@@ -85,3 +85,10 @@ def install_cancel_recording(*, broker, conn_getter) -> None:
     # decision reads it. See src/execution/broker_parts/guarded.py.
     from src.execution.broker_parts.guarded import attach_reconciliation_db
     attach_reconciliation_db(broker, conn_getter)
+    # The order/stop clusters (src/execution/broker_parts/order_desk.py and
+    # friends) are COLLABORATORS built per call from the broker's client, not
+    # the broker itself, so they cannot read a handle lent to the broker. The
+    # one object every one of them already shares is this client, so the same
+    # handle is lent there too — still one channel, still one wiring site, and
+    # still nothing on the order path reads it.
+    attach_reconciliation_db(broker.client, conn_getter)
