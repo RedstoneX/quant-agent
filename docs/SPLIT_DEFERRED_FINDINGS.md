@@ -5,17 +5,13 @@ behaviour change hidden in a verbatim move is unreviewable. Each entry says
 what is wrong, where, and what would prove a fix. Work them after the
 structure is sound, hardest-wearing first.
 
-## Owner alerts are sent and the result thrown away
+## Owner-alert senders that bypass the retry funnel
 
-Nearly every caller discards the return value of the owner-alert send, so a
-failed delivery is indistinguishable from a successful one. Fix: make the
-callers honour the result, and prove a failed send is visible somewhere.
+`send_owner_alert` retries through `deliver_with_retry` and records an undelivered alert (fixed by #1104, witnessed by `tests/test_owner_alert_delivery.py`; replacing the funnel call with a bare send turns it red, re-measured 2026-10-04). What remains: code that builds its own `TelegramNotifier()` and sends escapes that retry entirely, and no guard forbids it.
 
-VERDICT 2026-10-02 (isolation pass): NOT A DEFECT as written -- the note's consequence is false. 22 of 34 `send_owner_alert` call sites do discard the return, but a failed delivery is NOT invisible: `send_owner_alert` logs CRITICAL before sending, and the transport records every attempt in `notifier_sends` with status `failed` and the reason. Reproduced with the real transport and a forced connection error against a temp DB: returned False, CRITICAL line logged, row `('owner_alert', 'failed', 'boom')`. The function's docstring says callers treat the result as information by design. Residual (a design question, not a bug): nothing retries or escalates a failed alert; the only trace is the row and the log.
+Measured 2026-10-04 on main: six construction sites in `src/` outside the funnel (`alert_watchdog.py` default, `pipeline.py`, `scheduler.py`, `cost_circuit/alert_ledger.py`, two in `cost_circuit/breaker.py`) across five modules, not six; whether the `scheduler.py` one sends owner alerts is not checked. About ten more sites in `scripts/` also construct one and are not counted in the earlier sizing.
 
-CLOSED 2026-10-04: the residual was fixed by #1104 (found already on main, not re-done here). `send_owner_alert` runs every caller through `deliver_with_retry`: retry on the desk's transient-fault policy, then one counted `owner_alert_undelivered` row with a running total. A deliberate mute is settled, never retried. The dashboard's muted-backlog read selects every `notifier_sends` row whose status is not 'sent', so an undelivered alert reaches the owner's only channel. Section kept: a caller that builds its own notifier and bypasses the funnel would escape this, and no guard forbids that yet.
-
-WIRING PINNED 2026-10-04: the funnel itself was unpinned -- replacing `send_owner_alert`'s `deliver_with_retry` call with a single direct notifier send left all six delivery tests green, so the discipline could be deleted unnoticed. Two witness tests now drive `send_owner_alert` itself and both go red under that mutation. The section still stands on its stated residual only: six sites build their own `TelegramNotifier()` and send outside the funnel, and no guard forbids that; closing it means routing or refusing those, which is its own instalment.
+Fix: route each sender through the funnel (or justify and allow-list it), then add a guard that fails on any new direct construction. Sized at roughly 150-250 lines for the `src/` sites and the guard [estimate: earlier agent sizing, not re-derived]; the scripts would add to it.
 
 ## The cost circuit is eleven mixins, not eleven modules
 
@@ -50,6 +46,12 @@ SIZED 2026-10-04, NOT STARTED (a run that closed the cost-circuit section above 
 
 VERDICT 2026-10-02 (isolation pass): REPRODUCED (structural debt). Mixins remain: `PromptFactsReviewMixin` (`src/pipeline_prompt_facts_review.py`) and in `src/agents/portfolio_manager/`: `DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`, `PromptEvidenceMixin`; `tests/test_boundary_harness.py` passes (with the other two files run, 20 passed) but only covers pipeline mixins. The note named three pieces; the portfolio-manager seat actually has four mixins. Rebuild size: medium-large, five pieces.
 
+## Nothing in the build checks for undefined names
+
+A bare `_log` in the take-profit refusal branches raised `NameError` in a cold path (fixed by #1102; `tests/test_take_profit_refusal_names.py` goes red on all three cases if a bare `_log.error` is put back, re-measured 2026-10-04; no sibling survives in `src/`). The class is not closed: there is no ruff, flake8 or pyflakes in `pyproject.toml` or `.github/workflows/`, and no script in `scripts/` resolves names, so the next one ships the same way.
+
+Fix: a stdlib-only scope-analysing guard in `scripts/` plus one workflow edit, roughly 250-350 lines [estimate: earlier agent sizing, not re-derived], with its false-positive rate on the existing tree driven to zero first. A lint dependency is the alternative and needs an owner call as a new dependency.
+
 ---
 
 # Resolved history
@@ -80,25 +82,6 @@ CLOSED 2026-10-04: the cost-circuit half. Its cause (Python ET day vs SQLite's o
 
 VERDICT 2026-10-02 (isolation pass): holding-discipline half -- ALREADY FIXED (module-level stamp now read at run time; `tests/test_no_local_day_as_exchange_day.py` guard passes, no import-time `str(et_today())` stamp remains in that file). Cost-circuit half -- NOT REPRODUCED (carried forward from the earlier investigation; not redone). The note names no test, so it should not be treated as a known defect.
 
-### The evidence gate's per-name record has never been written -- FIXED
-
-In the name-coverage loop the recording call passed a symbol argument twice --
-once by name and once inside the unpacked details -- so every call raised a
-type error, which a broad catch turned into a log line. A second collision sat
-behind it: the stage was also passed twice, so removing only the symbol still
-wrote nothing. Both were reproduced before the fix: the old code logged
-"got multiple values for argument 'symbol'", and a run through the morning
-session left zero per-name rows in the store. Fix: the details now carry
-neither key. Proof: a new test runs the gate and asserts a real per-name row
-for a candidate lands in the store with the right stage and outcome. The broad
-catch stays, deliberately -- this runs on the trading path and a forensic
-record may not stop it -- but it now logs the full traceback at error level,
-and the store-level test is what keeps this class from hiding again.
-
-VERDICT 2026-10-02 (isolation pass): ALREADY FIXED. Fixed by #1079 (fbae04e6) in `NameCoverageRecordSession`. Proof: restoring the pre-fix source makes `tests/test_name_coverage_rows_land.py` fail (1 failed); on main it passes (1 passed).
-
-RE-VERIFIED 2026-10-04 (mutation pass): both halves are individually witnessed, so neither can be deleted unnoticed. Dropping the `symbol` pop in `NameCoverageRecordSession` reds `tests/test_name_coverage_rows_land.py` (1 failed); separately putting a `stage` key back into the unpacked details reds the same test (1 failed); unmutated main is green (1 passed). The broad catch now logs the traceback at ERROR, so a future collision is loud rather than one warning line. Nothing further is owed on this finding.
-
 ### A broker read error reads as "no stop to adjust" -- FIXED
 
 The stop read used to return nothing on ANY error, and the protection path
@@ -119,16 +102,3 @@ succeeding places nothing. All seven callers use it; the watchdog reconcile now
 passes the database it was already given.
 
 VERDICT 2026-10-02 (isolation pass): ALREADY FIXED. Fixed by #1085 (c1fdebc8), `src/execution/stop_read.py`. Proof: `tests/test_stop_read_unknown.py` plus `tests/test_evidence_gate.py` pass (149 passed); a grep finds no caller reading the broker stop outside `read_stop`; seven call sites (pipeline_exits x2, pipeline, pipeline_prompt_facts x2, pipeline_protection, stop_records) use it. Not reverted-to-prove: the pre-fix source was not re-run.
-
-### `update_open_take_profit` refuses through an undefined name
-
-DONE 2026-10-02. The refusal branches called a bare `_log` that the ledger
-module never defined, so they raised `NameError`. They now use the module's
-`logger`; `tests/test_take_profit_refusal_names.py` drives both refusals and
-failed with `NameError: name '_log' is not defined` before the fix.
-
-VERDICT 2026-10-02 (isolation pass): ALREADY FIXED by #1102 (c9c2dcbc), `src/storage/trades/ledger.py`. Proof: with the pre-fix ledger restored, `tests/test_take_profit_refusal_names.py` fails with `NameError: name '_log' is not defined` at ledger.py:1875; on main it passes and no bare `_log` remains in the ledger.
-
-CONFIRMED CLOSED 2026-10-04 (mutation pass): the witness is real, not decoration. Re-substituting a bare `_log.error` into both refusal branches on main reds all three parametrised cases of `tests/test_take_profit_refusal_names.py`; restoring `logger` greens them. The refusal path is live, not dead code: `src/exits/target_revision.py` calls `update_open_take_profit` through `src/storage/db.py`. A repo-wide sweep of `src/` finds no remaining `_log.` use in any module that does not define or import `_log`, so no sibling of this defect survives.
-
-NOT CLOSED, AND BROADER THAN THIS DEFECT: nothing in CI ever checks for undefined names, so the next `NameError` in a cold branch ships exactly the way this one did. There is no ruff, flake8 or pyflakes in `pyproject.toml`, in `.github/workflows/`, or installed in the virtualenv, and none of the twenty-odd scripts in `scripts/` performs name resolution. Closing that needs either a new lint dependency wired into `.github/workflows/test.yml` (small, but a new dependency) or a stdlib-only scope-analysing guard in `scripts/` sized at roughly 250-350 lines across one new module plus one workflow edit, with an unmeasured false-positive rate against the existing tree that has to be driven to zero before it can be green on arrival. Deliberately left for an owner call rather than half-shipped here.
