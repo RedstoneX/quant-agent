@@ -383,3 +383,6 @@ detail: docs/board_notes/item-232.md
 DONE WHEN:
 - [ ] one shared date+time formatter exists and every previously time-only owner-facing site calls it. (Done for `fmt_time_12h`, which every trader_feed and notifier header uses; STILL OPEN: the health report in `log_health.py` formats its own clock, and `inflight.py` shows `%H:%M ET` on the dashboard.)
 - [ ] a test fails if any owner-facing timestamp is emitted without a date. (`tests/test_owner_timestamps_carry_date.py` covers notifier and trader_feed only; extend to log_health and inflight when those move to the formatter.)
+
+# MERGE-BEHAVIOUR PROBE work-b (delete me)
+probe_work_b: placeholder
