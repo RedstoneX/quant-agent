@@ -91,3 +91,45 @@ def test_fractional_coverage_change_still_cancels_but_the_window_is_recorded(tc)
     assert pay["reason"] == "fractional_quantity_change"
     assert pay["cancelled_ids"] == ["s1"] and pay["outcome"] == "replaced"
     assert pay["window_seconds"] >= 0
+
+
+@patch("src.execution.broker_parts.stop_shift.defer_shift_if_closed",
+       return_value=None)
+@patch("src.execution.broker.TradingClient")
+def test_shift_fallback_window_is_recorded_not_silent(tc, _closed):
+    """The ex-dividend shift's un-amendable fallback still cancels; its naked
+    window must become a durable row, the same as replace_stop_loss's."""
+    from src.stop_cancel_outcome import StopCancelOutcome
+    from src.execution.broker_parts.stop_window import record_unprotected_windows
+    b, client = _broker(tc)
+    specs = [{"id": "s1", "qty": 10, "stop_price": 100.0}]
+    # A bracket PARENT carrying legs is the shape that genuinely cannot amend.
+    b._list_open_sell_stop_orders = MagicMock(return_value=[
+        _stop("s1", 100.0, klass="bracket", legs=[object()])])
+    b._snapshot_stop_order = MagicMock(side_effect=lambda o: dict(specs[0]))
+    b.cancel_snapshotted_stops = MagicMock(
+        return_value=StopCancelOutcome.all_cleared("ZZZ", tuple(specs)))
+    b._restore_stop_orders = MagicMock(return_value=(1, []))
+    out = b.shift_stops_down("ZZZ", 1.0)
+    assert out["mode"] == "cancel_resubmit"
+    db = MagicMock()
+    record_unprotected_windows(b, db, "ZZZ")
+    kw = db.insert_specialist_evidence.call_args.kwargs
+    assert kw["kind"] == "stop_unprotected_window"
+    pay = json.loads(kw["evidence_json"])
+    assert pay["path"] == "shift_stops_down"
+    assert pay["cancelled_ids"] == ["s1"] and pay["outcome"] == "restored"
+    assert pay["window_seconds"] >= 0
+
+
+@patch("src.execution.broker.TradingClient")
+def test_an_amended_shift_opens_no_window_at_all(tc):
+    """Recording must not invent a window on the path that cancels nothing."""
+    b, _client = _broker(tc)
+    b._list_open_sell_stop_orders = MagicMock(return_value=[_stop("s1", 100.0)])
+    out = b.shift_stops_down("ZZZ", 1.0)
+    assert out["mode"] == "amend"
+    db = MagicMock()
+    from src.execution.broker_parts.stop_window import record_unprotected_windows
+    record_unprotected_windows(b, db, "ZZZ")
+    db.insert_specialist_evidence.assert_not_called()

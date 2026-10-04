@@ -10,8 +10,17 @@ import logging
 
 from src.execution.broker_parts.stop_amend import _quantize_price
 from src.execution.broker_parts.stop_clock import defer_shift_if_closed
+from src.execution.broker_parts.stop_window import UnprotectedWindow, fallback_reason
 
 logger = logging.getLogger("src.execution.broker")
+
+
+def _specs_qty(specs: list[dict]) -> float | None:
+    """Total resting stop quantity, or None when a spec is unreadable."""
+    try:
+        return sum(abs(float(s["qty"])) for s in specs)
+    except (TypeError, ValueError, KeyError):
+        return None
 
 
 class ShiftStopsMixin:
@@ -171,7 +180,17 @@ class ShiftStopsMixin:
 
         if (deferred := defer_shift_if_closed(self, symbol, specs, shifted, amount)):
             return deferred  # out of hours: cancel NOTHING (see stop_clock.py)
+        # Item 201: this fallback is the one shift path that still cancels, so
+        # its naked window is TIMED and RECORDED exactly like replace_stop_loss's
+        # rather than passing silently. Recording only; nothing here changes what
+        # is cancelled, restored or returned.
+        window = UnprotectedWindow(
+            symbol, fallback_reason(specs, _specs_qty(specs)),
+            self._window_log, path="shift_stops_down",
+        )
         cancel = self.cancel_snapshotted_stops(symbol, specs)
+        for spec in cancel.cancelled:
+            window.cancelled(spec.get("id"))
         if not cancel.cleared:
             # Rollback handled inside; a shrunk-coverage outcome means the
             # ORIGINAL levels are gone and could not be put back, so the
@@ -182,6 +201,7 @@ class ShiftStopsMixin:
                 self._restore_stop_orders(
                     symbol, list(cancel.unprotected), check_idempotency=True,
                 )
+            window.close("cancel_incomplete")
             return None
         restored, failed = self._restore_stop_orders(symbol, shifted)
         if failed:
@@ -197,6 +217,8 @@ class ShiftStopsMixin:
                 "originals restored where possible", len(failed), len(specs), symbol,
             )
         if restored <= 0:
+            window.close("not_restored")
             return None
+        window.close("partial" if failed else "restored")
         return {"id": f"shift-{symbol}", "status": "accepted", "symbol": symbol,
                 "shifted": restored, "total": len(specs), "mode": "cancel_resubmit"}
