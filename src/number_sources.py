@@ -256,8 +256,20 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
 #:                      write, which is what it was.
 #:   not-trade-governing — in scope structurally, does not reach a trade
 #:                      decision. Requires `note` saying why.
+#:   owner-ruled      — the owner decided this VALUE and the decision is
+#:                      dated and recorded. A decision, not a measurement and
+#:                      not a debt. Requires `ruled_on` (YYYY-MM-DD) and
+#:                      `ruling_record` (where it is written down) and
+#:                      `ruling_summary` (what was decided, in words).
 VALID_STATUSES: frozenset[str] = frozenset(
-    {"instrument", "sourced", "derived", "arbitrary", "not-trade-governing"}
+    {
+        "instrument",
+        "sourced",
+        "derived",
+        "arbitrary",
+        "not-trade-governing",
+        "owner-ruled",
+    }
 )
 
 #: Fields every `arbitrary` entry must carry. `docs/OUTCOME.md`'s outcome-3
@@ -486,6 +498,8 @@ def classification(
             out["not_trade_governing"].append(site_id)
         elif status in {"derived", "instrument", "measurement"}:
             out["sourced_or_measured"].append(site_id)
+        elif status == "owner-ruled":
+            out["ratified_bound"].append(site_id)
         elif status == "sourced":
             text = str(entry.get("source", "")).lower()
             key = "ratified_bound" if "ratif" in text else "sourced_or_measured"
@@ -675,54 +689,10 @@ def load_ledger(path: Path | None = None) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _appconfig_sections(root: Path) -> dict[str, str]:
-    """`{ConfigClassName: settings.yaml section}` read from `AppConfig`.
-
-    Read rather than hardcoded: the mapping IS the field name on `AppConfig`,
-    so a renamed section cannot desynchronise this check from the loader.
-    """
-    trees = [ast.parse(p.read_text(encoding="utf-8")) for p in config_modules(root)]
-    for node in (n for t in trees for n in ast.walk(t)):
-        if not isinstance(node, ast.ClassDef) or node.name != "AppConfig":
-            continue
-        out: dict[str, str] = {}
-        for body_node in node.body:
-            if (
-                isinstance(body_node, ast.AnnAssign)
-                and isinstance(body_node.annotation, ast.Name)
-                and isinstance(body_node.target, ast.Name)
-            ):
-                out[body_node.annotation.id] = body_node.target.id
-        return out
-    return {}
-
-
-def deployed_values(root: Path | None = None) -> dict[str, float]:
-    """`{site_id: deployed value}` for every ledger site `settings.yaml` sets.
-
-    THE BLIND SPOT THIS CLOSES. The ledger pins the CODE DEFAULT. For a
-    `src.config.*Config.<field>` site the deployed value comes from
-    `config/settings.yaml`, so `risk.max_position_risk_pct: 5` could be edited
-    to `10` with the gate entirely silent. Measured 2026-09-18: 52 sites route
-    this way. They all currently agree with their defaults — which is exactly
-    why this is cheap to start enforcing now.
-    """
-    base = root or REPO_ROOT
-    settings = base / "config" / "settings.yaml"
-    if not settings.is_file():
-        raise FileNotFoundError(str(settings))
-    sections = _appconfig_sections(base)
-    raw = yaml.safe_load(settings.read_text(encoding="utf-8")) or {}
-    out: dict[str, float] = {}
-    for class_name, section in sections.items():
-        block = raw.get(section)
-        if not isinstance(block, dict):
-            continue
-        for key, value in block.items():
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                continue
-            out[f"src.config.{class_name}.{key}"] = float(value)
-    return out
+from src.number_deployed_values import (  # noqa: E402,F401 -- lifted verbatim
+    _appconfig_sections,
+    deployed_values,
+)
 
 
 #: A `source` a non-author can open in under a minute: a URL, or a repo path
@@ -867,6 +837,36 @@ def audit(
                     "this number cannot reach a trade decision.",
                 )
             )
+        if status == "owner-ruled":
+            ruled_on = str(entry.get("ruled_on") or "").strip()
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", ruled_on):
+                problems.append(
+                    LedgerProblem(
+                        "no-ruling-date",
+                        site_id,
+                        "status 'owner-ruled' requires `ruled_on:` as a "
+                        "YYYY-MM-DD date. A ruling nobody can date is a claim, "
+                        "not a decision.",
+                    )
+                )
+            if not str(entry.get("ruling_summary") or "").strip():
+                problems.append(
+                    LedgerProblem(
+                        "no-ruling-summary",
+                        site_id,
+                        "status 'owner-ruled' requires `ruling_summary:` stating "
+                        "in plain words what the owner decided.",
+                    )
+                )
+            if not str(entry.get("ruling_record") or "").strip():
+                problems.append(
+                    LedgerProblem(
+                        "no-ruling-record",
+                        site_id,
+                        "status 'owner-ruled' requires `ruling_record:` saying "
+                        "where the ruling is written down.",
+                    )
+                )
         if status == "arbitrary":
             for field in ARBITRARY_REQUIRED_FIELDS:
                 if not str(entry.get(field) or "").strip():

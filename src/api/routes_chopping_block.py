@@ -37,8 +37,10 @@ _UNREADABLE = (
 _NO_MARGIN = (
     "Margins are rating steps from neutral (rule R2) and independent "
     "net-evidence points above failing (rule R5), compared day against day. "
-    "The other entry rules are yes-or-no and have no distance. A day with no "
-    "margin record shows no margin rather than a guess."
+    "The other entry rules are yes-or-no and have no distance. The bar is made "
+    "of ratings and evidence counts, not a price, so there is no price gap to "
+    "scale by the stock's daily range. A name with no margin record is shown "
+    "as unrecorded, never as safe."
 )
 _RULES = (
     ("r2_steps_from_neutral", "rating", "steps from neutral"),
@@ -62,12 +64,15 @@ class ChoppingBlockRow(BaseModel):
     margins: list[Margin] = []
     headline: str
     reason: str
+    distance_known: bool = False
+    distance: str = ""
 
 
 class ChoppingBlockResponse(BaseModel):
     as_of: str | None
     holdings: list[ChoppingBlockRow]
     note: str
+    summary: str = ""
 
 
 def _split(value: object) -> list[str]:
@@ -121,6 +126,27 @@ def _margins(sym: str, passes: list[dict]) -> list[Margin]:
         out.append(Margin(rule=label, unit=unit, now=now, previous=prev,
                           first=vals[0], direction=d))
     return out
+
+
+def _distance(standing: str, ms: list[Margin]) -> tuple[bool, str]:
+    """What the owner reads as 'how far from the bar'. Never blank, never a guess."""
+    if standing == "below_bar":
+        return True, ("Already below the bar. The desk sells any name below "
+                      "it; being close earns no grace.")
+    if not ms:
+        return False, ("Distance to the bar is NOT recorded for this name "
+                       "(no margin record yet), so it cannot be called safe.")
+    return True, "; ".join(
+        f"{m.rule} {m.now} {m.unit}"
+        + ("" if m.previous is None else f" (was {m.previous})") for m in ms)
+
+
+def _summary(rows: list[ChoppingBlockRow]) -> str:
+    below = sum(r.standing == "below_bar" for r in rows)
+    closing = sum(r.direction == "closing_in" for r in rows)
+    blind = sum(not r.distance_known for r in rows)
+    return (f"{len(rows)} holdings: {below} below the bar, {closing} closing "
+            f"in, {blind} with no distance recorded.")
 
 
 def _closing_text(ms: list[Margin]) -> str:
@@ -181,13 +207,15 @@ def build_rows(passes: list[dict]) -> ChoppingBlockResponse:
             direction = "closing_in"
             head = (f"Still clears the entry bar but is closing in on it: "
                     f"{closing}. " + head)
+        known, dist = _distance(standing, ms)
         rows.append(ChoppingBlockRow(
             symbol=sym, standing=standing, direction=direction, margins=ms,
-            headline=head, reason=why))
+            headline=head, reason=why, distance_known=known, distance=dist))
     rows.sort(key=lambda r: (
-        r.standing != "below_bar", r.direction != "closing_in", r.symbol))
+        r.standing != "below_bar", r.direction != "closing_in",
+        r.distance_known, r.symbol))
     return ChoppingBlockResponse(
-        as_of=latest["ts"], holdings=rows,
+        as_of=latest["ts"], holdings=rows, summary=_summary(rows),
         note=_NO_MARGIN + " Holdings are those the latest pass examined; a "
              "name bought since appears after the next pass.")
 

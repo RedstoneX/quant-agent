@@ -81,3 +81,41 @@ def record_reconciliation(*, db, kind: str, result, run_id: str | None = None):
         # but it cannot take the money path down with it.
         logger.error("reconciliation %s could not be recorded", kind, exc_info=True)
     return result
+
+
+def record_guarded_outcome(*, db, where: str, exc: BaseException | None = None,
+                           run_id: str | None = None, log=None,
+                           context: dict | None = None):
+    """One counted row for ONE pass through a money-path catch-all.
+
+    Why this exists: a broad ``except Exception`` on the trading path is
+    there on purpose — removing it can turn a recoverable miss into a crash
+    mid-order — but as written most of them record a one-line message with
+    no traceback, so a programming error (a TypeError from an argument
+    passed twice, an AttributeError from a renamed field) is indistinguishable
+    from a quiet no-op. This makes the handler LOUD without changing what it
+    does: full traceback at ERROR, plus one counted row on the EXISTING
+    reconciliation channel. It never re-raises and never returns anything the
+    caller branches on.
+
+    Three states stay distinct, which is the whole point:
+      * ``not_run``   — this site was never reached (no row at all)
+      * ``agreed``    — it ran and swallowed nothing (``exc=None``)
+      * ``disagreed`` — it ran and swallowed a fault (``exc`` set)
+
+    `log` is the caller's module logger when given, so the traceback lands
+    under the module that owns the handler rather than under this one, and
+    `context` carries the per-name facts (symbol, row, order id) that the
+    one-line log it replaces used to carry, into the counted row itself.
+    """
+    emitter = log or logger
+    detail: list = []
+    ctx = dict(context or {})
+    if exc is not None:
+        emitter.error(
+            "money-path guard swallowed a fault at %s (%s): %s: %s",
+            where, ctx, type(exc).__name__, exc, exc_info=exc,
+        )
+        detail = [{"where": where, "error": type(exc).__name__,
+                   "message": str(exc), **ctx}]
+    record_reconciliation(db=db, kind=f"guarded:{where}", result=detail, run_id=run_id)

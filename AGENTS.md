@@ -8,6 +8,8 @@ Read `docs/STATE.md`, then `docs/WORK.md`. Use `docs/OUTCOME.md` for product int
 
 Do not trust a document's claimed status at face value — check reality first: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`.
 
+Credentials: OneCLI is the source of truth; `.env` is stale and proves nothing. Read `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`. Never print or commit a real value.
+
 ## Paper-beta autonomy
 
 While QAMC remains Alpaca Paper, already-authorized engineering may run end-to-end without a human review/merge/deploy gate:
