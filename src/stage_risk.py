@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.stage_risk_discipline import reject_false_claim
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     Any,
     DROP_CODE_UNSPECIFIED,
@@ -19,7 +20,6 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     RunContext,
     SOFT_EXIT_MISSING_AFTER_RETRY,
     _ANALYSIS_DROP_KIND,
-    _alert_holding_discipline_block,
     _dropped_since_proposal,
     _isolate_empty_soft_exit_entries,
     _macro_regime,
@@ -1224,20 +1224,8 @@ class RiskStage:
                         "Holding discipline BLOCK (claim proven false): %s",
                         check.finding,
                     )
-                    _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "risk",
-                        "rejected", check.finding,
-                    )
-                    _record_pipeline_event(
-                        pipeline, ctx, decision.symbol, "risk",
-                        "holding_discipline_claim_false", check.finding,
-                    )
+                    reject_false_claim(pipeline, ctx, decision, symbol_u, check)
                     hd_blocked.append((symbol_u, check.finding or ""))
-                    _alert_holding_discipline_block(
-                        symbol=symbol_u,
-                        action=decision.action,
-                        reasons=check.reasons,
-                    )
                     continue
                 if check.verdict == "unverifiable":
                     # Unchanged from before the 2026-09-04 escalation:
