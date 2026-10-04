@@ -54,7 +54,7 @@ from src.protection.protected_sell import ProtectedSell
 from src.protection.reprotect_records import ReprotectRecords
 from src.protection.coverage_book_read import read_positions_with_retry
 from src.protection.coverage_book_read import unverified_book_sweep
-from src.sentinel.reconciliation import record_reconciliation
+from src.sentinel.reconciliation import record_guarded_outcome, record_reconciliation
 from src.execution.broker import AlpacaBroker, _split_protective_qty
 from src.models import TradeDecision
 from src.pipeline_context import RunContext
@@ -994,6 +994,7 @@ class RestoreDrain:
             rows = self.db.get_pending_protection_restores()
         except Exception as exc:
             logger.warning("drain_pending_protection_restores: DB read failed: %s", exc)
+            record_guarded_outcome(db=self.db, where='drain.read_rows', exc=exc, log=logger)
             return 0
         if not rows:
             return 0
@@ -1010,17 +1011,16 @@ class RestoreDrain:
                 try:
                     ok = drain_scale_in_row(self.broker, self.db, row)
                 except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "drain: scale-in WAL restore raised for %s row %d: %s "
-                        "— leaving for next session",
-                        symbol, row_id, exc,
-                    )
+                    record_guarded_outcome(
+                        db=self.db, where="drain.scale_in_restore", exc=exc, log=logger,
+                        context={"symbol": symbol, "row": row_id,
+                                 "effect": "leaving for next session"})
                     continue
                 if ok:
                     try:
                         self.db.delete_pending_protection_restore(row_id)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        record_guarded_outcome(db=self.db, where='drain.delete_after_scale_in', exc=exc, log=logger)
                     drained += 1
                     logger.info(
                         "drain: scale-in recovery rebuilt coverage for %s "
@@ -1036,14 +1036,14 @@ class RestoreDrain:
                 try:
                     wal_specs = _json.loads(row["specs_json"])
                 except Exception as exc:
-                    logger.error(
-                        "drain: WAL row %d has unparseable specs_json (%s) "
-                        "— deleting orphan to unblock the queue", row_id, exc,
-                    )
+                    record_guarded_outcome(
+                        db=self.db, where="drain.wal_specs_parse", exc=exc, log=logger,
+                        context={"row": row_id,
+                                 "effect": "deleting orphan to unblock the queue"})
                     try:
                         self.db.delete_pending_protection_restore(row_id)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        record_guarded_outcome(db=self.db, where='drain.delete_unparseable_wal_row', exc=exc, log=logger)
                     continue
                 # Stage 3 (shorts): the row now carries its own `side` —
                 # written at creation time by whoever closed the position,
@@ -1065,16 +1065,16 @@ class RestoreDrain:
                         **side_kwargs,
                     )
                 except Exception as exc:
-                    logger.error(
-                        "drain: WAL restore raised for %s row %d: %s — "
-                        "leaving for next session", symbol, row_id, exc,
-                    )
+                    record_guarded_outcome(
+                        db=self.db, where="drain.wal_restore", exc=exc, log=logger,
+                        context={"symbol": symbol, "row": row_id,
+                                 "effect": "leaving for next session"})
                     continue
                 if ok:
                     try:
                         self.db.delete_pending_protection_restore(row_id)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        record_guarded_outcome(db=self.db, where='drain.delete_after_wal_restore', exc=exc, log=logger)
                     drained += 1
                     logger.info(
                         "drain: WAL recovery rebuilt coverage for %s "
@@ -1086,20 +1086,18 @@ class RestoreDrain:
                             row_id, _json.dumps(retry),
                         )
                     except Exception as exc:
-                        logger.warning(
-                            "drain: failed to narrow WAL row %d: %s",
-                            row_id, exc,
-                        )
+                        record_guarded_outcome(
+                            db=self.db, where="drain.narrow_wal_row", exc=exc,
+                            log=logger, context={"row": row_id})
                 continue
 
             try:
                 fill_info = self.broker.get_order_fill_info(order_id) or {}
             except Exception as exc:
-                logger.warning(
-                    "drain: broker query failed for %s (order %s): %s — "
-                    "leaving row %d for next session",
-                    symbol, order_id, exc, row_id,
-                )
+                record_guarded_outcome(
+                    db=self.db, where="drain.broker_fill_query", exc=exc, log=logger,
+                    context={"symbol": symbol, "order": order_id, "row": row_id,
+                             "effect": "leaving row for next session"})
                 continue
             status = (fill_info.get("status") or "").lower()
             if status not in self._TERMINAL_ORDER_STATUSES:
@@ -1112,15 +1110,14 @@ class RestoreDrain:
             try:
                 cancelled_specs = _json.loads(row["specs_json"])
             except Exception as exc:
-                logger.error(
-                    "drain: row %d has unparseable specs_json (%s) — "
-                    "deleting orphan to unblock the queue",
-                    row_id, exc,
-                )
+                record_guarded_outcome(
+                    db=self.db, where="drain.specs_parse", exc=exc, log=logger,
+                    context={"row": row_id,
+                             "effect": "deleting orphan to unblock the queue"})
                 try:
                     self.db.delete_pending_protection_restore(row_id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    record_guarded_outcome(db=self.db, where='drain.delete_unparseable_row', exc=exc, log=logger)
                 continue
             # Same persisted-side-first resolution as the sentinel branch
             # above (see `_resolve_wal_row_side`): a row written after the
@@ -1159,11 +1156,9 @@ class RestoreDrain:
                                 row_id, len(cancelled_specs), len(retry_specs),
                             )
                         except Exception as exc:
-                            logger.warning(
-                                "drain: failed to narrow row %d after "
-                                "partial restore: %s",
-                                row_id, exc,
-                            )
+                            record_guarded_outcome(
+                                db=self.db, where="drain.narrow_row", exc=exc,
+                                log=logger, context={"row": row_id})
                     logger.warning(
                         "drain: finalize for %s row %d did not rebuild "
                         "coverage — leaving row for next session",
@@ -1177,13 +1172,15 @@ class RestoreDrain:
                     "row %d cleared)", symbol, order_id, row_id,
                 )
             except Exception as exc:
-                logger.error(
-                    "drain: finalize replay failed for %s row %d: %s — "
-                    "leaving row for next session",
-                    symbol, row_id, exc,
-                )
+                record_guarded_outcome(
+                    db=self.db, where="drain.finalize_replay", exc=exc, log=logger,
+                    context={"symbol": symbol, "row": row_id,
+                             "effect": "leaving row for next session"})
         if drained:
             logger.info("drain: cleared %d orphaned protection-restore row(s)", drained)
+        # Proof the drain RAN. Without this, "no fault rows" is ambiguous
+        # between a clean pass and a drain that was never called at all.
+        record_guarded_outcome(db=self.db, where="drain.completed", log=logger)
         return drained
 
 
