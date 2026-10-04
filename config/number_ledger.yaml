@@ -2961,11 +2961,27 @@ numbers:
         have held rather than names it did hold, so it is a property of the tape and
         not of this desk's trade record
       closes_when: >-
-        the owner states the single-name account loss he will tolerate when a stop
-        does not fill at all, and the measured gap distribution at a stated
-        percentile turns that tolerance into a notional share. The ceiling is then
-        that computed share. Until both halves exist the desk pays a round 65 nobody
-        derived; the open mandate half belongs to board item 186
+        the overnight gap distribution is measured and the ceiling is read off it,
+        with NO owner tolerance asked for. The question this row once routed to the
+        owner (how much single-name loss he will tolerate when a stop does not fill)
+        is WITHDRAWN: a protective stop cannot trigger while the exchange is shut, so
+        an overnight gap is whatever the market does and not a tolerance anyone can
+        set, as the owner has ruled repeatedly (recorded 2026-10-04 in
+        docs/board_notes/item-186.md). The measurement, startable from this entry
+        alone: take the daily OHLC bars this repo already fetches for the eligible
+        universe (`src.data.market.MarketDataProvider.get_ohlcv_batch`; a recorded
+        400-session sample for 33 symbols sits in
+        ops/rehearsal/recordings/market_bars.json.gz), compute for every consecutive
+        session pair (open_t / close_t-1) - 1, pool the adverse gaps across names,
+        and write down the window, the universe, the gap count, the worst gap and the
+        gaps at the 1-in-100, 1-in-1,000 and 1-in-10,000 ranks. The ceiling then
+        becomes the notional share at which the WORST OBSERVED gap costs the account
+        no more than the per-name risk envelope the ledger already carries at
+        src.config.RiskConfig.max_position_risk_pct (share = envelope / |worst gap|):
+        a derivation from the tape and an existing number, with no percentile picked
+        and no tolerance chosen. The per-name reading of the same gap history is the
+        build item 186 names and supersedes this pooled bound once it exists. Until a
+        measured figure is written down the desk pays a round 65 nobody derived
   - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct
     value: 90
     status: derived
