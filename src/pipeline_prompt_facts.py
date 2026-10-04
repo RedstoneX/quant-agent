@@ -695,8 +695,8 @@ class PromptFactsMixin(PromptFactsReviewMixin):
 
     Each `_prompt_*` builder reads the host's collaborators at call time. Cross-family reads
     (pm facts -> heat and history; heat -> stop map) are handed the host's shim, never a body
-    the part owns, so no recursion guard is needed. The projected-portfolio part is handed the
-    host as its sector-cache owner, so `_last_symbol_sectors` is read and written through live."""
+    the part owns, so no recursion guard is needed. The projected-portfolio part holds no
+    sector cache at all: the resolved sector map is written onto the RunContext handed to it."""
 
     # Free-standing helpers now live in src/pipeline_prompt_facts_pure.py;
     # re-bound here so `self._x(...)` / `PromptFactsMixin._x` keep working.
@@ -711,7 +711,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
 
     def _prompt_projected(self) -> PromptProjected:
         return PromptProjected(
-            sector_cache_owner=self, portfolio_constructor=getattr(self, "portfolio_constructor", None),
+            portfolio_constructor=getattr(self, "portfolio_constructor", None),
             risk_engine=getattr(self, "risk_engine", None),
         )
 
@@ -820,7 +820,7 @@ class PromptFactsMixin(PromptFactsReviewMixin):
         return self._prompt_decisions()._build_own_recent_decisions(*args, **kwargs)
 
     def _build_projected_portfolio(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/projected.py; the host stays the sector-cache owner."""
+        """Thin shim: body moved to src/prompt_facts/projected.py; needs the caller's `run=` context."""
         return self._prompt_projected()._build_projected_portfolio(*args, **kwargs)
 
     def _build_watchlist_candidates(self, *args, **kwargs):
