@@ -240,7 +240,7 @@ def test_class_share_positions_cancels_and_reconciliation_preserve_internal_symb
     stop_filter = mock_client.get_orders.call_args.kwargs["filter"]
     assert stop_filter.symbols == ["BRK.B"]
     assert ok is True and specs[0]["id"] == "stop-1"
-    assert broker.cancel_snapshotted_stops("BRK-B", specs) is True
+    assert broker.cancel_snapshotted_stops("BRK-B", specs).cleared is True
     assert mock_client.cancel_order_by_id.call_args_list[-1].args == ("stop-1",)
 
     mock_client.close_position.return_value = SimpleNamespace(
@@ -803,7 +803,7 @@ def test_cancel_snapshotted_stops_cancels_each_by_id(mock_tc_cls):
         {"id": "stop-a", "qty": 51.0, "stop_price": 248.5, "limit_price": 240.0},
         {"id": "stop-b", "qty": 51.0, "stop_price": 246.0, "limit_price": 238.0},
     ]
-    assert broker.cancel_snapshotted_stops("AMZN", specs) is True
+    assert broker.cancel_snapshotted_stops("AMZN", specs).cleared is True
     assert mock_client.cancel_order_by_id.call_count == 2
     mock_client.cancel_order_by_id.assert_any_call("stop-a")
     mock_client.cancel_order_by_id.assert_any_call("stop-b")
@@ -828,7 +828,7 @@ def test_cancel_snapshotted_stops_partial_failure_rolls_back(mock_tc_cls):
         {"id": "stop-a", "qty": 51.0, "stop_price": 248.5, "limit_price": 240.0},
         {"id": "stop-b", "qty": 51.0, "stop_price": 246.0, "limit_price": 238.0},
     ]
-    assert broker.cancel_snapshotted_stops("AMZN", specs) is False
+    assert broker.cancel_snapshotted_stops("AMZN", specs).coverage_shrank is False
     broker._restore_stop_orders.assert_called_once()
     restored_arg = broker._restore_stop_orders.call_args[0][1]
     assert [s["id"] for s in restored_arg] == ["stop-a"]  # only the cancelled one

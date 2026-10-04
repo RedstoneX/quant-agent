@@ -41,6 +41,10 @@ from src.data.levels import (
     touch_probability,
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
+from src.portfolio_constructor.sector_weights import (
+    _current_sector_weights,
+    _note_reducing_order_sectors,
+)
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision,
     reward_to_risk, stated_soft_exit,
@@ -420,12 +424,17 @@ class PortfolioConstructor:
         self.last_side_flips = {}
         self.last_order_sectors = {}
         try:
-            return self._construct_orders_impl(*args, **kwargs)
+            orders = self._construct_orders_impl(*args, **kwargs)
+            self._note_reducing_order_sectors(orders)
+            return orders
         finally:
             logger.removeHandler(capture)
             self.last_drop_reasons = {
                 sym: " | ".join(msgs) for sym, msgs in capture.reasons.items()
             }
+
+    _note_reducing_order_sectors = _note_reducing_order_sectors
+    _current_sector_weights = staticmethod(_current_sector_weights)
 
     def _construct_orders_impl(
         self,
@@ -1490,32 +1499,6 @@ class PortfolioConstructor:
             if p.qty != 0
         }
 
-    @staticmethod
-    def _current_sector_weights(
-        positions: list[Position], total_value: float,
-    ) -> dict[tuple[str, str], float]:
-        """Held GROSS exposure per `(sector, side)`, as % of equity.
-
-        Spec §10.3 (the dial) and §12.2 (the split). Calls the SAME
-        `sector_side_weights` that `RiskRuleEngine.check` measures with,
-        rather than restating the arithmetic — the constructor sizing against
-        a different book than the gate measures is how a scaled order gets
-        blocked anyway, and three hand-written copies of this sum is how the
-        signed-vs-gross defect survived.
-
-        §12.2 CORRECTION: `market_value` used to be summed SIGNED, so a held
-        short REDUCED its sector's measured weight even though the engine's
-        own comment on that block claimed "gross ... unsigned magnitude". It
-        is now an unsigned magnitude booked to the short side's own budget.
-        A long and a short in the same sector do not offset.
-
-        Sector is read off the POSITION's own `sector` field rather than
-        `_get_sector(symbol)` — the engine sums held positions the first way
-        and resolves only the CANDIDATE symbol the second way, so
-        `_apply_sector_dial` does the same.
-        """
-        from src.risk.rules import sector_side_weights
-        return sector_side_weights(positions, total_value)
 
     def _apply_sector_dial(
         self,

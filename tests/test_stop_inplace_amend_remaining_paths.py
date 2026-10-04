@@ -33,7 +33,7 @@ def test_stop_limit_leg_is_amended_in_place_keeping_its_limit_buffer(tc):
     b, client = _broker(tc)
     b._list_open_sell_stop_orders = MagicMock(return_value=[
         _stop("s1", 100.0, otype="stop_limit", limit=97.0)])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     out = b.shift_stops_down("ZZZ", 1.0)
     assert out["mode"] == "amend" and out["shifted"] == 1
     client.cancel_order_by_id.assert_not_called()
@@ -47,7 +47,7 @@ def test_bracket_child_stop_is_amended_in_place(tc):
     b, client = _broker(tc)
     b._list_open_sell_stop_orders = MagicMock(return_value=[
         _stop("c1", 100.0, klass="bracket", parent="p1")])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     out = b.shift_stops_down("ZZZ", 1.0)
     assert out["mode"] == "amend" and out["shifted"] == 1
     client.cancel_order_by_id.assert_not_called()

@@ -94,9 +94,14 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from src.notifier import TelegramNotifier
+from src.health_words import (  # noqa: F401  re-exported names
+    OWNER_TZ,
+    _duration_words,
+    _plural,
+    _time_words,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +120,6 @@ DEFAULT_STATE_PATH = PROJECT_ROOT / "data" / "log_health" / "state.json"
 #: owner is shown is converted. `docs/WORK.md`, "Engineering setup", records
 #: this — quoting him a UTC time has caused confusion before.
 LOG_TZ = timezone.utc
-OWNER_TZ = ZoneInfo("America/New_York")
 
 #: `2026-09-18 13:47:27,710 [ERROR] src.pipeline: text`
 _LINE_RE = re.compile(
@@ -1018,10 +1022,6 @@ _VERDICT_WORDS = {
 }
 
 
-def _plural(n: int) -> str:
-    return "" if n == 1 else "s"
-
-
 def _window_words(report: Report) -> str:
     start = report.window_start.astimezone(OWNER_TZ)
     end = report.window_end.astimezone(OWNER_TZ)
@@ -1039,20 +1039,6 @@ def _window_words(report: Report) -> str:
     # Fridays read identically — so the date goes in. It is the owner's local
     # (Eastern) date, never the log's UTC one.
     return f"{clock(start, True)} to {clock(end, True)}"
-
-
-def _duration_words(since: datetime, now: datetime) -> str:
-    days = max(0, (now - since).days)
-    if days >= 14:
-        return f"since {since.astimezone(OWNER_TZ).strftime('%-d %B')}"
-    if days >= 1:
-        return f"for {days} day{_plural(days)}"
-    return "since earlier today"
-
-
-def _time_words(moment: datetime) -> str:
-    stamp = moment.astimezone(OWNER_TZ).strftime("%-I:%M%p")
-    return stamp[:-2] + stamp[-2:].lower()
 
 
 def _bullet(

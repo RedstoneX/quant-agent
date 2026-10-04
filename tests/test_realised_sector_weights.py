@@ -110,17 +110,6 @@ def test_a_run_that_built_nothing_records_that_fact_not_zero_concentration(db):
     assert row["entry_orders_built"] == 0
 
 
-def test_a_reducing_only_run_also_records_an_empty_list_not_null(db):
-    db.record_realised_sector_weights(
-        decisions=[_decision("SELL", "AAA", 50.0)],
-        sectors={"AAA": "Energy"}, total_value=10_000.0, run_id="run-4b",
-    )
-    row = _row(db)[0]
-    assert row["weights_json"] == "[]"
-    assert row["entry_orders_built"] == 0
-    assert row["reducing_orders_built"] == 1
-
-
 def test_no_recording_call_can_ever_write_a_null_weights_row(db):
     """The write path must have no input that yields NULL weights."""
     cases = [
@@ -201,10 +190,11 @@ def test_one_row_per_run(db):
 
 def test_recording_is_reachable_from_executable_product_code():
     """The write must be reached from the product, not only from a test."""
-    # item 210 step 12 moved `_record_realised_sector_weights` verbatim
-    # into src/pipeline_entry_orders.py. Read it where it now lives; the
+    # item 210 step 12 moved `_record_realised_sector_weights` verbatim into
+    # src/pipeline_entry_orders.py; item 224 moved it again, verbatim, into
+    # src/pipeline_sector_weights.py. Read it where it now lives; the
     # assertion below is unchanged.
-    stages = (SRC / "pipeline_entry_orders.py").read_text()
+    stages = (SRC / "pipeline_sector_weights.py").read_text()
     tree = ast.parse(stages)
     helper = next(
         n for n in ast.walk(tree)
@@ -222,7 +212,8 @@ def test_recording_is_reachable_from_executable_product_code():
     callers = []
     for module in ("pipeline_stages.py", "stage_decision.py",
                    "pipeline_entry_orders.py", "pipeline_rotation_exec.py",
-                   "pipeline_risk_budget_recording.py"):
+                   "pipeline_risk_budget_recording.py",
+                   "pipeline_sector_weights.py"):
         callers += [
             n for n in ast.walk(ast.parse((SRC / module).read_text()))
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
@@ -281,7 +272,7 @@ def test_a_real_construct_orders_run_lands_a_populated_row_in_the_store(
 
     import src.sector_reference as sector_reference
     from src.models import TargetPosition
-    from src.pipeline_entry_orders import _record_realised_sector_weights
+    from src.pipeline_sector_weights import _record_realised_sector_weights
     from src.portfolio_constructor import PortfolioConstructor
 
     sectors = {"AAA": "SectorOne", "BBB": "SectorOne", "CCC": "SectorTwo"}

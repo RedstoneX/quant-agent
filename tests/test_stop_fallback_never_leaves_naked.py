@@ -122,7 +122,7 @@ def test_out_of_hours_the_ex_dividend_shift_cancels_nothing(tc):
     # so shift_stops_down drops to its own cancel+resubmit fallback.
     b._list_open_sell_stop_orders = MagicMock(return_value=[
         _stop("s1", 100.0, otype="stop_limit", limit=None)])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(1, []))
 
     out = b.shift_stops_down("ZZZ", 1.0)
