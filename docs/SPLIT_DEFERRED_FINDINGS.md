@@ -97,6 +97,8 @@ and the store-level test is what keeps this class from hiding again.
 
 VERDICT 2026-10-02 (isolation pass): ALREADY FIXED. Fixed by #1079 (fbae04e6) in `NameCoverageRecordSession`. Proof: restoring the pre-fix source makes `tests/test_name_coverage_rows_land.py` fail (1 failed); on main it passes (1 passed).
 
+RE-VERIFIED 2026-10-04 (mutation pass): both halves are individually witnessed, so neither can be deleted unnoticed. Dropping the `symbol` pop in `NameCoverageRecordSession` reds `tests/test_name_coverage_rows_land.py` (1 failed); separately putting a `stage` key back into the unpacked details reds the same test (1 failed); unmutated main is green (1 passed). The broad catch now logs the traceback at ERROR, so a future collision is loud rather than one warning line. Nothing further is owed on this finding.
+
 ### A broker read error reads as "no stop to adjust" -- FIXED
 
 The stop read used to return nothing on ANY error, and the protection path
