@@ -78,3 +78,12 @@ build-backend = "setuptools.build_meta"
 # state, not taken out of the parallel run. `-n 0` runs serially for
 # debugging.
 addopts = "-n auto"
+
+# Temp directory retention: shared server disk filled to 81% with pytest's
+# /tmp/.../pytest-of-*/ directories; nothing removes them between runs.
+# tmp_path_retention_policy="failed" keeps only failed-run directories for
+# debugging (passing runs have no diagnostic value and caused the 6 GB bloat).
+# tmp_path_retention_count=5 limits failed-run retention: enough for
+# post-hoc diagnosis without re-accumulation between housekeeping sweeps.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 5
