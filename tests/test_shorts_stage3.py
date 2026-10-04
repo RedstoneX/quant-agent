@@ -1071,7 +1071,7 @@ def _midday_pipeline_with_short(symbol: str, qty: float, current_price: float):
     _executor_pipeline_with_position, kept local for the same reason."""
     pipeline = build_pipeline(broker=MagicMock(), db=MagicMock())
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
     pipeline.broker.submit_order.return_value = {
         "id": "cover-order", "status": "accepted", "symbol": symbol,

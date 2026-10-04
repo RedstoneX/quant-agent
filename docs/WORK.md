@@ -370,8 +370,12 @@ detail: docs/board_notes/item-219.md
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
-
 **231. Every owner-facing timestamp shows a time but no date — OPEN, filed 2026-10-02 by the owner.** He reads the alerts on a phone hours after they fire, and a bare time cannot be placed once he scrolls back. [measured 2026-10-02, grep of `src/`] 24 call sites format a bare 12-hour time; exactly one — the notifier session header — prepends the date. Fix at the source: one shared formatter emitting date + time, used by every site that currently emits time alone, so a newly written alert cannot omit the date. Keep the existing 12-hour, no-leading-zero behaviour and the glibc caveat already documented in the sections module. This changes message TEXT only; Telegram stays muted and no new alerts are added.
 DONE WHEN:
 - [ ] one shared date+time formatter exists and every previously time-only owner-facing site calls it. (Done for `fmt_time_12h`, which every trader_feed and notifier header uses; STILL OPEN: the health report in `log_health.py` formats its own clock, and `inflight.py` shows `%H:%M ET` on the dashboard.)
 - [ ] a test fails if any owner-facing timestamp is emitted without a date. (`tests/test_owner_timestamps_carry_date.py` covers notifier and trader_feed only; extend to log_health and inflight when those move to the formatter.)
+
+**232. Ledger citations resolved but did not substantiate (bystander pins: `__all__`, bare imports, mid-sentence fragments) — FIXED.** The guard only proved a pin existed, so the bulk rewrite of item 225 left rows pinned to whatever sat at their stale line.
+DONE WHEN:
+- [x] the guard refuses `__all__`/module dunders, import-statement pins and mid-sentence or bracket-unbalanced text pins (`src/ledger_citations.py`, `tests/test_number_sources.py`).
+- [x] every row it caught (19 citations across 17 rows) was re-pointed by hand to a symbol or line-start text that supports its claim; none left unverified.
