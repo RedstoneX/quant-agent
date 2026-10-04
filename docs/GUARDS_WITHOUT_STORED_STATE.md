@@ -77,7 +77,9 @@ have existed.
 
 Same class, same treatment, after the five land:
 - ~~the known-leaks list in `tests/test_no_silent_patch_targets.py`~~ DONE — no list; the patch-target audit runs over the working tree and over `origin/main` at check time and fails on any unreachable-call-site identity that is new
-- `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`
+- ~~`_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`~~ DONE — the frozenset is deleted and `tests/test_status_board.py` asserts it stays gone; `scripts/board_rot_guard.py` reads the finished-but-still-open items in the working tree and on `origin/main` via `scripts/guard_reference.py` at check time and fails on any item identity that is newly flagged, refusing when `origin/main` cannot be read
+
+Measured 2026-10-04 on `origin/main`: every entry above is struck through. No check in `scripts/` or `tests/` reads or writes a committed baseline, a pinned offender count, a saved snapshot or a known-bad list; `scripts/guard_reference.py` holds no cache, and the guard test files pass under the project's parallel `-n auto` run. The list is complete; a new entry here means a new guard was written the old way.
 - ~~the offender baseline in `tests/test_no_local_day_as_exchange_day.py`~~ DONE — the hardcoded `_BASELINE` is deleted; `scripts/local_day_guard.py` scans the working tree and `origin/main` at check time and fails on any new site identity
 - ~~`tests/replay_outbound_sites_baseline.json`~~ DONE — judged a cached
   measurement (an AST scan of `src/` frozen on 2026-10-02, no human
@@ -163,6 +165,8 @@ Also done (2026-10-02, Python-clothed baselines): ~~`TRADING_PIPELINE_TEST_FILE_
 ## Weakening a guard needs a written reason
 
 `tests/test_guard_weakening_gate.py` (logic in `scripts/guard_weakening_gate.py`) fails any change that edits or deletes an existing guard file without a one-line `Guard-rule-change:` of 25+ words in a commit message. Guard files are derived by naming rule (`scripts/*guard*.py`, `tests/test_*guard*.py`, `tests/test_*ratchet*.py`), never listed. Tightening cannot be told from loosening, so every behavioural edit is asked; only new guard files and docstring/comment/format-only edits (identical AST) are exempt. An unreadable base is a failure.
+
+Also done (2026-10-04, the settlement-recording class): `scripts/settlement_fill_guard.py` refuses a NEW site that hands a `built` settlement route's field to the writer through a three-argument `getattr` or a literal `None`. It stores no list of known offenders -- it names each offending (file, enclosing scope, field, shape) in the working tree, names them again on `origin/main`, and fails only on an identity the tree holds that the trunk does not; it refuses outright when the trunk cannot be read. This is the layer ABOVE the one `tests/test_settlement_recording_writes.py` checks: that test reads the storage layer's AST and asks whether anything writes the column, and it answered YES, correctly, for all four recordings that nonetheless recorded nothing. The defect was always the caller's expression, and a defaulted `getattr` is the one expression that cannot fail. What this guard deliberately does NOT decide is whether a write is CENSORED by the branch it sits on (the noise band, PR #1177, wrote only where the band blocked an exit); that is a question about the meaning of a condition, not its shape, and what settles it is a production measurement that the accrued sample holds observations on both sides of the threshold.
 
 ## Compressing is the same offence as growing
 

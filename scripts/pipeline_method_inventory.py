@@ -27,6 +27,8 @@ TRACKED_MODULES: tuple[str, ...] = (
     "src/pipeline_prompt_facts_pure.py",
     "src/pipeline_prompt_facts_review.py",
     "src/pipeline_protection.py",
+    "src/protection/protected_sell.py",
+    "src/protection/reprotect_records.py",
     "src/pipeline_risk_gate.py",
     "src/pipeline_risk_gate_mixin.py",
     "src/pipeline_research_continuity.py",

@@ -189,6 +189,21 @@ from typing import Any
 
 import yaml
 from src.feature_flags import config_modules  # where the config lives
+from src.number_site_scan import (  # noqa: F401 -- re-exported, lifted verbatim
+    CONFIG_CLASS_SUFFIX,
+    FACTOR_BAND,
+    NEUTRAL_VALUES,
+    NumberSite,
+    _factor_operands,
+    _field_default,
+    _imported_constants,
+    _leaves,
+    _module_constants,
+    _numeric,
+    _own_nodes,
+    _qualified_scopes,
+    _scan_extended_shapes,
+)
 
 #: Repository root, resolved from this file rather than the cwd so the check
 #: behaves the same under pytest, a git hook and a direct run.
@@ -202,105 +217,10 @@ LEDGER_PATH = REPO_ROOT / "config" / "number_ledger.yaml"
 #: checked against this file, because this is the value the desk trades.
 SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 
-#: The modules on the path from a verdict to a broker order. See the SCOPE
-#: rule in the module docstring; this list is the rule applied, and
-#: `scripts/unscoped_number_guard.py` is what stops it from silently lagging.
-#: A directory entry covers every `.py` under it.
-SCOPED_PATHS: tuple[str, ...] = (
-    "src/risk",
-    "src/portfolio_constructor",
-    "src/rotation.py",
-    "src/nominations.py",
-    "src/evidence_gate.py",
-    "src/verdicts.py",
-    "src/data/correlation.py",
-    # 2026-10-01: the sector cluster moved out of src/execution/broker.py
-    # verbatim (sector resolution feeds the exposure ladder); same code, same scope.
-    "src/sector_reference.py",
-    # 2026-09-19, board item 124: the research-defined insider purchase
-    # cluster now lifts the smart-money seat's conviction, so its definition
-    # is on the path from a verdict to an order.
-    "src/data/smart_money_cluster.py",
-    # The indicator and level units. Every ATR multiple and every stop the
-    # ledger tracks is a multiple of `technical.ATR_PERIOD`, and levels are
-    # where stops are placed; watching the multiplier and not the unit was
-    # the gap the scope rule above was written to close.
-    "src/data/technical.py",
-    "src/data/levels.py",
-    # Decides whether an APPROVED trade is actually sent
-    # (`MAX_ENTRY_SLIPPAGE_BPS`), and carries the sizing fallback.
-    "src/pipeline_stages.py",
-    # 2026-10-01, board item 210 step 10: the four stage classes moved out of
-    # `src/pipeline_stages.py` verbatim. Same code, same scope -- these paths
-    # keep their numbers inside the ledger instead of dropping out silently.
-    "src/stage_morning_research.py",
-    "src/stage_decision.py",
-    "src/stage_risk.py",
-    "src/stage_execution.py",
-    "src/pipeline_sizing.py",
-    "src/pipeline_earnings_quality.py",
-    # 2026-10-01, board item 210 step 12: the rotation-EXECUTION block and
-    # the entry order-placement/re-peg block moved out of
-    # `src/pipeline_stages.py` verbatim. Same code, same scope.
-    "src/pipeline_rotation_exec.py",
-    "src/pipeline_entry_orders.py",
-    "src/execution/cash_sweep.py",
-    "src/execution/stop_records.py",
-    # 2026-09-19, board item 130: `broker.py` IS the broker order -- the
-    # scope rule's own words ("every module on the path from a seat's
-    # verdict to a broker order") named this file and it was not here.
-    # `stop_repair.py` and `coverage_watchdog.py` are the repair/alarm path
-    # for a protective stop that failed to place. `stop_repair.py` still
-    # defines no module-level numeric constant (see the docstring note this
-    # entry used to require); scoping it adds nothing today but stops a
-    # future one arriving unseen.
-    "src/execution/broker.py", "src/execution/broker_parts",
-    "src/execution/stop_repair.py", "src/execution/order_gates.py", "src/execution/order_idempotency.py",
-    "src/coverage_watchdog.py",
-    # The pipeline's own decision/execution glue. The de-lever and midday
-    # order-price buffers are inline multipliers and rule (e) has seen them
-    # since 2026-09-19; rule (c) (function-parameter defaults) was added the
-    # same day for `_clamp_queued_earnings_buys`' `max_pct=5.0`, which no
-    # longer exists — that gate refuses the BUY instead of sizing it (board
-    # item 186, 2026-10-01) — and the rule stays because the shape recurs.
-    "src/pipeline.py",
-    "src/pipeline_delever.py",
-    # The held-position exit engine and the exit-trigger vocabulary -- moved
-    # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
-    # Every trail multiple and every exit threshold it carries stays scoped.
-    "src/pipeline_exits.py",
-    # The intra-check session and the intraday opportunity scan -- moved here
-    # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
-    "src/pipeline_intraday.py",
-    # 2026-10-01, board item 210 step 6: the universe-admission cluster --
-    # the external-nomination gates, the screen and its admission -- moved
-    # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
-    # scoped.
-    "src/pipeline_admission.py",
-    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py", "src/prompt_facts/missed_ops_signals.py", "src/prompt_facts/review/grading.py", "src/prompt_facts/review/exits.py", "src/prompt_facts/review/calibration.py", "src/prompt_facts/review/blocked.py", "src/prompt_facts/review/replay.py",
-    # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
-    # application moved here out of `src/pipeline.py`.
-    "src/pipeline_risk_gate.py",
-    # 2026-10-01, board item 210 step 2: the protection cluster -- stop
-    # coverage, repair, protected sells, write-ahead restore, the fill and
-    # stop-out reconcilers -- moved here out of `src/pipeline.py`. Scoped at
-    # its new address so its numbers stay under the guard.
-    "src/pipeline_protection.py",
-    # Every seat's prompt-construction and LLM-call code -- the path from
-    # evidence to a seat's verdict the scope rule names. Most of what lives
-    # here is LLM plumbing (timeouts, retries, token budgets) that is
-    # `not-trade-governing` once seen; the truncation caps and rank tables
-    # that shape what evidence a verdict is built from are not.
-    "src/agents",
-    # 2026-09-19: the universe admission screen. Every threshold that decides
-    # whether a symbol may be traded at all lives here or in
-    # `UniverseScreenConfig`.
-    "src/universe_screen.py",
-)
+#: The modules on the path from a verdict to a broker order; see
+#: src/number_scope.py (data only, re-exported here for every reader).
+from src.number_scope import SCOPED_PATHS  # noqa: E402,F401
 
-#: Config classes inside scoped files whose numeric field defaults are sites.
-#: Matched by SUFFIX, so a new `FooConfig` is covered the day it is written.
-CONFIG_CLASS_SUFFIX = "Config"
 
 #: `src/config/__init__.py` holds every seat's settings in one file, most of them
 #: nothing to do with a trade (LLM cost circuits, Telegram retries, evolution
@@ -319,19 +239,6 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
     "UniverseScreenConfig",
 )
 
-#: Zero alone is excluded as a definition site: it is the empty/neutral
-#: default on a result field and the bottom of an ordinal scale, and no
-#: reviewer has anything to say about it.
-#:
-#: 1.0 USED TO BE EXCLUDED HERE, justified as "the identity, not a setting"
-#: with the claim that every audited number sat outside the set. That claim
-#: was false and the exclusion hid real settings:
-#: `absolute_min_stop_atr_multiple = 1.0` (in both `RiskConfig` and
-#: `ConstructorConfig`), `min_target_atr_multiple = 1.0`,
-#: `breakout_projection_atr_multiple = 1.0`, `NOISE_BAND_ATR_MULTIPLE = 1.0`
-#: and `CashReserveConfig.pct = 1.0`. One ATR is not an identity — it
-#: is the hard floor under every stop this desk sets.
-NEUTRAL_VALUES: frozenset[float] = frozenset({0.0})
 
 #: Classifications a ledger entry may carry.
 #:   instrument       — read off the instrument at run time or fixed by an
@@ -598,19 +505,6 @@ def classification(
 UNSCOPED_SENTINEL_EXCLUDE: tuple[str, ...] = ("src/frontend",)
 
 
-@dataclass(frozen=True)
-class NumberSite:
-    """One numeric definition site the ledger must account for."""
-
-    site_id: str
-    path: str
-    lineno: int
-    value: float
-
-    def __str__(self) -> str:  # pragma: no cover - diagnostics only
-        return f"{self.site_id} = {self.value!r}  ({self.path}:{self.lineno})"
-
-
 @dataclass
 class LedgerProblem:
     """One reason the build should fail, in the words a reviewer needs."""
@@ -621,163 +515,6 @@ class LedgerProblem:
 
     def __str__(self) -> str:  # pragma: no cover - diagnostics only
         return f"[{self.kind}] {self.site_id}: {self.detail}"
-
-
-def _numeric(node: ast.AST, names: dict[str, float] | None = None) -> float | None:
-    """The literal value of `node`, or None if it is not a number.
-
-    Handles the unary minus that `ast` represents as an operator rather than
-    as part of the constant, so `-20.0` is one site and not a miss.
-
-    `names` maps module-level constant names to their values (the module's own
-    plus the ones it imports from other repo modules). Without it, a default
-    bound to a NAME rather than to a literal returns None and the number
-    vanishes from the gate entirely — which was a one-line way to hide any
-    number by pointing a scoped field at an unscoped module. Constant
-    arithmetic (`5 * 366`) is folded for the same reason.
-    """
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        if isinstance(node.value, bool):
-            return None
-        return float(node.value)
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-        inner = _numeric(node.operand, names)
-        return None if inner is None else -inner
-    if names and isinstance(node, ast.Name):
-        return names.get(node.id)
-    if isinstance(node, ast.BinOp):
-        left = _numeric(node.left, names)
-        right = _numeric(node.right, names)
-        if left is None or right is None:
-            return None
-        try:
-            if isinstance(node.op, ast.Add):
-                return left + right
-            if isinstance(node.op, ast.Sub):
-                return left - right
-            if isinstance(node.op, ast.Mult):
-                return left * right
-            if isinstance(node.op, ast.Div):
-                return left / right
-            if isinstance(node.op, ast.Pow):
-                return float(left**right)
-        except (ZeroDivisionError, OverflowError, ValueError):
-            return None
-    return None
-
-
-def _module_constants(tree: ast.Module) -> dict[str, float]:
-    """Module-level names bound to a plain number, in definition order.
-
-    Deliberately shallow: a name bound to a call, a container or a comprehension
-    is not resolved, because the point is to follow the one-hop indirection an
-    author reaches for, not to evaluate the module.
-    """
-    out: dict[str, float] = {}
-    for node in tree.body:
-        targets: list[ast.expr]
-        if isinstance(node, ast.Assign):
-            targets = list(node.targets)
-        elif isinstance(node, ast.AnnAssign):
-            targets = [node.target]
-        else:
-            continue
-        if node.value is None:
-            continue
-        value = _numeric(node.value, out)
-        if value is None:
-            continue
-        for target in targets:
-            if isinstance(target, ast.Name):
-                out[target.id] = value
-    return out
-
-
-def _imported_constants(tree: ast.Module, root: Path) -> dict[str, float]:
-    """Numeric constants this module imports by name from other repo modules.
-
-    `from src.risk.constants import STARTER_POSITION_RISK_PCT` makes that
-    number the live default of a scoped field, so the gate has to see it
-    whether or not `src/risk/constants.py` is itself in scope. That is the
-    whole evasion: point the name somewhere unscoped and the number is gone.
-    """
-    out: dict[str, float] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or not node.module:
-            continue
-        if not node.module.startswith("src."):
-            continue
-        source = root / (node.module.replace(".", "/") + ".py")
-        if not source.is_file():
-            continue
-        try:
-            constants = _module_constants(ast.parse(source.read_text(encoding="utf-8")))
-        except SyntaxError:  # pragma: no cover - a broken file fails elsewhere
-            continue
-        for alias in node.names:
-            if alias.name in constants:
-                out[alias.asname or alias.name] = constants[alias.name]
-    return out
-
-
-def _leaves(
-    node: ast.AST,
-    prefix: str,
-    names: dict[str, float] | None = None,
-    local: dict[str, float] | None = None,
-) -> list[tuple[str, float, int]]:
-    """Every numeric leaf under `node`, with a stable path-qualified id.
-
-    A bare literal yields one leaf. A tuple, list or dict literal yields one
-    leaf per numeric element, keyed by index or by its literal key, so
-    `stop_atr_setup_scale`'s `("range", 0.90)` is addressable as
-    `...stop_atr_setup_scale[1][1]` and moves only if the structure moves.
-
-    `local` names the constants defined in this same file. A leaf that is
-    just one of those names is NOT a second site — it is one number with two
-    names, and ledgering it twice is how the flagship entry came to say a
-    number existed in one place while the ledger listed it in two. A name
-    bound to a number from ANOTHER module is still a site, because that is
-    where the number enters this file.
-    """
-    if local and isinstance(node, ast.Name) and node.id in local:
-        return []
-    value = _numeric(node, names)
-    if value is not None:
-        return [(prefix, value, getattr(node, "lineno", 0))]
-
-    out: list[tuple[str, float, int]] = []
-    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        for index, element in enumerate(node.elts):
-            out.extend(_leaves(element, f"{prefix}[{index}]", names, local))
-    elif isinstance(node, ast.Dict):
-        for key, element in zip(node.keys, node.values):
-            if isinstance(key, ast.Constant):
-                label = f"[{key.value!r}]"
-            else:
-                label = "[?]"
-            out.extend(_leaves(element, f"{prefix}{label}", names, local))
-    return out
-
-
-def _field_default(node: ast.AnnAssign) -> ast.AST | None:
-    """The default expression of an annotated class field, or None.
-
-    Covers a bare default (`x: float = 2.5`), a dataclass `field(default=...)`
-    and a pydantic `Field(2.5, ...)` / `Field(default=2.5)`. A
-    `default_factory` is deliberately NOT followed: the number then lives in
-    a function body, which is out of scope and honestly declared as such.
-    """
-    if node.value is None:
-        return None
-    if isinstance(node.value, ast.Call):
-        for keyword in node.value.keywords:
-            if keyword.arg == "default":
-                return keyword.value
-        if node.value.args:
-            return node.value.args[0]
-        return None
-    return node.value
 
 
 def _scan_module(
@@ -856,146 +593,6 @@ def _scan_module(
     if config_classes is None:
         sites.extend(_scan_extended_shapes(tree, module, rel, names, local))
 
-    return sites
-
-
-#: Rule (e)'s band. A literal in [0.5, 2.0), other than 1.0, used as a
-#: multiplier or divisor is a price or size scaled by a policy margin — a
-#: limit 0.5% through the market, a 2% proceeds cushion, a 1.25 ATR noise
-#: floor. The band is a CLASSIFIER, not a trade number: it was chosen by
-#: listing every literal operand of arithmetic in scope on 2026-09-19 (about
-#: seventy) and finding that everything outside it is a unit conversion
-#: (10_000 bps, 365 days, 60 s, 1_000_000), a float epsilon, or a query
-#: padding, while everything inside it is an order-price or sizing margin.
-#: 2.0 itself is excluded because halving/doubling is overwhelmingly an
-#: identity of the arithmetic (a midpoint) rather than a chosen margin.
-FACTOR_BAND: tuple[float, float] = (0.5, 2.0)
-
-
-def _qualified_scopes(tree: ast.Module):
-    """Yield `(node, qualname)` for every function and class in the module.
-
-    `qualname` is the dotted chain of enclosing class and function names,
-    the same path a reader would use to find the definition.
-    """
-
-    def visit(node: ast.AST, prefix: str):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                qual = f"{prefix}.{child.name}" if prefix else child.name
-                yield child, qual
-                yield from visit(child, qual)
-            else:
-                yield from visit(child, prefix)
-
-    yield from visit(tree, "")
-
-
-def _factor_operands(node: ast.AST) -> list[ast.AST]:
-    """The operand itself, or both branches of `(a if cond else b)`."""
-    if isinstance(node, ast.IfExp):
-        return _factor_operands(node.body) + _factor_operands(node.orelse)
-    return [node]
-
-
-def _own_nodes(func: ast.AST):
-    """Every node in `func`'s body that is not inside a nested def or class.
-
-    A nested function's literals belong to that function's own qualname, so
-    an edit inside one never renumbers the other's sites.
-    """
-    stack = list(ast.iter_child_nodes(func))
-    while stack:
-        node = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        yield node
-        stack.extend(ast.iter_child_nodes(node))
-
-
-def _scan_extended_shapes(
-    tree: ast.Module,
-    module: str,
-    rel: str,
-    names: dict[str, float],
-    local: dict[str, float],
-) -> list[NumberSite]:
-    """Rules (c), (d) and (e): the shapes rules (a)/(b) cannot see.
-
-    Applied only inside a scoped module — never to `src/config/__init__.py`'s named
-    classes and never to the unscoped sentinel, whose count is defined as
-    module-level constants and would otherwise jump for no reason.
-    """
-    sites: list[NumberSite] = []
-    for node, qual in _qualified_scopes(tree):
-        # (c) numeric defaults on function and method parameters.
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = node.args
-            positional = list(args.posonlyargs) + list(args.args)
-            pairs = list(zip(positional[len(positional) - len(args.defaults):], args.defaults))
-            pairs += [
-                (arg, default)
-                for arg, default in zip(args.kwonlyargs, args.kw_defaults)
-                if default is not None
-            ]
-            for arg, default in pairs:
-                base = f"{module}.{qual}({arg.arg})"
-                for site_id, value, lineno in _leaves(default, base, names, local):
-                    if value not in NEUTRAL_VALUES:
-                        sites.append(NumberSite(site_id, rel, lineno or node.lineno, value))
-
-            # (e) inline multiplier/divisor literals in the near-one band.
-            ordinal = 0
-            found: list[tuple[int, int, float]] = []
-            for inner in _own_nodes(node):
-                if not isinstance(inner, ast.BinOp) or not isinstance(
-                    inner.op, (ast.Mult, ast.Div)
-                ):
-                    continue
-                for side, other in ((inner.left, inner.right), (inner.right, inner.left)):
-                    if _numeric(other) is not None:
-                        # Constant arithmetic (`365 * 5`) is one folded number,
-                        # not a margin applied to a price.
-                        continue
-                    for operand in _factor_operands(side):
-                        value = _numeric(operand)
-                        # +-1 is the identity or a sign flip, never a margin.
-                        if value is None or abs(value) == 1.0:
-                            continue
-                        low, high = FACTOR_BAND
-                        if low <= abs(value) < high:
-                            found.append((operand.lineno, operand.col_offset, value))
-            for lineno, _col, value in sorted(found):
-                sites.append(
-                    NumberSite(f"{module}.{qual}:factor[{ordinal}]", rel, lineno, value)
-                )
-                ordinal += 1
-
-        # (d) numeric attributes on any class. A `*Config` class's annotated
-        # fields are rule (b) already; its un-annotated attributes are not,
-        # so those are picked up here too.
-        if isinstance(node, ast.ClassDef):
-            is_config = node.name.endswith(CONFIG_CLASS_SUFFIX)
-            for body_node in node.body:
-                if isinstance(body_node, ast.AnnAssign):
-                    if is_config or not isinstance(body_node.target, ast.Name):
-                        continue
-                    default = _field_default(body_node)
-                    targets = [body_node.target]
-                elif isinstance(body_node, ast.Assign):
-                    default = body_node.value
-                    targets = [t for t in body_node.targets if isinstance(t, ast.Name)]
-                else:
-                    continue
-                if default is None:
-                    continue
-                for target in targets:
-                    base = f"{module}.{qual}.{target.id}"
-                    for site_id, value, lineno in _leaves(default, base, names, local):
-                        if value not in NEUTRAL_VALUES:
-                            sites.append(
-                                NumberSite(site_id, rel, lineno or body_node.lineno, value)
-                            )
     return sites
 
 

@@ -230,26 +230,6 @@ numbers:
     cost_while_unanswered: >-
       Too low and a funded order fails for want of cash; too high and equity
       sits in raw cash earning nothing.
-    settles_by:
-      kind: recording
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Cash reserve` -- the
-        recording is specified there and is not yet built
-      records: >-
-        for every order the desk places, the cash the sizer assumed was
-        spendable, the cash actually debited once the order settled, and
-        the difference split into commission, slippage and unfilled
-        remainder, together with whether any order was ever short of cash
-        at settlement
-      closes_when: >-
-        a full quarter of orders is on the record and the largest observed
-        shortfall between assumed and settled cost is readable, so the
-        reserve is that shortfall rather than a round 1%. DELETE OUTCOME:
-        if no order in that window is ever short, and the only readers
-        remain the two displayed liquidity figures, the reserve is deleted
-        and the account view reports raw cash with no held-back band at
-        all
   - id: src.config.DeploymentGapConfig.band_pct
     settles_by:
       kind: measurement
@@ -280,26 +260,6 @@ numbers:
     cost_while_unanswered: >-
       Too narrow and the advisory nags on noise; too wide and real idle cash
       goes unflagged.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Deployment gap band`
-        -- a cost arithmetic over this account's published commission and
-        the measured entry slippage already in this ledger
-      records: >-
-        the round-trip cost, in percentage points of equity, of trading
-        the book from N points under fully invested back to fully
-        invested, computed at each N from this account's own fee schedule
-        and the measured entry-slippage distribution, against the carry
-        forgone by leaving those N points in cash
-      closes_when: >-
-        the N at which the cost of closing the gap first exceeds the drag
-        of leaving it open is readable, and the band is set to that N.
-        DELETE OUTCOME: if the cost curve crosses the drag curve below the
-        smallest gap the book can actually express, there is no band to
-        set and the advisory is deleted rather than re-picked at another
-        round number
   - id: src.coverage_watchdog._SUPPRESSION_LOG_LIMIT
     value: 50
     status: not-trade-governing
@@ -404,27 +364,6 @@ numbers:
     cost_while_unanswered: >-
       Too short and the desk positions into a release it never saw; too long
       and the seat skims past rows it will not act on.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Event horizon` -- a
-        measurement over the UNIVERSE the desk could trade, never over
-        this desk's own trades
-      records: >-
-        for every scheduled macro release on several years of the
-        published calendar, the realised absolute move of the names in the
-        desk's tradable universe on each of the sessions preceding the
-        release, against the same names' ordinary daily variation on
-        sessions with no release ahead
-      closes_when: >-
-        the number of SESSIONS ahead over which pre-release moves separate
-        from ordinary variation is readable, and the horizon is set to
-        that count in sessions rather than calendar days, which also
-        settles board item 91's calendar-versus-trading-day defect for
-        this field. DELETE OUTCOME: if no pre-release session shows a
-        separable move, the horizon and the `event_risk` field it feeds
-        are both deleted rather than re-picked
   - id: src.config.ExecutionConfig.fractional_share_decimals
     value: 4
     status: sourced
@@ -510,28 +449,6 @@ numbers:
     cost_while_unanswered: >-
       An approved trade is silently not sent when the book is merely busy, or
       a genuinely abnormal book is paid through.
-    settles_by:
-      kind: recording
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Entry-slippage belt`
-        -- the uncensoring recording is specified there; the existing
-        measurement is in docs/INCIDENT_HISTORY.md and cannot close this
-        row because the belt truncates its own tail
-      records: >-
-        every order the belt REFUSES, with the geometry it was refused at,
-        the quoted spread at the moment of refusal and what the desk did
-        with the name afterwards; and, on a declared and bounded subset of
-        orders, the realised slippage with the belt deliberately widened,
-        so the distribution ABOVE the current 40bp is observed at all
-        rather than censored by the belt that is being tested
-      closes_when: >-
-        the untruncated slippage distribution exists and the belt sits at
-        a percentile read off it rather than inside the measured 32bp-
-        to-390bp indifference band. DELETE OUTCOME: if the widened subset
-        shows that no refused order would have filled worse than the half-
-        spread the universe screen already rejects, the belt is redundant
-        with that screen and is deleted rather than re-picked
     owner_appetite_2026_10_02: >-
       THIS IS AN OWNER APPETITE QUESTION, NOT A MEASUREMENT GAP, and it is
       recorded as one here because the distinction was not drawn on the row.
@@ -583,24 +500,6 @@ numbers:
     cost_while_unanswered: >-
       Either a real intraday development is ignored, or the seat is re-billed
       for the same read.
-    settles_by:
-      kind: recording
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Intraday scan`; the
-        cluster is docs/WORK.md item 177 and the three scan numbers are
-        settled together, never one at a time
-      records: >-
-        every intraday re-scan of a name already scanned in the same
-        session: the hours elapsed since the previous scan, the verdict
-        each scan reached, and whether the second verdict differed from
-        the first
-      closes_when: >-
-        the elapsed time after which a second scan's verdict differs often
-        enough to pay for the scan is readable, and the cooldown is set to
-        it. DELETE OUTCOME: if verdicts never differ at any elapsed time,
-        the cooldown becomes a flat once-per-name-per-session rule and the
-        hours knob is deleted rather than re-picked
   - id: src.config.IntradayScanConfig.max_candidates_per_scan
     settles_by:
       kind: recording
@@ -629,26 +528,6 @@ numbers:
     cost_while_unanswered: >-
       A real candidate is dropped unseen once the cap is hit, with no record
       that it was.
-    settles_by:
-      kind: recording
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Intraday scan`; the
-        cluster is docs/WORK.md item 177 and the three scan numbers are
-        settled together, never one at a time
-      records: >-
-        per intraday scan: how many names cleared the move trigger, how
-        many of those the session could still size inside its remaining
-        risk envelope, and how many were dropped by this count cap rather
-        than by risk, so the cap's own binding share is readable instead
-        of assumed
-      closes_when: >-
-        the record shows either that the cap truncates candidates the risk
-        envelope would have permitted -- in which case it is sized to what
-        the session can actually resolve -- or that it does not. DELETE
-        OUTCOME: if the risk envelope binds first on every observed scan,
-        the count cap never decides anything and is deleted rather than
-        re-picked
   - id: src.config.IntradayScanConfig.move_threshold_pct
     settles_by:
       kind: measurement
@@ -679,25 +558,6 @@ numbers:
     cost_while_unanswered: >-
       A flat percentage means a 1.2%/day utility triggers on nothing and an
       8%/day name triggers on everything.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Intraday scan`; a
-        measurement over the UNIVERSE the desk could trade, never over
-        this desk's own trades
-      records: >-
-        for the tradable universe, intraday moves expressed as a multiple
-        of each name's OWN ATR rather than as a flat percent, against
-        whether the remainder of the session continued the move or
-        reverted it
-      closes_when: >-
-        the ATR multiple above which continuation separates from reversion
-        is readable, and the trigger is restated in ATR multiples so a
-        quiet name and a volatile one are not held to the same flat 3%.
-        DELETE OUTCOME: if no ATR multiple separates continuation from
-        reversion, the intraday trigger is deleted and the desk reads
-        these names on its ordinary daily cycle
   - id: src.config.NominationConfig.max_per_seat_per_run
     settles_by:
       kind: recording
@@ -724,24 +584,6 @@ numbers:
     cost_while_unanswered: >-
       A seat's best idea can be crowded out by its own earlier ones, ranked
       only by arrival.
-    settles_by:
-      kind: recording
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Nomination caps`;
-        one recording settles both caps, because the per-seat and per-run
-        figures are two readings of the same affordability question
-      records: >-
-        per run and per seat: nominations offered, nominations resolved
-        end to end, the token and wall-clock cost of each resolution, and
-        every nomination this per-seat cap truncated before the run-level
-        cap could see it
-      closes_when: >-
-        the per-seat count the downstream pipeline resolves inside its
-        cost and deadline budget is read off that record, making the cap a
-        measured affordability bound. DELETE OUTCOME: if the run-level
-        total always binds first, this per-seat cap never truncates
-        anything and is deleted rather than re-picked
   - id: src.config.NominationConfig.max_total_per_run
     settles_by:
       kind: recording
@@ -768,26 +610,6 @@ numbers:
     cost_while_unanswered: >-
       As above, plus the cap interacts with the per-seat cap in a way nothing
       measures.
-    settles_by:
-      kind: recording
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Nomination caps`;
-        the same recording as the per-seat cap, read at the run level. NO
-        DERIVATION WAS ATTEMPTED: 6 is not two times the per-seat 3 in any
-        defensible sense, because the desk runs more than two nominating
-        seats
-      records: >-
-        per run: nominations offered across all seats, nominations
-        resolved end to end, the total token and wall-clock cost of the
-        run against its budget, and every nomination this run-level cap
-        truncated
-      closes_when: >-
-        the run-level count one session resolves inside its cost and
-        deadline budget is readable, and the cap is set to it. DELETE
-        OUTCOME: if no observed run approaches its cost or deadline budget
-        at any candidate count, the run-level cap is deleted and the per-
-        seat cap alone bounds the run
   - id: src.config.RiskConfig.SECTOR_HARD_CEILING_MAX
     value: 90
     status: arbitrary
@@ -889,28 +711,6 @@ numbers:
     cost_while_unanswered: >-
       The last line of defence under every tight stop is a round number
       mirrored from prompt prose.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Hard stop floor`; a
-        measurement over the UNIVERSE the desk could trade, never over
-        this desk's own stop fills, and it must not rest on
-        config/prompts/tech_analyst.md, which Invariant 2 bars as a final
-        authority
-      records: >-
-        for daily bars across the tradable universe, how often a stop
-        placed at each ATR multiple from 0.25 upward behind a level is
-        pierced and then closed back through within the following sessions
-        -- a whipsaw rather than a trend break -- tabulated against the
-        touch count of the level behind it
-      closes_when: >-
-        the ATR distance below which the whipsaw rate is indistinguishable
-        from chance no matter how well-touched the level is, is readable,
-        and the hard floor is set there. DELETE OUTCOME: if whipsaw rate
-        falls smoothly with distance and shows no such floor, there is
-        nothing for a hard floor to protect and it is deleted, leaving
-        stop distance to structure and the touch-count bar alone
   - id: src.config.RiskConfig.breakout_projection_atr_multiple
     value: 1
     status: sourced
@@ -1112,16 +912,6 @@ numbers:
         binding, so the ceiling can be set above observed behaviour instead
         of picked
   - id: src.config.RiskConfig.max_position_risk_pct
-    settles_by:
-      kind: ratified-bound
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
-      records: the dollar loss a single name at this envelope represents at the account equity on
-        the day, written down with that date and that equity beside it, so the appetite is recorded
-        as a sum of money rather than as a percentage nobody converted
-      closes_when: the owner states the per-name dollar loss he will accept and the envelope is restated
-        as that figure over current equity; this row stays ARBITRARY in the ledger when he does, because
-        ratified appetite is not a source, and only the recorded dollar figure and its date change
     value: 5
     status: arbitrary
     route_audit_2026_10_04: >-
@@ -1237,27 +1027,6 @@ numbers:
     cost_while_unanswered: >-
       A target 60 sessions out licenses a claim of roughly 8 ATRs of travel
       with nothing measured behind the horizon.
-    settles_by:
-      kind: recording
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Target horizon`. The
-        question deliberately asks whether this number governs anything,
-        because Rex's 2026-09-30 ruling is that the desk exits on
-        ALIGNMENT and never on a target
-      records: >-
-        for every surviving position each session, whether this ceiling
-        changed anything: the target the constructor proposed, whether the
-        ceiling truncated or rejected it, and whether the order that
-        followed differed in any field from the order that would have
-        followed with no ceiling at all
-      closes_when: >-
-        the record shows either that the ceiling changes a real order --
-        in which case it needs a horizon measurement, not a ratification
-        -- or that it changes none over a full quarter. DELETE OUTCOME:
-        this is the EXPECTED reading given the alignment ruling, and in
-        that case the ceiling is deleted outright rather than re-picked at
-        another session count
   - id: src.config.RiskConfig.max_target_reach_atr_multiple
     settles_by:
       kind: measurement
@@ -1283,25 +1052,6 @@ numbers:
     cost_while_unanswered: >-
       Every reachability judgement - for targets AND for whether a level is
       relevant at all - scales off this one number.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Target reach`; board
-        item 56 owns the question, and this is a measurement over the
-        UNIVERSE the desk could trade, never over its own trades
-      records: >-
-        for the tradable universe, realised travel from an entry-shaped
-        reference over each holding length, expressed as a multiple of ATR
-        times the square root of sessions, so the reach cap is compared
-        against what this instrument class actually travels
-      closes_when: >-
-        the multiple this instrument class reaches at the stated horizon
-        is readable and the cap is set to it, replacing a figure that
-        board item 56 records as made CONSISTENT with its sibling without
-        either being made right. DELETE OUTCOME: if the target horizon row
-        above settles as governing nothing, targets decide no order and
-        this reach cap is deleted with them
   - id: src.config.RiskConfig.min_level_touches_for_stop_honor
     settles_by:
       kind: measurement
@@ -1360,30 +1110,6 @@ numbers:
       unproven bar decides how tight a live stop may be. Set too low, a stop is
       honoured against a separation that could be noise; set too high, real
       structure is ignored and every stop is widened to the unbacked floor.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Touch bar`;
-        docs/WORK.md item 55 names the same recording. The 2026-09-03 in-
-        repo table is NOT a source -- prose in this repo never is -- and
-        its reconstruction on the 276-bar panel this checkout holds
-        FAILED, with the shuffled control scoring higher than real at
-        every touch count
-      records: >-
-        bounce rate at each touch count over daily bars for the tradable
-        universe, with the levels built by the desk's OWN overlap
-        clustering rather than by the retired code path the original table
-        used, against a shuffled control run the same way
-      closes_when: >-
-        the real-versus-shuffled separation reappears with non-overlapping
-        95% intervals, names the touch count at which it starts, and does
-        so on a panel giving observations of the same order as the
-        original table's 400-plus rather than the 27 the current panel
-        yields. DELETE OUTCOME: if no touch count separates real from
-        shuffled, the tight-stop exemption is deleted and every stop uses
-        the unbacked floor, which removes this number rather than re-
-        picking it
   - id: src.config.RiskConfig.min_position_risk_pct
     value: 0.5
     status: derived
@@ -1623,131 +1349,6 @@ numbers:
       Flags a target inside this many ATRs of entry as thin reward - price is
       barely off it and the whole payoff is one ordinary session's noise.
       Labels the derived target; does not select it (changed 2026-09-30).
-  - id: src.config.RiskConfig.short_gap_risk_multiple
-    value: 1.5
-    status: derived
-    site: src/config/__init__.py
-    derived_from: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
-    base_value: 1.5
-    note: >-
-      The deployed, operator-overridable setting. It holds no literal of its
-      own: its Field default IS the one definition
-      (src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT), so base-drift
-      cannot happen silently and this row is `derived`, not a second
-      arbitrary number. Board item 216, 2026-10-01 — before that date the
-      literal 1.5 was written out four times and applied at three sites.
-  - id: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
-    settles_by:
-      kind: measurement
-      state: specified
-      where: board item 186 in docs/WORK.md -- this is board item 186's question, not this constant's,
-        and it is routed here rather than re-derived
-      records: the overnight gap distribution of the SHORTABLE part of the universe the desk could
-        trade, on public daily bars against the short side, beside the same distribution against the
-        long side, so the haircut becomes the measured ratio of adverse short-side gap to adverse
-        long-side gap rather than a chosen one and a half
-      closes_when: item 186 holds the measured short-versus-long adverse gap ratio and the haircut
-        is restated as that ratio; it is DELETED, and shorts are sized exactly as longs are, if the
-        two distributions turn out not to differ beyond their own sampling error
-    value: 1.5
-    status: arbitrary
-    site: src/risk/constants.py
-    note: >-
-      MOVED 2026-10-01, board item 216: this is the SAME number, unchanged in
-      value, re-homed from src.config.RiskConfig.short_gap_risk_multiple to
-      the one place that now defines AND applies it. It previously had a
-      second ledger row (src.portfolio_constructor.config.ConstructorConfig.
-      short_gap_risk_multiple, `derived`); that row is deleted rather than
-      kept in sync, because a mirror kept in sync is the same defect waiting
-      to recur. The literal existed four times and the haircut was APPLIED at
-      three sites; execution ships min(qty_by_alloc, qty_by_risk), so the
-      execution-side copy, not the constructor's, sized a live short whenever
-      the risk leg bound. Both legs now call gap_adjusted_risk_per_share. No
-      sizing changed. The arbitrary count is unchanged: one row replaces one
-      row, and the deleted row was `derived`, never counted as arbitrary.
-      Sizing-only haircut on a short's risk-per-share, never applied to stop
-      placement: a short gaps through its stop upward with no bound, so the
-      same risk allocation opens a SMALLER short than an equivalent long
-      (src/config/__init__.py::RiskConfig). The direction is reasoned; the 1.5 magnitude is
-      not measured against any gap distribution.
-      ITEM 186 PASS 2026-09-26 — RESEARCHED. The DIRECTION survives and needs
-      no citation: a short's loss above its stop is unbounded while a long's
-      below its stop is bounded by zero, which is arithmetic, not an
-      empirical claim. The MAGNITUDE is not sourceable, and the literature
-      that looks like it should settle it measures a different quantity, so
-      it is NOT adopted. (a) The positive-skewness-of-individual-stocks and
-      skewness-pricing work is an ASSET-PRICING result about expected returns
-      to lottery-like stocks; it says nothing about the size of an overnight
-      gap against a short. (b) The empirical overnight-gap asymmetry studies
-      are INDEX-level and do not even agree in sign: one index shows the
-      larger median gap on the downside, while the DJIA shows the larger
-      median gap on the UPSIDE but strongly negative skew, i.e. the fatter
-      tail running against LONGS. Neither yields "a short's gap risk is 1.5x
-      a long's" for single names, and importing either would be citing a
-      number that measures something else.
-      The honest route is MEASUREMENT, and it is blocked on data rather than
-      on thinking. The quantity wanted is the ratio of the adverse-tail
-      up-gap to the adverse-tail down-gap — (open_t - close_t-1) / close_t-1
-      taken at a matched tail percentile — over the names this desk actually
-      shorts. This repo cannot compute it today: the desk's database holds no
-      OHLCV/bar table (verified 2026-09-26), bars are fetched live each
-      session and discarded, so there is no stored gap history to measure and
-      no recorded short universe to measure it over. That is a data build,
-      and it would NOT be backtesting: it measures a distribution, not an
-      outcome. NO VALUE PICKED.
-      CORRECTION 2026-09-18: the
-      first version quoted "until a separate pass re-examines it" as text at
-      this site; that phrase is in docs/, not in src/config/__init__.py.
-      ITEM 186 PASS 2026-09-30 — TWO DERIVATIONS ATTEMPTED, BOTH WITHDRAWN,
-      NO VALUE CHANGED. The desk sizes shorts today exactly as it did
-      before this pass. Record of the two failures so nobody spends a third
-      attempt on either. (1) WORST HISTORICAL GAP over the fetch lookback:
-      dead because that lookback is a 5-year window chosen for CHART
-      STRUCTURE, and a maximum over a fixed window can only grow until the
-      bar ages out — one old gap would govern every short's size for years
-      and a regime change could not update it. (2) STOP DISTANCE PLUS ONE
-      ATR: dead on algebra, not on data. The entry stop is ITSELF placed at
-      2.5 ATR, so the multiple is (2.5 + 1) / 2.5 = exactly 1.40 for every
-      name — the per-name ATR cancels out. It is a flat haircut in a
-      per-name costume, and LOWER than the 1.5 it claimed to replace.
-      ALSO ESTABLISHED THIS PASS — WHERE THIS NUMBER ACTUALLY BINDS.
-      Execution takes min(qty_by_alloc, qty_by_risk), and the risk-budget
-      path in src/pipeline_stages.py multiplies by this number. So this
-      row, not the constructor's mirror of it, is the one that sizes a live
-      short whenever the risk path is the binding leg. Any future statement
-      that a constructor-side change has "retired" this number is false
-      unless the execution-side read changes with it. That construction /
-      execution split is a latent defect in its own right and is filed as
-      board item 215.
-      WHAT CHANGED INSTEAD: the desk now RECORDS the evidence. Every short
-      it holds accumulates the worst adverse overnight gap actually
-      suffered against it, beside the volatility read and the stop distance
-      already pinned at entry (`trades.max_adverse_overnight_gap`,
-      `overnight_gap_sessions`, joined to `entry_atr` and
-      `initial_stop_loss`). Recording only — no threshold, no gate, no
-      sizing change, and it may NOT be swept for the multiple that would
-      have been optimal, which would be fitting to this desk's history.
-    open_question: >-
-      NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that risk is
-      never a global dial: it is read per name off that instrument's own
-      behaviour now and off how convicted the seats are on it. So the
-      appetite question previously routed here ("how much smaller should a
-      short open") is WITHDRAWN, not pending, and no value may be picked to
-      settle it. What replaces it is a per-name read: this stock's own
-      overnight-gap magnitude relative to its own stop distance, so a
-      tight-stopped name is haircut harder than a wide-stopped one. That read
-      is BLOCKED ON DATA and on nothing else. Verified 2026-09-30 at the two
-      live sizing sites (src/portfolio_constructor/config.py, the short branch and
-      the risk-plan loop): they are handed `analysis.atr_14` and a stop
-      price, never bars, and the database still holds no OHLCV table, so the
-      gap term cannot be read at sizing time. Writing the gap as some
-      multiple of ATR would invent that multiple, which is the exact failure
-      this ledger exists to stop, so 1.5 STANDS UNCHANGED and labelled rather
-      than being replaced by a better-dressed guess. Unblocked by a stored
-      daily-bar table and by nothing else.
-    cost_while_unanswered: >-
-      Shorts are sized by a haircut whose direction is arithmetic and whose
-      magnitude is neither sourced nor measured.
   - id: src.config.RiskConfig.target_divergence_warn_pct
     settles_by:
       kind: recording
@@ -1772,23 +1373,6 @@ numbers:
     cost_while_unanswered: >-
       The advisory either cries wolf or stays quiet while a seat's target and
       the structure disagree materially.
-    settles_by:
-      kind: recording
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md, tranche seven, `Divergence warning`
-      records: >-
-        every comparison between a proposed target and the desk's own
-        computed structural target: the signed gap, whether it crossed
-        this band, and whether the resulting order differed in any field
-        from the order that would have been placed with the warning
-        suppressed
-      closes_when: >-
-        the gap distribution is readable and the band sits where genuine
-        disagreement begins rather than where rounding ends. DELETE
-        OUTCOME: if no flagged divergence ever changes an order, the
-        warning changes nothing and both it and its band are deleted
-        rather than re-picked
   - id: src.config.SmartMoneyConfig.cluster_window_days
     value: 2
     status: arbitrary
@@ -4094,7 +3678,7 @@ numbers:
     site: src/risk/exit_guard.py
     note: >-
       The exit-guard noise band, in ATRs, before the sqrt(sessions_held)
-      widening described at src/risk/exit_guard.py::MetricDeltas.stop_driven. How far an adverse
+      widening computed at src/risk/exit_guard.py::noise_band_atr. How far an adverse
       move must travel FROM ENTRY before it stops being ordinary daily wobble.
       RECLASSIFIED 2026-09-26, board item 70: this entry read `derived` from
       `src.risk.trailing.NOISE_BAND_ATR_MULTIPLE` with `base_value: 1.25`
@@ -4288,10 +3872,6 @@ numbers:
       Whether a support level counts as broken -- and therefore whether the
       desk lifts protection and sells -- turns on a distance that no published
       work measures in these units.
-    cost_while_unanswered: >-
-      Whether a structural level counts as broken, and therefore whether a
-      position keeps its protection, turns on an ATR distance no published
-      work expresses in ATRs.
   - id: src.risk.exit_guard.TREND_CONFIRMING_CLOSES
     value: 2
     status: sourced
@@ -5465,10 +5045,10 @@ numbers:
     note: >-
       Handshake-attempt ceiling for one trade_updates session, derived from
       the equal-jitter curve run off the reconnect min/max above (1, 2, 4,
-      8, 16, 30 -- saturates at attempt 6, src/execution/broker.py::AlpacaBroker.__init__).
+      8, 16, 30 -- saturates at attempt 6, src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_SESSION).
       One of three constants added 2026-09-18 to close an unbounded retry
       loop that logged 32,896 handshakes and 32,666 HTTP 429s in one day
-      (src/execution/broker.py::AlpacaBroker.__init__); none of the three decides, sizes,
+      (src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_DAY); none of the three decides, sizes,
       prices or exits a trade -- the bounded REST fill path is unchanged and
       is what runs when this ceiling fires.
   - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY
@@ -5478,7 +5058,7 @@ numbers:
     note: >-
       Handshake-attempt ceiling per process per day for the same socket,
       set to Alpaca's own published account-wide rate limit of 200
-      requests/minute (src/execution/broker.py::AlpacaBroker.__init__, cross-checked
+      requests/minute (src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_DAY, cross-checked
       against measured 56 and 50 attempts on 2026-09-16/17). Same
       not-trade-governing reasoning as
       src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
@@ -5489,7 +5069,7 @@ numbers:
     note: >-
       Stand-down after the broker answers HTTP 429 on the same socket, set
       to Alpaca's published one-minute rate-limit window
-      (src/execution/broker.py::AlpacaBroker.__init__). Same not-trade-governing reasoning
+      (src/execution/broker_parts/trade_stream.py::_STREAM_RATE_LIMIT_STAND_DOWN_S). Same not-trade-governing reasoning
       as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
   - id: src.execution.broker_parts.market_data._BROKER_HTTP_TIMEOUT
     value: 30.0
@@ -7380,7 +6960,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline.py
     note: >-
-      Dead. Defined at src/pipeline_admission.py::AdmissionService._evaluate_screened_admission and described in comments as the
+      Dead. Defined at src/pipeline.py::TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT and described in comments as the
       de-lever cushion, but nothing reads it: the de-lever no longer prices off
       a fixed % of the mark at all -- it crosses the LIVE quote or sends a
       MARKET order (src.pipeline.TradingPipeline._live_delever_price, branch
@@ -7400,7 +6980,7 @@ numbers:
     site: src/prompt_facts/review/blocked.py
     note: >-
       Window of the PM's 'names you keep proposing and never get' memory
-      (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
+      (src/prompt_facts/review/blocked.py::ReviewBlocked._build_blocked_proposals). Its only caller (src/stage_decision.py::DecisionStage.run) passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7430,7 +7010,7 @@ numbers:
     site: src/prompt_facts/review/blocked.py
     note: >-
       Maximum blocked names shown to the PM in that memory
-      (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
+      (src/prompt_facts/review/blocked.py::ReviewBlocked._build_blocked_proposals). Its only caller (src/stage_decision.py::DecisionStage.run) passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7460,7 +7040,7 @@ numbers:
     site: src/prompt_facts/review/blocked.py
     note: >-
       Proposal count before a blocked name is shown to the PM in that memory
-      (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
+      (src/prompt_facts/review/blocked.py::ReviewBlocked._build_blocked_proposals). Its only caller (src/stage_decision.py::DecisionStage.run) passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7490,7 +7070,7 @@ numbers:
     site: src/prompt_facts/review/calibration.py
     note: >-
       Window of the PM's own hit-rate/return calibration note
-      (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates). Its only caller passes nothing, so this
+      (src/stage_decision.py::DecisionStage.run and src/sessions/position_review_session.py::PositionReviewSession.run). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7530,7 +7110,7 @@ numbers:
     note: >-
       Dollar-volume floor ($M) for a top-mover to enter the evening missed-
       opportunity review, which feeds the PM's missed-lessons memory
-      (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Its only caller passes nothing, so this
+      (src/sessions/evening_session.py::EveningSession.run). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7572,7 +7152,7 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       How many broker top-movers are added to the evening missed-opportunity
-      review (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Its only caller passes nothing, so
+      review (src/sessions/evening_session.py::EveningSession.run). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
       trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7641,7 +7221,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many of its own previous decision sets the PM is shown (anti-flip-
-      flop memory) (src/pipeline_research_continuity.py::ResearchContinuityMixin._macro_series_prints_changed). Its only caller passes
+      flop memory) (src/stage_decision.py::DecisionStage.run). Its only caller passes
       nothing, so this default is live. Same class as the smart-money prompt-
       truncation caps classified arbitrary on 2026-09-19: it decides what
       evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7748,7 +7328,7 @@ numbers:
     status: arbitrary
     site: src/prompt_facts/review/exits.py
     note: >-
-      Window of the PM's repeat-loss-cause memory (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates).
+      Window of the PM's repeat-loss-cause memory (src/stage_decision.py::DecisionStage.run).
       Its only caller passes nothing, so this default is live. Same class as
       the smart-money prompt-truncation caps classified arbitrary on
       2026-09-19: it decides what evidence a trading seat's verdict is built
@@ -7808,7 +7388,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/calibration.py
     note: >-
-      Dead default (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body): every caller in src/ passes this
+      Dead default (src/sessions/evening_session.py::EveningSession.run): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7817,7 +7397,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/calibration.py
     note: >-
-      Dead default (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body): every caller in src/ passes this
+      Dead default (src/prompt_facts/review/calibration.py::ReviewCalibration._build_recent_outlook_calibration): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7836,7 +7416,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many recent risk-seat verdicts the PM is shown to self-calibrate
-      size (src/pipeline_research_continuity.py::_carry_forward_readers). Its only caller passes nothing, so
+      size (src/stage_decision.py::DecisionStage.run). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
       trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7895,7 +7475,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/pipeline.py::TradingPipeline._run_evening_body): every caller in src/ passes this
+      Dead default (only caller: src/sessions/position_review_session.py::PositionReviewSession.run): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7904,7 +7484,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_prompt_facts.py
     note: >-
-      Owner-facing universe-expansion report (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates); no
+      Owner-facing universe-expansion report (src/pipeline_prompt_facts.py::PromptFactsMixin._build_watchlist_candidates); no
       caller in the trading path, and the only caller
       (scripts/watchlist_candidates.py::main) passes it explicitly. It proposes
       names for a human to add; it never adds one.
@@ -7982,7 +7562,7 @@ numbers:
     base_value: 1.25
     note: >-
       Midday noise-band clamp: a new stop inside 1.25 x ATR14 of price is
-      refused (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). The same 1.25 as the trailing-
+      refused (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). The same 1.25 as the trailing-
       stop noise band, which carries the open question.
   - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]
     value: 1.005
@@ -7992,7 +7572,7 @@ numbers:
     base_value: 0.995
     note: >-
       Board item 138: the midday COVER limit, price x 1.005
-      (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Its comment ties it to the ExecutionStage
+      (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Its comment ties it to the ExecutionStage
       COVER loop. One number, mirrored.
   - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]
     value: 0.995
@@ -8002,15 +7582,15 @@ numbers:
     base_value: 0.995
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
-      (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Same number as the ExecutionStage SELL offset.
-  - id: src.pipeline_exits.ExitEngineMixin._trail_tightened_recently(calendar_days)
+      (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Same number as the ExecutionStage SELL offset.
+  - id: src.exits.exit_records.ExitRecords._trail_tightened_recently(calendar_days)
     value: 4
     status: arbitrary
-    site: src/pipeline_exits.py
+    site: src/exits/exit_records.py
     note: >-
       Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
-      the last 4 calendar days (src/pipeline_exits.py::ExitEngineMixin._trail_tightened_recently, caller
-      src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body passes nothing). The docstring's reason is a
+      the last 4 calendar days (src/exits/exit_records.py::ExitRecords._trail_tightened_recently, lifted verbatim 2026-10-04, caller
+      src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions passes nothing). The docstring's reason is a
       forensic observation, not a measured cooldown length. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive the 4 calendar days from the ratified swing mandate. FAILED -- the mandate names no number, by design. Attempt (2): derive it from the reviewer's >=1.02x min-bump rule, i.e. the sessions needed for 2% of range to accumulate. FAILED -- that rule bounds the SIZE of one tighten and says nothing about spacing, and the 1.02 is itself unsourced. The measurement below is the route. Value unchanged.
     open_question: >-
       Over how many sessions does a tightened trail on this desk's names stay
@@ -8143,7 +7723,7 @@ numbers:
     note: >-
       Default portfolio risk ceiling of the allocator
       (src/risk/budget.py::allocate_risk_budget). Every caller passes it
-      (src/portfolio_constructor/__init__.py::PortfolioConstructor._construct_orders_impl,
+      (src/portfolio_constructor/__init__.py::PortfolioConstructor._plan_risk_targets,
       src/agents/portfolio_manager/__init__.py::PortfolioManagerAgent.build_user_message); same 25 as the deployed
       ceiling.
   - id: src.risk.budget.allocate_risk_budget(cluster_share_pct)
@@ -8554,3 +8134,18 @@ numbers:
       size or stop depends on it. It is bumped only when a field is added or
       an existing field's meaning changes. There is nothing to source: the
       value is an identifier that happens to be written as a number.
+  - id: src.infra_retry_policy.MAX_RETRIES
+    value: 2
+    status: not-trade-governing
+    site: src/infra_retry_policy.py
+    note: "Bounded retries of a transient infrastructure fault (an LLM provider blip, a failed owner-alert send) before the harder failure path runs. It is the same number as `MacroConfig.max_retries` in src/config/macro.py, which the macro provider's retry loop (`MacroDataProvider`) spends, and `LLMCostCircuitConfig` in src/config/llm_cost.py says it mirrors that policy. It bounds how many times a failed call is repeated, never a price, size, stop or whether a trade is allowed; a wrong value delays a retry by seconds or fails one call sooner. If the macro default is ever re-derived this row must be revisited, since the two are meant to stay equal."
+  - id: src.infra_retry_policy.BACKOFF_BASE_S
+    value: 2.0
+    status: not-trade-governing
+    site: src/infra_retry_policy.py
+    note: "First retry's wait in seconds, doubling each retry up to BACKOFF_MAX_S. Same number as `MacroConfig.retry_backoff_base_s` in src/config/macro.py, whose docstring states the doubling and the cap and which `MacroDataProvider._next_backoff` in src/data/macro.py applies. A pause between repeated calls; no trade quantity, price or gate reads it."
+  - id: src.infra_retry_policy.BACKOFF_MAX_S
+    value: 8.0
+    status: not-trade-governing
+    site: src/infra_retry_policy.py
+    note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls; no trade quantity, price or gate reads it."

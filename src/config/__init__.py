@@ -15,7 +15,6 @@ from src.config.notifications import NotificationsConfig  # noqa: F401  (re-expo
 from src.config.macro import MacroConfig  # noqa: F401  (re-export; lives in its own module)
 from src.trading_calendar import SESSION_WINDOWS
 from src.risk.constants import (
-    SHORT_GAP_RISK_MULTIPLE_DEFAULT,
     STARTER_POSITION_RISK_PCT,
 )
 
@@ -407,18 +406,6 @@ class RiskConfig(BaseModel):
     # equal nominal risk is not equal real risk — so the same risk
     # allocation opens a SMALLER short than an equivalent long.
     #
-    # 2026-09-26, board item 186: the DIRECTION above is arithmetic and needs
-    # no citation. The MAGNITUDE 1.5 is still a chosen number. Researched and
-    # deliberately NOT sourced: the skewness-pricing literature measures
-    # expected returns to lottery-like stocks, not the size of an overnight
-    # gap against a short, and the empirical overnight-gap studies are
-    # index-level and disagree in sign. Measuring it properly needs a stored
-    # daily-bar history this desk does not keep. The number ledger carries
-    # the routed owner-appetite question; 1.5 means a short opens at
-    # two-thirds the size of a long carrying the same stated risk.
-    short_gap_risk_multiple: float = Field(
-        default=SHORT_GAP_RISK_MULTIPLE_DEFAULT, gt=1.0, le=3.0,
-    )
     # --- Kill switch (2026-09-02 operational safety guard) ---------------
     # A file whose mere EXISTENCE halts every order this desk would place —
     # entries, exits, covers, and protective-stop placement/replacement
