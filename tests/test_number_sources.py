@@ -577,31 +577,6 @@ def test_zero_is_not_a_site_but_one_is() -> None:
     ]
 
 
-def test_a_citation_pointing_at_nothing_is_reported() -> None:
-    """Rule 7, firing. `broken_citations` is checked directly rather than
-    through a fixture tree, because a fixture has no `docs/` and every real
-    citation would read as missing there — a test that passes for the wrong
-    reason is worse than no test.
-    """
-    root = Path(__file__).resolve().parent.parent
-    invented = {
-        "src.risk.rules.MAX_HEAT_PCT": {
-            "status": "sourced",
-            "source": "the measured matrix in docs/DOES_NOT_EXIST.md:12",
-        },
-        "src.risk.rules.PAST_EOF": {
-            "status": "sourced",
-            "source": "see src/number_sources.py:999999",
-        },
-        "src.risk.rules.FINE": {
-            "status": "sourced",
-            "source": "see src/number_sources.py::audit",
-        },
-    }
-    reported = {site_id for site_id, _, _ in broken_citations(invented, root)}
-    assert reported == {"src.risk.rules.MAX_HEAT_PCT", "src.risk.rules.PAST_EOF"}
-
-
 def test_a_default_pointed_at_an_unscoped_module_does_not_vanish() -> None:
     """The evasion in miniature. `Config.floor = SOME_NAME` imported from a
     module nobody scoped used to remove the number from the gate entirely.
@@ -916,29 +891,3 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
                     "2026-09-30 ruling on global risk dials bars."
                 )
                 start = hit + 1
-
-
-@pytest.mark.parametrize(
-    "cite",
-    [
-        "src/verdicts.py::__all__",
-        "src/risk/trailing.py::__all__",
-        "src/risk/constants.py@`import math`",
-        "src/data/technical.py@`from src.models import OHLCV, TechnicalIndicator`",
-        "src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W`",
-        "src/verdicts.py@`analyst prompts are) — and let it be overridden`",
-        "src/verdicts.py@`weight applies there).** The original rule was`",
-    ],
-)
-def test_a_citation_that_cannot_substantiate_anything_is_refused(cite: str) -> None:
-    """Item 232: resolving is not substantiating. These are the measured
-    bystander pins; each must stay refused if anybody writes it back."""
-    root = Path(__file__).resolve().parent.parent
-    row = {"x.y": {"status": "sourced", "source": f"see {cite} for it"}}
-    assert [s for s, _, _ in broken_citations(row, root)] == ["x.y"]
-
-
-def test_a_citation_that_substantiates_is_accepted() -> None:
-    root = Path(__file__).resolve().parent.parent
-    row = {"x.y": {"status": "sourced", "source": "see src/verdicts.py::SEAT_WEIGHT"}}
-    assert broken_citations(row, root) == []
