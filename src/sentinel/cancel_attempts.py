@@ -80,3 +80,8 @@ def install_cancel_recording(*, broker, conn_getter) -> None:
         return  # a test fake with no trading client has no cancels to count; an observer must not break construction
     if not isinstance(broker.client, CancelRecordingClient):
         broker.client = CancelRecordingClient(inner=broker.client, conn_getter=conn_getter)
+    # Same single wiring site lends the broker's broad catch-alls the ledger
+    # they count their reconciliation rows through — observability only, no
+    # decision reads it. See src/sentinel/guarded.py.
+    from src.sentinel.guarded import attach_reconciliation_db
+    attach_reconciliation_db(broker, conn_getter)

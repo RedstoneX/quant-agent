@@ -108,6 +108,10 @@ if [[ "$ET_DOW" -gt 5 ]]; then
 fi
 
 # === Window per mode (minutes past ET midnight) ===
+# WALL CLOCK ONLY, and known to be wrong on an early close or a holiday: the
+# weekday short-circuit above is this wrapper's entire calendar. See the
+# src/trading_calendar.py module docstring for what that costs on a 13:00
+# close and for why the repair is sized across six modules, not patched here.
 # Python authoritative source: src/trading_calendar.py SESSION_WINDOWS.
 # tests/test_trading_calendar.py asserts this table matches that one —
 # don't edit one without the other.
