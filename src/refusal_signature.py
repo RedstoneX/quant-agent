@@ -126,7 +126,7 @@ new cadence is invented here.
 
 And the streak must be CURRENT: the newest session in it has to fall on the
 most recent completed trading day, judged by the same
-`coverage_watchdog.most_recent_trading_day` the stop watchdog uses. The
+`trading_day.most_recent_trading_day` the stop watchdog uses. The
 trading timers were paused on 2026-09-03. A paused desk runs no sessions,
 so its newest session is not on the most recent trading day, so this check
 is silent — a deliberately paused desk is not a defect. It re-arms itself
@@ -153,7 +153,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.coverage_watchdog import most_recent_trading_day
+from src.trading_day import most_recent_trading_day
 from src.trading_calendar import ET
 
 logger = logging.getLogger(__name__)
