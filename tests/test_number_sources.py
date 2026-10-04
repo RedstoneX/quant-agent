@@ -271,7 +271,7 @@ def test_every_source_is_openable_by_a_non_author() -> None:
             continue
         source = str(entry.get("source") or "")
         openable = re.search(r"https?://\S+", source) or re.search(
-            r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml):\d+", source
+            r"\b[\w./-]+\.(?:py|yaml|yml|md|json|toml)(?:::[A-Za-z_]|@`)", source
         )
         assert openable, f"{site_id} cites prose with nothing to open"
 
@@ -444,7 +444,7 @@ def test_a_source_with_a_file_and_line_passes() -> None:
           - id: src.risk.rules.MAX_HEAT_PCT
             value: 4.2
             status: sourced
-            source: the derivation at src/risk/rules.py:12
+            source: the derivation at src/risk/rules.py::MAX_HEAT_PCT
         """,
     )
     assert not _kinds(root, ledger)
@@ -595,7 +595,7 @@ def test_a_citation_pointing_at_nothing_is_reported() -> None:
         },
         "src.risk.rules.FINE": {
             "status": "sourced",
-            "source": "see src/number_sources.py:1",
+            "source": "see src/number_sources.py::audit",
         },
     }
     reported = {site_id for site_id, _, _ in broken_citations(invented, root)}

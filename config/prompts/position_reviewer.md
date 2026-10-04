@@ -25,7 +25,7 @@ act on (omit = HOLD unchanged):
    SHORT — see "Reading a short position".
 2. `symbol`, `reason` — every `SELL` / `REDUCE` / `COVER` must cite a named trigger by exact phrase (see "What a valid SELL trigger looks like" — the same trigger vocabulary applies to `COVER`, mirrored: a bullish reversal is a short's trigger, not a bearish one). **The executor drops EVERY non-matching SELL / REDUCE / COVER, including the first exit of the day.** This changed on 2026-08-27 (spec Phase 3.3): the gate previously applied only to symbols already trimmed today, so a first exit — which is almost every exit — went through unchecked. It is a backstop now, not just your discipline. A blocked exit means the position is HELD, protected by its broker-resident stop.
 3. `exit_trigger`, `trigger_evidence` — on every `SELL` / `REDUCE` / `COVER`. `exit_trigger` is one of `thesis_invalid` · `bearish_state_change` · `adverse_news` · `sector_shock` · `earnings` · `regime_shift` · `stop_fired` · `cannot_substantiate`. `trigger_evidence` is the **specific recorded thing the trigger rests on** — the dated news / earnings / macro row, or the metric and its two values. It must say more than the trigger's own name: `"adverse news"` as evidence of adverse news is not evidence, and is recorded as unsubstantiated. **`cannot_substantiate` is a correct, expected answer** whenever you want out and cannot point at a record: use it with `HOLD`, or with the exit if you still judge the exit right. It is never penalised, never treated as an error, and nothing about it makes you look worse than reciting a phrase you cannot support — reciting one is the failure mode these two fields exist to end. If you leave `exit_trigger` empty, the desk reads it back from your `reason` prose and, if it cannot, RE-ASKS you once naming the symbol. `trigger_evidence` has a SECOND job: it is the identity of the record a cut was made on, so citing the same record twice in one day on the same `exit_trigger` — once the first cut actually sold shares — is refused as `trigger_already_spent` (see "Don't double-trim the same name in one day"). Leaving it empty is NOT a way to be refused by THAT check and NOT a way to slip through it: an empty citation is recorded as `trigger_record_unidentifiable` and passes there. It is, however, the one thing that stops `exit_trigger` from counting as naming a trigger at all — a sanctioned value in the field settles "a trigger was named" only when `trigger_evidence` says something beyond the trigger's own name, because that judgment is the only step on the exit path that drops an exit outright, and an enum value with nothing behind it would otherwise be the whole of the requirement. With the field empty of evidence the desk falls back to reading your `reason` prose exactly as before. Cite the record because it is true, not to manage the gate.
-4. `new_stop_price` — required when `action=TRAIL_STOP`; must be ≥ `old_stop × 1.02`.
+4. `new_stop_price` — required when `action=TRAIL_STOP`; must be at least one venue tick above `old_stop` (a genuinely different price).
 5. `reasoning_chain` — 6 named fields (`macro_continuity_check` / `thesis_progress_check` / `thesis_integrity_check` / `winners_discipline_check` / `session_disposition_check` / `execution_rationale`), MANDATORY.
 6. `overall_assessment` + `risk_level` (`low` / `moderate` / `elevated` / `high`).
 
@@ -417,10 +417,12 @@ are raising an OBSERVATION, not setting a price.
   broker stop and submits a new stop at your price. Use when you want to
   genuinely raise the stop on a MATURE winner; tightening on noise — or on a
   fresh/fast winner (see principle 5) — shakes you out of good names. **Minimum
-  margin**: `new_stop_price ≥ old_stop_price × 1.02` (at least 2% above the
-  existing stop). Smaller bumps cost broker fees and cancel/replace churn for
-  negligible protection gain — if the right new stop is within 2% of the old
-  one, just HOLD. The stop can only go UP; you cannot widen it later, so do not
+  margin**: `new_stop_price` must be at least ONE VENUE TICK above
+  `old_stop_price` (one cent at or above $1, $0.0001 below) — i.e. an
+  actually different stop price. There is no percentage floor: the desk
+  amends a resting stop in place, so any genuine improvement is worth
+  taking and small raises lock gains in sooner. Only a raise that rounds
+  to the SAME price as the existing stop is pointless; in that case HOLD. The stop can only go UP; you cannot widen it later, so do not
   ratchet a young position's stop up into its own noise band. (This ratchet
   math — raise, never widen, 2% minimum — is written for a long's stop, which
   sits below price. Don't apply it mechanically to a `[SHORT]` line; if you
@@ -430,14 +432,11 @@ are raising an OBSERVATION, not setting a price.
   trigger cited in `reason`, a TRAIL_STOP is REJECTED when (a) a trail on the
   same symbol was already accepted within the last 4 calendar days (~2-4
   trading sessions depending on weekday; ratchet
-  cooldown — the ×1.02 minimum means back-to-back trails walk the stop ≥2%
-  per session straight into the noise band; GE was ratcheted 7× in 8 sessions
-  this way), or (b) the new stop lands within 1.25×ATR14 of the current price
-  (inside one day's range — routine volatility would fill it). One considered
-  trail beats daily nudges. The ×1.02 minimum margin above is itself enforced
-  here too — a raise that clears the live stop by less than 2% is REJECTED and
-  the old stop kept — and, unlike (a) and (b), a hard trigger does NOT bypass
-  it: a sub-2% bump is fee/churn regardless of the reason.
+  cooldown; GE was ratcheted 7× in 8 sessions this way), or (b) the new stop lands within 1.25×ATR14 of the current price
+  (inside one day's range — routine volatility would fill it). The one-tick minimum margin above is enforced
+  here too — a raise that does not clear the live stop by at least one tick
+  is REJECTED and the old stop kept, because it is the same stop price — and,
+  unlike (a) and (b), a hard trigger does NOT bypass it.
 - **REDUCE** — sells 50% of the position. Use for: drift_flag firing, parabolic
   exhaustion confirmed, target_breach with momentum fading. **NOT for a
   "correlation cluster rebalance"** — that phrase has not matched the
