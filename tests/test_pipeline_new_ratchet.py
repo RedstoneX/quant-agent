@@ -35,17 +35,16 @@ def test_trunk_measurement_is_actually_read():
     assert len(paths) > 50, f"only {len(paths)} test .py files seen in the working tree"
     blobs = guard_reference.trunk_blobs(sorted(paths))
     assert len(blobs) > 50, f"only {len(blobs)} of those were readable on origin/main"
-    assert sum(pipeline_new_guard.trunk_sites(paths).values()) > 0, (
-        "origin/main has no __new__ pipeline sites at all, so the comparison is vacuous"
-    )
+    # Zero trunk sites is the goal state, not vacuity: the blobs above were read.
+    assert pipeline_new_guard.trunk_sites(paths) is not None
 
 
 def test_growth_is_caught_and_reported_as_a_delta(monkeypatch):
     """Pretend the trunk copy had one site fewer: the guard must say so."""
-    now = pipeline_new_guard.working_sites()
-    assert now, "no __new__ sites in the tree at all; pick a different fixture"
-    offender = sorted(now)[0]
-    real = pipeline_new_guard.trunk_sites
+    offender = ("tests/test_planted.py", "p = TradingPipeline." + "__new__" + "(TradingPipeline)")
+    now = {offender: [4, 8]}
+    monkeypatch.setattr(pipeline_new_guard, "working_sites", lambda: now)
+    real = lambda paths: {offender: 2}
 
     def fewer(paths):
         sites = real(paths)
@@ -68,9 +67,11 @@ def test_a_brand_new_offender_file_is_caught(monkeypatch):
 
 def test_removing_one_site_and_adding_another_still_fails(monkeypatch):
     """The count hole: -1 old +1 new nets to zero. Identity comparison must still fail."""
-    now = pipeline_new_guard.working_sites()
-    assert now, "no __new__ sites in the tree at all; pick a different fixture"
-    path, old_line = sorted(now)[0]
+    path = "tests/test_planted.py"
+    old_line = "p = TradingPipeline." + "__new__" + "(TradingPipeline)"
+    now = {(path, old_line): [4]}
+    monkeypatch.setattr(pipeline_new_guard, "trunk_sites", lambda paths: {(path, old_line): 1})
+    monkeypatch.setattr(pipeline_new_guard, "test_paths", lambda: [path])
     new_site = (path, "q = TradingPipeline." + "__new__" + "(TradingPipeline)  # moved")
     pretend = {site: lines for site, lines in now.items() if site != (path, old_line)}
     pretend[new_site] = [1]

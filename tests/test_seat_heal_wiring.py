@@ -802,7 +802,7 @@ def test_healable_categories_is_only_read_by_the_heal_path():
     # consequence, which is the one thing this test exists to catch — so
     # src/ is held to a hard allowlist of exactly the heal dispatcher,
     # which step 7 of docs/PIPELINE_SPLIT_PLAN.md moved verbatim out of
-    # src/pipeline.py into src/pipeline_research_continuity.py.
+    # src/pipeline.py, now `SeatHealer` (item 210 step 9, second instalment).
     # tests/ cannot manufacture a live trading consequence on its own: a
     # test file reading the constant to PIN its membership (as this one
     # already does, and as tests/test_macro_partial_verdict.py does for the
@@ -810,10 +810,10 @@ def test_healable_categories_is_only_read_by_the_heal_path():
     # the defect this check is written against. Enumerating test files by
     # name here would just make every new pinning test a false alarm.
     src_readers = {r for r in code_readers if r.startswith("src/")}
-    assert src_readers == {"src/pipeline_research_continuity.py"}, (
+    assert src_readers == {"src/research_continuity/seat_heal_path.py"}, (
         f"HEALABLE_CATEGORIES is read in production code outside the heal "
         f"dispatcher: "
-        f"{sorted(src_readers - {'src/pipeline_research_continuity.py'})}. "
+        f"{sorted(src_readers - {'src/research_continuity/seat_heal_path.py'})}. "
         f"It is a "
         f"refresh-cost hint, not a trading consequence."
     )
