@@ -163,3 +163,44 @@ board was not recounted here.
 - Provider data and news caches written to the wrong `data/` are not undone
   by an account reset.
 - A session left running past the open with resting orders.
+
+---
+
+## SIZED, NOT STARTED — the session windows ignore the calendar
+
+Measured against `origin/main` on 2026-10-04. This belongs here because the
+only honest end-to-end proof of the repair is a real early close, and the
+next one on the US equities calendar is in late November.
+
+**What is actually wrong.** The market-OPEN verdict is already correct: each
+calendar edge is read independently and a positively-established "outside the
+session" wins, so an early close reads as shut. What was never fixed is the
+SCHEDULE. Each phase is pinned to a fixed minute of the ET day in
+`SESSION_WINDOWS`, and `scripts/run_if_et_window.sh` carries a second
+hand-copied table of the same numbers, held in step by a pinning test. The
+wrapper's entire calendar awareness is a weekday short-circuit.
+
+**What that costs on a 13:00 close.** `midday` (13:00-14:30) and `close`
+(15:30-16:00) fire wholly after the market has shut, so the act-on-trigger
+end-of-day position review never runs while the desk can still trade, and
+positions go into the long weekend un-reviewed. `intra_check`, the desk's
+largest paid cost centre, keeps ticking to 16:00 against a shut market. On a
+full holiday the wrapper fires every weekday phase.
+
+**Why no fix is attached.** The repair is to express each phase relative to
+the session's real open and close, resolved per day from the broker calendar
+`src/market_session.py` already reads, and to delete the wrapper's copy of
+the table rather than maintain two. The fixed bounds are also read by
+`src/scheduler.py`, `src/silence_watchdog.py`, `src/coverage_watchdog.py` and
+`src/config/llm_cost.py` — the last three derive expected-tick counts and the
+paid-session budget from them — so all of it becomes session-dependent in the
+same change. Roughly 400-600 changed lines across six modules plus the
+wrapper and the pinning test. Half of that shipped is worse than none,
+because a phase table that is calendar-aware in one reader and wall-clock in
+another drifts silently.
+
+**Explicitly not done:** no detector, alert or warning was added. A detector
+that fires on a half day is not a fix and the owner has ruled against it.
+
+**Do not introduce a hardcoded holiday list** when this is picked up. That is
+the same time bomb wearing a different hat; the calendar is the only source.
