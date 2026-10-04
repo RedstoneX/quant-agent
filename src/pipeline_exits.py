@@ -879,7 +879,7 @@ class ExitEngineMixin:
                     status=_astatus, shifted=len(_ok), total=len(_legs),
                     legs=_legs, run_id=run_id,
                 )
-                if _astatus in ("partial", "refused", "unknown", "naked"):
+                if _astatus in ("partial", "refused", "unknown", "naked", "market_closed"):
                     # Telegram is muted, so this row and this alert are the
                     # whole evidence that a leg did not move.
                     try:
@@ -1797,15 +1797,14 @@ class ExitEngineMixin:
                 # about whether a trend has ended.
                 if held_now is not None and alignment_verdict is None and not cites_external_information(reason_for_band):
                     from src.risk.exit_guard import noise_band_atr
+                    from src.risk.noise_band_record import midday_payload as midday_band_payload
 
                     atr = self._atr_for_symbol(symbol)
                     # Phase 3.6 audit follow-up (2026-09-04, fix #1): the band
                     # widens with sqrt(sessions_held) — same convention as
-                    # levels.py's target projection — instead of a flat 1.0x
-                    # ATR regardless of how long the position has aged. See
-                    # `exit_guard.noise_band_atr` for the rationale.
-                    #
-                    # 2026-09-04 audit follow-up (fix, second pass): this MUST
+                    # levels.py's target projection — not a flat 1.0x ATR
+                    # however long the position has aged; see
+                    # `exit_guard.noise_band_atr`. Second pass: this MUST
                     # be `sessions_held` (weekend-aware trading-session count,
                     # `trading_calendar.trading_sessions_held`), NOT the plain
                     # calendar-day `days_held` — levels.py's own precedent
@@ -1814,35 +1813,60 @@ class ExitEngineMixin:
                     # every weekend (Friday entry reviewed Monday shows 3
                     # calendar days but only 1 real session of price action).
                     sessions_held_for_band = (position_facts or {}).get(symbol, {}).get("sessions_held")
-                    if adverse_move_is_noise(
+                    # BOARD ITEM 70, 2026-10-04: the band used to be recorded
+                    # ONLY when it BLOCKED, and a sample truncated at the
+                    # threshold under examination can never locate it. Both
+                    # outcomes now go to `src/risk/noise_band_record.py`.
+                    _band_blocks = adverse_move_is_noise(
                         held_now.avg_entry, held_now.current_price, atr,
                         side=close_side, days_held=sessions_held_for_band,
-                    ):
-                        adverse_move = (
-                            held_now.current_price - held_now.avg_entry
-                            if close_side == "buy"
-                            else held_now.avg_entry - held_now.current_price
+                    )
+                    adverse_move = (
+                        held_now.current_price - held_now.avg_entry
+                        if close_side == "buy"
+                        else held_now.avg_entry - held_now.current_price
+                    )
+                    band_multiple = noise_band_atr(sessions_held_for_band)
+                    # Board item 70, 2026-09-30 — TRUTH OF THE RECORD.
+                    # `noise_band_atr` SILENTLY FLOORS a missing or sub-1
+                    # session count to 1, so a width quoted beside
+                    # `sessions_held=None` asserted what the record could not
+                    # support. Say which it was.
+                    try:
+                        _sess = float(sessions_held_for_band) if sessions_held_for_band is not None else None
+                    except (TypeError, ValueError):
+                        _sess = None
+                    sessions_measured = (
+                        _sess is not None and math.isfinite(_sess) and _sess >= 1.0
+                    )
+                    sessions_text = (
+                        f"{_sess:g} (measured)" if sessions_measured
+                        else f"{sessions_held_for_band!r} unusable — floored to 1 session"
+                    )
+                    _atr_f = float(atr or 0.0)
+                    band_width = band_multiple * _atr_f
+                    band_detail = midday_band_payload(
+                        close_side=close_side, blocked=_band_blocks,
+                        adverse=adverse_move, entry=held_now.avg_entry,
+                        price=held_now.current_price, atr=_atr_f,
+                        band_multiple=band_multiple,
+                        sessions_held=_sess if sessions_measured else 1.0,
+                        sessions_measured=sessions_measured,
+                        tail=f"{act}: {reason_for_band[:400]}",
+                    )
+                    try:
+                        self.db.record_intraday_evaluation(
+                            symbol=symbol, run_id=run_id,
+                            status=(
+                                "exit_blocked_inside_atr_noise_band"
+                                if _band_blocks
+                                else "exit_noise_band_evaluated_not_blocked"
+                            ),
+                            detail=band_detail,
                         )
-                        band_multiple = noise_band_atr(sessions_held_for_band)
-                        # Board item 70, 2026-09-30 — TRUTH OF THE RECORD.
-                        # `noise_band_atr` SILENTLY FLOORS a missing, non-finite
-                        # or sub-1 session count to 1 session. The old line
-                        # printed `sessions_held=None` beside a concrete
-                        # multiple, so the record asserted a band width without
-                        # saying the width came from a default rather than from
-                        # a measured hold length. Say which it was.
-                        try:
-                            _sess = float(sessions_held_for_band) if sessions_held_for_band is not None else None
-                        except (TypeError, ValueError):
-                            _sess = None
-                        sessions_measured = (
-                            _sess is not None and math.isfinite(_sess) and _sess >= 1.0
-                        )
-                        sessions_text = (
-                            f"{_sess:g} (measured)" if sessions_measured
-                            else f"{sessions_held_for_band!r} unusable — floored to 1 session"
-                        )
-                        band_width = band_multiple * float(atr or 0.0)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("noise band: audit write failed: %s", e)
+                    if _band_blocks:
                         logger.warning(
                             "Position reviewer: blocking %s %s — adverse "
                             "$%.2f move from entry $%.2f is smaller than "
@@ -1853,33 +1877,9 @@ class ExitEngineMixin:
                             "Reason: %r",
                             act, symbol, adverse_move,
                             held_now.avg_entry, band_width, band_multiple,
-                            atr or 0.0, sessions_text,
+                            _atr_f, sessions_text,
                             reason_for_band[:160],
                         )
-                        # The durable per-symbol rows used to carry ONLY the
-                        # model's own words, so nothing persisted said which
-                        # rule fired or on what numbers. Both rows now carry a
-                        # machine-readable rule=... payload ahead of the reason.
-                        band_detail = (
-                            f"rule=atr_noise_band side={close_side} "
-                            f"adverse={adverse_move:.4f} "
-                            f"entry={held_now.avg_entry:.4f} "
-                            f"price={held_now.current_price:.4f} "
-                            f"atr14={float(atr or 0.0):.4f} "
-                            f"band_multiple={band_multiple:.4f} "
-                            f"band_width={band_width:.4f} "
-                            f"sessions_held={_sess if sessions_measured else 1.0:g} "
-                            f"sessions_measured={str(sessions_measured).lower()} "
-                            f"| {act}: {reason_for_band[:400]}"
-                        )
-                        try:
-                            self.db.record_intraday_evaluation(
-                                symbol=symbol, run_id=run_id,
-                                status="exit_blocked_inside_atr_noise_band",
-                                detail=band_detail,
-                            )
-                        except Exception as e:  # noqa: BLE001
-                            logger.warning("noise band: audit write failed: %s", e)
                         from src.risk.exit_refusal import CODE_NOISE_BAND
                         self._record_exit_refusal(
                             symbol=symbol, run_id=run_id, action=act,

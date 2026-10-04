@@ -532,6 +532,19 @@ numbers:
         shows that no refused order would have filled worse than the half-
         spread the universe screen already rejects, the belt is redundant
         with that screen and is deleted rather than re-picked
+    owner_appetite_2026_10_02: >-
+      THIS IS AN OWNER APPETITE QUESTION, NOT A MEASUREMENT GAP, and it is
+      recorded as one here because the distinction was not drawn on the row.
+      The slippage distribution under the belt IS already measured; what no
+      measurement can produce is the tail, because the belt refuses the orders
+      that would populate it, so the data needed to pick a percentile can only
+      be bought by deliberately sending some refused orders through a wider
+      belt and paying whatever they fill at. The one sentence the owner would
+      be answering: are you willing to pay worse fills on a small number of
+      deliberately admitted orders in order to learn what the entry belt is
+      currently refusing, and if so for how many orders. No value is proposed
+      and none may be picked until that is answered; the row stays `arbitrary`
+      and its recording route is unchanged.
   - id: src.config.ExecutionConfig.repeg_poll_seconds
     value: 5
     status: not-trade-governing
@@ -1132,6 +1145,25 @@ numbers:
         holds real orders near 1%, so if the notional cap binds first on
         every order the measurement covers, this envelope governs nothing
         and is deleted rather than re-picked
+    ruling_check_2026_10_02: >-
+      THE OPEN QUESTION ABOVE IS BARRED AND IS WITHDRAWN. It asks "What
+      single-name risk does the mandate actually permit?", which routes a
+      GLOBAL risk dial to the owner. The owner ruled on 2026-09-30 that risk
+      limits are read off each name's own behaviour and seat conviction, and
+      that a global risk constant is a defect rather than a value to ratify.
+      That ruling was already applied to the two neighbouring aggregate rows
+      -- `src.config.RiskConfig.max_portfolio_risk_pct` and
+      `src.config.RiskConfig.SECTOR_HARD_CEILING_MAX` both carry an "ITEM 186
+      PASS 2026-09-30" paragraph withdrawing their owner questions -- and it
+      was not applied here, which is how this row kept routing the one
+      question the ruling forbids. UNLIKE those two it is NOT exempt as an
+      aggregate rationing ceiling: this is a PER-NAME cap, which is exactly
+      the shape the ruling addresses, so the remedy does apply and this row is
+      a defect by the ruling's own terms. No value is changed and no value may
+      be picked to settle it. The route recorded in `settles_by` -- a
+      measurement over the TRADABLE UNIVERSE, never over this desk's own fills
+      -- is the only admissible way out, and it remains the correct one
+      because it produces a per-name reading rather than a dial.
   - id: src.config.RiskConfig.max_target_horizon_sessions
     settles_by:
       kind: measurement
@@ -2262,40 +2294,31 @@ numbers:
         which behaviour does not change is removed instead of re-picked.
   - id: src.config.SmartMoneyConfig.min_cluster_owners
     value: 2
-    status: arbitrary
+    status: sourced
     site: src/config/__init__.py
+    source: >-
+      src/config/__init__.py:1410 -- the field is declared
+      `min_cluster_owners: int = Field(default=2, ge=2, le=10)`, so 2 is the
+      smallest value the field may legally hold, and src/data/smart_money.py:464
+      and src/data/congressional_trading.py:425 both clamp it again with
+      `max(2, int(min_cluster_owners))`. It is the DOMAIN FLOOR of the quantity,
+      not a point chosen inside a range.
     note: >-
-      The insider-signal admission screen: 2 owners, a $5 minimum price,
-      $10M average daily dollar volume, 20 days of history. The $100k/$250k
-      dollar floors that used to sit here were deleted (board item 52,
-      resolved 2026-09-25: no study supports single-transaction dollar size
-      as an insider-buy predictor). The $10M and 20-day floors were recorded
-      on 2026-09-01 as screening the WRONG THING, under a redesign that was
-      agreed and never built. All round numbers, none measured.
-    open_question: >-
-      How many distinct owners must buy before it is a cluster rather than a
-      coincidence?
-    cost_while_unanswered: >-
-      Two independent buyers are read as agreement.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: >-
-        docs/board_notes/ `## item 90` -- the 2026-10-01 tranche-three
-        routing pass, which specifies each recording field by name
-      records: >-
-        every insider and congressional purchase the desk ingests, with its
-        transaction and filing dates, the filer's role, the gaps to that
-        filer's own prior purchases, the other filers buying the same name in
-        the same span, and the price path of the name afterwards -- read off
-        the filings record and market prices, never off this desk's own fills.
-      closes_when: >-
-        that record is long enough to show how post-filing price behaviour
-        varies with each window -- the span that makes a cluster, the length
-        of the lookback, the cadence gaps that mark a buy routine, and the age
-        of a calendar pattern -- so each window is read off where behaviour
-        actually changes rather than set to a round number; a window across
-        which behaviour does not change is removed instead of re-picked.
+      2026-10-02, item 90 follow-up pass. Re-read as a STRUCTURAL BOUND with
+      the reason recorded, which is item 90's state (2), rather than as an
+      unsourced screening level. The quantity counted is DISTINCT OWNERS
+      buying the same name in the same window; a count of one is one insider's
+      purchase, which is not a cluster under any definition of the word and
+      which the desk already treats as a single-transaction signal elsewhere.
+      Two is therefore the smallest integer at which the predicate can be
+      true at all, which is why the Pydantic bound and both runtime clamps
+      independently pin it there. This disposition settles ONLY the floor. It
+      does NOT claim that two is the right ADMISSION threshold: if the
+      measurement specified for
+      `src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS` shows that
+      coincidence persists at two or three distinct insiders, the admission
+      threshold moves UP, and that would be a new number above this floor, not
+      a correction to it. No value changed.
   - id: src.config.SmartMoneyConfig.min_external_avg_dollar_volume_usd
     value: 10000000
     status: arbitrary
@@ -2370,40 +2393,37 @@ numbers:
         re-derived.
   - id: src.config.SmartMoneyConfig.min_external_price_usd
     value: 5
-    status: arbitrary
+    status: sourced
     site: src/config/__init__.py
+    source: >-
+      17 CFR 240.3a51-1(d), the SEC's definition of "penny stock": a security
+      is a penny stock unless, among the listed exclusions, it has a price of
+      $5.00 or more.
+      https://www.ecfr.gov/current/title-17/chapter-II/part-240/section-240.3a51-1
+      $5.00 is the boundary of the penny-stock regime and of the Rule
+      15g-2..15g-9 disclosure, suitability and confirmation requirements that
+      attach to transactions in one. It is fixed by the Commission, not by
+      this desk.
     note: >-
-      The insider-signal admission screen: 2 owners, a $5 minimum price,
-      $10M average daily dollar volume, 20 days of history. The $100k/$250k
-      dollar floors that used to sit here were deleted (board item 52,
-      resolved 2026-09-25: no study supports single-transaction dollar size
-      as an insider-buy predictor). The $10M and 20-day floors were recorded
-      on 2026-09-01 as screening the WRONG THING, under a redesign that was
-      agreed and never built. All round numbers, none measured.
-    open_question: >-
-      Below what price does tick granularity and spread make this desk's stop
-      placement unreliable?
-    cost_while_unanswered: >-
-      A price floor standing in for a spread-and-tick constraint nobody
-      measured.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: >-
-        docs/board_notes/ `## item 90` -- the 2026-10-01 tranche-three
-        routing pass, which specifies each recording field by name
-      records: >-
-        for every external candidate this screen admits or rejects: its quoted
-        spread, tick size, average dollar volume, length of available price
-        history, the reject reason where it was rejected, and the stop
-        distance this desk's own rules would have placed on it, so tradability
-        is recorded rather than presumed.
-      closes_when: >-
-        the record shows the price, liquidity and history levels at which stop
-        placement stops being reliable for the order sizes this account
-        actually places, so each floor is read off tradability instead of
-        chosen; a floor that rejects nothing untradable is removed rather than
-        re-derived.
+      2026-10-02, item 90 follow-up pass. The admission screen for an EXTERNAL
+      nomination -- a name the desk does not already follow -- rejects a quote
+      below $5. Re-read as an UNDENIABLE regulatory boundary rather than a
+      round price: $5.00 is the one externally fixed price line in US equities,
+      and the screen's effect is to keep the penny-stock regime out of the
+      nominating universe entirely. The value is not a point chosen on a
+      distribution, so nothing here is fitted and nothing is ratified into
+      place. WHAT THIS DOES NOT SETTLE, said explicitly because the row's
+      previous open question was a different question: it does NOT establish
+      the price below which spread and tick granularity make this desk's STOP
+      PLACEMENT unreliable. That is a property of the instrument's quote, not
+      of the Commission's threshold; it governs stop geometry, not external
+      admission, and it stays open on the stop rows
+      (`src.config.RiskConfig.absolute_min_stop_atr_multiple` and
+      `src.portfolio_constructor.config.ConstructorConfig.structural_stop_buffer_pct`),
+      where the stop distance it would bound is actually computed. The desk may
+      still want a HIGHER external floor than $5 for that reason; this entry
+      sources the floor that is here, and says plainly that a tick-and-spread
+      measurement could raise it. No value changed.
   - id: src.config.SmartMoneyConfig.refresh_deadline_s
     value: 180
     status: arbitrary
@@ -2842,57 +2862,25 @@ numbers:
       to avoid on the other side.
   - id: src.data.smart_money_cluster.MIN_PURCHASE_CLUSTER_INSIDERS
     value: 2
-    status: arbitrary
-    settles_by:
-      kind: measurement
-      state: specified
-      where: >-
-        docs/board_notes/item-090.md (item 90, the 2026-10-01 smart-money tranche)
-      records: >-
-        two things: whether the Alldredge & Blank (2019) cluster definition can
-        be read from an obtainable copy of the paper rather than from a search
-        snippet, and, independently of that, the distribution of distinct-
-        insider counts per same-day purchase cluster across the SEC Form 4
-        record the desk already pulls.
-      closes_when: >-
-        either the paper's own definition is read from a retrievable copy and
-        the threshold matches it or moves to it, or the measured distinct-
-        insider distribution shows where coincidence ends, so two is kept or
-        replaced on filings evidence instead of resting on a citation nobody has
-        opened.
+    status: derived
     site: src/data/smart_money_cluster.py
+    derived_from: src.config.SmartMoneyConfig.min_cluster_owners
+    base_value: 2
     note: >-
-      CORRECTED 2026-09-20 (adversary review of board item 124): this was
-      marked `sourced` against https://papers.ssrn.com/abstract=2781761
-      (Alldredge & Blank, J. Financial Research 42(2), 2019). That page (and
-      the Wiley mirror) returned HTTP 403 on 2026-09-19 and again on
-      2026-09-20 -- nobody, including the author, can open it. The value (2
-      distinct insiders) reads as the abstract's own definition ("a purchase
-      on the same day as another insider purchase at the same company") only
-      because a search engine's cached snippet of the abstract was quoted
-      back, not because the paper was read. A citation nobody can open does
-      not meet this ledger's own bar ("give a URL... a non-author can
-      open"), whatever the snippet says, so this is relabelled `arbitrary`
-      rather than left `sourced` against a dead link. The PR that shipped
-      this feature separately corrected three OTHER figures it had been
-      citing from this same paper ("within ~2 days", "~2.1%/month", "0.9
-      percentage points above solitary buys") after finding those specific
-      three were from a secondary summary, not the abstract -- see
-      docs/RESEARCH_FINDINGS.md and docs/INCIDENT_HISTORY.md's 2026-09-19
-      entry. This entry was not part of that correction and should have
-      been.
-    open_question: >-
-      Does Alldredge & Blank (2019) actually define a cluster as two or more
-      distinct insiders, or is that reconstruction from a search snippet
-      wrong -- and is two the right count, or would three change the
-      measured 23% same-day-clustering rate materially? Answerable by
-      reading the actual paper (library access, a paid copy, or a version
-      hosted somewhere that does not 403) rather than by another web search.
-    cost_while_unanswered: >-
-      Every same-day insider purchase cluster this feature detects, and
-      therefore every medium-to-high conviction lift it can produce, is
-      gated on a threshold nobody has verified against the source it is
-      attributed to.
+      NOT A SECOND NUMBER. 2026-10-02: this is the same quantity as
+      `SmartMoneyConfig.min_cluster_owners` -- the count of DISTINCT insiders
+      required before a same-window set of purchases is called a cluster --
+      at a second definition site in the same module family. The configured
+      value is threaded to the clustering function as `min_cluster_owners`
+      (src/pipeline.py:778 and :815 -> src/data/smart_money_cluster.py:89,121);
+      this module-level constant guards the purchase-cluster branch at
+      src/data/smart_money_cluster.py:223, which takes no parameter. Recorded
+      as `derived` so the two cannot drift apart silently: raising the
+      configured floor without raising this one would leave the purchase
+      branch admitting pairs the rest of the pipeline had stopped admitting.
+      The base carries the grounds (the domain floor of "cluster") and the
+      measurement route for any admission threshold ABOVE the floor stays
+      recorded there and on board item 90. No value changed.
   - id: src.data.technical.ATR_PERIOD
     value: 14
     status: sourced
@@ -3360,39 +3348,31 @@ numbers:
         derived; the open mandate half belongs to board item 186
   - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct
     value: 90
-    status: arbitrary
+    status: derived
     site: src/portfolio_constructor/config.py
+    derived_from: src.config.RiskConfig.SECTOR_HARD_CEILING_MAX
+    base_value: 90
     note: >-
-      The soft sector target and the hard sector ceiling. Owner-accepted
-      figures with no measurement behind either; approval does not make a flat
-      percent non-arbitrary (docs/OUTCOME.md). Board item 104 separately
-      records that the prompts describe the soft bound as if it were the hard
-      one.
-      ITEM 186 PASS 2026-09-30 — checked against the owner's ruling that risk
-      is never a global dial and re-affirmed as OUT of its scope. This is an
-      AGGREGATE rationing ceiling over the whole book, not a per-name risk
-      read: there is no single instrument whose behaviour it could be read
-      off, so the ruling's remedy (read it per name) does not apply and it is
-      not converted into a defect. It remains owner-ratified appetite with no
-      measurement behind it, which is why the status stays `arbitrary`.
-    open_question: >-
-      WITHDRAWN with the base row, for the same reason: the owner's 2026-09-30
-      ruling bars routing a global risk dial to him. Both failed derivations
-      and the measured 44.3% maximum live sector share are recorded on
-      `src.config.RiskConfig.SECTOR_HARD_CEILING_MAX`; this constructor site
-      is the same ceiling at a second definition site and settles with it.
-    cost_while_unanswered: >-
-      Same open question as SECTOR_HARD_CEILING_MAX, at the constructor.
-    settles_by:
-      kind: recording
-      state: specified
-      where: docs/board_notes/ (item 186, the 2026-10-01 pass)
-      records: >-
-        the same per-session sector shares of gross notional that settle the
-        base row, since this site deploys the identical ceiling
-      closes_when: >-
-        the base row's recording shows the realised maximum sector share and
-        both definition sites are moved together to a bound above it
+      NOT A SECOND NUMBER. 2026-10-02: this field is overwritten on every
+      live run. `build_constructor_config` sets
+      `max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct`
+      (src/pipeline.py:363), and `sector_hard_ceiling_pct`
+      (src/config/__init__.py:1031-1037) returns
+      `min(100.0, max(max_sector_pct, min(SECTOR_HARD_CEILING_MAX,
+      max_sector_pct * SECTOR_HARD_MULTIPLE)))`. With the deployed
+      `max_sector_pct` of 75 and `SECTOR_HARD_MULTIPLE` of 1.5 the inner
+      product is 112.5, so the cap binds and the live value is exactly
+      `SECTOR_HARD_CEILING_MAX` = 90. The literal here is the fallback for a
+      `ConstructorConfig` built without the pipeline (the backtest engine,
+      src/backtest/engine.py), and it is the same ceiling, not an
+      independently chosen one. Recorded as `derived` so that moving the base
+      without moving this fails `base-drift` instead of leaving two ceilings
+      that silently disagree -- which is the state
+      `src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)` is
+      still in and is the reason the mirror rule exists. The open question
+      about the MAGNITUDE of 90 is not answered here and has not moved: it
+      lives on the base row, `src.config.RiskConfig.SECTOR_HARD_CEILING_MAX`,
+      which stays `arbitrary` with its settlement route.
   - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_pct
     value: 75
     status: arbitrary
@@ -4140,6 +4120,32 @@ numbers:
       The settlement recording for this number therefore exists in code but
       has recorded nothing yet, and the board's headline "7 of 8 discretionary
       exits blocked" is NOT reproducible from that table.
+
+      STRUCTURAL CAUSE FOUND AND FIXED 2026-10-04 (recording only, no
+      behaviour change). The emptiness was not only the desk being off. The
+      recording was CENSORED BY CONSTRUCTION: in `src/pipeline_exits.py` the
+      payload was written only on the branch where the band BLOCKED an exit,
+      so every adverse move the band judged large enough to let through was
+      discarded, and the band's SECOND home, the `check_structural_protection`
+      fallback in `src/risk/exit_guard.py`, emitted no `rule=` payload at all.
+      A sample truncated at exactly the threshold under examination can never
+      locate that threshold -- it would have contained only moves below 1.0
+      ATR and would have been consistent with any multiple whatsoever. Both
+      outcomes are now written, tagged `blocked=` / `inside_band=`, and the
+      adverse move is carried as an ATR MULTIPLE as well as in dollars, which
+      is the unit this constant is denominated in and the only unit in which
+      the two homes are comparable. The payload also exposes an asymmetry no
+      record previously stated: the midday home widens the band by
+      sqrt(sessions held) while the fallback home passes no hold length and
+      stays flat at 1.0, so one named constant produced two different widths
+      for the same holding on the same day. NOT YET SETTLED: the recording can
+      now accrue, but it has still accrued nothing, because the desk is off.
+      WHAT WOULD SETTLE IT: the distribution of `adverse_atr_multiple` across
+      both outcomes at the moment of a reviewer-approved exit, paired with
+      what the position did afterwards -- specifically, the multiple above
+      which an adverse move from entry was followed by further adverse travel
+      rather than recovery. That requires live sessions with exits in them and
+      cannot be manufactured from the 334 rows now on disk.
   - id: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
     settles_by:
       kind: recording
@@ -4735,7 +4741,7 @@ numbers:
       (https://corporatefinanceinstitute.com/resources/wealth-management/chandelier-exit/).
       NUANCE: only the MULTIPLE (3.0) is sourced, not the whole formula. The
       desk's fallback trail multiplies this by a PASSED-IN ATR off the
-      highest-high / lowest-low since entry (src/risk/trailing.py:624,634),
+      highest-high / lowest-low since entry (src/risk/trail_evaluate.py:262,271),
       NOT the published indicator's fixed 22-bar lookback and ATR(22); so the
       3.0 multiple carries this citation, the surrounding geometry does not.
   - id: src.risk.trailing.MIN_RATCHET_PCT
@@ -4846,6 +4852,36 @@ numbers:
       None outstanding. The refusal codes written to `specialist_evidence`
       (`kind='trail_state'`, `src/risk/trailing.py::TRAIL_CODE_*`) already
       name which gate refused each trail, which is what this entry wanted.
+    wrong_as_of_2026_10_02: >-
+      THIS NUMBER IS NOW WRONG BY ITS OWN RECORDED TEST, AND THE TEST WAS
+      PRE-COMMITTED. The only cost this gate was kept for was measured and
+      written down at src/risk/trailing.py:152-168: every stop replacement was
+      a cancel-then-resubmit, so each admitted tighten opened a real window in
+      which the position carried no protective order, and removing the gate
+      would have added seven such windows across nine evaluation runs. The
+      same comment named the exact condition that would end that defence --
+      `_amend_resting_stop_price` reaching main -- and recorded "It is NOT on
+      main (verified 2026-09-30)". IT IS ON MAIN. It is defined at
+      src/execution/broker.py:1467, constructed into the stop placer at
+      src/execution/broker_parts/stop_place.py:186 and :209, and
+      `replace_stop_loss` now PREFERS it: src/execution/broker_parts/
+      stop_place.py:1030-1062 amends the resting stop's price in place and
+      falls back to cancel+resubmit only when the pre-amend position re-read
+      fails or the order is not amendable, with the fallback's naked window
+      timed and recorded (src/execution/broker_parts/stop_window.py:53). So on
+      the preferred path there is no unprotected instant, and the measured
+      cost that defended 2.0 is gone. By the derivation this entry already
+      committed to, the honest floor is now ONE VENUE TICK -- SEC Rule 612
+      (17 CFR 242.612), $0.01 at or above $1.00 and $0.0001 below, which
+      `_quantize_price` and `_prices_match` already implement -- a reading off
+      the instrument instead of a picked percentage.
+      WHY THE VALUE IS NOT CHANGED IN THIS COMMIT, said plainly rather than
+      deferred quietly: lowering this floor admits stop tightenings the desk
+      currently refuses, and a tightened protective stop does not move back.
+      That is a one-way change to live protection, so it is reported rather
+      than taken by the agent that found it. The change itself is small and
+      fully specified above: replace the percentage gate with a one-tick
+      minimum read from `_quantize_price`.
   - id: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
     settles_by:
       kind: measurement
@@ -7920,7 +7956,7 @@ numbers:
     note: >-
       Board item 39, attempt 3. Not a trading threshold: it is the length of
       the field this text has to fit in. `_build_sell` stores
-      `reasoning[:500]` (src/portfolio_constructor/orders.py:133, :189, :411),
+      `reasoning[:500]` (src/portfolio_constructor/order_build/: ExitOrderBuilders._build_sell, ExitOrderBuilders._build_cover, LongEntryBuilder._build_buy, ShortEntryBuilder._build_short),
       so a rotation reason longer than that loses its LAST clause - which is
       the one naming what the sale was cleared on, or that the close is
       contingent on the replacement buy. Read from the truncation it has to
@@ -8054,6 +8090,28 @@ numbers:
       The risk seat is told a cluster is too large at a line nothing backs,
       and a second, different cluster cap (40% of RISK) exists beside this one
       (50% of NOTIONAL).
+    correction_2026_10_02: >-
+      TWO CITATIONS IN THE `note` ABOVE ARE FALSE AND ARE CORRECTED HERE
+      RATHER THAN LEFT TO BE RE-DISCOVERED. (1) "The one caller
+      (src/pipeline.py:2113)" -- the one production caller is now
+      src/pipeline_risk_gate.py:165; it still passes nothing, so the finding
+      that the default is the live value STANDS, but the path given for it
+      does not exist. (2) "src/pipeline.py:176" for HARD_BLOCK_RULES is the
+      same stale path; the rule set is defined at src/risk/rules.py:966-982
+      and `correlation_cluster` is absent from it, so the advisory claim also
+      stands. The rule body is at src/risk/rules.py:2202-2239, not 1700-1740.
+      WHAT WAS CHECKED AND DELIBERATELY NOT CHANGED. The obvious repair --
+      wire `max_cluster_risk_share_pct` (40) through to this parameter so one
+      configured number governs both -- was examined and REJECTED as a
+      category error, and this is recorded so the next pass does not re-make
+      it. The two caps measure different quantities in different units:
+      src/risk/rules.py:2222-2226 computes `cluster_pct` as
+      `(peer_value + gross_new) / total_value * 100`, a share of GROSS
+      NOTIONAL, while `max_cluster_risk_share_pct` is a share of the RISK
+      budget consumed by a cluster (src/portfolio_constructor/__init__.py:1186).
+      Feeding the risk share into the notional test would silently tighten a
+      live advisory on an arithmetic confusion. The row stays `arbitrary` and
+      its recorded settlement route is unchanged.
   - id: src.risk.rules.apply_gross_ceiling(min_order_usd)
     value: 500
     status: derived
@@ -8232,13 +8290,54 @@ numbers:
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
       parameter was renamed to match.
-  - id: src.risk.trailing.compute_trailing_stop(qty)
+  - id: src.risk.trail_evaluate.compute_trailing_stop(qty)
     value: 1
     status: not-trade-governing
-    site: src/risk/trailing.py
+    site: src/risk/trail_evaluate.py
     note: >-
-      Unit default for a quantity (src/risk/trailing.py:347); both callers
-      pass the real quantity.
+      Unit default for a quantity (`compute_trailing_stop`, moved verbatim from
+      src/risk/trailing.py on 2026-10-04); both callers pass the real quantity.
+  # --- 2026-10-04: src/risk/trailing.py split into constructible parts. The
+  # numbers did not move: every constant stays defined in src/risk/trailing.py
+  # under its existing entry. These four rows exist only because a parameter
+  # default written as a NAME (`window: int = PIVOT_WINDOW`) imported from
+  # another file is a site in the importing module; each is the same number.
+  - id: src.risk.trail_evaluate.compute_trailing_stop(min_ratchet_pct)
+    value: 2
+    status: derived
+    site: src/risk/trail_evaluate.py
+    derived_from: src.risk.trailing.MIN_RATCHET_PCT
+    base_value: 2
+    note: >-
+      `min_ratchet_pct: float = MIN_RATCHET_PCT`, the name imported from
+      src/risk/trailing.py; the body moved verbatim on 2026-10-04.
+  - id: src.risk.trail_evaluate.evaluate_trailing_stop(min_ratchet_pct)
+    value: 2
+    status: derived
+    site: src/risk/trail_evaluate.py
+    derived_from: src.risk.trailing.MIN_RATCHET_PCT
+    base_value: 2
+    note: >-
+      `min_ratchet_pct: float = MIN_RATCHET_PCT`, the name imported from
+      src/risk/trailing.py; the body moved verbatim on 2026-10-04.
+  - id: src.risk.trail_structure._swing_lows(window)
+    value: 3
+    status: derived
+    site: src/risk/trail_structure.py
+    derived_from: src.risk.trailing.PIVOT_WINDOW
+    base_value: 3
+    note: >-
+      `window: int = PIVOT_WINDOW`, the name imported from src/risk/trailing.py;
+      the body moved verbatim on 2026-10-04.
+  - id: src.risk.trail_structure._swing_highs(window)
+    value: 3
+    status: derived
+    site: src/risk/trail_structure.py
+    derived_from: src.risk.trailing.PIVOT_WINDOW
+    base_value: 3
+    note: >-
+      `window: int = PIVOT_WINDOW`, the name imported from src/risk/trailing.py;
+      the body moved verbatim on 2026-10-04.
   # --- 2026-09-19: universe expansion and pruning (src/universe_screen.py) --
   # The screen's price, size and borrow lines are published rules; its
   # spread and volatility lines are DERIVED at run time from existing

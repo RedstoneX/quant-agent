@@ -40,8 +40,7 @@ def test_growth_is_caught_and_reported_as_a_delta(monkeypatch):
 
     def shrunk(paths):
         sizes = real(paths)
-        if biggest in sizes:
-            sizes[biggest] -= 50
+        sizes[biggest] = now[biggest] - 50  # relative to the working copy, so a change that itself shrinks the biggest file cannot hide the simulated growth
         return sizes
 
     monkeypatch.setattr(file_size_guard, "trunk_sizes", shrunk)

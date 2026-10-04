@@ -1,6 +1,6 @@
 """src.cost_circuit.parts.settlement -- Settlement for the cost circuit (before_provider_attempt, complete_call, fail_call).
 
-Bodies moved verbatim from src/cost_circuit/breaker_settlement.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_settlement.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations
