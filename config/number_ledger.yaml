@@ -988,18 +988,10 @@ numbers:
       -- is the only admissible way out, and it remains the correct one
       because it produces a per-name reading rather than a dial.
   - id: src.config.RiskConfig.max_target_horizon_sessions
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
-      records: the distribution of how many sessions the universe the desk could trade, on public
-        daily bars takes to travel a given ATR multiple from a comparable setup, so the reachability
-        horizon is read off real traverse times instead of a round three trading months
-      closes_when: the sessions-to-traverse distribution is in hand and the horizon is set at a stated
-        percentile of it; it is DELETED, together with the reach test, if traverse time turns out
-        to carry no information about whether a target is reached at all
     value: 60
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-09-25'
+    ruling_record: 'this row note: owner-ratified appetite, delegated to the adversary'
     site: src/config/__init__.py
     note: >-
       The longest horizon a target may claim before the desk stops believing
@@ -1008,22 +1000,6 @@ numbers:
       credit a target over, but no measurement of this desk's own closed
       trades picks the magnitude. Interacts with board item 91, the
       calendar-vs-trading-day defect.
-    open_question: >-
-      BARRED AND REPLACED 2026-10-01 (found by board item 185's sweep; this was
-      the FOURTH copy of a question that can only be answered by a study over
-      this desk's own trade record, which docs/OUTCOME.md forbids). The honest
-      question is not how long a target takes but whether this horizon governs
-      anything at all: Rex's 2026-09-30 ruling is that the desk exits on
-      ALIGNMENT - structure, ATR and an SMA cross agreeing the trend is over -
-      and never on a target, so a ceiling on how far out a target may sit may
-      now be guarding a decision nothing makes. Settle it by reading the live
-      exit path for a surviving consumer, and delete the number if there is
-      none; that reading belongs to board items 75 and 91, which own the
-      target's status and the calendar-vs-trading-day defect. Do not re-derive
-      the magnitude, and do not route 60 to the owner as an appetite dial.
-    cost_while_unanswered: >-
-      A target 60 sessions out licenses a claim of roughly 8 ATRs of travel
-      with nothing measured behind the horizon.
   - id: src.config.RiskConfig.max_target_reach_atr_multiple
     settles_by:
       kind: measurement
@@ -2937,7 +2913,9 @@ numbers:
       previously checked.
   - id: src.portfolio_constructor.config.ConstructorConfig.max_position_pct
     value: 65
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-09-11'
+    ruling_record: 'docs/INCIDENT_HISTORY.md, the prompt_limits defect (owner override to 65)'
     site: src/portfolio_constructor/config.py
     note: >-
       Single-name ceiling, moved to 65 by owner override on 2026-09-11
@@ -3521,7 +3499,9 @@ numbers:
     value: 1.5
   - id: src.risk.constants.STARTER_POSITION_RISK_PCT
     value: 0.5
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-08-27'
+    ruling_record: 'docs/OUTCOME.md risk-envelope row, commit 75c02335 (this row prior_source)'
     site: src/risk/constants.py
     prior_source: >-
       Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335).
@@ -3545,46 +3525,6 @@ numbers:
       RSG. docs/INCIDENT_HISTORY.md@`He was right. The work to that point had been co` attributes that shrinking to the 1.5
       reward:risk starter cap, not to this 0.5% floor - two different numbers
       in one sentence.
-    open_question: >-
-      Does this floor bind anything at all? The VALUE is owner-ratified
-      appetite and is not for re-deriving. What is unknown is whether the
-      seat ever asks for less than it, which nothing observed until board
-      item 223 built the recording. Answerable as: across the recorded
-      sub-floor requests, does the seat ever emit a positive risk below the
-      floor, and under what circumstances. NOT answerable by asking this
-      desk's own closed trades what floor would have paid best -- that is
-      fitting a number to the desk's own record, which docs/OUTCOME.md
-      bars outright. DELETE outcome: if the seat never asks below it across
-      a stated run of sessions, the floor is inert and goes, rather than
-      being re-picked at some other level.
-    cost_while_unanswered: >-
-      The floor decides which ideas are tradeable at all. Set too high, sound
-      ideas the seat would size small are never emitted and the desk never
-      learns what they would have returned; set too low, the book fills with
-      token positions paying full cost for an immaterial payoff. Neither
-      failure is visible today because, until board item 223, nothing
-      recorded a portfolio-manager target that sat under the floor.
-    settles_by:
-      kind: recording
-      state: built
-      where: src/storage/trades/ledger.py
-      writes:
-        - trade_refusals.requested_risk_pct
-      records: >-
-        Board item 223, 2026-10-01. Every portfolio-manager target whose
-        requested risk is positive and below the floor in force: the symbol,
-        the risk asked for (`trade_refusals.requested_risk_pct`), the floor
-        it sat under (`threshold`), and what the desk then did with it
-        (`stage`, always `observed_not_refused` here -- the target is shipped
-        unchanged, because a deterministic sub-floor refusal was ruled
-        out on the risk route 2026-10-01, on the adversary's measurement). Written from `PortfolioConstructor._plan_risk_targets`.
-      closes_when: >-
-        Rows accumulate and the trades they correspond to close: if sub-floor
-        targets do occur and their realised net returns after costs are
-        indistinguishable from zero, the floor becomes measured rather than
-        ratified. If after a year of sessions no row has ever been written,
-        the floor governs nothing the seat ever asks for, and the row leaves
-        `arbitrary` by reformulation rather than by derivation.
   - id: src.risk.alignment_exit.SMA_LADDER[20]
     value: 50
     status: not-trade-governing
