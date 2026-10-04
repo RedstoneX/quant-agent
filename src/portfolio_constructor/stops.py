@@ -42,6 +42,7 @@ from src.data.levels import (
     stop_rests_on_level,
     touch_probability,
 )
+from src.portfolio_constructor.structural_buffer import structural_buffer_beyond
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision,
@@ -260,17 +261,16 @@ class StopRules:
         Returns (matched_level_or_None, stop_price, rule) or None when neither
         tier yields a usable level on the protective side of entry (a monotonic
         move, no structure, or zero bars -- the ruling's genuine skip case).
-        The buffer is `ConstructorConfig.structural_stop_buffer_pct` --
-        owner-appetite, ledgered with an open question, not doctrine.
+        The buffer is this name's OWN signal-bar range (`structural_buffer`).
         """
         buffer_pct = self.cfg.structural_stop_buffer_pct
 
         def _beyond(level_price: float) -> float:
             # Just past the level on the losing side: below it for a long,
-            # above it for a short.
-            return (
-                level_price * (1.0 + buffer_pct) if is_short
-                else level_price * (1.0 - buffer_pct)
+            # above it for a short. Owner ruling 2026-10-04 -- the buffer is
+            # the name's OWN bar range, this flat fraction only as fallback.
+            return structural_buffer_beyond(
+                level_price, analysis, buffer_pct, is_short=is_short,
             )
 
         def _usable(stop_price: float) -> bool:

@@ -3077,48 +3077,72 @@ numbers:
     status: arbitrary
     site: src/portfolio_constructor/config.py
     note: >-
-      How far BELOW a structural level (ABOVE it for a short) the protective
-      stop is placed when it must be READ from price structure because there is
-      no ATR reading -- `_derive_structural_stop_no_atr`, added for board item
-      80 (owner ruling 2026-09-25: a missing volatility reading is never a
-      reason to skip protection or to size off an unverifiable typed number, so
-      the stop is derived from the nearest verified computed level, else the
-      signal/prior bar, and the position is HELD). A fraction of the level
-      price, so a wick that just tags the level does not trigger. The published
-      methods this implements -- swing-low (IG, LuxAlgo), prior-bar low (Ticker
-      Daily), Donchian channel-low -- all agree a buffer is needed but none
-      fixes its size, so this is OWNER-APPETITE, not doctrine. 0.5% is a modest
-      default, deliberately smaller than the 1.0% level-cluster zone
-      (levels.CLUSTER_TOLERANCE_PCT) so the stop sits just past the zone the
-      level was matched within, never inside it.
+      FALLBACK ONLY since 2026-10-04. How far BELOW a structural level (ABOVE
+      it for a short) the protective stop is placed when it must be READ from
+      price structure because there is no ATR reading --
+      `_derive_structural_stop_no_atr`, added for board item 80 (owner ruling
+      2026-09-25: a missing volatility reading is never a reason to skip
+      protection or to size off an unverifiable typed number). The owner's
+      2026-10-04 ruling ("self adjusting is not a made up number -- it is
+      specific to its own stock move") retired the flat fraction as the
+      DEFAULT: the buffer is now the signal bar's own range times
+      the derived multiple in
+      `src/portfolio_constructor/structural_buffer.py`. This flat fraction is kept
+      for the one case where that denominator is unreadable (a missing or
+      degenerate signal bar), because a missing denominator must never cost a
+      name its protection. It is still an unchosen number in that narrow case,
+      so it stays `arbitrary` rather than being quietly re-filed.
     open_question: >-
-      What buffer past a structural level does the owner want a no-ATR
-      protective stop to sit at -- a fixed percentage like this, the level's
-      own cluster half-width, or a value tied to the instrument's recent range?
+      ANSWERED for the ordinary case by the owner's 2026-10-04 ruling -- the
+      buffer is a multiple of the instrument's own recent range, the third
+      option this question listed. What remains open is narrower: what buffer
+      should a name get when even its signal bar is unreadable, given no
+      per-stock denominator exists at that point?
     cost_while_unanswered: >-
-      A no-ATR name's protective stop sits a flat 0.5% past its level rather
-      than a distance anyone chose; too tight risks a wick-out, too loose gives
-      up more than intended on the rare name that loses its ATR reading.
+      On the rarer sub-case where the signal bar is unreadable, a no-ATR name's
+      protective stop still sits a flat 0.5% past its level rather than a
+      distance anyone chose. The ordinary no-ATR name no longer pays this cost.
     settles_by:
       kind: recording
       state: specified
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
       records: >-
-        every no-ATR structural stop placement, carrying the level the stop was read
-        from, the half-width of the price cluster that formed that level (the
-        dispersion of the touches the level detector already groups), the distance
-        this flat 0.5% put the stop at, and whether the subsequent low pierced the
-        buffer without invalidating the level. The cluster half-width is a reading
-        off the instrument that is already computed at placement time; nothing here
-        consults the trade's profit or loss
+        every no-ATR structural stop placement that fell back to the flat fraction,
+        carrying the level the stop was read from, why the signal-bar range was
+        unusable, the distance this flat 0.5% put the stop at, and whether the
+        subsequent low pierced the buffer without invalidating the level. Nothing
+        here consults the trade's profit or loss
       closes_when: >-
-        the recording shows the cluster half-width is present and non-degenerate at
-        placement on a stated run of placements, at which point the buffer becomes
-        that measured half-width per name and the flat percentage is DELETED. If the
-        half-width is routinely unavailable, the flat percentage stays and the
-        recording states how often it was too tight -- pierced without the level
-        breaking -- so the cost is at least a measured number instead of an
-        assumption
+        the recording shows how often the signal-bar denominator is genuinely absent
+        at placement. If it is effectively never absent, the flat fraction is DELETED
+        outright; if it is routinely absent, the recording states how often the flat
+        fraction was too tight -- pierced without the level breaking -- so the cost is
+        a measured number instead of an assumption
+  - id: src.portfolio_constructor.structural_buffer.STRUCTURAL_BUFFER_BAR_RANGE_MULTIPLE
+    value: 0.263
+    status: derived
+    site: src/portfolio_constructor/structural_buffer.py
+    derived_from: src.portfolio_constructor.config.ConstructorConfig.structural_stop_buffer_pct
+    base_value: 0.005
+    note: >-
+      The no-ATR structural stop's buffer, expressed in the NAME'S OWN movement
+      instead of as a flat fraction of its price -- owner ruling 2026-10-04:
+      "self adjusting the 2.5 is not a made up number. It is specific to its
+      own stock move. It's the way we should be handling everything." The
+      denominator is the signal bar's high-minus-low, which already rides on
+      the `TechAnalysisResult` this path reads (it is the same object the
+      tier-2 prior-bar fallback reads), so nothing new is fetched and the
+      denominator exists precisely where ATR does not. The MULTIPLE IS NOT
+      PICKED: it is the value that reproduces today's behaviour on a typical
+      name. Measured over the 33-symbol recorded live universe
+      (ops/rehearsal/recordings/market_bars.json.gz, 60 sessions to
+      2026-09-30), the median daily range is 1.904% of close, so 0.005 /
+      0.01904 = 0.263. Effect: a quiet name (XLF, 1.05% median range) sees its
+      buffer go from 0.50% of price to 0.28%, a volatile one (FLNC, 5.81%)
+      from 0.50% to 1.53% -- which is the whole point of the ruling, and is
+      the direction a quiet name's structure argues for. Recorded as `derived`
+      because it is a unit conversion of the flat fraction above against a
+      measured universe median, not a second appetite choice.
   - id: src.portfolio_constructor.config.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived
