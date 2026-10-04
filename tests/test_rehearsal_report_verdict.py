@@ -279,11 +279,11 @@ _BRIDGE_FUNCTION_NAMES = {
 
 
 def _derive_known_pipeline_statuses() -> set[str]:
-    # The split moved run_intra_check into src/pipeline_intraday.py; scan both.
+    # Parts (src/intraday/) come FIRST so `_find_function` meets a body, not a shim.
     pipeline_tree = ast.Module(
         body=[
             stmt
-            for mod in ("pipeline.py", "pipeline_intraday.py")
+            for mod in ("pipeline.py", "intraday/safety.py", "intraday/session.py", "intraday/candidates.py", "intraday/gating.py", "pipeline_intraday.py")
             for stmt in ast.parse((REPO_ROOT / "src" / mod).read_text()).body
         ],
         type_ignores=[],
