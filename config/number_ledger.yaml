@@ -1349,131 +1349,6 @@ numbers:
       Flags a target inside this many ATRs of entry as thin reward - price is
       barely off it and the whole payoff is one ordinary session's noise.
       Labels the derived target; does not select it (changed 2026-09-30).
-  - id: src.config.RiskConfig.short_gap_risk_multiple
-    value: 1.5
-    status: derived
-    site: src/config/__init__.py
-    derived_from: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
-    base_value: 1.5
-    note: >-
-      The deployed, operator-overridable setting. It holds no literal of its
-      own: its Field default IS the one definition
-      (src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT), so base-drift
-      cannot happen silently and this row is `derived`, not a second
-      arbitrary number. Board item 216, 2026-10-01 — before that date the
-      literal 1.5 was written out four times and applied at three sites.
-  - id: src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT
-    settles_by:
-      kind: measurement
-      state: specified
-      where: board item 186 in docs/WORK.md -- this is board item 186's question, not this constant's,
-        and it is routed here rather than re-derived
-      records: the overnight gap distribution of the SHORTABLE part of the universe the desk could
-        trade, on public daily bars against the short side, beside the same distribution against the
-        long side, so the haircut becomes the measured ratio of adverse short-side gap to adverse
-        long-side gap rather than a chosen one and a half
-      closes_when: item 186 holds the measured short-versus-long adverse gap ratio and the haircut
-        is restated as that ratio; it is DELETED, and shorts are sized exactly as longs are, if the
-        two distributions turn out not to differ beyond their own sampling error
-    value: 1.5
-    status: arbitrary
-    site: src/risk/constants.py
-    note: >-
-      MOVED 2026-10-01, board item 216: this is the SAME number, unchanged in
-      value, re-homed from src.config.RiskConfig.short_gap_risk_multiple to
-      the one place that now defines AND applies it. It previously had a
-      second ledger row (src.portfolio_constructor.config.ConstructorConfig.
-      short_gap_risk_multiple, `derived`); that row is deleted rather than
-      kept in sync, because a mirror kept in sync is the same defect waiting
-      to recur. The literal existed four times and the haircut was APPLIED at
-      three sites; execution ships min(qty_by_alloc, qty_by_risk), so the
-      execution-side copy, not the constructor's, sized a live short whenever
-      the risk leg bound. Both legs now call gap_adjusted_risk_per_share. No
-      sizing changed. The arbitrary count is unchanged: one row replaces one
-      row, and the deleted row was `derived`, never counted as arbitrary.
-      Sizing-only haircut on a short's risk-per-share, never applied to stop
-      placement: a short gaps through its stop upward with no bound, so the
-      same risk allocation opens a SMALLER short than an equivalent long
-      (src/config/__init__.py::RiskConfig). The direction is reasoned; the 1.5 magnitude is
-      not measured against any gap distribution.
-      ITEM 186 PASS 2026-09-26 — RESEARCHED. The DIRECTION survives and needs
-      no citation: a short's loss above its stop is unbounded while a long's
-      below its stop is bounded by zero, which is arithmetic, not an
-      empirical claim. The MAGNITUDE is not sourceable, and the literature
-      that looks like it should settle it measures a different quantity, so
-      it is NOT adopted. (a) The positive-skewness-of-individual-stocks and
-      skewness-pricing work is an ASSET-PRICING result about expected returns
-      to lottery-like stocks; it says nothing about the size of an overnight
-      gap against a short. (b) The empirical overnight-gap asymmetry studies
-      are INDEX-level and do not even agree in sign: one index shows the
-      larger median gap on the downside, while the DJIA shows the larger
-      median gap on the UPSIDE but strongly negative skew, i.e. the fatter
-      tail running against LONGS. Neither yields "a short's gap risk is 1.5x
-      a long's" for single names, and importing either would be citing a
-      number that measures something else.
-      The honest route is MEASUREMENT, and it is blocked on data rather than
-      on thinking. The quantity wanted is the ratio of the adverse-tail
-      up-gap to the adverse-tail down-gap — (open_t - close_t-1) / close_t-1
-      taken at a matched tail percentile — over the names this desk actually
-      shorts. This repo cannot compute it today: the desk's database holds no
-      OHLCV/bar table (verified 2026-09-26), bars are fetched live each
-      session and discarded, so there is no stored gap history to measure and
-      no recorded short universe to measure it over. That is a data build,
-      and it would NOT be backtesting: it measures a distribution, not an
-      outcome. NO VALUE PICKED.
-      CORRECTION 2026-09-18: the
-      first version quoted "until a separate pass re-examines it" as text at
-      this site; that phrase is in docs/, not in src/config/__init__.py.
-      ITEM 186 PASS 2026-09-30 — TWO DERIVATIONS ATTEMPTED, BOTH WITHDRAWN,
-      NO VALUE CHANGED. The desk sizes shorts today exactly as it did
-      before this pass. Record of the two failures so nobody spends a third
-      attempt on either. (1) WORST HISTORICAL GAP over the fetch lookback:
-      dead because that lookback is a 5-year window chosen for CHART
-      STRUCTURE, and a maximum over a fixed window can only grow until the
-      bar ages out — one old gap would govern every short's size for years
-      and a regime change could not update it. (2) STOP DISTANCE PLUS ONE
-      ATR: dead on algebra, not on data. The entry stop is ITSELF placed at
-      2.5 ATR, so the multiple is (2.5 + 1) / 2.5 = exactly 1.40 for every
-      name — the per-name ATR cancels out. It is a flat haircut in a
-      per-name costume, and LOWER than the 1.5 it claimed to replace.
-      ALSO ESTABLISHED THIS PASS — WHERE THIS NUMBER ACTUALLY BINDS.
-      Execution takes min(qty_by_alloc, qty_by_risk), and the risk-budget
-      path in src/pipeline_stages.py multiplies by this number. So this
-      row, not the constructor's mirror of it, is the one that sizes a live
-      short whenever the risk path is the binding leg. Any future statement
-      that a constructor-side change has "retired" this number is false
-      unless the execution-side read changes with it. That construction /
-      execution split is a latent defect in its own right and is filed as
-      board item 215.
-      WHAT CHANGED INSTEAD: the desk now RECORDS the evidence. Every short
-      it holds accumulates the worst adverse overnight gap actually
-      suffered against it, beside the volatility read and the stop distance
-      already pinned at entry (`trades.max_adverse_overnight_gap`,
-      `overnight_gap_sessions`, joined to `entry_atr` and
-      `initial_stop_loss`). Recording only — no threshold, no gate, no
-      sizing change, and it may NOT be swept for the multiple that would
-      have been optimal, which would be fitting to this desk's history.
-    open_question: >-
-      NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that risk is
-      never a global dial: it is read per name off that instrument's own
-      behaviour now and off how convicted the seats are on it. So the
-      appetite question previously routed here ("how much smaller should a
-      short open") is WITHDRAWN, not pending, and no value may be picked to
-      settle it. What replaces it is a per-name read: this stock's own
-      overnight-gap magnitude relative to its own stop distance, so a
-      tight-stopped name is haircut harder than a wide-stopped one. That read
-      is BLOCKED ON DATA and on nothing else. Verified 2026-09-30 at the two
-      live sizing sites (src/portfolio_constructor/config.py, the short branch and
-      the risk-plan loop): they are handed `analysis.atr_14` and a stop
-      price, never bars, and the database still holds no OHLCV table, so the
-      gap term cannot be read at sizing time. Writing the gap as some
-      multiple of ATR would invent that multiple, which is the exact failure
-      this ledger exists to stop, so 1.5 STANDS UNCHANGED and labelled rather
-      than being replaced by a better-dressed guess. Unblocked by a stored
-      daily-bar table and by nothing else.
-    cost_while_unanswered: >-
-      Shorts are sized by a haircut whose direction is arithmetic and whose
-      magnitude is neither sourced nor measured.
   - id: src.config.RiskConfig.target_divergence_warn_pct
     settles_by:
       kind: recording
@@ -7720,13 +7595,13 @@ numbers:
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
       (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Same number as the ExecutionStage SELL offset.
-  - id: src.pipeline_exits.ExitEngineMixin._trail_tightened_recently(calendar_days)
+  - id: src.exits.exit_records.ExitRecords._trail_tightened_recently(calendar_days)
     value: 4
     status: arbitrary
-    site: src/pipeline_exits.py
+    site: src/exits/exit_records.py
     note: >-
       Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
-      the last 4 calendar days (src/pipeline_exits.py::ExitEngineMixin._trail_tightened_recently, caller
+      the last 4 calendar days (src/exits/exit_records.py::ExitRecords._trail_tightened_recently, lifted verbatim 2026-10-04, caller
       src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions passes nothing). The docstring's reason is a
       forensic observation, not a measured cooldown length. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive the 4 calendar days from the ratified swing mandate. FAILED -- the mandate names no number, by design. Attempt (2): derive it from the reviewer's >=1.02x min-bump rule, i.e. the sessions needed for 2% of range to accumulate. FAILED -- that rule bounds the SIZE of one tighten and says nothing about spacing, and the 1.02 is itself unsourced. The measurement below is the route. Value unchanged.
     open_question: >-
