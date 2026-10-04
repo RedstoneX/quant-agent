@@ -52,6 +52,8 @@ VERDICT 2026-10-02 (isolation pass): REPRODUCED (structural debt). Mixins remain
 
 ## Nothing in the build checks for undefined names
 
+DONE 2026-10-04: `scripts/check_undefined_names.py` (stdlib `symtable`, no new dependency) runs in the test workflow and is proven by `tests/test_undefined_names_guard.py`; 0 findings on 497 files at arrival. Blind spots: attribute names, dynamically created names, modules with a star import (skipped), and module-level reads before binding.
+
 A bare `_log` in the take-profit refusal branches raised `NameError` in a cold path (fixed by #1102; `tests/test_take_profit_refusal_names.py` goes red on all three cases if a bare `_log.error` is put back, re-measured 2026-10-04; no sibling survives in `src/`). The class is not closed: there is no ruff, flake8 or pyflakes in `pyproject.toml` or `.github/workflows/`, and no script in `scripts/` resolves names, so the next one ships the same way.
 
 Fix: a stdlib-only scope-analysing guard in `scripts/` plus one workflow edit, roughly 250-350 lines [estimate: earlier agent sizing, not re-derived], with its false-positive rate on the existing tree driven to zero first. A lint dependency is the alternative and needs an owner call as a new dependency.
