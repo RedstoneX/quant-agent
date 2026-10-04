@@ -1231,37 +1231,64 @@ def build_refusal_artefact(base: str, ours: str, theirs: str,
     # Rule 1, mechanically. `git merge-file` is not supposed to drop a line,
     # but "not supposed to" is what the last three data-loss incidents had in
     # common, so it is checked rather than trusted.
-    missing = _lines_lost(text, ours, theirs)
+    missing = _lines_lost(text, ours, theirs, base)
     if missing:
+        # ONE well-formed diff3 region, never two terminators for one opener.
+        # The previous shape opened with `<<<<<<<` and closed with TWO
+        # `>>>>>>>` lines, using the first as a mid-region divider. That is
+        # not conflict syntax: every parser — git's own, the editors, and a
+        # human told to "resolve every region" — ends the region at the first
+        # terminator and silently drops everything after it, which was the
+        # whole `theirs` copy [reproduced 2026-10-04 against a real stale
+        # branch merge of docs/WORK.md].
         text += (
             f"<<<<<<< CONTENT NOT ACCOUNTED FOR — {len(missing)} line(s) of the "
-            "two sides did not survive git's line merge\n"
-            "||||||| both sides follow in full; nothing below has been merged\n"
-            "=======\n"
+            "two sides did not survive git's line merge; both sides follow in "
+            "full and nothing below has been merged\n"
             + ours
-            + ">>>>>>> --- the other side follows ---\n"
+            + "||||||| merge base, for reference\n"
+            + base
+            + "=======\n"
             + theirs
             + ">>>>>>> CONTENT NOT ACCOUNTED FOR — end of the unmerged copies\n"
         )
     return text
 
 
-def _lines_lost(text: str, ours: str, theirs: str) -> list[str]:
+def _lines_lost(text: str, ours: str, theirs: str, base: str = "") -> list[str]:
     """Non-blank lines present on either side and absent from `text`.
 
     Counted, not just set-tested: a line that appears three times on one side
     and once in the result has lost two copies, and for a document whose
     entries are paragraphs of prose that is a real loss.
+
+    `base` is what stops this from crying wolf on every ordinary merge. A
+    three-way merge is SUPPOSED to drop a line that one side deleted relative
+    to the base and the other side left untouched — that deletion is the
+    change being merged, not data loss. Without the base this function counted
+    every such line as missing, so a branch merging a fast-moving trunk
+    forward tripped it on the trunk's own edits and had both whole copies of
+    the document appended to it [measured 2026-10-04: 20 "lost" lines and a
+    376-line document turned into 1145 lines, on a merge git itself resolved
+    down to a single conflict region].
     """
     from collections import Counter
 
-    have = Counter(ln.rstrip() for ln in text.splitlines() if ln.strip())
+    def counts(s: str) -> Counter:
+        return Counter(ln.rstrip() for ln in s.splitlines() if ln.strip())
+
+    have = counts(text)
+    in_base = counts(base)
+    sides = (counts(ours), counts(theirs))
     lost: list[str] = []
-    for side in (ours, theirs):
-        want = Counter(ln.rstrip() for ln in side.splitlines() if ln.strip())
-        for ln, n in want.items():
-            if have[ln] < n:
-                lost.extend([ln] * (n - have[ln]))
+    for mine, other in (sides, sides[::-1]):
+        for ln, n in mine.items():
+            # Copies of this line the OTHER side deleted relative to the base:
+            # a correct merge honours that deletion, so they are not losses.
+            deleted_by_other = max(0, min(in_base[ln], n) - other[ln])
+            want = n - deleted_by_other
+            if have[ln] < want:
+                lost.extend([ln] * (want - have[ln]))
     return lost
 
 
