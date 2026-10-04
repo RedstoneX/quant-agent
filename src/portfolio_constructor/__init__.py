@@ -23,12 +23,10 @@ confined to intent; math is code.
 
 from __future__ import annotations
 
-import json
 import math
 import logging
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from src.data.levels import (
     describe_stop_level_basis,
@@ -113,15 +111,16 @@ from src.portfolio_constructor.config import (
     ConstructorConfig,
     widest_reachable_stop_atr_multiple,
 )
-from src.portfolio_constructor.stops import _StopMixin
-from src.portfolio_constructor.orders import _OrderBuildMixin
+from src.portfolio_constructor.assembly import hold_parts, install_delegates
 
 
-class PortfolioConstructor(_StopMixin, _OrderBuildMixin):
+@install_delegates
+class PortfolioConstructor:
     """Stateless translator: target state → concrete orders."""
 
     def __init__(self, config: ConstructorConfig | None = None, db=None):
         self.cfg = config or ConstructorConfig()
+        hold_parts(self, delegate_owner=PortfolioConstructor)  # parts HELD, not inherited; wiring in assembly.py
         # Owner ruling 2026-10-01 (board item 218) made the parity refusal a
         # TRIAL — "see if that improves the desk purchases" — and a trial
         # judged by grepping English prose out of an in-memory dict cannot
