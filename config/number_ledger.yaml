@@ -660,14 +660,14 @@ numbers:
       kind: measurement
       state: specified
       where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
-      records: the distribution of adverse excursion within the holding window, in ATR units, measured
-        over the universe the desk could trade, on public daily bars and NOT over this desk's own
-        fills, so the hard floor under every stop is read off how far names of this kind routinely
-        move against a position before resuming
-      closes_when: the universe excursion distribution is in hand and the absolute floor is set at
-        the point below which a stop is inside ordinary noise; it is DELETED, and the single minimum
-        multiple governs alone, if the measurement cannot distinguish the absolute floor from the
-        ordinary one
+      records: the distance in ATRs of every level-backed stop the desk actually places, split by
+        whether this floor BOUND it, counted by src/portfolio_constructor/absolute_floor_record.py
+        at the one site that applies the floor, plus (for the universe denominator) the distribution
+        of adverse excursion within the holding window in ATR units over the tradable universe
+      closes_when: the recorder has seen enough level-backed placements to show where the tightest
+        of them sit, and the absolute floor is set at the point below which a stop is inside
+        ordinary noise; it is DELETED, and the single minimum multiple governs alone, if the
+        observations cannot distinguish the absolute floor from the ordinary one
     value: 1
     status: arbitrary
     route_audit_2026_10_04: >-
@@ -681,6 +681,14 @@ numbers:
       set, not a missing idea. The row also carried two settles_by blocks, so
       the newer 2026-10-01 route was being dropped in silence; the duplicate is
       reported by scripts/measure_ledger_route_admissibility.py.
+      MEASURED 2026-10-04, production DB read-only: across 84 trades, 725 agent
+      logs, 14 trade refusals and 14,179 specialist-evidence rows there are 9
+      `stop_honoured_at_computed_level` placements and ZERO
+      `stop_widened_to_absolute_atr_floor` ones. This floor has NEVER bound --
+      never exercised, not broken. The value is therefore left alone and the
+      counted recorder above was added instead, so the next session reads a
+      real distribution rather than re-deriving a protection number off a zero
+      denominator.
     site: src/config/__init__.py
     note: >-
       The HARD FLOOR under every stop this desk sets. A level-backed stop is
