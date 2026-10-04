@@ -13,6 +13,8 @@ callers honour the result, and prove a failed send is visible somewhere.
 
 VERDICT 2026-10-02 (isolation pass): NOT A DEFECT as written -- the note's consequence is false. 22 of 34 `send_owner_alert` call sites do discard the return, but a failed delivery is NOT invisible: `send_owner_alert` logs CRITICAL before sending, and the transport records every attempt in `notifier_sends` with status `failed` and the reason. Reproduced with the real transport and a forced connection error against a temp DB: returned False, CRITICAL line logged, row `('owner_alert', 'failed', 'boom')`. The function's docstring says callers treat the result as information by design. Residual (a design question, not a bug): nothing retries or escalates a failed alert; the only trace is the row and the log.
 
+CLOSED 2026-10-04: the residual was fixed by #1104 (found already on main, not re-done here). `send_owner_alert` runs every caller through `deliver_with_retry`: retry on the desk's transient-fault policy, then one counted `owner_alert_undelivered` row with a running total. A deliberate mute is settled, never retried. The dashboard's muted-backlog read selects every `notifier_sends` row whose status is not 'sent', so an undelivered alert reaches the owner's only channel. Section kept: a caller that builds its own notifier and bypasses the funnel would escape this, and no guard forbids that yet.
+
 ## The cost circuit is eleven mixins, not eleven modules
 
 It sits under the ceiling, but eleven of its nineteen pieces are mixin groups,
