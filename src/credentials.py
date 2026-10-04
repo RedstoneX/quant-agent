@@ -39,8 +39,10 @@ both directives populate the same directory.
 import json
 import os
 import tempfile
-from datetime import date, datetime, timezone
 from pathlib import Path
+
+from src.trading_calendar import et_today
+from datetime import date, datetime, timezone
 
 # The variable systemd sets for a unit that declares LoadCredential= or
 # LoadCredentialEncrypted=. Its absence is the normal, supported case: it means
@@ -332,7 +334,7 @@ STATE_PATH = (
 
 def _today() -> date:
     """Seam for tests — real code never patches `datetime` itself."""
-    return datetime.now(timezone.utc).date()
+    return et_today()
 
 
 def load_state(path: Path | None = None) -> dict[str, object]:
