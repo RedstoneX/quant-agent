@@ -1364,6 +1364,14 @@ class ExDividends:
             except Exception as e:
                 logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
                 continue
+            finally:
+                # Item 201: the shift's cancel+resubmit fallback leaves a naked
+                # window; persist it whatever the shift did, including when the
+                # shift raised — a failed shift is where the window matters most.
+                from src.execution.broker_parts.stop_window import (
+                    record_unprotected_windows,
+                )
+                record_unprotected_windows(self.broker, self.db, p.symbol)
             from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
             if isinstance(order, dict):
                 # Item 201: the per-leg outcome is a ROW, not a log line, and it
