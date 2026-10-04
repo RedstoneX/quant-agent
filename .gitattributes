@@ -20,5 +20,4 @@ config/number_ledger_history.yaml merge=union
 # by scripts/resolve_baseline_conflict.py (min of both sides, drop keys for
 # deleted files, REFUSE any merge that would loosen a baseline). Like docsmerge
 # this needs the per-clone registration: scripts/install_git_merge_drivers.sh.
-tests/import_cycle_baseline.json merge=baselinemerge
 tests/import_layers.json merge=baselinemerge

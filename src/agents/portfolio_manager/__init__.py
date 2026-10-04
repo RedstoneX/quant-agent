@@ -60,12 +60,11 @@ from src.agents.portfolio_manager.grounding import (  # noqa: F401 — re-export
     _SYMBOL_DIRECTION_RE,
     DecisionGroundingMixin,
 )
-from src.agents.portfolio_manager.prompt_evidence import PromptEvidenceMixin
+from src.agents.portfolio_manager.prompt_evidence import hold_prompt_evidence
 from src.agents.portfolio_manager.ranking import CandidateRankingMixin
 from src.agents.portfolio_manager.rotation_section import RotationSectionMixin
 
 class PortfolioManagerAgent(
-    PromptEvidenceMixin,
     CandidateRankingMixin,
     RotationSectionMixin,
     DecisionGroundingMixin,
@@ -1832,4 +1831,5 @@ class _PortfolioManagerMirroringModule(_types.ModuleType):
                     setattr(sub, name, pristine)
 
 
+hold_prompt_evidence(PortfolioManagerAgent)
 _sys.modules[__name__].__class__ = _PortfolioManagerMirroringModule

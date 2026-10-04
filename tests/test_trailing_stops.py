@@ -11,7 +11,7 @@ import pytest
 
 from src.risk.trailing import (
     CHANDELIER_ATR_MULTIPLE,
-    MIN_RATCHET_PCT,
+    MIN_RATCHET_TICKS, min_ratchet_floor, venue_tick,
     RANGE_BREAKEVEN_R_MULTIPLE,
     RANGE_SECOND_RATCHET_LOCK_R,
     RANGE_SECOND_RATCHET_TRIGGER_R,
@@ -592,7 +592,7 @@ def test_a_move_smaller_than_the_ratchet_threshold_is_not_worth_an_order():
     candidate there, so the chandelier was already the candidate in every
     recorded `below_min_ratchet` refusal.
     """
-    stop = 110.0 / (1 + MIN_RATCHET_PCT / 100.0) + 0.01
+    stop = 110.0 - venue_tick(110.0) / 2.0
 
     # Structure alone (no ATR, so no chandelier leg): the gate still refuses.
     assert compute_trailing_stop(
@@ -609,7 +609,7 @@ def test_a_move_smaller_than_the_ratchet_threshold_is_not_worth_an_order():
     )
     assert proposal is not None
     assert proposal.source == "chandelier"
-    assert proposal.new_stop > stop * (1 + MIN_RATCHET_PCT / 100.0)
+    assert proposal.new_stop >= min_ratchet_floor(stop)
 
 
 def test_a_stop_is_never_placed_inside_the_atr_noise_band():

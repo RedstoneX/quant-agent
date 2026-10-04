@@ -9,28 +9,30 @@ from pathlib import Path
 from typing import Any, Callable, TypeVar
 from src.cost_circuit.clock import _ClockPinnedConnection, _REAL_NOW_UTC, _now_utc
 from src.cost_circuit.alert_ledger import UnavailableLLMCostCircuit, _durable_alert_surface_ok
-from src.cost_circuit.breaker_latch import _BreakerLatchMixin
-from src.cost_circuit.breaker_retry import _BreakerRetryMixin
-from src.cost_circuit.breaker_session import _BreakerSessionMixin
-from src.cost_circuit.breaker_notify import _BreakerNotifyMixin
-from src.cost_circuit.breaker_admission import _BreakerAdmissionMixin
-from src.cost_circuit.breaker_settlement import _BreakerSettlementMixin
-from src.cost_circuit.breaker_operator import _BreakerOperatorMixin
+from src.cost_circuit.assembly import hold_parts
+from src.cost_circuit.parts.admission import Admission
 from src.cost_circuit.parts.alert_formats import AlertFormats
+from src.cost_circuit.parts.emergency_latch import EmergencyLatch
 from src.cost_circuit.parts.circuit_state import CircuitState
 from src.cost_circuit.parts.episode_wording import EpisodeWording
+from src.cost_circuit.parts.infra_retry import InfraRetry
+from src.cost_circuit.parts.operator_controls import OperatorControls
+from src.cost_circuit.parts.owner_notify import OwnerNotify
 from src.cost_circuit.parts.quota_holds import QuotaHolds
+from src.cost_circuit.parts.session_lifecycle import SessionLifecycle
+from src.cost_circuit.parts.settlement import Settlement
 
 logger = logging.getLogger(__name__)
 
 
-class LLMCostCircuitBreaker(_BreakerLatchMixin, _BreakerRetryMixin, _BreakerSessionMixin, _BreakerNotifyMixin, _BreakerAdmissionMixin, _BreakerSettlementMixin, _BreakerOperatorMixin):
+class LLMCostCircuitBreaker:
     """Mandatory cost/retry breaker shared by every agent in one pipeline.
 
-    Four pieces are HELD, not inherited: `AlertFormats`, `EpisodeWording`,
-    `CircuitState` and `QuotaHolds` are built once in `_hold_parts` and every
-    same-named method below delegates to that instance. The seven remaining
-    bases are still per-call shims (see src/cost_circuit/breaker_*.py).
+    Composition, not inheritance: all eleven cost-circuit parts are HELD.
+    `_hold_parts` builds one instance of each once per breaker and every
+    same-named method below delegates to that instance. Collaborators that
+    can change after construction (`notifier`, `_connect`, the sentinel and
+    the infrastructure error) reach the parts live, never as a snapshot.
     """
 
     def __init__(self, db_path: str, config: Any, notifier: Any | None = None):
@@ -64,7 +66,6 @@ class LLMCostCircuitBreaker(_BreakerLatchMixin, _BreakerRetryMixin, _BreakerSess
             from src.notifier import TelegramNotifier
             notifier = TelegramNotifier()
         self.notifier = notifier
-        self._hold_parts()
         # ContextVar keeps overlapping APScheduler job threads isolated.  The
         # morning research ThreadPool explicitly copies this context into its
         # workers (pipeline_stages.py); a mutable process-global tuple allowed
@@ -75,6 +76,7 @@ class LLMCostCircuitBreaker(_BreakerLatchMixin, _BreakerRetryMixin, _BreakerSess
         self._infrastructure_lock = threading.Lock()
         self._infrastructure_error: BaseException | None = None
         self._unavailable_sentinel: UnavailableLLMCostCircuit | None = None
+        self._hold_parts()
         self._sync_emergency_latch()
         if self._unavailable_sentinel is not None:
             return
@@ -158,13 +160,13 @@ class LLMCostCircuitBreaker(_BreakerLatchMixin, _BreakerRetryMixin, _BreakerSess
 
                 notifier = _LocalOnlyNotifier()
         self.notifier = notifier
-        self._hold_parts()
         self._session_context = ContextVar(
             f"qamc_cost_session_{id(self)}", default=(run_id, mode)
         )
         self._infrastructure_lock = threading.Lock()
         self._infrastructure_error = None
         self._unavailable_sentinel = None
+        self._hold_parts()
         self.mark_unavailable(
             error,
             run_id=run_id,
@@ -174,78 +176,65 @@ class LLMCostCircuitBreaker(_BreakerLatchMixin, _BreakerRetryMixin, _BreakerSess
         )
         return self
 
-    # --- Held parts (composition). Built once per breaker; `config` and the
-    # latch path never change after construction, and `_context` is the
-    # session shim's bound method, which reads the ContextVar live.
-    def _hold_parts(self) -> None:
-        self._alert_formats = AlertFormats()
-        self._episode_wording = EpisodeWording(config=self.config)
-        self._circuit_state = CircuitState(
-            config=self.config,
-            context=self._context,
-            emergency_latch_path=self._emergency_latch_path,
-        )
-        self._quota_holds = QuotaHolds(
-            config=self.config,
-            auto_clear_transient_latch_locked=self._circuit_state._auto_clear_transient_latch_locked,
-            scope_key=self._circuit_state._scope_key,
-            state_row=self._circuit_state._state_row,
-        )
+    # --- Held parts (composition): wired once per breaker by assembly.py.
+    @property
+    def notifier(self) -> Any:
+        return self._notifier
 
-    # AlertFormats -- four pure formatters, the part's own functions.
+    @notifier.setter
+    def notifier(self, value: Any) -> None:
+        self._notifier = value
+        for part in (
+            getattr(self, "_emergency_latch", None),
+            getattr(self, "_infra_retry", None),
+            getattr(self, "_owner_notify", None),
+        ):
+            if part is not None:
+                part.notifier = value
+
+    def _hold_parts(self) -> None:
+        hold_parts(self)
+
+    # Every name below forwards to the held part, looked up on the instance at
+    # call time so a part swapped on the breaker is what runs (wired at import,
+    # see the foot of this module).
+    _DELEGATES = {
+        "_emergency_latch": ("_best_effort_emergency_snapshot", "_read_emergency_latch",
+                             "_sync_emergency_latch", "_emergency_file_lock",
+                             "_write_emergency_latch"),
+        "_infra_retry": ("_infra_retry_backoff_s", "_run_with_infra_retry",
+                         "mark_unavailable", "_raise_if_unavailable"),
+        "_session_lifecycle": ("_initialize", "_validate_accounting_invariants",
+                               "_seed_today", "activate_session", "set_session_context",
+                               "_context"),
+        "_owner_notify": ("_notify_if_needed", "_notify_quota_holds_if_needed",
+                          "_notify_quota_recoveries_if_needed",
+                          "_notify_auto_resets_if_needed"),
+        "_admission": ("_enforce_settled_limits_locked", "enforce_current_limits",
+                       "require_paid_analysis", "begin_call"),
+        "_settlement": ("before_provider_attempt", "complete_call", "fail_call"),
+        "_operator_controls": ("status", "reset"),
+        "_episode_wording": ("_self_clear_window_minutes",
+                             "_suspension_still_inside_self_clear_window_locked",
+                             "_episode_already_paged_locked",
+                             "_record_suspension_deferral_locked", "_episode_facts_locked"),
+        "_circuit_state": ("_state_row", "_active_quota_hold_locked",
+                           "_effective_state_locked", "_auto_clear_transient_latch_locked"),
+        "_quota_holds": ("_reconcile_quota_holds_locked", "_hold_quota_locked",
+                         "_refresh_latched_snapshot_locked", "_trip_locked"),
+    }
+
+    # Pure functions of the parts, re-exported under their old names.
+    _safe_optional_int = staticmethod(EmergencyLatch._safe_optional_int)
+    _safe_optional_float = staticmethod(EmergencyLatch._safe_optional_float)
     format_auto_reset_alert = staticmethod(AlertFormats.format_auto_reset_alert)
     format_quota_alert = staticmethod(AlertFormats.format_quota_alert)
     format_recovery_alert = staticmethod(AlertFormats.format_recovery_alert)
     format_alert = staticmethod(AlertFormats.format_alert)
-
-    # EpisodeWording.
-    def _self_clear_window_minutes(self):
-        return self._episode_wording._self_clear_window_minutes()
-
-    def _suspension_still_inside_self_clear_window_locked(self, *args, **kwargs):
-        return self._episode_wording._suspension_still_inside_self_clear_window_locked(*args, **kwargs)
-
-    def _episode_already_paged_locked(self, *args, **kwargs):
-        return self._episode_wording._episode_already_paged_locked(*args, **kwargs)
-
-    def _record_suspension_deferral_locked(self, *args, **kwargs):
-        return self._episode_wording._record_suspension_deferral_locked(*args, **kwargs)
-
-    def _episode_facts_locked(self, *args, **kwargs):
-        return self._episode_wording._episode_facts_locked(*args, **kwargs)
-
     _format_episode_line = staticmethod(EpisodeWording._format_episode_line)
     _format_episode_summary = staticmethod(EpisodeWording._format_episode_summary)
-
-    # CircuitState.
     _totals = staticmethod(CircuitState._totals)
-
-    def _state_row(self, conn):
-        return self._circuit_state._state_row(conn)
-
     _scope_key = staticmethod(CircuitState._scope_key)
-
-    def _active_quota_hold_locked(self, *args, **kwargs):
-        return self._circuit_state._active_quota_hold_locked(*args, **kwargs)
-
-    def _effective_state_locked(self, *args, **kwargs):
-        return self._circuit_state._effective_state_locked(*args, **kwargs)
-
-    def _auto_clear_transient_latch_locked(self, *args, **kwargs):
-        return self._circuit_state._auto_clear_transient_latch_locked(*args, **kwargs)
-
-    # QuotaHolds.
-    def _reconcile_quota_holds_locked(self, *args, **kwargs):
-        return self._quota_holds._reconcile_quota_holds_locked(*args, **kwargs)
-
-    def _hold_quota_locked(self, *args, **kwargs):
-        return self._quota_holds._hold_quota_locked(*args, **kwargs)
-
-    def _refresh_latched_snapshot_locked(self, conn):
-        return self._quota_holds._refresh_latched_snapshot_locked(conn)
-
-    def _trip_locked(self, *args, **kwargs):
-        return self._quota_holds._trip_locked(*args, **kwargs)
 
     def _connect(self) -> Any:
         conn = sqlite3.connect(
@@ -263,3 +252,14 @@ class LLMCostCircuitBreaker(_BreakerLatchMixin, _BreakerRetryMixin, _BreakerSess
             )
         return conn
 
+
+def _delegate(part: str, name: str):
+    def forward(self, *args, **kwargs):
+        return getattr(getattr(self, part), name)(*args, **kwargs)
+    forward.__name__, forward.__qualname__ = name, f"LLMCostCircuitBreaker.{name}"
+    return forward
+
+
+for _part, _names in LLMCostCircuitBreaker._DELEGATES.items():
+    for _name in _names:
+        setattr(LLMCostCircuitBreaker, _name, _delegate(_part, _name))
