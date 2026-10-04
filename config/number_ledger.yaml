@@ -3090,6 +3090,14 @@ numbers:
     status: arbitrary
     site: src/portfolio_constructor/config.py
     note: >-
+      NARROWED 2026-10-04 (branch reachability only; the value is NOT
+      settled): the only consumer is the no-ATR branch, entered when the
+      analysis carries no ATR(14). Running the live indicator function over
+      every 40-bar window of the committed daily-bar fixture (1197 windows,
+      7 symbols) produced an ATR in all of them [measured]; it is absent only
+      under 15 bars of history, so this branch is NEVER EXERCISED on that
+      data -- not proven safe, not proven broken. Pinned by
+      tests/test_no_atr_branch_reachability.py. No other consumer reads it.
       How far BELOW a structural level (ABOVE it for a short) the protective
       stop is placed when it must be READ from price structure because there is
       no ATR reading -- `_derive_structural_stop_no_atr`, added for board item
