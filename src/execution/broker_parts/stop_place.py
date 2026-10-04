@@ -44,39 +44,16 @@ from src.execution.order_idempotency import (
 # No ledger handle on this per-call object: traceback is logged, the counted row is skipped until
 # one is lent (flagged, no new channel).
 from src.sentinel.guarded import record_guarded_pass
-
+# One durable row per placement, so the stop-LIMIT buffer's own ledger row can
+# ever close; observation only, and it cannot raise into the placement.
+from src.execution.stop_limit_buffer_records import (
+    LEG_FALLBACK, LEG_PRIMARY, LIMIT_FROM_BUFFER, LIMIT_FROM_CALLER,
+    record_leg_for as _record_leg,
+)
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
 logger = logging.getLogger("src.execution.broker")
 
-
-# Spec §11.1, guard 1: "stop placement retries immediately and hard on
-# failure". IMMEDIATELY — at the point of failure, inside the same call,
-# not queued for the next sweep. The position is already open by the time
-# this runs; a retry that waits for the 30-minute reconcile is exactly the
-# indefinite gap the guard exists to prevent.
-#
-# THREE ATTEMPTS, ~2 SECONDS TOTAL, and both halves of that are deliberate:
-#
-#   * Three, because a failure worth retrying is transient — a 429 rate
-#     limit, a 5xx, a dropped connection, an eventual-consistency blip
-#     between the fill and the order being placeable — and those clear in
-#     under a second. A REJECTION (a bad price, an unsupported qty, a
-#     closed venue) is not worth retrying at all: the broker's answer is
-#     Alpaca's own `APIError.status_code` 400/404/422, it will not change
-#     between attempt 1 and attempt 3, and burning the burst on a doomed
-#     resubmit just delays the owner alert that is the real remedy.
-#     Board item 129: this ceiling used to be a blind `except Exception`
-#     that retried a 422 exactly like a 429, so a genuine rejection paid
-#     the full three-attempt, ~2-second cost anyway before anyone was
-#     told. `_is_terminal_broker_rejection` now reads the status code that
-#     was always on the exception and short-circuits on it, so only a
-#     failure with no such code (or a 429/5xx) spends the retry burst; a
-#     genuine rejection is reported after its FIRST attempt.
-#   * ~2 seconds, because the owner's own standard for this feature is that
-#     "the gap is brief upon entry". A retry loop long enough to matter
-#     would itself become the exposure it was added to close. Escalating to
-#     a human inside two seconds beats a fourth doomed attempt.
 _STOP_PLACEMENT_MAX_ATTEMPTS = 3
 
 _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
@@ -91,23 +68,10 @@ from src.execution.broker_parts.stop_rejections import (  # noqa: F401
 )
 
 
-def _alpaca_symbol(symbol: str) -> str:
-    """Translate the universe's yfinance class-share spelling at Alpaca's edge.
-
-    BRK-B/BF-B are valid yfinance symbols while Alpaca expects BRK.B/BF.B.
-    Only the terminal one-letter class suffix is translated; ordinary hyphenated
-    symbols are left untouched instead of applying a broad, unsafe replacement.
-    """
-    value = str(symbol).strip().upper()
-    return re.sub(r"^([A-Z]+)-([A-Z])$", r"\1.\2", value)
-
-
-def _internal_symbol(symbol: str) -> str:
-    """Map Alpaca class-share spelling back to QAMC/yfinance canonical form."""
-    value = str(symbol).strip().upper()
-    return re.sub(r"^([A-Z]+)\.([A-Z])$", r"\1-\2", value)
-
-
+# Spelling translation moved to stop_symbols.py (re-exported; same patch targets).
+from src.execution.broker_parts.stop_symbols import (  # noqa: E402,F401
+    _alpaca_symbol, _internal_symbol,
+)
 # The protective-order status vocabulary lives in src/execution/order_statuses.py (re-exported above).
 
 
@@ -569,7 +533,9 @@ class StopPlacer:
         # force-de-lever must-fill SELL use.
         if limit_price and limit_price > 0:
             limit_price_q = _quantize_price(limit_price)
+            limit_source = LIMIT_FROM_CALLER
         else:
+            limit_source = LIMIT_FROM_BUFFER
             buffer_mult = (
                 (1 + self.STOP_LIMIT_BUFFER_PCT) if order_side == OrderSide.BUY
                 else (1 - self.STOP_LIMIT_BUFFER_PCT)
@@ -597,6 +563,7 @@ class StopPlacer:
                 session_date=session_date, qty=qty, price=stop_price_q,
                 holds_shares_statuses=PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES,
             )
+            _record_leg(self, LEG_PRIMARY, symbol, qty, side, stop_price_q, limit_price_q, limit_source)
         except Exception as exc:  # noqa: BLE001
             if not _is_unsupported_stop_market_rejection(exc):
                 # NOT a type/tif refusal — held_for_orders, buying-power,
@@ -633,6 +600,7 @@ class StopPlacer:
                 session_date=session_date, qty=qty, price=stop_price_q,
                 holds_shares_statuses=PROTECTIVE_ORDER_HOLDS_SHARES_STATUSES,
             )
+            _record_leg(self, LEG_FALLBACK, symbol, qty, side, stop_price_q, limit_price_q, limit_source)
         # Unwrap OrderStatus enum value (see submit_order — same reason).
         return {"id": str(order.id),
                 "status": str(getattr(order.status, "value", order.status)),
