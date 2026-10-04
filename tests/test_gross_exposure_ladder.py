@@ -882,7 +882,7 @@ def test_trimming_the_held_book_has_exactly_one_owner():
     # de-lever does not call `apply_gross_ceiling` itself — it delegates to
     # `_enforce_gross_ceiling` with a cut order — precisely so a second owner
     # cannot appear. A duplicate entry here means one did.
-    assert trim_owners == ["pipeline_delever.py"], (
+    assert trim_owners == ["delever/enforce.py"], (
         f"exactly one caller may author de-lever orders; found {trim_owners}"
     )
     assert sizing_callers == ["portfolio_constructor/__init__.py"], (
