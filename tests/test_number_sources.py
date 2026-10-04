@@ -860,6 +860,9 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
         # `ConstructorConfig.max_sector_hard_pct` was recorded as the mirror
         # of `RiskConfig.SECTOR_HARD_CEILING_MAX` that src/pipeline.py:363
         # makes it; the base kept its recording and its withdrawn question.
+        if entry.get("status") == "owner-ruled":
+            # A dated owner decision owes no settlement route.
+            continue
         if entry.get("status") == "derived":
             base_id = entry.get("derived_from")
             assert base_id in ceilings, (
