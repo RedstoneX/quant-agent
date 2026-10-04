@@ -4419,7 +4419,7 @@ numbers:
     status: not-trade-governing
     site: src/risk/rules.py
     note: >-
-      The desk's capital-deployment target. src/risk/rules.py:1534-1539 states
+      The desk's capital-deployment target. src/risk/rules.py:452-460 states
       it as a MANDATE, not a tuned number - the whole of equity, because cash
       earning less than inflation is a loss and the desk can always go long or
       short. Compared against `BookExposure.deployed_pct` by the PM facts
@@ -8132,7 +8132,7 @@ numbers:
     note: >-
       Correlated-cluster advisory cap: a BUY whose |corr|>=0.7 cluster would
       exceed 50% of the book raises an advisory violation
-      (src/risk/rules.py:1700-1740). The one caller (src/pipeline.py:2113)
+      (src/risk/rules.py:1106-1145). The one caller (src/pipeline.py:2113)
       passes nothing, so the default is live. Advisory (absent from
       HARD_BLOCK_RULES, src/pipeline.py:176), but advisories reach the risk
       seat.
@@ -8190,7 +8190,7 @@ numbers:
     derived_from: src.config.RiskConfig.maintenance_margin_pct
     base_value: 25
     note: >-
-      Default maintenance margin (src/risk/rules.py:1468); the one caller
+      Default maintenance margin (src/risk/rules.py:410); the one caller
       passes risk.maintenance_margin_pct (src/pipeline_intraday.py:96-98,
       11742-11744).
   - id: src.risk.target_revision.assess_target_revision(breakout_projection_atr_multiple)
