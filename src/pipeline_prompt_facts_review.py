@@ -1,100 +1,57 @@
-"""Trade-review prompt facts: graded sells/buys, calibration, grades, missed lessons,
-loss pits, blocked proposals, recent performance and the evening replay inputs.
+"""Trade-review prompt facts: the pipeline HOLDS `ReviewFacts` instead of inheriting a mixin.
 
-Bodies live in src/prompt_facts/review/ (five constructed parts); this mixin keeps
-same-named thin shims, built per call so a collaborator swapped after construction is
-what the body sees. The module-level names below are re-exported unchanged for
-importers and patchers of this module (the ONE mirror block for this module).
+Bodies live in src/prompt_facts/review/ (five constructed parts behind one standalone
+`ReviewFacts`, src/prompt_facts/review/facts.py). `hold_review_facts(host_cls)` installs a
+same-named delegate for each of the eleven fact names, so every existing call site
+(`self._build_post_exit_reality(...)`) keeps resolving. Nothing is snapshotted: the part
+is built per call from the host instance's collaborators as they stand at that moment.
+The module-level names below are re-exported unchanged for importers and patchers of
+this module (the ONE mirror block for this module).
 """
 
 import json as _json  # noqa: F401 -- re-exported
 import logging
 from pathlib import Path  # noqa: F401 -- re-exported
 
-from src.prompt_facts.review.blocked import ReviewBlocked
-from src.prompt_facts.review.calibration import ReviewCalibration
-from src.prompt_facts.review.exits import ReviewExits
-from src.prompt_facts.review.grading import ReviewGrading
-from src.prompt_facts.review.replay import ReviewReplay
+from src.prompt_facts.review.facts import REVIEW_FACT_NAMES, ReviewFacts
 from src.risk.rules import peak_to_trough_pct  # noqa: F401 -- re-exported
 from src.trading_calendar import et_today  # noqa: F401 -- re-exported
 
 logger = logging.getLogger(__name__)
 
+_BODIES = "src/prompt_facts/review/facts.py"
 
-class PromptFactsReviewMixin:
-    """Trade-review prompt facts; every body lives on a part under src/prompt_facts/review/.
 
-    Each `_review_*` builder reads the host's collaborators at call time. The grading
-    part is handed the host's `_build_post_exit_reality` (a shim onto the exits part, or
-    whatever a test swapped in), never a body it owns, so no recursion guard is needed."""
+def build_review_facts(host) -> ReviewFacts:
+    """The part, wired to `host`'s collaborators as they stand now.
 
-    def _review_grading(self) -> ReviewGrading:
-        return ReviewGrading(
-            db=getattr(self, "db", None), broker=getattr(self, "broker", None),
-            market=getattr(self, "market", None), sweeper=getattr(self, "_sweeper", None),
-            build_post_exit_reality=getattr(self, "_build_post_exit_reality", None),
-        )
+    The grading body is handed the host's `_build_post_exit_reality` (this module's
+    delegate, or whatever a test swapped in), never a body it owns."""
+    return ReviewFacts(
+        db=getattr(host, "db", None), broker=getattr(host, "broker", None),
+        market=getattr(host, "market", None), sweeper=getattr(host, "_sweeper", None),
+        exit_audit_actions=getattr(host, "_EXIT_AUDIT_ACTIONS", None),
+        log_conviction_outcome_for_operator=getattr(host, "_log_conviction_outcome_for_operator", None),
+        build_post_exit_reality=getattr(host, "_build_post_exit_reality", None),
+    )
 
-    def _review_exits(self) -> ReviewExits:
-        return ReviewExits(
-            db=getattr(self, "db", None), broker=getattr(self, "broker", None),
-            sweeper=getattr(self, "_sweeper", None),
-            exit_audit_actions=getattr(self, "_EXIT_AUDIT_ACTIONS", None),
-        )
 
-    def _review_calibration(self) -> ReviewCalibration:
-        return ReviewCalibration(
-            db=getattr(self, "db", None),
-            log_conviction_outcome_for_operator=getattr(self, "_log_conviction_outcome_for_operator", None),
-        )
+def _delegate(name: str):
+    """An instance method forwarding `name` to a `ReviewFacts` built from the instance."""
+    def shim(self, *args, **kwargs):
+        return getattr(build_review_facts(self), name)(*args, **kwargs)
+    shim.__name__ = name
+    shim.__qualname__ = f"hold_review_facts.<locals>.{name}"
+    shim.__doc__ = f"Thin delegate: body lives in {_BODIES}."
+    shim._held_delegate = name
+    return shim
 
-    def _review_blocked(self) -> ReviewBlocked:
-        return ReviewBlocked(db=getattr(self, "db", None))
 
-    def _review_replay(self) -> ReviewReplay:
-        return ReviewReplay()
+def hold_review_facts(host_cls):
+    """Make `host_cls` hold the review facts: a delegate per fact name, no base class.
 
-    def _build_recent_sells_for_grading(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/grading.py."""
-        return self._review_grading()._build_recent_sells_for_grading(*args, **kwargs)
-
-    def _build_recent_buys_for_grading(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/grading.py."""
-        return self._review_grading()._build_recent_buys_for_grading(*args, **kwargs)
-
-    def _build_trade_grade_summary(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/grading.py."""
-        return self._review_grading()._build_trade_grade_summary(*args, **kwargs)
-
-    def _build_post_exit_reality(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/exits.py."""
-        return self._review_exits()._build_post_exit_reality(*args, **kwargs)
-
-    def _build_recent_missed_lessons(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/exits.py."""
-        return self._review_exits()._build_recent_missed_lessons(*args, **kwargs)
-
-    def _build_recent_loss_pits(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/exits.py."""
-        return self._review_exits()._build_recent_loss_pits(*args, **kwargs)
-
-    def _build_recent_outlook_calibration(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/calibration.py."""
-        return self._review_calibration()._build_recent_outlook_calibration(*args, **kwargs)
-
-    def _build_calibration_note(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/calibration.py."""
-        return self._review_calibration()._build_calibration_note(*args, **kwargs)
-
-    def _compute_recent_performance(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/calibration.py."""
-        return self._review_calibration()._compute_recent_performance(*args, **kwargs)
-
-    def _build_blocked_proposals(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/blocked.py."""
-        return self._review_blocked()._build_blocked_proposals(*args, **kwargs)
-
-    def _persist_evening_replay_inputs(self, *args, **kwargs):
-        """Thin shim: body moved to src/prompt_facts/review/replay.py."""
-        return self._review_replay()._persist_evening_replay_inputs(*args, **kwargs)
+    Usable as a class decorator; returns `host_cls`."""
+    host_cls._review_facts = build_review_facts
+    for name in REVIEW_FACT_NAMES:
+        setattr(host_cls, name, _delegate(name))
+    return host_cls

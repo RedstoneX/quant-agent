@@ -1,4 +1,4 @@
-# Findings parked during the rebuild
+DONE 2026-10-04 for the fourth piece: `PromptFactsReviewMixin` is deleted. `src/prompt_facts/review/facts.py` holds `ReviewFacts` (inherits nothing; the five review parts behind it, built per call from keyword-only collaborators) and `hold_review_facts` in `src/pipeline_prompt_facts_review.py` decorates `PromptFactsMixin`, installing eleven same-named delegates built from the host instance at each call (collaborators read live, never snapshotted). `PromptFactsMixin.__bases__ == (object,)`; nothing named Review is in `TradingPipeline`'s MRO. Witness: `tests/test_review_facts_held_boundary.py` (built and run from stubs on a bare class with no pipeline; a db swapped after holding is the one that runs; the prompt-facts mixin carries the delegates and has `object` as its only base).# Findings parked during the rebuild
 
 Bugs noticed while moving code, deliberately NOT fixed inside a split: a
 behaviour change hidden in a verbatim move is unreviewable. Each entry says

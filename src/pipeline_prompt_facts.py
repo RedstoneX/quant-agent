@@ -13,7 +13,6 @@ The defining property of this module: it places no orders, cancels nothing and
 amends no stop. `_handle_ex_dividends` sat in this cluster's line range and does
 move live stops, so it is NOT here — it goes to the protection module in step 2
 (plan §1 correction, 2026-10-01).
-
 Nothing here may import `src.pipeline`: this module is one of its bases.
 """
 
@@ -31,7 +30,7 @@ from src.pipeline_prompt_facts_pure import (  # noqa: F401  re-exports, see pipe
     _missed_ops_quality_metrics,
     _valuation_signal_from,
 )
-from src.pipeline_prompt_facts_review import PromptFactsReviewMixin
+from src.pipeline_prompt_facts_review import hold_review_facts
 from src.prompt_facts.decisions import PromptDecisions
 from src.prompt_facts.heat import PromptHeat
 from src.prompt_facts.missed_ops_signals import MissedOpsSignals
@@ -690,7 +689,8 @@ class PromptPositionFacts:
         return facts
 
 
-class PromptFactsMixin(PromptFactsReviewMixin):
+@hold_review_facts
+class PromptFactsMixin:
     """Read-only prompt-context builders mixed into `TradingPipeline`; every body lives on a part under src/prompt_facts/.
 
     Each `_prompt_*` builder reads the host's collaborators at call time. Cross-family reads
