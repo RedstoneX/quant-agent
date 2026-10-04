@@ -34,8 +34,10 @@ def fallback_reason(stop_specs: list[dict], position_qty: float | None) -> str:
 class UnprotectedWindow:
     """Times one cancel+resubmit and appends its facts to `sink` on close."""
 
-    def __init__(self, symbol: str, reason: str, sink: list):
+    def __init__(self, symbol: str, reason: str, sink: list,
+                 path: str = "replace_stop_loss"):
         self.symbol, self.reason, self.sink = symbol, reason, sink
+        self.path = path
         self.cancelled_ids: list[str] = []
         self._start = time.monotonic()
 
@@ -48,11 +50,13 @@ class UnprotectedWindow:
         seconds = round(time.monotonic() - self._start, 3)
         self.sink.append({"symbol": self.symbol, "reason": self.reason,
                           "cancelled_ids": list(self.cancelled_ids),
-                          "outcome": outcome, "window_seconds": seconds})
+                          "outcome": outcome, "window_seconds": seconds,
+                          "path": self.path})
         logger.warning(
-            "replace_stop_loss: %s was WITHOUT a protective stop for %.3fs "
+            "%s: %s was WITHOUT a protective stop for %.3fs "
             "(reason=%s, outcome=%s, cancelled=%s)",
-            self.symbol, seconds, self.reason, outcome, self.cancelled_ids)
+            self.path, self.symbol, seconds, self.reason, outcome,
+            self.cancelled_ids)
 
 
 def record_unprotected_windows(broker: Any, db: Any, symbol: str) -> None:

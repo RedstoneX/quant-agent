@@ -33,19 +33,23 @@ REMAINING (the fourth piece): `PromptFactsReviewMixin` (`src/pipeline_prompt_fac
 
 VERDICT 2026-10-02 (isolation pass): REPRODUCED (structural debt). Mixins remain: `PromptFactsReviewMixin` (`src/pipeline_prompt_facts_review.py`) and in `src/agents/portfolio_manager/`: `DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`, `PromptEvidenceMixin`; `tests/test_boundary_harness.py` passes (with the other two files run, 20 passed) but only covers pipeline mixins. The note named three pieces; the portfolio-manager seat actually has four mixins. Rebuild size: medium-large, five pieces.
 
-## Nothing in the build checks for undefined names
-
-DONE 2026-10-04: `scripts/check_undefined_names.py` (stdlib `symtable`, no new dependency) runs in the test workflow and is proven by `tests/test_undefined_names_guard.py`; 0 findings on 497 files at arrival. Blind spots: attribute names, dynamically created names, modules with a star import (skipped), and module-level reads before binding.
-
-A bare `_log` in the take-profit refusal branches raised `NameError` in a cold path (fixed by #1102; `tests/test_take_profit_refusal_names.py` goes red on all three cases if a bare `_log.error` is put back, re-measured 2026-10-04; no sibling survives in `src/`). The class is not closed: there is no ruff, flake8 or pyflakes in `pyproject.toml` or `.github/workflows/`, and no script in `scripts/` resolves names, so the next one ships the same way.
-
-Fix: a stdlib-only scope-analysing guard in `scripts/` plus one workflow edit, roughly 250-350 lines [estimate: earlier agent sizing, not re-derived], with its false-positive rate on the existing tree driven to zero first. A lint dependency is the alternative and needs an owner call as a new dependency.
-
 ---
 
 # Resolved history
 
 These findings have been addressed through code fixes or established as not defects. Preserved here for completeness and context.
+
+### Nothing in the build checks for undefined names (CLOSED 2026-10-04)
+
+A bare `_log` in the take-profit refusal branches raised `NameError` in a cold money path (fixed by #1102; `tests/test_take_profit_refusal_names.py` goes red on all three cases if a bare `_log.error` is put back). The class is now closed mechanically, not by care.
+
+CLOSED: `scripts/check_undefined_names.py` (stdlib `symtable`, no new dependency) resolves every name in `src/`, `scripts/` and `main.py` and runs in the test workflow (`.github/workflows/test.yml`), so an undefined name fails the build before it can ship.
+
+VERIFIED 2026-10-04 (isolation pass, fresh worktree off main b3734403, no code change): the guard exits 0 with `525 files checked, 0 finding(s)`, and no module under `src/` carries a star import, so nothing in the money paths is skipped. It is PROVEN TO BITE by `tests/test_undefined_names_guard.py`: a bare `_log.error` inside a function is reported, defining the name clears it, and a helper left behind by a lifted method body is reported in a method -- the exact shape of the known lift-the-body trap. A deliberate syntax error introduced into `src/pipeline_exits.py` also failed the guard (1 finding, exit 1) and the tree was restored green.
+
+Blind spots, unchanged and accepted: attribute names, dynamically created names (`globals()[...]`, `setattr`), modules with a star import (skipped, currently none in `src/`), and module-level reads before binding.
+
+The earlier text claimed "there is no ruff, flake8 or pyflakes ... and no script in `scripts/` resolves names, so the next one ships the same way", and sized the remaining work at 250-350 lines. Both were already false when this section was last read: the guard and its workflow edit had landed. The section was stale, not open.
 
 ### The cost circuit is eleven mixins, not eleven modules (CLOSED 2026-10-04)
 

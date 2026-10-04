@@ -1181,6 +1181,10 @@ class ExDividends:
                 continue
 
             from src.execution.stop_read import read_stop, repair_for
+            from src.execution.exit_path_records import (
+                record_shift_outcome, record_stop_shift_legs,
+            )
+            from src.execution.stop_records import record_unprotected_windows
             stop_read = read_stop(self.broker, p.symbol, db=self.db,
                                   run_id=run_id, context="ex-div shift", establish=repair_for(self._repair_stop_coverage, p))
             if stop_read.unreadable or stop_read.absent:
@@ -1203,39 +1207,15 @@ class ExDividends:
                 record_protection_fault(self, "exdiv.stop_shift", e, symbol=p.symbol)
                 logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
                 continue
+            finally:
+                record_unprotected_windows(self.broker, self.db, p.symbol)  # Item 201: even when the shift raised
             from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
             if isinstance(order, dict):
-                # Item 201: the per-leg outcome is a ROW, not a log line, and it
-                # is written whatever the outcome — a shift that refused is the
-                # case that most needs to survive the session.
-                from src.execution.exit_path_records import (
-                    record_stop_shift_legs, stop_shift_incomplete_text,
+                record_shift_outcome(
+                    self.db, p.symbol, amount, order, run_id,
+                    lambda stage, exc: record_protection_fault(self, stage, exc, symbol=p.symbol),
+                    record_stop_shift_legs,
                 )
-                shift_status = str(order.get("status") or "")
-                record_stop_shift_legs(
-                    self.db, symbol=p.symbol, amount=amount,
-                    mode=str(order.get("mode") or ""), status=shift_status,
-                    shifted=int(order.get("shifted") or 0),
-                    total=int(order.get("total") or 0),
-                    legs=order.get("legs"), run_id=run_id,
-                )
-                if shift_status in ("partial", "refused", "unknown", "naked", "market_closed"):
-                    # An un-shifted stop across an ex-dividend open is wrong by
-                    # exactly the dividend IN THE DIRECTION THAT TRIGGERS IT, so
-                    # this is an owner-visible change in protection, not a nit.
-                    try:
-                        from src.notifier import send_owner_alert
-                        send_owner_alert(
-                            stop_shift_incomplete_text(
-                                p.symbol, shift_status,
-                                int(order.get("shifted") or 0),
-                                int(order.get("total") or 0),
-                            ),
-                            symbols=[p.symbol],
-                        )
-                    except Exception as e:  # noqa: BLE001
-                        record_protection_fault(self, "exdiv.owner_alert", e, symbol=p.symbol)
-                        logger.warning("ex-div: owner alert failed for %s: %s", p.symbol, e)
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
