@@ -349,3 +349,61 @@ nine close by asking the owner for a loss or a dial. Those two counts are the
 remaining debt behind the headline `arbitrary` count: a row with a barred route
 is further from settled than the count suggests, because running its route
 would produce a number no more defensible than the one it replaces.
+
+---
+
+## Findings 2026-10-04 — the minimum stop width IS the holding period, and that is why it cannot be settled as one number
+
+**The earlier blocker was wrong.** The paragraph above records the hard stop
+floor as unrunnable because "this repository commits none" of the daily bars
+such a measurement needs. That is false, and it was false when written: the
+bars are committed as **gzipped JSON**, not as CSV or Parquet, so a search by
+the usual extensions finds nothing and reads as proof of absence. The long
+fixture holds **38 symbols and 17,208 daily bars spanning 2021-09-27 to
+2026-09-30** [measured: `ops/model_policy/fixtures/yf_daily_bars_2026-08-28.json.gz`].
+The measurement below runs against it with no network and no broker.
+
+**What was measured.** `ops/research/min_stop_atr_sweep.py` sweeps the stop
+distance from 0.50 to 5.00 ATR in 0.25 steps, at five holding horizons, over
+every bar as a candidate entry, and asks of each stop hit whether the price
+then recovered above the entry inside the horizon (the stop cost money for
+nothing: *regret*) or kept falling (the stop did its job: *saved*). ATR is the
+desk's own Wilder-14 reading, imported rather than reimplemented. A
+shuffled-ATR control runs alongside. Between **14,434 and 16,524 entry events**
+per horizon [measured: sweep output]; the live-placement section — the wider of
+the ATR band and the entry bar's low, which is what both call sites actually
+place — is the one read below.
+
+**Within one horizon the curves DO separate.** Net benefit per 100 entries
+(saved minus regret) has a clear single peak, and the real series beats the
+shuffled-ATR control at every distance, so the shape is not noise
+[measured: sweep output, live-placement section].
+
+**Across horizons the peak migrates across the entire sweep range**
+[all measured, net per 100 entries, live placement]:
+
+| horizon (sessions) | best distance | net at best | net at 2.5 (live) | net at 1.5 (prior MAE pick) |
+| --- | --- | --- | --- | --- |
+| 5 | 1.25 ATR | +22.6 | +9.4 | +21.2 |
+| 10 | 1.75 ATR | +19.6 | +16.8 | +17.4 |
+| 20 | 3.00 ATR | +17.2 | +15.8 | -0.3 |
+| 40 | 4.50 ATR | +11.3 | -3.3 | -27.3 |
+| 60 | 5.00 ATR (at or beyond the sweep's top) | +8.9 | -18.7 | -41.8 |
+
+**So the answer is: not settleable as a single number on this data, and the
+reason is structural rather than a shortage of bars.** The distance that wins
+is a monotone function of how long the trade is meant to be held, and this
+repository pins no default holding period — `expected_horizon_sessions` is
+required per trade and has no fallback. Any single figure is therefore a
+holding-period assumption wearing a volatility multiple's clothes.
+
+**What this does settle, and it is not nothing.** The live 2.5 is the best
+distance for a hold of roughly 15 to 20 sessions and is net-negative beyond
+about 30; the 1.5 suggested by the earlier maximum-adverse-excursion work is
+optimal only for a hold of about 5 sessions and is sharply net-negative at 20
+sessions and beyond. Neither is wrong in isolation; they answer different
+questions, and the desk has never stated which question it is asking. A
+defensible route exists and does not need a picked number: **derive the
+distance from each trade's own stated horizon** instead of from one global
+constant. Nothing here changes a config value, a stop or any trading
+behaviour — that is an owner decision, and this is the evidence for it.
