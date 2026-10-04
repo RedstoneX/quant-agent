@@ -940,6 +940,12 @@ class QueueItem:
     #: `status_paragraph_leads`. This is where a later change of state lands
     #: when the headline is not rewritten (item 49's "DECIDED 2026-09-12").
     status_leads: tuple[str, ...] = ()
+    #: The body's own physical lines, unjoined. `done_when_marks` reads the
+    #: `DONE WHEN:` criterion bullets off these, because the bullet RUN is a
+    #: line-level shape: a `[ ]` in a prose sentence below the run is not a
+    #: criterion, and `raw_body` (one joined line) can no longer tell them
+    #: apart. Empty only for an item built by hand without a body.
+    body_lines: tuple[str, ...] = ()
 
     @property
     def ref(self) -> str:
@@ -1022,6 +1028,8 @@ class QueueItem:
         such block. Structured data, not prose: the one statement about an
         item's completeness that cannot be fooled by how a headline is
         worded."""
+        if self.body_lines:
+            return _done_when_criterion_marks(self.body_lines)
         return _done_when_checkbox_marks(self.raw_body)
 
     @property
@@ -1228,6 +1236,7 @@ def _parse_numbered_items(body: str, source: str = "backlog",
             # this item's own text — never from a neighbour's.
             refs=extract_refs(headline + " " + " ".join(body_lines)),
             status_leads=status_paragraph_leads(body_lines),
+            body_lines=tuple(body_lines),
         ))
     return sorted(items, key=lambda i: i.rank)
 
@@ -1812,6 +1821,64 @@ _BOARD_STILL_OPEN_WORDS = (
 #: has used it yet.
 _DONE_WHEN_CHECKBOX_RE = re.compile(r"\[( |x|X)\]")
 
+#: One criterion bullet of a `DONE WHEN:` run -- the same shape
+#: `scripts.definition_of_done.CRITERION` reads, so the status board and the
+#: commit gate can never disagree about which boxes are an item's criteria.
+_DONE_WHEN_BULLET_RE = re.compile(r"^[-*]\s*\[( |x|X)\]")
+_DONE_WHEN_LABEL_RE = re.compile(r"^DONE WHEN:\s*(.*)$")
+
+
+def _marks_in_bullet_run(text: str) -> list[str]:
+    """Marks of the consecutive criterion bullets `text` opens with, in order,
+    stopping at the first fragment that is not a bullet. Used for the rare
+    one-line shape where bullets follow the label on the same line."""
+    marks: list[str] = []
+    for frag in re.split(r"(?:^|\s)(?=[-*]\s*\[(?: |x|X)\])", text.strip()):
+        frag = frag.strip()
+        if not frag:
+            continue
+        m = _DONE_WHEN_BULLET_RE.match(frag)
+        if not m:
+            break
+        marks.append(m.group(1))
+    return marks
+
+
+def _done_when_criterion_marks(lines) -> list[str]:
+    """Every mark in this item's `DONE WHEN:` CRITERION RUN, and nothing else.
+
+    The run is a line-level shape -- the label on its own line, then one
+    `- [ ]` / `- [x]` bullet per line, ending at the first line that is
+    neither a bullet nor blank -- read exactly as
+    `scripts.definition_of_done.criteria` reads it. A `[ ]` or `[x]` in prose
+    above or below the run is not a criterion and is never counted. Until
+    2026-10-04 the reader took every bracket after the first `DONE WHEN`
+    anywhere in the joined body, so an item's state moved with how much prose
+    it carried: relocating a paragraph that happened to hold a `[ ]` flipped
+    the item to finished, and the board could not be trimmed without
+    re-classifying its own items. State comes from the boxes alone.
+    """
+    marks: list[str] = []
+    started = False
+    for line in lines:
+        s = line.strip()
+        if not started:
+            label = _DONE_WHEN_LABEL_RE.match(s)
+            if not label:
+                continue
+            started = True
+            if label.group(1).strip():
+                # Bullets on the label's own line: the run is that line.
+                return _marks_in_bullet_run(label.group(1))
+            continue
+        if not s:
+            continue
+        m = _DONE_WHEN_BULLET_RE.match(s)
+        if not m:
+            break
+        marks.append(m.group(1))
+    return marks
+
 #: The literal marker an item's own body may write to say its `DONE WHEN`
 #: block can be fully ticked and the item STILL cannot close, because
 #: closing it needs an event the desk cannot manufacture -- a real fill, a
@@ -1843,10 +1910,10 @@ def _done_when_checkbox_marks(raw_body: str) -> list[str]:
     literal `[` (a citation, a code fragment) without being mistaken for a
     criterion.
     """
-    idx = raw_body.find("DONE WHEN")
+    idx = raw_body.find("DONE WHEN:")
     if idx == -1:
         return []
-    return _DONE_WHEN_CHECKBOX_RE.findall(raw_body[idx:])
+    return _marks_in_bullet_run(raw_body[idx + len("DONE WHEN:"):])
 
 
 def _all_done_when_boxes_checked(raw_body: str) -> bool:
@@ -1930,7 +1997,7 @@ def find_finished_items_still_on_board(
                         and not _closure_hit(scan, _BOARD_STILL_OPEN_WORDS)):
                     headline_finished = True
             checkbox_finished = (
-                _all_done_when_boxes_checked(item.raw_body)
+                item.box_state == "finished"
                 and not _LIVE_EVENT_BLOCKED_RE.search(item.headline)
                 and not _LIVE_EVENT_BLOCKED_RE.search(item.raw_body)
             )

@@ -1512,6 +1512,64 @@ def test_no_pending_decision_is_overdue():
 # page could say.
 # ---------------------------------------------------------------------------
 
+def _funnel_openers(text: str) -> list[int]:
+    """Every `**N.` item opener inside the funnel-queue section, counted off
+    the raw text with the parser's own stop markers -- an independent read the
+    parser's yield must equal, item for item."""
+    section = text.split(sb._QUEUE_HEADING, 1)[1]
+    for stop in board_rot_guard._QUEUE_STOPS:
+        if stop in section:
+            section = section.split(stop, 1)[0]
+    return [int(n) for n in re.findall(r"^\*\*(?:~~)?(\d+)\.", section, re.M)]
+
+
+def _whole_board(text: str) -> str:
+    return (
+        "# board\n\n## PM TEST GATE\n\n**The gate is EMPTY** -- every gate item closed.\n\n"
+        "## THE FUNNEL QUEUE\n\n" + text
+        + "\n\n**Retired item numbers -- never reuse.**\n- retired queue: 1\n\n## Next\n"
+    )
+
+
+def test_a_small_whole_board_parses_and_a_mangled_one_does_not(tmp_path):
+    """One item is a legitimate board; a truncated or mangled one is not, and
+    the difference is read off the file's shape, not its size."""
+    p = tmp_path / "WORK.md"
+    p.write_text(_whole_board("**7. Last thing — OPEN.**\n\nDONE WHEN:\n  - [ ] it\n"))
+    items, problem = sb.load_funnel_queue(p)
+    assert problem is None and [i.rank for i in items] == [7] == _funnel_openers(p.read_text())
+    assert not board_rot_guard._board_structure_problems(p)
+    # truncated part-way through the queue: no closing heading
+    p.write_text(_whole_board("**7. Last thing — OPEN.**\n\nDONE WHEN:\n  - [ ] it\n").split("\n**Retired")[0])
+    assert board_rot_guard._board_structure_problems(p)
+    # mangled: the queue heading survives but no item under it parses
+    p.write_text(_whole_board("prose only, no numbered items\n"))
+    items, problem = sb.load_funnel_queue(p)
+    assert items == [] and problem and board_rot_guard._board_structure_problems(p)
+
+
+def test_prose_outside_the_done_when_run_never_moves_box_state(tmp_path):
+    """State is the criterion bullets and nothing else, in both directions."""
+    p = tmp_path / "WORK.md"
+    ticked = "**7. Done thing — OPEN.**\n\nDONE WHEN:\n  - [x] one\n  - [x] two\n"
+    prose = "\nA paragraph below the run with a stray [ ] bracket and a `- [ ] bullet`.\n"
+    p.write_text(_whole_board(ticked + prose))
+    assert sb.load_funnel_queue(p)[0][0].box_state == "finished"
+    p.write_text(_whole_board(ticked))
+    assert sb.load_funnel_queue(p)[0][0].box_state == "finished"
+    open_ = "**7. Open thing — OPEN.**\n\nDONE WHEN:\n  - [x] one\n  - [ ] two\n"
+    p.write_text(_whole_board(open_ + "\nProse saying [x] [x] [x] done.\n"))
+    assert sb.load_funnel_queue(p)[0][0].box_state == "outstanding"
+    p.write_text(_whole_board(open_))
+    assert sb.load_funnel_queue(p)[0][0].box_state == "outstanding"
+    # the guard still bites: an all-ticked item is flagged however short it is
+    (tmp_path / "board_notes").mkdir()
+    p.write_text(_whole_board(ticked))
+    assert sb.find_finished_items_still_on_board(p, tmp_path / "board_notes")
+    p.write_text(_whole_board(open_))
+    assert not sb.find_finished_items_still_on_board(p, tmp_path / "board_notes")
+
+
 def test_the_real_backlog_still_parses():
     """The shipped docs/WORK.md must actually yield the queue.
 
@@ -1521,7 +1579,13 @@ def test_the_real_backlog_still_parses():
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     items, problem = sb.load_funnel_queue(work)
     assert problem is None, problem
-    assert len(items) >= 10, f"only {len(items)} queue items parsed"
+    # Whole, not big: the parse is checked against the file's own shape, never
+    # against a floor on the item count. A floor made a board that finished
+    # its work indistinguishable from one the parser could not read.
+    assert not board_rot_guard._board_structure_problems(work)
+    assert [i.rank for i in items] == sorted(_funnel_openers(work.read_text())), (
+        "the parser yields a different set of items than the queue's own bold "
+        "`**N.` openers -- some item heading no longer parses")
     assert [i.rank for i in items] == sorted(i.rank for i in items)
     assert all(i.title for i in items)
     # Funnel items 1 and 4 (invented R/R refuse / 1.2 belt) were retired

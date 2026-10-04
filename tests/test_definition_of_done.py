@@ -25,6 +25,7 @@ a clone with no reachable base, the gate does not run.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -122,6 +123,32 @@ def _base_with_board(tmp_path: Path, items: str, retired: str = "1, 2") -> tuple
 # the board's own shapes — parsed, not assumed
 # ---------------------------------------------------------------------------
 
+def _board_parse_problems(work_md: str) -> list[str]:
+    """Did the board PARSE -- never, is it big. Each read of the file is held
+    equal to an independent raw count of the same shape, so a heading or
+    retired line the reader skips shows up as a mismatch however many items
+    the board happens to hold. (Until 2026-10-04 this was a floor of ten on
+    both counts, which refused a board that had simply finished its work.)"""
+    problems = []
+    openers = re.findall(r"^\*\*(\d+)\.", work_md, re.M)
+    if sorted(dod.item_blocks(work_md)) != sorted(openers):
+        problems.append("an item heading the file plainly opens does not parse as a block")
+    lines = re.findall(r"^\s*-\s*retired queue:\s*(.*)$", work_md, re.M)
+    raw = {n for line in lines for n in re.findall(r"\d+", line)}
+    if not lines or dod.retired_numbers(work_md) != raw:
+        problems.append("the retired-numbers bullet lines do not parse to the numbers they carry")
+    return problems
+
+
+def test_a_whole_board_parses_whatever_its_size_and_a_mangled_one_does_not():
+    small = ("## THE FUNNEL QUEUE\n\n**7. One item — OPEN.**\n\nDONE WHEN:\n  - [ ] it\n\n"
+             "**Retired item numbers — never reuse.** APPEND-ONLY.\n- retired queue: 1\n")
+    assert not _board_parse_problems(small)
+    assert _board_parse_problems(small.replace("**7. One", "**7.One"))
+    assert _board_parse_problems(small.replace("- retired queue: 1", "- retired queue: 1, x"))
+    assert _board_parse_problems(small.split("**Retired")[0])
+
+
 def test_the_real_board_parses_into_items_and_retired_numbers():
     """Every check is built on these two reads of the live docs/WORK.md.
 
@@ -130,10 +157,9 @@ def test_the_real_board_parses_into_items_and_retired_numbers():
     the whole gate silently matching nothing and passing everything.
     """
     work_md = (REPO / dod.WORK_MD).read_text()
+    assert not _board_parse_problems(work_md), _board_parse_problems(work_md)
     blocks = dod.item_blocks(work_md)
-    assert len(blocks) >= 10, "docs/WORK.md item headings no longer parse"
     retired = dod.retired_numbers(work_md)
-    assert len(retired) >= 10, "docs/WORK.md retired-numbers line no longer parses"
     assert not (set(blocks) & retired), (
         "an item number is both live in docs/WORK.md and on the retired line; "
         "items_closed() would mis-read a diff"
