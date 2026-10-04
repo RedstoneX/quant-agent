@@ -85,8 +85,10 @@ def test_refresh_all_refreshes_the_openrouter_cache_not_only_litellm(monkeypatch
     monkeypatch.setattr(rp, "refresh_openrouter_pricing", _openrouter)
     monkeypatch.setattr(rp, "refresh_pricing", _litellm)
     monkeypatch.setattr(rp, "openrouter_cache_age_hours", lambda: 0.1)
+    monkeypatch.setattr(rp, "record_openrouter_balance", lambda: called.append("balance") or {})
 
     outcome = rp.refresh_all(force=True)
+    assert "balance" in called, "the timer must also snapshot the remaining credit"
 
     assert "openrouter(force=True)" in called
     assert "litellm(force=True)" in called

@@ -74,6 +74,7 @@ from src.cost_table import (  # noqa: E402
     openrouter_cache_path,
     refresh_openrouter_pricing,
     refresh_pricing,
+    record_openrouter_balance,
 )
 
 
@@ -180,8 +181,9 @@ def refresh_all(force: bool = False) -> RefreshOutcome:
     # would go back to the network, and a stale cache is already an alert.
     priced = bool(refresh_openrouter_pricing(force=False)) if is_current else False
     litellm_ok = refresh_pricing(force=force)
-    from src.llm_balance_runway import record_provider_balance
-    record_provider_balance()  # best-effort; the dashboard derives it if refused
+    # Provider's own remaining credit. A refusal is logged at ERROR by name
+    # and the dashboard falls back to the top-up-derived figure, never to "ok".
+    record_openrouter_balance()
     return RefreshOutcome(
         openrouter_call_ok=bool(openrouter_ok),
         openrouter_age_hours=age_hours,

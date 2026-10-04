@@ -2,19 +2,24 @@
 
 On 2026-09-29 the single OpenRouter balance ran out and every paid seat was
 refused at once. This module is the early warning, read by the dashboard's
-/health payload. It reuses the desk's own spend record (`llm_budget_days`,
-written by the cost circuit) and invents nothing.
+/health payload and spoken by every out-of-credit message. It reuses the
+desk's own spend record (`llm_budget_days`, written by the cost circuit) and
+invents nothing. It makes NO network call of its own.
 
 WHERE THE BALANCE COMES FROM, in order:
   1. `data/openrouter_balance.json` -- the provider's own figure (OpenRouter
      GET /api/v1/credits: total_credits - total_usage), written by
-     `record_provider_balance()` from the twice-daily pricing-refresh timer.
-     The provider may refuse that call (it can need a management key); then
-     no file is written and step 2 applies. Spend recorded after the
-     snapshot day is subtracted so the figure keeps falling between refreshes.
+     `src.cost_table.record_openrouter_balance()` from the twice-daily
+     pricing-refresh timer. That fetch lives in cost_table because it is the
+     module that already reaches openrouter.ai (replay-seam guard). When the
+     provider refuses the call the timer logs the reason at ERROR, no file is
+     written, and step 2 applies. Spend recorded after the snapshot day is
+     subtracted so the figure keeps falling between refreshes.
   2. DERIVED: the recorded top-up (`llm_cost_circuit.openrouter_topup_usd`
      and `_date`) minus the desk's recorded spend from that date on.
-The payload says which one it used (`source`).
+The payload says which one it used (`source`). A snapshot file that exists
+but cannot be read is reported as `unknown` naming the file -- it does not
+quietly fall through to the derived figure.
 
 THE TRIGGER IS MEASURED, NOT PICKED. One full trading day costs what the
 desk's own record says it cost; the worst recorded full day is the yardstick.
@@ -25,35 +30,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, datetime, timezone
 from pathlib import Path
 
-SNAPSHOT_PATH = Path(__file__).resolve().parent.parent / "data" / "openrouter_balance.json"
-_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
-
-
-def record_provider_balance(path: Path = SNAPSHOT_PATH) -> float | None:
-    """Ask OpenRouter for the remaining credit and keep it. Never raises."""
-    try:
-        import os
-
-        import requests
-
-        key = os.environ.get("OPENROUTER_API_KEY", "")
-        resp = requests.get(
-            _CREDITS_URL, headers={"Authorization": f"Bearer {key}"}, timeout=15
-        )
-        resp.raise_for_status()
-        data = resp.json()["data"]
-        remaining = float(data["total_credits"]) - float(data["total_usage"])
-        path.write_text(json.dumps({
-            "remaining_usd": remaining,
-            "as_of_day": date.today().isoformat(),
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-        }))
-        return remaining
-    except Exception:  # noqa: BLE001 -- the derived path covers a refusal
-        return None
+from src.cost_table import OPENROUTER_BALANCE_PATH as SNAPSHOT_PATH
 
 
 def _day_costs(conn: sqlite3.Connection) -> dict[str, float]:
@@ -124,9 +103,16 @@ def compute_state(
 def read_state(db_path: str, *, topup_usd, topup_date, snapshot_path: Path = SNAPSHOT_PATH) -> dict:
     """Never raises: a failed read is `unknown`, never `ok`."""
     try:
-        try:
-            snapshot = json.loads(snapshot_path.read_text())
-        except Exception:  # noqa: BLE001
+        if snapshot_path.exists():
+            try:
+                snapshot = json.loads(snapshot_path.read_text())
+            except (OSError, ValueError) as exc:
+                return {
+                    "status": "unknown",
+                    "message": f"The provider balance snapshot {snapshot_path} exists but cannot be read, so the remaining credit is not known.",
+                    "error": str(exc),
+                }
+        else:
             snapshot = None
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
