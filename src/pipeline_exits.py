@@ -37,6 +37,7 @@ import math
 from datetime import datetime, timedelta
 
 from src.models import ReasoningChain, TradeDecision
+from src.sentinel.guarded_exit import record_exit_guard
 from src.trading_calendar import et_today
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -407,11 +408,9 @@ class ExitEngineMixin:
                 }),
             )
             any_surface_ok = True
+            record_exit_guard(self, "structural.board_reason_write")
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "structural protection: board reason write failed for %s "
-                "(%s) — Telegram send still attempted", symbol_u, e,
-            )
+            record_exit_guard(self, "structural.board_reason_write", e, logger, symbol=symbol_u, effect="Telegram send still attempted")
 
         # Telegram: the same standalone owner-alert path the holding-discipline
         # block uses. `send_owner_alert` does NOT raise on a failed send — it
@@ -422,11 +421,9 @@ class ExitEngineMixin:
 
             ok = _notifier.send_owner_alert(message, symbols=[symbol_u])
             any_surface_ok |= bool(ok)
+            record_exit_guard(self, "structural.owner_alert_send")
         except Exception as e:  # noqa: BLE001
-            logger.error(
-                "structural protection: owner alert send failed for %s (%s)",
-                symbol_u, e,
-            )
+            record_exit_guard(self, "structural.owner_alert_send", e, logger, symbol=symbol_u, effect="owner not told; dedup slot stays free")
 
         # Consume the dedup slot only if the why reached at least one surface;
         # otherwise leave it free so a later cycle retries rather than the desk
@@ -514,7 +511,9 @@ class ExitEngineMixin:
         try:
             from src.execution.scale_in import pending_protection_symbols
             pending_syms = pending_protection_symbols(self.db)
-        except Exception:  # noqa: BLE001
+            record_exit_guard(self, "trail.pending_protection_symbols")
+        except Exception as exc:  # noqa: BLE001
+            record_exit_guard(self, "trail.pending_protection_symbols", exc, logger, effect="treated as no in-flight restore rows")
             pending_syms = set()
         for position in positions:
             symbol = position.symbol
@@ -529,8 +528,9 @@ class ExitEngineMixin:
                 continue
             try:
                 buy = self.db.get_symbol_last_buy(symbol)
+                record_exit_guard(self, "trail.last_buy_lookup")
             except Exception as e:  # noqa: BLE001
-                logger.warning("trail: last-buy lookup failed for %s: %s", symbol, e)
+                record_exit_guard(self, "trail.last_buy_lookup", e, logger, symbol=symbol, effect="symbol skipped this pass")
                 _note(symbol, "opening_row_lookup_failed", str(e))
                 continue
             if not buy:
@@ -554,12 +554,9 @@ class ExitEngineMixin:
                 # uses: anything that is not a real row leaves `buy` alone.
                 if isinstance(_open_row, dict):
                     buy = _open_row
+                record_exit_guard(self, "trail.position_open_row")
             except Exception as e:  # noqa: BLE001
-                logger.warning(
-                    "trail: position-open row lookup failed for %s (%s) — "
-                    "falling back to the last opening row",
-                    symbol, e,
-                )
+                record_exit_guard(self, "trail.position_open_row", e, logger, symbol=symbol, effect="falls back to last opening row")
             from src.execution.stop_read import read_stop, repair_for
             _stop_read = read_stop(self.broker, symbol, db=self.db,
                                    context="deterministic trail", establish=repair_for(self._repair_stop_coverage, position))
@@ -613,12 +610,9 @@ class ExitEngineMixin:
                 all_bars = self.market.get_ohlcv(symbol, 120) or []
                 try:
                     opened_ts = self.db.get_position_open_timestamp(buy)
+                    record_exit_guard(self, "trail.position_open_timestamp")
                 except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        "trail: position-open lookup failed for %s (%s) — "
-                        "falling back to the last opening row's date",
-                        symbol, e,
-                    )
+                    record_exit_guard(self, "trail.position_open_timestamp", e, logger, symbol=symbol, effect="falls back to opening row date")
                     opened_ts = None
                 if not isinstance(opened_ts, str):
                     opened_ts = None
@@ -628,8 +622,9 @@ class ExitEngineMixin:
                     b for b in all_bars
                     if not entry_day or str(getattr(b, "date", ""))[:10] >= entry_day
                 ]
+                record_exit_guard(self, "trail.bar_fetch")
             except Exception as e:  # noqa: BLE001
-                logger.warning("trail: bar fetch failed for %s: %s", symbol, e)
+                record_exit_guard(self, "trail.bar_fetch", e, logger, symbol=symbol, effect="trail evaluated without bars")
 
             # Item 82: the MEASURED half of the breakout verdict, pinned at
             # entry alongside `setup_type` (stored 0/1/NULL). Present → this
@@ -720,11 +715,9 @@ class ExitEngineMixin:
                 order = replace_stop_and_record(
                     self.broker, self.db, symbol, proposal.new_stop,
                 )
+                record_exit_guard(self, "trail.replace_stop")
             except Exception as e:  # noqa: BLE001
-                logger.error(
-                    "trail: replace_stop_loss failed for %s (%s) — the OLD "
-                    "stop remains in force", symbol, e,
-                )
+                record_exit_guard(self, "trail.replace_stop", e, logger, symbol=symbol, effect="old stop remains in force")
                 _note(
                     symbol, "replace_raised", str(e),
                     proposed_stop=proposal.new_stop, current_stop=current_stop,
@@ -763,8 +756,9 @@ class ExitEngineMixin:
                                 symbol, _astatus, len(_ok), len(_legs)),
                             symbols=[symbol],
                         )
+                        record_exit_guard(self, "trail.owner_alert")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("trail: owner alert failed for %s: %s", symbol, e)
+                        record_exit_guard(self, "trail.owner_alert", e, logger, symbol=symbol, effect="owner not told of incomplete stop shift")
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
@@ -807,8 +801,9 @@ class ExitEngineMixin:
                     run_id=run_id,
                     stop_loss=proposal.new_stop,
                 )
+                record_exit_guard(self, "trail.trade_row_write")
             except Exception as e:  # noqa: BLE001
-                logger.warning("trail: trade row write failed for %s: %s", symbol, e)
+                record_exit_guard(self, "trail.trade_row_write", e, logger, symbol=symbol, effect="trail not recorded in trade rows")
 
         record_trail_code_census(
             self.db, run_id=run_id, counts=dict(code_census),
@@ -1130,11 +1125,9 @@ class ExitEngineMixin:
         # kind of silent gap this fix exists to remove.
         try:
             exit_position_history = self._build_position_history(positions)
+            record_exit_guard(self, "exit_review.position_history")
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Exit review: position history rebuild failed — the seat sees "
-                "holding ages as unknown: %s", e,
-            )
+            record_exit_guard(self, "exit_review.position_history", e, logger, effect="seat sees holding ages as unknown")
             exit_position_history = {}
 
         try:
@@ -1163,13 +1156,9 @@ class ExitEngineMixin:
                 # two audit steps were skipped that do not exist here.
                 review_mode=risk_review_mode.EXIT_REVIEW,
             )
+            record_exit_guard(self, "exit_review.risk_review")
         except Exception as e:  # noqa: BLE001
-            logger.error(
-                "AI Risk exit review RAISED (%s) — failing OPEN: %d exit(s) "
-                "proceed unreviewed. Named-trigger exits already passed the "
-                "deterministic owner; unnamed exits were not sent here.",
-                e, len(decisions),
-            )
+            record_exit_guard(self, "exit_review.risk_review", e, logger, effect="fails OPEN: exits proceed unreviewed")
             for d in decisions:
                 self._record_exit_refusal(
                     symbol=d.symbol, run_id=run_id,
@@ -1194,8 +1183,9 @@ class ExitEngineMixin:
                 cost_usd=rm_result.cost_usd,
                 status="agent_failure" if verdict is None else "ok",
             )
+            record_exit_guard(self, "exit_review.agent_log_write")
         except Exception as e:  # noqa: BLE001
-            logger.warning("AI Risk exit review: agent log write failed: %s", e)
+            record_exit_guard(self, "exit_review.agent_log_write", e, logger, effect="agent log row not written")
 
         if verdict is None:
             logger.error(
@@ -1250,8 +1240,9 @@ class ExitEngineMixin:
                     status="exit_vetoed_by_ai_risk",
                     detail=(veto_reasons[symbol] or "")[:400],
                 )
+                record_exit_guard(self, "exit_review.veto_audit_write")
             except Exception as e:  # noqa: BLE001
-                logger.warning("AI Risk exit review: audit write failed: %s", e)
+                record_exit_guard(self, "exit_review.veto_audit_write", e, logger, symbol=symbol, effect="veto audit row not written")
             self._record_exit_refusal(
                 symbol=symbol, run_id=run_id,
                 action=original_action_by_symbol.get(symbol, "SELL"),
@@ -1374,11 +1365,9 @@ class ExitEngineMixin:
             acted_today = keep_executed_acted_triggers(
                 acted_today, executed_order_ids=_executed_order_ids,
             )
+            record_exit_guard(self, "spent_trigger.acted_today_read")
         except Exception as _e:  # noqa: BLE001 — a failed read is uncertainty
-            logger.warning(
-                "spent trigger: today's acted-trigger record could not be "
-                "read (%s) — this layer fails OPEN for this pass", _e,
-            )
+            record_exit_guard(self, "spent_trigger.acted_today_read", _e, logger, effect="layer fails OPEN for this pass")
             acted_today = None
         # Entry context (thesis_invalid_if / entry price / entry stop) for the
         # holding-discipline claim check below. Built ONCE and only if some
@@ -1428,8 +1417,9 @@ class ExitEngineMixin:
                                 status="exit_vetoed_contradicts_own_metrics",
                                 detail=veto[:500],
                             )
+                            record_exit_guard(self, "exit_guard.metric_audit_write")
                         except Exception as e:  # noqa: BLE001
-                            logger.warning("exit guard: audit write failed: %s", e)
+                            record_exit_guard(self, "exit_guard.metric_audit_write", e, logger, symbol=symbol, effect="audit row not written")
                         from src.risk.exit_refusal import CODE_CONTRADICTS_METRICS
                         self._record_exit_refusal(
                             symbol=symbol, run_id=run_id, action=act,
@@ -1572,8 +1562,9 @@ class ExitEngineMixin:
                             status=f"alignment_exit_{verdict.status.lower()}",
                             detail=det[:400],
                         )
+                        record_exit_guard(self, "alignment_exit.audit_write")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("alignment exit: audit write failed: %s", e)
+                        record_exit_guard(self, "alignment_exit.audit_write", e, logger, symbol=symbol, effect="audit row not written")
                     logger.info(
                         "Alignment exit %s %s: %s (claimed=%s) — %s", act, symbol,
                         verdict.status, alignment_claimed, verdict.reason,
@@ -1668,8 +1659,9 @@ class ExitEngineMixin:
                             ),
                             detail=band_detail,
                         )
+                        record_exit_guard(self, "noise_band.audit_write")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("noise band: audit write failed: %s", e)
+                        record_exit_guard(self, "noise_band.audit_write", e, logger, symbol=symbol, effect="audit row not written")
                     if _band_blocks:
                         logger.warning(
                             "Position reviewer: blocking %s %s — adverse "
@@ -1721,8 +1713,9 @@ class ExitEngineMixin:
                             status="exit_blocked_no_named_trigger",
                             detail=f"{act}: {str(reason_text)[:400]}",
                         )
+                        record_exit_guard(self, "exit_gate.audit_write")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("exit gate: audit write failed: %s", e)
+                        record_exit_guard(self, "exit_gate.audit_write", e, logger, symbol=symbol, effect="audit row not written")
                     self._record_exit_refusal(
                         symbol=symbol, run_id=run_id, action=act,
                         code=CODE_UNRECOGNIZED_TRIGGER, dropped=True,
@@ -1775,11 +1768,9 @@ class ExitEngineMixin:
                 if hd_position_history is None:
                     try:
                         hd_position_history = self._build_position_history(positions)
+                        record_exit_guard(self, "holding_discipline.position_history")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "holding discipline: entry-context lookup failed "
-                            "(%s) — protection is read without it this run", e,
-                        )
+                        record_exit_guard(self, "holding_discipline.position_history", e, logger, symbol=symbol, effect="protection read without entry context")
                         hd_position_history = {}
                 try:
                     hd_check = self._holding_discipline_check_for_exit(
@@ -1793,12 +1784,9 @@ class ExitEngineMixin:
                         # adjudicable at all.
                         exit_trigger=action_item.get("exit_trigger"),
                     )
+                    record_exit_guard(self, "holding_discipline.check")
                 except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        "holding discipline: check failed for %s %s (%s) — "
-                        "the claim goes unverified rather than blocking the "
-                        "exit", act, symbol, e,
-                    )
+                    record_exit_guard(self, "holding_discipline.check", e, logger, symbol=symbol, effect="claim goes unverified rather than blocking")
                     hd_check = None
                 if hd_check is not None and hd_check.blocks:
                     logger.warning(
@@ -1812,10 +1800,9 @@ class ExitEngineMixin:
                             status="exit_blocked_holding_discipline_claim_false",
                             detail=(hd_check.finding or "")[:500],
                         )
+                        record_exit_guard(self, "holding_discipline.audit_write_blocked")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "holding discipline: audit write failed: %s", e,
-                        )
+                        record_exit_guard(self, "holding_discipline.audit_write_blocked", e, logger, symbol=symbol, effect="audit row not written")
                     from src.risk.exit_refusal import CODE_HOLDING_DISCIPLINE_FALSE
                     self._record_exit_refusal(
                         symbol=symbol, run_id=run_id, action=act,
@@ -1833,10 +1820,9 @@ class ExitEngineMixin:
                             status="holding_discipline_claim_unverified",
                             detail=(hd_check.finding or "")[:500],
                         )
+                        record_exit_guard(self, "holding_discipline.audit_write_unverified")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "holding discipline: audit write failed: %s", e,
-                        )
+                        record_exit_guard(self, "holding_discipline.audit_write_unverified", e, logger, symbol=symbol, effect="audit row not written")
 
             # The same-day-trim gate that used to sit here is GONE, not
             # relaxed: it read `symbol in already_trimmed and not
@@ -1887,8 +1873,9 @@ class ExitEngineMixin:
                         status="exit_blocked_trigger_already_spent",
                         detail=spent.detail[:500],
                     )
+                    record_exit_guard(self, "spent_trigger.audit_write")
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("spent trigger: audit write failed: %s", e)
+                    record_exit_guard(self, "spent_trigger.audit_write", e, logger, symbol=symbol, effect="audit row not written")
                 self._record_exit_refusal(
                     symbol=symbol, run_id=run_id, action=act,
                     code=spent.code, dropped=True,
@@ -1942,8 +1929,9 @@ class ExitEngineMixin:
                                 symbol,
                             )
                             continue
-                    except Exception:  # noqa: BLE001
-                        pass
+                        record_exit_guard(self, "midday_trail.pending_protection_check")
+                    except Exception as exc:  # noqa: BLE001
+                        record_exit_guard(self, "midday_trail.pending_protection_check", exc, logger, symbol=symbol, effect="restore-in-flight check skipped")
                     try:
                         new_stop = float(action_item.get("new_stop_price") or 0)
                     except (TypeError, ValueError):
@@ -2219,13 +2207,9 @@ class ExitEngineMixin:
                             run_id=run_id, payload_json=_acted.to_json(),
                             symbol=_acted.symbol,
                         )
+                        record_exit_guard(self, "spent_trigger.record_acted")
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(
-                            "spent trigger: could not record the acted "
-                            "trigger for %s (%s) — a second cut on this "
-                            "same record today would not be caught",
-                            symbol, e,
-                        )
+                        record_exit_guard(self, "spent_trigger.record_acted", e, logger, symbol=symbol, effect="a second cut today would not be caught")
                     if acted_today is not None:
                         acted_today.append(_acted)
                 logger.info(
@@ -2233,8 +2217,9 @@ class ExitEngineMixin:
                     act, self._format_qty(qty),
                     symbol, action_item.get("reason"),
                 )
+                record_exit_guard(self, "midday.order")
             except Exception as e:
-                logger.error("Midday order failed for %s: %s", symbol, e)
+                record_exit_guard(self, "midday.order", e, logger, symbol=symbol, effect="order failed; exit not placed")
             # Rebuild THIS symbol's stop coverage on its actual fill before
             # the loop cancels the next symbol's stops — the same per-name
             # discipline the de-lever loops got (docs/WORK.md item 111).
