@@ -5280,10 +5280,10 @@ numbers:
       reconciler uses). Guards against representation error rather than
       choosing a policy magnitude, same reasoning as
       src.execution.broker_parts.stop_place._FRACTIONAL_QTY_EPSILON.
-  - id: src.pipeline_prompt_facts._PM_PROFILE_SYMBOL_CAP
+  - id: src.prompt_facts.pm_facts._PM_PROFILE_SYMBOL_CAP
     value: 40
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/pm_facts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. Ceiling
       on how many symbols get a company-profile network lookup for PM's
@@ -7201,13 +7201,13 @@ numbers:
       (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_own_recent_decisions(limit)
+  - id: src.prompt_facts.decisions.PromptDecisions._build_own_recent_decisions(limit)
     value: 3
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/decisions.py
     note: >-
       How many previous position-reviewer sessions the reviewer is shown
-      (anti-flip-flop memory) (src/pipeline_prompt_facts.py::PromptFactsMixin._build_own_recent_decisions). Its only caller
+      (anti-flip-flop memory) (src/prompt_facts/decisions.py::PromptDecisions._build_own_recent_decisions). Its only caller
       passes nothing, so this default is live. Same class as the smart-money
       prompt-truncation caps classified arbitrary on 2026-09-19: it decides
       what evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7231,10 +7231,10 @@ numbers:
         a run of sessions shows the surviving-row count beyond which the seat's verdict stops changing; the window or
         cap is then set at that point, read off the recording, instead of at a round number. Never set from which
         window would have traded best
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_pm_recent_decisions(limit)
+  - id: src.prompt_facts.decisions.PromptDecisions._build_pm_recent_decisions(limit)
     value: 3
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/decisions.py
     note: >-
       How many of its own previous decision sets the PM is shown (anti-flip-
       flop memory) (src/stage_decision.py::DecisionStage.run). Its only caller passes
@@ -7426,10 +7426,10 @@ numbers:
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_rm_recent_verdicts(limit)
+  - id: src.prompt_facts.decisions.PromptDecisions._build_rm_recent_verdicts(limit)
     value: 5
     status: arbitrary
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/decisions.py
     note: >-
       How many recent risk-seat verdicts the PM is shown to self-calibrate
       size (src/stage_decision.py::DecisionStage.run). Its only caller passes nothing, so
@@ -7495,12 +7495,12 @@ numbers:
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
-  - id: src.pipeline_prompt_facts.PromptFactsMixin._build_watchlist_candidates(lookback_days)
+  - id: src.prompt_facts.watchlist.PromptWatchlist._build_watchlist_candidates(lookback_days)
     value: 30
     status: not-trade-governing
-    site: src/pipeline_prompt_facts.py
+    site: src/prompt_facts/watchlist.py
     note: >-
-      Owner-facing universe-expansion report (src/pipeline_prompt_facts.py::PromptFactsMixin._build_watchlist_candidates); no
+      Owner-facing universe-expansion report (src/prompt_facts/watchlist.py::PromptWatchlist._build_watchlist_candidates); no
       caller in the trading path, and the only caller
       (scripts/watchlist_candidates.py::main) passes it explicitly. It proposes
       names for a human to add; it never adds one.
