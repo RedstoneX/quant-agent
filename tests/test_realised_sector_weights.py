@@ -253,3 +253,69 @@ def test_the_recording_never_blocks_a_trade(db):
         decisions=[_decision("BUY", "AAA", 1.0)],
         sectors={"AAA": "Energy"}, total_value=1.0, run_id="run-6",
     ) is False
+
+
+def _analysis(symbol, entry=100.0, stop=95.0, target=135.0):
+    from src.models import TechAnalysisResult, TechReasoningChain
+    return TechAnalysisResult(
+        symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
+        reference_target=target, reasoning="test",
+        support_levels=[stop], resistance_levels=[target],
+        computed_levels=[stop, target], atr_14=(entry - stop) / 3.5,
+        setup_type="range", expected_horizon_sessions=60,
+        reasoning_chain=TechReasoningChain(
+            trend="x", momentum="x", volatility="x", volume="x",
+            support_resistance="x"),
+        thesis_invalid_if="closes below support",
+    )
+
+
+def test_a_real_construct_orders_run_lands_a_populated_row_in_the_store(
+    db, monkeypatch,
+):
+    """THE PROOF THE ROW LANDS: real constructor sizes real orders, the real
+    product helper runs on its output, and the row is read back out of a real
+    store with real values. Fixture symbols and sectors are synthetic."""
+    from types import SimpleNamespace
+
+    import src.sector_reference as sector_reference
+    from src.models import TargetPosition
+    from src.pipeline_entry_orders import _record_realised_sector_weights
+    from src.portfolio_constructor import PortfolioConstructor
+
+    sectors = {"AAA": "SectorOne", "BBB": "SectorOne", "CCC": "SectorTwo"}
+    monkeypatch.setattr(
+        sector_reference, "_get_sector", lambda s: sectors.get(s, "Unknown"),
+    )
+    constructor = PortfolioConstructor()
+    names = ["AAA", "BBB", "CCC"]
+    decisions = constructor.construct_orders(
+        targets=[TargetPosition(symbol=s, target_weight_pct=4.0,
+                                conviction="high", thesis="t") for s in names],
+        positions=[], analyses=[_analysis(s) for s in names],
+        total_value=100_000, price_map={s: 100.0 for s in names},
+        unpriceable_symbols={},
+    )
+    built = [d for d in decisions if d.action == "BUY"]
+    assert built, "fixture must make the constructor build orders"
+
+    pipeline = SimpleNamespace(db=db, portfolio_constructor=constructor)
+    _record_realised_sector_weights(
+        pipeline, SimpleNamespace(run_id="run-e2e"),
+        SimpleNamespace(decisions=decisions), 100_000,
+    )
+
+    rows = _row(db)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["run_id"] == "run-e2e"
+    assert row["entry_orders_built"] == len(built)
+    stored = {(r["sector"], r["side"]): r for r in json.loads(row["weights_json"])}
+    expected = {}
+    for d in built:
+        k = (sectors[d.symbol], "long")
+        expected[k] = expected.get(k, 0.0) + d.allocation_pct
+    assert set(stored) == set(expected)
+    for k, w in expected.items():
+        assert stored[k]["weight_pct"] == pytest.approx(w, abs=1e-5)
+        assert stored[k]["weight_pct"] > 0
