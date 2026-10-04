@@ -1129,9 +1129,13 @@ numbers:
       was built around it. config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any` sets the same 0.5.
   - id: src.config.RiskConfig.min_stop_atr_multiple
     value: 2.5
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-10-04'
+    ruling_summary: "Owner ruled on 2026-10-04 that the minimum stop distance is 2.5 times the stock's own ATR, closing the stop-multiple question at that value; it individualises per name because ATR does."
+    ruling_record: docs/OUTCOME.md, sections 'The protective stop width is settled at 2.5 ATR' and 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)
     site: src/config/__init__.py
-    settles_by:
+    route_parked_by_ruling_2026_10_04:
+      why: the measurement route below is kept as written but parked, because the owner's dated ruling above settles the value; a ruled number owes no route, and this one is not re-derived.
       kind: recording
       state: built
       where: src/storage/trades/ledger.py
@@ -2937,7 +2941,10 @@ numbers:
       previously checked.
   - id: src.portfolio_constructor.config.ConstructorConfig.max_position_pct
     value: 65
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-09-11'
+    ruling_summary: "Owner overrode the single-name notional ceiling to 65% of equity on 2026-09-11 after the prompt_limits defect; a dated appetite call, not a derivation."
+    ruling_record: src/portfolio_constructor/config.py, the max_position_pct comment, clause (c) dated 2026-09-11 (owner set 65 as his own risk-appetite call, costs at five real gap disasters recorded beside it); docs/INCIDENT_HISTORY.md, the prompt_limits defect
     site: src/portfolio_constructor/config.py
     note: >-
       Single-name ceiling, moved to 65 by owner override on 2026-09-11
@@ -2954,7 +2961,8 @@ numbers:
       7.69%-of-entry crossover with the 5% risk envelope. The earlier wording
       here, "binds most real trades", was never measured and is wrong: it
       bound 4 of 38, not most.
-    settles_by:
+    route_parked_by_ruling_2026_10_04:
+      why: the measurement route below is kept as written but parked, because the owner's dated ruling above settles the value; a ruled number owes no route, and this one is not re-derived.
       kind: measurement
       state: specified
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)

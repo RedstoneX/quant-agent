@@ -847,7 +847,8 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
         "src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct",
     )
     for site_id in ceilings:
-        entry = ledger[site_id]
+        if (entry := ledger[site_id])["status"] == "owner-ruled":
+            continue  # a dated owner decision owes no settlement route
         # A ceiling that is a MIRROR of another ceiling owes nothing of its
         # own: it has no settlement route because a `derived` row may not
         # carry one (the validator rejects `settles_by` on any non-arbitrary
@@ -857,9 +858,8 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
         # somebody and the owner is still not being asked -- is therefore
         # checked on the BASE instead, which must itself be one of these
         # ceilings. Added 2026-10-02 when
-        # `ConstructorConfig.max_sector_hard_pct` was recorded as the mirror
-        # of `RiskConfig.SECTOR_HARD_CEILING_MAX` that src/pipeline.py:363
-        # makes it; the base kept its recording and its withdrawn question.
+        # `ConstructorConfig.max_sector_hard_pct` was recorded as the mirror of
+        # `RiskConfig.SECTOR_HARD_CEILING_MAX` (src/pipeline.py:363).
         if entry.get("status") == "derived":
             base_id = entry.get("derived_from")
             assert base_id in ceilings, (
