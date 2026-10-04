@@ -25,7 +25,20 @@ kept as history and marked DONE where they describe a stored file that is gone.
   owner/allow pairs in code, with no trunk comparison. It reads as reviewed policy
   (each entry carries a reason), not a cached measurement, but it is a stored list.
   Sized follow-up: decide policy vs measurement; not changed here.
-- Not stored by design: `config/number_ledger.yaml` (content, see below).
+- Config files checked against the three-way test (kept record of a decision /
+  stored baseline-allow-list a guard could compute / neither). Read 2026-10-04:
+  - `config/number_ledger.yaml`: KEPT RECORD. The register of money-governing
+    numbers and their provenance; real content, stays.
+  - `config/live_capital_preflight_attestations.yaml`: KEPT RECORD. A named
+    person's attestation of conditions a machine cannot verify; cannot be computed.
+  - `config/number_ledger_history.yaml` and `config/number_ledger_route_history.yaml`:
+    AMBIGUOUS. Each entry's `why` is a kept decision record, but the file also
+    makes a stored count (sum of deltas) that a test checks equals the live
+    count of arbitrary rows, which the tree could give directly. Whether the
+    count half is bookkeeping to remove is an open call; not changed here.
+  - `config/prompt_only_numbers.yaml`: AMBIGUOUS. Rows carry a recorded reason
+    and open question (register), yet a test also uses the rows as the allow-list
+    of threshold-shaped figures permitted in prompt sheets.
 - Source-reading tests, re-counted 2026-10-04: 119 of 480 test files by a broad
   text heuristic (AST/getsource use, or file reads combined with a source-path or
   git-listing pattern), 44 by a strict one (AST/getsource AND a repo path)
