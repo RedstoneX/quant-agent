@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.entry_evidence import resolve_entry_pins
 from src.recording_accessors import pinned_evidence
 
 __all__ = ["insert_pending_entry"]
@@ -51,32 +52,10 @@ def insert_pending_entry(
     # new entry has no prior pinned row and reads the single
     # value the constructor already classified, carried on the
     # decision.
-    if add_prep is not None and add_prep.is_scale_in:
-        # Carry the position's OWN pinned setup_type forward. A
-        # short add reads the last SHORT open (item 82 mirror) —
-        # get_symbol_last_buy defaults to BUY rows and would
-        # otherwise miss the short's original entry.
-        _existing_buy = db.get_symbol_last_buy(
-            decision.symbol,
-            action="SHORT" if is_short else "BUY",
-        )
-        pinned_setup_type = (_existing_buy or {}).get("setup_type") or None
-        # Item 82: carry the position's OWN pinned MEASURED verdict
-        # forward too (stored 0/1/NULL), for the same reason as
-        # setup_type above — an add is the same position, not a
-        # fresh classification. See TradeDecision.structural_ceiling.
-        _pinned_sc = (_existing_buy or {}).get("structural_ceiling")
-        pinned_structural_ceiling = (
-            None if _pinned_sc is None else bool(_pinned_sc)
-        )
-    else:
-        pinned_setup_type = getattr(decision, "setup_type", None)
-        # Item 82: the MEASURED half of the verdict, pinned from the
-        # constructor's TradeDecision (see _build_buy/_build_short),
-        # alongside setup_type. None for a legacy notional target.
-        pinned_structural_ceiling = getattr(
-            decision, "structural_ceiling", None,
-        )
+    _prior_row, pinned_setup_type, pinned_structural_ceiling = resolve_entry_pins(
+        db, decision, is_short=is_short,
+        is_scale_in=add_prep is not None and add_prep.is_scale_in,
+    )
     entry_side = "sell_short" if is_short else "buy"
     pending_row_id = db.insert_trade(
         symbol=decision.symbol, action=decision.action, qty=qty,

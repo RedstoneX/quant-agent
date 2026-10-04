@@ -11,6 +11,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.entry_evidence import (
+    record_scale_in_own_verdict as _record_scale_in_own_verdict,
+    resolve_entry_pins as _resolve_entry_pins,
+)
 from src.execution.entry_record import insert_pending_entry
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
@@ -1549,11 +1553,41 @@ class ExecutionStage:
                     (a for a in (ctx.analyses or []) if a.symbol == decision.symbol),
                     None,
                 )
+                # Item 82: `setup_type` was being classified a SECOND time
+                # here, independently of `PortfolioConstructor._build_buy`/
+                # `_build_short` (see `TradeDecision.setup_type` in
+                # models.py, which exists specifically so execution does not
+                # have to re-derive this fact). On a scale-in ADD to an
+                # already-held name this second lookup re-read TODAY's
+                # technical read and wrote it onto the new row —
+                # `get_symbol_last_buy` returns the newest row, so this
+                # silently RECLASSIFIED a position whose setup_type was
+                # already pinned on its original entry, which is worse than
+                # a mere disagreement: pace/progress (disabled for a
+                # breakout) could flip back on, or off, on a held position
+                # with no new entry decision behind the change. A genuinely
+                # new entry has no prior pinned row and reads the single
+                # value the constructor already classified, carried on the
+                # decision.
+                _is_scale_in = add_prep is not None and add_prep.is_scale_in
+                # Item 82 scale-in carry-forward lives in src/entry_evidence.py.
+                _existing_buy, _setup_type_unused, _ceiling_unused = (
+                    _resolve_entry_pins(
+                        pipeline.db, decision,
+                        is_short=is_short, is_scale_in=_is_scale_in,
+                    )
+                )
                 pending_row_id, entry_side = insert_pending_entry(
                     db=pipeline.db, decision=decision, add_prep=add_prep,
                     is_short=is_short, qty=qty, executed_price=executed_price,
                     run_id=run_id, stop_price=stop_price, decision_id=decision_id,
                     entry_analysis=entry_analysis, decision_model=ctx.decision_model,
+                )
+
+                _record_scale_in_own_verdict(
+                    pipeline.db, logger, run_id=run_id, decision_id=decision_id,
+                    decision=decision, prior_row=_existing_buy,
+                    is_scale_in=_is_scale_in,
                 )
 
                 try:
