@@ -51,6 +51,15 @@ from src.execution.broker import (
 )
 from src.sector_reference import _get_sector
 from src.pipeline_context import PMFacts, RunContext, SessionType
+# --- MIRROR: config builders moved to src/pipeline_config_build.py (pure move). ---
+# Re-exported so `from src.pipeline import ...` and `patch("src.pipeline.<name>")` still resolve.
+from src.pipeline_config_build import (  # noqa: F401
+    _smart_money_refresh_sources_word,
+    _threaded_risk_settings,
+    build_constructor_config,
+    build_risk_config,
+)
+# --- END MIRROR ---
 # Step 1 of docs/PIPELINE_SPLIT_PLAN.md: these moved to a mixin module and are
 # re-exported here because tests and other modules import them from `src.pipeline`.
 from src.pipeline_protection import (  # noqa: F401
@@ -109,6 +118,12 @@ from src.pipeline_stages import (
     _persist_evidence,
     _record_pipeline_event,
 )
+# RE-EXPORT MIRROR (pipeline split, run gates): the paid-analysis gate and the
+# two pre-decision halt gates moved VERBATIM to function-only modules.
+# `TradingPipeline` keeps a one-line shim per moved name below, so every
+# `self._x(...)` caller and `patch.object(TradingPipeline, "_x")` is untouched.
+from src import pipeline_cost_gate as _cost_gate
+from src import pipeline_halt_gates as _halt_gates
 from src.portfolio_constructor import PortfolioConstructor
 from src.sessions.evening_session import EveningSession
 from src.sessions.position_review_session import PositionReviewSession
@@ -160,30 +175,6 @@ class SessionTerminated(BaseException):
     """
 
 
-def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
-    """Real numeric risk settings, keyed by field name, ready to splat into
-    `RiskConfig(...)`.
-
-    A name whose value is NOT a real number is OMITTED from the dict rather
-    than replaced with a literal, so pydantic applies the field's own
-    declared default and the number keeps exactly ONE home in this file's
-    source. The omission case is the MagicMock config many pipeline tests
-    build, where attribute access auto-creates a child mock pydantic refuses.
-
-    ZERO PASSES THROUGH, unlike `_risk_number`. `min_position_risk_pct` is
-    declared `ge=0` — zero is a legal "no floor" — so a `> 0` read would hand
-    the engine a floor nobody configured while the seat's standing sheet
-    rendered the configured 0. A seat briefed on a number nothing enforces is
-    the defect this whole change removes.
-    """
-    threaded: dict[str, float] = {}
-    for name in names:
-        value = getattr(risk_config, name, None)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            continue
-        threaded[name] = float(value)
-    return threaded
-
 
 # `HARD_BLOCK_RULES` now lives in `src/risk/rules.py`, beside the engine that
 # emits the rule names, so the RISK SEAT'S RENDERER can classify an entry
@@ -193,264 +184,6 @@ def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
 from src.risk.rules import HARD_BLOCK_RULES  # noqa: E402,F401
 
 
-
-# ---------------------------------------------------------------------------
-# The two objects that ENFORCE the desk's numeric limits.
-#
-# Lifted out of `TradingPipeline.__init__` so a test can build them from a
-# candidate settings object and read back what the engine and the sizer would
-# actually enforce. That matters because the parity these limits need is
-# behavioural: `tests/test_risk_prompt_limits_live.py` asserts that a value a
-# seat's standing sheet SHOWS is the value these objects CARRY. Parsing the
-# source text of a keyword list could only ever prove a kwarg name was typed,
-# not that the setting reached the object — a limit hard-coded at its current
-# value would have satisfied it.
-#
-# NOTHING ELSE CHANGED IN THE MOVE. Both bodies are the code that ran inline.
-# ---------------------------------------------------------------------------
-
-
-def build_risk_config(config) -> RiskConfig:
-    """The `RiskConfig` the deterministic risk engine is built from.
-
-    Hand-enumerated: a declared setting left out falls back to the pydantic
-    CLASS DEFAULT and settings.yaml is ignored for that field. See the
-    comments inline for which are threaded and why the rest are not.
-    """
-    return RiskConfig(
-            max_position_pct=config.risk.max_position_pct,
-            max_total_position_pct=config.risk.max_total_position_pct,
-            max_position_risk_pct=_risk_number(
-                getattr(config.risk, "max_position_risk_pct", None), 5.0,
-            ),
-            max_sector_pct=config.risk.max_sector_pct,
-            # Spec §10.3 — the absolute ceiling behind the sector dial.
-            # Read through the same MagicMock guard `_risk_setting` applies
-            # below (many tests build the pipeline against a mock config, and
-            # a child mock coerces to 1.0, which would trip the "ceiling must
-            # sit above the target" validator with a number nobody chose).
-            # `None` means "derive 1.5x the target", which RiskConfig does.
-            max_sector_hard_pct=_optional_risk_number(
-                getattr(getattr(config, "risk", None), "max_sector_hard_pct", None),
-            ),
-            require_stop_loss=config.risk.require_stop_loss,
-            # Codex r11 P2: previously omitted, defaulting to False even
-            # when settings.yaml said True. Prompts + force_delever read
-            # config.risk.allow_margin directly, so the agent saw "margin
-            # OK" while the deterministic engine still applied cash_only.
-            # Result: a user opting in to margin had their BUYs blocked
-            # by a hard rule the agent didn't know was active.
-            allow_margin=config.risk.allow_margin,
-            # SAME OMISSION CLASS AS `allow_margin` DIRECTLY ABOVE. This
-            # `RiskConfig(...)` is hand-enumerated, so any declared setting
-            # left out of it silently falls back to the pydantic CLASS
-            # DEFAULT and settings.yaml is ignored for that field. 22 of the
-            # declared risk settings were in that state before this change;
-            # today every one of those defaults happens to equal the settings
-            # value, so nothing is live-wrong — it is latent, and
-            # `allow_margin` directly above is the proof that it does not
-            # stay latent forever.
-            #
-            # The seven threaded here are the ones the Risk Manager's and
-            # Portfolio Manager's standing sheets now RENDER from settings.yaml (see
-            # src/agents/prompt_limits.py). Rendering a value into the
-            # reviewer's briefing while the engine enforced a different
-            # object's default would be the same two-homes defect this
-            # change removes, pointed the other way. Threading them makes
-            # "the seat is briefed against what the engine enforces" true
-            # rather than merely intended, and `tests/
-            # test_risk_prompt_limits_live.py` now pins it.
-            #
-            # The other 15 are NOT touched here: they predate this work, they
-            # are not live-wrong, and sweeping them would change enforcement
-            # nobody has reviewed. Recorded in docs/WORK.md instead.
-            # Splatted through `_threaded_risk_settings`, NOT read through
-            # `_risk_number`: a `_risk_number(x, <literal>)` per field would
-            # type seven more copies of seven limits into this file, which is
-            # the two-homes defect this change removes, pointed inward. The
-            # helper omits a non-numeric (MagicMock) read instead, leaving
-            # pydantic's own field default as the single fallback home — and
-            # it lets a legal 0 through, which `_risk_number` does not.
-            **_threaded_risk_settings(
-                getattr(config, "risk", None),
-                "min_position_risk_pct",
-                "max_portfolio_risk_pct",
-                # Rendered into the Portfolio Manager's sheet by the same
-                # mechanism, so they carry the same parity requirement.
-                "max_cluster_risk_share_pct",
-                "max_gross_exposure_x",
-                "short_gap_risk_multiple",
-            ),
-    )
-
-
-def build_constructor_config(config, risk_engine_config):
-    """The `ConstructorConfig` the deterministic sizer is built from.
-
-    Takes the risk engine's ALREADY-RESOLVED config rather than re-deriving
-    from settings, so the ceilings the sizer shrinks against are provably the
-    identical objects the engine enforces.
-
-    This is the enforcement home for four settings the Portfolio Manager's
-    standing sheet renders — `min_position_risk_pct`, `max_portfolio_risk_pct`,
-    `max_cluster_risk_share_pct` and `short_gap_risk_multiple` — none of which
-    `src/risk/rules.py` reads at all. The sizing seat's parity is against THIS
-    object, not only against `RiskConfig`.
-    """
-    from src.portfolio_constructor import ConstructorConfig
-    from src.config import RiskConfig
-    _risk_cfg = getattr(config, "risk", None)
-
-    def _declared_default(name: str, literal: float) -> float:
-        """The default `RiskConfig` itself declares for `name`.
-
-        The fallback literals below used to be hand-copied from
-        `src/config.py`, and one of them silently rotted: this function
-        passed 1.5 for `min_stop_atr_multiple` long after the declared
-        default became 2.5 (2026-09-10), so any path reaching here with the
-        setting ABSENT sized live stops against a floor nobody ratified. A
-        literal repeated in two files is drift waiting to happen, so the
-        declared default now WINS; the literal survives only as the last
-        resort for a field `RiskConfig` declares with no default of its own
-        (`max_position_pct` is required, so it has none).
-        """
-        field = RiskConfig.model_fields.get(name)
-        if field is not None:
-            declared = getattr(field, "default", None)
-            if not isinstance(declared, bool) and isinstance(declared, (int, float)):
-                return float(declared)
-        return float(literal)
-
-    def _risk_setting(name: str, default: float, allow_zero: bool = False) -> float:
-        """Read a risk ceiling, or the ratified default.
-
-        Coerced through a real float check rather than trusted from
-        `getattr`: many tests construct the pipeline against a MagicMock
-        config, where attribute access auto-creates a child mock that is
-        neither the default nor a number — and a MagicMock reaching the
-        sizing arithmetic fails with an opaque TypeError deep inside the
-        constructor. Same defensive posture as `_coerce_token_count`.
-
-        `allow_zero` for the one setting where 0 is a CONFIGURED value rather
-        than an absent one: `min_position_risk_pct` is declared `ge=0`, so 0
-        means "no floor". Swallowing it into the default would size under a
-        floor nobody configured while the sizing seat's sheet rendered the 0.
-        """
-        default = _declared_default(name, default)
-        value = getattr(_risk_cfg, name, default)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return default
-        if allow_zero and value >= 0:
-            return float(value)
-        return float(value) if value > 0 else default
-
-    return ConstructorConfig(
-            risk_budget_pct=_risk_setting("max_position_risk_pct", 5.0),
-            min_risk_pct=_risk_setting("min_position_risk_pct", 0.5, allow_zero=True),
-            max_portfolio_risk_pct=_risk_setting("max_portfolio_risk_pct", 25.0),
-            max_cluster_risk_share_pct=_risk_setting("max_cluster_risk_share_pct", 40.0),
-            # Same setting the risk engine enforces (line ~326), so the
-            # constructor sizes under the ceiling rather than proposing orders
-            # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
-            max_position_pct=_risk_setting("max_position_pct", 65.0),
-            # Spec §10.3 "concentration scales size". Read back off the risk
-            # ENGINE's own resolved config rather than re-derived from
-            # settings, so the number the constructor shrinks against is
-            # provably the identical number the engine will enforce — the
-            # drift `max_position_pct`'s "keep in sync" comment can only ask
-            # for, this one gets structurally.
-            max_sector_pct=risk_engine_config.max_sector_pct,
-            max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct,
-            # No `min_order_usd`: board item 183 deleted
-            # `ConstructorConfig.min_order_usd` on 2026-09-26. Nothing in the
-            # constructor read it — the one call that forwarded it reached an
-            # argument `apply_gross_ceiling` has ignored since 2026-09-24.
-            # Stage 3 (shorts) — the sizing haircut. A short's single-name
-            # ceiling is `max_position_pct` above, the same as a long's.
-            short_gap_risk_multiple=_risk_setting(
-                "short_gap_risk_multiple", SHORT_GAP_RISK_MULTIPLE_DEFAULT,
-            ),
-            # Spec §11.2 — same "size under the hard block" pattern again.
-            # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
-            # breaches the ceiling would be DROPPED rather than taken
-            # smaller without this. The per-session ladder step is passed to
-            # `construct_orders`; this is the standing cap it starts from.
-            max_gross_exposure_x=_risk_setting("max_gross_exposure_x", 2.0),
-            # The cash park is not exposure. Read from the SAME config gate
-            # `_sweeper()` uses (enabled + symbol) so the sizing gate and the
-            # execution gate can never disagree about what counts.
-            cash_park_symbol=(
-                getattr(getattr(config, "cash_sweep", None), "symbol", None)
-                if bool(getattr(getattr(config, "cash_sweep", None), "enabled", False))
-                else None
-            ),
-            # 1.5 -> 2.5 on 2026-09-30 (board item 90). This fallback was
-            # left behind by the 2026-09-10 base move and still named the
-            # value the desk EXPLICITLY ABANDONED: 1.5 was the Sweeney MAE
-            # fit to this desk's own ~2-week history, dropped both because
-            # that window's seat outputs were later found to misreport
-            # confidence/data quality AND because fitting a threshold to
-            # past outcomes is barred outright (docs/OUTCOME.md, "No
-            # arbitrary numbers, ever", the 2026-09-12 correction). Not
-            # reachable on the production path today — a real `RiskConfig`
-            # always carries the attribute and pydantic coerces the YAML —
-            # so this is a stale constant, not a live defect, and it is
-            # corrected rather than reported as one. `_risk_setting`'s own
-            # docstring says it returns "the ratified default", and 2.5 is
-            # the ratified default. The ledger gate cannot see this line:
-            # `src/number_sources.py` names "fallback arguments" among the
-            # shapes it structurally cannot scan, which is why every
-            # fallback in this block is now pinned to its `RiskConfig`
-            # field default by `tests/test_risk_setting_fallbacks.py`.
-            min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 2.5),
-            # Spec §12.1 — a stop sitting at a level the system COMPUTED is
-            # honoured whatever the band says, down to a deterministic 1x ATR
-            # floor. Same "wire from the ratified setting, not the
-            # constructor's own default" pattern as every ceiling above.
-            # There is no `level_match_atr_tolerance` to wire any more: item
-            # 46 (2026-09-13) deleted it, and the constructor reads the
-            # match tolerance off the level zone's own definition.
-            absolute_min_stop_atr_multiple=_risk_setting(
-                "absolute_min_stop_atr_multiple", 1.0,
-            ),
-            # Phase 12.1, 2026-09-03 — how many prior touches a computed
-            # level needs before the tight-stop exemption above trusts it.
-            # docs/RESEARCH_FINDINGS.md §7.
-            min_level_touches_for_stop_honor=int(
-                _risk_setting("min_level_touches_for_stop_honor", 5),
-            ),
-            # Target derivation (2026-09-01) — the numerator of the ratio
-            # above, computed from bars instead of guessed by the analyst.
-            # Wired from the ratified settings, same pattern as every
-            # ceiling above.
-            min_target_atr_multiple=_risk_setting("min_target_atr_multiple", 1.0),
-            breakout_projection_atr_multiple=_risk_setting(
-                "breakout_projection_atr_multiple", 1.0,
-            ),
-            max_target_reach_atr_multiple=_risk_setting(
-                "max_target_reach_atr_multiple", 1.5,
-            ),
-            max_target_horizon_sessions=int(
-                _risk_setting("max_target_horizon_sessions", 60),
-            ),
-            target_divergence_warn_pct=_risk_setting(
-                "target_divergence_warn_pct", 25.0,
-            ),
-    )
-
-
-def _smart_money_refresh_sources_word(congress_enabled: bool) -> str:
-    """What the pre-market smart-money refresh log line should say it read.
-
-    Congressional trading disclosures (`src/data/congressional_trading.py`)
-    are only ever fetched when `config.smart_money.congress_enabled` is
-    True — switched on 2026-09-20 per owner ruling (see that date's entry
-    in `docs/INCIDENT_HISTORY.md`). The log line must say so honestly rather
-    than always naming both sources.
-    """
-    if congress_enabled:
-        return "SEC Form 4 + congressional"
-    return "SEC Form 4 only (congressional cross-check switched off)"
 
 
 class _MissingCollaborator:
@@ -1530,99 +1263,20 @@ class TradingPipeline(
         self.decision_stage.run(ctx)
 
     def _activate_cost_session(self, run_id: str, mode: str) -> None:
-        """Register paid-call context without interfering with safety work."""
-
-        self._active_cost_run_context = (run_id, mode)
-        circuit = getattr(self, "cost_circuit", None)
-        if circuit is None:
-            if BaseAgent._allow_unmetered_for_tests:
-                return
-            circuit = UnavailableLLMCostCircuit(
-                RuntimeError("mandatory paid-analysis cost circuit is not initialized")
-            )
-            self.cost_circuit = circuit
-            self._attach_cost_circuit_to_agents()
-        try:
-            circuit.activate_session(run_id, mode)
-        except Exception as exc:
-            logger.critical(
-                "Cost-circuit activation failed for %s/%s; failing paid analysis "
-                "closed without interrupting deterministic safety: %s",
-                run_id, mode, exc, exc_info=True,
-            )
-            marker = getattr(circuit, "mark_unavailable", None)
-            if callable(marker):
-                marker(exc, run_id=run_id, mode=mode)
-            else:
-                circuit = UnavailableLLMCostCircuit(exc)
-                self.cost_circuit = circuit
-                self._attach_cost_circuit_to_agents()
-                circuit.activate_session(run_id, mode)
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._activate_cost_session(self, run_id, mode)
 
     def _require_paid_analysis(self, agent_name: str) -> None:
-        circuit = getattr(self, "cost_circuit", None)
-        if circuit is None:
-            if BaseAgent._allow_unmetered_for_tests:
-                return
-            raise PaidAnalysisSuspended(
-                "mandatory paid-analysis cost circuit is not initialized",
-                {"available": False, "suspended": True},
-            )
-        try:
-            circuit.require_paid_analysis(agent_name)
-        except PaidAnalysisSuspended:
-            raise
-        except Exception as exc:
-            logger.critical("Cost-circuit preflight failed closed: %s", exc, exc_info=True)
-            marker = getattr(circuit, "mark_unavailable", None)
-            if callable(marker):
-                state = marker(exc)
-                raise PaidAnalysisSuspended(
-                    "mandatory cost-circuit preflight failed", state,
-                ) from exc
-            replacement = UnavailableLLMCostCircuit(exc)
-            self.cost_circuit = replacement
-            self._attach_cost_circuit_to_agents()
-            run_id, mode = getattr(
-                self, "_active_cost_run_context", ("unscoped", "unknown")
-            )
-            replacement.activate_session(run_id, mode)
-            replacement.require_paid_analysis(agent_name)
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._require_paid_analysis(self, agent_name)
 
     def _attach_cost_circuit_to_agents(self) -> None:
-        circuit = getattr(self, "cost_circuit", None)
-        for name in (
-            "tech_analyst", "news_analyst", "macro_analyst",
-            "earnings_analyst", "smart_money_analyst",
-            "portfolio_manager", "risk_manager",
-            "position_reviewer", "evening_analyst", "meta_reflector",
-        ):
-            agent = getattr(self, name, None)
-            setter = getattr(agent, "set_cost_circuit", None)
-            if callable(setter):
-                setter(circuit)
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._attach_cost_circuit_to_agents(self)
 
     def _cost_circuit_status(self) -> dict:
-        circuit = getattr(self, "cost_circuit", None)
-        if circuit is None:
-            if BaseAgent._allow_unmetered_for_tests:
-                return {"enabled": False, "suspended": False}
-            return {"available": False, "enabled": True, "suspended": True,
-                    "trigger_detail": "mandatory cost circuit is not initialized"}
-        try:
-            return circuit.status()
-        except Exception as exc:
-            logger.critical("Cost-circuit status failed closed: %s", exc, exc_info=True)
-            marker = getattr(circuit, "mark_unavailable", None)
-            if callable(marker):
-                return marker(exc)
-            replacement = UnavailableLLMCostCircuit(exc)
-            self.cost_circuit = replacement
-            self._attach_cost_circuit_to_agents()
-            run_id, mode = getattr(
-                self, "_active_cost_run_context", ("unscoped", "unknown")
-            )
-            return replacement.activate_session(run_id, mode)
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._cost_circuit_status(self)
 
     @staticmethod
     def _parse_logged_agent_response(row: dict):
@@ -1635,310 +1289,21 @@ class TradingPipeline(
         return parse_logged_agent_response(row)
 
     @staticmethod
-    def _paid_suspended_payload(
-        run_id: str,
-        *,
-        orders: list[dict] | None = None,
-        error: BaseException | None = None,
-        filings_waiting: list[dict] | None = None,
-    ) -> dict:
-        # `filings_waiting` (2026-09-24): when the cost circuit trips after
-        # `run_earnings_preprocess` has already computed which filings were
-        # queued for the LLM reader, that backlog was silently dropped here
-        # -- the suspended payload carried no earnings keys at all, so
-        # `_append_earnings_body` rendered "analyzed:0 confirmed:0
-        # failed:0" for a run that actually found N new filings. Passing it
-        # through lets the owner-facing message say "suspended, N filing(s)
-        # waiting" instead of implying nothing happened.
-        waiting = list(filings_waiting or [])
-        return {
-            "status": "paid_analysis_suspended",
-            "run_id": run_id,
-            "orders": list(orders or []),
-            "error": str(error or "mandatory cost circuit is open"),
-            "paid_analysis_suspended": True,
-            "filings_waiting": waiting,
-            "filings_waiting_count": len(waiting),
-            "preserved": [
-                "broker_resident_protection",
-                "order_fill_reconciliation",
-                "deterministic_loss_protection",
-                "non_llm_safety_jobs",
-            ],
-        }
+    def _paid_suspended_payload(run_id: str, *, orders: list[dict] | None=None, error: BaseException | None=None, filings_waiting: list[dict] | None=None) -> dict:
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._paid_suspended_payload(run_id, orders=orders, error=error, filings_waiting=filings_waiting)
 
-    def _paid_suspension_after_late_safety(
-        self,
-        run_id: str,
-        *,
-        session: str,
-        error: BaseException,
-        where: str,
-        orders: list[dict] | None = None,
-        extra: dict | None = None,
-    ) -> dict:
-        """The suspension return payload.
-
-        It used to re-run an account-level loss check first. That
-        whole mechanism was removed 2026-09-20 on owner instruction
-        (docs/INCIDENT_HISTORY.md, retired item 32): per-position stops are
-        the desk's loss protection now, and they live at the broker rather
-        than depending on this process reaching this line.
-
-        KNOWN RESIDUE, deliberately not chased in that change: `session`
-        and `where` are now unused here, and the name still says "after
-        late safety" when there is no late safety check left. Eleven call
-        sites pass both. Renaming the method and dropping two keyword
-        arguments across all eleven is churn with no behavioural effect, so
-        it was left for whoever next touches this path — it is recorded
-        here rather than silently tolerated.
-        """
-
-        existing_orders = list(orders or [])
-        payload = self._paid_suspended_payload(
-            run_id, orders=existing_orders, error=error,
-        )
-        if extra:
-            payload.update(extra)
-        # 2026-09-30 (item 199): this is the third legit PM-less completion
-        # alongside `no_data` and `evidence_gate_skip` above, both of which
-        # already call `_dc.write_status` so the evening dead-man probe
-        # skips its "research ran, PM never did — killed mid-run?" guess.
-        # This path never did, so a same-day cost-circuit suspension the
-        # owner was already told about at the time (the morning session's
-        # own "SUSPENDED" push) re-arrived ~16h later relabelled as a
-        # mystery kill. Morning-only: `read_status`/the sharper probes in
-        # `_expected_sessions_missing_today` only ever key on "morning".
-        if session == "morning":
-            from src import decision_checkpoint as _dc
-
-            _dc.write_status("morning", "paid_analysis_suspended")
-        return payload
+    def _paid_suspension_after_late_safety(self, run_id: str, *, session: str, error: BaseException, where: str, orders: list[dict] | None=None, extra: dict | None=None) -> dict:
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._paid_suspension_after_late_safety(self, run_id, session=session, error=error, where=where, orders=orders, extra=extra)
 
     def _kill_switch_halt_result(self, run_id: str, **extra) -> dict | None:
-        """Guard 1's early, VISIBLE half (2026-09-02 operational safety
-        guard). Returns an early-exit result dict when ops has halted the
-        desk, else None.
+        """Body lives in `src.pipeline_halt_gates`; this shim keeps callers and patch targets."""
+        return _halt_gates._kill_switch_halt_result(self, run_id, **extra)
 
-        The broker-level check (`AlpacaBroker._kill_switch_active`) is what
-        actually GUARANTEES no order reaches Alpaca while the flag file
-        exists — it re-checks on every single submit/replace call, so it
-        stays correct even if the file appears mid-session, after this
-        early check already passed. This method exists only so a halted
-        run (a) does not spend real broker calls and LLM budget on analysis
-        that can place no order, and (b) produces exactly ONE clear alert
-        on the channel the operator actually reads: the returned
-        `status` flows through `format_session_result` to
-        `TelegramNotifier.send()` in `main.py`, the SAME path every other
-        session result already takes — no new alerting mechanism.
-
-        UNLIKE `_paid_suspended_payload` above, nothing NEW is preserved:
-        this is the one guard in the codebase that also blocks a
-        risk-reducing order (see RiskConfig.kill_switch_path), so a new
-        protective stop cannot go out either while it is active. A stop
-        already resting at the broker from before the halt is untouched
-        and keeps protecting its position — only new broker-bound order
-        flow is refused.
-        """
-        if self._kill_switch_path is None or not self._kill_switch_path.exists():
-            return None
-        logger.error(
-            "KILL SWITCH ACTIVE (%s exists) — halting run %s before any "
-            "broker or LLM work. touch/rm that file to stop/resume the "
-            "desk.", self._kill_switch_path, run_id,
-        )
-        payload = {
-            "status": "kill_switch_halted", "run_id": run_id, "orders": [],
-            "kill_switch_path": str(self._kill_switch_path),
-        }
-        payload.update(extra)
-        return payload
-
-    def _evidence_gate_skip(
-        self, ctx, run_id: str, *, session: str = "morning",
-    ) -> dict | None:
-        """docs/WORK.md item 20 — refuse to DECIDE on evidence that never
-        arrived. Returns a terminal result dict when the run must skip, or
-        None to proceed.
-
-        The distinction it rests on is categorical and needs no threshold: a
-        seat that had nothing to report answered; a seat whose answer was
-        lost did not. See `src/evidence_gate.py` for why no count is used and
-        why the counting half of the owner's design is deliberately unbuilt.
-
-        WHICH LOST SEAT ACTUALLY STOPS THE RUN is an owner mandate decision
-        of 2026-09-18 — "Only technical analysis can stop the desk" — and
-        lives in `evidence_gate.BLOCKING_SEATS`, not here. A lost ADVISORY
-        seat is recorded in the same durable rows, logged loudly, carried in
-        the result so the unsuppressible data-quality alert still fires, and
-        named in the freshness disclosure. It does not halt trading.
-
-        EVERY DECISION DISCLOSES ITS OWN EVIDENCE FRESHNESS. With the other
-        seats advisory a decision can rest on one freshly-read seat plus a
-        carried-forward book, and every carried seat reports green; this is
-        the one path every decision passes through, so the count of seats
-        read on THIS tick is computed here and handed to the owner's message
-        and the durable record. Disclosure, not a threshold — there is no
-        minimum fresh count anywhere and none may be invented.
-
-        THE SKIP IS LOUD, by three independent paths, because retired item 11
-        was this desk producing nothing for a whole day with nobody noticing
-        (docs/INCIDENT_HISTORY.md, closed 2026-09-13):
-          - its own standalone owner alert, sent here — MORNING ONLY as of
-            2026-09-18. On an intra_check tick the session message below is
-            guaranteed to speak (`evidence_gate_skip` is actionable on the
-            trader feed and is in none of its silent-status sets), so this
-            alert only duplicated it, one minute apart, word for word;
-          - `notifier.maybe_alert_data_quality`, which fires from main.py's
-            finally block on the `data_status` carried in the result and
-            cannot be suppressed by a mode's noise policy;
-          - the session result message, whose `status` says it in one word.
-
-        It drops no candidate and emits no target: it returns before any
-        target exists, so it cannot produce the 0%-target-means-SELL shape.
-        Every symbol that HAD reached a technical read still gets its own
-        durable, machine-readable row saying why the desk never decided on
-        it, alongside the run-level row.
-        """
-        from src import evidence_gate
-
-        try:
-            verdict = evidence_gate.evaluate(ctx.data_status)
-        except Exception as exc:  # noqa: BLE001
-            # A gate that can stop the desk trading must not stop it by
-            # crashing. `evaluate` is documented never to raise; if it
-            # somehow does, proceed and say so loudly.
-            logger.error(
-                "evidence gate raised (%s) — PROCEEDING with the decision. "
-                "This is a bug in src/evidence_gate.py.", exc,
-            )
-            return None
-
-        def _record(symbol, outcome, reason, **details):
-            # Forensic persistence must never be able to break the trading
-            # path it is reporting on (.claude/rules/trading-core.md).
-            # `_persist_evidence` already swallows DB errors; this also
-            # covers a caller with no `db` wired at all.
-            try:
-                _record_pipeline_event(
-                    self, ctx, symbol, "evidence_gate", outcome, reason,
-                    **details,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("evidence gate: event write failed: %s", exc)
-
-        # Disclosure, carried out of here by `_attach_evidence_freshness` on
-        # every return path of the session wrappers. Stored on the pipeline
-        # as well as on ctx because the result dicts are built in dozens of
-        # places and the wrappers are the two that see all of them.
-        try:
-            # Stamp the classification with WHEN and WHICH RUN before it is
-            # persisted. Owner ruling 2026-10-01 (sell what fails the fresh
-            # bar) makes "was this seat read in THIS run?" something a sell
-            # can rest on, and it must be a recorded fact, not an inference
-            # drawn from the shape of the row. Records only — no threshold,
-            # nothing gated. Fail-soft on the prior-read lookup: an unknown
-            # age is reported as unknown, never as fresh.
-            prior = {}
-            try:
-                if getattr(self, "db", None) is not None:
-                    prior = self.db.last_fresh_seat_reads(
-                        seats=list(verdict.freshness.data_status)
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "evidence gate: prior seat-read lookup failed (%s) — "
-                    "carried seats will report an unknown age", exc,
-                )
-            stamped = verdict.freshness.stamped(
-                run_id=getattr(ctx, "run_id", None),
-                mode=str(getattr(ctx, "session", "") or "") or None,
-                prior_reads=prior,
-            )
-            self._last_evidence_freshness = stamped.to_evidence()
-            self._last_decision_data_status = dict(verdict.data_status)
-            ctx.evidence_freshness = dict(self._last_evidence_freshness)
-        except Exception as exc:  # noqa: BLE001 — never break the decision
-            logger.warning("evidence gate: freshness record failed: %s", exc)
-        logger.info("EVIDENCE FRESHNESS — %s", verdict.freshness.summary)
-
-        evidence = verdict.to_evidence()
-        _record(None, evidence.pop("outcome"), evidence.pop("reason"), **evidence)
-        self._record_name_coverage(ctx, _record)
-        if not verdict.skip:
-            if verdict.advisory_lost:
-                # Owner mandate 2026-09-18: only the technical seat halts the
-                # desk. An advisory seat losing its answer is still a real
-                # fault and is still said out loud — here, in the durable row
-                # above, and by `notifier.maybe_alert_data_quality`, which
-                # reads the `data_status` the wrappers now attach to every
-                # result. What it no longer does is stop trading.
-                logger.error(
-                    "evidence gate: ADVISORY seat(s) lost their answer and the "
-                    "decision PROCEEDED (owner mandate 2026-09-18, only the "
-                    "technical seat blocks): %s",
-                    {s: verdict.data_status.get(s) for s in verdict.advisory_lost},
-                )
-            if verdict.unclassified:
-                logger.error(
-                    "evidence gate: unclassified seat status this run: %s",
-                    {s: verdict.data_status.get(s) for s in verdict.unclassified},
-                )
-            return None
-
-        logger.error("EVIDENCE GATE — %s", verdict.reason)
-        for analysis in ctx.analyses or []:
-            symbol = getattr(analysis, "symbol", None)
-            if symbol:
-                _record(
-                    symbol, "not_decided", "evidence_gate_skip",
-                    lost_seats=list(verdict.lost),
-                    blocking_lost_seats=list(verdict.blocking_lost),
-                    data_status=dict(verdict.data_status),
-                )
-        # Legit PM-less completion — same reason `no_data` records one: the
-        # evening dead-man probe must not read "research rows, no PM row" as
-        # a morning that was killed mid-run.
-        from src import decision_checkpoint as _dc
-
-        # Morning only: the evening dead-man probe keys off this
-        # checkpoint. An intra_check skip must not overwrite a completed
-        # morning's status with a later refusal.
-        if session == "morning":
-            _dc.write_status("morning", "evidence_gate_skip")
-        # The owner was told the same skip TWICE, one minute apart, on
-        # 2026-09-18 11:19 ET: once by this standalone alert and once by the
-        # intraday tick's own message. On an intra_check tick the tick
-        # message is guaranteed to speak — `evidence_gate_skip` is in
-        # `trader_feed._intraday_tick_actionable`'s list and in neither
-        # `_BASE_ONLY_STATUSES` nor `_INTRADAY_SILENT_STATUSES`, so the
-        # "a quiet tick is silent" policy that this standalone alert exists
-        # to defeat cannot apply to a skip. The tick message also carries
-        # P&L and the book, which this one cannot. So the tick message
-        # speaks for an intraday skip and this alert stays quiet; the skip
-        # is not silenced anywhere, and the morning path (whose own session
-        # message is a different renderer) keeps its alert unchanged.
-        if session == "morning":
-            try:
-                from src.notifier import CATEGORY_OPERATIONAL, describe_skipped_decision, send_owner_alert
-
-                # Plain words only — no run id, no seat key, no state token
-                # and no `verdict.reason`. The machine reason is unchanged in
-                # the result dict, the event rows and the log line above.
-                send_owner_alert("\n".join(
-                    describe_skipped_decision(verdict.lost, verdict.data_status)
-                ), category=CATEGORY_OPERATIONAL)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("evidence gate: owner alert failed: %s", exc)
-        return {
-            "status": "evidence_gate_skip", "orders": [], "run_id": run_id,
-            "data_status": dict(ctx.data_status),
-            "lost_seats": list(verdict.lost),
-            "blocking_lost_seats": list(verdict.blocking_lost),
-            "advisory_lost_seats": list(verdict.advisory_lost),
-            "evidence_freshness": verdict.freshness.to_evidence(),
-            "reason": verdict.reason,
-        }
+    def _evidence_gate_skip(self, ctx, run_id: str, *, session: str='morning') -> dict | None:
+        """Body lives in `src.pipeline_halt_gates`; this shim keeps callers and patch targets."""
+        return _halt_gates._evidence_gate_skip(self, ctx, run_id, session=session)
 
     def run_morning(self) -> dict:
         """The morning session, plus the durable record of its own output.

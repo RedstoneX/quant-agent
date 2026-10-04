@@ -189,8 +189,10 @@ def test_the_pipeline_stamps_what_it_persists():
     never written in production."""
     import inspect
 
-    from src import pipeline
+    # The body moved to the function-only halt-gates module 2026-10-04; the
+    # class keeps a one-line shim, so read the body where it now lives.
+    from src import pipeline_halt_gates
 
-    source = inspect.getsource(pipeline.TradingPipeline._evidence_gate_skip)
+    source = inspect.getsource(pipeline_halt_gates._evidence_gate_skip)
     assert ".stamped(" in source
     assert "last_fresh_seat_reads" in source
