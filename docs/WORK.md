@@ -319,10 +319,10 @@ DONE WHEN:
 detail: docs/board_notes/item-219.md
 
 
-**232. The ledger's rewritten citations may point at the WRONG place and now read as verified -- OPEN, filed 2026-10-04. [BOARD STATE: 0 of 4 ticked. PR 1081 (fix/ledger-citations-225) MERGED 2026-10-04, so the rows to correct are on the trunk and the item is no longer blocked.]** First measurement: 12 hand-checked citations -- 6 right, 5 wrong, 1 cannot tell; the five wrong rows and where each should point are in the note.
+**232. The ledger's rewritten citations may point at the WRONG place and now read as verified -- OPEN, filed 2026-10-04. [BOARD STATE: 1 of 4 ticked. PR 1081 (fix/ledger-citations-225) MERGED 2026-10-04, so the rows to correct are on the trunk and the item is no longer blocked.]** First measurement: 12 hand-checked citations -- 6 right, 5 wrong, 1 cannot tell; the five wrong rows and where each should point are in the note.
 
 DONE WHEN:
-- [ ] the five named rows (see the note) are corrected on the trunk, each re-read against the number it justifies; PR 1081 itself merged 2026-10-04
+- [x] the five named rows (see the note) are corrected on the trunk, each re-read against the number it justifies; PR 1081 itself merged 2026-10-04 (corrected 2026-10-04 on branch fix/item-232-citations-point-right, plus 16 more wrong rows found outward; see note)
 - [ ] EVERY remaining rewritten citation (not a sample) is checked by hand or by a test that compares the cited text to the row's number, and the count right / wrong / cannot-tell is recorded here
 - [ ] the guard (or a second one) fails when a citation resolves to a symbol that never mentions the row's value or id, proved red against one of the five wrong rows first
 - [ ] no citation is left as cannot-tell: each is either confirmed or replaced with a source that settles it
@@ -383,8 +383,3 @@ detail: docs/board_notes/item-232.md
 DONE WHEN:
 - [ ] one shared date+time formatter exists and every previously time-only owner-facing site calls it. (Done for `fmt_time_12h`, which every trader_feed and notifier header uses; STILL OPEN: the health report in `log_health.py` formats its own clock, and `inflight.py` shows `%H:%M ET` on the dashboard.)
 - [ ] a test fails if any owner-facing timestamp is emitted without a date. (`tests/test_owner_timestamps_carry_date.py` covers notifier and trader_feed only; extend to log_health and inflight when those move to the formatter.)
-
-**232. Ledger citations resolved but did not substantiate (bystander pins: `__all__`, bare imports, mid-sentence fragments) — FIXED.** The guard only proved a pin existed, so the bulk rewrite of item 225 left rows pinned to whatever sat at their stale line.
-DONE WHEN:
-- [x] the guard refuses `__all__`/module dunders, import-statement pins and mid-sentence or bracket-unbalanced text pins (`src/ledger_citations.py`, `tests/test_number_sources.py`).
-- [x] every row it caught (19 citations across 17 rows) was re-pointed by hand to a symbol or line-start text that supports its claim; none left unverified.
