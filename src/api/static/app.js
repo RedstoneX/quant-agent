@@ -1434,7 +1434,7 @@ async function loadMutedBacklog() {
       }));
     } else if (data.total) {
       parts.push(el("p", {
-        text: `${data.total} undelivered message${data.total === 1 ? "" : "s"} recorded (${data.muted_total ?? 0} muted, ${data.filtered_total ?? 0} filtered as operational), ${data.live_risk_total} of them about a position whose protection was gone or never arrived.`,
+        text: `${data.total} undelivered message${data.total === 1 ? "" : "s"} recorded (${data.muted_total ?? 0} muted, ${data.filtered_total ?? 0} filtered as operational, ${data.failed_total ?? 0} that failed to send), ${data.live_risk_total} of them about a position whose protection was gone or never arrived.`,
       }));
       parts.push(evidenceSection(
         `Live-risk messages (${data.live_risk.length})`,

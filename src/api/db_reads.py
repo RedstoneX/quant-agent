@@ -1454,6 +1454,13 @@ MUTE_RECORD_BEGINS_AT = "2026-10-01T06:25:46+00:00"
 MUTE_BEGAN_ON = "2026-09-30"
 
 
+#: Every `notifier_sends.status` that means the owner did not receive the
+#: message. Kept as one tuple so the surface and the counters cannot disagree
+#: about what "undelivered" means; the query selects by exclusion of 'sent',
+#: so a status added later still reaches the owner, merely under "muted".
+_UNDELIVERED_REASONS = ("muted", "filtered", "failed")
+
+
 def _live_risk_headlines() -> tuple[str, ...]:
     """The owner-facing headlines that mean "protection is gone or absent".
 
@@ -1553,6 +1560,7 @@ def get_muted_backlog() -> dict:
         "total": 0,
         "muted_total": 0,
         "filtered_total": 0,
+        "failed_total": 0,
         "live_risk_total": 0,
         "by_kind": [],
         "by_day": [],
@@ -1570,13 +1578,16 @@ def get_muted_backlog() -> dict:
             return out
         out["record_available"] = True
         rows = conn.execute(
-            # Defect 2 (PR #978): the per-category mute records its drops
-            # with status 'filtered', and nothing read them — so a message
-            # the desk deliberately dropped was invisible on the only
-            # surface the owner has. Same backlog, two reasons, kept
-            # distinguishable rather than merged.
+            # Read what was NOT delivered, rather than enumerating the
+            # ways a message can fail to be delivered. The enumeration has
+            # drifted twice: 'filtered' was missing until PR #978, and
+            # 'failed' — the status the transport writes when the send
+            # itself errors — was missing until this change, so an owner
+            # alert the desk tried and failed to deliver appeared on no
+            # surface at all while its caller discarded the False. Telegram
+            # is muted, so this page is the owner's only channel.
             "SELECT kind, text, detail, timestamp, status FROM notifier_sends "
-            "WHERE status IN ('muted', 'filtered') ORDER BY timestamp DESC"
+            "WHERE status <> 'sent' ORDER BY timestamp DESC"
         ).fetchall()
     except Exception:
         return out
@@ -1598,14 +1609,14 @@ def get_muted_backlog() -> dict:
         kind = str(kind or "unknown")
         stamp = str(stamp or "")
         status = str(status or "muted")
-        reason = "filtered" if status == "filtered" else "muted"
+        reason = status if status in _UNDELIVERED_REASONS else "muted"
         stamps.append(stamp)
         live = is_live_risk_message(text)
         day = _et_day(stamp)
         for bucket, key in ((by_kind, kind), (by_day, day)):
             slot = bucket.setdefault(key, {
                 "count": 0, "live_risk_count": 0,
-                "muted_count": 0, "filtered_count": 0,
+                **{f"{r}_count": 0 for r in _UNDELIVERED_REASONS},
             })
             slot["count"] += 1
             slot[f"{reason}_count"] += 1
