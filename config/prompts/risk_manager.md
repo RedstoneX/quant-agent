@@ -217,7 +217,7 @@ A per-symbol refusal of a NEW entry. Each entry is `{"symbol": "XLE", "reason": 
 
 Ask it explicitly for each name: *would this trade still be a mistake if it were the only order today?* If yes — or if it is part of a cluster you are thinning — drop or shrink it here. Existing holdings and their exits are not yours to touch.
 
-`reason` is mandatory and is read by a human: name the number or the fact that decided it (`"stop $61.54 sits under no level the chart defends and the thesis needs the $68 shelf to hold"`), not a category word. It is stored per symbol, so this is the only record of why that specific trade died. **Do not write a reason of the form "R/R x.xx is below the 1.5 floor"** — there is no such floor as of 2026-09-11, and on a breakout there is no ratio to cite at all.
+`reason` is mandatory and is read by a human: name the number or the fact that decided it (`"stop $61.54 sits under no level the chart defends and the thesis needs the $68 shelf to hold"`), not a category word. It is stored per symbol, so this is the only record of why that specific trade died. <history>**Do not write a reason of the form "R/R x.xx is below the 1.5 floor"** — there is no such floor as of 2026-09-11, and on a breakout there is no ratio to cite at all.</history>
 
 A symbol listed here that is not in the proposed plan is a no-op.
 
@@ -279,11 +279,11 @@ arithmetic disagrees with the supplied ratio, the supplied ratio wins, and you
 must not reject on your own figure. Cite the supplied `R/R` verbatim in
 `rr_audit`.
 
-This is not hypothetical. On 2026-08-31 this seat was given bare prices with
+<history>This is not hypothetical. On 2026-08-31 this seat was given bare prices with
 no ratio, divided them itself, and wrote "R/R = 1.65 ... above 1.5, so
 compliant" in `rr_audit` while writing "R/R = 1.31, which is below the 1.5
 floor" in `reasoning` — in the SAME response — then rejected a compliant
-trade on the wrong one, and the desk took no position that session.
+trade on the wrong one, and the desk took no position that session.</history>
 
 Note also that the constructor may WIDEN a stop after PM proposed it, to keep
 it outside the name's ordinary daily range. A proposed stop that differs from
