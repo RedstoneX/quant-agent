@@ -758,6 +758,22 @@ numbers:
       every figure derived from it an ESTIMATE until the broker's own INT
       activity confirms paper accounts are charged at all.
   - id: src.config.RiskConfig.max_cluster_risk_share_pct
+    narrowed: >-
+      RECORDING VERIFIED WIRED 2026-10-04, and the one coverage hole named. The `settles_by` recording is genuinely
+      end-to-end, not a stub: `src/stage_decision.py` imports `_record_realised_concentration`, which calls
+      `_record_realised_risk_budget`, which reads the allocator's own stashed `last_risk_allocation` rather than
+      recomputing it. That attribute is assigned unconditionally inside `PortfolioConstructor._plan_risk_targets`,
+      and the constructor calls `_plan_risk_targets` on every construction whose `total_value` is above zero,
+      including a session with an empty target list, so a quiet day still records the held book's at-risk. Method:
+      static trace of the writer chain, 2026-10-04.
+      THE HOLE: the allocator result is set to None whenever `existing_risk_pct` is None, which is the documented
+      degradation when book heat is unavailable, and the row then stores `allocator_ran = 0` with `committed_pct`
+      and `cluster_shares_json` NULL. Any distribution taken off these rows must therefore be read against the
+      `allocator_ran = 0` share or it will be a distribution of entry-capable sessions mistaken for a distribution
+      of all sessions. No new counter is needed, because `allocator_ran` already makes that share readable. NOT
+      MEASURED: how many rows have accumulated. The production database could not be opened from this account
+      (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
+      distribution remain unread, not absent.
     value: 40
     status: arbitrary
     site: src/config/__init__.py
@@ -844,6 +860,22 @@ numbers:
     status: instrument
     value: 2
   - id: src.config.RiskConfig.max_portfolio_risk_pct
+    narrowed: >-
+      RECORDING VERIFIED WIRED 2026-10-04, and the one coverage hole named. The `settles_by` recording is genuinely
+      end-to-end, not a stub: `src/stage_decision.py` imports `_record_realised_concentration`, which calls
+      `_record_realised_risk_budget`, which reads the allocator's own stashed `last_risk_allocation` rather than
+      recomputing it. That attribute is assigned unconditionally inside `PortfolioConstructor._plan_risk_targets`,
+      and the constructor calls `_plan_risk_targets` on every construction whose `total_value` is above zero,
+      including a session with an empty target list, so a quiet day still records the held book's at-risk. Method:
+      static trace of the writer chain, 2026-10-04.
+      THE HOLE: the allocator result is set to None whenever `existing_risk_pct` is None, which is the documented
+      degradation when book heat is unavailable, and the row then stores `allocator_ran = 0` with `committed_pct`
+      and `cluster_shares_json` NULL. Any distribution taken off these rows must therefore be read against the
+      `allocator_ran = 0` share or it will be a distribution of entry-capable sessions mistaken for a distribution
+      of all sessions. No new counter is needed, because `allocator_ran` already makes that share readable. NOT
+      MEASURED: how many rows have accumulated. The production database could not be opened from this account
+      (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
+      distribution remain unread, not absent.
     value: 25
     status: arbitrary
     site: src/config/__init__.py
@@ -7820,6 +7852,21 @@ numbers:
       Unit default for a quantity (src/risk/metrics.py::r_multiple); every caller
       passes the real quantity.
   - id: src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)
+    narrowed: >-
+      NARROWED 2026-10-04 (wiring measured; value NOT settled). The hardcoded 50.0 is a keyword-only default on
+      `RiskRuleEngine.check` and the single production caller, `src/pipeline_risk_gate.py` line 165, never passes
+      it, so every live run uses 50.0 and no settings key or RiskConfig field can change it. This is an UNWIRED
+      KNOB, NOT an unreachable branch, and the distinction matters: the branch IS reachable, because the same caller
+      does pass `correlation_matrix`, which is built for real by `_ensure_correlation_matrix` on two live stages
+      (`src/stage_risk.py` line 601 and `src/stage_decision.py` line 168). Do NOT record this as 'never consulted'
+      and do NOT delete it on that basis.
+      It is also a DIFFERENT QUANTITY from `RiskConfig.max_cluster_risk_share_pct` (40) despite both being called a
+      cluster cap: 50 is a share of gross NOTIONAL book value, computed as (peer_value + gross_new) / total_value
+      with the gross multiplier applied, and it only appends an advisory `correlation_cluster` violation; 40 is a
+      share of the committed RISK budget and is enforcing. The two cannot be reconciled to one number and neither
+      derives the other. Method: static call-graph read of the only production caller plus the input suppliers,
+      2026-10-04. Not settled: nothing records how often the advisory fires, so its firing rate against live book
+      geometry is still unmeasured, and that counter is what this row waits on.
     settles_by:
       kind: recording
       state: specified
