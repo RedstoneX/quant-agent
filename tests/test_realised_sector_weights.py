@@ -221,7 +221,8 @@ def test_recording_is_reachable_from_executable_product_code():
     # the split instead of being weakened by it.
     callers = []
     for module in ("pipeline_stages.py", "stage_decision.py",
-                   "pipeline_entry_orders.py", "pipeline_rotation_exec.py"):
+                   "pipeline_entry_orders.py", "pipeline_rotation_exec.py",
+                   "pipeline_risk_budget_recording.py"):
         callers += [
             n for n in ast.walk(ast.parse((SRC / module).read_text()))
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)

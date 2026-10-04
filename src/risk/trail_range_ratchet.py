@@ -36,7 +36,7 @@ def _range_breakeven_ratchet(
     Fails closed: with no `initial_stop` (the ENTRY stop, never the live one
     a prior trail may have already moved), R cannot be measured, so this
     proposes nothing rather than guessing at the risk that was taken.
-    Deliberately skips the ordinary `min_ratchet_pct` / noise-band invariants
+    Deliberately skips the ordinary minimum-ratchet / noise-band invariants
     below — this move is not a structural ratchet being tuned to avoid
     churn, it is a one-time, always-worthwhile transition from "full initial
     risk" to "no risk", regardless of how small the percentage move to
@@ -102,7 +102,7 @@ def _range_second_ratchet(
     Mirrors `_range_breakeven_ratchet` exactly: fails closed with no
     `initial_stop` (the ENTRY stop, never the live one a prior trail moved) so
     R cannot be guessed; measures R the same way (`abs(entry - initial_stop)`);
-    and skips the ordinary `min_ratchet_pct` / noise-band invariants because
+    and skips the ordinary minimum-ratchet / noise-band invariants because
     this is a one-time step-up in protection, not a structural trail being
     tuned against churn. The `stop < candidate < cur` guard (mirrored for a
     short) is what enforces NEVER LOOSEN A STOP: the +1R lock is proposed only

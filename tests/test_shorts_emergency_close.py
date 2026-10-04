@@ -496,12 +496,12 @@ def test_position_reviewer_surfaces_emergency_cover_from_morning_trades():
 # can't settle.
 
 def _bare_pipe():
-    """A __new__'d pipeline with nothing wired up — _derive_close_side_for_drain
+    """A pipeline built through the real constructor — _derive_close_side_for_drain
     has exactly one dependency, _current_position_qty_for_finalize, which
     every test below stubs directly (same seam tests/test_pipeline.py's
     WAL/drain tests already stub, e.g. test_drain_sentinel_restores_when_
     position_intact)."""
-    return TradingPipeline.__new__(TradingPipeline)
+    return build_pipeline(broker=MagicMock())
 
 
 def test_derive_close_side_for_drain_returns_buy_for_a_short():
