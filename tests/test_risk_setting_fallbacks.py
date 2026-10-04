@@ -84,7 +84,6 @@ EXPECTED_FIELDS = {
     "max_portfolio_risk_pct",
     "max_cluster_risk_share_pct",
     "max_position_pct",
-    "short_gap_risk_multiple",
     "max_gross_exposure_x",
     "min_stop_atr_multiple",
     "absolute_min_stop_atr_multiple",
@@ -105,7 +104,7 @@ def _scan_fallbacks() -> dict[str, float]:
     may live in src/pipeline.py or be IMPORTED from another module: board
     item 216 (2026-10-01) collapsed the short-side gap haircut to a single
     definition in `src.risk.constants`, so the wiring line now reads
-    `_risk_setting("short_gap_risk_multiple", SHORT_GAP_RISK_MULTIPLE_DEFAULT)`
+    `_risk_setting("max_gross_exposure_x", MAX_GROSS_EXPOSURE_X_DEFAULT)`
     with the number defined one import away. Following the import is the
     right answer: restoring a literal here to keep the scanner happy would
     recreate exactly the duplicate definition that item was closed to remove,
