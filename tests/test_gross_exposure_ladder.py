@@ -2943,20 +2943,22 @@ def test_only_one_place_may_mark_the_gross_ceiling_debt_paid():
     import ast
     from pathlib import Path
 
-    src = (
-        Path(__file__).resolve().parent.parent / "src" / "pipeline_delever.py"
-    ).read_text()
-    tree = ast.parse(src)
+    # The bodies moved from pipeline_delever.py into the src/delever/ parts, so
+    # the one-assignment rule is counted over the shim module AND every part.
+    root = Path(__file__).resolve().parent.parent / "src"
+    sources = [root / "pipeline_delever.py", *sorted((root / "delever").glob("*.py"))]
     clears = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not (isinstance(node.value, ast.Constant) and node.value.value is False):
-            continue
-        for target in node.targets:
-            if (isinstance(target, ast.Attribute)
-                    and target.attr == "gross_ceiling_deferred"):
-                clears.append(node.lineno)
+    for path in sources:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not (isinstance(node.value, ast.Constant) and node.value.value is False):
+                continue
+            for target in node.targets:
+                if (isinstance(target, ast.Attribute)
+                        and target.attr == "gross_ceiling_deferred"):
+                    clears.append(f"{path.name}:{node.lineno}")
     assert len(clears) == 1, (
         f"exactly one place may clear the deferred gross-ceiling debt; "
         f"found {len(clears)} at lines {clears}"

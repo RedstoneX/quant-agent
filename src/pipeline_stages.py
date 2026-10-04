@@ -109,8 +109,7 @@ _MOVED_NAME_OWNERS = {
     **{n: _pipeline_sizing for n in vars(_pipeline_sizing)
        if not n.startswith("__")},
 }
-for _n in ("logging", "math", "re", "annotations", "logger",
-           "gap_adjusted_risk_per_share"):
+for _n in ("logging", "math", "re", "annotations", "logger"):
     _MOVED_NAME_OWNERS.pop(_n, None)
 
 # The single `__getattr__`/write-through mirror lives at the END of this module
@@ -119,7 +118,6 @@ for _n in ("logging", "math", "re", "annotations", "logger",
 from src.risk.constants import (
     REWARD_RISK_FLOOR,
     STARTER_POSITION_RISK_PCT,
-    gap_adjusted_risk_per_share,
 )
 
 if TYPE_CHECKING:
