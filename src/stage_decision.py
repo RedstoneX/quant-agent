@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from src.pipeline_risk_budget_recording import _record_realised_concentration
 from src.rotation_dispositions import apply_rotation_recording_dispositions
+from src.soft_exit_never_blank import add_constructor_dropped
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     FAULT_NO_PRICE,
     FAULT_STALE_PRICE,
@@ -37,7 +38,9 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     _record_pipeline_event,
     _record_rotation_precheck,
     _record_seat_stances,
-    _record_soft_exit_heals, _record_soft_exit_missing_after_retry,
+    _record_soft_exit_heals,
+    _record_soft_exit_refusal_count,
+    _record_soft_exit_missing_after_retry,
     _rotation_execution_enabled,
     _rotation_ranked_margin_enabled,
     _session_candidate_ranking,
@@ -680,19 +683,14 @@ class DecisionStage:
         )
         for symbol in refused_soft_exit:
             _record_soft_exit_missing_after_retry(pipeline, ctx, symbol)
+        _record_soft_exit_refusal_count(pipeline, ctx, refused_soft_exit)
         if refused_soft_exit:
             logger.warning(
                 "Refusing %d open target(s) %s before the ticket book: %s",
                 len(refused_soft_exit), SOFT_EXIT_MISSING_AFTER_RETRY,
                 refused_soft_exit,
             )
-            existing = list(
-                getattr(portfolio_decision, "constructor_dropped", None) or []
-            )
-            for symbol in refused_soft_exit:
-                if symbol not in existing:
-                    existing.append(symbol)
-            portfolio_decision.constructor_dropped = existing
+            add_constructor_dropped(portfolio_decision, refused_soft_exit)
         portfolio_decision.decisions = pipeline.portfolio_constructor.construct_orders(
             targets=book_targets,
             positions=positions,

@@ -51,8 +51,22 @@ _REFUSALS = {
 
 
 def configure(db_path) -> None:
+    """Aim the door at this session's intent record; `release` ends that aim.
+
+    The pointer is process-wide, so its lifetime must be the SESSION that set
+    it, not the process. `main.main` pairs this with `release` in its finally
+    block: without that pairing the pointer outlives the database it names
+    (one session per process in production hides it; a test run does not),
+    and every later read escalates to UNKNOWN against a database that is gone.
+    """
     global _db_path
     _db_path = db_path
+
+
+def release() -> None:
+    """End the aim set by `configure`; an unaimed door reads no flags."""
+    global _db_path
+    _db_path = None
 
 
 #: Called with a reason string whenever the desk acts on an UNKNOWN flag set.

@@ -226,3 +226,101 @@ def test_market_data_state_is_the_broker_itself():
     assert md._data_client is None
     md._data_client = "client"
     assert host._data_client == "client"
+
+
+# --- StopShifter: the ex-dividend shift as a part (was ShiftStopsMixin) -------
+
+def _one_amendable_stop(**overrides):
+    """Stubs for a single resting stop that the measured-safe amend covers."""
+    from src.execution.broker_parts.stop_shifter import StopShifter
+    order = MagicMock(name="order", id="o1")
+    spec = {"id": "o1", "qty": 3, "stop_price": 10.0, "limit_price": None}
+    leg = {"outcome": "amended", "id": "o1", "new_id": "o2", "old_stop": 10.0,
+           "new_stop": 9.5, "qty": 3, "detail": ""}
+    stubs = dict(
+        client=MagicMock(name="client"),
+        list_open_sell_stop_orders=lambda symbol: [order],
+        snapshot_stop_order=lambda o: dict(spec),
+        stop_order_amendable_in_place=lambda o: True,
+        amend_one_stop_price=MagicMock(name="amend", return_value=leg),
+        cancel_snapshotted_stops=MagicMock(name="cancel"),
+        restore_stop_orders=MagicMock(name="restore"),
+    )
+    stubs.update(overrides)
+    return StopShifter, stubs
+
+
+def test_stop_shifter_is_constructible_from_stubs():
+    from src.execution.broker_parts.stop_shifter import StopShifter
+    _build(StopShifter)
+    params = inspect.signature(StopShifter).parameters
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+def test_stop_shifter_module_passes_the_boundary_check():
+    verdict = check_boundary("src.execution.broker_parts.stop_shifter")
+    assert verdict.passed, verdict.failures
+
+
+def test_stop_shift_shim_module_passes_the_boundary_check():
+    verdict = check_boundary("src.execution.broker_parts.stop_shift")
+    assert verdict.passed, verdict.failures
+
+
+def test_shift_stops_down_runs_from_stubs_without_a_placer_or_broker():
+    """The boundary: the amend path runs end to end on stubs alone, cancels
+    nothing, and reports the confirmed shift. No StopPlacer, no broker."""
+    StopShifter, stubs = _one_amendable_stop()
+    out = StopShifter(**stubs).shift_stops_down("GE", 0.5)
+    assert out["status"] == "accepted" and out["mode"] == "amend"
+    assert out["shifted"] == 1 and out["total"] == 1 and out["id"] == "o2"
+    stubs["amend_one_stop_price"].assert_called_once_with(
+        symbol="GE", spec={"id": "o1", "qty": 3, "stop_price": 10.0, "limit_price": None},
+        new_price=9.5)
+    stubs["cancel_snapshotted_stops"].assert_not_called()
+    stubs["restore_stop_orders"].assert_not_called()
+
+
+def test_shift_body_lives_in_the_part_and_the_shim_only_forwards():
+    """stop_shift.shift_stops_down must be a one-return forwarder bound onto
+    StopPlacer; the body is in StopShifter and no mixin remains. A body
+    creeping back into the shim is a regression to the mixin design."""
+    import ast
+    from src.execution.broker_parts import stop_shift, stop_shifter
+    tree = ast.parse(inspect.getsource(stop_shift))
+    assert not [n for n in tree.body if isinstance(n, ast.ClassDef)]
+    shim = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "shift_stops_down")
+    stmts = [s for s in shim.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+    assert len(stmts) == 1 and isinstance(stmts[0], ast.Return)
+    assert StopPlacer.shift_stops_down is stop_shift.shift_stops_down
+    part = ast.parse(inspect.getsource(stop_shifter))
+    cls = next(n for n in part.body if isinstance(n, ast.ClassDef) and n.name == "StopShifter")
+    body = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "shift_stops_down")
+    assert len(body.body) > 10
+
+
+def test_shim_hands_the_placer_collaborators_in_live_not_at_construction():
+    """The seam witness. A collaborator swapped on the placer AFTER it is built
+    (how the broker shim and tests patch) must be the one the moved body calls.
+    Snapshotting at construction would call the stale one forever."""
+    _, stubs = _one_amendable_stop()
+    placer = _build(StopPlacer, client=stubs["client"],
+                    list_open_sell_stop_orders=stubs["list_open_sell_stop_orders"],
+                    snapshot_stop_order=stubs["snapshot_stop_order"],
+                    stop_order_amendable_in_place=stubs["stop_order_amendable_in_place"],
+                    amend_one_stop_price=MagicMock(name="stale", return_value={
+                        "outcome": "refused", "id": "o1", "new_id": None, "old_stop": 10.0,
+                        "new_stop": 9.5, "qty": 3, "detail": "stale"}),
+                    cancel_snapshotted_stops=stubs["cancel_snapshotted_stops"])
+    placer.shift_stops_down("GE", 0.5)  # first call builds a shifter
+    placer._amend_one_stop_price = stubs["amend_one_stop_price"]  # swap after
+    out = placer.shift_stops_down("GE", 0.5)
+    assert out["status"] == "accepted", out
+    stubs["amend_one_stop_price"].assert_called_once()
+    stubs["cancel_snapshotted_stops"].assert_not_called()
+
+
+def test_shift_helpers_still_resolve_on_the_shim_module():
+    from src.execution.broker_parts import stop_shift, stop_shifter
+    assert stop_shift._quantize_price is stop_shifter._quantize_price
+    assert stop_shift.defer_shift_if_closed is stop_shifter.defer_shift_if_closed

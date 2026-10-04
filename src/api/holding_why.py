@@ -52,6 +52,8 @@ import re
 from datetime import date
 from typing import Any
 
+from src.api.holding_origin import SEAT_LABELS, name_the_origin
+
 #: Verbatim, because getting this wrong misleads the owner about whether
 #: the desk will ever sell at the number on his screen. Established from
 #: code and history on 2026-09-18: the automatic take-profit trim was
@@ -88,21 +90,9 @@ HORIZON_IS_A_PLAN = (
 
 NOT_RECORDED = "Not recorded."
 
-#: Which origin wins when a name arrived by more than one route. A Form 4
-#: admission is first because it is the route that ADMITTED the symbol —
-#: without it the desk would not have been looking at the name at all. A
-#: seat nomination is next for the same reason one step down. The
-#: technical prefilter is last because it is the desk's default way of
-#: noticing any name already in the universe, so it distinguishes nothing.
-_DRIVER_PRECEDENCE = ("smart_money", "nomination", "technical")
-
-_SEAT_LABELS = {
-    "technical": "Technical",
-    "earnings": "Earnings",
-    "smart_money": "Smart money",
-    "macro": "Macro",
-    "news": "News",
-}
+#: Origin precedence and seat labels live in `src/api/holding_origin.py`
+#: with the rule that uses them.
+_SEAT_LABELS = SEAT_LABELS
 
 #: Name tokens that must not be title-cased. SEC filer names are stored in
 #: block capitals; naive title-casing turns "III" into "Iii" and "LP" into
@@ -556,47 +546,12 @@ def build_holding_why(
             admission.get("symbol") or tech.get("symbol") or target.get("symbol") or ""
         ).upper()
 
-    nominating_seats = [
-        str(_payload(row).get("seat") or "")
-        for row in rows
-        if str(row.get("kind")) == "seat_stance" and _payload(row).get("nominated")
-    ]
-    nominating_seats = [s for s in nominating_seats if s]
-
     # --- the named primary driver -------------------------------------
-    origins: dict[str, str] = {}
-    if admission:
-        origins["smart_money"] = (
-            "The smart-money seat put this name in front of the desk: its "
-            "SEC Form 4 scan found a large open-market insider purchase and "
-            "admitted the symbol for analysis."
-        )
-    if nominating_seats:
-        labels = [_SEAT_LABELS.get(s, s.replace("_", " ")) for s in nominating_seats]
-        origins["nomination"] = (
-            f"{' and '.join(labels)} asked the desk to look at this name."
-        )
-    if any(
-        _payload(row).get("reason") == "actionable_technical_prefilter"
-        for row in rows
-        if str(row.get("kind")) == "pipeline_event"
-    ):
-        origins["technical"] = (
-            "The technical seat picked this name out of the universe it "
-            "screens every run."
-        )
-
-    driver_key = next((k for k in _DRIVER_PRECEDENCE if k in origins), None)
-    if driver_key == "smart_money":
-        driver_name = "Smart money"
-    elif driver_key == "nomination":
-        driver_name = _SEAT_LABELS.get(
-            nominating_seats[0], nominating_seats[0].replace("_", " ").title()
-        )
-    elif driver_key == "technical":
-        driver_name = "Technical"
-    else:
-        driver_name = None
+    named = name_the_origin(rows, admission, _payload)
+    origins = named["origins"]
+    driver_key = named["driver_key"]
+    driver_name = named["driver_name"]
+    nominating_seats = named["nominating_seats"]
 
     prov = _provenance_lines(target)
     insider = _insider_summary(admission, finding) if admission or finding else None
@@ -606,7 +561,7 @@ def build_holding_why(
         driver_detail = (insider or {}).get("plain") or prov.get("smart_money")
     elif driver_key == "nomination":
         driver_detail = prov.get(nominating_seats[0])
-    elif driver_key == "technical":
+    elif driver_key in ("technical", "intraday_move"):
         driver_detail = prov.get("technical") or str(tech.get("reasoning") or "").strip() or None
 
     # --- the thesis ---------------------------------------------------

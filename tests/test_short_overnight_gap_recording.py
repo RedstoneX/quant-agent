@@ -1,7 +1,7 @@
 """Short-side gap evidence: a short that closes carries its worst gap.
 
 RECORDING ONLY (docs/WORK.md item 186). The short-side sizing haircut
-(`RiskConfig.short_gap_risk_multiple`, 1.5) is unsourced, and two attempts
+(`RiskConfig.short_gap_risk_multiple`, 1.5) was DELETED 2026-10-04; two attempts
 to read it off the instrument were withdrawn — see docs/BOARD_NOTES.md item
 186 for both failure reasons. Both failed because the desk has never kept a
 record of what a short actually suffers overnight. These tests prove that

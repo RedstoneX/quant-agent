@@ -7,8 +7,10 @@ caught it, because an undefined global inside a function body is legal at
 import time and only fails when that branch runs -- and a refusal branch is
 exactly the branch tests rarely drive. This guard reads every module under
 `src/` and fails on a load of a name that no enclosing scope, no module-level
-binding and no builtin provides. Shrink-only: the baseline below may go down,
-never up.
+binding and no builtin provides. There is no baseline and no exemption list:
+the stored one drained to empty and was deleted, because a recorded offence
+outlives the code that earned it and then reds every unrelated change until
+someone notices. Zero offenders is computed from the tree on every run.
 """
 from __future__ import annotations
 
@@ -17,15 +19,6 @@ import builtins
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-
-# Offenders present when the guard arrived. Shrink-only: removing an entry is
-# the point; adding one means a new undefined name reached the tree.
-BASELINE: set[tuple[str, str]] = {
-    # Deliberate lazy wiring, already marked `# noqa: F821` in place: the
-    # package installs `PortfolioManagerAgent` into this module after the
-    # agent class exists, and the lambdas read it only when called.
-    ("src/agents/portfolio_manager/ranking.py", "PortfolioManagerAgent"),
-}
 
 _BUILTINS = set(dir(builtins)) | {"__file__", "__name__", "__doc__", "__spec__", "__package__", "__loader__", "__builtins__", "__debug__", "__path__", "WindowsError", "reveal_type"}
 
@@ -142,17 +135,16 @@ def _offenders(path: Path) -> list[tuple[int, str]]:
 
 
 def test_no_undefined_name_is_read_anywhere_under_src() -> None:
+    assert SRC.is_dir(), f"guard cannot read its reference tree: {SRC} is not a directory"
     hits: list[str] = []
-    current: set[tuple[str, str]] = set()
+    scanned = 0
     for path in sorted(SRC.rglob("*.py")):
         rel = str(path.relative_to(SRC.parent))
+        scanned += 1
         for lineno, name in _offenders(path):
-            current.add((rel, name))
-            if (rel, name) not in BASELINE:
-                hits.append(f"{rel}:{lineno} reads undefined name {name!r}")
+            hits.append(f"{rel}:{lineno} reads undefined name {name!r}")
+    assert scanned, f"guard scanned no modules under {SRC}; its reference is unreadable, not clean"
     assert not hits, (
         "A function reads a name nothing defines; it will raise NameError when "
         "that branch runs:\n" + "\n".join(sorted(hits))
     )
-    stale = BASELINE - current
-    assert not stale, f"Baseline entries no longer offend; delete them: {sorted(stale)}"
