@@ -1454,60 +1454,15 @@ MUTE_RECORD_BEGINS_AT = "2026-10-01T06:25:46+00:00"
 MUTE_BEGAN_ON = "2026-09-30"
 
 
-def _live_risk_headlines() -> tuple[str, ...]:
-    """The owner-facing headlines that mean "protection is gone or absent".
-
-    NOT a new classification. These are the literal first lines the desk's
-    own live-risk alerts write — the three per-symbol-per-day siblings of
-    item 211 plus their relatives in `src/coverage_watchdog.py` and
-    `src/notifier.py`. A headline announcing that a gap CLOSED ("A MISSING
-    STOP WAS PUT BACK", "PROTECTION RESTORED") is deliberately absent: it is
-    good news about a gap, not an open one.
-    """
-
-    return (
-        "EXIT NOT PLACED",
-        "PROTECTIVE STOP UNREADABLE",
-        "STOP UNREADABLE",
-        "POSITION UNGUARDED LONGER THAN EVER MEASURED",
-        "UNPROTECTED SHARES, AND THE DESK IS NOT RUNNING",
-        "COULD NOT PUT THE PROTECTIVE STOP BACK",
-    )
-
-
-def is_live_risk_message(text: str | None) -> bool:
-    """True when this muted message was about unprotected money.
-
-    Two sources, both of them the desk's existing idea of the class, neither
-    invented here: the `MONEY_UNPROTECTED` fault families in
-    `src/log_health.py` (the module that already owns "a position was left
-    without the protective stop the desk believes is on it"), and the
-    owner-facing headlines those same alerts print. The log-health patterns
-    are written against log lines and the headlines against owner prose, so
-    both are needed to cover a record that holds owner prose written from
-    the same events.
-    """
-
-    body = (text or "").strip()
-    if not body:
-        return False
-    upper = body.upper()
-    if any(head in upper for head in _live_risk_headlines()):
-        return True
-    try:
-        from src.log_health import FAMILIES, MONEY_UNPROTECTED
-    except Exception:
-        return False
-    for family in FAMILIES:
-        if getattr(family, "reason", None) != MONEY_UNPROTECTED:
-            continue
-        for pattern in getattr(family, "patterns", ()) or ():
-            if pattern.search(body):
-                return True
-    return False
+#: Every `notifier_sends.status` that means the owner did not receive the
+#: message. Kept as one tuple so the surface and the counters cannot disagree
+#: about what "undelivered" means; the query selects by exclusion of 'sent',
+#: so a status added later still reaches the owner, merely under "muted".
+_UNDELIVERED_REASONS = ("muted", "filtered", "failed")
 
 
 from src.api.muted_helpers import _et_day, _headline, _muted_symbols  # noqa: E402,F401
+from src.api.live_risk_message import _live_risk_headlines, is_live_risk_message  # noqa: E402,F401
 
 
 def get_muted_backlog() -> dict:
@@ -1553,6 +1508,7 @@ def get_muted_backlog() -> dict:
         "total": 0,
         "muted_total": 0,
         "filtered_total": 0,
+        "failed_total": 0,
         "live_risk_total": 0,
         "by_kind": [],
         "by_day": [],
@@ -1570,13 +1526,16 @@ def get_muted_backlog() -> dict:
             return out
         out["record_available"] = True
         rows = conn.execute(
-            # Defect 2 (PR #978): the per-category mute records its drops
-            # with status 'filtered', and nothing read them — so a message
-            # the desk deliberately dropped was invisible on the only
-            # surface the owner has. Same backlog, two reasons, kept
-            # distinguishable rather than merged.
+            # Read what was NOT delivered, rather than enumerating the
+            # ways a message can fail to be delivered. The enumeration has
+            # drifted twice: 'filtered' was missing until PR #978, and
+            # 'failed' — the status the transport writes when the send
+            # itself errors — was missing until this change, so an owner
+            # alert the desk tried and failed to deliver appeared on no
+            # surface at all while its caller discarded the False. Telegram
+            # is muted, so this page is the owner's only channel.
             "SELECT kind, text, detail, timestamp, status FROM notifier_sends "
-            "WHERE status IN ('muted', 'filtered') ORDER BY timestamp DESC"
+            "WHERE status <> 'sent' ORDER BY timestamp DESC"
         ).fetchall()
     except Exception:
         return out
@@ -1598,14 +1557,14 @@ def get_muted_backlog() -> dict:
         kind = str(kind or "unknown")
         stamp = str(stamp or "")
         status = str(status or "muted")
-        reason = "filtered" if status == "filtered" else "muted"
+        reason = status if status in _UNDELIVERED_REASONS else "muted"
         stamps.append(stamp)
         live = is_live_risk_message(text)
         day = _et_day(stamp)
         for bucket, key in ((by_kind, kind), (by_day, day)):
             slot = bucket.setdefault(key, {
                 "count": 0, "live_risk_count": 0,
-                "muted_count": 0, "filtered_count": 0,
+                **{f"{r}_count": 0 for r in _UNDELIVERED_REASONS},
             })
             slot["count"] += 1
             slot[f"{reason}_count"] += 1
