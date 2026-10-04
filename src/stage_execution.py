@@ -12,8 +12,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.execution.entry_evidence import (
+    SCALE_IN_EVIDENCE_AGENT as _SCALE_IN_EVIDENCE_AGENT,
+    SCALE_IN_EVIDENCE_KIND as _SCALE_IN_EVIDENCE_KIND,
     pinned_setup_type as _pinned_setup_type,
     pinned_structural_ceiling as _pinned_structural_ceiling,
+    scale_in_own_verdict as _scale_in_own_verdict,
 )
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
@@ -1575,9 +1578,10 @@ class ExecutionStage:
                 # nobody made a new entry decision about. A short add reads
                 # the last SHORT open (item 82 mirror) — get_symbol_last_buy
                 # defaults to BUY rows and would otherwise miss the short's
-                # original entry. Where the prior row holds NO pinned value,
-                # the decision's own freshly computed one is recorded instead
-                # of propagating the hole — see src/execution/entry_evidence.py.
+                # original entry. Where the prior row holds NO pinned value
+                # the position keeps holding none — the add's own verdict is
+                # recorded ALONGSIDE as its own evidence row below, never over
+                # the top. See src/execution/entry_evidence.py.
                 _existing_buy = (
                     pipeline.db.get_symbol_last_buy(
                         decision.symbol,
@@ -1649,6 +1653,31 @@ class ExecutionStage:
                     # — see TradeDecision.thesis_invalid_if in models.py.
                     thesis_invalid_if=getattr(decision, "thesis_invalid_if", None),
                 )
+
+                if _is_scale_in:
+                    # The add's OWN verdict, recorded ALONGSIDE the row above
+                    # and never over the top of it: the held position's entry
+                    # verdict is whatever its own entry row says, including
+                    # nothing. Forensic only — `specialist_evidence` is read
+                    # by no trading path (see its CREATE comment), so this
+                    # cannot change what the desk buys, sizes or protects.
+                    _own_verdict = _scale_in_own_verdict(_existing_buy, decision)
+                    if _own_verdict is not None:
+                        try:
+                            pipeline.db.insert_specialist_evidence(
+                                run_id=run_id,
+                                decision_id=decision_id,
+                                agent_name=_SCALE_IN_EVIDENCE_AGENT,
+                                kind=_SCALE_IN_EVIDENCE_KIND,
+                                scope="symbol",
+                                symbol=decision.symbol,
+                                evidence_json=_own_verdict,
+                            )
+                        except Exception as exc:  # pragma: no cover - forensic only
+                            logger.warning(
+                                "scale-in evidence not recorded for %s: %s",
+                                decision.symbol, exc,
+                            )
 
                 try:
                     # Set BEFORE the call: if submit raises, the broker may

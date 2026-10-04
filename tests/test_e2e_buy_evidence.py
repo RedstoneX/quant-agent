@@ -89,10 +89,10 @@ def test_the_evidence_check_fails_when_the_constructor_stops_pinning_it(
     red. `shipped_stop_level_basis` is the constructor method that pins
     `stop_level_basis` onto the TradeDecision; with it silenced the row is
     written with the column NULL, which is exactly the production symptom."""
-    from src.portfolio_constructor.stops import _StopMixin
+    from src.portfolio_constructor.stops import StopRules
 
     with patch.object(
-        _StopMixin, "shipped_stop_level_basis",
+        StopRules, "shipped_stop_level_basis",
         lambda self, *a, **k: None,
     ):
         result, _trace, _trading = _run_session(tmp_path, monkeypatch)
@@ -133,25 +133,50 @@ def test_a_scale_in_keeps_the_positions_own_pinned_verdict():
     assert pinned_structural_ceiling(prior, fresh, is_scale_in=True) is True
 
 
-def test_a_scale_in_onto_a_pre_feature_row_records_the_fresh_verdict():
-    """The cascade: every production ADD copied a NULL `structural_ceiling`
-    from a row opened before the column existed, discarding the verdict the
-    constructor had computed on that very decision. The hole must not
-    propagate."""
+def test_a_scale_in_onto_a_pre_feature_row_reports_the_hole_honestly():
+    """A position whose entry verdict is genuinely MISSING stays missing.
+
+    Backfilling it from a later top-up's reasoning would silently
+    reclassify why the desk holds something it bought weeks ago on
+    different reasoning. "We do not know why this was bought" is the
+    true answer for those rows.
+    """
     from src.execution.entry_evidence import (
         pinned_setup_type, pinned_structural_ceiling,
     )
     pre_feature = {"setup_type": "range", "structural_ceiling": None}
-    fresh = _Decision(setup_type="range", structural_ceiling=True)
-    assert pinned_structural_ceiling(pre_feature, fresh, is_scale_in=True) is True
+    fresh = _Decision(setup_type="breakout", structural_ceiling=True)
+    assert pinned_structural_ceiling(pre_feature, fresh, is_scale_in=True) is None
+    # The field the position DOES hold is still carried, not reclassified.
     assert pinned_setup_type(pre_feature, fresh, is_scale_in=True) == "range"
     # A row from before the column was added at all behaves the same way.
-    assert pinned_structural_ceiling({}, fresh, is_scale_in=True) is True
+    assert pinned_structural_ceiling({}, fresh, is_scale_in=True) is None
+    assert pinned_setup_type({}, fresh, is_scale_in=True) is None
     # False is a real verdict, not a hole: it must survive the round trip.
     assert pinned_structural_ceiling(
         {"structural_ceiling": 0}, _Decision(structural_ceiling=True),
         is_scale_in=True,
     ) is False
+
+
+def test_the_add_records_its_own_verdict_as_its_own_evidence():
+    """The evidence the old fix threw away is kept — ALONGSIDE, attributed
+    to the top-up, in a record nothing reads as a position's entry verdict."""
+    import json
+
+    from src.execution.entry_evidence import scale_in_own_verdict
+
+    pre_feature = {"setup_type": "range", "structural_ceiling": None}
+    fresh = _Decision(setup_type="breakout", structural_ceiling=True)
+    payload = json.loads(scale_in_own_verdict(pre_feature, fresh))
+    assert payload["fields"]["structural_ceiling"] == {
+        "add_verdict": True, "position_already_held_a_verdict": False,
+    }
+    assert payload["fields"]["setup_type"] == {
+        "add_verdict": "breakout", "position_already_held_a_verdict": True,
+    }
+    # An add that computed nothing writes no evidence row at all.
+    assert scale_in_own_verdict(pre_feature, _Decision()) is None
 
 
 def test_a_fresh_entry_never_reads_a_prior_row():

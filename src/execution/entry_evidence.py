@@ -1,4 +1,4 @@
-"""Pinned entry evidence for a row the execution stage is about to write.
+"""Entry-pinned evidence for a row the execution stage is about to write.
 
 THE DEFECT THIS EXISTS TO CLOSE
 -------------------------------
@@ -9,37 +9,58 @@ today's technical read. Re-classifying mid-position is a real bug: it
 can silently flip pace/progress on or off for a position nobody made a
 new entry decision about.
 
-But "carry the pinned value forward" was implemented as "use the prior
-row's value", full stop — including when the prior row has NO value.
-Every position opened before a column existed therefore carries NULL
-forever: each ADD copies the NULL from the row before it, and the
-verdict the constructor computed on THIS decision is thrown away. That
-is how three 2026-10-01 entries were written with a fresh `entry_atr`
-and a fresh `stop_level_basis` beside a NULL `structural_ceiling` — the
-evidence was in hand and discarded.
+The hole that leaves is also real. A position opened before a column
+existed carries NULL on that column forever, every later ADD copies the
+NULL, and the verdict the constructor computed on THAT decision is
+thrown away. The desk ends up unable to say what it knew at the moment
+it added.
 
-The rule here keeps both halves honest:
+Both halves are kept honest by recording ALONGSIDE, never over the top:
 
-  * a pinned value on the prior row WINS — an add never reclassifies;
-  * a MISSING pinned value falls back to the decision's own freshly
-    computed value — absence is not a classification, and recording
-    the constructor's answer can only add evidence, never overwrite a
-    verdict the position already holds.
+  * the position's entry verdict is whatever its own prior row holds —
+    including NULL. An ADD never writes a verdict onto a position that
+    does not have one, because "we do not know why this was bought" is
+    the true answer for those rows and the desk must be able to say it;
+  * the ADD's own freshly computed verdict is recorded as the ADD's own
+    evidence, attributed to the top-up, carrying its own run id and
+    timestamp — see `scale_in_own_verdict`. Nothing that reads a
+    position's entry verdict reads that row.
 
 Deliberately generic in the field it resolves, so the whole class is
 closed rather than this one column: any entry-pinned fact added later
-gets the same behaviour by being resolved through `pinned_or_fresh`.
+gets the same behaviour by being resolved through `pinned_value`.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
-__all__ = ["pinned_or_fresh", "pinned_setup_type", "pinned_structural_ceiling"]
+__all__ = [
+    "pinned_value",
+    "pinned_setup_type",
+    "pinned_structural_ceiling",
+    "scale_in_own_verdict",
+    "SCALE_IN_EVIDENCE_AGENT",
+    "SCALE_IN_EVIDENCE_KIND",
+]
 
 _SENTINEL = object()
 
+# How a top-up's own verdict is filed in `specialist_evidence`. That table
+# is an explicitly non-trading forensic record (see its CREATE comment), so
+# writing here cannot change what the desk buys, sells, sizes or protects.
+SCALE_IN_EVIDENCE_AGENT = "execution_scale_in"
+SCALE_IN_EVIDENCE_KIND = "verdict"
 
-def pinned_or_fresh(
+# The entry-pinned fields this module resolves. `cast` normalises a value
+# read back out of the ledger (`structural_ceiling` is stored 0/1).
+_PINNED_FIELDS: dict[str, Any] = {
+    "setup_type": None,
+    "structural_ceiling": bool,
+}
+
+
+def pinned_value(
     prior_row: dict | None,
     decision: Any,
     field: str,
@@ -50,30 +71,69 @@ def pinned_or_fresh(
     """The value to write for an entry-pinned `field`.
 
     `prior_row` is the position's own previous open row (None on a fresh
-    entry). `decision` is the constructor's `TradeDecision`. `cast`, when
-    given, normalises whichever value wins (the ledger stores
-    `structural_ceiling` as 0/1, so the stored int becomes a bool again).
+    entry). `decision` is the constructor's `TradeDecision`.
+
+    On a scale-in the position's OWN stored value wins, and a position
+    that holds no value keeps holding none: absence is reported as
+    absence, never backfilled from a later top-up's reasoning.
     """
-    fresh = getattr(decision, field, None)
     if not is_scale_in:
+        fresh = getattr(decision, field, None)
         return None if fresh is None else (cast(fresh) if cast else fresh)
     pinned = (prior_row or {}).get(field, _SENTINEL)
     if pinned is _SENTINEL or pinned is None or pinned == "":
-        # No verdict on the position yet: record the one in hand rather
-        # than propagating the hole. This is the fix — see module docstring.
-        return None if fresh is None else (cast(fresh) if cast else fresh)
+        return None
     return cast(pinned) if cast else pinned
 
 
 def pinned_setup_type(prior_row, decision, *, is_scale_in: bool) -> str | None:
-    value = pinned_or_fresh(
+    value = pinned_value(
         prior_row, decision, "setup_type", is_scale_in=is_scale_in,
     )
     return value or None
 
 
 def pinned_structural_ceiling(prior_row, decision, *, is_scale_in: bool) -> bool | None:
-    return pinned_or_fresh(
+    return pinned_value(
         prior_row, decision, "structural_ceiling",
         cast=bool, is_scale_in=is_scale_in,
+    )
+
+
+def scale_in_own_verdict(prior_row, decision) -> str | None:
+    """The top-up's OWN verdict, as a JSON evidence payload, or None.
+
+    This is what the constructor classified for THIS add — the value the
+    held position deliberately does not take on. For each entry-pinned
+    field it records the add's own answer and whether the position
+    already held one, so a later reader can see both that the position's
+    verdict is absent and what was known on the day of the add.
+
+    Returns None when the add carries no computed value at all: an empty
+    evidence row would be a record of nothing.
+    """
+    fields: dict[str, Any] = {}
+    for field, cast in _PINNED_FIELDS.items():
+        fresh = getattr(decision, field, None)
+        if fresh is None or fresh == "":
+            continue
+        held = (prior_row or {}).get(field, _SENTINEL)
+        fields[field] = {
+            "add_verdict": cast(fresh) if cast else fresh,
+            "position_already_held_a_verdict": (
+                held is not _SENTINEL and held is not None and held != ""
+            ),
+        }
+    if not fields:
+        return None
+    return json.dumps(
+        {
+            "source": SCALE_IN_EVIDENCE_AGENT,
+            "note": (
+                "the add's own classification; the held position's entry "
+                "verdict is unchanged by this row"
+            ),
+            "fields": fields,
+        },
+        sort_keys=True,
     )
