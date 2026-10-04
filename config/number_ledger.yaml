@@ -778,6 +778,11 @@ numbers:
       off, so the ruling's remedy (read it per name) does not apply and it is
       not converted into a defect. It remains owner-ratified appetite with no
       measurement behind it, which is why the status stays `arbitrary`.
+
+      The deterministic backtest cannot settle this row, for the same reason recorded against
+      max_portfolio_risk_pct: the cluster cap only bites on a binding-budget day, and the engine
+      resolves those by alphabetical ticker tie-break rather than a quality ranking, so a
+      measured delta on max_cluster_risk_share_pct would not be attributable to the cap.
     open_question: >-
       NOT AN OWNER QUESTION ANY MORE. Under the owner's 2026-09-30 ruling the
       appetite question previously routed here ("what share of the risk budget
@@ -855,6 +860,12 @@ numbers:
       off, so the ruling's remedy (read it per name) does not apply and it is
       not converted into a defect. It remains owner-ratified appetite with no
       measurement behind it, which is why the status stays `arbitrary`.
+
+      The deterministic backtest cannot settle this row. On the probe slice (AAPL/MSFT/NVDA,
+      2025-01-02 to 2025-04-30) the engine reported 16 of 26 entry days as binding-budget days,
+      and on a binding day it serves equal-size requests by alphabetical ticker because it
+      passes no priority; production spends down analyst-verdict order. Any A/B on
+      max_portfolio_risk_pct therefore measures ticker spelling, not rationing.
     open_question: >-
       NOT AN OWNER QUESTION ANY MORE. The owner ruled 2026-09-30 that risk is
       never a global dial, so the appetite question previously routed here
@@ -1032,6 +1043,14 @@ numbers:
       The reach caps, split out of one number -- board item 56 owns the
       question and records that the split made them CONSISTENT without making
       either RIGHT.
+
+      A deterministic A/B over src/backtest/engine.py (scripts/backtest.py, --config vs
+      --config-b differing only in max_target_reach_atr_multiple, 1.5 against 0.2,
+      AAPL/MSFT/NVDA, 2025-01-02 to 2025-04-30) returned BYTE-IDENTICAL metrics on all twelve
+      lines, so that engine cannot settle this row: it reaches its own nearest-level target
+      instead of _derive_target, as its own docstring states. The number still governs live, so
+      the status stays arbitrary; settling it needs the travel measurement this row already
+      specifies, not a backtest.
     open_question: >-
       What multiple of ATR x sqrt(sessions) does this instrument class
       actually travel at the stated horizon?
