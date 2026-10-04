@@ -39,6 +39,7 @@ unknown is never repaired against a guessed level.
 """
 from __future__ import annotations
 
+from src.sentinel.swallow_record import record_swallow
 import logging
 import time
 from typing import Any, Callable
@@ -125,6 +126,7 @@ def unverified_book_rows(
             raise TypeError(f"ledger read returned {type(ledger).__name__}")
         ledger = dict(ledger)
     except Exception as exc:  # noqa: BLE001
+        record_swallow("coverage_book_read.ledger_read", exc)
         rows[0]["read_error"] += (
             f" — except the ledger could not be read either ({exc}), so not "
             "even the list of held names is known"
@@ -173,7 +175,8 @@ pipeline: Any, read_error: str, pending_syms: set,
             sweeper.symbol if sweeper is not None
             else pipeline._retired_cash_park_symbol()
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        record_swallow("coverage_book_read.sweep_symbol", exc)
         sweep_symbol = None
     rows = unverified_book_rows(
         # `getattr`: a half-built pipeline with no `db` must still get
@@ -197,6 +200,7 @@ pipeline: Any, read_error: str, pending_syms: set,
                 is_short=bool(row.get("is_short")), outcome=row,
             )
         except Exception as exc:  # noqa: BLE001
+            record_swallow("coverage_book_read.repair", exc, symbol=str(row.get("symbol")))
             row["repaired"] = False
             row["repair_refusal"] = f"the repair itself failed: {exc}"
     try:

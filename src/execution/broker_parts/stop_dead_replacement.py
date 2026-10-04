@@ -6,6 +6,7 @@ ratchet; `self` is the amender (it supplies `client`,
 """
 from __future__ import annotations
 
+from src.sentinel.swallow_record import record_swallow
 import logging
 
 logger = logging.getLogger("src.execution.broker")
@@ -34,6 +35,7 @@ def classify_after_dead_replacement(
         sells, buys = self._list_open_stop_orders_by_side(symbol, errors=errors)
         live_orders = list(sells or []) + list(buys or [])
     except Exception as exc:  # noqa: BLE001
+        record_swallow("stop_dead_replacement.reread", exc, symbol=symbol)
         leg["detail"] += f"; the book could not be re-read ({exc})"
         return "unknown"
     if errors:
@@ -52,6 +54,7 @@ def classify_after_dead_replacement(
                 if getattr(pos, "symbol", None) == symbol
             ]
         except Exception as exc:  # noqa: BLE001
+            record_swallow("stop_dead_replacement.positions", exc, symbol=symbol)
             leg["detail"] += (
                 f"; the book is empty and the position could not be "
                 f"re-read ({exc}) — treating it as UNPROTECTED"

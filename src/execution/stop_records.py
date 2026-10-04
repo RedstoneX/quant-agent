@@ -28,6 +28,8 @@ breakeven ratchet still read THAT number, never the live one.
 """
 from __future__ import annotations
 
+from src.sentinel.swallow_record import record_swallow
+
 import logging
 import math
 from typing import Any, Callable
@@ -133,7 +135,8 @@ def _holding_is_short(broker: Any, symbol: str) -> bool | None:
     """
     try:
         positions = broker.get_positions()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        record_swallow("stop_records.holding_is_short", exc, symbol=symbol)
         return None
     if not isinstance(positions, list):
         return None
