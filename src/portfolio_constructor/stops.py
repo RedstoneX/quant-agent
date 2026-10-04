@@ -74,6 +74,7 @@ from src.portfolio_constructor.config import (
 
 
 from src.portfolio_constructor.entry_stop.resolver import EntryStopResolver
+import src.portfolio_constructor.level_touch_record as touch_gate
 from src.portfolio_constructor.stop_width import stop_atr_multiple
 
 
@@ -186,12 +187,11 @@ class StopRules:
                 continue
             if not is_short and price > entry_price:
                 continue
-            touches = touches_by_price.get(price)
-            if touches is None or touches < min_touches:
-                # Unverified touch count (missing map entry, e.g. an older
-                # caller/fixture that never set it) is treated the same as
-                # "below the bar" — fail closed, per Invariant 2, rather than
-                # honour a tight stop we cannot show cleared the bar.
+            if not touch_gate.level_clears_touch_bar(
+                touches_by_price.get(price),
+                min_touches,
+                site=touch_gate.SITE_TIGHT_STOP_EXEMPTION,
+            ):
                 continue
             # "At" this level means ON ONE OF ITS BARS, not merely inside
             # its band — docs/WORK.md item 215. Item 55 made the zone the
@@ -299,11 +299,11 @@ class StopRules:
                 continue
             if not is_short and price >= entry_price:
                 continue
-            touches = touches_by_price.get(price)
-            if touches is None or touches < min_touches:
-                # Unverified or under-touched: fail closed, exactly as the
-                # tight-stop exemption does. It is not trusted enough to anchor
-                # the only protection this name will get.
+            if not touch_gate.level_clears_touch_bar(
+                touches_by_price.get(price),
+                min_touches,
+                site=touch_gate.SITE_NO_ATR_STRUCTURAL_ANCHOR,
+            ):
                 continue
             gap = abs(entry_price - price)
             if gap < best_gap:

@@ -128,52 +128,20 @@ _LIMIT_PHRASE = re.compile(
     r"(?<![\w.$])(\d+(?:\.\d+)?)\s*%?[^.\n]{0,32}?" + _LIMIT_NOUN, re.I,
 )
 
-#: Phrases each sheet's checks must not flag, with the reason each is not a
-#: statement of a live limit. Kept explicit, short and per-sheet: an exemption
-#: is a hole, so it should be readable at a glance and argued for individually.
-#: Every entry here is either (a) a PAST value in a provenance note, which is
-#: history and must stay literal or the note stops meaning anything, or (b) a
-#: rule with no settings key to render.
-_EXEMPTIONS = {
-    "risk_manager.md": (
-        # The sheet states TWICE that the 1.5 reward:risk floor no longer
-        # exists, once as a forbidden phrasing to quote back. Negations of a
-        # REMOVED gate; there is no setting to render (PR #341 deleted the
-        # gate rather than reconfiguring it).
-        "1.5 floor",
-        "1.5\nfloor",
-    ),
-    "portfolio_manager.md": (
-        # (a) PROVENANCE. Past values of settings, in notes explaining why a
-        # limit is what it is. Rendering these would rewrite history every
-        # time a setting moved, which is the opposite of what they are for.
-        "has since moved 3.0 ",     # min_stop_atr_multiple: 3.0 -> 1.5 -> 2.5
-        "20% notional ceiling",     # the pre-2026-09-04 max_position_pct
-        "20% ceiling",              # same, second mention in that narrative
-        # NOTE: the sizing formula's `min(raw, queued_cap, 5.0)` and its 0.5
-        # emit floor were exempted here as "pseudo-code illustration" and are
-        # NOT exempt any more. They are the arithmetic the seat performs, so
-        # they render from `max_position_risk_pct` / `min_position_risk_pct`
-        # like the prose two hundred lines above them. An exemption there put
-        # the 2026-09-11 self-contradiction back inside one sheet.
-        #
-        # (b) WAS three prompt-only ceilings with no settings key and no
-        # derivation — the earnings-queued risk cap, the starter-sleeve
-        # ceiling and a cash floor. All three are GONE from the sheet as of
-        # 2026-09-14 (item 62, retired), so there is nothing left to exempt:
-        # two were second homes for the derived agreement schedule and the
-        # third was a dangling reference to a regime cash-floor rule deleted
-        # from the sheet on 2026-09-01. See
-        # `test_no_prompt_only_order_size_ceilings` below, which fails if any
-        # of the three comes back.
-        #
-        # (c) NOT LIMITS AT ALL — a table row number and a coin-flip idiom,
-        # both of which the pattern reads as "<number> ... cap/ceiling"
-        # purely by adjacency.
-        "6 | **Gross exposure ceiling",
-        "50/50 thesis, cluster cap",
-    ),
-}
+#: STRUCTURAL HISTORY. A value quoted as history (a removed gate, a past
+#: setting value in a provenance note) sits inside a `<history>...</history>`
+#: block in the sheet. The checks scan only the text OUTSIDE such blocks, so
+#: the distinction is where a figure sits, never how it is phrased, and there
+#: is no stored list of excused phrases to go stale. The tags stay in the
+#: rendered prompt: the reviewer reads them as "this is background".
+_HISTORY_BLOCK = re.compile(r"<history>.*?</history>", re.S)
+
+
+def _live_region(text: str) -> str:
+    """The sheet with every history block removed; what the checks scan."""
+    assert text.count("<history>") == text.count("</history>"), "unbalanced <history> block"
+    return _HISTORY_BLOCK.sub("", text)
+
 
 #: How far past a setting's name a digit still counts as "restating its
 #: value". Short on purpose: `name=65` and `` `name` (10%, `` are the two
@@ -225,7 +193,7 @@ def _hand_typed_limits(text: str, sheet: str = "risk_manager.md") -> list[str]:
     follow are ordinary prose ("...=65% — a 15% position stopped 3% below
     entry...").
     """
-    marked = PLACEHOLDER_RE.sub(_RENDERED, text)
+    marked = PLACEHOLDER_RE.sub(_RENDERED, _live_region(text))
     findings: list[str] = []
     claimed: list[tuple[int, int]] = []
     for name in _risk_setting_names():
@@ -237,8 +205,6 @@ def _hand_typed_limits(text: str, sheet: str = "risk_manager.md") -> list[str]:
                 continue
             claimed.append((match.start(), match.end()))
             window = _NOT_A_LIMIT.sub("", marked[match.end():match.end() + ADJACENCY_CHARS])
-            if any(ex in window for ex in _EXEMPTIONS.get(sheet, ())):
-                continue
             digit = re.search(r"\d", window)
             if digit is None:
                 continue
@@ -260,13 +226,10 @@ def _unrendered_limit_phrases(text: str, sheet: str = "risk_manager.md") -> list
     # Spec section references (§9.4, §12.3) are numbered pointers, not
     # values; blanked so a §9.4 mention does not read as a limit
     # stated at 9.4.
-    marked = re.sub(r"§\s*[\d.]+", "", PLACEHOLDER_RE.sub(_RENDERED, text))
+    marked = re.sub(r"§\s*[\d.]+", "", PLACEHOLDER_RE.sub(_RENDERED, _live_region(text)))
     findings = []
-    exempt = _EXEMPTIONS.get(sheet, ())
     for match in _LIMIT_PHRASE.finditer(marked):
         phrase = match.group(0).replace(_RENDERED, "<rendered>")
-        if any(ex in match.group(0) for ex in exempt):
-            continue
         findings.append(phrase)
     return findings
 
@@ -954,20 +917,21 @@ def test_no_prompt_only_order_size_ceilings():
     )
 
 
-def test_item_62_exemptions_are_gone():
-    """The three exemptions are removed, not merely unused.
-
-    Leaving them in place would let any of the three be re-added silently,
-    which is the shape the item warned about ("that exemption is a place to
-    record the question, not an answer to it").
-    """
-    pm_exemptions = _EXEMPTIONS["portfolio_manager.md"]
-    for stale in ("1% risk cap", "1.0% risk — the sleeve ceiling",
-                  "10% floor", "1.0\nqueued_cap"):
-        assert stale not in pm_exemptions, (
-            f"{stale!r} is still exempt from the hand-typed-limit check; "
-            "item 62 removed the ceiling it was covering."
-        )
+def test_history_block_is_structural_not_phrased():
+    """Bite tests for the history region. A live limit in the live region
+    FAILS; the same sentence inside <history> is ignored; and there is no
+    stored exemption list."""
+    assert "_EXEMPTIONS" not in globals()
+    base = _sheet()
+    live = base + "\nNever hold more than a 40% ceiling in one name.\n"
+    assert _unrendered_limit_phrases(live), "live limit must be caught"
+    hist = base + "\n<history>It once had a 40% ceiling in one name.</history>\n"
+    assert not _unrendered_limit_phrases(hist), "history region must be ignored"
+    assert not _hand_typed_limits(
+        base + "\n<history>max_position_pct=65 was once typed here.</history>\n")
+    assert _hand_typed_limits(base + "\nmax_position_pct=65\n")
+    with pytest.raises(AssertionError):
+        _live_region("<history>never closed")
 
 
 def test_a_just_filed_name_loses_its_earnings_seat():

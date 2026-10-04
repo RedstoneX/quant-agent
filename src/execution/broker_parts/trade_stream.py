@@ -10,13 +10,11 @@ collaborators are keyword-only, and the per-broker state the bodies mutate
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from src.trading_calendar import session_date_key
 from pathlib import Path
 import asyncio
-import fcntl
 import json
 import logging
-import os
 import random
 import re
 import threading
@@ -24,6 +22,8 @@ import time
 
 from src.execution.broker_parts.trade_stream_errors import _stream_http_status, _stream_retry_after_seconds  # noqa: F401
 from src.sentinel.guarded import record_guarded_pass
+from src.execution.broker_parts.trade_stream_flags import _signal_event
+from src.execution.broker_parts.trade_stream_lease import _TradeUpdatesLease  # noqa: F401
 
 try:
     from alpaca.trading.stream import TradingStream
@@ -56,74 +56,6 @@ def _default_trade_updates_lease_path() -> Path:
     """
     return Path("data") / ".trade_updates.lock"
 
-
-class _TradeUpdatesLease:
-    """Account-wide exclusive right to open Alpaca's trade_updates websocket.
-
-    flock is released when the fd closes, including process death, so a
-    killed job cannot wedge the slot. The pid written into the file is
-    diagnostic only — ownership is the lock, not the text. Not a new
-    service, not IPC, not a second trading-memory system.
-    """
-
-    def __init__(self, path: Path):
-        self.path = Path(path)
-        self._fh = None
-
-    def acquire(self, *, blocking: bool = False) -> bool:
-        if self._fh is not None:
-            return True
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fh = open(self.path, "a+")
-        except Exception:
-            logger.warning(
-                "trade_updates lease: could not open %s — refusing to open a socket",
-                self.path, exc_info=True,
-            )
-            return False
-        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
-        try:
-            fcntl.flock(fh.fileno(), flags)
-        except BlockingIOError:
-            fh.close()
-            return False
-        except Exception:
-            logger.warning(
-                "trade_updates lease: flock failed on %s — refusing to open a socket",
-                self.path, exc_info=True,
-            )
-            try:
-                fh.close()
-            except Exception:
-                pass
-            return False
-        try:
-            fh.seek(0)
-            fh.truncate()
-            fh.write(f"{os.getpid()}\n")
-            fh.flush()
-        except Exception:
-            pass
-        self._fh = fh
-        return True
-
-    def release(self) -> None:
-        fh = self._fh
-        self._fh = None
-        if fh is None:
-            return
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-        try:
-            fh.close()
-        except Exception:
-            pass
-
-    def held(self) -> bool:
-        return self._fh is not None
 
 # Fallback reconnect bounds, used only when the installed TradingStream
 # does not expose `_reconnect_min_backoff` / `_reconnect_max_backoff`.
@@ -257,27 +189,27 @@ class _StreamAttemptBudget:
 
     def record_attempt(self, today: str | None = None) -> int:
         """Count one handshake failure; return attempts spent today."""
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             self._attempts += 1
             return self._attempts
 
     def day_exhausted(self, today: str | None = None) -> bool:
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             return self._attempts >= _STREAM_ATTEMPT_CEILING_PER_DAY
 
     def attempts_today(self, today: str | None = None) -> int:
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             return self._attempts
 
     def claim_alert(self, today: str | None = None) -> bool:
         """True exactly ONCE per day, for the caller that should page the owner."""
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             if self._alerted_day == day:
@@ -327,11 +259,10 @@ def _alert_stream_gave_up(reason: str) -> None:
         from src.notifier import send_owner_alert
 
         send_owner_alert(message)
-    except Exception:  # noqa: BLE001 - never let the alert sink break execution
-        logger.warning(
-            "could not push the trade_updates give-up alert to the owner",
-            exc_info=True,
-        )
+    except Exception as exc:  # noqa: BLE001 - never let the alert sink break execution
+        record_guarded_pass(None, "trade_stream.give_up_alert", exc, log=logger,
+                            context={"effect": "owner not told the stream gave up"})
+
 
 
 
@@ -767,8 +698,9 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
             restored = True
             try:
                 ws.recv = original_recv  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                record_guarded_pass(None, "trade_stream.auth_capture.restore_recv", exc, log=logger,
+                                    context={"effect": "recv wrapper stays on the socket"})
 
         if callable(original_recv):
             async def _recv_once():
@@ -780,7 +712,9 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
 
             try:
                 ws.recv = _recv_once  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                record_guarded_pass(None, "trade_stream.auth_capture.wrap_recv", exc, log=logger,
+                                    context={"effect": "auth reply not captured"})
                 original_recv = None
 
         # WHICH FRAME THIS HANDSHAKE SENDS. New form unless a previous
@@ -865,7 +799,9 @@ def _fell_back_to_deprecated_auth(stream: object, raw: object) -> None:
     """
     try:
         setattr(stream, "_qamc_auth_fallback", True)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        record_guarded_pass(None, "trade_stream.auth_fallback.mark", exc, log=logger,
+                            context={"effect": "fallback flag not set"})
         return
     message, status = _parse_stream_auth_reply(raw)
     logger.warning(
@@ -916,7 +852,9 @@ def _note_stream_auth_deprecation(raw: object) -> None:
         return
     try:
         message, _status = _parse_stream_auth_reply(raw)
-    except Exception:  # noqa: BLE001 - a diagnostic must not break the handshake
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must not break the handshake
+        record_guarded_pass(None, "trade_stream.auth_deprecation.parse", exc, log=logger,
+                            context={"effect": "deprecation notice not logged"})
         return
     if not message or _STREAM_AUTH_DEPRECATION_MARKER not in message.lower():
         return
@@ -1025,8 +963,9 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
             # is how a "bounded" loop stays unbounded in aggregate.
             try:
                 setattr(stream, "_should_run", False)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                record_guarded_pass(None, "trade_stream.reconnect.stop_flag_exhausted", exc, log=logger,
+                                    context={"effect": "retry loop may keep running"})
             event.set()
             _alert_stream_gave_up("the daily retry budget is spent")
             raise TradeStreamGaveUp(
@@ -1046,25 +985,10 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
                 "trade_updates websocket authenticated (endpoint=%s)",
                 getattr(stream, "_endpoint", "unknown"),
             )
-            authed = getattr(stream, "_qamc_authed", None)
-            if authed is not None:
-                try:
-                    authed.set()
-                except Exception:
-                    pass
+            _signal_event(stream, "_qamc_authed", "set")
         except Exception as exc:
-            authed = getattr(stream, "_qamc_authed", None)
-            if authed is not None:
-                try:
-                    authed.clear()
-                except Exception:
-                    pass
-            connected = getattr(stream, "_qamc_connected", None)
-            if connected is not None:
-                try:
-                    connected.clear()
-                except Exception:
-                    pass
+            _signal_event(stream, "_qamc_authed", "clear")
+            _signal_event(stream, "_qamc_connected", "clear")
             failures += 1
             spent_today = _STREAM_ATTEMPT_BUDGET.record_attempt()
             status = _stream_http_status(exc)
@@ -1090,8 +1014,9 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
                 # without abandoning the SDK's public run()/stop() contract.
                 try:
                     setattr(stream, "_should_run", False)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    record_guarded_pass(None, "trade_stream.reconnect.stop_flag_giveup", exc, log=logger,
+                                        context={"effect": "retry loop may keep running"})
                 event.set()
                 logger.warning(
                     "trade_updates websocket give-up: %d attempts this "

@@ -41,9 +41,16 @@ kept as history and marked DONE where they describe a stored file that is gone.
     the test already compares it with the live arbitrary-row count measured
     from the tree (121 and 0 at this date, both equal), failing on a rise AND
     a fall. A trunk-identity replacement would pass a fall, so it is looser.
-  - `config/prompt_only_numbers.yaml`: AMBIGUOUS. Rows carry a recorded reason
-    and open question (register), yet a test also uses the rows as the allow-list
-    of threshold-shaped figures permitted in prompt sheets.
+  - `config/prompt_only_numbers.yaml`: RULED KEEP (2026-10-04). Test applied:
+    the figures present in a sheet ARE derivable (the test's shape list finds
+    them), but each row's status and open question is a human judgement that a
+    number is prompt-only and unsettled, which no scan can produce. Staleness is
+    covered both ways by the tests: a new figure with no row fails, and a row
+    whose figure left the sheet fails. REAL GAP, not a tidy close: nothing
+    detects a number that stops being prompt-only while its prose stays (for
+    example it becomes code-computed or ledgered), and a `sourced` status is
+    never checked against anything. The shape list is also a known-string
+    scan, so a reworded figure is missed (the test file says so).
 - Source-reading tests, re-counted 2026-10-04: 119 of 480 test files by a broad
   text heuristic (AST/getsource use, or file reads combined with a source-path or
   git-listing pattern), 44 by a strict one (AST/getsource AND a repo path)
@@ -223,3 +230,5 @@ Also done (2026-10-04, the settlement-recording class): `scripts/settlement_fill
 ## Compressing is the same offence as growing
 
 `tests/test_statement_cram_ratchet.py` (logic in `scripts/statement_cram_guard.py`) closes the route a change took on 2026-10-04 to satisfy the size ratchet without splitting anything: it joined statements onto shared lines (`from A import x; from B import y`, `if cond: return x`) and only the line counter moved. The guard PARSES every tracked `.py` file (the size ratchet's own scope, `working_paths("*.py")`, no second list) and names each line on which more than one statement starts, or whose block body sits on its header's line (`if`/`elif`/`except`/`else`/`finally`/`case` headers alike); semicolons inside strings, docstrings and comments are invisible to it. There is no threshold -- the measure is statements per line -- and no stored list: identities (`path`, enclosing scope, the line's text) are collected on the working tree and on `origin/main` at check time and only a NEW or more-frequent identity fails. A one-line stub body (`class Boom(Exception): pass`, `def f(self) -> int: ...`) is not cramming and is exempt. It refuses without `origin/main`; removals never fail; the ~116 pre-existing crammed lines on the trunk pass (measured 2026-10-04).
+
+**Lines are not size (2026-10-04, second route).** The same day, two changes added error logging to dozens of money-path sites, reported their files SHRANK in lines, and between them added 33 lines over 140 characters with none removed (measured from the two diffs); the project has no line-width lint, so the line ratchet was satisfied by widening. `scripts/file_size_guard.py` now ratchets two further measures of the same files, same rule, same scope, still storing nothing: (1) non-whitespace characters -- invariant under wrapping, joining and re-indenting, so no re-layout can move it; a file over the 400-line floor may not gain any against `origin/main`; (2) lines wider than `WIDTH` = 120 characters -- a file may not gain one by identity (path + the line's text), so a widened line fails and passes once wrapped, while the trunk's ~416 pre-existing wide lines pass (120 is the 99.9th percentile of the 410,999 lines in 1,022 tracked `.py` files on `origin/main`, measured 2026-10-04; p99 = 90). Run against the two changes it was built for, it names 25 and 30 new wide lines and +2,367 / +2,320 / +1,378 non-whitespace characters in files that "shrank". Tests: `test_a_line_widened_past_the_limit_fails_and_passes_once_wrapped`, `test_more_ink_in_fewer_lines_is_still_growth`, `test_a_pre_existing_wide_line_is_not_reported`.

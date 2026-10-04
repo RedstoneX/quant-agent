@@ -24,41 +24,22 @@ Nothing is stored here: no module-level tally, no file, no counter object.
 The only durable write is the reconciliation row, which is computed fresh from
 the single pass being reported.
 
-The reconciliation connection is NOT something ``AlpacaBroker`` has ever
-held — it is a ledger handle owned by the pipeline. ``attach_reconciliation_db``
-lets the pipeline lend it to the broker for observability only; when no handle
-has been lent (an isolated unit test building ``AlpacaBroker`` directly, say)
-the traceback is still logged in full and the row is simply skipped, which
-``record_reconciliation`` already reports at debug.
+WHERE THE HANDLE COMES FROM when the handler has no obvious owner -- a
+static helper, a module-level function, a cluster built from a client -- is
+settled ONCE in ``guarded_reach.py``: pass whatever is already in scope and
+``ledger_in_reach`` walks it at call time; a site with nothing to walk passes
+``NO_LEDGER`` and is a declared, greppable exemption. Read that module first.
 """
 from __future__ import annotations
 
 import logging
 
+from src.sentinel.guarded_reach import (  # noqa: F401 (re-export)
+    NO_LEDGER, RECON_DB_ATTR, _LazyLedger, ledger_in_reach,
+)
 from src.sentinel.reconciliation import record_guarded_outcome
 
 logger = logging.getLogger(__name__)
-
-#: Attribute the lent ledger handle lives on. Read with ``getattr`` and a
-#: default everywhere, so a broker that never had one behaves identically.
-RECON_DB_ATTR = "_recon_db"
-
-
-class _LazyLedger:
-    """What ``record_reconciliation`` wants — an object with a ``.conn`` — built
-    fresh from the pipeline's connection getter on every read, so nothing about
-    the ledger is cached or stored on the broker."""
-
-    def __init__(self, conn_getter):
-        self._conn_getter = conn_getter
-
-    @property
-    def conn(self):
-        try:
-            return self._conn_getter()
-        except Exception:  # noqa: BLE001
-            logger.error("guarded rows cannot reach the ledger", exc_info=True)
-            return None
 
 
 def attach_reconciliation_db(broker, conn_getter) -> None:
@@ -74,6 +55,9 @@ def record_guarded_pass(owner, where: str, exc: BaseException | None = None, *,
                context: dict | None = None, log=None) -> None:
     """Record ONE pass through one of the broker's broad catch-alls.
 
+    `owner` is whatever the site has in scope (or a tuple of such things, or
+    ``NO_LEDGER``); see ``guarded_reach.ledger_in_reach`` for the walk.
+
     `exc` set means the pass swallowed a fault: full traceback at ERROR and a
     ``disagreed`` row carrying the exception type, its message and `context`.
     `exc` left as ``None`` means the pass ran clean: an ``agreed`` row, so that
@@ -84,7 +68,7 @@ def record_guarded_pass(owner, where: str, exc: BaseException | None = None, *,
     """
     try:
         record_guarded_outcome(
-            db=getattr(owner, RECON_DB_ATTR, None),
+            db=ledger_in_reach(*(owner if isinstance(owner, tuple) else (owner,))),
             where=f"broker.{where}",
             exc=exc,
             log=log or logger,
