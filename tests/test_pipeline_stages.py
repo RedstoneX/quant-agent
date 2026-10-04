@@ -27,7 +27,7 @@ def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
     plus the composed cancel_protective_stops for any direct caller."""
     specs = list(specs)
     broker.snapshot_protective_stops.return_value = (snapshot_ok, specs)
-    broker.cancel_snapshotted_stops.return_value = cancel_ok
+    broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=cancel_ok, coverage_shrank=False)
     cleared = snapshot_ok and cancel_ok
     broker.cancel_protective_stops.return_value = (
         cleared, specs if cleared else [],

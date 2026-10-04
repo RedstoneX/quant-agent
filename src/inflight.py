@@ -61,6 +61,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
+from src.notifier.sections import fmt_time_12h
 
 REPO = "RedstoneX/quant-agent"
 API = "https://api.github.com"
@@ -372,13 +373,11 @@ def _stamp(t: datetime) -> str:
 
 
 def _opened(t: datetime, now: datetime) -> str:
-    """"opened today 12:00 ET" / "opened Thursday 11 September". Read off
-    the two timestamps, never a threshold: same calendar day in New York
-    is "today", anything else is dated."""
-    local, today = t.astimezone(ET), now.astimezone(ET)
-    if local.date() == today.date():
-        return f"opened today {local.strftime('%H:%M')} ET"
-    return f"opened {local.strftime('%A %-d %B')}"
+    """"opened 2026-10-04 1:05 PM ET". Every timestamp carries a date
+    so the owner can scroll back hours later and know when something was
+    opened (item 231)."""
+    local = t.astimezone(ET)
+    return f"opened {fmt_time_12h(local)}"
 
 
 def render_in_flight(inf: InFlight, now: datetime | None = None,

@@ -299,7 +299,7 @@ class ProtectionMixin:
         # clock, or a sweep straddling 16:00 ET could call one symbol's
         # lapse expected and the next symbol's identical lapse a failure.
         market_open = _market_is_open_now(self.broker)
-
+        if market_open: from src.execution.stop_repair import drain_owed_stop_levels; drain_owed_stop_levels(self.broker, self.db)  # owed out-of-hours stop levels land FIRST
         gaps: list[dict] = []
         # Positions whose protective stop has been elected and has not
         # filled. Kept OUT of `gaps`: every consumer of that list buckets a
@@ -1354,12 +1354,12 @@ class ProtectionMixin:
         wal_row_id = self._write_ahead_protection_restore(
             symbol, position_qty_before_sell, specs, side=side,
         )
-        if not self.broker.cancel_snapshotted_stops(symbol, specs):
-            # Stops NOT cleared (rolled back by cancel_snapshotted_stops).
-            # The position is still protected and the SELL would be
-            # rejected on held_for_orders — discharge the row we just
-            # pre-wrote so the next drain doesn't redundantly "restore"
-            # stops that never actually left the broker.
+        cancel = self.broker.cancel_snapshotted_stops(symbol, specs)
+        if not cancel.cleared:
+            # STATE THREE: rollback failed, shares naked NOW, WAL row is the repair.
+            from src.stop_cancel_outcome import keep_lost_coverage_row
+            if cancel.coverage_shrank and keep_lost_coverage_row(self, symbol, wal_row_id, cancel, logger):
+                return False, [], None
             if wal_row_id is not None:
                 try:
                     self.db.delete_pending_protection_restore(wal_row_id)
@@ -1369,11 +1369,10 @@ class ProtectionMixin:
                         "rollback for %s: %s (drain will idempotently "
                         "no-op it)", wal_row_id, symbol, exc,
                     )
-            # STATE TWO: the cancel failed and was ROLLED BACK. The stops
-            # are verified resting, so "the broker would reject the SELL on
-            # held_for_orders" is an evidenced statement here — measured
-            # live 2026-04-25 on AMZN, where a REDUCE was rejected with the
-            # trail stop holding all 51 shares.
+            # The stops are verified resting, so "the broker would reject
+            # the SELL on held_for_orders" is an evidenced statement here —
+            # measured live 2026-04-25 on AMZN, where a REDUCE was rejected
+            # with the trail stop holding all 51 shares.
             self._last_stop_clear_refusal = "cancel_rolled_back"
             return False, [], None
         self._last_stop_clear_refusal = ""

@@ -7,6 +7,9 @@ import uuid
 from datetime import date, datetime, time, timedelta
 
 from src.storage.schema import DatabaseSchema
+from src.storage.sector_weights import (
+    record_realised_sector_weights as _record_realised_sector_weights,
+)
 from src.storage.analytics import TradeAnalytics
 from src.storage.trades import TradeLedger
 from src.storage.trades.ledger import (  # re-export mirror: defined there, still importable from here
@@ -458,102 +461,7 @@ class Database:
         "before the gross multiplier"
     )
 
-    def record_realised_sector_weights(
-        self, *, decisions, sectors, total_value, run_id: str | None = None,
-        session_date: str | None = None,
-    ) -> bool:
-        """Record the REALISED `(sector, side)` weights of one run's orders.
-
-        ITEM 224 RECORDING, RECORDING ONLY, and it decides nothing. Read the
-        `realised_sector_weights` note in `_migrate` for why it exists (the
-        pre-decision projection was removed as undeliverable) and for the
-        hard limit on its use: nothing may read it back into a sizing,
-        ordering or refusal decision, and it may NEVER be swept for the
-        sector cap that would have performed best.
-
-        `decisions` is the FINISHED order list the constructor returned, so
-        the figures are what was built and not what was hoped for; `sectors`
-        is the constructor's own `last_order_sectors`, the sector it already
-        resolved while sizing, so this write buys no market data and cannot
-        disagree with the sizing it describes.
-
-        Unknown sector stays NULL inside the JSON, never an "other" bucket.
-        `weights_json` itself is NEVER NULL (NOT NULL in the schema): a run
-        that built no entry orders writes `[]` with `entry_orders_built` 0,
-        which cannot be mistaken for a recorder that failed to write content.
-
-        Idempotent per run (UNIQUE on `run_id`).
-        """
-        sectors = sectors or {}
-        entries: list = []
-        reducing = 0
-        for d in (decisions or ()):
-            action = getattr(d, "action", None)
-            if action in ("BUY", "SHORT"):
-                entries.append(d)
-            elif action in ("SELL", "COVER"):
-                reducing += 1
-
-        def _num(x):
-            try:
-                v = float(x)
-            except (TypeError, ValueError):
-                return None
-            return v if math.isfinite(v) else None
-
-        buckets: dict[tuple[str | None, str], dict] = {}
-        unknown_orders = 0
-        for d in entries:
-            sym = getattr(d, "symbol", None)
-            sector = sectors.get(sym)
-            sector = (sector or None) if isinstance(sector, str) else None
-            if sector is None:
-                unknown_orders += 1
-            side = "short" if getattr(d, "action", None) == "SHORT" else "long"
-            key = (sector, side)
-            slot = buckets.setdefault(
-                key, {"sector": sector, "side": side, "weight_pct": 0.0,
-                      "orders": 0},
-            )
-            slot["orders"] += 1
-            w = _num(getattr(d, "allocation_pct", None))
-            if w is not None:
-                slot["weight_pct"] += w
-        rows = sorted(
-            buckets.values(),
-            key=lambda r: (r["sector"] or "", r["side"]),
-        )
-        for r in rows:
-            r["weight_pct"] = round(r["weight_pct"], 6)
-        payload = json.dumps(rows)  # never NULL: [] means no entry orders
-        try:
-            with self._lock:
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO realised_sector_weights ("
-                    "  timestamp, run_id, session_date, weights_json,"
-                    "  denominator, total_value, entry_orders_built,"
-                    "  reducing_orders_built, unknown_sector_orders"
-                    ") VALUES (?,?,?,?,?,?,?,?,?)",
-                    (
-                        self._sqlite_utc_timestamp(datetime.now(UTC)),
-                        run_id or None,
-                        session_date or str(et_today()),
-                        payload,
-                        self.REALISED_SECTOR_WEIGHT_DENOMINATOR,
-                        _num(total_value),
-                        len(entries),
-                        reducing,
-                        unknown_orders,
-                    ),
-                )
-                self.conn.commit()
-            return True
-        except Exception as e:  # noqa: BLE001 — a recording never blocks a trade
-            logger.warning(
-                "realised sector weights for run %s were not recorded (%s)",
-                run_id, e,
-            )
-            return False
+    record_realised_sector_weights = _record_realised_sector_weights
 
     def insert_agent_log(self, agent_name: str, run_id: str, input_summary: str,
                          output_summary: str, full_response: str, model: str,
