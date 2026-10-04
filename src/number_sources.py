@@ -259,7 +259,8 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
 #:   owner-ruled      — the owner decided this VALUE and the decision is
 #:                      dated and recorded. A decision, not a measurement and
 #:                      not a debt. Requires `ruled_on` (YYYY-MM-DD) and
-#:                      `ruling_record` (where the ruling is written down).
+#:                      `ruling_record` (where it is written down) and
+#:                      `ruling_summary` (what was decided, in words).
 VALID_STATUSES: frozenset[str] = frozenset(
     {
         "instrument",
@@ -846,6 +847,15 @@ def audit(
                         "status 'owner-ruled' requires `ruled_on:` as a "
                         "YYYY-MM-DD date. A ruling nobody can date is a claim, "
                         "not a decision.",
+                    )
+                )
+            if not str(entry.get("ruling_summary") or "").strip():
+                problems.append(
+                    LedgerProblem(
+                        "no-ruling-summary",
+                        site_id,
+                        "status 'owner-ruled' requires `ruling_summary:` stating "
+                        "in plain words what the owner decided.",
                     )
                 )
             if not str(entry.get("ruling_record") or "").strip():

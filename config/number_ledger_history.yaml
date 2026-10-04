@@ -1163,12 +1163,12 @@ changes:
       `RiskConfig.max_position_risk_pct` (ruled 2026-08-27) leave `arbitrary`:
       their notes kept them there only because the ledger had no category
       for an owner-ratified value, which `owner-ruled` now is. No value changed.
-  - delta: -9
+  - delta: -1
     date: '2026-10-04'
     why: >-
-      Nine rows re-filed `arbitrary` to `owner-ruled` under the owner
-      ruling of 2026-10-04 ("self adjusting the 2.5 is not a made up number.
-      It is specific to its own stock move"). Each is verified in code as a
-      multiple of the stock's own ATR (six rows) or of R, the risk taken on
-      that position (three rows), so it individualises per name and has no
-      single value to measure. No value changed.
+      `RiskConfig.min_stop_atr_multiple` (2.5) is re-filed `arbitrary` to
+      `owner-ruled` on the explicit owner ruling of 2026-10-04 that closed the
+      stop multiple at 2.5 ATR. No value changed. Other multiples expressed in
+      ATR or R stay `arbitrary`: the ruling that an ATR-scaled number is not
+      made up settles the units, not the multiple, so each still needs its own
+      ruling or measurement.
