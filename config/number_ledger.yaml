@@ -4735,7 +4735,7 @@ numbers:
       (https://corporatefinanceinstitute.com/resources/wealth-management/chandelier-exit/).
       NUANCE: only the MULTIPLE (3.0) is sourced, not the whole formula. The
       desk's fallback trail multiplies this by a PASSED-IN ATR off the
-      highest-high / lowest-low since entry (src/risk/trailing.py:624,634),
+      highest-high / lowest-low since entry (src/risk/trail_evaluate.py:262,271),
       NOT the published indicator's fixed 22-bar lookback and ATR(22); so the
       3.0 multiple carries this citation, the surrounding geometry does not.
   - id: src.risk.trailing.MIN_RATCHET_PCT
@@ -8232,13 +8232,54 @@ numbers:
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
       parameter was renamed to match.
-  - id: src.risk.trailing.compute_trailing_stop(qty)
+  - id: src.risk.trail_evaluate.compute_trailing_stop(qty)
     value: 1
     status: not-trade-governing
-    site: src/risk/trailing.py
+    site: src/risk/trail_evaluate.py
     note: >-
-      Unit default for a quantity (src/risk/trailing.py:347); both callers
-      pass the real quantity.
+      Unit default for a quantity (`compute_trailing_stop`, moved verbatim from
+      src/risk/trailing.py on 2026-10-04); both callers pass the real quantity.
+  # --- 2026-10-04: src/risk/trailing.py split into constructible parts. The
+  # numbers did not move: every constant stays defined in src/risk/trailing.py
+  # under its existing entry. These four rows exist only because a parameter
+  # default written as a NAME (`window: int = PIVOT_WINDOW`) imported from
+  # another file is a site in the importing module; each is the same number.
+  - id: src.risk.trail_evaluate.compute_trailing_stop(min_ratchet_pct)
+    value: 2
+    status: derived
+    site: src/risk/trail_evaluate.py
+    derived_from: src.risk.trailing.MIN_RATCHET_PCT
+    base_value: 2
+    note: >-
+      `min_ratchet_pct: float = MIN_RATCHET_PCT`, the name imported from
+      src/risk/trailing.py; the body moved verbatim on 2026-10-04.
+  - id: src.risk.trail_evaluate.evaluate_trailing_stop(min_ratchet_pct)
+    value: 2
+    status: derived
+    site: src/risk/trail_evaluate.py
+    derived_from: src.risk.trailing.MIN_RATCHET_PCT
+    base_value: 2
+    note: >-
+      `min_ratchet_pct: float = MIN_RATCHET_PCT`, the name imported from
+      src/risk/trailing.py; the body moved verbatim on 2026-10-04.
+  - id: src.risk.trail_structure._swing_lows(window)
+    value: 3
+    status: derived
+    site: src/risk/trail_structure.py
+    derived_from: src.risk.trailing.PIVOT_WINDOW
+    base_value: 3
+    note: >-
+      `window: int = PIVOT_WINDOW`, the name imported from src/risk/trailing.py;
+      the body moved verbatim on 2026-10-04.
+  - id: src.risk.trail_structure._swing_highs(window)
+    value: 3
+    status: derived
+    site: src/risk/trail_structure.py
+    derived_from: src.risk.trailing.PIVOT_WINDOW
+    base_value: 3
+    note: >-
+      `window: int = PIVOT_WINDOW`, the name imported from src/risk/trailing.py;
+      the body moved verbatim on 2026-10-04.
   # --- 2026-09-19: universe expansion and pruning (src/universe_screen.py) --
   # The screen's price, size and borrow lines are published rules; its
   # spread and volatility lines are DERIVED at run time from existing
