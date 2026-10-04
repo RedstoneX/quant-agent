@@ -345,6 +345,14 @@ def _cache_is_fresh() -> bool:
     return age < _CACHE_MAX_AGE_SECONDS
 
 
+def http_get_json(url: str, headers: dict | None = None):
+    """The one outbound GET in this module (replay seam). Raises on failure."""
+    import requests  # lazy: no network setup needed at import time
+    resp = requests.get(url, headers=headers, timeout=_FETCH_TIMEOUT_S)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def _fetch_litellm_dataset() -> dict | None:
     """Fetch the full LiteLLM pricing JSON and atomically cache it locally.
 
@@ -354,12 +362,7 @@ def _fetch_litellm_dataset() -> dict | None:
     (bulk apply) and `_resolve_unknown_model()` (single-model lookup).
     """
     try:
-        # Import requests lazily so that test environments without
-        # network setup don't blow up at module import time.
-        import requests
-        resp = requests.get(_LITELLM_PRICING_URL, timeout=_FETCH_TIMEOUT_S)
-        resp.raise_for_status()
-        data = resp.json()
+        data = http_get_json(_LITELLM_PRICING_URL)
     except Exception as exc:
         logger.warning("pricing fetch from LiteLLM failed: %s", exc)
         return None
@@ -462,10 +465,7 @@ def _fetch_openrouter_pricing() -> dict[str, dict[str, float]] | None:
     safety continues.
     """
     try:
-        import requests
-        resp = requests.get(_OPENROUTER_PRICING_URL, timeout=_FETCH_TIMEOUT_S)
-        resp.raise_for_status()
-        payload = resp.json()
+        payload = http_get_json(_OPENROUTER_PRICING_URL)
     except Exception as exc:
         logger.warning("pricing fetch from OpenRouter failed: %s", exc)
         return None

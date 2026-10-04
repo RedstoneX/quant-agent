@@ -34,6 +34,13 @@ OUT_OF_CREDIT_DETAIL = (
     "paid analysis back on"
 )
 
+
+def out_of_credit_detail() -> str:
+    """OUT_OF_CREDIT_DETAIL plus the remaining balance, one shared wording."""
+    from src.llm_balance_runway import balance_line
+
+    return f"{OUT_OF_CREDIT_DETAIL}. {balance_line()}"
+
 #: `trigger_code` written instead of `failed_call_unknown_cost` when the
 #: cause is a payment refusal.
 OUT_OF_CREDIT_TRIGGER_CODE = "provider_out_of_credit"

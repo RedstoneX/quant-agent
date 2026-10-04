@@ -49,7 +49,6 @@ from src.models import (
 )
 from src.risk.constants import (
     REWARD_RISK_PARITY,
-    gap_adjusted_risk_per_share,
     reward_risk_floor_applies,
     risk_budget_allocation_pct,
     reward_risk_parity_refuses,
@@ -737,18 +736,6 @@ class ConstructorConfig:
     # place it was passed to discarded it, so the constructor no longer passes
     # anything: no order size, refusal or gate changes. The sweep's own
     # `cash_sweep.min_order_usd` is a different field and is untouched.
-    # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
-    # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
-    # this before it is converted to a weight, so the same risk allocation
-    # opens a smaller short than an equivalent long. Plumbing only: the
-    # value is `risk.short_gap_risk_multiple` and the default literal lives
-    # once, in `src.risk.constants` (board item 216). The haircut itself is
-    # applied by `gap_adjusted_risk_per_share`, never inline. There is
-    # deliberately NO default literal here: this field used to carry its own
-    # copy of the number and its own number-ledger row, and a mirror kept in
-    # sync is the same defect waiting to recur. `None` means "whatever the
-    # one definition says", which is what the helper resolves it to.
-    short_gap_risk_multiple: float | None = None
     # Minimum stop distance, in ATRs. A stop inside ordinary volatility is not
     # a thesis invalidation, it is a coin flip on noise — Phase 3 already
     # established 1.25 ATR as one ordinary day's range for a TRAILING stop,

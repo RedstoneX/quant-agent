@@ -77,7 +77,9 @@ have existed.
 
 Same class, same treatment, after the five land:
 - ~~the known-leaks list in `tests/test_no_silent_patch_targets.py`~~ DONE — no list; the patch-target audit runs over the working tree and over `origin/main` at check time and fails on any unreachable-call-site identity that is new
-- `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`
+- ~~`_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`~~ DONE — the frozenset is deleted and `tests/test_status_board.py` asserts it stays gone; `scripts/board_rot_guard.py` reads the finished-but-still-open items in the working tree and on `origin/main` via `scripts/guard_reference.py` at check time and fails on any item identity that is newly flagged, refusing when `origin/main` cannot be read
+
+Measured 2026-10-04 on `origin/main`: every entry above is struck through. No check in `scripts/` or `tests/` reads or writes a committed baseline, a pinned offender count, a saved snapshot or a known-bad list; `scripts/guard_reference.py` holds no cache, and the guard test files pass under the project's parallel `-n auto` run. The list is complete; a new entry here means a new guard was written the old way.
 - ~~the offender baseline in `tests/test_no_local_day_as_exchange_day.py`~~ DONE — the hardcoded `_BASELINE` is deleted; `scripts/local_day_guard.py` scans the working tree and `origin/main` at check time and fails on any new site identity
 - ~~`tests/replay_outbound_sites_baseline.json`~~ DONE — judged a cached
   measurement (an AST scan of `src/` frozen on 2026-10-02, no human
