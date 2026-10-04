@@ -104,6 +104,37 @@ Getting main's version of the tree: `git ls-tree`/`git show` against
 whole-tree one. Measure which is faster before choosing — a guard slow enough
 to be skipped is a guard that gets skipped.
 
+## One moment on both sides of the comparison
+
+The reference is **not** always `origin/main`'s current tip. On `pull_request`
+CI the tree under test is GitHub's merge ref — the branch merged into whatever
+main was when GitHub last computed it — so comparing it against a freshly
+fetched `origin/main` measures a stale tree against a newer trunk and bills
+main's own later commits to the branch. Measured 2026-10-04 on PRs 1158 and
+1172: the merge ref's main-side parent was ten commits behind main, the tested
+tree held `src/pipeline.py` at 2529 lines where main held 1894, and the
+file-size ratchet reported a 600-line growth on a file neither branch touched.
+The same phantom appeared on 17 of 18 red changes.
+
+`guard_reference.trunk_rev()` therefore resolves the main-side parent of the
+merge commit actually under test, and every guard reads the trunk through it.
+A branch is judged against the real main it was merged with.
+
+This is deliberately **not** "compare against the merge base". A merge base is
+a commit the branch picks by never merging, which would let a branch delete
+something today's main still needs and pass. The merge ref's first parent is
+recomputed by GitHub from current main and the branch cannot influence it, and
+it is trusted only when all four hold: the run is a `pull_request` event, HEAD
+is a two-parent merge, HEAD's second parent is exactly the PR head commit the
+event payload names, and HEAD's first parent is an ancestor of the current
+`origin/main`. Anything else — a direct push, a local run, a missing or
+mismatched payload — falls back to `origin/main`'s tip, which is the stricter
+reference, so no branch gains anything by making the detection fail. Nothing is
+stored either way — not even in memory: the reference is resolved afresh on
+every call, because a cached tip read earlier in the process let the refusal
+test pass with an unreadable trunk (CI, 2026-10-04). The refinement only ever
+applies to a trunk that WAS read; it never stands in for one that could not be.
+
 ## Acceptance — proven, not asserted
 
 1. **Two unrelated changes at the same time never collide.** Branch twice off
@@ -132,3 +163,7 @@ Also done (2026-10-02, Python-clothed baselines): ~~`TRADING_PIPELINE_TEST_FILE_
 ## Weakening a guard needs a written reason
 
 `tests/test_guard_weakening_gate.py` (logic in `scripts/guard_weakening_gate.py`) fails any change that edits or deletes an existing guard file without a one-line `Guard-rule-change:` of 25+ words in a commit message. Guard files are derived by naming rule (`scripts/*guard*.py`, `tests/test_*guard*.py`, `tests/test_*ratchet*.py`), never listed. Tightening cannot be told from loosening, so every behavioural edit is asked; only new guard files and docstring/comment/format-only edits (identical AST) are exempt. An unreadable base is a failure.
+
+## Compressing is the same offence as growing
+
+`tests/test_statement_cram_ratchet.py` (logic in `scripts/statement_cram_guard.py`) closes the route a change took on 2026-10-04 to satisfy the size ratchet without splitting anything: it joined statements onto shared lines (`from A import x; from B import y`, `if cond: return x`) and only the line counter moved. The guard PARSES every tracked `.py` file (the size ratchet's own scope, `working_paths("*.py")`, no second list) and names each line on which more than one statement starts, or whose block body sits on its header's line (`if`/`elif`/`except`/`else`/`finally`/`case` headers alike); semicolons inside strings, docstrings and comments are invisible to it. There is no threshold -- the measure is statements per line -- and no stored list: identities (`path`, enclosing scope, the line's text) are collected on the working tree and on `origin/main` at check time and only a NEW or more-frequent identity fails. A one-line stub body (`class Boom(Exception): pass`, `def f(self) -> int: ...`) is not cramming and is exempt. It refuses without `origin/main`; removals never fail; the ~116 pre-existing crammed lines on the trunk pass (measured 2026-10-04).

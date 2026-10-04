@@ -209,7 +209,7 @@ def test_prepare_skips_buy_when_cancel_is_not_confirmed(tmp_path):
     broker.snapshot_protective_stops.return_value = (
         True, [{"id": "stop-1", "qty": 10, "stop_price": 88.0}],
     )
-    broker.cancel_snapshotted_stops.return_value = True
+    broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     broker.wait_for_order_terminal.return_value = "pending_cancel"
     broker._restore_stop_orders.return_value = (1, [])
 
@@ -235,7 +235,7 @@ def test_prepare_writes_wal_before_cancel(tmp_path):
 
     def _cancel(symbol, specs):
         seen_at_cancel["rows"] = db.get_pending_protection_restores()
-        return True
+        return MagicMock(cleared=True)
 
     broker.cancel_snapshotted_stops.side_effect = _cancel
     broker.wait_for_order_terminal.return_value = "canceled"
@@ -260,7 +260,7 @@ def test_execution_stage_cancels_then_submits_buy_add():
     pipeline = _pipeline(positions=held)
     stop = {"id": "stop-cop", "qty": 10, "stop_price": 88.0}
     pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
 
     def _wait(order_id, *args, **kwargs):
         return "canceled" if "stop" in str(order_id) else "filled"
@@ -309,7 +309,7 @@ def test_scale_in_add_carries_the_pinned_setup_type_not_todays_reread():
     pipeline = _pipeline(positions=held)
     stop = {"id": "stop-cop", "qty": 10, "stop_price": 88.0}
     pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.wait_for_order_terminal.side_effect = (
         lambda order_id, *a, **k: "canceled" if "stop" in str(order_id) else "filled"
     )
@@ -405,7 +405,7 @@ def test_execution_stage_rearms_at_the_tighter_of_cancelled_and_add_stop():
     pipeline = _pipeline(positions=held)
     stop = {"id": "stop-cop", "qty": 10, "stop_price": 92.0}
     pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.wait_for_order_terminal.side_effect = (
         lambda order_id, *a, **k: "canceled" if "stop" in str(order_id) else "filled"
     )
@@ -431,7 +431,7 @@ def test_submit_exception_leaves_wal_instead_of_restoring_old_stop_size():
     pipeline = _pipeline(positions=held)
     stop = {"id": "stop-cop", "qty": 10, "stop_price": 88.0}
     pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.wait_for_order_terminal.return_value = "canceled"
     pipeline.broker.submit_order.side_effect = RuntimeError("broker timeout")
     pipeline.broker._restore_stop_orders.return_value = (1, [])
@@ -453,7 +453,7 @@ def test_execution_stage_does_not_submit_when_cancel_unconfirmed():
     pipeline.broker.snapshot_protective_stops.return_value = (
         True, [{"id": "stop-cop", "qty": 10, "stop_price": 88.0}],
     )
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.wait_for_order_terminal.return_value = None
     pipeline.broker._restore_stop_orders.return_value = (1, [])
     pipeline.db.insert_pending_protection_restore.return_value = 3
@@ -550,7 +550,7 @@ def test_prepare_short_add_aborts_when_the_buy_stop_fills(tmp_path):
     broker.snapshot_protective_stops.return_value = (
         True, [{"id": "bstop-1", "qty": 10, "stop_price": 108.0}],
     )
-    broker.cancel_snapshotted_stops.return_value = True
+    broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     broker.wait_for_order_terminal.return_value = "filled"
     # Position re-read confirms FLAT — the stop covered the whole short.
     broker.get_positions.return_value = []
@@ -581,7 +581,7 @@ def test_prepare_short_add_fill_but_not_flat_does_not_leave_a_sibling_naked(tmp_
             {"id": "bstop-lot2", "qty": 5, "stop_price": 112.0},
         ],
     )
-    broker.cancel_snapshotted_stops.return_value = True
+    broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     # First spec FILLED, sibling canceled — abort-on-fill triggers.
     broker.wait_for_order_terminal.side_effect = (
         lambda oid, *a, **k: "filled" if "lot1" in str(oid) else "canceled"
@@ -615,7 +615,7 @@ def test_prepare_short_add_fill_not_flat_and_no_rearm_keeps_the_wal(tmp_path):
     broker.snapshot_protective_stops.return_value = (
         True, [{"id": "bstop-1", "qty": 15, "stop_price": 108.0}],
     )
-    broker.cancel_snapshotted_stops.return_value = True
+    broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     broker.wait_for_order_terminal.return_value = "filled"
     # Broker position UNREADABLE (cannot confirm flat) and rearm fails.
     broker.get_positions.side_effect = RuntimeError("broker down")
@@ -639,7 +639,7 @@ def test_prepare_short_add_snapshots_and_wals_on_the_buy_side(tmp_path):
     broker.snapshot_protective_stops.return_value = (
         True, [{"id": "bstop-1", "qty": 10, "stop_price": 108.0}],
     )
-    broker.cancel_snapshotted_stops.return_value = True
+    broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     broker.wait_for_order_terminal.return_value = "canceled"
 
     prep = prepare_short_add(
@@ -666,7 +666,7 @@ def test_execution_stage_cancels_buy_stop_then_submits_sell_add_and_rearms():
     # Resting buy-stop at 108; add's own stop 110 → most-protective = 108.
     stop = {"id": "bstop-cop", "qty": 10, "stop_price": 108.0}
     pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.wait_for_order_terminal.side_effect = (
         lambda order_id, *a, **k: "canceled" if "stop" in str(order_id) else "filled"
     )
@@ -788,7 +788,7 @@ def test_emergency_cover_after_rearm_fails_covers_the_full_enlarged_short():
     pipeline = _shortable(_pipeline(positions=held))
     stop = {"id": "bstop-cop", "qty": 10, "stop_price": 108.0}
     pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.wait_for_order_terminal.side_effect = (
         lambda oid, *a, **k: "canceled" if "stop" in str(oid) else "filled"
     )
@@ -1031,7 +1031,7 @@ def test_emergency_cover_rejected_by_broker_pages_operator_and_writes_no_trade()
     )
     stop = {"id": "bstop-cop", "qty": 10, "stop_price": 108.0}
     pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.wait_for_order_terminal.side_effect = (
         lambda oid, *a, **k: "canceled" if "stop" in str(oid) else "filled"
     )
@@ -1392,7 +1392,7 @@ def test_scale_in_never_amends_a_resting_stop_and_survives_42210000(tmp_path):
     broker.snapshot_protective_stops.return_value = (
         True, [{"id": "stop-1", "qty": 10.5, "stop_price": 88.0}],
     )
-    broker.cancel_snapshotted_stops.return_value = True
+    broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     broker.wait_for_order_terminal.return_value = "canceled"
 
     def _refuse_quantity_amend(*a, **k):

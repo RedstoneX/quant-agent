@@ -1681,7 +1681,7 @@ def _stop_timeline_pipeline(*, allow_margin: bool):
 
     def _cancel(symbol, _specs):
         events.append(("naked", symbol))
-        return True
+        return MagicMock(cleared=True)
 
     def _submit(*, symbol, **_kw):
         events.append(("submit", symbol))

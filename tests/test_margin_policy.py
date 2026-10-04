@@ -363,7 +363,7 @@ def test_force_delever_picks_biggest_loser_first():
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     # audit F1 #1: SELL paths use the split snapshot/cancel seam.
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
     pipeline.broker.get_account.return_value = {
         "cash": 500.0, "portfolio_value": 10_000.0, "last_equity": 10_500.0,
@@ -415,7 +415,7 @@ def test_force_delever_stops_once_deficit_covered():
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     # audit F1 #1: SELL paths use the split snapshot/cancel seam.
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
     pipeline.broker.get_account.return_value = {
         "cash": 1_000.0, "portfolio_value": 10_000.0, "last_equity": 11_000.0,
@@ -484,7 +484,7 @@ def test_force_delever_tiebreak_is_deterministic_on_equal_pnl():
     pipeline.broker.wait_for_order_terminal.return_value = "filled"
     # audit F1 #1: SELL paths use the split snapshot/cancel seam.
     pipeline.broker.snapshot_protective_stops.return_value = (True, [])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipeline.broker.cancel_protective_stops.return_value = (True, [])
     pipeline.broker.get_account.return_value = {
         "cash": 100.0, "portfolio_value": 10_000.0, "last_equity": 10_500.0,
