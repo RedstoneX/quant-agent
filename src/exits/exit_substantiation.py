@@ -9,6 +9,12 @@ and calls it, so every existing caller and patch target is unchanged.
 
 import logging
 
+#: The lift out of `ExitEngineMixin` left these two behind: the bodies call
+#: them, the mixin's module imported them, this module did not -- so the
+#: agent-log write raised `NameError` into the broad catch below and the row
+#: was never written. Imported here, as every other caller does.
+from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
+
 #: Logs under `src.pipeline`, as the bodies did before the move;
 #: binding the name rather than `__name__` keeps log records byte-identical.
 logger = logging.getLogger("src.pipeline")
