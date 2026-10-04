@@ -2175,18 +2175,6 @@ class Database:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().get_protection_restore_wal_audit()
 
-    def record_pending_stop_amend(self, *args, **kwargs) -> int:
-        """Thin shim -> TradeLedger.record_pending_stop_amend; built per call."""
-        return self._trades().record_pending_stop_amend(*args, **kwargs)
-
-    def get_pending_stop_amends(self) -> list[dict]:
-        """Thin shim -> TradeLedger.get_pending_stop_amends; built per call."""
-        return self._trades().get_pending_stop_amends()
-
-    def delete_pending_stop_amend(self, row_id: int) -> int:
-        """Thin shim -> TradeLedger.delete_pending_stop_amend; built per call."""
-        return self._trades().delete_pending_stop_amend(row_id)
-
     def get_pending_protection_restores(self) -> list[dict]:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().get_pending_protection_restores()

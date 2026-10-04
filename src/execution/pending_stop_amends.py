@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.storage.trades import pending_stop_amends_store as _store
+
 logger = logging.getLogger("src.execution.broker")
 
 
@@ -64,7 +66,7 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
     this whole mechanism exists to prevent.
     """
     try:
-        rows = db.get_pending_stop_amends()
+        rows = _store.get_all(db._trades())
     except Exception as exc:  # noqa: BLE001
         logger.warning("pending stop drain: DB read failed: %s", exc)
         return 0
@@ -88,7 +90,7 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
                 symbol, intended, current,
             )
             try:
-                db.delete_pending_stop_amend(row.get("id"))
+                _store.delete(db._trades(), row.get("id"))
                 discharged += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning("pending stop drain: could not delete %s's row: %s", symbol, exc)
@@ -108,7 +110,7 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
                 "now live at $%.4f", symbol, intended,
             )
             try:
-                db.delete_pending_stop_amend(row.get("id"))
+                _store.delete(db._trades(), row.get("id"))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("pending stop drain: could not delete %s's row: %s", symbol, exc)
             discharged += 1
@@ -119,3 +121,29 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
                 symbol, intended,
             )
     return discharged
+
+
+def record_deferred_amend(db: Any, broker: Any, symbol: str, new_stop_price: float, order: dict) -> dict:
+    """Persist the level owed from a shut-tape amend (nothing was attempted or cancelled).
+
+    A write failure is the one way the intent can vanish, so it is logged as an
+    error, never swallowed silently. Returns the deferred payload unchanged.
+    """
+    try:
+        from src.execution.stop_records import _holding_is_short
+        _store.record(db._trades(), symbol, new_stop_price,
+                      is_short=bool(_holding_is_short(broker, symbol)), reason="market_closed")
+        logger.warning("stop amend for %s DEFERRED to the next open at $%.4f: the market is closed and a "
+                       "shut tape cannot elect the resting stop", symbol, new_stop_price)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("stop amend for %s could not be recorded as pending (%s) - the intended level $%.4f "
+                     "is NOT owed to the next open and must be re-decided", symbol, exc, new_stop_price)
+    return order
+
+
+def drain_safely(broker: Any, db: Any) -> None:
+    """`drain_pending_stop_amends` that never raises; a row it cannot apply stays owed."""
+    try:
+        drain_pending_stop_amends(broker, db)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("coverage sweep: the pending stop-amend drain failed (%s) - owed levels are STILL owed", exc)

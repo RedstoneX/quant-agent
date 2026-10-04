@@ -73,10 +73,23 @@ def test_closed_market_defers_instead_of_amending_or_cancelling():
 
 class _Db:
     def __init__(self, rows): self.rows = list(rows)
-    def get_pending_stop_amends(self): return list(self.rows)
-    def delete_pending_stop_amend(self, row_id):
-        self.rows = [r for r in self.rows if r["id"] != row_id]
+    def _trades(self): return self
+
+
+class _FakeStore:
+    @staticmethod
+    def get_all(ledger): return list(ledger.rows)
+
+    @staticmethod
+    def delete(ledger, row_id):
+        ledger.rows = [r for r in ledger.rows if r["id"] != row_id]
         return 1
+
+
+@pytest.fixture(autouse=True)
+def _fake_store(monkeypatch):
+    from src.execution import pending_stop_amends
+    monkeypatch.setattr(pending_stop_amends, "_store", _FakeStore)
 
 
 class _Broker:
@@ -130,3 +143,17 @@ def test_an_owed_stop_that_cannot_be_applied_stays_owed(monkeypatch):
 ])
 def test_a_pending_level_never_loosens_protection(intended, current, is_short, ok):
     assert intent_is_protective(intended, current, is_short=is_short) is ok
+
+
+def test_owed_level_round_trips_through_the_real_database(tmp_path):
+    from src.storage.db import Database
+    from src.storage.trades import pending_stop_amends_store as store
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    ledger = db._trades()
+    store.record(ledger, "AAA", 90.0)
+    store.record(ledger, "AAA", 95.0, is_short=True)  # a later intent replaces the earlier
+    rows = store.get_all(ledger)
+    assert [(r["symbol"], r["intended_stop"], r["is_short"]) for r in rows] == [("AAA", 95.0, 1)]
+    assert store.delete(ledger, rows[0]["id"]) == 1
+    assert store.get_all(ledger) == []

@@ -219,40 +219,13 @@ def replace_stop_and_record(
     **kwargs: Any,
 ) -> dict | None:
     """The replacement funnel: broker replace, then archive write-back.
-
     Callers go through here so a successful replace cannot silently leave
     `trades.stop_loss` on the entry level. A failed replace writes no level.
     """
     order = broker.replace_stop_loss(symbol, new_stop_price, **kwargs)
-    from src.execution.broker_parts.stop_window import record_unprotected_windows
+    from src.execution.broker_parts.stop_window import record_unprotected_windows; from src.execution.pending_stop_amends import record_deferred_amend
     record_unprotected_windows(broker, db, symbol)  # even a failed replace
-    if isinstance(order, dict) and order.get("amend_status") == "market_closed":
-        # The tape was shut, so no amend was attempted and nothing was
-        # cancelled (see src/execution/pending_stop_amends.py). The level the
-        # desk decided on is OWED, not lost: persist it so the next open's
-        # coverage preamble applies it before anything else can expose the
-        # name. A write failure here is the one way the intent can vanish,
-        # so it is logged as an error rather than swallowed.
-        try:
-            db.record_pending_stop_amend(
-                symbol, new_stop_price,
-                is_short=bool(_holding_is_short(broker, symbol)),
-                reason="market_closed",
-            )
-            logger.warning(
-                "stop amend for %s DEFERRED to the next open at $%.4f: the "
-                "market is closed, the broker refuses an amend on a resting "
-                "order, and a shut tape cannot elect the existing stop — the "
-                "position is not exposed meanwhile",
-                symbol, new_stop_price,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "stop amend for %s could not be recorded as pending (%s) — the "
-                "intended level $%.4f is NOT owed to the next open and must be "
-                "re-decided", symbol, exc, new_stop_price,
-            )
-        return order
+    if isinstance(order, dict) and order.get("amend_status") == "market_closed": return record_deferred_amend(db, broker, symbol, new_stop_price, order)
     if accepted_stop_order(order):
         recorded = write_back_stop_loss(
             db, symbol, new_stop_price,
