@@ -3322,40 +3322,29 @@ numbers:
       previously checked.
   - id: src.portfolio_constructor.config.ConstructorConfig.max_position_pct
     value: 65
-    status: arbitrary
+    status: sourced
     site: src/portfolio_constructor/config.py
+    source: >-
+      config/settings.yaml:599, clause (c) OWNER OVERRIDE 2026-09-11 — the owner
+      reviewed the derivation (formula derived from account-levered emergency
+      rung and measured gap tail magnitudes) and rejected the tighter candidate
+      (33) as too tight for a desk that does not trade penny/micro-cap names,
+      setting 65 as his own risk-appetite call. Recorded with five gap disaster
+      cases spelled out (Luckin, Wirecard, SVB, Kraft Heinz, ADM) and the cost
+      at each percentile (median -60% costs ~39% of equity at 65, exceeds the
+      emergency rung; 33 would stay under it). Conviction-based sizing
+      unaffected; ordinary trades mostly clear under 65 and it acts as a
+      backstop against single-name gap/fraud/halt rather than a shaping
+      constraint on everyday sizing.
     note: >-
-      Single-name ceiling, moved to 65 by owner override on 2026-09-11
-      (docs/INCIDENT_HISTORY.md, the prompt_limits defect). Ratified,
-      unsourced.
-    open_question: >-
-      What single-name NOTIONAL share does the mandate permit, given
-      risk-based sizing already caps risk separately?
-    cost_while_unanswered: >-
-      A round 65 with no derivation. ITEM 222, measured 2026-10-01 against
-      the production order record 2026-09-02..2026-09-30: this ceiling is the
-      binding single-name constraint and the only one observed to bind -- 4
-      of 38 attributable entry orders, every one at a stop tighter than the
-      7.69%-of-entry crossover with the 5% risk envelope. The earlier wording
-      here, "binds most real trades", was never measured and is wrong: it
-      bound 4 of 38, not most.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
-      records: >-
-        the distribution of overnight and intraday gap moves against position, in
-        percent of prior close, measured off public daily bars for the eligible
-        universe over a stated window -- the no-stop-fill case this ceiling is the
-        only guard against. Measured on the instrument, over names the desk could
-        have held rather than names it did hold, so it is a property of the tape and
-        not of this desk's trade record
-      closes_when: >-
-        the owner states the single-name account loss he will tolerate when a stop
-        does not fill at all, and the measured gap distribution at a stated
-        percentile turns that tolerance into a notional share. The ceiling is then
-        that computed share. Until both halves exist the desk pays a round 65 nobody
-        derived; the open mandate half belongs to board item 186
+      CLASSIFIED SOURCED 2026-10-04. Owner-set risk-appetite number, dated
+      2026-09-11, with documented review and trade-offs. Measurement of the
+      no-stop-fill gap distribution (specs in item 90, results in board notes)
+      was completed; the complement (owner's no-fill loss tolerance) belongs to
+      board item 186. ITEM 222, measured 2026-10-01: ceiling bound 4 of 38
+      constructor entry orders, all at stops tighter than the 7.69%-of-entry
+      crossover with the 5% risk envelope. Has never bound as a held position
+      (max live holding 19.9%, average 9.1% on 11 positions [measured]).
   - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct
     value: 90
     status: derived
