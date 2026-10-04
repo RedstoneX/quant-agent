@@ -1,5 +1,9 @@
 """Credential delivery — prefer systemd's credentials directory, fall back to the environment.
 
+SOURCE OF TRUTH: OneCLI holds every credential; `.env` is stale and proves nothing.
+This module is only DELIVERY to the running process. See
+`docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` ("Where credentials live").
+
 WHY THIS EXISTS. Alpaca's `trade_updates` websocket authenticates with an
 in-band websocket *message*, not an HTTP handshake header. The OneCLI gateway
 (`docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`) injects headers into
