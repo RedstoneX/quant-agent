@@ -2251,6 +2251,23 @@ numbers:
       What DID change is that the number no longer defines a level: every
       level `find_structural_levels` builds from bars now carries its own
       measured zone and never consults this value.
+      MEASURED 2026-10-04 - route (2) IS DEAD. `_cluster` reaches the
+      fallback only for a pivot whose bar range is not finite, and
+      `_clean_bars` makes that unreachable on any real series: it drops every
+      bar failing `high > 0 and low > 0 and close > 0 and high >= low`, which
+      rejects NaN prints (every NaN comparison is false), zero or negative
+      lows, and inverted bars. Over 200 synthetic well-formed series of 260
+      bars each, 6147 pivots were produced and ZERO were non-measurable.
+      Injecting each corrupt-print class (NaN high, +inf high, inverted bar,
+      zero low, -inf low) one bar into a 260-bar series produced 498 pivots
+      and ZERO non-measurable in every case. The only surviving route is a
+      `+inf` high in a series of 11 to 20 bars, where `_clean_bars` returns
+      early without its local-median outlier pass while `_find_pivots` still
+      has enough bars to fire; a price feed cannot emit +inf, so this is a
+      theoretical branch, not a live one. The value is therefore NOT changed:
+      nothing was learned about what the right width is, only that this one
+      of its four consumers never asks. Routes (1), (3) and (4) are untouched
+      and the row stays `arbitrary` on their account.
     open_question: >-
       What bound should a zone-less level get, when no bar range is available
       to read one off? Unanswered; 1% is a guess standing in for a

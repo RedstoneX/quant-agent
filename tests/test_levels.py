@@ -262,3 +262,44 @@ def test_detection_is_deterministic(cycles):
     first = find_structural_levels(bars)
     for _ in range(3):
         assert find_structural_levels(bars) == first
+
+
+def test_cluster_tolerance_fallback_is_unreachable_on_cleaned_bars():
+    """Route (2) of `CLUSTER_TOLERANCE_PCT_FALLBACK` is dead on real bars.
+
+    `_cluster` consults the percentage fallback only for a pivot whose bar
+    range is not finite. `_clean_bars` removes every bar that could produce
+    one, so the branch cannot be reached from `find_structural_levels`.
+    Measured 2026-10-04 and recorded against the ledger row of the same name.
+    """
+    import datetime as _dt
+    import math as _math
+
+    from src.data import levels as _levels
+    from src.models.analysis import OHLCV as _OHLCV
+
+    def _bar(i, high, low):
+        return _OHLCV(
+            date=_dt.date(2025, 1, 1) + _dt.timedelta(days=i),
+            open=100.0, high=high, low=low, close=100.0, volume=1000,
+        )
+
+    corrupt = {
+        "nan_high": (float("nan"), 99.0),
+        "inf_high": (float("inf"), 99.0),
+        "inverted": (90.0, 110.0),
+        "zero_low": (101.0, 0.0),
+        "neg_inf_low": (101.0, float("-inf")),
+    }
+    for name, (high, low) in corrupt.items():
+        bars = [_bar(i, 101.0, 99.0) for i in range(260)]
+        bars[130] = _bar(130, high, low)
+        pivots = _levels._find_pivots(
+            _levels._clean_bars(bars), _levels.PIVOT_WINDOW
+        )
+        assert pivots, name
+        unmeasurable = [
+            p for p in pivots
+            if not (_math.isfinite(p[3]) and _math.isfinite(p[4]) and p[3] <= p[4])
+        ]
+        assert unmeasurable == [], name
