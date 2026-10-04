@@ -71,7 +71,7 @@ def _buy_row(days_ago=6, horizon=15, setup="range", stop=90.0, target=140.0,
 def _facts(pipeline, position, buy_row, today=None):
     pipeline.db.get_symbol_last_buy.return_value = buy_row
     if today is not None:
-        with patch("src.prompt_facts.position_facts.et_today", return_value=today):
+        with patch("src.pipeline_prompt_facts.et_today", return_value=today):
             return pipeline._build_position_facts(
                 positions=[position], morning_trades=[], total_value=100_000.0,
             )[position.symbol]
@@ -926,7 +926,7 @@ def test_noise_band_uses_trading_sessions_not_calendar_days_over_a_weekend():
     pipeline.db.get_symbol_last_buy.return_value = buy_row
     position = _position("AAA", avg_entry=100.0, current_price=97.6)  # 1.2xATR adverse (ATR=2.0)
 
-    with patch("src.prompt_facts.position_facts.et_today", return_value=monday):
+    with patch("src.pipeline_prompt_facts.et_today", return_value=monday):
         facts = pipeline._build_position_facts(
             positions=[position], morning_trades=[], total_value=100_000.0,
         )["AAA"]

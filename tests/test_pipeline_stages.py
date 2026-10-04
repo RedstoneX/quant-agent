@@ -3275,7 +3275,7 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
 # --------------------------------------------------------------------------
 
 def test_build_active_state_changes_renders_direction_per_symbol():
-    from src.prompt_facts.history import PromptHistory
+    from src.pipeline_prompt_facts import PromptHistory
 
     fake_pipeline = MagicMock()
     fake_pipeline.news_store.recent_state_changes.return_value = [{
@@ -3296,7 +3296,7 @@ def test_build_active_state_changes_renders_unknown_for_a_symbol_with_no_directi
     `symbol_direction` (older persisted report predating this field, or a
     genuine analyst omission) renders as `(unknown)` — never silently
     treated as agreeing with any trade direction."""
-    from src.prompt_facts.history import PromptHistory
+    from src.pipeline_prompt_facts import PromptHistory
 
     fake_pipeline = MagicMock()
     fake_pipeline.news_store.recent_state_changes.return_value = [{

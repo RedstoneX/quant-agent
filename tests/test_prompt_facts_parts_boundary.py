@@ -108,16 +108,16 @@ def test_grading_part_is_handed_post_exit_reality_not_owning_it():
 # --- The parent prompt-facts parts (src/prompt_facts/*.py): built and run with no pipeline behind them.
 
 from src.prompt_facts.decisions import PromptDecisions  # noqa: E402
-from src.prompt_facts.exposure import PromptExposure  # noqa: E402
+from src.pipeline_prompt_facts import PromptExposure  # noqa: E402
 from src.prompt_facts.heat import PromptHeat  # noqa: E402
-from src.prompt_facts.history import PromptHistory  # noqa: E402
+from src.pipeline_prompt_facts import PromptHistory  # noqa: E402
 from src.prompt_facts.pm_facts import PromptPMFacts  # noqa: E402
-from src.prompt_facts.position_facts import PromptPositionFacts  # noqa: E402
+from src.pipeline_prompt_facts import PromptPositionFacts  # noqa: E402
 from src.prompt_facts.projected import PromptProjected  # noqa: E402
 from src.prompt_facts.watchlist import PromptWatchlist  # noqa: E402
 
 FACT_PARTS = [PromptHistory, PromptDecisions, PromptProjected, PromptWatchlist, PromptExposure, PromptHeat, PromptPMFacts, PromptPositionFacts]
-FACT_MODULES = [f"src.prompt_facts.{m}" for m in ("history", "decisions", "projected", "watchlist", "exposure", "heat", "pm_facts", "position_facts")]
+FACT_MODULES = [f"src.prompt_facts.{m}" for m in ("decisions", "projected", "watchlist", "heat", "pm_facts")]
 
 
 @pytest.mark.parametrize("cls", FACT_PARTS)
