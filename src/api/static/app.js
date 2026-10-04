@@ -1498,7 +1498,7 @@ async function loadPruning() {
     body.replaceChildren();
     body.appendChild(el("div", { className: "dim", text: data.note }));
     data.passes.forEach((p) => {
-      body.appendChild(el("h3", { text: `Run ${p.run_id} - ${p.recorded_at || ""} - examined ${p.examined_count}` }));
+      body.appendChild(el("h3", { text: `Run ${p.run_id} - ${p.recorded_at || ""} - examined ${p.examined_count ?? "not recorded"}` }));
       p.lines.forEach((line) => body.appendChild(el("div", { className: "rotation-line", text: line })));
       const rows = p.verdicts.map((v) =>
         el("tr", {}, [
