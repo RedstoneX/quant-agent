@@ -138,7 +138,7 @@ detail: docs/board_notes/item-075.md
 **78. Delete the blank-falsifier isolate once Tech and the PM demonstrably produce a real falsifier — DEFECT (patch), instance of the missing-data standing principle. [BOARD STATE: 0 of 4 ticked; 1 box is buildable now (125: never-blank path), the other 3 are PRODUCTION-BLOCKED while the desk is OFF (live-session proof and live-database measurement).]** The isolate is live and declares itself TEMPORARY: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py:2817`) drops any constructed BUY/SHORT whose falsifier is blank. Heal outcome now recorded durably (recording only, 2026-10-01); blank rate re-measured 68% on 30 Sep, unchanged, so the isolate stays.
 
 DONE WHEN:
-  - [ ] the never-blank path is live: a falsifier blanked by a later wipe is healed back from the sentence the model already wrote, the seat is re-asked once (paid), and a still-blank name is REFUSED before the book — never invented, and never with skip-and-continue as the product
+  - [x] the never-blank path is live: a falsifier blanked by a later wipe is healed back from the sentence the model already wrote, the seat is re-asked once (paid), and a still-blank name is REFUSED before the book — never invented, and never with skip-and-continue as the product
   - [ ] LIVE-BLOCKED, the same shape item 86 was before a live log line retired it on 2026-09-26: `_isolate_empty_soft_exit_entries` (`src/pipeline_stages.py`) is deleted only once a real live session records the seats filling the box, and the item stays OPEN until a live session proves it
   - [ ] MEASURED 2026-09-30 against the live database, condition NOT met: the technical seat still returns a blank `thesis_invalid_if` on 60% of the stocks it answered on 2026-09-29 (134 of 223) and 54% on 2026-09-28 (14 of 26), which is no better than the 30-73% daily range it ran at before the wrapper-object schema landed on 2026-09-25, so the tightened answer format did not make the seat produce a falsifier; Detail in the note.
   - [ ] MEASURED AGAIN 2026-10-01 against the live database (specialist_evidence, 13,815 rows total; Detail in the note.
@@ -179,7 +179,7 @@ DONE WHEN:
   - [ ] the short-side haircut CLOSES ON RECORDED EVIDENCE, NOT ON A THIRD DERIVATION. — full text: docs/board_notes/item-186.md
   - [x] RULED OUT 2026-10-04, not pending: this was filed as an owner-appetite dial and the owner has now answered it more than once -- "if the mark — full text: docs/board_notes/item-186.md
   - [x] 2026-09-30 OWNER RULING APPLIED: risk is never a global dial, so no appetite number on this item is routed to the owner any more; each remaining ceiling is either replaced by a per-name read or recorded as blocked with its blocker named. Both previously routed questions are WITHDRAWN, not pending
-  - [ ] `short_gap_risk_multiple` (1.5) becomes a read off that stock's own overnight-gap behaviour instead of one constant for every short — BLOCKED on stored daily bars, which the desk does not keep (the constructor is handed `analysis.atr_14` and no bar history, verified 2026-09-30). No value picked, no appetite asked
+  - [x] `short_gap_risk_multiple` (1.5) is DELETED, not re-derived — owner ruling 2026-10-04: "A short is not riskier than long. 1.5 is a made up number so throw that out completely... A short should be treated the same as a long, no different math no different behavior." The constant, the config fields, the ledger rows and the application site are all gone, so there is no neutral dial left to re-tune
   - [x] the queued-earnings BUY clamp (5% of the book) stops being a global share — — full text: docs/board_notes/item-186.md
 
   - [x] THE RECORDING IS BUILT, 2026-10-02 — — full text: docs/board_notes/item-186.md
@@ -379,6 +379,7 @@ detail: docs/board_notes/item-232.md
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
+
 **231. Every owner-facing timestamp shows a time but no date — OPEN, filed 2026-10-02 by the owner.** He reads the alerts on a phone hours after they fire, and a bare time cannot be placed once he scrolls back. [measured 2026-10-02, grep of `src/`] 24 call sites format a bare 12-hour time; exactly one — the notifier session header — prepends the date. Fix at the source: one shared formatter emitting date + time, used by every site that currently emits time alone, so a newly written alert cannot omit the date. Keep the existing 12-hour, no-leading-zero behaviour and the glibc caveat already documented in the sections module. This changes message TEXT only; Telegram stays muted and no new alerts are added.
 DONE WHEN:
 - [ ] one shared date+time formatter exists and every previously time-only owner-facing site calls it. (Done for `fmt_time_12h`, which every trader_feed and notifier header uses; STILL OPEN: the health report in `log_health.py` formats its own clock, and `inflight.py` shows `%H:%M ET` on the dashboard.)

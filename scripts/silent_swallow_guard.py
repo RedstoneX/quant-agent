@@ -178,6 +178,10 @@ class _Finder(ast.NodeVisitor):
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if is_broad(node) and _swallows_and_returns_empty(node):
             scope, src = site_identity(node, self.scopes)
+            # Name the def, not the class that happens to hold it: a body
+            # moved to a constructed part keeps its identity, while a second
+            # copy anywhere still raises the occurrence count and is reported.
+            scope = scope.rsplit(".", 1)[-1]
             self.hits.append(((self.rel, scope, src), node.lineno))
         self.generic_visit(node)
 

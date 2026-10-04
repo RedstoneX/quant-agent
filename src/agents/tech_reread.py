@@ -1,11 +1,25 @@
 """Board item 177: ask the technical seat only about symbols whose inputs moved.
 
-`TechRereadMixin.analyze_batch` wraps the untouched
+`TechReread.analyze_batch` wraps the untouched
 `TechAnalystAgent._analyze_batch_uncached`. See `src/research_throttle.py` for
 the input set, the exact-equality comparison and the fail-open rules.
+
+A standalone part, not a mixin: `TechAnalystAgent` inherits nothing from here.
+It is handed two collaborators, keyword-only:
+
+* `ask` -- a callable returning the seat's uncached batch call. Read per call,
+  never snapshotted, so a spy bound onto the agent INSTANCE after construction
+  (`agent._analyze_batch_uncached = spy`) is what this part calls.
+* `state` -- the object that carries `last_carried`, `last_unanswered` and
+  `last_unreadable` for the pipeline to read after the call. The owner agent
+  itself; its identity never changes for the life of the part, so the
+  reference is held directly.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Callable
 
 from src.models import TechAnalysisResult
 
@@ -17,7 +31,11 @@ _PARAMS = (
 )
 
 
-class TechRereadMixin:
+class TechReread:
+    def __init__(self, *, ask: Callable[[], Callable], state) -> None:
+        self._ask = ask
+        self._state = state
+
     def analyze_batch(self, symbols_data, prior_ratings=None, valuations=None,
                       prior_macro_regime=None, prior_macro_outlook=None,
                       intraday_context=None):
@@ -38,7 +56,8 @@ class TechRereadMixin:
             tech_input_fingerprint,
         )
 
-        self.last_carried: dict[str, TechAnalysisResult] = {}
+        state = self._state
+        state.last_carried: dict[str, TechAnalysisResult] = {}
         items = list(symbols_data or [])
         prior_ratings = prior_ratings or {}
         fingerprints: dict[str, str | None] = {}
@@ -83,12 +102,12 @@ class TechRereadMixin:
             )
         if carried and not to_ask:
             # Nothing moved for anybody: no call is made at all.
-            self.last_unreadable = {}
-            self.last_unanswered = set()
-            self.last_carried = dict(carried)
+            state.last_unreadable = {}
+            state.last_unanswered = set()
+            state.last_carried = dict(carried)
             return dict(carried), None
 
-        out, agent_result = self._analyze_batch_uncached(
+        out, agent_result = self._ask()(
             to_ask, prior_ratings=prior_ratings or None, valuations=valuations,
             prior_macro_regime=prior_macro_regime,
             prior_macro_outlook=prior_macro_outlook,
@@ -98,5 +117,20 @@ class TechRereadMixin:
             if analysis is not None and analysis.input_fingerprint is None:
                 analysis.input_fingerprint = fingerprints.get(sym)
         out.update(carried)
-        self.last_carried = dict(carried)
+        state.last_carried = dict(carried)
         return out, agent_result
+
+
+def hold_tech_reread(owner_cls: type) -> type:
+    """Class decorator: give `owner_cls` a thin `analyze_batch` shim.
+
+    The part is built per call so an agent made with `__new__` (no
+    `__init__`) still answers, and `_analyze_batch_uncached` is read off the
+    instance at call time, never captured.
+    """
+    def analyze_batch(self, *args, **kwargs):
+        """Thin shim: body lives in src/agents/tech_reread.py (`TechReread`)."""
+        part = TechReread(ask=lambda: self._analyze_batch_uncached, state=self)
+        return part.analyze_batch(*args, **kwargs)
+    owner_cls.analyze_batch = analyze_batch
+    return owner_cls

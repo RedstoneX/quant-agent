@@ -183,3 +183,144 @@ and the procedure now both exist in the repo. Until a control that cannot be
 accused of this bias is built, no bar count and no zone width is derivable, and
 the two open boxes below remain correctly unticked: the desk's own recording,
 not this panel, is still the route to a verdict on whether its levels hold.
+
+---
+
+## FOLLOW-UP 2026-10-04 — the missing control was built. THE CONCLUSION SURVIVES.
+
+The weakness named above has been closed. `ops/research/item55_volclustered_control.py`
+re-runs the identical sweep — same committed panel, same pivot definition, same
+greedy clustering, same `MIN_TOUCHES=2`, same 60/40 out-of-sample split, same
+bounce counter, same interval — and changes **only** the control. Every other
+function is imported unchanged from `item55_level_sweep.py`, so nothing but the
+counterfactual differs.
+
+**The fair control: a sign-randomised surrogate.** Each log return is written as
+drift + deviation; the deviation keeps its MAGNITUDE at its own index and only
+its SIGN is flipped. The series of absolute deviations is therefore identical
+bar for bar to the real one, so volatility clustering is preserved exactly — not
+approximately, and with no block length, half-life, window or cut-off invented
+anywhere. The intrabar high/low shape stays at its own index too. Only the sign
+sequence, the thing that builds a path and puts turns at particular prices, is
+destroyed.
+
+**Measured proof the control is now fair.** Median lag-1 autocorrelation of
+|log return| across the 99 usable symbols: real **+0.1159**, sign-flip control
+**+0.1172**. The plain shuffle it replaces drives that quantity to ~0 (asserted
+in the test). The clustering objection is answered on its own terms.
+
+**Result over 20 independent control replications** (per-setting spread reported,
+not a single draw; control standard deviation 0.0044–0.0138 across settings, so
+no conclusion here rests on one lucky surrogate):
+
+- All 24 definitions score **negative** against the fair control.
+- Edges range **-0.0153 to -0.0748**; 23 of 24 clear the 95% band on the wrong
+  side. The desk's live setting (window 5, 1.0% zone) measures real 0.6461 vs
+  control 0.7043, edge **-0.0582 +/- 0.0098**.
+- The negatives got **LARGER**, not smaller, than under the plain shuffle. The
+  hypothesis recorded above — that the uniform small negative was an artefact of
+  the unfair control — is **disproved**. The bias ran the other way.
+
+**VERDICT: outcome 1, the conclusion survives.** Levels as this desk defines them
+show no measurable edge against a control that cannot be accused of the
+volatility-clustering bias. Price entering one of these zones holds its side
+*less* often than a structureless series with the same volatility path does.
+This is a finding about a core part of the strategy and it is stated plainly:
+there is no measurement supporting these level definitions, and there is now a
+measurement against them.
+
+**A different answer was possible, and the method is proven able to produce it.**
+Had levels been real, the measurement would have shown the real series holding
+its side materially more often than the surrogate, with the edge clearing its
+95% band on the positive side. `test_a_different_answer_is_possible_when_levels_are_real`
+runs the exact same pipeline and the exact same fair control over a synthetic
+panel in which price genuinely reflects off two fixed prices, and it reports
+precisely that: a large, significant POSITIVE edge. The same assertion applied
+to the real panel fails at all 24 settings. The method is not one that can only
+return zero.
+
+**What this does NOT license.** Nothing is changed by this run. `PIVOT_WINDOW`
+stays 5 and 3, `CLUSTER_TOLERANCE_PCT` stays 1.0, no stop, size or exit moves,
+and every ledger status stays `arbitrary` — a measurement that a number has no
+support is not a derivation of a better one. The remaining honest caveat is
+scope, not method: this is 99 symbols of public daily bars over roughly five
+years, and daily bars cannot see intraday touches, so a level effect living
+inside the day would not appear here. That is a different measurement needing
+intraday data the repo does not have, not a defect in this one.
+
+
+### 2026-10-04 — THE DATA BLOCKER WAS FALSE, THE SWEEP RAN, AND NEITHER NUMBER IS DERIVABLE
+
+**THE NOTE ABOVE WAS WRONG ABOUT THE DATA, AND THAT IS THE FIRST FINDING.** The
+2026-09-30 entry states the Tsinaslanidis 4.5 sweep "cannot be run by an agent
+barred from production credentials" because "there is no local bar cache in the
+repo". There is. `ops/model_policy/fixtures/yf_daily_bars_pm_public_day_2026-09-14.json.gz`
+is committed and holds **101 symbols x 1236 completed daily bars, 2021-10-11 to
+2026-09-12** — the five-year public panel the note says does not exist. It was
+missed because the search looked in `tests/fixtures/`. No credentials, no
+network and no production read are needed. Separately confirmed in the same
+pass: the production database holds **no OHLCV table at all** and the recorded
+evening replays carry no bars, so the committed panel is the only bar source —
+but it is sufficient, and it is 4.5x the 276-bar panel whose width the
+2026-10-01 note blamed for the failed touch-count re-derivation.
+
+**THE EXPERIMENT.** `ops/research/item55_level_sweep.py`, hermetic and
+rerunnable. Pivots are confirmed swing highs/lows over a symmetric window;
+pivots are grouped into levels; a level needs the settled two touches. Levels
+are discovered on the **first 60% of each symbol's series and every event is
+counted on the remaining 40%**, so nothing is fitted and there is no lookahead.
+The bounce test is Tsinaslanidis 4.5 restated in code rather than described:
+price enters the zone from clearly outside, and the first subsequent close back
+outside it either lands on the side it came from (HOLD) or through it (BREAK).
+**No cutoff is chosen anywhere** — "respected" is not defined, only "came back
+out the same way". The control is the identical procedure on the same symbol's
+own daily returns shuffled, so the control has the same volatility and the same
+drift and no structure. Swept: pivot window 3/5/10/25, zone 0.5/1/2/3/5%, plus
+the threshold-free bar-overlap clustering, 24 settings.
+
+**THE RESULT [measured 2026-10-04, 99 symbols that cleaned, ~230,000 out-of-sample
+bounce events across the 24 settings].** Not one setting's real hold-rate beats
+its own shuffled control at 95%. Every single edge is zero or NEGATIVE. At the
+desk's live setting (window 5, zone 1%) real holds 0.6461 against control
+0.6579, edge -0.0118 +/- 0.0104 on 15,066 events. The widest tested zone (5%)
+holds 0.83 and the narrowest (0.5%) holds 0.58 — but the control does exactly
+the same, because a wider zone is simply harder to close outside of. **The
+entire apparent "levels hold" effect is explained by zone width and by the
+return distribution, with nothing left over for structure.**
+
+**A DIFFERENT ANSWER WAS AVAILABLE AND DID NOT APPEAR.** Real structure has a
+signature: a positive edge concentrated at the narrow zones and the small
+windows, decaying as the zone widens past the precision of the turn. Narrow
+zones were swept down to 0.5%, a fifth of anything in the published range, and
+windows out to 25. The surface is flat and slightly below zero everywhere. Had
+the panel carried the effect, this sweep would have shown it; it is not a test
+that could only have returned one answer.
+
+**WHAT THIS DOES NOT LICENCE, STATED PLAINLY.** This is NOT a finding that
+levels are harmful, and the three settings whose negative edge clears 95% must
+not be read that way. Shuffling returns destroys volatility clustering, so the
+control series trend less and therefore close outside a band less often; that
+biases the control UPWARD by an unmeasured amount and is the most likely source
+of a uniform small negative. The honest statement is **no measurable structure
+effect at any setting, with a control known to be imperfect in the direction
+observed**. Note this also explains the 2026-10-01 touch-count attempt's failed
+sanity check — shuffled scoring higher there was not a broken reconstruction, it
+is what this control does, reproduced here at 24/24 settings on 4.5x the data.
+
+**THE ANSWER TO THE ITEM: outcome 3, NEITHER number can be derived from the data
+available, and NOTHING WAS CHANGED.** `PIVOT_WINDOW` stays 5 and 3,
+`CLUSTER_TOLERANCE_PCT` stays 1.0, every ledger status stays `arbitrary`. There
+is no measured basis to move any of them, and inventing one here would be the
+exact defect this item exists to remove. The bar-overlap clustering remains the
+only threshold-free candidate for the zone and remains unshipped — it scores no
+better than the percentages and its measured edge is the most negative of the
+set (-0.023 to -0.029), so there is now a measurement arguing against adopting
+it, where before there was only an argument for it.
+
+**EXACTLY WHAT WOULD SETTLE IT.** A control that preserves volatility clustering
+— a stationary block bootstrap, or a GARCH-filtered resample — run over this same
+committed panel with this same script. That is the one missing piece; the data
+and the procedure now both exist in the repo. Until a control that cannot be
+accused of this bias is built, no bar count and no zone width is derivable, and
+the two open boxes below remain correctly unticked: the desk's own recording,
+not this panel, is still the route to a verdict on whether its levels hold.
