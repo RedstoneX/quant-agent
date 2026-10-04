@@ -1,0 +1,10 @@
+.cb-summary { font-weight: 600; margin-bottom: 8px; }
+.cb-card { border: 1px solid var(--border); border-left-width: 4px; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.cb-below { border-left-color: var(--red); }
+.cb-watch { border-left-color: #e0a526; }
+.cb-clear { border-left-color: var(--green); }
+.cb-top { display: flex; justify-content: space-between; gap: 8px; }
+.cb-tag { font-size: 0.85em; color: var(--text-dim); }
+.cb-distance { margin: 4px 0; }
+.cb-headline, .cb-reason { font-size: 0.9em; }
+.cb-note { font-size: 0.85em; }
