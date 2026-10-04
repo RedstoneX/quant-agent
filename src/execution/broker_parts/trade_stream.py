@@ -10,7 +10,7 @@ collaborators are keyword-only, and the per-broker state the bodies mutate
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from src.trading_calendar import session_date_key
 from pathlib import Path
 import asyncio
 import fcntl
@@ -253,27 +253,27 @@ class _StreamAttemptBudget:
 
     def record_attempt(self, today: str | None = None) -> int:
         """Count one handshake failure; return attempts spent today."""
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             self._attempts += 1
             return self._attempts
 
     def day_exhausted(self, today: str | None = None) -> bool:
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             return self._attempts >= _STREAM_ATTEMPT_CEILING_PER_DAY
 
     def attempts_today(self, today: str | None = None) -> int:
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             return self._attempts
 
     def claim_alert(self, today: str | None = None) -> bool:
         """True exactly ONCE per day, for the caller that should page the owner."""
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             if self._alerted_day == day:
