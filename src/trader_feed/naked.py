@@ -121,8 +121,17 @@ def send_naked_position_alert(notifier, result: dict | None) -> bool:
             if g.get("symbol")
         ]
         run_id = result.get("run_id") if isinstance(result, dict) else None
-        return bool(notifier.send(
-            text, symbols=symbols, kind="no_stop_at_all", run_id=run_id,
+        # Through the retry funnel, never a bare `notifier.send`. This is the
+        # canonical owner alert `send_owner_alert` exists for, and a bare send
+        # made ONE attempt and recorded nothing when it failed: a Telegram
+        # blip lost the page about an unprotected position with no trace.
+        # `send_owner_alert` cannot be used here because it builds its own
+        # notifier and takes no `kind`/`run_id`; the funnel underneath it does.
+        from src.notifier.owner_alert_delivery import deliver_with_retry
+
+        return bool(deliver_with_retry(
+            notifier, text, symbols=symbols, kind="no_stop_at_all",
+            run_id=run_id,
         ))
     except Exception as exc:  # noqa: BLE001
         import logging

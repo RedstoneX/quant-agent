@@ -11,7 +11,13 @@ structure is sound, hardest-wearing first.
 
 Measured 2026-10-04 on main: six construction sites in `src/` outside the funnel (`alert_watchdog.py` default, `pipeline.py`, `scheduler.py`, `cost_circuit/alert_ledger.py`, two in `cost_circuit/breaker.py`) across five modules, not six; whether the `scheduler.py` one sends owner alerts is not checked. About ten more sites in `scripts/` also construct one and are not counted in the earlier sizing.
 
-Fix: route each sender through the funnel (or justify and allow-list it), then add a guard that fails on any new direct construction. Sized at roughly 150-250 lines for the `src/` sites and the guard [estimate: earlier agent sizing, not re-derived]; the scripts would add to it.
+CORRECTED AND CLOSED 2026-10-04. The earlier sizing counted CONSTRUCTIONS; constructing a notifier is not a bypass, SENDING through one is. Measured on main: of the six `src/` construction sites, `alert_watchdog.py` calls `probe()` (not a send) and `pipeline.py` calls `send_document()` (a P&L CSV attachment, not an alert), so only three sites in `src/` actually call `notifier.send`.
+
+Of those three, exactly ONE was an unretried owner alert: `send_naked_position_alert` in `src/trader_feed/naked.py`, the "NO STOP AT ALL" page the funnel was built for. REPRODUCED 2026-10-04 against the real function with a notifier whose first send fails: one attempt, `False` returned, no undelivered row -- a transient Telegram fault lost the page about an unprotected position with no trace. Root cause: `deliver_with_retry` is reachable only through `send_owner_alert`, which builds its own `TelegramNotifier` and takes no `kind`/`run_id`, so a caller handed a notifier has no way in and hand-rolls a send. Fixed by calling `deliver_with_retry` directly.
+
+The other two are NOT defects and are now allow-listed with their reasons: `src/cost_circuit/alert_outcome.py` keeps a durable three-way `alert_state` where a failure stays retryable, and `src/scheduler.py:249` sends the routine end-of-session summary, which is not an alarm.
+
+The class cannot recur: `scripts/owner_alert_funnel_guard.py` fails on any `notifier.send` in `src/` outside that allow-list, and also fails on a stale allowance so the list cannot rot. Witness `tests/test_owner_alert_funnel.py` (6 tests). The ~ten `scripts/` sites are out of scope: they are operator tools, not the desk's money path, and none sends an owner alert.
 
 ## The cost circuit is eleven mixins, not eleven modules
 
