@@ -97,6 +97,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from src.notifier import TelegramNotifier
+from src.notifier.sections import fmt_time_12h
 
 logger = logging.getLogger(__name__)
 
@@ -1051,8 +1052,8 @@ def _duration_words(since: datetime, now: datetime) -> str:
 
 
 def _time_words(moment: datetime) -> str:
-    stamp = moment.astimezone(OWNER_TZ).strftime("%-I:%M%p")
-    return stamp[:-2] + stamp[-2:].lower()
+    """Format a moment with date and time, e.g. '2026-10-04 1:05 PM ET'."""
+    return fmt_time_12h(moment.astimezone(OWNER_TZ))
 
 
 def _bullet(
