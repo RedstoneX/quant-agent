@@ -109,6 +109,12 @@ from src.pipeline_stages import (
     _persist_evidence,
     _record_pipeline_event,
 )
+# RE-EXPORT MIRROR (pipeline split, run gates): the paid-analysis gate and the
+# two pre-decision halt gates moved VERBATIM to function-only modules.
+# `TradingPipeline` keeps a one-line shim per moved name below, so every
+# `self._x(...)` caller and `patch.object(TradingPipeline, "_x")` is untouched.
+from src import pipeline_cost_gate as _cost_gate
+from src import pipeline_halt_gates as _halt_gates
 from src.portfolio_constructor import PortfolioConstructor
 from src.sessions.evening_session import EveningSession
 from src.sessions.position_review_session import PositionReviewSession
@@ -1530,99 +1536,20 @@ class TradingPipeline(
         self.decision_stage.run(ctx)
 
     def _activate_cost_session(self, run_id: str, mode: str) -> None:
-        """Register paid-call context without interfering with safety work."""
-
-        self._active_cost_run_context = (run_id, mode)
-        circuit = getattr(self, "cost_circuit", None)
-        if circuit is None:
-            if BaseAgent._allow_unmetered_for_tests:
-                return
-            circuit = UnavailableLLMCostCircuit(
-                RuntimeError("mandatory paid-analysis cost circuit is not initialized")
-            )
-            self.cost_circuit = circuit
-            self._attach_cost_circuit_to_agents()
-        try:
-            circuit.activate_session(run_id, mode)
-        except Exception as exc:
-            logger.critical(
-                "Cost-circuit activation failed for %s/%s; failing paid analysis "
-                "closed without interrupting deterministic safety: %s",
-                run_id, mode, exc, exc_info=True,
-            )
-            marker = getattr(circuit, "mark_unavailable", None)
-            if callable(marker):
-                marker(exc, run_id=run_id, mode=mode)
-            else:
-                circuit = UnavailableLLMCostCircuit(exc)
-                self.cost_circuit = circuit
-                self._attach_cost_circuit_to_agents()
-                circuit.activate_session(run_id, mode)
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._activate_cost_session(self, run_id, mode)
 
     def _require_paid_analysis(self, agent_name: str) -> None:
-        circuit = getattr(self, "cost_circuit", None)
-        if circuit is None:
-            if BaseAgent._allow_unmetered_for_tests:
-                return
-            raise PaidAnalysisSuspended(
-                "mandatory paid-analysis cost circuit is not initialized",
-                {"available": False, "suspended": True},
-            )
-        try:
-            circuit.require_paid_analysis(agent_name)
-        except PaidAnalysisSuspended:
-            raise
-        except Exception as exc:
-            logger.critical("Cost-circuit preflight failed closed: %s", exc, exc_info=True)
-            marker = getattr(circuit, "mark_unavailable", None)
-            if callable(marker):
-                state = marker(exc)
-                raise PaidAnalysisSuspended(
-                    "mandatory cost-circuit preflight failed", state,
-                ) from exc
-            replacement = UnavailableLLMCostCircuit(exc)
-            self.cost_circuit = replacement
-            self._attach_cost_circuit_to_agents()
-            run_id, mode = getattr(
-                self, "_active_cost_run_context", ("unscoped", "unknown")
-            )
-            replacement.activate_session(run_id, mode)
-            replacement.require_paid_analysis(agent_name)
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._require_paid_analysis(self, agent_name)
 
     def _attach_cost_circuit_to_agents(self) -> None:
-        circuit = getattr(self, "cost_circuit", None)
-        for name in (
-            "tech_analyst", "news_analyst", "macro_analyst",
-            "earnings_analyst", "smart_money_analyst",
-            "portfolio_manager", "risk_manager",
-            "position_reviewer", "evening_analyst", "meta_reflector",
-        ):
-            agent = getattr(self, name, None)
-            setter = getattr(agent, "set_cost_circuit", None)
-            if callable(setter):
-                setter(circuit)
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._attach_cost_circuit_to_agents(self)
 
     def _cost_circuit_status(self) -> dict:
-        circuit = getattr(self, "cost_circuit", None)
-        if circuit is None:
-            if BaseAgent._allow_unmetered_for_tests:
-                return {"enabled": False, "suspended": False}
-            return {"available": False, "enabled": True, "suspended": True,
-                    "trigger_detail": "mandatory cost circuit is not initialized"}
-        try:
-            return circuit.status()
-        except Exception as exc:
-            logger.critical("Cost-circuit status failed closed: %s", exc, exc_info=True)
-            marker = getattr(circuit, "mark_unavailable", None)
-            if callable(marker):
-                return marker(exc)
-            replacement = UnavailableLLMCostCircuit(exc)
-            self.cost_circuit = replacement
-            self._attach_cost_circuit_to_agents()
-            run_id, mode = getattr(
-                self, "_active_cost_run_context", ("unscoped", "unknown")
-            )
-            return replacement.activate_session(run_id, mode)
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._cost_circuit_status(self)
 
     @staticmethod
     def _parse_logged_agent_response(row: dict):
@@ -1635,310 +1562,21 @@ class TradingPipeline(
         return parse_logged_agent_response(row)
 
     @staticmethod
-    def _paid_suspended_payload(
-        run_id: str,
-        *,
-        orders: list[dict] | None = None,
-        error: BaseException | None = None,
-        filings_waiting: list[dict] | None = None,
-    ) -> dict:
-        # `filings_waiting` (2026-09-24): when the cost circuit trips after
-        # `run_earnings_preprocess` has already computed which filings were
-        # queued for the LLM reader, that backlog was silently dropped here
-        # -- the suspended payload carried no earnings keys at all, so
-        # `_append_earnings_body` rendered "analyzed:0 confirmed:0
-        # failed:0" for a run that actually found N new filings. Passing it
-        # through lets the owner-facing message say "suspended, N filing(s)
-        # waiting" instead of implying nothing happened.
-        waiting = list(filings_waiting or [])
-        return {
-            "status": "paid_analysis_suspended",
-            "run_id": run_id,
-            "orders": list(orders or []),
-            "error": str(error or "mandatory cost circuit is open"),
-            "paid_analysis_suspended": True,
-            "filings_waiting": waiting,
-            "filings_waiting_count": len(waiting),
-            "preserved": [
-                "broker_resident_protection",
-                "order_fill_reconciliation",
-                "deterministic_loss_protection",
-                "non_llm_safety_jobs",
-            ],
-        }
+    def _paid_suspended_payload(run_id: str, *, orders: list[dict] | None=None, error: BaseException | None=None, filings_waiting: list[dict] | None=None) -> dict:
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._paid_suspended_payload(run_id, orders=orders, error=error, filings_waiting=filings_waiting)
 
-    def _paid_suspension_after_late_safety(
-        self,
-        run_id: str,
-        *,
-        session: str,
-        error: BaseException,
-        where: str,
-        orders: list[dict] | None = None,
-        extra: dict | None = None,
-    ) -> dict:
-        """The suspension return payload.
-
-        It used to re-run an account-level loss check first. That
-        whole mechanism was removed 2026-09-20 on owner instruction
-        (docs/INCIDENT_HISTORY.md, retired item 32): per-position stops are
-        the desk's loss protection now, and they live at the broker rather
-        than depending on this process reaching this line.
-
-        KNOWN RESIDUE, deliberately not chased in that change: `session`
-        and `where` are now unused here, and the name still says "after
-        late safety" when there is no late safety check left. Eleven call
-        sites pass both. Renaming the method and dropping two keyword
-        arguments across all eleven is churn with no behavioural effect, so
-        it was left for whoever next touches this path — it is recorded
-        here rather than silently tolerated.
-        """
-
-        existing_orders = list(orders or [])
-        payload = self._paid_suspended_payload(
-            run_id, orders=existing_orders, error=error,
-        )
-        if extra:
-            payload.update(extra)
-        # 2026-09-30 (item 199): this is the third legit PM-less completion
-        # alongside `no_data` and `evidence_gate_skip` above, both of which
-        # already call `_dc.write_status` so the evening dead-man probe
-        # skips its "research ran, PM never did — killed mid-run?" guess.
-        # This path never did, so a same-day cost-circuit suspension the
-        # owner was already told about at the time (the morning session's
-        # own "SUSPENDED" push) re-arrived ~16h later relabelled as a
-        # mystery kill. Morning-only: `read_status`/the sharper probes in
-        # `_expected_sessions_missing_today` only ever key on "morning".
-        if session == "morning":
-            from src import decision_checkpoint as _dc
-
-            _dc.write_status("morning", "paid_analysis_suspended")
-        return payload
+    def _paid_suspension_after_late_safety(self, run_id: str, *, session: str, error: BaseException, where: str, orders: list[dict] | None=None, extra: dict | None=None) -> dict:
+        """Body lives in `src.pipeline_cost_gate`; this shim keeps callers and patch targets."""
+        return _cost_gate._paid_suspension_after_late_safety(self, run_id, session=session, error=error, where=where, orders=orders, extra=extra)
 
     def _kill_switch_halt_result(self, run_id: str, **extra) -> dict | None:
-        """Guard 1's early, VISIBLE half (2026-09-02 operational safety
-        guard). Returns an early-exit result dict when ops has halted the
-        desk, else None.
+        """Body lives in `src.pipeline_halt_gates`; this shim keeps callers and patch targets."""
+        return _halt_gates._kill_switch_halt_result(self, run_id, **extra)
 
-        The broker-level check (`AlpacaBroker._kill_switch_active`) is what
-        actually GUARANTEES no order reaches Alpaca while the flag file
-        exists — it re-checks on every single submit/replace call, so it
-        stays correct even if the file appears mid-session, after this
-        early check already passed. This method exists only so a halted
-        run (a) does not spend real broker calls and LLM budget on analysis
-        that can place no order, and (b) produces exactly ONE clear alert
-        on the channel the operator actually reads: the returned
-        `status` flows through `format_session_result` to
-        `TelegramNotifier.send()` in `main.py`, the SAME path every other
-        session result already takes — no new alerting mechanism.
-
-        UNLIKE `_paid_suspended_payload` above, nothing NEW is preserved:
-        this is the one guard in the codebase that also blocks a
-        risk-reducing order (see RiskConfig.kill_switch_path), so a new
-        protective stop cannot go out either while it is active. A stop
-        already resting at the broker from before the halt is untouched
-        and keeps protecting its position — only new broker-bound order
-        flow is refused.
-        """
-        if self._kill_switch_path is None or not self._kill_switch_path.exists():
-            return None
-        logger.error(
-            "KILL SWITCH ACTIVE (%s exists) — halting run %s before any "
-            "broker or LLM work. touch/rm that file to stop/resume the "
-            "desk.", self._kill_switch_path, run_id,
-        )
-        payload = {
-            "status": "kill_switch_halted", "run_id": run_id, "orders": [],
-            "kill_switch_path": str(self._kill_switch_path),
-        }
-        payload.update(extra)
-        return payload
-
-    def _evidence_gate_skip(
-        self, ctx, run_id: str, *, session: str = "morning",
-    ) -> dict | None:
-        """docs/WORK.md item 20 — refuse to DECIDE on evidence that never
-        arrived. Returns a terminal result dict when the run must skip, or
-        None to proceed.
-
-        The distinction it rests on is categorical and needs no threshold: a
-        seat that had nothing to report answered; a seat whose answer was
-        lost did not. See `src/evidence_gate.py` for why no count is used and
-        why the counting half of the owner's design is deliberately unbuilt.
-
-        WHICH LOST SEAT ACTUALLY STOPS THE RUN is an owner mandate decision
-        of 2026-09-18 — "Only technical analysis can stop the desk" — and
-        lives in `evidence_gate.BLOCKING_SEATS`, not here. A lost ADVISORY
-        seat is recorded in the same durable rows, logged loudly, carried in
-        the result so the unsuppressible data-quality alert still fires, and
-        named in the freshness disclosure. It does not halt trading.
-
-        EVERY DECISION DISCLOSES ITS OWN EVIDENCE FRESHNESS. With the other
-        seats advisory a decision can rest on one freshly-read seat plus a
-        carried-forward book, and every carried seat reports green; this is
-        the one path every decision passes through, so the count of seats
-        read on THIS tick is computed here and handed to the owner's message
-        and the durable record. Disclosure, not a threshold — there is no
-        minimum fresh count anywhere and none may be invented.
-
-        THE SKIP IS LOUD, by three independent paths, because retired item 11
-        was this desk producing nothing for a whole day with nobody noticing
-        (docs/INCIDENT_HISTORY.md, closed 2026-09-13):
-          - its own standalone owner alert, sent here — MORNING ONLY as of
-            2026-09-18. On an intra_check tick the session message below is
-            guaranteed to speak (`evidence_gate_skip` is actionable on the
-            trader feed and is in none of its silent-status sets), so this
-            alert only duplicated it, one minute apart, word for word;
-          - `notifier.maybe_alert_data_quality`, which fires from main.py's
-            finally block on the `data_status` carried in the result and
-            cannot be suppressed by a mode's noise policy;
-          - the session result message, whose `status` says it in one word.
-
-        It drops no candidate and emits no target: it returns before any
-        target exists, so it cannot produce the 0%-target-means-SELL shape.
-        Every symbol that HAD reached a technical read still gets its own
-        durable, machine-readable row saying why the desk never decided on
-        it, alongside the run-level row.
-        """
-        from src import evidence_gate
-
-        try:
-            verdict = evidence_gate.evaluate(ctx.data_status)
-        except Exception as exc:  # noqa: BLE001
-            # A gate that can stop the desk trading must not stop it by
-            # crashing. `evaluate` is documented never to raise; if it
-            # somehow does, proceed and say so loudly.
-            logger.error(
-                "evidence gate raised (%s) — PROCEEDING with the decision. "
-                "This is a bug in src/evidence_gate.py.", exc,
-            )
-            return None
-
-        def _record(symbol, outcome, reason, **details):
-            # Forensic persistence must never be able to break the trading
-            # path it is reporting on (.claude/rules/trading-core.md).
-            # `_persist_evidence` already swallows DB errors; this also
-            # covers a caller with no `db` wired at all.
-            try:
-                _record_pipeline_event(
-                    self, ctx, symbol, "evidence_gate", outcome, reason,
-                    **details,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("evidence gate: event write failed: %s", exc)
-
-        # Disclosure, carried out of here by `_attach_evidence_freshness` on
-        # every return path of the session wrappers. Stored on the pipeline
-        # as well as on ctx because the result dicts are built in dozens of
-        # places and the wrappers are the two that see all of them.
-        try:
-            # Stamp the classification with WHEN and WHICH RUN before it is
-            # persisted. Owner ruling 2026-10-01 (sell what fails the fresh
-            # bar) makes "was this seat read in THIS run?" something a sell
-            # can rest on, and it must be a recorded fact, not an inference
-            # drawn from the shape of the row. Records only — no threshold,
-            # nothing gated. Fail-soft on the prior-read lookup: an unknown
-            # age is reported as unknown, never as fresh.
-            prior = {}
-            try:
-                if getattr(self, "db", None) is not None:
-                    prior = self.db.last_fresh_seat_reads(
-                        seats=list(verdict.freshness.data_status)
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "evidence gate: prior seat-read lookup failed (%s) — "
-                    "carried seats will report an unknown age", exc,
-                )
-            stamped = verdict.freshness.stamped(
-                run_id=getattr(ctx, "run_id", None),
-                mode=str(getattr(ctx, "session", "") or "") or None,
-                prior_reads=prior,
-            )
-            self._last_evidence_freshness = stamped.to_evidence()
-            self._last_decision_data_status = dict(verdict.data_status)
-            ctx.evidence_freshness = dict(self._last_evidence_freshness)
-        except Exception as exc:  # noqa: BLE001 — never break the decision
-            logger.warning("evidence gate: freshness record failed: %s", exc)
-        logger.info("EVIDENCE FRESHNESS — %s", verdict.freshness.summary)
-
-        evidence = verdict.to_evidence()
-        _record(None, evidence.pop("outcome"), evidence.pop("reason"), **evidence)
-        self._record_name_coverage(ctx, _record)
-        if not verdict.skip:
-            if verdict.advisory_lost:
-                # Owner mandate 2026-09-18: only the technical seat halts the
-                # desk. An advisory seat losing its answer is still a real
-                # fault and is still said out loud — here, in the durable row
-                # above, and by `notifier.maybe_alert_data_quality`, which
-                # reads the `data_status` the wrappers now attach to every
-                # result. What it no longer does is stop trading.
-                logger.error(
-                    "evidence gate: ADVISORY seat(s) lost their answer and the "
-                    "decision PROCEEDED (owner mandate 2026-09-18, only the "
-                    "technical seat blocks): %s",
-                    {s: verdict.data_status.get(s) for s in verdict.advisory_lost},
-                )
-            if verdict.unclassified:
-                logger.error(
-                    "evidence gate: unclassified seat status this run: %s",
-                    {s: verdict.data_status.get(s) for s in verdict.unclassified},
-                )
-            return None
-
-        logger.error("EVIDENCE GATE — %s", verdict.reason)
-        for analysis in ctx.analyses or []:
-            symbol = getattr(analysis, "symbol", None)
-            if symbol:
-                _record(
-                    symbol, "not_decided", "evidence_gate_skip",
-                    lost_seats=list(verdict.lost),
-                    blocking_lost_seats=list(verdict.blocking_lost),
-                    data_status=dict(verdict.data_status),
-                )
-        # Legit PM-less completion — same reason `no_data` records one: the
-        # evening dead-man probe must not read "research rows, no PM row" as
-        # a morning that was killed mid-run.
-        from src import decision_checkpoint as _dc
-
-        # Morning only: the evening dead-man probe keys off this
-        # checkpoint. An intra_check skip must not overwrite a completed
-        # morning's status with a later refusal.
-        if session == "morning":
-            _dc.write_status("morning", "evidence_gate_skip")
-        # The owner was told the same skip TWICE, one minute apart, on
-        # 2026-09-18 11:19 ET: once by this standalone alert and once by the
-        # intraday tick's own message. On an intra_check tick the tick
-        # message is guaranteed to speak — `evidence_gate_skip` is in
-        # `trader_feed._intraday_tick_actionable`'s list and in neither
-        # `_BASE_ONLY_STATUSES` nor `_INTRADAY_SILENT_STATUSES`, so the
-        # "a quiet tick is silent" policy that this standalone alert exists
-        # to defeat cannot apply to a skip. The tick message also carries
-        # P&L and the book, which this one cannot. So the tick message
-        # speaks for an intraday skip and this alert stays quiet; the skip
-        # is not silenced anywhere, and the morning path (whose own session
-        # message is a different renderer) keeps its alert unchanged.
-        if session == "morning":
-            try:
-                from src.notifier import CATEGORY_OPERATIONAL, describe_skipped_decision, send_owner_alert
-
-                # Plain words only — no run id, no seat key, no state token
-                # and no `verdict.reason`. The machine reason is unchanged in
-                # the result dict, the event rows and the log line above.
-                send_owner_alert("\n".join(
-                    describe_skipped_decision(verdict.lost, verdict.data_status)
-                ), category=CATEGORY_OPERATIONAL)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("evidence gate: owner alert failed: %s", exc)
-        return {
-            "status": "evidence_gate_skip", "orders": [], "run_id": run_id,
-            "data_status": dict(ctx.data_status),
-            "lost_seats": list(verdict.lost),
-            "blocking_lost_seats": list(verdict.blocking_lost),
-            "advisory_lost_seats": list(verdict.advisory_lost),
-            "evidence_freshness": verdict.freshness.to_evidence(),
-            "reason": verdict.reason,
-        }
+    def _evidence_gate_skip(self, ctx, run_id: str, *, session: str='morning') -> dict | None:
+        """Body lives in `src.pipeline_halt_gates`; this shim keeps callers and patch targets."""
+        return _halt_gates._evidence_gate_skip(self, ctx, run_id, session=session)
 
     def run_morning(self) -> dict:
         """The morning session, plus the durable record of its own output.
