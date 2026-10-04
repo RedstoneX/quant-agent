@@ -15,18 +15,18 @@ from typing import Callable
 from src.notifier.base import logger
 from src.notifier.category import was_suppressed
 
-from src.config import LLMCostCircuitConfig as _Retry
+from src import infra_retry_policy as _retry
 
 #: Total attempts (first try plus retries) before the alert is recorded
 #: undelivered. Read off the desk's existing transient-fault retry policy
-#: (`LLMCostCircuitConfig.infra_fault_max_retries`) rather than a new number.
-MAX_ATTEMPTS = _Retry.model_fields["infra_fault_max_retries"].default + 1
+#: (`src.infra_retry_policy`, also the cost circuit's defaults) rather than a new number.
+MAX_ATTEMPTS = _retry.MAX_RETRIES + 1
 #: Seconds to wait before each retry: the same policy's exponential backoff
 #: (base doubling, capped at its max). Tests patch this to zero.
 RETRY_DELAYS_S = tuple(
     min(
-        _Retry.model_fields["infra_fault_retry_backoff_base_s"].default * 2**i,
-        _Retry.model_fields["infra_fault_retry_backoff_max_s"].default,
+        _retry.BACKOFF_BASE_S * 2**i,
+        _retry.BACKOFF_MAX_S,
     )
     for i in range(MAX_ATTEMPTS - 1)
 )
