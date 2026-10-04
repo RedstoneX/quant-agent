@@ -7515,10 +7515,10 @@ numbers:
       caller in the trading path, and the only caller
       (scripts/watchlist_candidates.py::main) passes it explicitly. It proposes
       names for a human to add; it never adds one.
-  - id: src.pipeline_delever.DeleverMixin._force_delever:factor[0]
+  - id: src.delever.forced.DeleverForced._force_delever:factor[0]
     value: 0.97
     status: derived
-    site: src/pipeline_delever.py
+    site: src/delever/forced.py
     derived_from: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     base_value: 0.03
     note: >-

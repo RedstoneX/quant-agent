@@ -72,7 +72,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # longer exists — that gate refuses the BUY instead of sizing it (board
     # item 186, 2026-10-01) — and the rule stays because the shape recurs.
     "src/pipeline.py",
-    "src/pipeline_delever.py",
+    "src/pipeline_delever.py", "src/delever/forced.py", "src/delever/ladder.py", "src/delever/conviction.py", "src/delever/enforce.py", "src/delever/trims.py", "src/delever/risk_number.py",
     # The held-position exit engine and the exit-trigger vocabulary -- moved
     # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
     # Every trail multiple and every exit threshold it carries stays scoped.
