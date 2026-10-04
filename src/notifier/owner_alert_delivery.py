@@ -66,16 +66,18 @@ def _record_undelivered(notifier, text: str, attempts: int) -> None:
         logger.exception("could not record an undelivered owner alert")
 
 
-def deliver_with_retry(notifier, text: str, **send_kwargs) -> bool:
-    """Send via `notifier`, retrying a failure; record it if all attempts fail.
+def deliver_with_outcome(
+    notifier, text: str, *, max_attempts: int = MAX_ATTEMPTS, **send_kwargs,
+) -> tuple[bool, bool]:
+    """`deliver_with_retry`, but also says whether the drop was deliberate.
 
-    A deliberate suppression (mute / category filter) or a disabled notifier
-    is settled, not a failure: it is returned at once, never retried.
-    Returns True only when a send landed. Never raises.
+    Returns (delivered, suppressed). Both False is a real failure that was
+    retried and recorded undelivered. A caller that keeps its own durable
+    retry (the cost circuit) passes max_attempts=1. Never raises.
     """
     attempts = 0
     try:
-        for attempt in range(MAX_ATTEMPTS):
+        for attempt in range(max_attempts):
             attempts = attempt + 1
             try:
                 outcome = notifier.send(text, **send_kwargs)
@@ -83,10 +85,12 @@ def deliver_with_retry(notifier, text: str, **send_kwargs) -> bool:
                 logger.exception("owner alert send raised (attempt %d)", attempts)
                 outcome = False
             if outcome:
-                return True
-            if was_suppressed(outcome) or not getattr(notifier, "enabled", True):
-                return False
-            if attempt < MAX_ATTEMPTS - 1:
+                return True, False
+            if was_suppressed(outcome):
+                return False, True
+            if not getattr(notifier, "enabled", True):
+                return False, False
+            if attempt < max_attempts - 1:
                 try:
                     time.sleep(RETRY_DELAYS_S[min(attempt, len(RETRY_DELAYS_S) - 1)])
                 except Exception:  # noqa: BLE001
@@ -94,4 +98,14 @@ def deliver_with_retry(notifier, text: str, **send_kwargs) -> bool:
         _record_undelivered(notifier, text, attempts)
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery discipline failed")
-    return False
+    return False, False
+
+
+def deliver_with_retry(notifier, text: str, **send_kwargs) -> bool:
+    """Send via `notifier`, retrying a failure; record it if all attempts fail.
+
+    A deliberate suppression (mute / category filter) or a disabled notifier
+    is settled, not a failure: it is returned at once, never retried.
+    Returns True only when a send landed. Never raises.
+    """
+    return deliver_with_outcome(notifier, text, **send_kwargs)[0]
