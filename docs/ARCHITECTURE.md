@@ -417,7 +417,24 @@ reported metric with a ratchet that may only go down.
 measured) and fails every mixin. Since 2026-10-04 it also passes
 `src/pipeline_cost_gate.py` and `src/pipeline_halt_gates.py` (the run gates lifted out of
 `TradingPipeline` as duck-typed functions; `tests/test_pipeline_run_gates_boundary.py` drives
-them from `SimpleNamespace` stubs). A harness that passes something it should fail
+them from `SimpleNamespace` stubs). Also since 2026-10-04 it passes
+`src/pipeline_seat_evidence.py`: the seat-evidence block (10 names, 374 lines, moved
+verbatim out of `src/pipeline_stages.py`: the nomination-to-decision join, seat-stance
+rows, the raw seat-nomination gather, the dual-shape macro read and its parse-failure
+stash, the risk seat's per-symbol event and edit snapshot, the advisory-only
+`scale_all_buys` record, the SEC sale-census probe) — duck-typed functions over plain
+arguments, re-exported through the one lazy table in `pipeline_stages` so every old
+import path and patch target still resolves to the same object;
+`tests/test_boundary_pipeline_seat_evidence.py` drives them from stubs. The new file
+is exactly 400 lines because `scripts/file_size_guard.py` refuses any NEW file over
+400 lines — that guard is why this block was taken alone and not combined with another.
+It is deliberately NOT in `SCOPED_PATHS` (no ledgered number site in the block). What
+remains in `pipeline_stages.py` after this and the candidate-records split is the
+levels-coverage / protection-alert block (`_check_levels_coverage`,
+`_alert_owner_protection_failed`, `_alert_holding_discipline_block`, ~255 lines) and
+the sizing-price / book-risk helpers (`_book_risk_inputs`, `_today_sizing_price`,
+`_session_gross_ceiling`, ~180 lines), plus imports, the re-export table and mirror.
+A harness that passes something it should fail
 is not yet a harness.
 
 ### Phase B — fix the layer violations that are already there (small, high value)
