@@ -907,7 +907,7 @@ class EntryStopResolver:
                         side_word=side_word, entry_price=entry_price,
                         stop_loss=stop_loss, atr=atr, level=level,
                         hard_floor=hard_floor, floor_multiple=floor_multiple,
-                        band_multiple=multiple, band_edge=band_edge,
+                        multiple=multiple, band_edge=band_edge,
                     )
                 else:
                     # Nothing computed backs this stop — widen it to the

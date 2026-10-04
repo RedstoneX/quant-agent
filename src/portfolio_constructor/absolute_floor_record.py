@@ -1,4 +1,4 @@
-"""Counted record of the hard ATR floor under every level-backed stop.
+"""Counted rows for the hard ATR floor under every level-backed stop.
 
 `risk.absolute_min_stop_atr_multiple` (ledger id
 `src.config.RiskConfig.absolute_min_stop_atr_multiple`, value 1, filed
@@ -11,36 +11,33 @@ agent logs, 14 trade refusals and 14,179 specialist-evidence rows there are
 9 recorded `stop_honoured_at_computed_level` placements and ZERO
 `stop_widened_to_absolute_atr_floor` ones. The floor has NEVER bound. That
 is NEVER EXERCISED, not broken: every level-backed stop the live desk has
-ever shipped already sat further than 1 ATR from its entry, so the floor had
-nothing to do.
+ever shipped already sat further than 1 ATR from its entry.
 
-So the multiple is NOT changed here. Re-deriving a protection number from
-bars, on a path with a zero denominator, is the trap two earlier
-measurements on this desk fell into. Protection changes are one-way:
-RAISING this floor forces a wider stop on exactly the names whose structure
-is tightest, and LOWERING it permits stops tighter than anything the desk
-has ever placed. Neither is justifiable off zero observations.
+So the multiple is NOT changed here, and no stop moves. Protection changes
+are one-way: RAISING this floor forces a wider stop on exactly the names
+whose structure is tightest, and LOWERING it permits stops tighter than
+anything the desk has ever placed. Neither is justifiable off zero
+observations.
 
-What this module adds is the denominator. It CHANGES NO BEHAVIOUR: `noted`
-returns the same `(honoured, rule)` pair the caller would have computed
-without it, and emits the same two log lines. It additionally counts, per
-desk session:
+What this module adds is the denominator, as COUNTED ROWS. It stores
+nothing: `noted` emits one `ABS_FLOOR_ROW` line per level-backed placement
+carrying that placement's observed distance in ATRs and whether the floor
+bound it, and `summarise` computes the count, the tightest, the widest and
+the mean by reading those rows back at the moment something asks. There is
+no module-level tally and no reset, so no session can inherit another's
+numbers and no test can depend on another test's order.
 
-  * how often the level-honoured branch is reached at all;
-  * how often the floor actually BINDS (the stop is widened to it);
-  * the distance-in-ATRs of every level-backed stop seen, so the next
-    session can read the real distribution rather than assume one.
-
-The third is the measurement the ledger row's settle condition asks for,
-taken on the desk's own live placements instead of on an offline universe
-proxy. Counts are per process, which is one desk session; `snapshot` reads
-them back and `reset` exists for tests, which must never inherit another
-test's tallies.
+The two logging bodies below moved VERBATIM out of
+`src/portfolio_constructor/entry_stop/resolver.py`: same format strings,
+same argument expressions, same local names, so the emitted text is
+byte-identical to what the resolver emitted before. The decision itself is
+still the resolver's -- `inside_hard_floor` arrives already decided and is
+recomputed nowhere here.
 """
 from __future__ import annotations
 
+import json
 import math
-from collections import Counter
 
 from src.portfolio_constructor.config import (
     STOP_RULE_ABSOLUTE_FLOOR,
@@ -48,20 +45,17 @@ from src.portfolio_constructor.config import (
     logger,
 )
 
-#: Level-backed stop outcomes, e.g. {"floor_bound": 0, "floor_clear": 9}.
-_OUTCOMES: Counter[str] = Counter()
-
-#: Running summary of entry-to-stop distance in ATRs across every
-#: level-backed stop seen. Summed rather than listed so nothing here needs a
-#: cap, and so no number in this module could ever govern a trade.
-_SEEN: dict[str, float | None] = {"n": 0, "sum": 0.0, "min": None, "max": None}
+#: Stable prefix every counted row carries, so rows can be found in a log
+#: without guessing at wording.
+ROW_TAG = "ABS_FLOOR_ROW "
 
 
 def distance_in_atrs(entry_price: float, stop_loss: float, atr: float) -> float | None:
     """|entry - stop| in ATRs, or None when it is not readable.
 
     None -- never zero -- for a non-finite or non-positive ATR, so a reader
-    can tell "no reading" from "a reading of nothing".
+    can tell "no reading" from "a reading of nothing". This is the ROW's
+    field only; the log lines below keep the resolver's own expression.
     """
     try:
         entry = float(entry_price)
@@ -76,6 +70,55 @@ def distance_in_atrs(entry_price: float, stop_loss: float, atr: float) -> float 
     return abs(entry - stop) / unit
 
 
+def emit_row(symbol: str, rule: str, bound: bool, observed: float | None) -> str:
+    """Write one counted row for a level-backed placement and return it."""
+    row = json.dumps(
+        {"symbol": symbol, "rule": rule, "floor_bound": bound,
+         "distance_atr": observed},
+        sort_keys=True,
+    )
+    logger.info("%s%s", ROW_TAG, row)
+    return row
+
+
+def rows_from(lines) -> list[dict]:
+    """Every counted row in `lines`, in order. Unparseable rows are skipped."""
+    out: list[dict] = []
+    for line in lines:
+        head, sep, tail = str(line).partition(ROW_TAG)
+        if not sep:
+            continue
+        try:
+            out.append(json.loads(tail.strip()))
+        except ValueError:
+            continue
+    return out
+
+
+def summarise(rows) -> dict[str, object]:
+    """Count the rows and read their spread back; nothing is stored.
+
+    `tightest_atr_seen` is the live answer to the ledger row's open question:
+    the closest any level-backed stop has actually been placed to its entry.
+    None while nothing has been seen -- never a stand-in number.
+    """
+    rows = list(rows)
+    binds = sum(1 for r in rows if r.get("floor_bound"))
+    seen = [
+        float(r["distance_atr"]) for r in rows
+        if isinstance(r.get("distance_atr"), (int, float))
+    ]
+    return {
+        "level_backed_total": len(rows),
+        "floor_binds": binds,
+        "floor_clears": len(rows) - binds,
+        "distance_readings": len(seen),
+        "tightest_atr_seen": min(seen) if seen else None,
+        "widest_atr_seen": max(seen) if seen else None,
+        "mean_atr_seen": (sum(seen) / len(seen)) if seen else None,
+    }
+
+
 def noted(
     *,
     inside_hard_floor: bool,
@@ -88,72 +131,50 @@ def noted(
     level: float,
     hard_floor: float,
     floor_multiple: float,
-    band_multiple: float,
+    multiple: float,
     band_edge: float,
 ) -> tuple[float, str]:
     """Count one level-backed stop and return its `(honoured, rule)` unchanged.
 
     `inside_hard_floor` is the caller's own verdict, recomputed nowhere here:
-    this module observes the decision, it does not make it.
+    this module observes the decision, it does not make it. `honoured` and
+    `rule` are bound to exactly the values the resolver bound them to, so
+    the log bodies below are the resolver's verbatim.
     """
-    observed = distance_in_atrs(entry_price, stop_loss, atr)
-    if observed is not None:
-        _SEEN["n"] += 1
-        _SEEN["sum"] += observed
-        lo, hi = _SEEN["min"], _SEEN["max"]
-        _SEEN["min"] = observed if lo is None else min(lo, observed)
-        _SEEN["max"] = observed if hi is None else max(hi, observed)
-    _OUTCOMES["floor_bound" if inside_hard_floor else "floor_clear"] += 1
-    shown = float("nan") if observed is None else observed
-
     if inside_hard_floor:
         # Real structure, still too close to survive one ordinary session.
-        # Pushed out to the floor and NOT to the full band -- the band is
-        # what §12.1 removed. See the module docstring for why this floor
-        # lives in code rather than in a prompt.
+        # Pushed out to the 1x floor and NOT to the full band -- the band
+        # is what §12.1 removed. See the module docstring for why this
+        # floor lives in code rather than in a prompt.
+        honoured, rule = hard_floor, STOP_RULE_ABSOLUTE_FLOOR
+        emit_row(symbol, rule, True, distance_in_atrs(entry_price, stop_loss, atr))
         logger.info(
-            "Constructor: %s %s stop $%.2f → $%.2f [%s] — it sits at the "
-            "computed structural level $%.2f, which is real, but only %.2f "
-            "ATRs from the $%.2f entry. A stop inside one ordinary day's "
-            "range is a coin flip, so it is moved out to the %.2f x ATR "
-            "floor — not to the %.2f x ATR noise band, which the level "
-            "exempts it from.",
-            side_label, symbol, stop_loss, hard_floor,
-            STOP_RULE_ABSOLUTE_FLOOR, level, shown, entry_price,
-            floor_multiple, band_multiple,
+            "Constructor: %s %s stop $%.2f → $%.2f [%s] — it "
+            "sits at the computed structural level $%.2f, "
+            "which is real, but only %.2f ATRs from the "
+            "$%.2f entry. A stop inside one ordinary day's "
+            "range is a coin flip, so it is moved out to the "
+            "%.2f x ATR floor — not to the %.2f x ATR noise "
+            "band, which the level exempts it from.",
+            side_label, symbol, stop_loss, honoured,
+            STOP_RULE_ABSOLUTE_FLOOR, level,
+            abs(entry_price - stop_loss) / atr, entry_price,
+            floor_multiple, multiple,
         )
-        return hard_floor, STOP_RULE_ABSOLUTE_FLOOR
+        return honoured, rule
 
+    honoured, rule = stop_loss, STOP_RULE_LEVEL_HONOURED
+    emit_row(symbol, rule, False, distance_in_atrs(entry_price, stop_loss, atr))
     logger.info(
-        "Constructor: %s %s stop $%.2f kept [%s] — it sits at the computed "
-        "structural level $%.2f (%.2f ATRs %s the $%.2f entry). The %.2f x "
-        "ATR noise band would have moved it to $%.2f, which is not a level "
-        "anyone is defending, so the band does not apply.",
-        side_label, symbol, stop_loss, STOP_RULE_LEVEL_HONOURED, level,
-        shown, side_word, entry_price, band_multiple, band_edge,
+        "Constructor: %s %s stop $%.2f kept [%s] — it "
+        "sits at the computed structural level $%.2f "
+        "(%.2f ATRs %s the $%.2f entry). The %.2f x ATR "
+        "noise band would have moved it to $%.2f, which "
+        "is not a level anyone is defending, so the band "
+        "does not apply.",
+        side_label, symbol, stop_loss,
+        STOP_RULE_LEVEL_HONOURED, level,
+        abs(entry_price - stop_loss) / atr, side_word,
+        entry_price, multiple, band_edge,
     )
-    return stop_loss, STOP_RULE_LEVEL_HONOURED
-
-
-def snapshot() -> dict[str, object]:
-    """What this session has counted so far, as plain values.
-
-    `tightest_atr_seen` is the live answer to the ledger row's open question:
-    the closest any level-backed stop has actually been placed to its entry.
-    None while nothing has been seen -- never a stand-in number.
-    """
-    return {
-        "level_backed_by_outcome": dict(_OUTCOMES),
-        "level_backed_total": sum(_OUTCOMES.values()),
-        "floor_binds": _OUTCOMES["floor_bound"],
-        "distance_readings": int(_SEEN["n"]),
-        "tightest_atr_seen": _SEEN["min"],
-        "widest_atr_seen": _SEEN["max"],
-        "mean_atr_seen": (_SEEN["sum"] / _SEEN["n"]) if _SEEN["n"] else None,
-    }
-
-
-def reset() -> None:
-    """Drop the tallies. For tests only."""
-    _OUTCOMES.clear()
-    _SEEN.update({"n": 0, "sum": 0.0, "min": None, "max": None})
+    return honoured, rule
