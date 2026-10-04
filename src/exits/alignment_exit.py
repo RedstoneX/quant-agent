@@ -197,11 +197,35 @@ class AlignmentExit:
                     act, symbol, verdict.reason,
                 )
             except Exception as e:  # noqa: BLE001 — a failure here HOLDS
-                logger.warning(
+                logger.exception(
                     "Alignment scan: %s could not be evaluated (%s) — no sale "
                     "is raised for it",
                     getattr(position, "symbol", "?"), e,
                 )
+                # LOUD, IN THE DATA. A swallowed failure here used to leave
+                # the session indistinguishable from one where the scan
+                # never ran: the warning above is not stored anywhere a
+                # reader of the readings table can see. The position now
+                # gets an explicit not-evaluated row naming the failure, so
+                # "the scan broke on this name" and "the scan never ran"
+                # stop looking identical. The row is the same shape the
+                # skip branch already writes — no chart read is bought.
+                _failed_symbol = (
+                    getattr(position, "symbol", "") or ""
+                ).strip().upper()
+                if _failed_symbol:
+                    try:
+                        _failed_qty = float(getattr(position, "qty", 0) or 0)
+                    except (TypeError, ValueError):
+                        _failed_qty = 0.0
+                    self._record_alignment_reading(
+                        symbol=_failed_symbol, verdict=None, run_id=run_id,
+                        is_short=_failed_qty < 0,
+                        not_evaluated_reason=(
+                            "the scan raised an error for this position, so "
+                            f"its chart reading is unknown: {type(e).__name__}: {e}"
+                        ),
+                    )
 
     def _record_alignment_reading(
         self, *, symbol: str, verdict, run_id: str, is_short: bool,
@@ -215,9 +239,14 @@ class AlignmentExit:
                 is_short=is_short, not_evaluated_reason=not_evaluated_reason,
             )
         except Exception as e:  # noqa: BLE001 — a recording never blocks
-            logger.warning(
-                "alignment-exit reading for %s was not recorded (%s)",
-                symbol, e,
+            # `exception`, not `warning`: this is the OTHER place an empty
+            # readings table can come from, and a bare one-line warning left
+            # nothing to tell the two apart. The traceback names which layer
+            # refused the write.
+            logger.exception(
+                "alignment-exit reading for %s was NOT recorded (%s: %s) — "
+                "the readings table will under-report this session",
+                symbol, type(e).__name__, e,
             )
 
     def _position_opened_today(self, symbol: str) -> bool:
