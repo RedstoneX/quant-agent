@@ -83,7 +83,7 @@ boundaries. Fix: convert them the way the sessions, exits, protection, broker
 and storage packages were done, and add witness tests.
 
 CLOSED 2026-10-02 (fourth and fifth instalments): all eleven parts are HELD
-instances on `LLMCostCircuitBreaker` (`_hold_parts`); every `breaker_*.py`
+instances on `LLMCostCircuitBreaker` (`_hold_parts`, wired by `assembly.py`); every `breaker_*.py`
 shim module is deleted and the class inherits from nothing. Three
 collaborators had to be handed in live rather than snapshotted (`notifier`,
 `_connect`, the owner-notify sentinel); see docs/ARCHITECTURE.md.

@@ -26,6 +26,7 @@ from src.cost_circuit.parts.owner_notify import OwnerNotify
 from src.cost_circuit.parts.quota_holds import QuotaHolds
 from src.cost_circuit.parts.shim_guard import _is_class_shim
 from src.cost_circuit.breaker import LLMCostCircuitBreaker
+from src.cost_circuit.assembly import hold_parts
 from tests.boundary_harness import check_boundary
 
 
@@ -59,6 +60,7 @@ def test_every_lifted_piece_is_constructible_from_stubs(cls):
     "src.cost_circuit.parts.infra_retry",
     "src.cost_circuit.parts.operator_controls",
     "src.cost_circuit.parts.session_lifecycle",
+    "src.cost_circuit.assembly",
 ])
 def test_every_lifted_module_passes_the_boundary_check(module):
     verdict = check_boundary(module)
@@ -203,6 +205,26 @@ def test_breaker_holds_every_part_instead_of_inheriting_any():
     assert breaker._self_clear_window_minutes() == 42.0
     breaker._operator_controls.status = lambda: {"swapped": True}
     assert breaker.status() == {"swapped": True}
+
+
+def test_assembly_wires_every_part_onto_a_stub_with_no_breaker_behind_it():
+    """The wiring is its own piece: `hold_parts` builds all eleven parts onto
+    any object carrying the breaker's slots -- here a bare stub, no breaker,
+    no pipeline -- and the breaker's `_hold_parts` is a two-line call to it."""
+    import inspect
+    stub = MagicMock(name="breaker_stub")
+    stub.config = object()
+    hold_parts(stub)
+    for attr, cls in HELD.items():
+        assert isinstance(getattr(stub, attr), cls), attr
+    assert stub._quota_holds._state_row.__self__ is stub._circuit_state
+    assert stub._emergency_latch.notifier is stub.notifier
+    # The breaker only delegates: no construction logic is left in the holder.
+    body = inspect.getsource(LLMCostCircuitBreaker._hold_parts).strip().splitlines()
+    assert body == ["def _hold_parts(self) -> None:", "        hold_parts(self)"], body
+    for part, names in LLMCostCircuitBreaker._DELEGATES.items():
+        for name in names:
+            assert part in HELD and hasattr(HELD[part], name), (part, name)
 
 
 def test_held_parts_see_collaborators_that_change_after_construction():

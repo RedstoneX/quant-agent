@@ -149,6 +149,7 @@ _SUBMODULES = (
     "src.cost_circuit.parts.infra_retry",
     "src.cost_circuit.parts.operator_controls",
     "src.cost_circuit.parts.session_lifecycle",
+    "src.cost_circuit.assembly",
     "src.cost_circuit.breaker",
     "src.cost_circuit.entrypoints",
 )
