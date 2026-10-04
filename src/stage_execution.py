@@ -15,7 +15,7 @@ from src.entry_evidence import (
     record_scale_in_own_verdict as _record_scale_in_own_verdict,
     resolve_entry_pins as _resolve_entry_pins,
 )
-from src.execution.entry_record import insert_pending_entry
+from src.entry_record import insert_pending_entry
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,

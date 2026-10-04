@@ -84,12 +84,12 @@ def test_storage_layer_is_not_scanned() -> None:
 def test_the_real_entry_write_no_longer_uses_a_silent_default() -> None:
     """The two fields measured empty in production are read loudly now, and
     so is the third built-route field the same call pins. The write lives in
-    src/execution/entry_record.py, lifted out of the execution stage."""
+    src/entry_record.py, lifted out of the execution stage."""
     from pathlib import Path
 
     from scripts.guard_reference import ROOT
 
-    text = Path(ROOT, "src/execution/entry_record.py").read_text(encoding="utf-8")
+    text = Path(ROOT, "src/entry_record.py").read_text(encoding="utf-8")
     assert 'entry_atr=pinned_evidence(entry_analysis, "atr_14")' in text
     assert 'stop_basis=pinned_evidence(decision, "stop_rule")' in text
     assert 'requested_risk_pct=pinned_evidence(decision, "requested_risk_pct")' in text

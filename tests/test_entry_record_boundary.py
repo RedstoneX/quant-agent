@@ -1,4 +1,4 @@
-"""Boundary witness for src/execution/entry_record.py.
+"""Boundary witness for src/entry_record.py.
 
 The pending-entry row writer was lifted out of ``ExecutionStage._run_session``.
 The project's boundary test is: can the piece be CONSTRUCTED and EXERCISED from
@@ -18,10 +18,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.execution.entry_record import insert_pending_entry
+from src.entry_record import insert_pending_entry
 from tests.boundary_harness import check_boundary
 
-MODULE = "src.execution.entry_record"
+MODULE = "src.entry_record"
 
 
 def _decision(**overrides):
