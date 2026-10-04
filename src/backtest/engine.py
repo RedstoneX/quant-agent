@@ -94,6 +94,31 @@ OTHER DECLARED SIMPLIFICATIONS
   days cannot evaluate live rationing. The share is not a discount you
   can apply to the other numbers: who got funded changes later equity,
   later size, and later outcomes.
+
+  Every run ALSO reports `contested_budget_days`: the strictly narrower
+  count of days on which two or more new candidates competed AND at
+  least one was cut. Those are the days the alphabetical tie-break
+  actually arbitrated between names. A day with a single candidate
+  trimmed by already-held risk binds the budget but decides nothing by
+  spelling, and production would have trimmed it the same way, so it is
+  not contested. A run with ZERO contested days has no alphabetical
+  arbitration anywhere in it and is therefore settleable; one with any
+  contested day is reported as a NON-RESULT by the tool itself rather
+  than left for a reader to disqualify. Zero is the line because this
+  engine compounds equity off realized P&L: one funding call decided by
+  spelling moves every later size and every later outcome, so there is
+  no share of contested days that can be treated as noise around an
+  otherwise sound number.
+
+NOT SUBSTITUTED — why the asks stay equal
+------------------------------------------
+Production's `requested_pct` is `combined_override.value`
+(src/portfolio_constructor/__init__.py), a conviction multiplier built
+from the analyst and PM verdicts. There is no deterministic quantity in
+this engine's reach that reproduces it. Making the asks differ per
+candidate here would mean inventing a quality score, which is the one
+thing this tool refuses to do, so the asks stay equal and the
+consequence is DECLARED and COUNTED instead of disguised.
 """
 
 from __future__ import annotations
@@ -201,6 +226,20 @@ class BacktestRunResult:
     #: ticker tie-break is the order they are served. That is not a
     #: ranking, and it is not production's `rank_verdicts` spend-down.
     binding_budget_days: int
+    #: Days on which TWO OR MORE new candidates competed and at least one
+    #: was cut — the days the alphabetical tie-break actually arbitrated
+    #: between names. Strictly a subset of `binding_budget_days`. Any
+    #: value above zero makes the run a NON-RESULT for settling a
+    #: parameter: see the module docstring for why zero is the line.
+    contested_budget_days: int
+
+    @property
+    def is_settleable(self) -> bool:
+        """Whether a parameter conclusion may be read off this run at
+        all. False whenever ticker spelling arbitrated any funding
+        decision, because compounding carries that choice into every
+        later size and outcome."""
+        return self.contested_budget_days == 0
 
 
 def _fill_price(raw_price: float, direction: str, side: str, slippage_bps: float) -> float:
@@ -456,6 +495,19 @@ def _budget_binds(allocation: BudgetAllocation) -> bool:
     )
 
 
+def _tie_break_arbitrated(allocation: BudgetAllocation, new_request_count: int) -> bool:
+    """True when the alphabetical tie-break actually DECIDED something.
+
+    That needs two conditions together: at least two new candidates
+    competed on the day, and at least one of them was not granted in
+    full. With a single candidate there is nobody to order it against —
+    a cut there is the ceiling or a cluster cap biting, exactly as it
+    would in production. `_budget_binds` counts both cases; this counts
+    only the ones where ticker spelling chose between names.
+    """
+    return new_request_count >= 2 and _budget_binds(allocation)
+
+
 def run_backtest(
     *, config: AppConfig, bars_by_symbol: dict[str, list[OHLCV]], params: BacktestParams,
 ) -> BacktestRunResult:
@@ -514,6 +566,7 @@ def run_backtest(
     skipped_symbol_days = 0
     entry_days = 0
     binding_budget_days = 0
+    contested_budget_days = 0
 
     for i, day in enumerate(calendar):
         # ---- 1. Exits, then trailing-stop updates, for open positions ----
@@ -651,6 +704,8 @@ def run_backtest(
         entry_days += 1
         if _budget_binds(allocation):
             binding_budget_days += 1
+        if _tie_break_arbitrated(allocation, len(requests)):
+            contested_budget_days += 1
 
         for c in candidates:
             granted = allocation.granted(c["symbol"])
@@ -696,4 +751,5 @@ def run_backtest(
         final_equity=round(params.initial_equity + realized_pnl, 2),
         entry_days=entry_days,
         binding_budget_days=binding_budget_days,
+        contested_budget_days=contested_budget_days,
     )
