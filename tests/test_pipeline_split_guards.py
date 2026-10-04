@@ -37,7 +37,7 @@ from src.ledger_move import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LEDGER_PATH = REPO_ROOT / "config" / "number_ledger.yaml"
-NUMBER_SOURCES_PATH = REPO_ROOT / "src" / "number_sources.py"
+NUMBER_SOURCES_PATH = REPO_ROOT / "src" / "number_scope.py"  # holds SCOPED_PATHS
 
 def test_no_new_duplicated_pipeline_method_against_trunk() -> None:
     """Mixin MRO risk (plan 5.4): two mixins defining one name is a silent win for
