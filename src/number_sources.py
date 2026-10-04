@@ -211,6 +211,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/risk",
     "src/portfolio_constructor",
     "src/rotation.py",
+    "src/infra_retry_policy.py",
     "src/nominations.py",
     "src/evidence_gate.py",
     "src/verdicts.py",
