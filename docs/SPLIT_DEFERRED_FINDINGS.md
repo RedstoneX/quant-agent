@@ -95,10 +95,12 @@ VERDICT 2026-10-02 (isolation pass): INCORRECT. Earlier verdict read only the `c
 The position builder, the portfolio-manager seat and the prompt-facts review
 chunk are under the ceiling but are not separable pieces. Same treatment.
 
-STILL OPEN, measured 2026-10-02: `tests/test_boundary_harness.py` passes 12
-tests but covers only the pipeline mixins; mixins remain in
-`src/pipeline_prompt_facts_review.py` and
-`src/agents/portfolio_manager/prompt_evidence.py`.
+UPDATE 2026-10-04: `PromptFactsReviewMixin` is now shims only; its eleven bodies
+live as five constructed parts under `src/prompt_facts/review/`, each witnessed in
+`tests/test_prompt_facts_parts_boundary.py`. `PromptEvidenceMixin` bodies already
+live on `PromptEvidence` (witnessed); the agent still INHERITS the shim class, and
+61 test sites call those names on the agent class, so dropping the inheritance is a
+separate change.
 
 DONE 2026-10-04 for `PromptEvidenceMixin`: `PortfolioManagerAgent` no longer inherits it. `hold_prompt_evidence` builds one `PromptEvidence` and installs classmethod delegates on the agent (61 class-level test call sites counted, all still resolving, none rewritten); `tests/test_portfolio_manager_parts_boundary.py` builds and runs the part on a bare class. Three mixins remain on the seat (`DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`) plus `PromptFactsReviewMixin`.
 
