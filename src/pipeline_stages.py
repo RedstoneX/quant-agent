@@ -614,7 +614,7 @@ def _alert_owner_protection_failed(pipeline, spec: dict, protection,
 
 
 def _alert_holding_discipline_block(
-    *, symbol: str, action: str, reasons: tuple[str, ...] | list[str],
+    pipeline, *, symbol: str, action: str, reasons: tuple[str, ...] | list[str],
 ) -> None:
     """Standalone owner alert: an exit was BLOCKED because the justification
     the Risk Manager gave for it is contradicted by the desk's own data.
