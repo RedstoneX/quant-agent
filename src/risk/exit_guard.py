@@ -68,6 +68,7 @@ __all__ = [
     "EXTERNAL_INFORMATION_PATTERNS",
     "cites_external_information",
     "adverse_move_is_noise",
+    "noise_band_anchor",
     "noise_band_atr",
     "NOISE_BAND_ATR_MULTIPLE",
     "BREAK_CONFIRMATION_ATR_MULTIPLE",
@@ -914,6 +915,35 @@ def noise_band_atr(days_held: int | float | None, *, multiple: float = NOISE_BAN
     return multiple * math.sqrt(days)
 
 
+def noise_band_anchor(
+    entry: float,
+    extreme_since_entry: float | None,
+    *,
+    is_short: bool,
+) -> float:
+    """The price the noise band is measured FROM: the running extreme since
+    entry (highest high for a long, lowest low for a short), falling back to
+    entry when no extreme is available.
+
+    Clamped so the anchor is never WORSE for the holder than entry — a long
+    anchors at `max(entry, highest_high)`, a short at `min(entry, lowest_low)`.
+    A real running extreme since entry already satisfies the clamp; it bites
+    only on a malformed or stale value.
+
+    The clamp alone does NOT make re-anchoring block-free: a larger adverse
+    move can bring a position that was flat-or-winning versus entry INSIDE the
+    band for the first time. Whether that adds a block depends on what the
+    calling home does with a non-adverse move, so the no-added-blocks property
+    belongs to a home, not to this function — see
+    `check_structural_protection`, which already blocks on `adverse <= 0` and
+    therefore can only lose blocks by re-anchoring.
+    """
+    ext = _finite(extreme_since_entry) if extreme_since_entry is not None else None
+    if ext is None or ext <= 0:
+        return entry
+    return min(entry, ext) if is_short else max(entry, ext)
+
+
 def adverse_move_is_noise(
     entry: float,
     current_price: float,
@@ -922,9 +952,32 @@ def adverse_move_is_noise(
     multiple: float = NOISE_BAND_ATR_MULTIPLE,
     side: str = "sell",
     days_held: int | float | None = None,
+    extreme_since_entry: float | None = None,
 ) -> bool:
-    """True when the position has moved ADVERSELY from entry by less than
-    the noise band for how long it has been held.
+    """True when the position has moved ADVERSELY from its anchor by less
+    than the noise band for how long it has been held.
+
+    ANCHOR. The default anchor is ENTRY, exactly as before. A caller that can
+    read the position's RUNNING EXTREME since entry (highest high for a long,
+    lowest low for a short) may pass it as `extreme_since_entry` and the
+    adverse move is then measured from there instead; `None` reproduces the
+    entry-anchored behaviour bit for bit.
+
+    MEASURED 2026-10-04 (19 symbols, 9,519 daily bars,
+    2024-09-30..2026-09-29, 424 trail-stop exit events, each home's real
+    control flow modelled) — the anchor is NOT a free choice, it is per-home:
+
+      * `check_structural_protection`'s fallback: re-anchoring removes 54
+        blocks and adds NONE, because that home already blocks whenever the
+        adverse move is <= 0, so a larger adverse move can only ever release
+        a block. It passes `extreme_since_entry`.
+      * The midday position reviewer: re-anchoring ADDS 191 blocks against 51
+        removed — of the added, 96 cost money and 95 saved (a coin flip), and
+        129 never release within 60 sessions. It stays ENTRY-anchored and
+        passes nothing.
+
+    The WIDTH (`multiple`, and the sqrt(sessions) widening) is UNCHANGED
+    either way, and deleting the band was measured and is NOT supported.
 
     The band is `multiple * ATR * sqrt(days_held)` (floor 1 session) — see
     `noise_band_atr`. Passing no `days_held` (the old call shape) reproduces
@@ -949,7 +1002,9 @@ def adverse_move_is_noise(
     atr_f = _finite(atr) if atr is not None else None
     if ent is None or cur is None or atr_f is None or atr_f <= 0 or ent <= 0:
         return False
-    adverse = (cur - ent) if str(side).lower() == "buy" else (ent - cur)
+    is_short = str(side).lower() == "buy"
+    anchor = noise_band_anchor(ent, extreme_since_entry, is_short=is_short)
+    adverse = (cur - anchor) if is_short else (anchor - cur)
     if adverse <= 0:
         return False   # flat or winning — not this guard's business
     return adverse < noise_band_atr(days_held, multiple=multiple) * atr_f
@@ -1642,6 +1697,7 @@ def check_structural_protection(
     prior_break_streak: int | None = None,
     prior_break_records: list | None = None,
     prior_session_dates: list | None = None,
+    extreme_since_entry: float | None = None,
 ) -> StructuralProtectionCheck:
     """Decide whether a position's thesis-backing level is still intact.
 
@@ -2021,7 +2077,20 @@ def check_structural_protection(
     # applies only to the thesis/level basis.
     cur = _finite(current_price)
     if ent is not None and atr_f is not None and atr_f > 0 and cur is not None:
-        adverse = (cur - ent) if is_short else (ent - cur)
+        # 2026-10-04 RE-ANCHOR, measured: anchored on the RUNNING EXTREME
+        # since entry when the caller supplies one (highest high long /
+        # lowest low short), falling back to entry when it does not.
+        # This home can only LOSE blocks by re-anchoring, and that is a
+        # property of the control flow right below rather than of the
+        # sample: the anchor is never worse for the holder than entry, so
+        # the measured adverse move can only grow; if the grown move is
+        # still <= 0 the old one was too (blocked then, blocked now), and
+        # if it is positive but inside the band the old one was inside the
+        # band too (blocked then, blocked now). There is no early return
+        # between the two, so a block can only be released, never created.
+        _anchor = noise_band_anchor(ent, extreme_since_entry, is_short=is_short)
+        _anchor_kind = "extreme_since_entry" if _anchor != ent else "entry"
+        adverse = (cur - _anchor) if is_short else (_anchor - cur)
         if adverse <= 0:
             # Flat or in profit — never this fallback's business.
             return StructuralProtectionCheck(
@@ -2029,13 +2098,15 @@ def check_structural_protection(
                 detail=(
                     "no thesis_invalid_if and no verified structural level "
                     "under the stop, but price is flat/favourable versus "
-                    "entry — protected; the noise band was NOT evaluated "
+                    "its running extreme since entry — protected; the "
+                    "noise band was NOT evaluated "
                     "(there is no adverse move to compare against it)"
                 ),
                 raw_broken=False,
             )
         is_noise = adverse_move_is_noise(
             ent, cur, atr_f, side=("buy" if is_short else "sell"),
+            extreme_since_entry=extreme_since_entry,
         )
         # BOARD ITEM 70 (2026-10-04): this home's outcome text, on BOTH
         # outcomes, is built by `src/risk/noise_band_record.py` so the band's
@@ -2044,6 +2115,7 @@ def check_structural_protection(
         _protected, _basis, _detail = noise_band_fallback_outcome(
             ent=ent, cur=cur, atr_f=atr_f, is_short=is_short,
             is_noise=bool(is_noise), band_multiple=NOISE_BAND_ATR_MULTIPLE,
+            anchor=_anchor, anchor_kind=_anchor_kind,
         )
         return StructuralProtectionCheck(
             protected=_protected, basis=_basis, detail=_detail,
