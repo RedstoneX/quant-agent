@@ -905,7 +905,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py::RiskConfig and src/data/levels.py@`def cluster_span(`. 1.0 means the
+      src/config/__init__.py::RiskConfig and src/data/levels.py::cluster_span. 1.0 means the
       projection IS the instrument's typical excursion over the stated horizon
       and nothing more, so the claim is read off the instrument rather than
       chosen. Note the documented interaction with min_stop_atr_multiple at
@@ -2759,7 +2759,7 @@ numbers:
     site: src/data/levels.py
     note: >-
       Bars either side of a candidate swing point for the LEVEL scan. Levels
-      place stops, so this reaches a trade. src/risk/trailing.py::__all__ records
+      place stops, so this reaches a trade. src/risk/trailing.py::PIVOT_WINDOW records
       that this is 5 while the trailing-stop pivot window is 3, that nothing
       downstream compares a level from here against a pivot from there, and
       that tests/test_pivot_window_independence.py pins both facts.
@@ -2889,7 +2889,7 @@ numbers:
       Wilder's original lookback, as published in J. Welles Wilder, New
       Concepts in Technical Trading Systems (1978), and the period every chart
       package means by "ATR(14)". Definition site and reasoning:
-      src/data/technical.py@`from src.models import OHLCV, TechnicalIndicator`.
+      src/data/technical.py::ATR_PERIOD.
     note: >-
       The ATR lookback. Every stop, every noise band and every ATR multiple in
       this ledger is a multiple of THIS unit, and it was out of scope while
@@ -3078,7 +3078,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       Below this many resolved symbols a share is noise - one empty result out
-      of three is 33% and means nothing (src/pipeline_stages.py@`from src.config import AppConfig`). It
+      of three is 33% and means nothing (src/pipeline_stages.py::LEVELS_COVERAGE_MIN_SAMPLE). It
       only suppresses a false ALARM on small or degenerate universes (tests, a
       misconfigured owner universe); production runs 100+ symbols so it never
       binds there, and it changes no trade either way.
@@ -3811,7 +3811,7 @@ numbers:
     note: >-
       One dollar of cash deficit, below which negative cash is treated as
       rounding noise - fill rounding, commission leftovers, mid-vs-fill drift
-      (src/risk/constants.py@`import math`). It decides whether a cash-only-policy
+      (src/risk/constants.py::MARGIN_DEFICIT_FLOOR_USD). It decides whether a cash-only-policy
       ACTION fires on what is arithmetically dust; it does not size, price,
       gate or exit a trade.
   - id: src.risk.constants.REWARD_RISK_PARITY
@@ -4709,7 +4709,7 @@ numbers:
     site: src/risk/size_override.py
     note: >-
       An ordinal in the size-override absorbing algebra (`no_trading > close >
-      reduce_only > multiplier`, src/risk/size_override.py@`from typing import Literal`). `combine()`
+      reduce_only > multiplier`, src/risk/size_override.py::_RANK). `combine()`
       keeps the operand with the lower rank. The VALUE carries no magnitude -
       only the ordering does, and the ordering is item 13's, not this file's.
       Any strictly increasing encoding behaves identically.
@@ -4997,7 +4997,7 @@ numbers:
       `arbitrary` rather than being dressed up as sourced.
     open_question: >-
       How many bars either side make a swing point a swing point?
-      src/risk/trailing.py::__all__ records that the level scan uses 5 and this
+      src/risk/trailing.py::PIVOT_WINDOW records that the level scan uses 5 and this
       uses 3 with no shared consumer.
     cost_while_unanswered: >-
       Trailing stops are placed on pivots found by a window nothing measured,
@@ -5196,7 +5196,7 @@ numbers:
     status: sourced
     site: src/verdicts.py
     source: >-
-      src/verdicts.py@`from __future__ import annotations`. The maximum of a scale defined as 0..1.
+      src/verdicts.py::CONVICTION_SCORE. The maximum of a scale defined as 0..1.
     note: >-
       The top of the same 0..1 encoding.
   - id: src.verdicts.CONVICTION_SCORE['medium']
@@ -5204,7 +5204,7 @@ numbers:
     status: sourced
     site: src/verdicts.py
     source: >-
-      src/verdicts.py@`from __future__ import annotations`: equal spacing on a three-point scale puts the
+      src/verdicts.py::CONVICTION_SCORE: equal spacing on a three-point scale puts the
       midpoint at 0.5 by construction, and the comment states nothing measured
       justifies anything else. The spacing is read off the scale; whether the
       scale should be equally spaced is the open question on the SEAT_WEIGHT
@@ -5232,7 +5232,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
+      src/verdicts.py::SEAT_WEIGHT cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here post-earnings-announcement drift (Ball &
       Brown 1968; Bernard & Thomas 1989/1990). The MAGNITUDE is not: nothing
@@ -5245,7 +5245,7 @@ numbers:
       20-resolved-call bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
+      spacing silently reorders the book; src/verdicts.py@`The amendment: use a real, externally published prior now, on outside literature about the general reliability of each TYPE of analysis (not a claim about how good THIS desk's specific analyst prompts are) — and let it be overridden the moment the desk's own conviction ledger clears the 20-resolved-call bar per seat` already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['macro']
     settles_by:
@@ -5266,7 +5266,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
+      src/verdicts.py::SEAT_WEIGHT cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here macro forecast effects fitting in-sample
       and failing out-of-sample (Benhenda 2026). The MAGNITUDE is not: nothing
@@ -5279,7 +5279,7 @@ numbers:
       bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
+      spacing silently reorders the book; src/verdicts.py@`The amendment: use a real, externally published prior now, on outside literature about the general reliability of each TYPE of analysis (not a claim about how good THIS desk's specific analyst prompts are) — and let it be overridden the moment the desk's own conviction ledger clears the 20-resolved-call bar per seat` already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['news']
     value: 1
@@ -5310,7 +5310,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
+      src/verdicts.py::SEAT_WEIGHT cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here insider edges living almost entirely in the
       pre-disclosure window. The MAGNITUDE is not: nothing in that literature
@@ -5323,7 +5323,7 @@ numbers:
       20-resolved-call bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
+      spacing silently reorders the book; src/verdicts.py@`The amendment: use a real, externally published prior now, on outside literature about the general reliability of each TYPE of analysis (not a claim about how good THIS desk's specific analyst prompts are) — and let it be overridden the moment the desk's own conviction ledger clears the 20-resolved-call bar per seat` already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['technical']
     settles_by:
@@ -5344,7 +5344,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
+      src/verdicts.py::SEAT_WEIGHT cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here cross-sectional momentum (Jegadeesh &
       Titman 1993; replicated by Rouwenhorst 1998). The MAGNITUDE is not:
@@ -5357,14 +5357,14 @@ numbers:
       20-resolved-call bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
+      spacing silently reorders the book; src/verdicts.py@`The amendment: use a real, externally published prior now, on outside literature about the general reliability of each TYPE of analysis (not a claim about how good THIS desk's specific analyst prompts are) — and let it be overridden the moment the desk's own conviction ledger clears the 20-resolved-call bar per seat` already
       commits to overriding it with measured history.
   - id: src.verdicts._DEFAULT_SEAT_WEIGHT
     value: 1
     status: sourced
     site: src/verdicts.py
     source: >-
-      src/verdicts.py::__all__: unweighted, never zero, so a seat added before
+      src/verdicts.py::_DEFAULT_SEAT_WEIGHT: unweighted, never zero, so a seat added before
       its own literature review lands is never silently muted. 1.0 is the
       unweighted baseline the table itself is expressed against, not a chosen
       magnitude.
@@ -7975,7 +7975,7 @@ numbers:
     note: >-
       Window of the quarterly meta-reflection digest
       (src/pipeline_intraday.py::IntradayMixin._intraday_open_overlap_skip). Its output reaches a prompt only as a
-      STAGED edit a human applies: config/settings.yaml@`# (launchd fires it every 30-min tick across 09:` deploys
+      STAGED edit a human applies: config/settings.yaml@`dry_run: true # explicit (was relying on the schema default)` deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.stage_execution.ExecutionStage._run_session:factor[0]
     settles_by:

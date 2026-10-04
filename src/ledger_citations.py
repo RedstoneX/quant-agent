@@ -49,6 +49,45 @@ def _python_symbols(source: str) -> set[str]:
     return found
 
 
+_IMPORT_RE = re.compile(r"^\s*(import\s+\S|from\s+\S+\s+import\b)")
+_OPENERS = {"(": ")", "[": "]", "{": "}"}
+_PREFIX_OK = re.compile(r"^[\s#>*|\-\"'`/]*$")
+_ASSIGN_PREFIX = re.compile(r"^\s*[\w.\[\]]+\s*(:[^=]+)?=\s*$")
+
+
+def _unbalanced(text: str) -> bool:
+    stack: list[str] = []
+    for ch in text:
+        if ch in _OPENERS:
+            stack.append(_OPENERS[ch])
+        elif ch in _OPENERS.values():
+            if not stack or stack.pop() != ch:
+                return True
+    return bool(stack)
+
+
+def _cannot_substantiate_text(snip: str, body: str) -> str | None:
+    """Why a text pin proves nothing, or None. An import line, an unbalanced
+    fragment, or text that starts mid-sentence says nothing about a number."""
+    if _IMPORT_RE.match(snip):
+        return "text pin is an import statement"
+    if _unbalanced(snip):
+        return "text pin has unbalanced brackets (a mid-sentence fragment)"
+    tokens = snip.split()
+    if not tokens:
+        return "text pin is empty"
+    hit = re.search(r"\s+".join(re.escape(t) for t in tokens), body)
+    if hit is None:
+        return None
+    line_start = body.rfind("\n", 0, hit.start()) + 1
+    before = body[line_start : hit.start()]
+    if _PREFIX_OK.match(before) or re.search(r"[.:;!?]\s+$", before):
+        return None
+    if _ASSIGN_PREFIX.match(before):
+        return None
+    return "text pin begins mid-sentence, not at a statement or sentence boundary"
+
+
 def _string_fields(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -100,9 +139,17 @@ def broken_citations(
                     continue
                 if rel not in symbols:
                     symbols[rel] = _python_symbols(body)
-                if match.group("sym").rstrip(".") not in symbols[rel]:
+                sym = match.group("sym").rstrip(".")
+                if "." not in sym and sym.startswith("__") and sym.endswith("__"):
+                    out.append((site_id, "module-level dunder (e.g. __all__) substantiates nothing", match.group(0)))
+                    continue
+                if sym not in symbols[rel]:
                     out.append((site_id, "symbol not defined in that file", match.group(0)))
             elif match.group("snip"):
                 if _normalise_text(match.group("snip")) not in _normalise_text(body):
                     out.append((site_id, "cited text not found in that file", match.group(0)))
+                    continue
+                why = _cannot_substantiate_text(match.group("snip"), body)
+                if why:
+                    out.append((site_id, why, match.group(0)))
     return out

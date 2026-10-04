@@ -916,3 +916,29 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
                     "2026-09-30 ruling on global risk dials bars."
                 )
                 start = hit + 1
+
+
+@pytest.mark.parametrize(
+    "cite",
+    [
+        "src/verdicts.py::__all__",
+        "src/risk/trailing.py::__all__",
+        "src/risk/constants.py@`import math`",
+        "src/data/technical.py@`from src.models import OHLCV, TechnicalIndicator`",
+        "src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W`",
+        "src/verdicts.py@`analyst prompts are) — and let it be overridden`",
+        "src/verdicts.py@`weight applies there).** The original rule was`",
+    ],
+)
+def test_a_citation_that_cannot_substantiate_anything_is_refused(cite: str) -> None:
+    """Item 232: resolving is not substantiating. These are the measured
+    bystander pins; each must stay refused if anybody writes it back."""
+    root = Path(__file__).resolve().parent.parent
+    row = {"x.y": {"status": "sourced", "source": f"see {cite} for it"}}
+    assert [s for s, _, _ in broken_citations(row, root)] == ["x.y"]
+
+
+def test_a_citation_that_substantiates_is_accepted() -> None:
+    root = Path(__file__).resolve().parent.parent
+    row = {"x.y": {"status": "sourced", "source": "see src/verdicts.py::SEAT_WEIGHT"}}
+    assert broken_citations(row, root) == []
