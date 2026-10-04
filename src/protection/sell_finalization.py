@@ -553,7 +553,10 @@ class SellFinalization:
         drain path (``_drain_pending_protection_restores``) doesn't have
         to guess it back from live broker state later.
         """
-        return write_ahead_restore_row(self.db, logger, _WAL_SELL_SENTINEL, symbol, position_qty_before_sell, specs, side)
+        return write_ahead_restore_row(
+            self.db, logger, _WAL_SELL_SENTINEL, symbol,
+            position_qty_before_sell, specs, side,
+        )
 
     def _restore_after_unconfirmed_sell(
         self,
