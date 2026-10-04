@@ -36,9 +36,16 @@ kept as history and marked DONE where they describe a stored file that is gone.
     makes a stored count (sum of deltas) that a test checks equals the live
     count of arbitrary rows, which the tree could give directly. Whether the
     count half is bookkeeping to remove is an open call; not changed here.
-  - `config/prompt_only_numbers.yaml`: AMBIGUOUS. Rows carry a recorded reason
-    and open question (register), yet a test also uses the rows as the allow-list
-    of threshold-shaped figures permitted in prompt sheets.
+  - `config/prompt_only_numbers.yaml`: RULED KEEP (2026-10-04). Test applied:
+    the figures present in a sheet ARE derivable (the test's shape list finds
+    them), but each row's status and open question is a human judgement that a
+    number is prompt-only and unsettled, which no scan can produce. Staleness is
+    covered both ways by the tests: a new figure with no row fails, and a row
+    whose figure left the sheet fails. REAL GAP, not a tidy close: nothing
+    detects a number that stops being prompt-only while its prose stays (for
+    example it becomes code-computed or ledgered), and a `sourced` status is
+    never checked against anything. The shape list is also a known-string
+    scan, so a reworded figure is missed (the test file says so).
 - Source-reading tests, re-counted 2026-10-04: 119 of 480 test files by a broad
   text heuristic (AST/getsource use, or file reads combined with a source-path or
   git-listing pattern), 44 by a strict one (AST/getsource AND a repo path)
