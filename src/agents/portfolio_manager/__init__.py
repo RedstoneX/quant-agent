@@ -64,6 +64,10 @@ from src.agents.portfolio_manager.prompt_evidence import hold_prompt_evidence
 from src.agents.portfolio_manager.ranking import hold_candidate_ranking
 from src.agents.portfolio_manager.rotation_section import hold_rotation_section
 
+from src.agents.portfolio_manager.registry_notes import (
+    broadcast_registry_note, omitted_rows_line, stale_registry_note,
+)
+
 class PortfolioManagerAgent(
     LiveLimitPrompt,
     BaseAgent,
@@ -153,39 +157,13 @@ class PortfolioManagerAgent(
             evidence_registry, sort_keys=True, indent=2,
         )
         if stale_sources:
-            # The registry values themselves stay undecorated — the PM must
-            # copy the stance string EXACTLY for `validate_grounding`, so the
-            # staleness is carried alongside rather than inside them.
-            stale_registry_note = (
-                "\n\nSTALE (still real coverage, still citable as provenance, "
-                "but NOT counted toward the agreement score below — the "
-                f"filing is more than {EARNINGS_STANCE_MAX_AGE_DAYS} days old):\n"
-                + "\n".join(
-                    f"- {symbol}: {', '.join(sorted(sources))}"
-                    for symbol, sources in sorted(stale_sources.items())
-                    if symbol in evidence_registry
-                )
+            evidence_registry_text += stale_registry_note(
+                stale_sources, evidence_registry,
             )
-            if not stale_registry_note.rstrip().endswith(":"):
-                evidence_registry_text += stale_registry_note
         if non_corroborating_sources:
-            # A DIFFERENT fact with a different consequence, so it gets its
-            # own note rather than an "or" the reader cannot resolve: this
-            # stance is current and real, it simply is not about this name.
-            broadcast_note = (
-                "\n\nMARKET-WIDE, NOT ABOUT THIS NAME (still real coverage, "
-                "still citable as provenance, and still counted AGAINST a "
-                "trade it opposes — but it can never count FOR one: this "
-                "macro stance is the broad equity outlook, applied to a name "
-                "whose sector the macro read did not mention):\n"
-                + "\n".join(
-                    f"- {symbol}: {', '.join(sorted(sources))}"
-                    for symbol, sources in sorted(non_corroborating_sources.items())
-                    if symbol in evidence_registry
-                )
+            evidence_registry_text += broadcast_registry_note(
+                non_corroborating_sources, evidence_registry,
             )
-            if not broadcast_note.rstrip().endswith(":"):
-                evidence_registry_text += broadcast_note
         # §9.4 "agreement earns size" — tell the PM the count BEFORE it
         # sizes, not after. Rendered for both directions since the PM has
         # not chosen one yet when it reads this: a name it takes long
@@ -202,12 +180,7 @@ class PortfolioManagerAgent(
         # a broad contested one. Showing the net is not optional — a ceiling
         # the PM cannot predict is the 2026-08-20 incident class, where the
         # constructor silently sized against the PM's own stated reasoning.
-        # MEASURED 2026-10-04 on the recorded production briefing: EVERY
-        # all-zero row carries the identical broadcast boilerplate, so a
-        # caveat filter would have dropped nothing. The caveat is not a
-        # per-row fact — the sentence is byte-identical on each of them and
-        # the note it points at is already printed once under the block —
-        # so what it conveys is carried by the counts on the summary line.
+        # Why all-zero rows are omitted: see registry_notes.omitted_rows_line.
         omitted_broadcast: list[str] = []
         omitted_stale: list[str] = []
         omitted_plain: list[str] = []
@@ -255,13 +228,6 @@ class PortfolioManagerAgent(
                 symbol, sources, "short", ignored_sources=ignored,
                 non_corroborating_sources=broadcast,
             )
-            # MEASURED 2026-10-04 on a recorded production briefing: 38 of
-            # the 82 rows read `0 aligned / 0 opposed` on BOTH sides with no
-            # caveat attached — 6,768 of 87,234 characters (7.8%) carrying no
-            # fact at all, at the seat that is 91% of model spend. They are
-            # omitted here and COUNTED on one line below, so the model can
-            # never read an omission as the symbol being absent. A row with a
-            # stale or broadcast caveat is NOT empty and is always kept.
             if not any((long_for, long_against, short_for, short_against)):
                 if broadcast_here:
                     omitted_broadcast.append(symbol)
@@ -287,25 +253,9 @@ class PortfolioManagerAgent(
             1 for line in rendered_agreement if line is None
         )
         if omitted_agreement_rows:
-            breakdown = ""
-            if omitted_broadcast:
-                breakdown += (
-                    f" {len(omitted_broadcast)} of them have only a one-sided "
-                    "broadcast macro stance, which cannot count FOR a trade "
-                    "— see the note below."
-                )
-            if omitted_stale:
-                breakdown += (
-                    f" {len(omitted_stale)} of them have only a stale stance, "
-                    "counted neither way."
-                )
-            agreement_lines.append(
-                f"- ({omitted_agreement_rows} further symbol(s) are present in "
-                "the registry above but have no aligned and no opposed source "
-                "on either side — net +0 long and net +0 short — so their rows "
-                "are omitted here; omitted does NOT mean absent."
-                f"{breakdown})"
-            )
+            agreement_lines.append(omitted_rows_line(
+                omitted_agreement_rows, len(omitted_broadcast), len(omitted_stale),
+            ))
         agreement_text = (
             "\n".join(agreement_lines) if agreement_lines
             else "No symbols with current coverage."
