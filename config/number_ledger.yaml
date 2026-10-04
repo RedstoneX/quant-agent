@@ -5526,8 +5526,11 @@ numbers:
         every time this cap binds, as a truncation row carrying the session, the
         symbol, the cap's name, the length in characters of the context text
         before truncation and the size kept, so how often it binds and by how
-        much becomes readable instead of assumed. Nothing records this today,
-        which is exactly why the cap has stood unexamined since it was written.
+        much becomes readable instead of assumed. RECORDED NOW by
+        src/agents/smart_money_cap_record.py: one SM_CAP_ROW per evaluation of
+        the cap named _MAX_CONTEXT_TEXT_CHARS, carrying bound true or false, so a row set that is
+        all false (evaluated, never cut) is distinguishable from no rows at all
+        (never ran). Read back with its summarise function; nothing is stored.
       closes_when: >-
         a run of sessions shows the distribution of the length in characters of
         the context text before truncation: if the cap never binds it governs
@@ -5558,8 +5561,11 @@ numbers:
         every time this cap binds, as a truncation row carrying the session, the
         symbol, the cap's name, the length in characters of the discount reason
         before truncation and the size kept, so how often it binds and by how
-        much becomes readable instead of assumed. Nothing records this today,
-        which is exactly why the cap has stood unexamined since it was written.
+        much becomes readable instead of assumed. RECORDED NOW by
+        src/agents/smart_money_cap_record.py: one SM_CAP_ROW per evaluation of
+        the cap named _MAX_REASON_TEXT_CHARS, carrying bound true or false, so a row set that is
+        all false (evaluated, never cut) is distinguishable from no rows at all
+        (never ran). Read back with its summarise function; nothing is stored.
       closes_when: >-
         a run of sessions shows the distribution of the length in characters of
         the discount reason before truncation: if the cap never binds it governs
