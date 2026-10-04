@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from src.cost_table import estimate_cost, fmt_cost
 from src.token_rate import TokenRateGovernor
+from src.llm_balance_runway import balance_line as _balance_line
 from src import llm_route_journal
 from src.cost_circuit import (
     OptionalPaidAnalysisRetrySkipped,
@@ -1338,10 +1339,9 @@ class BaseAgent(ABC):
                             "Agent %s attempt %d: the paid research account is "
                             "OUT OF CREDIT — the provider refused to serve the "
                             "call%s. Not retrying; topping the account up is "
-                            "the only fix. (%s)", self.name, attempt + 1,
-                            "" if affordable is not None
-                            else " and named no allowance it would serve",
-                            e,
+                            "the only fix. %s (%s)", self.name, attempt + 1,
+                            "" if affordable is not None else " and named no allowance it would serve",
+                            _balance_line(), e,
                         )
                     else:
                         logger.warning(
@@ -1449,7 +1449,7 @@ class BaseAgent(ABC):
                 wait_s=cooldown, error=primary_error,
                 detail=(
                     f"account out of credit; demoted for {cooldown:.0f}s "
-                    "without further attempts"
+                    f"without further attempts. {_balance_line()}"
                     if is_payment_refusal(primary_error)
                     else f"primary exhausted; demoted for {cooldown:.0f}s"
                 ),
