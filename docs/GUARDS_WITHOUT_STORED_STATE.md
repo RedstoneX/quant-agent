@@ -21,10 +21,12 @@ kept as history and marked DONE where they describe a stored file that is gone.
 - Absolute-rule checks with no trunk comparison and no stored list: `disk_guard`,
   `test_undefined_name_guard`, `test_holding_discipline_guard`,
   `test_stop_read_unknown`, `test_money_path_guards_are_loud`.
-- AMBIGUOUS: `tests/test_one_definition_guard.py` keeps a registry of
-  owner/allow pairs in code, with no trunk comparison. It reads as reviewed policy
-  (each entry carries a reason), not a cached measurement, but it is a stored list.
-  Sized follow-up: decide policy vs measurement; not changed here.
+- RULED 2026-10-04, KEEP: `tests/test_one_definition_guard.py` registry of
+  owner/allow pairs is POLICY. Which of several definitions is the sanctioned
+  one, and which sites may compute the quantity, is a human decision no scan
+  can produce; the scan measures violations and a separate test measures that
+  every named owner still resolves to a real function, so it cannot go stale
+  silently. Deriving it would make the owner whichever copy exists today.
 - Config files checked against the three-way test (kept record of a decision /
   stored baseline-allow-list a guard could compute / neither). Read 2026-10-04:
   - `config/number_ledger.yaml`: KEPT RECORD. The register of money-governing
@@ -32,10 +34,13 @@ kept as history and marked DONE where they describe a stored file that is gone.
   - `config/live_capital_preflight_attestations.yaml`: KEPT RECORD. A named
     person's attestation of conditions a machine cannot verify; cannot be computed.
   - `config/number_ledger_history.yaml` and `config/number_ledger_route_history.yaml`:
-    AMBIGUOUS. Each entry's `why` is a kept decision record, but the file also
-    makes a stored count (sum of deltas) that a test checks equals the live
-    count of arbitrary rows, which the tree could give directly. Whether the
-    count half is bookkeeping to remove is an open call; not changed here.
+    RULED 2026-10-04, KEEP BOTH. The `why` is a kept decision record. Each
+    `delta` is the recorded effect of one change, appended whole under
+    `merge=union`; nothing edits a shared line, so the collision and staleness
+    failures this mandate removes cannot occur. The total is computed, and
+    the test already compares it with the live arbitrary-row count measured
+    from the tree (121 and 0 at this date, both equal), failing on a rise AND
+    a fall. A trunk-identity replacement would pass a fall, so it is looser.
   - `config/prompt_only_numbers.yaml`: AMBIGUOUS. Rows carry a recorded reason
     and open question (register), yet a test also uses the rows as the allow-list
     of threshold-shaped figures permitted in prompt sheets.
