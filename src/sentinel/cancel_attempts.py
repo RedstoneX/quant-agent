@@ -78,5 +78,10 @@ def install_cancel_recording(*, broker, conn_getter) -> None:
     if getattr(broker, "client", None) is None:
         logger.warning("cancel recording NOT installed for %s: it has no trading client, so its cancels will not be counted", type(broker).__name__)
         return  # a test fake with no trading client has no cancels to count; an observer must not break construction
+    # The order desk is a COLLABORATOR built per call from the broker's client, not
+    # the broker, so the ledger handle is lent to the client (observability only;
+    # the recording wrapper delegates attribute reads to it). See src/sentinel/guarded.py.
+    from src.sentinel.guarded import attach_reconciliation_db
+    attach_reconciliation_db(broker.client, conn_getter)
     if not isinstance(broker.client, CancelRecordingClient):
         broker.client = CancelRecordingClient(inner=broker.client, conn_getter=conn_getter)
