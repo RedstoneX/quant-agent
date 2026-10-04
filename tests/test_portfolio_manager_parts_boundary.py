@@ -113,7 +113,6 @@ def test_shim_signatures_cover_every_body():
 
 #: (shim module, mixin, part, one body the part reads through `self.`)
 _INSTALMENT_2 = [
-    (rotation_section, rotation_section.RotationSectionMixin, RotationSection, "_rotation_constraint_line"),
     (ranking, ranking.CandidateRankingMixin, CandidateRanking, "candidate_eligibility"),
 ]
 
@@ -258,3 +257,36 @@ def test_delegates_cover_every_prompt_evidence_body():
     bodies = {n for n, f in vars(PromptEvidence).items()
               if n != "__init__" and (inspect.isfunction(f) or isinstance(f, (classmethod, staticmethod)))}
     assert bodies == set(prompt_evidence.DELEGATED)
+
+
+# --- The agent HOLDS the rotation-section part; it no longer inherits it ----------
+
+def test_agent_holds_rotation_section_instead_of_inheriting():
+    assert not any(c.__name__ == "RotationSectionMixin" for c in PortfolioManagerAgent.__mro__)
+    assert type(PortfolioManagerAgent._rotation_section) is RotationSection
+    for name in rotation_section.DELEGATED:
+        assert isinstance(inspect.getattr_static(PortfolioManagerAgent, name), classmethod), name
+        assert callable(getattr(RotationSection, name)), name
+    precheck = PortfolioManagerAgent.rotation_precheck(
+        ranked=[], blocked={}, held_symbols=set(), existing_risk_pct=None, ceiling_pct=5.0)
+    assert precheck.telemetry_available is False
+
+
+def test_rotation_section_part_is_built_and_exercised_without_the_agent():
+    """Constructed from nothing, exercised, and held on a bare class: no agent built."""
+    class Bare:
+        pass
+
+    rotation_section.hold_rotation_section(Bare)
+    assert set(rotation_section.DELEGATED) <= set(vars(Bare))
+    precheck = Bare.rotation_precheck(ranked=[], blocked={}, held_symbols=set(),
+                                      existing_risk_pct=None, ceiling_pct=5.0)
+    assert precheck.telemetry_available is False
+    swapped = RotationSection(rotation_precheck=lambda **kw: "SWAPPED")
+    assert rotation_section.hold_rotation_section(Bare, swapped).rotation_precheck() == "SWAPPED"
+
+
+def test_delegates_cover_every_rotation_section_body():
+    bodies = {n for n, f in vars(RotationSection).items()
+              if n != "__init__" and (inspect.isfunction(f) or isinstance(f, (classmethod, staticmethod)))}
+    assert bodies == set(rotation_section.DELEGATED)
