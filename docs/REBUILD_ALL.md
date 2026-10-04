@@ -77,9 +77,10 @@ git ls-tree -r --name-only origin/main src | grep '\.py$' |
   import cycle through the scale-in path.
 - The composition root of `src/pipeline.py` (its `__init__`) is its own piece
   of work, after the ceiling.
-- Real boundaries, not just smaller files, are still owed by the cost
-  circuit's eleven `_Breaker*Mixin` modules, the position builder, the
-  portfolio-manager seat and the prompt-facts review chunk.
+- Real boundaries, not just smaller files, are still owed by the position
+  builder, the portfolio-manager seat and the prompt-facts review chunk (the
+  cost circuit is done: all eleven parts are held instances, no mixin
+  remains, 2026-10-02).
 
 ## Appendix — measured inventory taken before the two rebuilds
 

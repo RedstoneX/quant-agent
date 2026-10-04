@@ -561,7 +561,6 @@ class TradingPipeline(
             _key_for(config.llm.tertiary_alt_model, config.llm.tertiary_alt_provider)
             if (config.llm.tertiary_alt_model or "").strip() else ""
         )
-
         self.tech_analyst = TechAnalystAgent(
             api_key=_key_for(config.llm.tech_analyst_model, config.llm.tech_analyst_provider),
             model=config.llm.tech_analyst_model,
@@ -889,6 +888,7 @@ class TradingPipeline(
         self.market.set_fallback_bars(self.broker.get_bars)
         self.db = Database(self._storage_db_path)
         self.db.initialize()
+        from src.sentinel.cancel_attempts import install_cancel_recording as _count_cancels; _count_cancels(broker=self.broker, conn_getter=lambda: getattr(getattr(self, "db", None), "conn", None))  # every broker cancel becomes one order_attempts row
         self._wire_protective_stop_block_recorder()
         if BaseAgent._allow_unmetered_for_tests:
             # Hermetic unit tests use mocked SDKs and explicitly opt out in

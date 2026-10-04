@@ -189,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         HermeticBreach, MissingRecordedInput, Sandbox,
     )
     from ops.rehearsal.runner import run_rehearsal
+    from ops.rehearsal.stand_in import StandInGap
 
     sandbox_root = Path(args.sandbox) if args.sandbox else Path(
         tempfile.mkdtemp(prefix="qamc-rehearsal-")
@@ -223,9 +224,10 @@ def main(argv: list[str] | None = None) -> int:
         # it" (2) without parsing prose. 2 is not a softer 1 — it means no
         # judgement was reached and the run has to be repeated properly.
         return {"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}.get(report.verdict, 1)
-    except (HermeticBreach, MissingRecordedInput) as exc:
-        # The replay is void, not merely degraded: it either left the box or
-        # was asked for something the recording does not hold. Print the
+    except (HermeticBreach, MissingRecordedInput, StandInGap) as exc:
+        # The replay is void, not merely degraded: it either left the box,
+        # was asked for something the recording does not hold, or asked the
+        # broker stand-in for a call it does not implement. Print the
         # report anyway so the operator can see what the run did, then say
         # plainly why no verdict may be read off it (board item 202). Exit 2
         # — "the rig could not judge it" — never 0.
