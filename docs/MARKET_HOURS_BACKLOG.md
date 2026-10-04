@@ -163,3 +163,35 @@ board was not recounted here.
 - Provider data and news caches written to the wrong `data/` are not undone
   by an account reset.
 - A session left running past the open with resting orders.
+
+### HOW TO RUN IT — the single command, with the hazards blocked
+
+The plan above is now buildable. Each of its five non-recoverable hazards is a
+refusal in `src/sandbox_preflight.py`, not a warning in prose:
+
+- Owner-facing Telegram: `scripts/sandbox_session.sh` unsets the bot token and
+  chat id both before and after sourcing the sandbox env file and forces
+  `TELEGRAM_DISABLED=1`; the preflight refuses to start if either credential is
+  present, or if the mute uses a spelling the notifier ignores. The session is
+  incapable of messaging the owner, not merely muted.
+- Production database: the preflight refuses to run from inside the production
+  checkout (`/home/qamc` by default, extendable via `QAMC_PRODUCTION_CHECKOUT`),
+  refuses a `data/` that resolves outside its own checkout (so a symlink into
+  production is caught), and refuses a database that no sandbox run created.
+- The desk's own paper keys: the sandbox key is pinned by an allow-list of one —
+  `QAMC_SANDBOX_ALPACA_KEY_SHA256` must be the SHA-256 of `ALPACA_API_KEY`. Any
+  other key is refused, so neither the production key nor the desk's paper key
+  can be used by accident, and no key, account id or digest of a real key is
+  committed.
+- Live trading: the existing paper-only lock in `AlpacaConfig` is re-asserted,
+  never bypassed.
+- Real LLM spend: unchanged and still real, capped by `llm_cost_circuit` as
+  described above. The preflight does not and cannot make it free.
+
+Run it from a SEPARATE checkout with its own empty `data/`:
+
+    cp config/sandbox.env.example .env.sandbox   # fill in, never commit
+    scripts/sandbox_session.sh morning
+
+Proof lives in `tests/test_sandbox_preflight.py`: every refusal has a paired
+positive case, so deleting a check reds the suite.
