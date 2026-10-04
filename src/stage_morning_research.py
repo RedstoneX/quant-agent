@@ -1403,7 +1403,7 @@ class MorningResearchStage:
             # keys impossible; when they show up anyway the row still
             # parsed and was still used, so this is evidence, not a gate.
             # Each count is tagged with the ACTUAL provider that answered
-            # (`_record_answer_hygiene` in src/agents/tech_analyst.py) —
+            # (`_record_answer_hygiene` in src/agents/tech_answer_hygiene.py) —
             # adversary review, 2026-09-23: only "openrouter"/"google" are
             # ever given a response_format at all (src/agents/base.py); a
             # count against any other provider is not evidence the strict
