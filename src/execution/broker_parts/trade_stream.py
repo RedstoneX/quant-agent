@@ -22,6 +22,7 @@ import time
 
 from src.execution.broker_parts.trade_stream_errors import _stream_http_status, _stream_retry_after_seconds  # noqa: F401
 from src.sentinel.guarded import record_guarded_pass
+from src.execution.broker_parts.trade_stream_flags import _signal_event
 from src.execution.broker_parts.trade_stream_lease import _TradeUpdatesLease  # noqa: F401
 
 try:
@@ -984,25 +985,10 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
                 "trade_updates websocket authenticated (endpoint=%s)",
                 getattr(stream, "_endpoint", "unknown"),
             )
-            authed = getattr(stream, "_qamc_authed", None)
-            if authed is not None:
-                try:
-                    authed.set()
-                except Exception:
-                    pass
+            _signal_event(stream, "_qamc_authed", "set")
         except Exception as exc:
-            authed = getattr(stream, "_qamc_authed", None)
-            if authed is not None:
-                try:
-                    authed.clear()
-                except Exception:
-                    pass
-            connected = getattr(stream, "_qamc_connected", None)
-            if connected is not None:
-                try:
-                    connected.clear()
-                except Exception:
-                    pass
+            _signal_event(stream, "_qamc_authed", "clear")
+            _signal_event(stream, "_qamc_connected", "clear")
             failures += 1
             spent_today = _STREAM_ATTEMPT_BUDGET.record_attempt()
             status = _stream_http_status(exc)
