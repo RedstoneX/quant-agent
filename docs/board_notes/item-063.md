@@ -44,3 +44,15 @@
 **Why this does not tick the first box.** Proving the recording works proves the data exists, not that it says anything. The desk's own join found the sourced >50%-of-holdings band to be the *most positive* of the three at both forward windows — the opposite sign to the published finding — and the 2026-10-04 literature pass found no citable signed scheme to borrow instead. Both routes offered by the first box are therefore answered negative, and inventing a sign now would be exactly the picked number the standing no-arbitrary-numbers rule forbids. Sales stay neutral at 0.
 
 **What is left on this item.** Nothing measurable without new evidence. The first box reopens only if the desk accumulates enough of its own *resolved* sale outcomes to read a separation, which needs the desk trading for a long period, or if a signed scheme is published. No production measurement remains owed; item 63 has been removed from the market-hours backlog on that basis.
+
+
+**Moved verbatim from docs/WORK.md, 2026-10-04 (board trim). Each entry: the kept lead on the board, then the text that was moved.**
+
+- Board line lead: ``
+  Moved text:   - [ ] the magnitude→sign boundary is settled by EVIDENCE, not appetite: either a published SIGNED insider-sale scoring scheme is cited and `SmartMoneyObservation.signal_direction` returns -1 off the already-reported `holdings_fraction_band` (Scott & Xu's sourced >50%-of-holdings band), or the desk's own resolved smart-money outcomes are numerous enough to read a separation from **2026-10-04 research verdict: the published-scheme route is CLOSED NEGATIVE** — no citable signed scheme exists; Scott & Xu's -0.81% needs >50% of holdings AND >100,000 shares and is an observation, not a score; own-data route still unmet, box stays open (docs/board_notes/item-063.md).
+
+- Board line lead: ``
+  Moved text:   - [ ] PREREQUISITE FOUND 2026-10-01: the desk's own data cannot settle it because it holds NO sale observations to read — the production evidence store has 521 smart-money observations across 325 analyst rows, ALL buys, zero sales [measured, production DB specialist_evidence, 2026-08-26..2026-09-30] and only 80 trades in total [measured, same DB]; the remaining build is a RECORDING of insider-sale rows (with `holdings_fraction_band`) plus their forward return, found first by tracing why no sale reaches the stored evidence although the parser emits them
+
+- Board line lead: `- [x] TRACED 2026-10-01, the prerequisite above is ANSWERED and the cause is not`
+  Moved text: the parser emits sales and the production observations cache holds 16,019 of them against 2,384 buys [measured, production smart-money observations cache, written 2026-09-30], but `SECForm4Provider.fetch` truncates to `max_observations` (40) under a sort whose FIRST key is `not transient_admission_eligible`, and admission requires `direction == "buy"`, so with more eligible buys than slots NO sale can ever reach the analyst or the evidence store — which is exactly why the store holds 828 observation rows and every one is a buy [measured, production specialist_evidence]
