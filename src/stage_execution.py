@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.recording_accessors import pinned_evidence
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -1629,8 +1630,8 @@ class ExecutionStage:
                     # refusal below already uses. None on the resume/sweep
                     # lanes that carry no analysis — the row then records no
                     # ATR rather than a reconstructed one.
-                    entry_atr=getattr(entry_analysis, "atr_14", None),
-                    stop_basis=getattr(decision, "stop_rule", None),
+                    entry_atr=pinned_evidence(entry_analysis, "atr_14"),
+                    stop_basis=pinned_evidence(decision, "stop_rule"),
                     # Item 55 RECORDING, no behaviour: what that stop was
                     # BASED on — which level, how many turns made it, how
                     # wide its zone was, how far the stop sat from it. Set
