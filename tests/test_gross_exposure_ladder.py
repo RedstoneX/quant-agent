@@ -882,7 +882,7 @@ def test_trimming_the_held_book_has_exactly_one_owner():
     # de-lever does not call `apply_gross_ceiling` itself — it delegates to
     # `_enforce_gross_ceiling` with a cut order — precisely so a second owner
     # cannot appear. A duplicate entry here means one did.
-    assert trim_owners == ["pipeline_delever.py"], (
+    assert trim_owners == ["delever/enforce.py"], (
         f"exactly one caller may author de-lever orders; found {trim_owners}"
     )
     assert sizing_callers == ["portfolio_constructor/__init__.py"], (
@@ -2943,20 +2943,20 @@ def test_only_one_place_may_mark_the_gross_ceiling_debt_paid():
     import ast
     from pathlib import Path
 
-    src = (
-        Path(__file__).resolve().parent.parent / "src" / "pipeline_delever.py"
-    ).read_text()
-    tree = ast.parse(src)
+    # Bodies moved into src/delever/: count the rule over the shim AND every part.
+    root = Path(__file__).resolve().parent.parent / "src"
+    sources = [root / "pipeline_delever.py", *sorted((root / "delever").glob("*.py"))]
     clears = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not (isinstance(node.value, ast.Constant) and node.value.value is False):
-            continue
-        for target in node.targets:
-            if (isinstance(target, ast.Attribute)
-                    and target.attr == "gross_ceiling_deferred"):
-                clears.append(node.lineno)
+    for path in sources:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not (isinstance(node.value, ast.Constant) and node.value.value is False):
+                continue
+            for target in node.targets:
+                if (isinstance(target, ast.Attribute)
+                        and target.attr == "gross_ceiling_deferred"):
+                    clears.append(f"{path.name}:{node.lineno}")
     assert len(clears) == 1, (
         f"exactly one place may clear the deferred gross-ceiling debt; "
         f"found {len(clears)} at lines {clears}"
