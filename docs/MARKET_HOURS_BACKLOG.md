@@ -102,5 +102,3 @@ settle them:
   loss) rather than an add to a name whose row predates the column.
 - **Item 90** — the settling data behind the unsourced trade-governing
   numbers.
-- **Item 63** — how many sale-census rows the specialist evidence holds, and
-  how recent they are.
