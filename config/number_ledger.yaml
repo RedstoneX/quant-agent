@@ -3177,8 +3177,8 @@ numbers:
       up more than intended on the rare name that loses its ATR reading.
     settles_by:
       kind: recording
-      state: built
-      where: src/portfolio_constructor/no_atr_stop_record.py
+      state: specified
+      where: docs/board_notes/item-090.md (item 90); placements are logged by src/portfolio_constructor/no_atr_stop_record.py but not yet persisted
       records: >-
         every no-ATR structural stop placement, counted by the rule it took
         (nearest verified structural level, else the signal/prior bar) and by

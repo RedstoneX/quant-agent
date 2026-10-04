@@ -21,26 +21,20 @@ is the trap this module exists to close. The conversion waits on branch
 ``ledger/atr-express-buffer-conversion`` until these counts exist.
 
 So this module CHANGES NO BEHAVIOUR. ``noted`` passes its placement straight
-back to the caller; it only counts it and logs it on the way through. The
+back to the caller; it only logs it on the way through. The
 signal-bar range it records is the candidate denominator, observed and never
 applied.
 
-Counts are per process, which is one desk session. They are read back through
-``snapshot`` and emitted with the session's other counters; `reset` exists for
-tests, which must never inherit another test's tallies.
+There is deliberately NO in-memory tally: stored bookkeeping is banned. The
+log line is the only record, so the count is whatever a log search finds, and
+the ledger route stays `specified` until a persisted row exists.
 """
 from __future__ import annotations
 
 import logging
 import math
-from collections import Counter
 
 logger = logging.getLogger(__name__)
-
-#: Placements by rule, e.g. {"stop_read_from_structure_no_atr": 3}.
-_BY_RULE: Counter[str] = Counter()
-#: Whether the candidate per-name denominator was readable at placement.
-_DENOMINATOR: Counter[str] = Counter()
 
 
 def signal_bar_range(analysis) -> float | None:
@@ -70,14 +64,12 @@ def signal_bar_range(analysis) -> float | None:
 def noted(
     level: float, stop: float, rule: str, analysis,
 ) -> tuple[float, float, str]:
-    """Count one no-ATR structural stop placement and return it unchanged.
+    """Log one no-ATR structural stop placement and return it unchanged.
 
     The returned tuple is exactly what the caller would have returned without
     this module, so a failure to record can never cost a name its stop.
     """
     span = signal_bar_range(analysis)
-    _BY_RULE[rule] += 1
-    _DENOMINATOR["readable" if span is not None else "unreadable"] += 1
     buffer_distance = abs(level - stop)
     logger.info(
         "no-ATR structural stop placed: rule=%s level=%.4f stop=%.4f "
@@ -89,18 +81,3 @@ def noted(
         "none" if not span else f"{buffer_distance / span:.4f}",
     )
     return (level, stop, rule)
-
-
-def snapshot() -> dict[str, object]:
-    """What this session has counted so far, as plain dicts."""
-    return {
-        "placements_by_rule": dict(_BY_RULE),
-        "signal_bar_denominator": dict(_DENOMINATOR),
-        "placements_total": sum(_BY_RULE.values()),
-    }
-
-
-def reset() -> None:
-    """Drop the tallies. For tests only."""
-    _BY_RULE.clear()
-    _DENOMINATOR.clear()
