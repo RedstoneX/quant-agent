@@ -3366,7 +3366,7 @@ numbers:
       NOT A SECOND NUMBER. 2026-10-02: this field is overwritten on every
       live run. `build_constructor_config` sets
       `max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct`
-      (src/pipeline.py::build_constructor_config), and `sector_hard_ceiling_pct`
+      (src/pipeline_config_build.py::build_constructor_config), and `sector_hard_ceiling_pct`
       (src/config/__init__.py::RiskConfig.sector_hard_ceiling_pct) returns
       `min(100.0, max(max_sector_pct, min(SECTOR_HARD_CEILING_MAX,
       max_sector_pct * SECTOR_HARD_MULTIPLE)))`. With the deployed
@@ -3512,7 +3512,7 @@ numbers:
     id: src.portfolio_constructor.config.ConstructorConfig.min_risk_pct
     note: 'DERIVED 2026-10-02 (fix #4, first slice). This is not an independent number: it is a MIRROR
       of src.config.RiskConfig.min_position_risk_pct, and in every live run the default written here
-      is overwritten before the constructor sees it -- src/pipeline.py::build_constructor_config builds it as `min_risk_pct=_risk_setting("min_position_risk_pct",
+      is overwritten before the constructor sees it -- src/pipeline_config_build.py::build_constructor_config builds it as `min_risk_pct=_risk_setting("min_position_risk_pct",
       0.5, allow_zero=True)`. The default survives only when a caller builds a ConstructorConfig by
       hand (tests and direct constructor use), and it is the same value as the field it mirrors, so
       it cannot disagree with the risk engine. Counting it as a separate arbitrary number double-counted
@@ -3579,7 +3579,7 @@ numbers:
     id: src.portfolio_constructor.config.ConstructorConfig.risk_budget_pct
     note: 'DERIVED 2026-10-02 (fix #4, first slice). This is not an independent number: it is a MIRROR
       of src.config.RiskConfig.max_position_risk_pct, and in every live run the default written here
-      is overwritten before the constructor sees it -- src/pipeline.py::build_constructor_config builds it as `risk_budget_pct=_risk_setting("max_position_risk_pct",
+      is overwritten before the constructor sees it -- src/pipeline_config_build.py::build_constructor_config builds it as `risk_budget_pct=_risk_setting("max_position_risk_pct",
       5.0)`. The default survives only when a caller builds a ConstructorConfig by hand (tests and
       direct constructor use), and it is the same value as the field it mirrors, so it cannot disagree
       with the risk engine. Counting it as a separate arbitrary number double-counted one decision;
@@ -8152,7 +8152,7 @@ numbers:
       exceed 50% of the book raises an advisory violation
       (src/risk/rules.py::RiskRuleEngine.check). The one caller (src/pipeline.py::TradingPipeline._run_morning_body)
       passes nothing, so the default is live. Advisory (absent from
-      HARD_BLOCK_RULES, src/pipeline.py::_threaded_risk_settings), but advisories reach the risk
+      HARD_BLOCK_RULES, src/pipeline_config_build.py::_threaded_risk_settings), but advisories reach the risk
       seat.
     open_question: >-
       What share of the book in one correlated cluster does the ratified per-
@@ -8168,7 +8168,7 @@ numbers:
       (src/pipeline.py::TradingPipeline._run_morning_body)" -- the one production caller is now
       src/pipeline_risk_gate.py::RiskGate._filter_hard_risk_decisions; it still passes nothing, so the finding
       that the default is the live value STANDS, but the path given for it
-      does not exist. (2) "src/pipeline.py::_threaded_risk_settings" for HARD_BLOCK_RULES is the
+      does not exist. (2) "src/pipeline_config_build.py::_threaded_risk_settings" for HARD_BLOCK_RULES is the
       same stale path; the rule set is defined at src/risk/rules.py::RiskRuleEngine.check
       and `correlation_cluster` is absent from it, so the advisory claim also
       stands. The rule body is at src/risk/rules.py::RiskRuleEngine.check, not 1700-1740.
