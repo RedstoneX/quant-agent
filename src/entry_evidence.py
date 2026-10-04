@@ -42,6 +42,8 @@ __all__ = [
     "scale_in_own_verdict",
     "SCALE_IN_EVIDENCE_AGENT",
     "SCALE_IN_EVIDENCE_KIND",
+    "resolve_entry_pins",
+    "record_scale_in_own_verdict",
 ]
 
 _SENTINEL = object()
@@ -137,3 +139,68 @@ def scale_in_own_verdict(prior_row, decision) -> str | None:
         },
         sort_keys=True,
     )
+
+
+def resolve_entry_pins(db, decision, *, is_short: bool, is_scale_in: bool):
+    """(prior_row, setup_type, structural_ceiling) for the row about to be written.
+
+    `db` only needs `get_symbol_last_buy(symbol, action=...)`; `prior_row`
+    is None on a fresh entry.
+    """
+    # Item 82: carry the position's OWN pinned classification
+    # forward on a scale-in ADD rather than re-reading today's
+    # technical, which would silently reclassify a position
+    # nobody made a new entry decision about. A short add reads
+    # the last SHORT open (item 82 mirror) — get_symbol_last_buy
+    # defaults to BUY rows and would otherwise miss the short's
+    # original entry. Where the prior row holds NO pinned value
+    # the position keeps holding none — the add's own verdict is
+    # recorded ALONGSIDE as its own evidence row, never over
+    # the top. See `record_scale_in_own_verdict`.
+    _existing_buy = (
+        db.get_symbol_last_buy(
+            decision.symbol,
+            action="SHORT" if is_short else "BUY",
+        ) if is_scale_in else None
+    )
+    setup_type = pinned_setup_type(
+        _existing_buy, decision, is_scale_in=is_scale_in,
+    )
+    structural_ceiling = pinned_structural_ceiling(
+        _existing_buy, decision, is_scale_in=is_scale_in,
+    )
+    return _existing_buy, setup_type, structural_ceiling
+
+
+def record_scale_in_own_verdict(
+    db, logger, *, run_id, decision_id, decision, prior_row, is_scale_in: bool,
+) -> None:
+    """File a top-up's own verdict in `specialist_evidence`; no-op otherwise.
+
+    `db` only needs `insert_specialist_evidence(...)`; a failure is logged
+    through `logger` and never raised, because this row is forensic only.
+    """
+    if is_scale_in:
+        # The add's OWN verdict, recorded ALONGSIDE the entry row
+        # and never over the top of it: the held position's entry
+        # verdict is whatever its own entry row says, including
+        # nothing. Forensic only — `specialist_evidence` is read
+        # by no trading path (see its CREATE comment), so this
+        # cannot change what the desk buys, sizes or protects.
+        _own_verdict = scale_in_own_verdict(prior_row, decision)
+        if _own_verdict is not None:
+            try:
+                db.insert_specialist_evidence(
+                    run_id=run_id,
+                    decision_id=decision_id,
+                    agent_name=SCALE_IN_EVIDENCE_AGENT,
+                    kind=SCALE_IN_EVIDENCE_KIND,
+                    scope="symbol",
+                    symbol=decision.symbol,
+                    evidence_json=_own_verdict,
+                )
+            except Exception as exc:  # pragma: no cover - forensic only
+                logger.warning(
+                    "scale-in evidence not recorded for %s: %s",
+                    decision.symbol, exc,
+                )

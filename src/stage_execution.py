@@ -11,12 +11,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.execution.entry_evidence import (
-    SCALE_IN_EVIDENCE_AGENT as _SCALE_IN_EVIDENCE_AGENT,
-    SCALE_IN_EVIDENCE_KIND as _SCALE_IN_EVIDENCE_KIND,
-    pinned_setup_type as _pinned_setup_type,
-    pinned_structural_ceiling as _pinned_structural_ceiling,
-    scale_in_own_verdict as _scale_in_own_verdict,
+from src.entry_evidence import (
+    record_scale_in_own_verdict as _record_scale_in_own_verdict,
+    resolve_entry_pins as _resolve_entry_pins,
 )
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
@@ -1572,27 +1569,12 @@ class ExecutionStage:
                 # value the constructor already classified, carried on the
                 # decision.
                 _is_scale_in = add_prep is not None and add_prep.is_scale_in
-                # Item 82: carry the position's OWN pinned classification
-                # forward on a scale-in ADD rather than re-reading today's
-                # technical, which would silently reclassify a position
-                # nobody made a new entry decision about. A short add reads
-                # the last SHORT open (item 82 mirror) — get_symbol_last_buy
-                # defaults to BUY rows and would otherwise miss the short's
-                # original entry. Where the prior row holds NO pinned value
-                # the position keeps holding none — the add's own verdict is
-                # recorded ALONGSIDE as its own evidence row below, never over
-                # the top. See src/execution/entry_evidence.py.
-                _existing_buy = (
-                    pipeline.db.get_symbol_last_buy(
-                        decision.symbol,
-                        action="SHORT" if is_short else "BUY",
-                    ) if _is_scale_in else None
-                )
-                pinned_setup_type = _pinned_setup_type(
-                    _existing_buy, decision, is_scale_in=_is_scale_in,
-                )
-                pinned_structural_ceiling = _pinned_structural_ceiling(
-                    _existing_buy, decision, is_scale_in=_is_scale_in,
+                # Item 82 scale-in carry-forward lives in src/entry_evidence.py.
+                _existing_buy, pinned_setup_type, pinned_structural_ceiling = (
+                    _resolve_entry_pins(
+                        pipeline.db, decision,
+                        is_short=is_short, is_scale_in=_is_scale_in,
+                    )
                 )
                 entry_side = "sell_short" if is_short else "buy"
                 pending_row_id = pipeline.db.insert_trade(
@@ -1654,30 +1636,11 @@ class ExecutionStage:
                     thesis_invalid_if=getattr(decision, "thesis_invalid_if", None),
                 )
 
-                if _is_scale_in:
-                    # The add's OWN verdict, recorded ALONGSIDE the row above
-                    # and never over the top of it: the held position's entry
-                    # verdict is whatever its own entry row says, including
-                    # nothing. Forensic only — `specialist_evidence` is read
-                    # by no trading path (see its CREATE comment), so this
-                    # cannot change what the desk buys, sizes or protects.
-                    _own_verdict = _scale_in_own_verdict(_existing_buy, decision)
-                    if _own_verdict is not None:
-                        try:
-                            pipeline.db.insert_specialist_evidence(
-                                run_id=run_id,
-                                decision_id=decision_id,
-                                agent_name=_SCALE_IN_EVIDENCE_AGENT,
-                                kind=_SCALE_IN_EVIDENCE_KIND,
-                                scope="symbol",
-                                symbol=decision.symbol,
-                                evidence_json=_own_verdict,
-                            )
-                        except Exception as exc:  # pragma: no cover - forensic only
-                            logger.warning(
-                                "scale-in evidence not recorded for %s: %s",
-                                decision.symbol, exc,
-                            )
+                _record_scale_in_own_verdict(
+                    pipeline.db, logger, run_id=run_id, decision_id=decision_id,
+                    decision=decision, prior_row=_existing_buy,
+                    is_scale_in=_is_scale_in,
+                )
 
                 try:
                     # Set BEFORE the call: if submit raises, the broker may

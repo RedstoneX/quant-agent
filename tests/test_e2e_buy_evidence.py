@@ -124,7 +124,7 @@ class _Decision:
 
 def test_a_scale_in_keeps_the_positions_own_pinned_verdict():
     """An ADD must never reclassify a position that already has a verdict."""
-    from src.execution.entry_evidence import (
+    from src.entry_evidence import (
         pinned_setup_type, pinned_structural_ceiling,
     )
     prior = {"setup_type": "breakout", "structural_ceiling": 1}
@@ -141,7 +141,7 @@ def test_a_scale_in_onto_a_pre_feature_row_reports_the_hole_honestly():
     different reasoning. "We do not know why this was bought" is the
     true answer for those rows.
     """
-    from src.execution.entry_evidence import (
+    from src.entry_evidence import (
         pinned_setup_type, pinned_structural_ceiling,
     )
     pre_feature = {"setup_type": "range", "structural_ceiling": None}
@@ -164,7 +164,7 @@ def test_the_add_records_its_own_verdict_as_its_own_evidence():
     to the top-up, in a record nothing reads as a position's entry verdict."""
     import json
 
-    from src.execution.entry_evidence import scale_in_own_verdict
+    from src.entry_evidence import scale_in_own_verdict
 
     pre_feature = {"setup_type": "range", "structural_ceiling": None}
     fresh = _Decision(setup_type="breakout", structural_ceiling=True)
@@ -180,8 +180,88 @@ def test_the_add_records_its_own_verdict_as_its_own_evidence():
 
 
 def test_a_fresh_entry_never_reads_a_prior_row():
-    from src.execution.entry_evidence import pinned_structural_ceiling
+    from src.entry_evidence import pinned_structural_ceiling
     assert pinned_structural_ceiling(
         {"structural_ceiling": 1}, _Decision(structural_ceiling=False),
         is_scale_in=False,
     ) is False
+
+
+class _StubDb:
+    """The two ledger calls the stage reaches for, and nothing else: the
+    pinning seam must be buildable without the execution stage."""
+
+    def __init__(self, prior=None, fail=False):
+        self.prior, self.fail = prior, fail
+        self.reads: list[tuple] = []
+        self.evidence: list[dict] = []
+
+    def get_symbol_last_buy(self, symbol, action="BUY"):
+        self.reads.append((symbol, action))
+        return self.prior
+
+    def insert_specialist_evidence(self, **row):
+        if self.fail:
+            raise RuntimeError("ledger closed")
+        self.evidence.append(row)
+        return len(self.evidence)
+
+
+class _Logged:
+    def __init__(self):
+        self.warnings: list[tuple] = []
+
+    def warning(self, *a):
+        self.warnings.append(a)
+
+
+def test_resolve_entry_pins_reads_the_prior_row_only_on_a_scale_in():
+    from src.entry_evidence import resolve_entry_pins
+
+    prior = {"setup_type": "breakout", "structural_ceiling": 0}
+    fresh = _Decision(setup_type="range", structural_ceiling=True)
+    fresh.symbol = "TEST"
+    db = _StubDb(prior=prior)
+    row, st, sc = resolve_entry_pins(db, fresh, is_short=True, is_scale_in=True)
+    assert (row, st, sc) == (prior, "breakout", False)
+    assert db.reads == [("TEST", "SHORT")]  # a short add reads the SHORT open
+    db = _StubDb(prior=prior)
+    row, st, sc = resolve_entry_pins(db, fresh, is_short=False, is_scale_in=False)
+    assert (row, st, sc) == (None, "range", True)
+    assert db.reads == []  # a fresh entry never reads a prior row
+
+
+def test_record_scale_in_own_verdict_files_alongside_and_never_raises():
+    import json
+
+    from src.entry_evidence import (
+        SCALE_IN_EVIDENCE_AGENT, record_scale_in_own_verdict,
+    )
+
+    fresh = _Decision(setup_type="breakout", structural_ceiling=True)
+    fresh.symbol = "TEST"
+    prior = {"setup_type": "range", "structural_ceiling": None}
+    db, log = _StubDb(), _Logged()
+    record_scale_in_own_verdict(
+        db, log, run_id="r1", decision_id="d1", decision=fresh,
+        prior_row=prior, is_scale_in=True,
+    )
+    [row] = db.evidence
+    assert (row["run_id"], row["decision_id"], row["symbol"]) == ("r1", "d1", "TEST")
+    assert row["agent_name"] == SCALE_IN_EVIDENCE_AGENT and row["scope"] == "symbol"
+    assert json.loads(row["evidence_json"])["fields"]["structural_ceiling"] == {
+        "add_verdict": True, "position_already_held_a_verdict": False,
+    }
+    # Not a scale-in: nothing is filed.
+    db = _StubDb()
+    record_scale_in_own_verdict(
+        db, log, run_id="r1", decision_id="d1", decision=fresh,
+        prior_row=None, is_scale_in=False,
+    )
+    assert db.evidence == []
+    # A ledger failure is logged, never raised into the buy path.
+    record_scale_in_own_verdict(
+        _StubDb(fail=True), log, run_id="r1", decision_id="d1",
+        decision=fresh, prior_row=prior, is_scale_in=True,
+    )
+    assert len(log.warnings) == 1 and log.warnings[0][1] == "TEST"
