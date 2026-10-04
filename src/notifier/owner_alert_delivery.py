@@ -15,10 +15,21 @@ from typing import Callable
 from src.notifier.base import logger
 from src.notifier.category import was_suppressed
 
-#: Total attempts (first try plus retries) before the alert is recorded undelivered.
-MAX_ATTEMPTS = 3
-#: Seconds to wait before each retry. Tests patch this to zero.
-RETRY_DELAYS_S = (0.5, 1.5)
+from src.config import LLMCostCircuitConfig as _Retry
+
+#: Total attempts (first try plus retries) before the alert is recorded
+#: undelivered. Read off the desk's existing transient-fault retry policy
+#: (`LLMCostCircuitConfig.infra_fault_max_retries`) rather than a new number.
+MAX_ATTEMPTS = _Retry.model_fields["infra_fault_max_retries"].default + 1
+#: Seconds to wait before each retry: the same policy's exponential backoff
+#: (base doubling, capped at its max). Tests patch this to zero.
+RETRY_DELAYS_S = tuple(
+    min(
+        _Retry.model_fields["infra_fault_retry_backoff_base_s"].default * 2**i,
+        _Retry.model_fields["infra_fault_retry_backoff_max_s"].default,
+    )
+    for i in range(MAX_ATTEMPTS - 1)
+)
 
 UNDELIVERED_STATUS = "owner_alert_undelivered"
 
