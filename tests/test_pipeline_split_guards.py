@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from scripts.pipeline_method_inventory import module_inventory
+from src.number_sources import SCOPED_PATHS
 from src.ledger_move import (
     MoveSpec,
     apply_move,
@@ -37,7 +38,15 @@ from src.ledger_move import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LEDGER_PATH = REPO_ROOT / "config" / "number_ledger.yaml"
-NUMBER_SOURCES_PATH = REPO_ROOT / "src" / "number_scope.py"  # holds SCOPED_PATHS
+
+
+def _live_scoped_text() -> str:
+    """The live `SCOPED_PATHS` rendered one entry per line, as the helper expects.
+
+    Read from the object production code imports, so no path to the defining
+    module is written down here and a relocation of it cannot trip this guard.
+    """
+    return "".join(f'    "{p}",\n' for p in SCOPED_PATHS)
 
 def test_no_new_duplicated_pipeline_method_against_trunk() -> None:
     """Mixin MRO risk (plan 5.4): two mixins defining one name is a silent win for
@@ -158,7 +167,7 @@ def _synthetic_spec(ledger: str) -> MoveSpec:
 
 def test_migration_helper_rewrites_ids_and_scoped_paths_on_a_synthetic_move() -> None:
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    scoped = NUMBER_SOURCES_PATH.read_text(encoding="utf-8")
+    scoped = _live_scoped_text()
     spec = _synthetic_spec(ledger)
 
     plan = plan_move(spec, ledger, scoped)
@@ -186,7 +195,7 @@ def test_migration_helper_rewrites_ids_and_scoped_paths_on_a_synthetic_move() ->
 
 def test_migration_helper_leaves_unrelated_ids_alone() -> None:
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    scoped = NUMBER_SOURCES_PATH.read_text(encoding="utf-8")
+    scoped = _live_scoped_text()
     spec = _synthetic_spec(ledger)
     plan = plan_move(spec, ledger, scoped)
     new_ledger, _ = apply_move(plan, ledger, scoped)
@@ -198,7 +207,7 @@ def test_migration_helper_leaves_unrelated_ids_alone() -> None:
 def test_verifier_catches_a_half_applied_move() -> None:
     """Prove the checkable half can fail: drop one rewrite and a scope entry."""
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    scoped = NUMBER_SOURCES_PATH.read_text(encoding="utf-8")
+    scoped = _live_scoped_text()
     spec = _synthetic_spec(ledger)
     plan = plan_move(spec, ledger, scoped)
     new_ledger, new_scoped = apply_move(plan, ledger, scoped)
@@ -215,7 +224,7 @@ def test_verifier_catches_a_half_applied_move() -> None:
 
 def test_verifier_catches_a_duplicated_id() -> None:
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    scoped = NUMBER_SOURCES_PATH.read_text(encoding="utf-8")
+    scoped = _live_scoped_text()
     spec = _synthetic_spec(ledger)
     plan = plan_move(spec, ledger, scoped)
     new_ledger, new_scoped = apply_move(plan, ledger, scoped)
