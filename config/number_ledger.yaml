@@ -8271,3 +8271,18 @@ numbers:
       size or stop depends on it. It is bumped only when a field is added or
       an existing field's meaning changes. There is nothing to source: the
       value is an identifier that happens to be written as a number.
+  - id: src.infra_retry_policy.MAX_RETRIES
+    value: 2
+    status: not-trade-governing
+    site: src/infra_retry_policy.py
+    note: "Bounded retries of a transient infrastructure fault (an LLM provider blip, a failed owner-alert send) before the harder failure path runs. It is the same number as `MacroConfig.max_retries` in src/config/macro.py, which the macro provider's retry loop (`MacroDataProvider`) spends, and `LLMCostCircuitConfig` in src/config/llm_cost.py says it mirrors that policy. It bounds how many times a failed call is repeated, never a price, size, stop or whether a trade is allowed; a wrong value delays a retry by seconds or fails one call sooner. If the macro default is ever re-derived this row must be revisited, since the two are meant to stay equal."
+  - id: src.infra_retry_policy.BACKOFF_BASE_S
+    value: 2.0
+    status: not-trade-governing
+    site: src/infra_retry_policy.py
+    note: "First retry's wait in seconds, doubling each retry up to BACKOFF_MAX_S. Same number as `MacroConfig.retry_backoff_base_s` in src/config/macro.py, whose docstring states the doubling and the cap and which `MacroDataProvider._next_backoff` in src/data/macro.py applies. A pause between repeated calls; no trade quantity, price or gate reads it."
+  - id: src.infra_retry_policy.BACKOFF_MAX_S
+    value: 8.0
+    status: not-trade-governing
+    site: src/infra_retry_policy.py
+    note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls; no trade quantity, price or gate reads it."

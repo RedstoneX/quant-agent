@@ -20,12 +20,10 @@ SRC = Path(__file__).resolve().parent.parent / "src"
 
 # Offenders present when the guard arrived. Shrink-only: removing an entry is
 # the point; adding one means a new undefined name reached the tree.
-BASELINE: set[tuple[str, str]] = {
-    # Deliberate lazy wiring, already marked `# noqa: F821` in place: the
-    # package installs `PortfolioManagerAgent` into this module after the
-    # agent class exists, and the lambdas read it only when called.
-    ("src/agents/portfolio_manager/ranking.py", "PortfolioManagerAgent"),
-}
+# Empty, and it must stay that way: the last entry stopped offending when the
+# ranking module was lifted into its own part, and the guard refuses a stale
+# entry precisely so a baseline cannot quietly outlive the thing it excused.
+BASELINE: set[tuple[str, str]] = set()
 
 _BUILTINS = set(dir(builtins)) | {"__file__", "__name__", "__doc__", "__spec__", "__package__", "__loader__", "__builtins__", "__debug__", "__path__", "WindowsError", "reveal_type"}
 
