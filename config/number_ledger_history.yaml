@@ -1114,3 +1114,6 @@ changes:
       meant to source it found directional overnight-gap asymmetry at a
       median 1.01 across names, nowhere near 1.5, so the count falls by
       one with no new unsourced number entering anywhere.
+
+# MERGE-BEHAVIOUR PROBE ledger-b (delete me)
+probe_ledger_b: placeholder
