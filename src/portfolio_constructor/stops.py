@@ -77,6 +77,9 @@ from src.portfolio_constructor.config import (
 
 from src.portfolio_constructor.entry_stop.resolver import EntryStopResolver
 from src.portfolio_constructor.stop_width import stop_atr_multiple
+from src.portfolio_constructor.no_atr_buffer_rows import (
+    OUTCOME_LEVEL, OUTCOME_NONE, OUTCOME_PRIOR_BAR, placement_recorder,
+)
 
 
 class StopRules:
@@ -91,9 +94,12 @@ class StopRules:
     `src/portfolio_constructor/assembly.py`.
     """
 
-    def __init__(self, *, read_cfg, entry_stop_resolver):
+    def __init__(self, *, read_cfg, entry_stop_resolver, read_db=None):
         self._read_cfg = read_cfg
         self._entry_stop_resolver = entry_stop_resolver
+        # Observation only: a zero-argument callable returning the owner's
+        # live database handle, or None. Read per placement, never cached.
+        self._read_db = read_db
 
     @property
     def cfg(self):
@@ -263,7 +269,8 @@ class StopRules:
         tier yields a usable level on the protective side of entry (a monotonic
         move, no structure, or zero bars -- the ruling's genuine skip case).
         The buffer is `ConstructorConfig.structural_stop_buffer_pct`, owner
-        appetite, ledgered with an open question; see `no_atr_stop_record`.
+        appetite, ledgered with an open question; see `no_atr_stop_record`
+        for the log line and `no_atr_buffer_rows` for the persisted row.
         """
         buffer_pct = self.cfg.structural_stop_buffer_pct
 
@@ -309,9 +316,16 @@ class StopRules:
             gap = abs(entry_price - price)
             if gap < best_gap:
                 best_level, best_gap = price, gap
+        # Item 90: one durable row per placement decision, never a total.
+        _row = placement_recorder(
+            self._read_db, analysis, is_short=is_short,
+            entry_price=entry_price, buffer_pct=buffer_pct,
+            min_touches=min_touches, candidate_levels=len(raw_levels),
+        )
         if best_level is not None:
             stop = _beyond(best_level)
             if _usable(stop):
+                _row(OUTCOME_LEVEL, best_level, stop, touches_by_price.get(best_level))
                 return noted(best_level, stop, STOP_RULE_STRUCTURAL_NO_ATR, analysis)
 
         # ---- Tier 2: the signal (prior) bar's far edge -------------------
@@ -327,8 +341,10 @@ class StopRules:
         ):
             stop = _beyond(bar_edge)
             if _usable(stop):
+                _row(OUTCOME_PRIOR_BAR, bar_edge, stop)
                 return noted(bar_edge, stop, STOP_RULE_PRIOR_BAR_NO_ATR, analysis)
 
+        _row(OUTCOME_NONE)
         return None
 
     def _reward_risk_at(

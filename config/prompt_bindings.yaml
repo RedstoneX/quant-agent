@@ -71,5 +71,5 @@ bindings:
           - "the stop is honoured exactly as you placed it"
           - "pushed out to a deterministic minimum distance"
           - "Absolute backstop, applied in code even to a level-backed stop"
-    code_digest: "8e2438d2374fd8fe"
+    code_digest: "c88a422a03b311f4"
     prose_digest: "348d051a74f32042"

@@ -69,6 +69,7 @@ def hold_parts(owner, *, delegate_owner: type) -> None:
     owner._stop_rules = StopRules(
         read_cfg=lambda: owner.cfg,
         entry_stop_resolver=lambda: build_entry_stop_resolver(owner, delegate_owner),
+        read_db=lambda: getattr(owner, "db", None),
     )
     owner._order_builders = OrderBuilders(collaborators=lambda: order_builder_collaborators(owner))
 
