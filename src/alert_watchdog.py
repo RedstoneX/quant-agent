@@ -337,14 +337,7 @@ def read_health(
     )
 
 
-def _age_hours(stamp: str, now: datetime) -> float | None:
-    try:
-        when = datetime.fromisoformat(stamp)
-    except (TypeError, ValueError):
-        return None
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    return max((now - when).total_seconds() / 3600.0, 0.0)
+from src.alert_watchdog_age import _age_hours  # noqa: E402,F401 -- lifted verbatim
 
 
 # ---------------------------------------------------------------------------

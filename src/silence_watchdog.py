@@ -143,18 +143,14 @@ DB_PATH = db_path()
 
 #: `data/` is gitignored — this record can never dirty the checkout, exactly
 #: like `scripts/alert_heartbeat.py`'s `data/alerting/heartbeat.json`.
-STATE_PATH = (
-    alerting_dir() / "silence_heartbeat.json"
-)
+STATE_PATH = alerting_dir() / "silence_heartbeat.json"
 
 #: Separate on-box record for the paused-desk notice. Deliberately NOT the
 #: same file as the silence marker: the two are written on mutually
 #: exclusive runs (the wrapper either finds the desk paused or it does
 #: not), and sharing one file would mean a pause episode could silently
 #: overwrite the `last_known_session_at` the silence check depends on.
-PAUSED_STATE_PATH = (
-    alerting_dir() / "paused_desk.json"
-)
+PAUSED_STATE_PATH = alerting_dir() / "paused_desk.json"
 
 TABLE = "alert_channel_checks"
 

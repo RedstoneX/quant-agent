@@ -150,9 +150,7 @@ logger = logging.getLogger(__name__)
 DB_PATH = db_path()
 
 #: On-box record, gitignored like its siblings under data/alerting/.
-STATE_PATH = (
-    alerting_dir() / "coverage_heartbeat.json"
-)
+STATE_PATH = alerting_dir() / "coverage_heartbeat.json"
 
 #: Deploy-drift snapshot, written by scripts/check_deploy_drift.py and read
 #: by the /health API so a checkout that is behind origin/main is VISIBLE on
@@ -161,9 +159,7 @@ STATE_PATH = (
 #: written with the same `load_state`/`save_state` helpers, so the per-day
 #: dedup that stops a repeating alert is the one already in use here rather
 #: than a fourth private implementation.
-DEPLOY_DRIFT_STATE_PATH = (
-    alerting_dir() / "deploy_drift.json"
-)
+DEPLOY_DRIFT_STATE_PATH = alerting_dir() / "deploy_drift.json"
 
 TABLE = "alert_channel_checks"
 

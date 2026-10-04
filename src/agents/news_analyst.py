@@ -92,14 +92,7 @@ def _persist_parse_failure(*, agent_name: str, session: str, raw_text: str,
 # Tokens too common to anchor an event on — they'd let any hallucinated event
 # survive a keyword match. Deliberately conservative: we only want to exclude
 # words that appear in virtually any headline.
-_STATE_CHANGE_STOPWORDS = frozenset({
-    "from", "into", "with", "that", "this", "these", "those",
-    "have", "been", "will", "would", "could", "should",
-    "change", "state", "event", "today", "more", "less",
-    "than", "some", "many", "much", "also", "very",
-    "after", "before", "during", "while", "about", "against", "between",
-    "said", "says", "reports", "reported", "according",
-})
+from src.news_state_change_words import _STATE_CHANGE_STOPWORDS  # noqa: E402,F401 -- lifted verbatim
 
 
 class NewsAnalystAgent(BaseAgent):
