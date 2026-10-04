@@ -221,7 +221,7 @@ def test_item_138_order_price_buffers_have_one_source_each() -> None:
 
     # Every other order-price site at these values derives from the base above.
     derived_from_base = {
-        "src.pipeline_delever.DeleverMixin._force_delever:factor[0]": stop_buffer,
+        "src.delever.forced.DeleverForced._force_delever:factor[0]": stop_buffer,
         "src.stage_execution.ExecutionStage._run_session:factor[1]": exit_offset,
         "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]": exit_offset,
         "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]": exit_offset,
@@ -630,7 +630,7 @@ def test_the_named_hidden_trade_numbers_are_now_sites() -> None:
     # proceeds haircut: the sweep-sizing cushion that used to sit ahead of it
     # was reformulated away on 2026-09-30 (board item 182), which renumbered
     # the haircut factor[1] -> factor[0]. One site still proves rule (e).
-    assert "src.pipeline_delever.DeleverMixin._force_delever:factor[0]" in ids
+    assert "src.delever.forced.DeleverForced._force_delever:factor[0]" in ids
     assert "src.pipeline.TradingPipeline._force_delever:factor[1]" not in ids
     assert "src.stage_execution.ExecutionStage._run_session:factor[0]" in ids
     assert "src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]" in ids
@@ -847,7 +847,8 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
         "src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct",
     )
     for site_id in ceilings:
-        entry = ledger[site_id]
+        if (entry := ledger[site_id])["status"] == "owner-ruled":
+            continue  # a dated owner decision owes no settlement route
         # A ceiling that is a MIRROR of another ceiling owes nothing of its
         # own: it has no settlement route because a `derived` row may not
         # carry one (the validator rejects `settles_by` on any non-arbitrary
@@ -857,9 +858,8 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
         # somebody and the owner is still not being asked -- is therefore
         # checked on the BASE instead, which must itself be one of these
         # ceilings. Added 2026-10-02 when
-        # `ConstructorConfig.max_sector_hard_pct` was recorded as the mirror
-        # of `RiskConfig.SECTOR_HARD_CEILING_MAX` that src/pipeline.py:363
-        # makes it; the base kept its recording and its withdrawn question.
+        # `ConstructorConfig.max_sector_hard_pct` was recorded as the mirror of
+        # `RiskConfig.SECTOR_HARD_CEILING_MAX` (src/pipeline.py:363).
         if entry.get("status") == "derived":
             base_id = entry.get("derived_from")
             assert base_id in ceilings, (

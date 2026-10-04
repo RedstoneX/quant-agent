@@ -16,6 +16,7 @@ from src.entry_evidence import (
     resolve_entry_pins as _resolve_entry_pins,
 )
 from src.entry_record import insert_pending_entry
+from src.entry_slippage_bound import entry_bound
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -962,15 +963,10 @@ class ExecutionStage:
                     # Price protection is unchanged — `slippage_bps` still
                     # bounds the worst possible fill — it just stops being
                     # self-defeating.
-                    pinned_cap = (getattr(ctx, "approved_entry_ceiling", None) or {}).get(
-                        decision.symbol,
+                    cap, offer_limit, ask_premium_bps = entry_bound(
+                        pipeline, ctx, decision.symbol, market_price, ask,
+                        slippage_bps, is_short=False,
                     )
-                    if isinstance(pinned_cap, (int, float)) and pinned_cap > 0:
-                        cap = float(pinned_cap)
-                    else:
-                        cap = market_price * (1 + slippage_bps / 10_000.0)
-                    offer_limit = round(cap, 2 if cap >= 1 else 4)
-                    ask_premium_bps = (ask - market_price) / market_price * 10_000.0
 
                     # THE IEX ASK DOES NOT DECIDE ANYTHING HERE (board item
                     # 183, 2026-09-30). It used to: an entry was refused when
@@ -1122,16 +1118,9 @@ class ExecutionStage:
                     # toward the bid costs fills the same way VLO's shaved
                     # buy limit did. Set the limit AT the existing
                     # slippage floor and let the match happen underneath.
-                    pinned_floor = (getattr(ctx, "approved_entry_ceiling", None) or {}).get(
-                        decision.symbol,
-                    )
-                    if isinstance(pinned_floor, (int, float)) and pinned_floor > 0:
-                        floor = float(pinned_floor)
-                    else:
-                        floor = market_price * (1 - slippage_bps / 10_000.0)
-                    bid_limit = round(floor, 2 if floor >= 1 else 4)
-                    bid_discount_bps = (
-                        (market_price - bid) / market_price * 10_000.0
+                    floor, bid_limit, bid_discount_bps = entry_bound(
+                        pipeline, ctx, decision.symbol, market_price, bid,
+                        slippage_bps, is_short=True,
                     )
 
                     # Mirror of the BUY side above, and it goes for the same

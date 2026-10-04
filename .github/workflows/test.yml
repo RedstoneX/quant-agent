@@ -68,6 +68,10 @@ jobs:
       - name: Disk guard
         run: python3 scripts/disk_guard.py --scratch /tmp
 
+      # Undefined-name check (stdlib symtable); see scripts/check_undefined_names.py.
+      - name: Undefined names
+        run: python3 scripts/check_undefined_names.py
+
       # Version comes from .python-version (the single place it's written;
       # see tests/conftest.py for the matching local-side check) rather than
       # a literal here, so this and the other setup-python step below can't
@@ -197,6 +201,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version-file: ".python-version"
+
+      - name: Install the one dependency the import chain needs
+        # src.inflight -> src.notifier imports `requests` at package load; this
+        # job never ran `pip install`, so it died on ModuleNotFoundError.
+        run: python -m pip install requests
 
       - name: Check this PR's board item numbers against other open PRs
         env:

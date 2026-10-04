@@ -91,3 +91,56 @@ def test_refuses_when_github_unreadable(tmp_path):
         raise RuntimeError("gh down")
     ok, why = prune.judge(entry(repo, wt), str(repo), states=boom)
     assert not ok and "cannot read" in why
+
+
+DIRTY = "uncommitted or untracked changes"
+NOPR = "no PR found for branch"
+FUTURE = lambda: __import__("time").time() + 100 * 3600  # noqa: E731
+
+
+def _stale(repo, wt, reason=DIRTY, states=lambda b, r: [], now=None, cwd="/nonexistent"):
+    return prune.judge_stale(entry(repo, wt), str(repo), reason, states=states, cwd=cwd,
+                             now=now if now is not None else FUTURE())
+
+
+def test_stale_rule_fires_on_old_prless_dirty_tree(tmp_path):
+    repo, wt = make(tmp_path)
+    (wt / "stray").write_text("x")
+    ok, why = _stale(repo, wt)
+    assert ok and "STALE" in why
+
+
+def test_stale_rule_holds_back_recent_tree(tmp_path):
+    repo, wt = make(tmp_path)
+    (wt / "stray").write_text("x")
+    ok, why = _stale(repo, wt, now=__import__("time").time())
+    assert not ok and "activity within" in why
+
+
+def test_stale_rule_holds_back_open_pr(tmp_path):
+    repo, wt = make(tmp_path)
+    ok, why = _stale(repo, wt, states=lambda b, r: [{"number": 7, "state": "OPEN"}])
+    assert not ok and "open PR" in why
+
+
+def test_stale_rule_holds_back_live_cwd_and_unlisted_reason(tmp_path):
+    repo, wt = make(tmp_path)
+    assert not _stale(repo, wt, cwd=str(wt / "sub"))[0]
+    assert not _stale(repo, wt, reason="unpushed commits")[0]
+    assert not _stale(repo, wt, reason="PR #1 is OPEN")[0]
+
+
+def test_stale_rule_holds_back_on_pr_lookup_failure(tmp_path):
+    repo, wt = make(tmp_path)
+    def boom(b, r):
+        raise RuntimeError("gh down")
+    assert not _stale(repo, wt, states=boom)[0]
+
+
+def test_stale_rule_old_commit_but_fresh_file_is_kept(tmp_path):
+    repo, wt = make(tmp_path)
+    (wt / "stray").write_text("x")
+    # commit is "old" (now far in future) but a file claims to be newer than the cutoff
+    ok, _ = prune.judge_stale(entry(repo, wt), str(repo), NOPR, states=lambda b, r: [],
+                              cwd="/nonexistent", now=FUTURE(), newer=lambda p, c: True)
+    assert not ok

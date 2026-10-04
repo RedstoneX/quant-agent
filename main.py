@@ -232,6 +232,14 @@ def main():
         error = exc
         raise
     finally:
+        # The owner-flag pointer belongs to THIS session, not to the process:
+        # released here so it can never name a database that is already gone.
+        try:
+            from src.execution import owner_flags_gate
+
+            owner_flags_gate.release()
+        except Exception as exc:  # noqa: BLE001 - never replace a session error
+            logger.warning("owner-flag pointer release failed: %s", exc)
         elapsed = time.monotonic() - start
         # format_session_result reads from the DB (cost line + position
         # snapshot). DB lock contention, a corrupted run_id, or any

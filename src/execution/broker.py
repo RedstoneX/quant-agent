@@ -43,6 +43,7 @@ from src.execution.broker_parts.order_desk import (  # noqa: F401 (re-exports ke
     OrderDesk, _PLAIN_PRICE_LABELS, _outlier_refusal_detail, _is_terminal_submission_rejection,
 )
 from src.execution.broker_parts.account_reads import AccountReads
+from src.sentinel.guarded import attach_reconciliation_db, record_guarded_pass  # noqa: F401 (re-export)
 from src.execution.order_gates import BadOrderQuantity, QTY_REJECTED, check_order_quantity  # noqa: F401 (re-exports keep patch targets)
 from src.execution.order_idempotency import _client_order_id, _is_dead_stop_result, _session_date_key  # noqa: F401 (re-exports keep patch targets)
 from src.execution.broker_parts.trade_stream import (  # noqa: F401 (re-exports keep patch targets)
@@ -267,9 +268,8 @@ class AlpacaBroker:
         self._trade_hub: _TradeUpdatesHub | None = None
         self._trade_hub_lock = threading.Lock()
         self._trade_lease = _TradeUpdatesLease(
-            Path(trade_updates_lease_path)
-            if trade_updates_lease_path
-            else _default_trade_updates_lease_path()
+            Path(trade_updates_lease_path or _default_trade_updates_lease_path()),
+            owner=self,
         )
         self._trade_slot_held = False
         self._trade_lease_contended = False
@@ -619,11 +619,10 @@ class AlpacaBroker:
             try:
                 self.client.cancel_order_by_id(sid)
                 cancelled.append(spec)
+                record_guarded_pass(self, "cancel_snapshotted_stops.cancel", context={"symbol": symbol, "order": sid})
             except Exception as exc:
-                logger.warning(
-                    "cancel_snapshotted_stops: cancel failed for %s order "
-                    "%s: %s", symbol, sid, exc,
-                )
+                record_guarded_pass(self, "cancel_snapshotted_stops.cancel", exc, log=logger,
+                           context={"symbol": symbol, "order": sid, "effect": "stop left resting; rollback decides coverage"})
                 cancel_failed.append(spec)
         return settle_cancel(
             symbol, specs, cancelled, untouched, cancel_failed,
@@ -712,12 +711,10 @@ class AlpacaBroker:
         """
         try:
             ok, specs = self.snapshot_protective_stops(symbol, side=side)
+            record_guarded_pass(self, "cancel_stray_protective_stops.list", context={"symbol": symbol, "side": side})
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "cancel_stray_protective_stops: could not list %s-stops for "
-                "now-flat %s: %s — a stray stop may still rest; the operator "
-                "should confirm it is gone", side, symbol, exc,
-            )
+            record_guarded_pass(self, "cancel_stray_protective_stops.list", exc, log=logger,
+                       context={"symbol": symbol, "side": side, "effect": "a stray stop may still rest; the operator should confirm it is gone"})
             return 0
         if not ok or not specs:
             return 0
@@ -729,13 +726,10 @@ class AlpacaBroker:
             try:
                 self.client.cancel_order_by_id(sid)
                 cancelled += 1
+                record_guarded_pass(self, "cancel_stray_protective_stops.cancel", context={"symbol": symbol, "order": sid, "side": side})
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "cancel_stray_protective_stops: cancel of stray %s-stop "
-                    "%s on now-flat %s failed: %s — a stop may still rest on "
-                    "a flat position; the operator should clear it by hand",
-                    side, sid, symbol, exc,
-                )
+                record_guarded_pass(self, "cancel_stray_protective_stops.cancel", exc, log=logger,
+                           context={"symbol": symbol, "order": sid, "side": side, "effect": "a stop may still rest on a flat position; clear it by hand"})
         if cancelled:
             logger.info(
                 "Cancelled %d stray protective %s-stop(s) on now-flat %s "
@@ -1078,9 +1072,10 @@ class AlpacaBroker:
             status = self.wait_for_order_terminal(
                 order_id, timeout_seconds=_ENTRY_FILL_TIMEOUT_S,
             )
+            record_guarded_pass(self, "entry_protection.wait_terminal", context={"symbol": symbol, "order": order_id})
         except Exception as exc:  # noqa: BLE001
-            logger.warning("entry protection: wait failed for %s (%s): %s",
-                           symbol, order_id, exc)
+            record_guarded_pass(self, "entry_protection.wait_terminal", exc, log=logger,
+                       context={"symbol": symbol, "order": order_id, "effect": "status unknown"})
             status = None
 
         cancelled_here = False
@@ -1100,18 +1095,18 @@ class AlpacaBroker:
             try:
                 self.client.cancel_order_by_id(order_id)
                 cancelled_here = True
+                record_guarded_pass(self, "entry_protection.cancel_working_entry", context={"symbol": symbol, "order": order_id})
             except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "entry protection: cancel of still-working entry %s (%s) "
-                    "failed: %s — a later fill will be UNPROTECTED until the "
-                    "next coverage reconcile", symbol, order_id, exc,
-                )
+                record_guarded_pass(self, "entry_protection.cancel_working_entry", exc, log=logger,
+                           context={"symbol": symbol, "order": order_id, "effect": "a later fill will be UNPROTECTED until the next coverage reconcile"})
             try:
                 status = self.wait_for_order_terminal(
                     order_id, timeout_seconds=10.0,
                 ) or status
-            except Exception:  # noqa: BLE001
-                pass
+                record_guarded_pass(self, "entry_protection.wait_after_cancel", context={"symbol": symbol, "order": order_id})
+            except Exception as exc:  # noqa: BLE001
+                record_guarded_pass(self, "entry_protection.wait_after_cancel", exc, log=logger,
+                           context={"symbol": symbol, "order": order_id, "effect": "falls through to the unconfirmed-outcome branch below"})
             if (status or "").lower() not in self._TERMINAL_ORDER_STATES:
                 # Fill confirmation has genuinely DEGRADED: the bounded
                 # window closed, the cancel-and-recheck closed too, and the
@@ -1129,16 +1124,17 @@ class AlpacaBroker:
                         waited_seconds=_ENTRY_FILL_TIMEOUT_S,
                         last_status=(status or "").lower() or None,
                     )
+                    record_guarded_pass(self, "entry_protection.unconfirmed_alert", context={"symbol": symbol, "order": order_id})
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "entry protection: unconfirmed-outcome alert for %s "
-                        "could not be sent: %s", symbol, exc,
-                    )
+                    record_guarded_pass(self, "entry_protection.unconfirmed_alert", exc, log=logger,
+                               context={"symbol": symbol, "order": order_id, "effect": "the owner was NOT told the outcome is unconfirmed"})
 
         try:
             info = self.get_order_fill_info(order_id) or {}
+            record_guarded_pass(self, "entry_protection.fill_info", context={"symbol": symbol, "order": order_id})
         except Exception as exc:  # noqa: BLE001
-            logger.warning("entry protection: fill info failed for %s: %s", symbol, exc)
+            record_guarded_pass(self, "entry_protection.fill_info", exc, log=logger,
+                       context={"symbol": symbol, "order": order_id, "effect": "treated as filled_qty=0"})
             info = {}
         try:
             filled_qty = float(info.get("filled_qty") or 0)
@@ -1182,11 +1178,10 @@ class AlpacaBroker:
                         "status": (status or "").lower() or "unknown",
                         "filled_qty": 0.0,
                     })
+                    record_guarded_pass(self, "entry_protection.unfilled_cancel_callback", context={"symbol": symbol, "order": order_id})
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "entry protection: unfilled-cancel callback for %s "
-                        "raised: %s", symbol, exc,
-                    )
+                    record_guarded_pass(self, "entry_protection.unfilled_cancel_callback", exc, log=logger,
+                               context={"symbol": symbol, "order": order_id, "effect": "the caller was not told the entry went unfilled"})
             return None
         if (
             requested_qty and filled_qty < requested_qty
@@ -1307,8 +1302,10 @@ class AlpacaBroker:
                     nested=True,
                 )
             )
+            record_guarded_pass(self, "replace_stop_loss.list_open_orders", context={"symbol": symbol})
         except Exception as exc:
-            logger.warning("replace_stop_loss: failed to list open orders for %s: %s", symbol, exc)
+            record_guarded_pass(self, "replace_stop_loss.list_open_orders", exc, log=logger,
+                       context={"symbol": symbol, "effect": "no stop orders returned to the caller"})
             # Board item 172 — same contract as the sell-side lister above.
             if errors is not None:
                 errors.append(f"open-order listing failed: {exc}")
@@ -1370,8 +1367,10 @@ class AlpacaBroker:
                     nested=True,
                 )
             )
+            record_guarded_pass(self, "replace_stop_loss.list_open_orders_buyside", context={"symbol": symbol})
         except Exception as exc:
-            logger.warning("replace_stop_loss: failed to list open orders for %s: %s", symbol, exc)
+            record_guarded_pass(self, "replace_stop_loss.list_open_orders_buyside", exc, log=logger,
+                       context={"symbol": symbol, "effect": "no stop orders returned to the caller"})
             if errors is not None:
                 errors.append(f"open-order listing failed: {exc}")
             return []
