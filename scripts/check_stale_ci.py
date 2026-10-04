@@ -34,6 +34,21 @@ deliberately muted. A cancelled run counts as stale on purpose — a cancelled
 run is not an answer, and treating it as one would be weakening the check to
 make a failure go away.
 
+SECOND RULE — OBSOLETE VERDICTS. The guards compare a branch with
+`origin/main`, and main moves constantly (85 merges on 2026-10-04). A PR's
+recorded result is a comparison against a main that no longer exists, and
+nothing re-runs it: PR 1250 failed at 12:40 UTC on a baseline entry that
+main removed at 13:08, and sat red for four and a half hours. So an open,
+non-draft, non-conflicted PR whose newest completed run STARTED before the
+current tip of main was COMMITTED is "obsolete" and gets a fresh run.
+  * No repeat dispatch: the new run starts after the tip, so next sweep it
+    is "running" and then "fresh". The (head, main tip) pair is recognised
+    by the run timestamps themselves; nothing is stored. A new main tip
+    legitimately makes the pair new.
+  * Cap: MAX_OBSOLETE_DISPATCH per sweep, oldest verdict first.
+  * Obsolete PRs never make the sweep exit non-zero (that would start the
+    job red on arrival); only the no-run-at-all rule does.
+
 Usage:
     scripts/check_stale_ci.py
     scripts/check_stale_ci.py --no-dispatch     # report only
@@ -50,6 +65,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime
 
 WORKFLOW_FILE = "test.yml"
 #: The `name:` of the workflow in .github/workflows/test.yml. Matched
@@ -57,6 +73,13 @@ WORKFLOW_FILE = "test.yml"
 #: turn this guard into a no-op that reports everything healthy.
 WORKFLOW_NAME = "tests"
 GH_TIMEOUT_S = 60
+#: Obsolete re-runs started per sweep. GitHub's documented limit is 20
+#: concurrent jobs on the free plan (the plan is not known from here), and
+#: ordinary push-triggered runs share it, so half of it (10) is the most this
+#: sweep may take. 24 stale PRs then clear in three sweeps (~1.5h) instead
+#: of one burst that starves real pushes. Main moves ~3.5 times an hour, so
+#: an uncapped sweep would otherwise queue a full set of runs per merge.
+MAX_OBSOLETE_DISPATCH = 10
 
 
 class GhError(RuntimeError):
@@ -91,7 +114,7 @@ def _gh_json(args: list[str]) -> object:
 def open_pull_requests(repo: str | None) -> list[dict]:
     """Open, non-draft PRs. Drafts are excluded: nobody is waiting on them."""
     args = ["pr", "list", "--state", "open", "--limit", "100",
-            "--json", "number,headRefName,headRefOid,isDraft,title"]
+            "--json", "number,headRefName,headRefOid,isDraft,title,mergeStateStatus"]
     if repo:
         args += ["--repo", repo]
     rows = _gh_json(args)
@@ -102,7 +125,7 @@ def open_pull_requests(repo: str | None) -> list[dict]:
 
 def runs_for_sha(sha: str, repo: str | None) -> list[dict]:
     args = ["run", "list", "--commit", sha, "--limit", "30",
-            "--json", "workflowName,status,conclusion,databaseId,event"]
+            "--json", "workflowName,status,conclusion,databaseId,event,createdAt,startedAt"]
     if repo:
         args += ["--repo", repo]
     rows = _gh_json(args)
@@ -126,6 +149,38 @@ def classify(runs: list[dict]) -> str:
         ):
             return "ok"
     return "stale"
+
+
+def _ts(value: object) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def main_tip_time(repo: str | None, branch: str = "main") -> datetime | None:
+    """When the current tip of the default branch was committed."""
+    target = f"repos/{repo or '{owner}/{repo}'}/commits/{branch}"
+    data = _gh_json(["api", target])
+    stamp = ((data or {}).get("commit") or {}).get("committer", {}).get("date")
+    return _ts(stamp)
+
+
+def is_obsolete(runs: list[dict], tip: datetime | None) -> bool:
+    """True when the newest completed run began before main's tip existed.
+
+    Only meaningful once classify() said "ok"; a PR with an in-flight run or
+    no run is handled by the other rule. A cancelled run is not a verdict.
+    """
+    if tip is None:
+        return False
+    started = [
+        _ts(r.get("startedAt") or r.get("createdAt")) for r in runs
+        if str(r.get("status")) == "completed"
+        and r.get("conclusion") not in (None, "cancelled", "skipped", "stale")
+    ]
+    started = [t for t in started if t is not None]
+    return bool(started) and max(started) < tip
 
 
 def dispatch(branch: str, repo: str | None) -> str | None:
@@ -155,7 +210,15 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
+    try:
+        tip = main_tip_time(args.repo)
+    except GhError as exc:
+        print(f"check_stale_ci: main tip lookup failed, obsolete rule skipped "
+              f"— {exc}", file=sys.stderr)
+        tip = None
+
     stale: list[dict] = []
+    obsolete: list[tuple[datetime, dict]] = []
     for pr in sorted(prs, key=lambda row: row.get("number") or 0):
         sha = str(pr.get("headRefOid") or "")
         number = pr.get("number")
@@ -165,14 +228,34 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             continue
         try:
-            verdict = classify(runs_for_sha(sha, args.repo))
+            runs = runs_for_sha(sha, args.repo)
+            verdict = classify(runs)
         except GhError as exc:
             print(f"check_stale_ci: PR #{number} run lookup failed — {exc}",
                   file=sys.stderr)
             return 2
+        if (verdict == "ok" and is_obsolete(runs, tip)
+                and pr.get("mergeStateStatus") != "DIRTY"):
+            verdict = "obsolete"
+            when = min(_ts(r.get("startedAt") or r.get("createdAt")) or tip
+                       for r in runs if r.get("status") == "completed")
+            obsolete.append((when, pr))
         print(f"PR #{number} {sha[:10]} {branch}: {verdict}")
         if verdict == "stale":
             stale.append(pr)
+
+    if obsolete and not args.no_dispatch:
+        obsolete.sort(key=lambda item: item[0])
+        batch = obsolete[:MAX_OBSOLETE_DISPATCH]
+        for _, pr in batch:
+            error = dispatch(str(pr.get("headRefName")), args.repo)
+            print(f"check_stale_ci: obsolete verdict on #{pr.get('number')} — "
+                  + (f"could not re-run: {error}" if error else "re-run started"))
+        if len(obsolete) > len(batch):
+            print(f"check_stale_ci: {len(obsolete) - len(batch)} more obsolete "
+                  f"PR(s) wait for the next sweep (cap {MAX_OBSOLETE_DISPATCH})")
+    elif obsolete:
+        print(f"check_stale_ci: {len(obsolete)} PR(s) hold an obsolete verdict")
 
     if not stale:
         print(f"check_stale_ci: all {len(prs)} open PR head commits have a "
