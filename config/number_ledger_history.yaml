@@ -1098,3 +1098,14 @@ changes:
       `instrument` rather than `arbitrary`. The single cost that defended
       the percentage -- the cancel-then-resubmit window with no protective
       order -- is gone now that the in-place stop amend is on main.
+  - delta: -3
+    date: '2026-10-04'
+    why: >-
+      A sixth ledger status, `owner-ruled`, now exists for a value the owner
+      decided on a recorded date, and three rows whose own note already
+      carried a dated owner ratification of the value move to it:
+      `STARTER_POSITION_RISK_PCT` (2026-08-27), `RiskConfig.max_target_horizon_sessions`
+      (2026-09-25) and `ConstructorConfig.max_position_pct` (2026-09-11). No
+      value changed. Rows whose note says they stay `arbitrary` on purpose,
+      and the gross ladder whose open question the owner has not answered,
+      were left.
