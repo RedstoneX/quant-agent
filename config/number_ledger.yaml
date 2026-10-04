@@ -3802,7 +3802,7 @@ numbers:
       where: docs/board_notes/item-070.md (item 70, the 2026-10-04 second split)
       records: >-
         every fallback evaluation in check_structural_protection, both
-        outcomes, via src/risk/noise_band_record.py::fallback_outcome
+        outcomes, via src/risk/exit_guard.py::check_structural_protection
         -- the adverse move from the running extreme as an ATR MULTIPLE as well
         as in dollars, the band multiple in force, and whether protection was
         held or lifted. The recording exists and has accrued nothing, because
