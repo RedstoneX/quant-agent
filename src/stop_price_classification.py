@@ -2,7 +2,7 @@
 
 Lifted out of `src/execution/stop_records.py` unchanged (2026-10-02) so the
 ledger can refuse an entry row with no stop WITHOUT importing the broker
-seam (`tests/import_layers.json`, rule "broker-seam"). `stop_records`
+seam (`scripts/import_graph.py`, rule "broker-seam"). `stop_records`
 re-exports every name below, so every existing importer is untouched.
 """
 from __future__ import annotations
