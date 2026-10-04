@@ -20,6 +20,8 @@ targets still resolve.
 from __future__ import annotations
 
 import logging
+
+from src.execution.broker_parts.order_desk_effects import mark, ok
 import math
 import time
 
@@ -151,9 +153,10 @@ class OrderDesk:
             count = len(cancelled) if cancelled else 0
             if count:
                 logger.info("Cancelled %d open order(s)", count)
+            ok(self, "cancel_all_open_orders")
             return count
         except Exception as exc:
-            logger.warning("Failed to cancel open orders: %s", exc)
+            mark(self, "cancel_all_open_orders", exc)
             return 0
 
     def cancel_open_entry_orders(self, symbol: str | None = None) -> int:
@@ -205,9 +208,10 @@ class OrderDesk:
                 count += 1
             if count:
                 logger.info("Cancelled %d open entry order(s)", count)
+            ok(self, "cancel_open_entry_orders", symbol=symbol)
             return count
         except Exception as exc:
-            logger.warning("Failed to cancel open entry orders: %s", exc)
+            mark(self, "cancel_open_entry_orders", exc, symbol=symbol)
             return 0
 
     def list_open_entry_order_ids(
@@ -262,10 +266,9 @@ class OrderDesk:
                     nested=True,
                 )
             )
+            ok(self, "list_open_entry_orders_checked", symbol=symbol)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "list_open_entry_orders_checked failed for %s: %s", symbol, exc,
-            )
+            mark(self, "list_open_entry_orders_checked", exc, symbol=symbol)
             return False, []
         ids: list[str] = []
         for order in orders or []:
@@ -331,9 +334,10 @@ class OrderDesk:
                         return None
                     price = live
                 total += qty * price
+            ok(self, "open_buy_notional")
             return total
         except Exception as exc:
-            logger.warning("open_buy_notional query failed: %s", exc)
+            mark(self, "open_buy_notional", exc)
             return None
 
     def list_recent_orders(
@@ -386,13 +390,10 @@ class OrderDesk:
                     "status": str(getattr(getattr(o, "status", None), "value",
                                           getattr(o, "status", ""))).lower(),
                 })
+            ok(self, "list_recent_orders", symbol=symbol, side=side)
             return out
         except Exception as exc:
-            logger.warning(
-                "list_recent_orders failed for %s %s: %s — returning None "
-                "so the caller retries rather than misjudging the order "
-                "absent", side, symbol, exc,
-            )
+            mark(self, "list_recent_orders", exc, symbol=symbol, side=side)
             return None
 
     def list_filled_sell_orders(self, symbol: str, after) -> list[dict] | None:
@@ -498,14 +499,10 @@ class OrderDesk:
                     "filled_at": filled_at.isoformat() if hasattr(filled_at, "isoformat") else None,
                     "order_type": str(getattr(order_type, "value", order_type)) if order_type else None,
                 })
+            ok(self, "list_filled_sell_orders", symbol=symbol)
             return out
         except Exception as exc:
-            logger.warning(
-                "list_filled_sell_orders failed for %s: %s — returning None "
-                "so the caller retries rather than concluding there was no "
-                "fill (a missed stop-out is a money-relevant accounting "
-                "gap, not just a stale read)", symbol, exc,
-            )
+            mark(self, "list_filled_sell_orders", exc, symbol=symbol)
             return None
 
     def get_order_fill_info(self, order_id: str) -> dict | None:
@@ -516,8 +513,9 @@ class OrderDesk:
         """
         try:
             order = self.client.get_order_by_id(order_id)
+            ok(self, "get_order_fill_info", order=order_id)
         except Exception as exc:
-            logger.warning("get_order_fill_info failed for %s: %s", order_id, exc)
+            mark(self, "get_order_fill_info", exc, order=order_id)
             return None
         status = str(
             getattr(getattr(order, "status", None), "value",
@@ -630,9 +628,10 @@ class OrderDesk:
             order = self.client.get_order_by_id(order_id)
             status = str(getattr(getattr(order, "status", None), "value",
                                  getattr(order, "status", ""))).lower()
+            ok(self, "read_order_status", order=order_id)
             return status or None
         except Exception as exc:
-            logger.warning("Failed to read order %s: %s", order_id, exc)
+            mark(self, "read_order_status", exc, order=order_id)
             return None
 
     def _wait_for_order_terminal_via_stream(
@@ -680,8 +679,9 @@ class OrderDesk:
                 order = self.client.get_order_by_id(order_id)
                 status = str(getattr(getattr(order, "status", None), "value",
                                      getattr(order, "status", ""))).lower()
+                ok(self, "poll_order_status", order=order_id)
             except Exception as exc:
-                logger.warning("Failed to poll order %s: %s", order_id, exc)
+                mark(self, "poll_order_status", exc, order=order_id)
                 return last_status
 
             last_status = status or last_status
@@ -1053,14 +1053,10 @@ class OrderDesk:
         """
         try:
             self.client.cancel_order_by_id(order_id)
+            ok(self, "cancel_entry_order", order=order_id)
             return True
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "cancel_entry_order: cancel of %s FAILED: %s — if this was a "
-                "re-peg replacement racing a partial fill, the position may "
-                "end up larger than intended; the next coverage reconcile "
-                "must be checked", order_id, exc,
-            )
+            mark(self, "cancel_entry_order", exc, order=order_id)
             return False
 
     def resolve_replacement_chain(self, order_id: str) -> str | None:
@@ -1081,12 +1077,9 @@ class OrderDesk:
         for _ in range(self._MAX_REPLACEMENT_HOPS):
             try:
                 order = self.client.get_order_by_id(current)
+                ok(self, "resolve_replacement_chain", order=current)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "resolve_replacement_chain: broker read failed for %s: %s "
-                    "— returning None so the caller retries rather than "
-                    "concluding the order was never replaced", current, exc,
-                )
+                mark(self, "resolve_replacement_chain", exc, order=current)
                 return None
             status = str(
                 getattr(getattr(order, "status", None), "value",
@@ -1177,13 +1170,9 @@ class OrderDesk:
             order = self.client.replace_order_by_id(
                 order_id, ReplaceOrderRequest(**kwargs),
             )
+            ok(self, "replace_entry_limit", order=order_id)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "replace_entry_limit: broker refused replacement of %s at "
-                "$%.4f: %s — the order most likely reached a terminal state "
-                "(filled) first; the ORIGINAL id remains authoritative",
-                order_id, price, exc,
-            )
+            mark(self, "replace_entry_limit", exc, order=order_id)
             return {"id": None, "status": "replace_rejected", "detail": str(exc)}
 
         new_id = str(getattr(order, "id", "") or "")
@@ -1256,11 +1245,9 @@ class OrderDesk:
                 str(old_order_id), timeout_seconds=timeout_seconds,
                 poll_interval=min(1.0, max(0.1, timeout_seconds)),
             )
+            ok(self, "replace_confirmation_wait", order=str(old_order_id))
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "replace confirmation: wait on %s failed (%s) — treating the "
-                "replacement as UNCONFIRMED", old_order_id, exc,
-            )
+            mark(self, "replace_confirmation_wait", exc, order=str(old_order_id))
             return False
         if str(status or "").lower() == "replaced":
             return True
@@ -1269,11 +1256,9 @@ class OrderDesk:
         # rather than concluding either way from silence.
         try:
             resolved = self.resolve_replacement_chain(str(old_order_id))
+            ok(self, "replace_confirmation_chain_reread", order=str(old_order_id))
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "replace confirmation: chain re-read for %s failed: %s",
-                old_order_id, exc,
-            )
+            mark(self, "replace_confirmation_chain_reread", exc, order=str(old_order_id))
             return False
         if resolved is not None and str(resolved) == str(new_order_id):
             return True
