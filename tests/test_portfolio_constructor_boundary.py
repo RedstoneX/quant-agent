@@ -67,28 +67,30 @@ def test_exit_builders_need_no_collaborators():
 
 
 @pytest.mark.parametrize("factory, cls", [("_long_entry_builder", LongEntryBuilder), ("_short_entry_builder", ShortEntryBuilder)])
-def test_shim_builds_the_object_per_call_from_the_host(factory, cls):
-    """A collaborator swapped on the host after construction is what the body sees."""
-    from src.portfolio_constructor.orders import _OrderBuildMixin
+def test_held_part_builds_the_object_per_call_from_the_owner(factory, cls):
+    """A collaborator swapped on the owner after construction is what the body sees."""
+    from src.portfolio_constructor.assembly import order_builder_collaborators
+    from src.portfolio_constructor.orders import _ORDER_BUILDER_COLLABORATORS, OrderBuilders
 
-    class Host(_OrderBuildMixin):
+    class Host:
         pass
 
     host = Host()
-    for _, attr in _OrderBuildMixin._ORDER_BUILDER_COLLABORATORS:
+    for _, attr in _ORDER_BUILDER_COLLABORATORS:
         setattr(host, attr, MagicMock(name=attr))
-    first = getattr(host, factory)()
+    part = OrderBuilders(collaborators=lambda: order_builder_collaborators(host))
+    first = getattr(part, factory)()
     host.cfg = MagicMock(name="swapped_cfg")
-    second = getattr(host, factory)()
+    second = getattr(part, factory)()
     assert isinstance(second, cls)
     assert second.cfg is host.cfg and first.cfg is not second.cfg
 
 
 def test_no_shim_collaborator_is_itself_a_lifted_method():
-    from src.portfolio_constructor.orders import _OrderBuildMixin
+    from src.portfolio_constructor.orders import _ORDER_BUILDER_COLLABORATORS
 
     lifted = {n for cls in LIFTED for n, _ in inspect.getmembers(cls, inspect.isfunction)} - {"__init__"}
-    passed = {attr for _, attr in _OrderBuildMixin._ORDER_BUILDER_COLLABORATORS}
+    passed = {attr for _, attr in _ORDER_BUILDER_COLLABORATORS}
     assert not (lifted & passed), lifted & passed
 
 

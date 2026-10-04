@@ -258,24 +258,13 @@ not by line, and **refuses to resolve** rather than guess when two branches
 file different items under the same number or a merge would make a live item
 vanish.
 
-**Register the baseline merge driver too (same one-time, per-clone, not automatic).**
-Fifteen open changes at once each edited the same shrink-only ratchet files
-under `tests/` (`import_cycle_baseline.json`, `import_layers.json`), so every landing made the rest conflict. The file-size,
-silent-swallow and `__new__`-pipeline ratchets no longer have one: each compares
-the working tree with `origin/main` at check time and stores nothing
+**Ratchet guards store nothing, so there is no baseline merge driver.** The
+file-size, silent-swallow, `__new__`-pipeline and import-cycle/layering guards
+each compare the working tree with `origin/main` at check time
 (`scripts/file_size_guard.py`, `scripts/silent_swallow_guard.py`,
-`scripts/pipeline_new_guard.py`, docs/GUARDS_WITHOUT_STORED_STATE.md).
-`.gitattributes` names a driver for them (`baselinemerge`); it takes the
-smaller number on both sides, drops keys for deleted files, and **refuses**
-(diff3 markers, exit 2) any merge that would loosen a baseline. Both drivers
-are registered by one script, run once per clone:
-
-```bash
-scripts/install_git_merge_drivers.sh
-```
-
-Without it the clone is unaffected (git's plain merge), not broken;
-`tests/test_baseline_merge_driver.py` emits a warning when it is missing.
+`scripts/pipeline_new_guard.py`, `scripts/import_graph.py --check`,
+docs/GUARDS_WITHOUT_STORED_STATE.md). `scripts/install_git_merge_drivers.sh`
+registers the one remaining driver (`docsmerge`), once per clone.
 
 **What a refusal leaves behind (changed 2026-09-23).** It leaves the document
 with conflict markers around the parts it could not resolve, both sides
