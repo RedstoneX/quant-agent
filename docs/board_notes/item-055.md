@@ -183,3 +183,67 @@ and the procedure now both exist in the repo. Until a control that cannot be
 accused of this bias is built, no bar count and no zone width is derivable, and
 the two open boxes below remain correctly unticked: the desk's own recording,
 not this panel, is still the route to a verdict on whether its levels hold.
+
+---
+
+## FOLLOW-UP 2026-10-04 — the missing control was built. THE CONCLUSION SURVIVES.
+
+The weakness named above has been closed. `ops/research/item55_volclustered_control.py`
+re-runs the identical sweep — same committed panel, same pivot definition, same
+greedy clustering, same `MIN_TOUCHES=2`, same 60/40 out-of-sample split, same
+bounce counter, same interval — and changes **only** the control. Every other
+function is imported unchanged from `item55_level_sweep.py`, so nothing but the
+counterfactual differs.
+
+**The fair control: a sign-randomised surrogate.** Each log return is written as
+drift + deviation; the deviation keeps its MAGNITUDE at its own index and only
+its SIGN is flipped. The series of absolute deviations is therefore identical
+bar for bar to the real one, so volatility clustering is preserved exactly — not
+approximately, and with no block length, half-life, window or cut-off invented
+anywhere. The intrabar high/low shape stays at its own index too. Only the sign
+sequence, the thing that builds a path and puts turns at particular prices, is
+destroyed.
+
+**Measured proof the control is now fair.** Median lag-1 autocorrelation of
+|log return| across the 99 usable symbols: real **+0.1159**, sign-flip control
+**+0.1172**. The plain shuffle it replaces drives that quantity to ~0 (asserted
+in the test). The clustering objection is answered on its own terms.
+
+**Result over 20 independent control replications** (per-setting spread reported,
+not a single draw; control standard deviation 0.0044–0.0138 across settings, so
+no conclusion here rests on one lucky surrogate):
+
+- All 24 definitions score **negative** against the fair control.
+- Edges range **-0.0153 to -0.0748**; 23 of 24 clear the 95% band on the wrong
+  side. The desk's live setting (window 5, 1.0% zone) measures real 0.6461 vs
+  control 0.7043, edge **-0.0582 +/- 0.0098**.
+- The negatives got **LARGER**, not smaller, than under the plain shuffle. The
+  hypothesis recorded above — that the uniform small negative was an artefact of
+  the unfair control — is **disproved**. The bias ran the other way.
+
+**VERDICT: outcome 1, the conclusion survives.** Levels as this desk defines them
+show no measurable edge against a control that cannot be accused of the
+volatility-clustering bias. Price entering one of these zones holds its side
+*less* often than a structureless series with the same volatility path does.
+This is a finding about a core part of the strategy and it is stated plainly:
+there is no measurement supporting these level definitions, and there is now a
+measurement against them.
+
+**A different answer was possible, and the method is proven able to produce it.**
+Had levels been real, the measurement would have shown the real series holding
+its side materially more often than the surrogate, with the edge clearing its
+95% band on the positive side. `test_a_different_answer_is_possible_when_levels_are_real`
+runs the exact same pipeline and the exact same fair control over a synthetic
+panel in which price genuinely reflects off two fixed prices, and it reports
+precisely that: a large, significant POSITIVE edge. The same assertion applied
+to the real panel fails at all 24 settings. The method is not one that can only
+return zero.
+
+**What this does NOT license.** Nothing is changed by this run. `PIVOT_WINDOW`
+stays 5 and 3, `CLUSTER_TOLERANCE_PCT` stays 1.0, no stop, size or exit moves,
+and every ledger status stays `arbitrary` — a measurement that a number has no
+support is not a derivation of a better one. The remaining honest caveat is
+scope, not method: this is 99 symbols of public daily bars over roughly five
+years, and daily bars cannot see intraday touches, so a level effect living
+inside the day would not appear here. That is a different measurement needing
+intraday data the repo does not have, not a defect in this one.
