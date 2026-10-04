@@ -759,10 +759,7 @@ numbers:
       activity confirms paper accounts are charged at all.
   - id: src.config.RiskConfig.max_cluster_risk_share_pct
     value: 40
-    status: owner-ruled
-    ruled_on: '2026-09-25'
-    ruling_summary: "Owner ratified on 2026-09-25 that one correlation cluster may hold at most 40% of total risk; the decision was delegated to the adversary."
-    ruling_record: 'this row note: owner-ratified appetite 2026-09-25, delegated to the adversary'
+    status: arbitrary
     site: src/config/__init__.py
     note: >-
       The share of total risk one correlation cluster may hold, owner-ratified
@@ -822,8 +819,6 @@ numbers:
         a run of sessions shows what share one cluster actually reaches, so
         the cap is set against observed crowding rather than against an
         implied two-names-per-theme count nobody chose
-      measurement behind it, which is what the `owner-ruled`
-      status means.
   - id: src.config.RiskConfig.max_gross_exposure_x
     note: 'DERIVED 2026-10-02 (fix #4, first slice), and the derivation is that NO CHOICE WAS MADE:
       2.0x is not an appetite this desk set, it is the maximum gross an overnight margin account is
@@ -850,10 +845,7 @@ numbers:
     value: 2
   - id: src.config.RiskConfig.max_portfolio_risk_pct
     value: 25
-    status: owner-ruled
-    ruled_on: '2026-09-25'
-    ruling_summary: "Owner ratified on 2026-09-25 that total capital at risk across the whole book may not exceed 25%; the decision was delegated to the adversary."
-    ruling_record: 'this row note: owner-ratified appetite 2026-09-25, delegated to the adversary'
+    status: arbitrary
     site: src/config/__init__.py
     note: >-
       Total portfolio risk ceiling, owner-ratified appetite 2026-09-25
@@ -916,14 +908,9 @@ numbers:
         book's realised at-risk and whether the 25% ceiling ever came near
         binding, so the ceiling can be set above observed behaviour instead
         of picked
-      measurement behind it, which is what the `owner-ruled`
-      status means.
   - id: src.config.RiskConfig.max_position_risk_pct
     value: 5
-    status: owner-ruled
-    ruled_on: '2026-08-27'
-    ruling_summary: "Owner ratified on 2026-08-27 that no single position may risk more than 5% of equity."
-    ruling_record: 'docs/OUTCOME.md risk-envelope row, ratified 2026-08-27, commit 75c02335'
+    status: arbitrary
     route_audit_2026_10_04: >-
       UNDETERMINED, and not for want of data: NEITHER recorded route can settle
       this row. The row carries two settles_by blocks, and YAML keeps only the
@@ -937,7 +924,7 @@ numbers:
       neither route: a per-name envelope must be READ OFF THE NAME, from that
       instrument's own ATR and the seats' conviction on it, which is what the
       ruling_check above already concluded and what no recorded route yet
-      implements. No value is changed and the status is `owner-ruled`. Reproduce
+      implements. No value is changed and the status stays arbitrary. Reproduce
       with scripts/measure_ledger_route_admissibility.py.
     site: src/config/__init__.py
     note: >-
@@ -952,6 +939,35 @@ numbers:
       entry orders -- no order requested more than 3.0% risk. The stale
       claim once carried here, that a 20%-notional cap was limiting real
       trades to ~1%, described the retired 20 and is removed.
+    open_question: >-
+      What single-name risk does the mandate actually permit? The 5 is
+      owner-ratified but no measurement of this account's gap or stop-slippage
+      behaviour stands behind the magnitude.
+    cost_while_unanswered: >-
+      Ratified is not sourced: the desk's largest routine exposure rests on a
+      round number.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/board_notes/item-090.md, tranche seven, `Single-name
+        envelope`. The owner's 2026-08-27 ratification is NOT a source;
+        and the route points at the tradable universe, never at this
+        desk's own fills
+      records: >-
+        for the tradable universe, realised loss when a stop is gapped
+        through, expressed as a multiple of the risk that was intended
+        when the stop was placed, so the question is how much worse than
+        planned one name can actually go rather than how much the mandate
+        feels like permitting
+      closes_when: >-
+        the single-name risk at which the worst observed gap multiple
+        still leaves the whole book inside the portfolio envelope is
+        readable, and the envelope is set to it; meanwhile the desk pays
+        the ratified 5%. DELETE OUTCOME: the 20%-notional cap already
+        holds real orders near 1%, so if the notional cap binds first on
+        every order the measurement covers, this envelope governs nothing
+        and is deleted rather than re-picked
     ruling_check_2026_10_02: >-
       THE OPEN QUESTION ABOVE IS BARRED AND IS WITHDRAWN. It asks "What
       single-name risk does the mandate actually permit?", which routes a
@@ -972,11 +988,18 @@ numbers:
       -- is the only admissible way out, and it remains the correct one
       because it produces a per-name reading rather than a dial.
   - id: src.config.RiskConfig.max_target_horizon_sessions
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the distribution of how many sessions the universe the desk could trade, on public
+        daily bars takes to travel a given ATR multiple from a comparable setup, so the reachability
+        horizon is read off real traverse times instead of a round three trading months
+      closes_when: the sessions-to-traverse distribution is in hand and the horizon is set at a stated
+        percentile of it; it is DELETED, together with the reach test, if traverse time turns out
+        to carry no information about whether a target is reached at all
     value: 60
-    status: owner-ruled
-    ruled_on: '2026-09-25'
-    ruling_summary: "Owner ratified on 2026-09-25 that a target is not credited beyond 60 sessions; the decision was delegated to the adversary."
-    ruling_record: 'this row note: owner-ratified appetite, delegated to the adversary'
+    status: arbitrary
     site: src/config/__init__.py
     note: >-
       The longest horizon a target may claim before the desk stops believing
@@ -985,6 +1008,22 @@ numbers:
       credit a target over, but no measurement of this desk's own closed
       trades picks the magnitude. Interacts with board item 91, the
       calendar-vs-trading-day defect.
+    open_question: >-
+      BARRED AND REPLACED 2026-10-01 (found by board item 185's sweep; this was
+      the FOURTH copy of a question that can only be answered by a study over
+      this desk's own trade record, which docs/OUTCOME.md forbids). The honest
+      question is not how long a target takes but whether this horizon governs
+      anything at all: Rex's 2026-09-30 ruling is that the desk exits on
+      ALIGNMENT - structure, ATR and an SMA cross agreeing the trend is over -
+      and never on a target, so a ceiling on how far out a target may sit may
+      now be guarding a decision nothing makes. Settle it by reading the live
+      exit path for a surviving consumer, and delete the number if there is
+      none; that reading belongs to board items 75 and 91, which own the
+      target's status and the calendar-vs-trading-day defect. Do not re-derive
+      the magnitude, and do not route 60 to the owner as an appetite dial.
+    cost_while_unanswered: >-
+      A target 60 sessions out licenses a claim of roughly 8 ATRs of travel
+      with nothing measured behind the horizon.
   - id: src.config.RiskConfig.max_target_reach_atr_multiple
     settles_by:
       kind: measurement
@@ -1092,12 +1131,50 @@ numbers:
     value: 2.5
     status: owner-ruled
     ruled_on: '2026-10-04'
-    ruling_summary: "Owner ruled on 2026-10-04 that the minimum stop distance is 2.5 ATR, closing the stop-multiple question at that value."
-    ruling_record: docs/OUTCOME.md, section 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)
+    ruling_summary: "Owner ruled on 2026-10-04 that the minimum stop distance is 2.5 times the stock's own ATR, closing the stop-multiple question at that value; it individualises per name because ATR does."
+    ruling_record: docs/OUTCOME.md, sections 'The protective stop width is settled at 2.5 ATR' and 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)
     site: src/config/__init__.py
+    route_parked_by_ruling_2026_10_04:
+      why: the measurement route below is kept as written but parked, because the owner's dated ruling above settles the value; a ruled number owes no route, and this one is not re-derived.
+      kind: recording
+      state: built
+      where: src/storage/trades/ledger.py
+      writes:
+        - trades.entry_atr
+        - trades.stop_basis
+        - trades.max_adverse_excursion
+        - trades.max_favourable_excursion
+      records: >-
+        Per CLOSED trade: entry price, entry ATR, the entry stop and the basis
+        it was computed from, and the maximum ADVERSE and FAVOURABLE excursions
+        (`trades.max_adverse_excursion` and its favourable mirror, written by
+        `src/storage/db.py`), alongside the realised outcome and stop-hit
+        category already stored. The realised ATR multiple is RECOMPUTED from
+        those columns and is deliberately not stored again.
+      closes_when: >-
+        Enough closed trades carry the excursion columns to answer the only
+        question doctrine allows of them -- was the floor ever VIOLATED in
+        practice -- which falsifies the floor or leaves it standing. It may
+        NOT be optimised against: fitting a number to this desk's own trading
+        record is barred outright (docs/OUTCOME.md), and that is how the 1.5
+        was produced in the first place.
+        LIVENESS, MEASURED in production on 2026-10-01 and not
+        inferred: the columns this route depends on are EMPTY --
+        entry_atr, stop_basis, max_adverse_excursion and
+        max_favourable_excursion are non-null on 0 of the 80 rows in
+        trades. The route is therefore BUILT but has settled nothing,
+        and the reason is dated rather than unknown: the entry-side
+        write read ATR off the wrong object until it was corrected and
+        deployed late on 2026-09-30, and no entry has been written
+        since that deploy, so the recording is UNPROVEN rather than
+        demonstrated dead. The excursion columns cannot fill
+        independently of that: their accumulating UPDATE filters on
+        entry_atr IS NOT NULL, so they stay empty for every trade
+        entered before the correction. The first entry taken after it
+        is the observation that decides whether this route is alive;
+        until one exists, no reader may treat the floor as being under
+        falsification.
     note: >-
-      OWNER-RULED 2026-10-04: this value is a multiple of the stock's own ATR (its own average daily range), so it individualises per name by construction and there is no single value to measure. A flat percentage or dollar amount would still be made up; this is neither.
-
       Minimum stop distance in ATRs where no real level backs the stop, a
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
       than), owner-ratified appetite 2026-09-25 (delegated to the adversary) as
@@ -2866,8 +2943,8 @@ numbers:
     value: 65
     status: owner-ruled
     ruled_on: '2026-09-11'
-    ruling_summary: "Owner overrode the single-name ceiling to 65% of equity on 2026-09-11 after the prompt_limits defect."
-    ruling_record: 'docs/INCIDENT_HISTORY.md, the prompt_limits defect (owner override to 65)'
+    ruling_summary: "Owner overrode the single-name notional ceiling to 65% of equity on 2026-09-11 after the prompt_limits defect; a dated appetite call, not a derivation."
+    ruling_record: src/portfolio_constructor/config.py, the max_position_pct comment, clause (c) dated 2026-09-11 (owner set 65 as his own risk-appetite call, costs at five real gap disasters recorded beside it); docs/INCIDENT_HISTORY.md, the prompt_limits defect
     site: src/portfolio_constructor/config.py
     note: >-
       Single-name ceiling, moved to 65 by owner override on 2026-09-11
@@ -2884,6 +2961,40 @@ numbers:
       7.69%-of-entry crossover with the 5% risk envelope. The earlier wording
       here, "binds most real trades", was never measured and is wrong: it
       bound 4 of 38, not most.
+    route_parked_by_ruling_2026_10_04:
+      why: the measurement route below is kept as written but parked, because the owner's dated ruling above settles the value; a ruled number owes no route, and this one is not re-derived.
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      records: >-
+        the distribution of overnight and intraday gap moves against position, in
+        percent of prior close, measured off public daily bars for the eligible
+        universe over a stated window -- the no-stop-fill case this ceiling is the
+        only guard against. Measured on the instrument, over names the desk could
+        have held rather than names it did hold, so it is a property of the tape and
+        not of this desk's trade record
+      closes_when: >-
+        the overnight gap distribution is measured and the ceiling is read off it,
+        with NO owner tolerance asked for. The question this row once routed to the
+        owner (how much single-name loss he will tolerate when a stop does not fill)
+        is WITHDRAWN: a protective stop cannot trigger while the exchange is shut, so
+        an overnight gap is whatever the market does and not a tolerance anyone can
+        set, as the owner has ruled repeatedly (recorded 2026-10-04 in
+        docs/board_notes/item-186.md). The measurement, startable from this entry
+        alone: take the daily OHLC bars this repo already fetches for the eligible
+        universe (`src.data.market.MarketDataProvider.get_ohlcv_batch`; a recorded
+        400-session sample for 33 symbols sits in
+        ops/rehearsal/recordings/market_bars.json.gz), compute for every consecutive
+        session pair (open_t / close_t-1) - 1, pool the adverse gaps across names,
+        and write down the window, the universe, the gap count, the worst gap and the
+        gaps at the 1-in-100, 1-in-1,000 and 1-in-10,000 ranks. The ceiling then
+        becomes the notional share at which the WORST OBSERVED gap costs the account
+        no more than the per-name risk envelope the ledger already carries at
+        src.config.RiskConfig.max_position_risk_pct (share = envelope / |worst gap|):
+        a derivation from the tape and an existing number, with no percentile picked
+        and no tolerance chosen. The per-name reading of the same gap history is the
+        build item 186 names and supersedes this pooled bound once it exists. Until a
+        measured figure is written down the desk pays a round 65 nobody derived
   - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct
     value: 90
     status: derived
@@ -3418,10 +3529,7 @@ numbers:
     value: 1.5
   - id: src.risk.constants.STARTER_POSITION_RISK_PCT
     value: 0.5
-    status: owner-ruled
-    ruled_on: '2026-08-27'
-    ruling_summary: "Owner ratified on 2026-08-27 that the smallest position the desk holds risks 0.5% of equity, the existing minimum-position-risk floor."
-    ruling_record: 'docs/OUTCOME.md risk-envelope row, commit 75c02335 (this row prior_source)'
+    status: arbitrary
     site: src/risk/constants.py
     prior_source: >-
       Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335).
@@ -3445,6 +3553,46 @@ numbers:
       RSG. docs/INCIDENT_HISTORY.md@`He was right. The work to that point had been co` attributes that shrinking to the 1.5
       reward:risk starter cap, not to this 0.5% floor - two different numbers
       in one sentence.
+    open_question: >-
+      Does this floor bind anything at all? The VALUE is owner-ratified
+      appetite and is not for re-deriving. What is unknown is whether the
+      seat ever asks for less than it, which nothing observed until board
+      item 223 built the recording. Answerable as: across the recorded
+      sub-floor requests, does the seat ever emit a positive risk below the
+      floor, and under what circumstances. NOT answerable by asking this
+      desk's own closed trades what floor would have paid best -- that is
+      fitting a number to the desk's own record, which docs/OUTCOME.md
+      bars outright. DELETE outcome: if the seat never asks below it across
+      a stated run of sessions, the floor is inert and goes, rather than
+      being re-picked at some other level.
+    cost_while_unanswered: >-
+      The floor decides which ideas are tradeable at all. Set too high, sound
+      ideas the seat would size small are never emitted and the desk never
+      learns what they would have returned; set too low, the book fills with
+      token positions paying full cost for an immaterial payoff. Neither
+      failure is visible today because, until board item 223, nothing
+      recorded a portfolio-manager target that sat under the floor.
+    settles_by:
+      kind: recording
+      state: built
+      where: src/storage/trades/ledger.py
+      writes:
+        - trade_refusals.requested_risk_pct
+      records: >-
+        Board item 223, 2026-10-01. Every portfolio-manager target whose
+        requested risk is positive and below the floor in force: the symbol,
+        the risk asked for (`trade_refusals.requested_risk_pct`), the floor
+        it sat under (`threshold`), and what the desk then did with it
+        (`stage`, always `observed_not_refused` here -- the target is shipped
+        unchanged, because a deterministic sub-floor refusal was ruled
+        out on the risk route 2026-10-01, on the adversary's measurement). Written from `PortfolioConstructor._plan_risk_targets`.
+      closes_when: >-
+        Rows accumulate and the trades they correspond to close: if sub-floor
+        targets do occur and their realised net returns after costs are
+        indistinguishable from zero, the floor becomes measured rather than
+        ratified. If after a year of sessions no row has ever been written,
+        the floor governs nothing the seat ever asks for, and the row leaves
+        `arbitrary` by reformulation rather than by derivation.
   - id: src.risk.alignment_exit.SMA_LADDER[20]
     value: 50
     status: not-trade-governing

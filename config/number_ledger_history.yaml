@@ -1144,31 +1144,19 @@ changes:
       spends down. This is the second parameter measured inert in this
       engine, after the level-touch count, so the standing order's
       remaining risk rows are narrower than they look.
-  - delta: -3
+  - delta: -2
     date: '2026-10-04'
     why: >-
       A sixth ledger status, `owner-ruled`, now exists for a value the owner
-      decided on a recorded date, and three rows whose own note already
-      carried a dated owner ratification of the value move to it:
-      `STARTER_POSITION_RISK_PCT` (2026-08-27), `RiskConfig.max_target_horizon_sessions`
-      (2026-09-25) and `ConstructorConfig.max_position_pct` (2026-09-11). No
-      value changed. Rows whose note says they stay `arbitrary` on purpose,
-      and the gross ladder whose open question the owner has not answered,
-      were left.
-  - delta: -3
-    date: '2026-10-04'
-    why: >-
-      Second pass of the `owner-ruled` re-filing. `RiskConfig.max_cluster_risk_share_pct`
-      and `RiskConfig.max_portfolio_risk_pct` (ruled 2026-09-25) and
-      `RiskConfig.max_position_risk_pct` (ruled 2026-08-27) leave `arbitrary`:
-      their notes kept them there only because the ledger had no category
-      for an owner-ratified value, which `owner-ruled` now is. No value changed.
-  - delta: -1
-    date: '2026-10-04'
-    why: >-
-      `RiskConfig.min_stop_atr_multiple` (2.5) is re-filed `arbitrary` to
-      `owner-ruled` on the explicit owner ruling of 2026-10-04 that closed the
-      stop multiple at 2.5 ATR. No value changed. Other multiples expressed in
-      ATR or R stay `arbitrary`: the ruling that an ATR-scaled number is not
-      made up settles the units, not the multiple, so each still needs its own
-      ruling or measurement.
+      decided on a recorded date. Two rows move to it, no value changed:
+      `RiskConfig.min_stop_atr_multiple` (2.5, owner ruling 2026-10-04 in
+      docs/OUTCOME.md) and `ConstructorConfig.max_position_pct` (65, owner
+      override 2026-09-11 in docs/INCIDENT_HISTORY.md). Their measurement
+      routes are kept in the row but parked, since a ruled value owes no route.
+      Five rows the first draft also flipped stay `arbitrary` on purpose: the
+      cluster share, the portfolio ceiling and the target horizon were
+      delegated to the adversary and never ruled by the owner; the 5% per-name
+      envelope was ratified 2026-08-27 but the owner's 2026-09-30 ruling that
+      per-name risk is read off the name supersedes it, as the row's own
+      ruling_check records; the 0.5% floor's standing under that same ruling
+      is undetermined, so it is left as found rather than promoted.
