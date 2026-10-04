@@ -96,6 +96,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.notifier import TelegramNotifier
+from src.notifier.sections import fmt_time_12h
 from src.health_words import (  # noqa: F401  re-exported names
     OWNER_TZ,
     _duration_words,
@@ -1023,22 +1024,12 @@ _VERDICT_WORDS = {
 
 
 def _window_words(report: Report) -> str:
+    # Every owner-facing time carries its date (item 231): he reads this hours
+    # later, so a bare "today" cannot be placed. The one shared formatter is
+    # used for both ends, in the owner's local (Eastern) zone, never UTC.
     start = report.window_start.astimezone(OWNER_TZ)
     end = report.window_end.astimezone(OWNER_TZ)
-    fmt = "%-I:%M%p"
-
-    def clock(moment: datetime, with_date: bool) -> str:
-        # Only the am/pm is lowercased — "Fri 31 Jul" reads as a date, "fri 31
-        # jul" reads as a typo.
-        stamp = moment.strftime(("%a %-d %b " if with_date else "") + fmt)
-        return stamp[:-2] + stamp[-2:].lower()
-
-    if start.date() == end.date():
-        return f"{clock(start, False)} to {clock(end, False)} today"
-    # Across a date boundary the weekday alone is ambiguous — two consecutive
-    # Fridays read identically — so the date goes in. It is the owner's local
-    # (Eastern) date, never the log's UTC one.
-    return f"{clock(start, True)} to {clock(end, True)}"
+    return f"{fmt_time_12h(start)} to {fmt_time_12h(end)}"
 
 
 def _bullet(

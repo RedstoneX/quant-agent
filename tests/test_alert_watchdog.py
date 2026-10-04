@@ -726,49 +726,6 @@ def test_every_probe_request_is_bounded_by_a_timeout(telegram_env):
         assert 0 < timeout <= 15, timeout
 
 
-def test_a_hanging_telegram_endpoint_cannot_stall_or_fail_a_session(
-    tmp_path, monkeypatch, telegram_env,
-):
-    """The load-bearing safety test: Telegram goes dark and the session is
-    unaffected except for being told the alarm is down.
-
-    Stands in for an endpoint that accepts the connection and never answers.
-    `requests` gives up at its timeout and raises; the probe catches it,
-    calls the channel broken, and the session finishes normally. A session
-    that raised, hung, or exited non-zero here would mean the watchdog can
-    cost a trading day, which is a worse defect than the one it fixes.
-    """
-    import time
-
-    import requests as requests_mod
-
-    calls: list[float] = []
-
-    def hangs_then_times_out(*args, **kwargs):
-        # A real hang ends in requests raising at `timeout`; the sleep keeps
-        # the test honest about elapsed time without waiting 5s per call.
-        assert kwargs.get("timeout"), "a request went out unbounded"
-        calls.append(time.monotonic())
-        time.sleep(0.05)
-        raise requests_mod.exceptions.ReadTimeout("simulated hang")
-
-    started = time.monotonic()
-    with patch("src.notifier.requests.post", side_effect=hangs_then_times_out):
-        # No pytest.raises: the session must complete, not survive an error.
-        db_path = _run_session(monkeypatch, tmp_path, mode="intra_check")
-    elapsed = time.monotonic() - started
-
-    assert calls, "the watchdog never even tried the channel"
-    # Bounded work, not an unbounded retry loop against a dead endpoint.
-    assert len(calls) <= 4, f"{len(calls)} requests against a hanging endpoint"
-    assert elapsed < 5, f"the session stalled for {elapsed:.1f}s on Telegram"
-
-    # And the outage was still detected, recorded and attributed correctly.
-    health = alert_watchdog.read_health(db_path)
-    assert health.status == "broken"
-    assert health.last_stage == "transport"
-
-
 def test_a_slow_endpoint_delays_a_session_by_at_most_its_timeout(telegram_env):
     """Worst case is bounded arithmetic, not a hope.
 

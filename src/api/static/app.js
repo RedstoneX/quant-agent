@@ -138,6 +138,9 @@ function updateHealthIndicator(health) {
   } else if (health.llm_circuit?.recent_recovery) {
     dot.className = "health-dot health-ok";
     label.textContent = "paid analysis rearmed — checks passed";
+  } else if (health.llm_balance?.status === "low") {
+    dot.className = "health-dot health-degraded";
+    label.textContent = health.llm_balance.message;
   } else {
     dot.className = "health-dot health-ok";
     label.textContent = "all systems reachable";
@@ -394,6 +397,7 @@ async function loadHealth() {
       : circuit.recent_recovery
       ? "rearmed · checks passed"
       : "ready";
+    const balanceText = data.llm_balance?.message || "Paid-model credit left: balance unknown.";
     const runs = Object.entries(data.last_run_files || {})
       .map(([mode, ts]) => `${mode}: ${ts ? fmtTime(ts) : "—"}`)
       .join("  ·  ");
@@ -415,7 +419,8 @@ async function loadHealth() {
         ? `Last recovery — ${circuit.recent_recovery.release_reason}`
         : "",
     });
-    body.replaceChildren(grid, circuitLine, runsLine);
+    const balanceLine = el("div", { className: `state-message${data.llm_balance?.status === "low" ? " error" : ""}`, text: balanceText });
+    body.replaceChildren(grid, balanceLine, circuitLine, runsLine);
     const degraded = Boolean((circuit && !circuit.available) || circuit?.requires_operator_reset || circuit?.suspended || quotaHoldCount);
     setPanelState("panel-health", degraded ? "degraded" : "ok", degraded ? "degraded" : "ok");
     stampUpdated();
@@ -1485,53 +1490,6 @@ async function loadMutedBacklog() {
 /* Orchestration                                                           */
 /* ---------------------------------------------------------------------- */
 
-/* Chopping-block heads-up (item 228): every holding, visibility only. */
-async function loadChoppingBlock() {
-  const body = document.querySelector("#panel-chopping-block [data-body]");
-  try {
-    const data = await fetchJSON("/chopping-block");
-    body.replaceChildren();
-    body.appendChild(el("div", { className: "dim", text: data.note }));
-    const rows = data.holdings.map((h) =>
-      el("tr", {}, [
-        el("td", { text: h.symbol }),
-        el("td", { text: h.standing === "below_bar" ? "below the bar" : "clears the bar" }),
-        el("td", { text: h.headline }),
-        el("td", { text: h.reason }),
-        el("td", { text: h.margins.map((m) => `${m.rule}: ${m.now} ${m.unit} (${m.direction.replace(/_/g, " ")}${m.previous === null ? "" : ", was " + m.previous})`).join("; ") || "no margin recorded" }),
-      ])
-    );
-    if (rows.length) body.appendChild(el("table", {}, rows));
-    setPanelState("panel-chopping-block", "ok", "ok");
-  } catch (err) {
-    showMessage(body, `Could not load the chopping-block heads-up: ${err.message}`, true);
-    setPanelState("panel-chopping-block", "error", "unreachable");
-  }
-}
-
-/* Model fallbacks (route journal): everything the routing did, newest first. */
-async function loadRouteEvents() {
-  const body = document.querySelector("#panel-route-events [data-body]");
-  try {
-    const data = await fetchJSON("/route-events");
-    body.replaceChildren();
-    body.appendChild(el("div", { className: "dim", text: data.note }));
-    const rows = data.events.map((e) =>
-      el("tr", {}, [
-        el("td", { text: e.when || "" }),
-        el("td", { text: e.what }),
-        el("td", { text: e.cost }),
-        el("td", { text: e.detail }),
-      ])
-    );
-    if (rows.length) body.appendChild(el("table", {}, rows));
-    setPanelState("panel-route-events", "ok", "ok");
-  } catch (err) {
-    showMessage(body, `Could not load the model fallbacks: ${err.message}`, true);
-    setPanelState("panel-route-events", "error", "unreachable");
-  }
-}
-
 /* Pruning pass panel (item 219): every held name reviewed, verdict and reason. */
 async function loadPruning() {
   const body = document.querySelector("#panel-pruning [data-body]");
@@ -1540,7 +1498,7 @@ async function loadPruning() {
     body.replaceChildren();
     body.appendChild(el("div", { className: "dim", text: data.note }));
     data.passes.forEach((p) => {
-      body.appendChild(el("h3", { text: `Run ${p.run_id} - ${p.recorded_at || ""} - examined ${p.examined_count}` }));
+      body.appendChild(el("h3", { text: `Run ${p.run_id} - ${p.recorded_at || ""} - examined ${p.examined_count ?? "not recorded"}` }));
       p.lines.forEach((line) => body.appendChild(el("div", { className: "rotation-line", text: line })));
       const rows = p.verdicts.map((v) =>
         el("tr", {}, [

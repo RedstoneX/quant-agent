@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from src.cost_table import estimate_cost, fmt_cost
 from src.token_rate import TokenRateGovernor
+from src.llm_balance_runway import balance_line as _balance_line
 from src import llm_route_journal
 from src.cost_circuit import (
     OptionalPaidAnalysisRetrySkipped,
@@ -93,6 +94,10 @@ from src.agents.llm_tertiary_route import (  # noqa: F401
     _DEFAULT_TERTIARY_ALT_MODEL,
     select_tertiary_route,
     _route_price,
+)
+from src.agents.llm_route3_policy import (  # noqa: F401
+    resolve_tertiary_route,
+    refuse_unmeasured_route,
 )
 from src.agents.llm_concurrency import (  # noqa: F401
     _int_env,
@@ -864,48 +869,23 @@ class BaseAgent(ABC):
             (self._fallback_provider, self._fallback_model)
             != (self._provider, self.model)
         )
-        # === Route 3: a genuinely DIFFERENT model ===========================
-        # See _DEFAULT_TERTIARY_PROVIDER above for why haiku-over-OpenRouter
-        # and not either direct endpoint (neither is credentialed on this
-        # deployment). Reachability is gated exactly like the failover's:
-        # a key must be configured AND the pair must differ from BOTH routes
-        # already in the ladder, or route 3 is just a third attempt at
-        # something that has already failed twice.
-        #
-        # Before any of that is fixed, route 3 may be SWAPPED for the
-        # second-road substitute — see `_DEFAULT_TERTIARY_ALT_PROVIDER` and
-        # `select_tertiary_route` above for the rule and the 2026-09-29
-        # measurement behind it. The swap fires only for a seat whose routes
-        # 1 and 2 have collapsed onto one provider; it never adds a rung.
-        _configured_tertiary = (
-            resolve_provider(tertiary_model, tertiary_provider), tertiary_model,
-        )
-        _alt_key = (tertiary_alt_api_key or "").strip()
-        _alt = (
-            (resolve_provider(tertiary_alt_model, tertiary_alt_provider),
-             tertiary_alt_model)
-            if _alt_key and (tertiary_alt_model or "").strip()
-            and (tertiary_model or "").strip()
-            else None
-        )
-        _selected = select_tertiary_route(
+        # Route 3 (which pair, which key, whether reachable, and whether it
+        # was swapped for the second-road substitute) is resolved in
+        # src/agents/llm_route3_policy.py; the reasoning lives there.
+        _route3 = resolve_tertiary_route(
             primary=(self._provider, self.model),
-            fallback=((self._fallback_provider, self._fallback_model)
-                      if self._failover_reachable else None),
-            tertiary=_configured_tertiary,
-            alt=_alt,
+            fallback=(self._fallback_provider, self._fallback_model),
+            failover_reachable=self._failover_reachable,
+            tertiary_provider=tertiary_provider, tertiary_model=tertiary_model,
+            tertiary_api_key=tertiary_api_key,
+            tertiary_alt_provider=tertiary_alt_provider,
+            tertiary_alt_model=tertiary_alt_model,
+            tertiary_alt_api_key=tertiary_alt_api_key,
         )
-        self._tertiary_on_alt_road = _selected is _alt and _alt is not None
-        self._tertiary_provider, self._tertiary_model = _selected
-        self._tertiary_api_key = (
-            _alt_key if self._tertiary_on_alt_road
-            else (tertiary_api_key or "").strip()
-        )
-        self._tertiary_reachable = bool(self._tertiary_api_key) and (
-            (self._tertiary_provider, self._tertiary_model)
-            not in {(self._provider, self.model),
-                    (self._fallback_provider, self._fallback_model)}
-        )
+        self._tertiary_on_alt_road = _route3.on_alt_road
+        self._tertiary_provider, self._tertiary_model = _route3.provider, _route3.model
+        self._tertiary_api_key = _route3.api_key
+        self._tertiary_reachable = _route3.reachable
         # Process-wide half-open breaker for THIS primary pair. Shared with
         # every other seat configured to the same primary — see RouteBreaker.
         self._route_breaker = route_breaker_for(self._provider)
@@ -1338,10 +1318,9 @@ class BaseAgent(ABC):
                             "Agent %s attempt %d: the paid research account is "
                             "OUT OF CREDIT — the provider refused to serve the "
                             "call%s. Not retrying; topping the account up is "
-                            "the only fix. (%s)", self.name, attempt + 1,
-                            "" if affordable is not None
-                            else " and named no allowance it would serve",
-                            e,
+                            "the only fix. %s (%s)", self.name, attempt + 1,
+                            "" if affordable is not None else " and named no allowance it would serve",
+                            _balance_line(), e,
                         )
                     else:
                         logger.warning(
@@ -1449,7 +1428,7 @@ class BaseAgent(ABC):
                 wait_s=cooldown, error=primary_error,
                 detail=(
                     f"account out of credit; demoted for {cooldown:.0f}s "
-                    "without further attempts"
+                    f"without further attempts. {_balance_line()}"
                     if is_payment_refusal(primary_error)
                     else f"primary exhausted; demoted for {cooldown:.0f}s"
                 ),
@@ -1532,6 +1511,15 @@ class BaseAgent(ABC):
                 # already failed — which is the saturated-MODEL case route 3
                 # exists for, and precisely what happened on 2026-09-22.
                 tertiary = None
+                # Board item 188: a decision seat declines the last rung when
+                # it is the unmeasured substitute. src/agents/llm_route3_policy.py
+                seat_refusal = refuse_unmeasured_route(
+                    seat_name=self.name, on_alt_road=self._tertiary_on_alt_road,
+                    tertiary=(self._tertiary_provider, self._tertiary_model),
+                    primary=(self._provider, self.model),
+                    run_id=getattr(reservation, "run_id", None),
+                    primary_error=primary_error,
+                )
                 # Route 3 is the last rung; it is NOT skipped on its own
                 # breaker being demoted when that breaker is shared with a
                 # route already skipped, because "skip the last resort too"
@@ -1545,6 +1533,7 @@ class BaseAgent(ABC):
                         "topping up.", self.name, self._tertiary_provider,
                     )
                 if (not single_provider_attempt and self._tertiary_reachable
+                        and seat_refusal is None
                         and self._tertiary_provider not in refused_providers):
                     try:
                         tertiary = self._try_tertiary(
@@ -1581,6 +1570,8 @@ class BaseAgent(ABC):
                             "model — both routes on the primary model failed)"
                         ),
                     )
+                elif seat_refusal is not None:
+                    last_route_error = seat_refusal
                 elif primary_error is None and attempt_errors:
                     # ONLY on the demoted path. When the primary DID fail,
                     # the long-standing contract is that its error is what

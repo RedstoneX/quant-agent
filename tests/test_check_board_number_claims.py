@@ -35,3 +35,22 @@ def test_multiple_overlaps_are_all_reported():
     assert len(out) == 2
     joined = " ".join(out)
     assert "188" in joined and "189" in joined
+
+
+def test_missing_dependency_is_a_problem_not_a_traceback(monkeypatch):
+    import builtins
+    import sys
+
+    from scripts.board_numbers import read_open_pr_claims
+
+    monkeypatch.delitem(sys.modules, "src.inflight", raising=False)
+    real = builtins.__import__
+
+    def deny(name, *a, **k):
+        if name == "src.inflight":
+            raise ModuleNotFoundError("No module named 'requests'")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", deny)
+    claims = read_open_pr_claims()
+    assert claims.problem and "requests" in claims.problem

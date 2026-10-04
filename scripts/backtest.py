@@ -54,6 +54,7 @@ from src.backtest.metrics import (
     format_ab_table,
     format_caveats,
     format_metrics_report,
+    format_settleability_verdict,
     write_trades_csv,
 )
 from src.config import AppConfig, load_config
@@ -161,10 +162,17 @@ def _report(label: str, config_path: str, result: BacktestRunResult, metrics: Me
                      "fallback wired, no local snapshot used)",
         initial_equity=args.initial_equity,
     )
+    print(format_settleability_verdict(
+        contested_budget_days=result.contested_budget_days,
+        binding_budget_days=result.binding_budget_days,
+        entry_days=result.entry_days, label=f"run {label}",
+    ))
+    print()
     print(format_metrics_report(
         f"{label}: {config_path}", metrics, meta,
         binding_budget_days=result.binding_budget_days,
         entry_days=result.entry_days,
+        contested_budget_days=result.contested_budget_days,
     ))
     print()
     print(format_caveats(

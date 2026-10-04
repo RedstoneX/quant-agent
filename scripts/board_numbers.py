@@ -250,14 +250,16 @@ def read_open_pr_claims(fetch=None, repo: str | None = None) -> OpenPrClaims:
     `scripts/work_queue.py` already uses for the adversary-line check.
     Never raises; a failed read comes back as `problem`, never as an empty
     (and therefore falsely reassuring) claim map."""
-    from src.inflight import read_open_pull_requests, REPO
-
     kwargs = {}
     if fetch is not None:
         kwargs["fetch"] = fetch
     if repo is not None:
         kwargs["repo"] = repo
     try:
+        # Imported inside the try: a missing dependency must come back as a
+        # `problem`, not as a traceback (the docstring's "never raises").
+        from src.inflight import read_open_pull_requests
+
         prs, problem = read_open_pull_requests(**kwargs)
     except Exception as exc:  # noqa: BLE001 - this must never raise into a caller
         return OpenPrClaims(problem=f"GitHub could not be read ({exc!r})")
