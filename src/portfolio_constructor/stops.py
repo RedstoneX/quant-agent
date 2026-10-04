@@ -76,37 +76,28 @@ from src.portfolio_constructor.config import (
 
 from src.portfolio_constructor.entry_stop.resolver import EntryStopResolver
 from src.portfolio_constructor.stop_width import stop_atr_multiple
-from src.portfolio_constructor.shim_guard import _is_class_shim
 
 
-class _StopMixin:
-    """Stop and reward-to-risk resolution for `PortfolioConstructor` (moved verbatim)."""
+class StopRules:
+    """Stop and reward-to-risk rules, HELD by `PortfolioConstructor` (bodies moved verbatim).
 
-    def _entry_stop_resolver(self) -> EntryStopResolver:
-        """Thin shim: builds the standalone object per call from this host's collaborators
-        (bodies moved to src/portfolio_constructor/entry_stop/resolver.py)."""
-        return EntryStopResolver(
-            cfg=self.cfg,
-            derive_target=self._derive_target,
-            note_data_fault=self._note_data_fault,
-            note_parity_standdown=self._note_parity_standdown,
-            note_refusal=self._note_refusal,
-            parity_verdict=self._parity_verdict,
-            record_parity_refusal=self._record_parity_refusal,
-            resolve_stop=self._resolve_stop,
-            unpriceable_symbols=self._unpriceable_symbols,
-            reward_risk_at=self._reward_risk_at,
-            derive_structural_stop_no_atr=self._derive_structural_stop_no_atr,
-            level_backing_stop=self._level_backing_stop,
-            stop_atr_multiple=self._stop_atr_multiple,
-            # A moved body passed back in would overwrite the resolver's own method
-            # with a call back into it: pass one ONLY when it is not this mixin's shim.
-            **{
-                kw: getattr(self, attr)
-                for kw, attr in (("widen_stop_past_noise", "_widen_stop_past_noise"),)
-                if not _is_class_shim(getattr(self, attr), attr, _StopMixin)
-            },
-        )
+    Constructible alone. `read_cfg` is a zero-argument callable returning the
+    owner's CURRENT `ConstructorConfig` -- handed in live, never snapshotted,
+    because callers reassign the owner's `cfg` after construction.
+    `entry_stop_resolver` is a zero-argument callable building the standalone
+    `EntryStopResolver` PER CALL from the owner's live collaborators; the three
+    resolver-backed names below are thin shims over it. Wiring lives in
+    `src/portfolio_constructor/assembly.py`.
+    """
+
+    def __init__(self, *, read_cfg, entry_stop_resolver):
+        self._read_cfg = read_cfg
+        self._entry_stop_resolver = entry_stop_resolver
+
+    @property
+    def cfg(self):
+        """The owner's current config, read on every access."""
+        return self._read_cfg()
 
     def _resolve_entry_and_stop(self, *args, **kwargs):
         """Thin shim: body moved to src/portfolio_constructor/entry_stop/resolver.py."""

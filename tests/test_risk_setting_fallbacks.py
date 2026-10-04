@@ -72,7 +72,7 @@ from pydantic_core import PydanticUndefined
 from src.config import RiskConfig
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINE = REPO_ROOT / "src" / "pipeline.py"
+PIPELINE = REPO_ROOT / "src" / "pipeline_config_build.py"
 SETTINGS = REPO_ROOT / "config" / "settings.yaml"
 
 #: Every `risk.*` field wired through `_risk_setting` in
