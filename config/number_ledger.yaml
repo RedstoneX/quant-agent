@@ -862,6 +862,17 @@ numbers:
         ordinary one
     value: 1
     status: arbitrary
+    route_audit_2026_10_04: >-
+      The route is ADMISSIBLE and UNRUN. Unlike the single-name envelope above,
+      neither bar applies: the whipsaw-rate-against-ATR-distance measurement
+      names no extreme of a sample and asks the owner nothing. It cannot be run
+      in this repository, because the repository commits no daily bars for any
+      universe; every existing measurement script is handed a bar file from
+      outside the tree. This row therefore stays arbitrary for a reason that is
+      recorded here rather than rediscovered: the blocker is a committed bar
+      set, not a missing idea. The row also carried two settles_by blocks, so
+      the newer 2026-10-01 route was being dropped in silence; the duplicate is
+      reported by scripts/measure_ledger_route_admissibility.py.
     site: src/config/__init__.py
     note: >-
       The HARD FLOOR under every stop this desk sets. A level-backed stop is
@@ -1103,6 +1114,21 @@ numbers:
   - id: src.config.RiskConfig.max_position_risk_pct
     value: 5
     status: arbitrary
+    route_audit_2026_10_04: >-
+      UNDETERMINED, and not for want of data: NEITHER recorded route can settle
+      this row. The row carries two settles_by blocks, and YAML keeps only the
+      last, so the live route is the OLDER tranche-seven one and the newer
+      2026-10-01 block above it was being dropped in silence. The live route
+      closes on "the worst observed gap multiple", which is a judgement wearing
+      the word worst: the extreme of a sample moves every time the sample grows,
+      so it never yields the same number twice. The dropped newer route closes
+      on the owner stating a per-name dollar loss he will accept, which the
+      2026-09-30 ruling withdrew along with every other risk dial. The remedy is
+      neither route: a per-name envelope must be READ OFF THE NAME, from that
+      instrument's own ATR and the seats' conviction on it, which is what the
+      ruling_check above already concluded and what no recorded route yet
+      implements. No value is changed and the status stays arbitrary. Reproduce
+      with scripts/measure_ledger_route_admissibility.py.
     site: src/config/__init__.py
     note: >-
       The 5% single-position risk envelope, owner-ratified 2026-08-27.
@@ -4000,6 +4026,18 @@ numbers:
         the recording, the band never governs an exit and is deleted
     value: 3.0
     status: arbitrary
+    route_audit_2026_10_04: >-
+      The row contradicts itself and the measurement half is the live half. Its
+      settles_by route closes when the give-back distributions of a resumed
+      trend and a finished one are separable, which asks the owner nothing and
+      names no extreme. Its open_question, written earlier, declares the same
+      number an owner dial that no research can settle. Those cannot both
+      stand, and the 2026-09-30 ruling that withdrew the risk dials settles
+      which one falls: the appetite framing is stale and the measurement route
+      is the one to run. The value is unchanged and the status stays arbitrary
+      until that measurement exists; what changed is that the row no longer
+      claims to be waiting on a person. Reproduce the contradiction with
+      scripts/measure_ledger_route_admissibility.py.
     site: src/risk/alignment_exit.py
     note: >-
       Give-back below the last CHART MARK (a moving average, or the level
@@ -4062,7 +4100,7 @@ numbers:
     site: src/risk/exit_guard.py
     note: >-
       The exit-guard noise band, in ATRs, before the sqrt(sessions_held)
-      widening described at src/risk/exit_guard.py::MetricDeltas.stop_driven. How far an adverse
+      widening computed at src/risk/exit_guard.py::noise_band_atr. How far an adverse
       move must travel FROM ENTRY before it stops being ordinary daily wobble.
       RECLASSIFIED 2026-09-26, board item 70: this entry read `derived` from
       `src.risk.trailing.NOISE_BAND_ATR_MULTIPLE` with `base_value: 1.25`
@@ -5433,10 +5471,10 @@ numbers:
     note: >-
       Handshake-attempt ceiling for one trade_updates session, derived from
       the equal-jitter curve run off the reconnect min/max above (1, 2, 4,
-      8, 16, 30 -- saturates at attempt 6, src/execution/broker.py::AlpacaBroker.__init__).
+      8, 16, 30 -- saturates at attempt 6, src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_SESSION).
       One of three constants added 2026-09-18 to close an unbounded retry
       loop that logged 32,896 handshakes and 32,666 HTTP 429s in one day
-      (src/execution/broker.py::AlpacaBroker.__init__); none of the three decides, sizes,
+      (src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_DAY); none of the three decides, sizes,
       prices or exits a trade -- the bounded REST fill path is unchanged and
       is what runs when this ceiling fires.
   - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY
@@ -5446,7 +5484,7 @@ numbers:
     note: >-
       Handshake-attempt ceiling per process per day for the same socket,
       set to Alpaca's own published account-wide rate limit of 200
-      requests/minute (src/execution/broker.py::AlpacaBroker.__init__, cross-checked
+      requests/minute (src/execution/broker_parts/trade_stream.py::_STREAM_ATTEMPT_CEILING_PER_DAY, cross-checked
       against measured 56 and 50 attempts on 2026-09-16/17). Same
       not-trade-governing reasoning as
       src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
@@ -5457,7 +5495,7 @@ numbers:
     note: >-
       Stand-down after the broker answers HTTP 429 on the same socket, set
       to Alpaca's published one-minute rate-limit window
-      (src/execution/broker.py::AlpacaBroker.__init__). Same not-trade-governing reasoning
+      (src/execution/broker_parts/trade_stream.py::_STREAM_RATE_LIMIT_STAND_DOWN_S). Same not-trade-governing reasoning
       as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
   - id: src.execution.broker_parts.market_data._BROKER_HTTP_TIMEOUT
     value: 30.0
@@ -7348,7 +7386,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline.py
     note: >-
-      Dead. Defined at src/pipeline_admission.py::AdmissionService._evaluate_screened_admission and described in comments as the
+      Dead. Defined at src/pipeline.py::TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT and described in comments as the
       de-lever cushion, but nothing reads it: the de-lever no longer prices off
       a fixed % of the mark at all -- it crosses the LIVE quote or sends a
       MARKET order (src.pipeline.TradingPipeline._live_delever_price, branch
@@ -7368,7 +7406,7 @@ numbers:
     site: src/prompt_facts/review/blocked.py
     note: >-
       Window of the PM's 'names you keep proposing and never get' memory
-      (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
+      (src/prompt_facts/review/blocked.py::ReviewBlocked._build_blocked_proposals). Its only caller (src/stage_decision.py::DecisionStage.run) passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7398,7 +7436,7 @@ numbers:
     site: src/prompt_facts/review/blocked.py
     note: >-
       Maximum blocked names shown to the PM in that memory
-      (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
+      (src/prompt_facts/review/blocked.py::ReviewBlocked._build_blocked_proposals). Its only caller (src/stage_decision.py::DecisionStage.run) passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7428,7 +7466,7 @@ numbers:
     site: src/prompt_facts/review/blocked.py
     note: >-
       Proposal count before a blocked name is shown to the PM in that memory
-      (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
+      (src/prompt_facts/review/blocked.py::ReviewBlocked._build_blocked_proposals). Its only caller (src/stage_decision.py::DecisionStage.run) passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7458,7 +7496,7 @@ numbers:
     site: src/prompt_facts/review/calibration.py
     note: >-
       Window of the PM's own hit-rate/return calibration note
-      (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates). Its only caller passes nothing, so this
+      (src/stage_decision.py::DecisionStage.run and src/sessions/position_review_session.py::PositionReviewSession.run). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7498,7 +7536,7 @@ numbers:
     note: >-
       Dollar-volume floor ($M) for a top-mover to enter the evening missed-
       opportunity review, which feeds the PM's missed-lessons memory
-      (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Its only caller passes nothing, so this
+      (src/sessions/evening_session.py::EveningSession.run). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
       seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7540,7 +7578,7 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       How many broker top-movers are added to the evening missed-opportunity
-      review (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Its only caller passes nothing, so
+      review (src/sessions/evening_session.py::EveningSession.run). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
       trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7609,7 +7647,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many of its own previous decision sets the PM is shown (anti-flip-
-      flop memory) (src/pipeline_research_continuity.py::ResearchContinuityMixin._macro_series_prints_changed). Its only caller passes
+      flop memory) (src/stage_decision.py::DecisionStage.run). Its only caller passes
       nothing, so this default is live. Same class as the smart-money prompt-
       truncation caps classified arbitrary on 2026-09-19: it decides what
       evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7716,7 +7754,7 @@ numbers:
     status: arbitrary
     site: src/prompt_facts/review/exits.py
     note: >-
-      Window of the PM's repeat-loss-cause memory (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates).
+      Window of the PM's repeat-loss-cause memory (src/stage_decision.py::DecisionStage.run).
       Its only caller passes nothing, so this default is live. Same class as
       the smart-money prompt-truncation caps classified arbitrary on
       2026-09-19: it decides what evidence a trading seat's verdict is built
@@ -7776,7 +7814,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/calibration.py
     note: >-
-      Dead default (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body): every caller in src/ passes this
+      Dead default (src/sessions/evening_session.py::EveningSession.run): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7785,7 +7823,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/calibration.py
     note: >-
-      Dead default (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body): every caller in src/ passes this
+      Dead default (src/prompt_facts/review/calibration.py::ReviewCalibration._build_recent_outlook_calibration): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7804,7 +7842,7 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many recent risk-seat verdicts the PM is shown to self-calibrate
-      size (src/pipeline_research_continuity.py::_carry_forward_readers). Its only caller passes nothing, so
+      size (src/stage_decision.py::DecisionStage.run). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
       trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
@@ -7863,7 +7901,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/pipeline.py::TradingPipeline._run_evening_body): every caller in src/ passes this
+      Dead default (only caller: src/sessions/position_review_session.py::PositionReviewSession.run): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7872,7 +7910,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_prompt_facts.py
     note: >-
-      Owner-facing universe-expansion report (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates); no
+      Owner-facing universe-expansion report (src/pipeline_prompt_facts.py::PromptFactsMixin._build_watchlist_candidates); no
       caller in the trading path, and the only caller
       (scripts/watchlist_candidates.py::main) passes it explicitly. It proposes
       names for a human to add; it never adds one.
@@ -7950,7 +7988,7 @@ numbers:
     base_value: 1.25
     note: >-
       Midday noise-band clamp: a new stop inside 1.25 x ATR14 of price is
-      refused (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). The same 1.25 as the trailing-
+      refused (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). The same 1.25 as the trailing-
       stop noise band, which carries the open question.
   - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]
     value: 1.005
@@ -7960,7 +7998,7 @@ numbers:
     base_value: 0.995
     note: >-
       Board item 138: the midday COVER limit, price x 1.005
-      (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Its comment ties it to the ExecutionStage
+      (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Its comment ties it to the ExecutionStage
       COVER loop. One number, mirrored.
   - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]
     value: 0.995
@@ -7970,7 +8008,7 @@ numbers:
     base_value: 0.995
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
-      (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Same number as the ExecutionStage SELL offset.
+      (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Same number as the ExecutionStage SELL offset.
   - id: src.pipeline_exits.ExitEngineMixin._trail_tightened_recently(calendar_days)
     value: 4
     status: arbitrary
@@ -7978,7 +8016,7 @@ numbers:
     note: >-
       Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
       the last 4 calendar days (src/pipeline_exits.py::ExitEngineMixin._trail_tightened_recently, caller
-      src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body passes nothing). The docstring's reason is a
+      src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions passes nothing). The docstring's reason is a
       forensic observation, not a measured cooldown length. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive the 4 calendar days from the ratified swing mandate. FAILED -- the mandate names no number, by design. Attempt (2): derive it from the reviewer's >=1.02x min-bump rule, i.e. the sessions needed for 2% of range to accumulate. FAILED -- that rule bounds the SIZE of one tighten and says nothing about spacing, and the 1.02 is itself unsourced. The measurement below is the route. Value unchanged.
     open_question: >-
       Over how many sessions does a tightened trail on this desk's names stay
@@ -8111,7 +8149,7 @@ numbers:
     note: >-
       Default portfolio risk ceiling of the allocator
       (src/risk/budget.py::allocate_risk_budget). Every caller passes it
-      (src/portfolio_constructor/__init__.py::PortfolioConstructor._construct_orders_impl,
+      (src/portfolio_constructor/__init__.py::PortfolioConstructor._plan_risk_targets,
       src/agents/portfolio_manager/__init__.py::PortfolioManagerAgent.build_user_message); same 25 as the deployed
       ceiling.
   - id: src.risk.budget.allocate_risk_budget(cluster_share_pct)
