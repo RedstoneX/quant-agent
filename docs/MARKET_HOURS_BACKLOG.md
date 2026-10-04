@@ -102,3 +102,64 @@ settle them:
   loss) rather than an add to a name whose row predates the column.
 - **Item 90** — the settling data behind the unsourced trade-governing
   numbers.
+
+---
+
+## PLAN — pointing a FULL daily session at the disposable paper account
+
+Investigation only, 2026-10-04. Nothing was run. Evidence is from the repo at
+origin/main; not exercised against the broker.
+
+**1. Credentials or code?** Credentials, plus a separate checkout. No code
+names the account: the account id appears nowhere in the repo; the account is
+chosen only by the key pair `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` (see
+`api_keys` in `config/settings.yaml`). `alpaca.base_url` is already the paper
+host and `AlpacaConfig` refuses `paper: false`, so a sandbox key pair on the
+same host needs no config edit. The one trap: the key pair, the Telegram
+token/chat and the LLM keys all arrive from the same environment or systemd
+credentials, so the sandbox keys must be supplied to a process that does NOT
+inherit the desk's unit.
+
+**2. Where writes land.** Into whichever checkout the process runs from, NOT
+into a database named by config alone. `storage.db_path` is relative
+(`data/quant_agent.db`), and the notifier, both watchdogs, the refusal-signature
+reader and the route journal each compute their own path from their source
+file's location (`Path(__file__)...`), so a second checkout with its own empty
+`data/` isolates all of them. Pointing the production checkout at other keys
+would NOT isolate: it would write sandbox trades into the production database.
+Also under `data/`: news, macro, checkpoints, evolution, and the kill-switch
+file. `QUANT_AGENT_DB_PATH` redirects only the route journal. Never run it with
+`/home/qamc` as the working directory. The rehearsal rig (`ops/rehearsal`) is
+frozen and walls off the network, so it cannot be reused for a live-paper run.
+
+**3. External cost.** One session is capped by `llm_cost_circuit`: 0.90 USD per
+session, 2.75 USD per day, 40 calls per session (`config/settings.yaml`). The
+cap counts spend in the sandbox's own database, so a fresh checkout starts the
+day at zero and the daily cap does NOT see production spend that day. The
+spend lands on the same provider accounts as production (same API keys).
+Production PM seat is the dominant cost (memory: ~91 percent). Kill switch:
+`touch data/KILL_SWITCH` in the sandbox checkout halts every order there; it
+does not stop LLM spend.
+
+**4. Evidence supplied.** Of the 8 items in the two lists above:
+- 4 sandbox-only items (1 to 4) need no session at all; a session adds nothing.
+- 6 "needs the desk running" items (78, 187, 201, 219, 226, 227): a session
+  could supply evidence for them only if the triggering condition occurs
+  (a payment refusal, a cancel-and-resubmit stop, a pruning pass); [estimate]
+  likely 3 to 4 of 6, unverified.
+- 2 production-data items (218, 90) stay blocked: an empty sandbox database
+  has no history to settle them.
+The "about 17 blocked" figure could not be reproduced from this file; the
+board was not recounted here.
+
+**5. Not recoverable by resetting the paper account.**
+- Telegram: a sandbox session with the desk's bot token messages the owner
+  and may be mistaken for real; leave those variables unset.
+- LLM spend: real money, up to the caps above, per session.
+- Running from the production checkout or `/home/qamc`: contaminates the
+  production database and its trade ledger.
+- Same key pair as the desk's own paper account: the hands-off rule above is
+  broken and that account's orders are cancelled.
+- Provider data and news caches written to the wrong `data/` are not undone
+  by an account reset.
+- A session left running past the open with resting orders.
