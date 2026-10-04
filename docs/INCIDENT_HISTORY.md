@@ -18050,3 +18050,11 @@ tour with a hand-written description per module, and no generator can invent
 those — so a module on disk the block does not mention is not a defect,
 while a renamed or deleted one named in the README is. It is a rot guard,
 not a contention fix, and is reported as such.
+
+## The rehearsal never once moved a stop, 2026-10-02 — a stand-in that silently under-implemented the broker
+
+**What was wrong.** The offline rehearsal's broker stand-in (`ops/rehearsal/broker.py`) had no `replace_order_by_id`. The desk's preferred way to trail a protective stop is an in-place amend through exactly that call; the resulting `AttributeError` was, by design, classified as "no broker answer" (nothing cancelled, nothing moved, re-read next pass), and the rehearsal reported PASS. Every rehearsal ever run had exercised the stop ratchet zero times. Also found on the way: the stand-in ignored `GetOrdersRequest(status=OPEN)`, so even a working amend would have left the replaced order visible as a second open stop.
+
+**What changed.** `ops/rehearsal/stand_in.py` gives the stand-in the amend endpoint as the 2026-09-30 measurement recorded it (old order → `replaced`, new id at the new price, same side/qty/time-in-force, one open stop at every instant; a non-resting order is refused with a 422 the desk classifies as "refused", not "unknown"), and `get_orders` now honours the status filter. The root cause is closed generically: every stand-in client now journals and raises `StandInGap` on ANY attribute the desk asks for that it does not implement, and the runner reads that journal after the session and VOIDS the run (exit 2, "the rig could not judge it"), the same channel as a network breach. No allow list: `get_asset` and `close_position`, the two calls the stand-in still cannot answer, now void a rehearsal that reaches them instead of steering it to a fail-closed answer the real broker would not have given.
+
+**Proof.** `tests/test_rehearsal_stand_in_amend.py`: the production `replace_stop_loss` over the stand-in moves `pre-existing-stop-ZZZ @ $100.00` to a new id `@ $105.00` with `cancelled=[]`; an unimplemented `get_clock` raises and the post-session check voids the run naming `RehearsalTradingClient.get_clock`; the CLI prints `REHEARSAL VOID — StandInGap: …` and exits 2.
