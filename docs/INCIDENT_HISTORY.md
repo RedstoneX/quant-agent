@@ -18120,3 +18120,14 @@ Root disk was 89% full; a daily sweep (`~/.claude/disk-sweep.sh`, outside the re
 - **pytest scratch is the second writer: 6.0 GB in `/tmp/pytest-of-ubuntu`.** The cost-ceiling rehearsal test wrote two full production-database snapshots per run (1.35 GB) and pytest keeps three runs per worker. FIXED in this change: the test removes both sandboxes when it ends (`reclaim_sandboxes`).
 - **Not the cause:** the repo checkouts (53 MB each, 223 MB in `worktrees`), `/var/log` (1.5 GB), `~/.claude` (3.2 GB), `~/.cache`. None is large enough or growing fast enough to explain the fill.
 - **Honest limit:** with 96 GB total and about 76 GB used, the box is small for the number of concurrent agent clones it hosts. No retention number for agent scratch can be derived from this data: it would have to come from the largest number of live scratch trees that agents need at once, which nobody has measured.
+
+## A citation that resolved was treated as a citation that proved something (item 232, 2026-10-04)
+
+**What was wrong.** The ledger guard checked only that a citation POINTED somewhere real, never that what it pointed at supported the claim. The bulk conversion of item 225 therefore left rows pinned to whatever happened to sit at their stale line: an export list, a bare import statement, a mid-sentence fragment. Every one of those passed the guard, so the ledger read as fully verified while some of its provenance was meaningless.
+
+**What changed.** The guard now refuses `__all__` and other module dunders, import-statement pins, and mid-sentence or bracket-unbalanced text pins. Every row it caught -- 19 citations across 17 rows -- was re-pointed by hand to a symbol or line-start text that actually supports its claim; none were left unverified.
+
+**Proof.** `src/ledger_citations.py` with `tests/test_number_sources.py`; a reintroduced bystander pin fails.
+
+**Still open, and tracked separately under the same number.** Resolution and substantiation are different questions, and correctness is a third: whether the rewritten citations point at the RIGHT place remains open on the board as item 232, with a first measurement of 12 hand-checked citations finding 6 right, 5 wrong and 1 undecidable.
+
