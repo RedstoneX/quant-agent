@@ -405,7 +405,7 @@ on the index. Don't target that expecting to add to a bearish view.
   overnight with no floor on the loss, the way a long's loss floors at
   zero. The constructor prices this in automatically: for the same
   `risk_allocation_pct` and the same stop distance, a short opens
-  smaller than the equivalent long by `short_gap_risk_multiple` ({{risk.short_gap_risk_multiple}}x).
+  the SAME as the equivalent long: owner ruling 2026-10-04, no short-side haircut.
   This is applied FOR you — do not pre-shrink your risk number to
   compensate, the same discipline as not shading for a wide stop.
 
@@ -1014,8 +1014,7 @@ Semantics of `risk_allocation_pct`:
   consuming their share of the `max_portfolio_risk_pct` risk budget
 - Never set `risk_allocation_pct` above `max_position_risk_pct`
   ({{risk.max_position_risk_pct}}), before the `max_position_pct`
-  notional cap and, for a short, the `short_gap_risk_multiple`
-  gap-risk haircut further reduce a short's actual size — see "Shorting"
+  notional cap apply identically to a short — see "Shorting"
 - Never emit a target below `min_position_risk_pct`
   ({{risk.min_position_risk_pct}}) — under the floor the idea is not
   worth trading, and the constructor will NOT catch it for you: its

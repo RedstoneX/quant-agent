@@ -21,8 +21,6 @@ from __future__ import annotations
 import logging
 import math
 
-from src.risk.constants import gap_adjusted_risk_per_share
-
 #: The moved code logged under `src.pipeline_stages` before the move and
 #: still does; binding the name rather than `__name__` keeps log records
 #: byte-identical.
@@ -139,8 +137,7 @@ _DEFAULT_RISK_BUDGET_PCT = 5.0
 def _risk_budget_pct(pipeline) -> float:
     """The configured §11.1 risk-budget percentage, or the ratified default.
 
-    Same Mock-safety posture as the `short_gap_risk_multiple` read just below
-    in this function, and as `TradingPipeline.__init__`'s `_risk_setting`:
+    Same Mock-safety posture as `TradingPipeline.__init__`'s `_risk_setting`:
     a MagicMock config (common in tests) auto-creates a child attribute that
     is neither the default nor a real number, so it must be checked rather
     than trusted from a bare `getattr`.
@@ -193,21 +190,9 @@ def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
         return None
     # D4: unsigned everywhere.
     risk_per_share = abs(sizing_price - stop_price)
-    # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement (the
-    # stop is untouched). This execution-time belt must be at least as
-    # conservative for a short as the constructor's own primary sizing, so
-    # both legs call the SAME application site (board item 216): execution
-    # ships `min(qty_by_alloc, qty_by_risk)`, and while these were two
-    # separate multiplies a change to one of them was silently a half-change
-    # to the quantity that actually reached the market.
-    risk_per_share = gap_adjusted_risk_per_share(
-        risk_per_share,
-        is_short=is_short,
-        multiple=getattr(
-            getattr(pipeline.config, "risk", None),
-            "short_gap_risk_multiple", None,
-        ),
-    )
+    # Owner ruling 2026-10-04: no short-side haircut. `is_short` above is
+    # used only to validate stop geometry; the risk arithmetic that follows
+    # is identical for both directions.
     if risk_per_share <= 0:
         return None
     risk_dollars = total_value * _risk_budget_pct(pipeline) / 100
