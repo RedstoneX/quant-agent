@@ -171,7 +171,7 @@ DONE WHEN:
   - [x] spend and actions re-measured — 2026-09-26, against the production cost circuit read-only. `intra_check` is the desk's largest spender: **$13.93 of $22.18 all-time, 62.8%**, over 211 sessions of which 106 were paid, against morning's $7.66 over 31. 13 paid ticks a day since the timer moved, 14 before. A tick carrying the held book costs **1.54x** a movers-only tick ($0.167 vs $0.108 mean). **80% of paid ticks (85 of 106) produced no order**, and the whole record attributes 21 new positions to intraday discovery — **$0.66 of model spend per position opened**. The mover cap binds on 21.5% of runs and drops the excess with no record. Figures and method in `docs/board_notes/`.
 detail: docs/board_notes/item-177.md
 
-**186. Risk ceilings are made-up — filed 2026-09-25. [5 of 8 ticked; 170, 172 buildable; 169 blocked]**
+**186. Risk ceilings are made-up — filed 2026-09-25. [5 of 8 ticked; both open boxes BLOCKED on evidence the desk does not record: the short-side haircut needs adverse overnight gaps on closed shorts (0 of 5 shorts ever taken carry one), `short_gap_risk_multiple` needs stored daily bars]**
 
 DONE WHEN:
   - [x] the three already-ratified ceilings (25 / 90 / 40) stay ratified, and the remaining three are researched to a definite verdict rather than left unexamined
