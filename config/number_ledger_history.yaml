@@ -1144,3 +1144,19 @@ changes:
       spends down. This is the second parameter measured inert in this
       engine, after the level-touch count, so the standing order's
       remaining risk rows are narrower than they look.
+  - delta: -2
+    date: '2026-10-04'
+    why: >-
+      A sixth ledger status, `owner-ruled`, now exists for a value the owner
+      decided on a recorded date. Two rows move to it, no value changed:
+      `RiskConfig.min_stop_atr_multiple` (2.5, owner ruling 2026-10-04 in
+      docs/OUTCOME.md) and `ConstructorConfig.max_position_pct` (65, owner
+      override 2026-09-11 in docs/INCIDENT_HISTORY.md). Their measurement
+      routes are kept in the row but parked, since a ruled value owes no route.
+      Five rows the first draft also flipped stay `arbitrary` on purpose: the
+      cluster share, the portfolio ceiling and the target horizon were
+      delegated to the adversary and never ruled by the owner; the 5% per-name
+      envelope was ratified 2026-08-27 but the owner's 2026-09-30 ruling that
+      per-name risk is read off the name supersedes it, as the row's own
+      ruling_check records; the 0.5% floor's standing under that same ruling
+      is undetermined, so it is left as found rather than promoted.
