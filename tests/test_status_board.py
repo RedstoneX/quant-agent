@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts import board_rot_guard, guard_reference
+from scripts.guard_reference import ReferenceUnavailable
 from src.api.server import _freshness_banner
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -964,202 +966,88 @@ def test_work_md_stays_under_a_hundred_thousand_bytes():
 
 
 # ---------------------------------------------------------------------------
+# PER-ITEM budget on docs/WORK.md -- `scripts/board_item_guard.py`
 # ---------------------------------------------------------------------------
-# PER-ITEM budget on docs/WORK.md
-# ---------------------------------------------------------------------------
-#: The board has always been policed by a WHOLE-FILE cap
-#: (`test_work_md_stays_under_a_hundred_thousand_bytes`) plus a shrinking
-#: growth budget. Owner finding, 2026-09-30: that pair punishes the wrong
-#: author. A whole-file cap binds on whoever files the NEXT item, never on
-#: whoever wrote an 8,294-byte one, and the only way past it is deleting
-#: items -- which is exactly how filed work comes to feel dropped. The
-#: design the owner wrote for this file is a one-line item plus a pointer,
-#: with the detail in `docs/board_notes/item-NNN.md`. Nothing held the item
-#: itself short, so items grew fat anyway. These checks enforce that half.
-#:
-#: THE DIVISOR BELOW IS A CHOSEN WORKING FIGURE, NOT A MEASURED ONE. It is
-#: not derived from anything and nothing measures it; 25 items were open
-#: when this landed [measured 2026-10-01], and 40 is a round allowance for
-#: growth picked by hand. That is acceptable here only because this number
-#: governs the length of a documentation file and no trade, position, stop
-#: or order whatsoever. Do not copy this pattern into anything that spends.
-_WORK_MD_MAX_OPEN_ITEMS = 40
+# The board has always been policed by a WHOLE-FILE cap
+# (`test_work_md_stays_under_a_hundred_thousand_bytes`) plus a shrinking
+# growth budget. Owner finding, 2026-09-30: that pair punishes the wrong
+# author. The design the owner wrote for this file is a one-line item plus a
+# pointer, with the detail in `docs/board_notes/item-NNN.md`. The guard
+# enforces that half: a per-item byte budget and a resolving note pointer.
+#
+# This file used to carry `_WORK_MD_OVERSIZE_ON_ARRIVAL` (eight items with
+# their byte size on 2026-10-01) and `_WORK_MD_POINTERLESS_ON_ARRIVAL` (four
+# numbers): cached measurements committed to the repo, a stored baseline in
+# Python clothing. Per docs/GUARDS_WITHOUT_STORED_STATE.md the guard now
+# stores nothing: it names every offending (item, rule) in the working tree,
+# names them again on origin/main at check time, and fails on any identity
+# the tree holds that the trunk does not. Removing or fixing an offender never
+# fails; retiring one and filing a different one still does.
+from scripts import board_item_guard  # noqa: E402
 
-#: Same shape as `_QUEUE_ITEM_RE`/`_ITEM_OPEN_RE` in scripts/status_board.py:
-#: an item block starts at its bold `**N. ` heading and runs to the next
-#: heading, or to the retired-numbers paragraph that closes the list.
-_WORK_ITEM_HEADING_RE = _re_mod.compile(r"^\*\*(?:~~)?(\d+)\.\s", _re_mod.M)
-_RETIRED_PARA = "**Retired item numbers"
-
-#: Items already over budget when this check landed, with their measured
-#: size on 2026-10-01. Their prose belongs to the authors who filed it and
-#: this PR does not touch a word of it. The check is a RATCHET instead: a
-#: grandfathered item may only ever get SMALLER, and any item not listed
-#: here -- every future one -- must come in under budget from the start.
-#: An entry is deleted outright once its item fits the budget; the test
-#: below fails if one is kept alive after that, so the list cannot rot.
-_WORK_MD_OVERSIZE_ON_ARRIVAL = {
-    "63": 3431, "70": 8294, "75": 3708, "90": 7548, "177": 5572, "186": 4065, "201": 5526, "218": 4005,
-}
-
-#: Items on the board when this check landed that do not resolve to a note
-#: file of their own [measured 2026-10-01: 9 of 25]. Same ratchet: writing
-#: another author's note is not this check's job, but no NEW item may arrive
-#: without one, and an entry here is deleted the moment its note exists.
-_WORK_MD_POINTERLESS_ON_ARRIVAL = {
-    "186", "188", "210", "218",
-}
+_RETIRED_PARA = board_item_guard.RETIRED_PARA
 
 
-def _work_md_item_blocks(text):
-    """`[(number, block_text)]` for every numbered item block in `text`."""
-    stop = text.find(_RETIRED_PARA)
-    if stop == -1:
-        stop = len(text)
-    heads = [m for m in _WORK_ITEM_HEADING_RE.finditer(text) if m.start() < stop]
-    blocks = []
-    for i, m in enumerate(heads):
-        end = heads[i + 1].start() if i + 1 < len(heads) else stop
-        blocks.append((m.group(1), text[m.start():end].rstrip() + "\n"))
-    return blocks
+def _per_item_offences(text, budget, notes):
+    return board_item_guard.offences(text, budget, notes)
 
 
-def _work_md_item_budget_bytes():
-    from scripts.check_board_hygiene import read_cap_bytes
-
-    repo = Path(__file__).resolve().parents[1]
-    cap, error = read_cap_bytes(repo)
-    assert error is None, error
-    return cap // _WORK_MD_MAX_OPEN_ITEMS
-
-
-def _over_budget_items(text, budget, allowed=None):
-    """Items over `budget`, minus the grandfathered ones that have not grown."""
-    allowed = _WORK_MD_OVERSIZE_ON_ARRIVAL if allowed is None else allowed
-    out = []
-    for n, b in _work_md_item_blocks(text):
-        if len(b) <= budget:
-            continue
-        if n in allowed and len(b) <= allowed[n]:
-            continue
-        out.append((n, len(b)))
-    return out
+def test_every_work_md_item_offence_is_already_on_the_trunk():
+    """The real docs/WORK.md against the real origin/main: this change may
+    not add an over-budget item or a pointerless one. Refuses, never passes,
+    without the trunk."""
+    try:
+        bad = board_item_guard.violations()
+    except ReferenceUnavailable as exc:
+        pytest.fail(f"board-item guard refused: {exc}")
+    assert not bad, "\n".join(bad)
 
 
-#: How `docs/WORK.md` spells a pointer since the notes became one file per
-#: item: `detail: docs/board_notes/item-177.md`. Zero-padded to three digits,
-#: which is why the number is compared as an int and not as text.
-_NOTE_POINTER_RE = _re_mod.compile(r"docs/board_notes/item-(\d+)\.md")
+def test_the_per_item_guard_fails_a_new_offender_and_the_net_zero_swap(monkeypatch):
+    """Identity, not total: removing one offender never licenses adding a
+    different one, and a pre-existing offender is not this change's business."""
+    budget = 2_500
+    monkeypatch.setattr(board_item_guard, "item_budget_bytes", lambda root=None: budget)
+    fat = {("6", "over_budget"): 9_000, ("7", "pointerless"): 0}
+    monkeypatch.setattr(board_item_guard, "trunk_offences", lambda b: dict(fat))
+    # Same offenders as the trunk: pre-existing rot, green.
+    monkeypatch.setattr(board_item_guard, "working_offences", lambda root=None: dict(fat))
+    assert board_item_guard.violations() == []
+    # Both fixed: removals never fail.
+    monkeypatch.setattr(board_item_guard, "working_offences", lambda root=None: {})
+    assert board_item_guard.violations() == []
+    # A new offender fails, and names the rule.
+    monkeypatch.setattr(board_item_guard, "working_offences",
+                        lambda root=None: {**fat, ("8", "over_budget"): 3_000})
+    bad = board_item_guard.violations()
+    assert len(bad) == 1 and bad[0].startswith("item 8 is 3,000 bytes") and "CHOSEN" in bad[0]
+    assert "docs/board_notes/" in bad[0] and "move the item's prose" in bad[0]
+    # Net-zero swap: item 6 fixed, item 9 newly fat -- a count would pass this.
+    monkeypatch.setattr(board_item_guard, "working_offences",
+                        lambda root=None: {("7", "pointerless"): 0, ("9", "over_budget"): 2_600})
+    assert [b.split(" ")[1] for b in board_item_guard.violations()] == ["9"]
+    # A pointer that resolves to no note is as bad as no pointer at all.
+    monkeypatch.setattr(board_item_guard, "working_offences",
+                        lambda root=None: {**fat, ("10", "pointerless"): 0})
+    assert [b.split(" ")[1] for b in board_item_guard.violations()] == ["10"]
+    assert board_item_guard.main() == 1
 
 
-def _notes_present():
-    """The note files `docs/board_notes/` actually holds, by item number.
-
-    The directory listing is the resolution `scripts.status_board.
-    load_board_notes` already uses to turn that directory into notes, and
-    the filename is what `docs/board_notes/README.md` makes authoritative —
-    so a pointer resolves here exactly as it resolves there. Deliberately
-    not a second, stricter rule of my own: two different answers to "does
-    this item have a note" is how a pointer comes to point at nothing while
-    every check stays green.
-    """
-    directory = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
-    if not directory.is_dir():
-        return set()
-    out = set()
-    for path in sorted(directory.glob("item-*.md")):
-        m = _re_mod.fullmatch(r"item-(\d+)\.md", path.name)
-        if m:
-            out.add(int(m.group(1)))
-    return out
+def test_the_per_item_guard_refuses_without_the_trunk(monkeypatch):
+    def gone(b):
+        raise ReferenceUnavailable("no origin/main")
+    monkeypatch.setattr(board_item_guard, "item_budget_bytes", lambda root=None: 2_500)
+    monkeypatch.setattr(board_item_guard, "working_offences", lambda root=None: {})
+    monkeypatch.setattr(board_item_guard, "trunk_offences", gone)
+    assert board_item_guard.main() == 2
+    with pytest.raises(ReferenceUnavailable):
+        board_item_guard.violations()
 
 
-def _items_missing_their_note(text, present, allowed=None):
-    """Items whose block carries no pointer, or whose pointer names a note
-    that is not this item's own, or one that is not there at all."""
-    allowed = _WORK_MD_POINTERLESS_ON_ARRIVAL if allowed is None else allowed
-    missing = []
-    for n, b in _work_md_item_blocks(text):
-        if n in allowed:
-            continue
-        targets = {int(x) for x in _NOTE_POINTER_RE.findall(b)}
-        if int(n) not in targets or int(n) not in present:
-            missing.append(n)
-    return missing
-
-
-def _per_item_failure_message(offenders, budget):
-    worst = ", ".join(f"item {n} ({size:,} bytes)" for n, size in offenders)
-    return (
-        f"docs/WORK.md item block(s) over the {budget:,}-byte per-item budget: "
-        f"{worst}. The budget is the file's own 100,000-byte cap divided by "
-        f"{_WORK_MD_MAX_OPEN_ITEMS}, a CHOSEN allowance for open items, not a "
-        "measured one -- it bounds a documentation file and nothing that "
-        "trades. TO FIX, and do NOT delete anything: move the item's prose "
-        "into `docs/board_notes/item-NNN.md` under its `## item N` heading -- "
-        "create that file if it is not there -- and leave behind only the bold "
-        "title line, the DONE WHEN checkboxes in short form, and the "
-        "`detail: docs/board_notes/item-NNN.md` pointer. Never raise this "
-        "number to make room, never shorten somebody else's item to make room "
-        "for yours, and never retire a live item to get under it."
-    )
-
-
-def test_every_work_md_item_stays_within_its_per_item_budget():
-    """The real docs/WORK.md, every item block, against the chosen budget."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
-    if not work_md.exists():
-        return
-    budget = _work_md_item_budget_bytes()
-    offenders = _over_budget_items(work_md.read_text(), budget)
-    assert not offenders, _per_item_failure_message(offenders, budget)
-
-
-def test_the_grandfathered_list_cannot_outlive_the_items_on_it():
-    """A ratchet that never releases is just a permanent exemption."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
-    if not work_md.exists():
-        return
-    budget = _work_md_item_budget_bytes()
-    sizes = {n: len(b) for n, b in _work_md_item_blocks(work_md.read_text())}
-    stale = sorted(n for n, _ in _WORK_MD_OVERSIZE_ON_ARRIVAL.items()
-                   if sizes.get(n, 0) <= budget)
-    assert not stale, (
-        f"item(s) {stale} now fit the {budget:,}-byte per-item budget — delete "
-        "them from _WORK_MD_OVERSIZE_ON_ARRIVAL so the budget binds on them "
-        "from now on."
-    )
-    # Released on exactly the condition the pointer check itself applies,
-    # so the two can never disagree about whether an item is still exempt.
-    still_missing = set(_items_missing_their_note(
-        work_md.read_text(), _notes_present(), allowed=set()))
-    gone = sorted(n for n in _WORK_MD_POINTERLESS_ON_ARRIVAL
-                  if n not in sizes or n not in still_missing)
-    assert not gone, (
-        f"item(s) {gone} now have a note of their own, or have left the "
-        "board — drop them from _WORK_MD_POINTERLESS_ON_ARRIVAL so the "
-        "pointer check binds on them from now on."
-    )
-
-
-def test_every_work_md_item_points_at_its_own_board_note_file():
-    """An item may be short only because its detail lives somewhere; the
-    pointer is what makes that true, so it is resolved, not assumed."""
-    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
-    if not work_md.exists():
-        return
-    missing = _items_missing_their_note(work_md.read_text(), _notes_present())
-    assert not missing, (
-        f"docs/WORK.md item(s) {missing} do not resolve to a note of their "
-        "own. Add a `detail: docs/board_notes/item-NNN.md` line to the block "
-        "and put the prose in that file under a `## item N` heading."
-    )
-
-
-def test_the_per_item_check_catches_a_fat_item_and_a_pointerless_one():
-    """Verifies the checker itself against a SIMULATED over-budget item, so
+def test_the_per_item_scanner_catches_a_fat_item_and_a_pointerless_one():
+    """Verifies the scanner itself against a SIMULATED over-budget item, so
     it is not merely passing because today's file happens to be tidy."""
-    budget = _work_md_item_budget_bytes()
+    budget = board_item_guard.item_budget_bytes()
     assert budget > 0
     tidy = (
         "**5. A short title.**\n\n"
@@ -1174,24 +1062,21 @@ def test_the_per_item_check_catches_a_fat_item_and_a_pointerless_one():
     text = tidy + fat + pointerless + _RETIRED_PARA + "** never reuse.\n"
     present = {5, 6}
 
-    assert [n for n, _ in _work_md_item_blocks(text)] == ["5", "6", "7"]
-    assert [n for n, _ in _over_budget_items(text, budget, allowed={})] == ["6"]
-    assert _items_missing_their_note(text, present, allowed=set()) == ["7"]
+    assert [n for n, _ in board_item_guard.item_blocks(text)] == ["5", "6", "7"]
+    assert _per_item_offences(text, budget, present) == {("6", "over_budget"): len(fat.rstrip() + "\n"), ("7", "pointerless"): 0}
     # A pointer that resolves to no note file is as bad as no pointer at all.
-    assert _items_missing_their_note(text, {5}, allowed=set()) == ["6", "7"]
-    # The ratchet exempts a grandfathered item, and ONLY while it has not grown.
-    assert _over_budget_items(text, budget, allowed={"6": 10_000}) == []
-    assert [n for n, _ in _over_budget_items(text, budget, allowed={"6": 10})] == ["6"]
-    assert _items_missing_their_note(text, present, allowed={"7"}) == []
-    assert _over_budget_items(tidy + _RETIRED_PARA, budget, allowed={}) == []
-    message = _per_item_failure_message(
-        _over_budget_items(text, budget, allowed={}), budget)
-    assert "docs/board_notes/" in message and "move the item's prose" in message
-    assert "CHOSEN" in message
+    assert sorted(n for n, rule in _per_item_offences(text, budget, {5}) if rule == "pointerless") == ["6", "7"]
+    assert _per_item_offences(tidy + _RETIRED_PARA, budget, {5}) == {}
+    assert board_item_guard.notes_in(["docs/board_notes/item-005.md", "docs/board_notes/README.md", "docs/other/item-009.md"]) == {5}
     # The retired-numbers paragraph is not an item and is never measured.
-    assert all(not b.startswith(_RETIRED_PARA) for _, b in _work_md_item_blocks(text))
+    assert all(not b.startswith(_RETIRED_PARA) for _, b in board_item_guard.item_blocks(text))
 
 
+def test_the_per_item_budget_is_the_cap_over_the_chosen_divisor():
+    from scripts.check_board_hygiene import read_cap_bytes
+    cap, error = read_cap_bytes(Path(__file__).resolve().parents[1])
+    assert error is None, error
+    assert board_item_guard.item_budget_bytes() == cap // board_item_guard.MAX_OPEN_ITEMS
 
 
 def test_finished_work_has_somewhere_to_go_that_is_not_deletion():
@@ -2156,61 +2041,59 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
     assert sb.find_finished_items_still_on_board(work, notes) == []
 
 
-#: Items on the REAL board, as of this change, whose own `DONE WHEN`
-#: checkboxes are all ticked while the item is still open — the ten this
-#: check found on its first real run (see the docstring of
-#: `find_finished_items_still_on_board`). This is an ALLOWLIST of KNOWN,
-#: pre-existing rot, not a target: retiring one of these items (writing it
-#: up in `docs/INCIDENT_HISTORY.md` and deleting its `docs/WORK.md` /
-#: `docs/board_notes/` blocks, the normal procedure) makes it disappear
-#: from the live check's output, and this set may SHRINK to match without
-#: anyone treating that as a test failure to chase down — update it in the
-#: same change that retires the item. It must never GROW silently: a NEW
-#: item joining the live check's output that is not already named here
-#: means a new item quietly finished without being moved, which is exactly
-#: the failure this whole check exists to catch, so that case still fails
-#: CI. (Item 170 has an open retirement PR, #737, at the time this set was
-#: written; it is included here because it was still open when this change
-#: was authored, and is expected to drop out of the live check, not out of
-#: this pin, the day that PR lands — a future run of this test after that
-#: merge will simply have one fewer overlap, which is fine.)
-_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26 = frozenset({
-    "item 125", "item 138", "item 139", "item 148", "item 152",
-    "item 154", "item 165", "item 170", "item 179", "item 180",
-})
-
-_REF_PREFIX_RE = re.compile(r"^(gate item \d+|item \d+)")
+# ---------------------------------------------------------------------------
+# finished-but-still-open board items: measured against the trunk, stored nowhere
+#
+# This used to be a frozenset, `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26`,
+# naming the ten items the check flagged on that date. That was a cached
+# measurement committed to the repo -- the same collision engine as the JSON
+# baselines, written in Python: every change retiring an item had to edit it,
+# and the set could be widened until the check passed. It is gone. The guard
+# in `scripts/board_rot_guard.py` stores nothing: it measures this working
+# tree and `origin/main` separately at check time and fails only on the DELTA,
+# and REFUSES (never passes) when the trunk cannot be read.
+# ---------------------------------------------------------------------------
 
 
 def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
     """The real docs/WORK.md and docs/board_notes/, not a fixture.
 
-    Unlike a plain "must find nothing" assertion, this tolerates the KNOWN,
-    already-measured backlog rot pinned in
-    `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` (ten items whose own DONE
-    WHEN boxes are all ticked while still open — real, pre-existing, and
-    not something this test's own change may fix by editing docs/WORK.md,
-    since that would collide with other sessions concurrently retiring
-    items in their own worktrees). What it still enforces: no item OUTSIDE
-    that known set may be flagged — a new one appearing there is a fresh
-    instance of exactly the failure this check exists to catch, and must
-    still fail CI.
+    Pre-existing rot already visible on `origin/main` is not this change's
+    business and is not something this test may fix by editing docs/WORK.md,
+    which would collide with other sessions retiring items in their own
+    worktrees. What it enforces is the delta: an item that newly declares
+    itself finished -- in its headline or by having every one of its own
+    DONE WHEN boxes ticked -- while still sitting on the board is a fresh
+    instance of exactly the failure this check exists to catch.
     """
-    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
-    notes = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
-    flagged = sb.find_finished_items_still_on_board(work, notes)
-    flagged_refs = set()
-    for f in flagged:
-        m = _REF_PREFIX_RE.match(f)
-        assert m, f"unrecognised flagged-item shape: {f!r}"
-        flagged_refs.add(m.group(1))
-    unexpected = flagged_refs - _KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26
-    assert not unexpected, (
+    new_rot = board_rot_guard.violations()
+    assert not new_rot, (
         "docs/WORK.md has NEW item(s) that declare themselves finished "
-        "(in headline or DONE WHEN checkboxes) but are still on the "
-        "board, beyond the already-known set pinned in "
-        "_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26:\n  "
-        + "\n  ".join(sorted(unexpected))
+        "(in headline or DONE WHEN checkboxes) but are still on the board, "
+        "beyond what origin/main already carries:\n  " + "\n  ".join(new_rot)
+    )
+
+
+def test_a_newly_finished_item_is_caught_as_a_delta(monkeypatch):
+    """An item flagged here but not on the trunk is this branch's doing."""
+    monkeypatch.setattr(board_rot_guard, "working_flagged", lambda: board_rot_guard.trunk_flagged() | {"item 9999"})
+    assert board_rot_guard.violations() == ["item 9999"]
+    assert board_rot_guard.main() == 1
+
+
+def test_rot_already_on_the_trunk_is_not_this_branch_s_problem(monkeypatch):
+    """Pre-existing rot is reported by neither side of the delta."""
+    monkeypatch.setattr(board_rot_guard, "trunk_flagged", lambda: {"item 4242"})
+    monkeypatch.setattr(board_rot_guard, "working_flagged", lambda: {"item 4242"})
+    assert board_rot_guard.violations() == []
+
+
+def test_the_guard_stores_no_list_of_current_items():
+    """The frozen set was the defect; a replacement in the guard is too."""
+    text = (_REPO / "scripts" / "board_rot_guard.py").read_text(encoding="utf-8")
+    assert "_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26 = " not in text
+    assert not re.search(r'"(gate )?item \d+"', text), (
+        "the guard pins a literal board item again; the trunk is the list"
     )
 
 

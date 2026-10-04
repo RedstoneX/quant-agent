@@ -1,0 +1,97 @@
+"""The gate that refuses an unjustified edit to a guard, proved both ways.
+
+Refusal cases run in throwaway repos; origin/main is never touched.
+"""
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+from scripts import guard_weakening_gate as gate
+from tests.test_definition_of_done import _commit, _git, _repo, _write
+
+JUSTIFIED = ("Guard-rule-change: the old byte-total rule is gameable because deleting "
+             "a test file frees budget for monolith growth; the new rule compares "
+             "per-file identities so freed budget in one file never offsets another.")
+
+
+def _base(tmp_path: Path) -> tuple[Path, str]:
+    repo = _repo(tmp_path)
+    _write(repo, "scripts/size_guard.py", '"""Doc."""\nLIMIT = 300\n')
+    _write(repo, "src/app.py", "x = 1\n")
+    _commit(repo, "base", "scripts/size_guard.py", "src/app.py")
+    sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    return repo, sha
+
+
+def _problems(repo: Path, base: str) -> list[str]:
+    return gate.problems(base, repo)
+
+
+def test_guard_edit_without_justification_fails(tmp_path):
+    repo, base = _base(tmp_path)
+    _write(repo, "scripts/size_guard.py", '"""Doc."""\nLIMIT = 600\n')
+    _commit(repo, "loosen", "scripts/size_guard.py")
+    out = _problems(repo, base)
+    assert out and "Guard-rule-change:" in out[0] and "25 words" in out[0]
+
+
+def test_guard_edit_with_justification_passes(tmp_path):
+    repo, base = _base(tmp_path)
+    _write(repo, "scripts/size_guard.py", '"""Doc."""\nLIMIT = 600\n')
+    _commit(repo, "loosen\n\n" + JUSTIFIED, "scripts/size_guard.py")
+    assert _problems(repo, base) == []
+
+
+def test_too_short_or_wrapped_justification_fails(tmp_path):
+    repo, base = _base(tmp_path)
+    _write(repo, "scripts/size_guard.py", "LIMIT = 600\n")
+    wrapped = "\n".join(JUSTIFIED.split(". ")[0].split(";"))
+    _commit(repo, "x\n\nGuard-rule-change: because I said so\n"
+            + wrapped.replace("Guard-rule-change:", "Guard-rule-change:\n"),
+            "scripts/size_guard.py")
+    assert _problems(repo, base)
+
+
+def test_deleting_a_guard_needs_the_line(tmp_path):
+    repo, base = _base(tmp_path)
+    _git(repo, "rm", "-q", "scripts/size_guard.py")
+    _git(repo, "commit", "-q", "-m", "drop")
+    out = _problems(repo, base)
+    assert out and "deleted" in out[0]
+
+
+def test_comment_and_docstring_only_edit_is_not_caught(tmp_path):
+    repo, base = _base(tmp_path)
+    _write(repo, "scripts/size_guard.py",
+           '"""A rewritten docstring."""\n# new comment\nLIMIT   =   300\n')
+    _commit(repo, "docs", "scripts/size_guard.py")
+    assert _problems(repo, base) == []
+
+
+def test_a_new_guard_file_is_not_caught_and_a_non_guard_edit_is_not(tmp_path):
+    repo, base = _base(tmp_path)
+    _write(repo, "scripts/new_guard.py", "LIMIT = 1\n")
+    _write(repo, "src/app.py", "x = 2\n")
+    _commit(repo, "add", "scripts/new_guard.py", "src/app.py")
+    assert _problems(repo, base) == []
+
+
+def test_unreadable_base_is_a_refusal_not_a_pass(tmp_path):
+    repo, _ = _base(tmp_path)
+    assert gate.problems(None, repo)
+    assert gate.problems("0" * 40, repo)
+
+
+def test_the_guard_set_is_derived_from_the_naming_rule():
+    assert gate.is_guard("scripts/file_size_guard.py")
+    assert gate.is_guard("tests/test_file_size_ratchet.py")
+    assert gate.is_guard("tests/test_disk_guard.py")
+    assert not gate.is_guard("scripts/definition_of_done.py")
+    assert not gate.is_guard("src/deep/x_guard.py")
+
+
+def test_this_change_justifies_every_guard_it_edits():
+    out = gate.problems(gate.dod.base_ref())
+    assert not out, "\n".join(f"- {p}" for p in out)

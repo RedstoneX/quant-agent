@@ -897,7 +897,7 @@ def test_length_pressure_drops_details_before_scan_first_content(tmp_path, monke
     # A tight budget — comfortably fits the scan-first sections (header,
     # P&L-less morning header, DONE) but not the full ~2500-char DETAILS
     # payload plus its wrapper tags.
-    monkeypatch.setattr(TelegramNotifier, "MAX_MESSAGE_CHARS", 900)
+    monkeypatch.setattr(TelegramNotifier, "MAX_MESSAGE_CHARS", 911)  # was 900; header grew 11 chars with the date (item 231)
 
     with patch.object(
         CompanyProfileStore, "get_many",
@@ -1021,7 +1021,7 @@ def test_length_pressure_protects_risk_and_execution_reasoning(tmp_path, monkeyp
 
     # Tight enough that the PM's long reasoning alone would consume the
     # whole DETAILS budget under the old flat-clip behaviour.
-    monkeypatch.setattr(TelegramNotifier, "MAX_MESSAGE_CHARS", 900)
+    monkeypatch.setattr(TelegramNotifier, "MAX_MESSAGE_CHARS", 911)  # was 900; header grew 11 chars with the date (item 231)
 
     with patch.object(
         CompanyProfileStore, "get_many",
@@ -2005,7 +2005,7 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     # --- header: ONE outcome word, computed (one done, one blocked) ---
     header = msg.splitlines()[0]
     # 12-hour clock, no 24-hour time anywhere (owner ratified 2026-09-17).
-    assert header.startswith("⚡ INTRADAY OPPORTUNITY · 1:05 PM ET")
+    assert header.startswith("⚡ INTRADAY OPPORTUNITY · 2026-09-17 1:05 PM ET")
     assert header.endswith("PARTIAL")
 
     # --- section placement: DONE, then BLOCKED, then LOOKED AT, then
@@ -2452,7 +2452,7 @@ def test_earnings_message_names_each_company_and_what_it_concluded(tmp_path, mon
         msg = trader_feed.format_session_result("earnings_preprocess", result, 18.5)
 
     assert msg is not None
-    assert msg.startswith("📄 PRE-MARKET EARNINGS · 10:45 AM ET · PARTLY READ")
+    assert msg.startswith("📄 PRE-MARKET EARNINGS · 2026-09-17 10:45 AM ET · PARTLY READ")
     assert "NVDA (NVIDIA) — quarterly report (10-Q) filed 2026-09-17: bullish, high conviction" in msg
     assert "Data-centre revenue accelerated again." in msg
     assert "OKLO (Oklo Inc) — annual report (10-K) filed 2026-09-16" in msg
@@ -2514,7 +2514,7 @@ def test_hourly_desk_check_names_the_orders_and_the_holdings(tmp_path, monkeypat
 
     assert msg is not None
     # A run that only sold does not read TRADED.
-    assert msg.startswith("🕐 DESK CHECK · 3:15 PM ET · SOLD")
+    assert msg.startswith("🕐 DESK CHECK · 2026-09-17 3:15 PM ET · SOLD")
     assert "⚡ 1 order(s) this hour" in msg
     assert "   • SELL AMD (Advanced Micro Devices) 2 @ $150.00 — filled" in msg
     assert "💼 Positions held: 1" in msg
