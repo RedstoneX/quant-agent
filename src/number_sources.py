@@ -256,8 +256,19 @@ SCOPED_CONFIG_CLASSES: tuple[str, ...] = (
 #:                      write, which is what it was.
 #:   not-trade-governing — in scope structurally, does not reach a trade
 #:                      decision. Requires `note` saying why.
+#:   owner-ruled      — the owner decided this VALUE and the decision is
+#:                      dated and recorded. A decision, not a measurement and
+#:                      not a debt. Requires `ruled_on` (YYYY-MM-DD) and
+#:                      `ruling_record` (where the ruling is written down).
 VALID_STATUSES: frozenset[str] = frozenset(
-    {"instrument", "sourced", "derived", "arbitrary", "not-trade-governing"}
+    {
+        "instrument",
+        "sourced",
+        "derived",
+        "arbitrary",
+        "not-trade-governing",
+        "owner-ruled",
+    }
 )
 
 #: Fields every `arbitrary` entry must carry. `docs/OUTCOME.md`'s outcome-3
@@ -486,6 +497,8 @@ def classification(
             out["not_trade_governing"].append(site_id)
         elif status in {"derived", "instrument", "measurement"}:
             out["sourced_or_measured"].append(site_id)
+        elif status == "owner-ruled":
+            out["ratified_bound"].append(site_id)
         elif status == "sourced":
             text = str(entry.get("source", "")).lower()
             key = "ratified_bound" if "ratif" in text else "sourced_or_measured"
@@ -867,6 +880,27 @@ def audit(
                     "this number cannot reach a trade decision.",
                 )
             )
+        if status == "owner-ruled":
+            ruled_on = str(entry.get("ruled_on") or "").strip()
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", ruled_on):
+                problems.append(
+                    LedgerProblem(
+                        "no-ruling-date",
+                        site_id,
+                        "status 'owner-ruled' requires `ruled_on:` as a "
+                        "YYYY-MM-DD date. A ruling nobody can date is a claim, "
+                        "not a decision.",
+                    )
+                )
+            if not str(entry.get("ruling_record") or "").strip():
+                problems.append(
+                    LedgerProblem(
+                        "no-ruling-record",
+                        site_id,
+                        "status 'owner-ruled' requires `ruling_record:` saying "
+                        "where the ruling is written down.",
+                    )
+                )
         if status == "arbitrary":
             for field in ARBITRARY_REQUIRED_FIELDS:
                 if not str(entry.get(field) or "").strip():
