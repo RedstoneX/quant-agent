@@ -4425,7 +4425,7 @@ numbers:
       is GONE. A proposed stop must now clear the live stop by one VENUE
       TICK -- the smallest price increment the venue will accept, Alpaca's
       published $0.01-at-or-above-$1 / $0.0001-below split (SEC Rule 612),
-      the same split `src/execution/broker_parts/stop_amend.py::_quantize_price`
+      the same split `src/execution/broker_parts/stop_amend_pure.py::_quantize_price`
       and `src/execution/stop_records.py::_prices_match` already carry.
       DERIVATION: two prices less than one tick apart are the SAME stop
       after the venue quantizes them, so a sub-tick amend cannot improve
@@ -4523,7 +4523,7 @@ numbers:
       surviving cost to defend and the honest floor becomes the venue
       minimum price increment -- one tick, SEC Rule 612 / Alpaca's published
       $0.01-at-or-above-$1 and $0.0001-below split, which
-      `src/execution/broker_parts/stop_amend.py::_quantize_price` and
+      `src/execution/broker_parts/stop_amend_pure.py::_quantize_price` and
       `src/execution/stop_records.py::_prices_match` already carry. That is
       a reading off the instrument rather than a picked percentage, and it
       is the same shape as item 183's removal of the picked
