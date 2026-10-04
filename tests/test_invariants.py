@@ -551,7 +551,9 @@ def test_invariant_intraday_scan_reuses_shared_stages_not_its_own_chain():
     # The scan is a thin concurrency-guard wrapper delegating to a body;
     # inspect both so the invariant can't be dodged by moving code between
     # them.
-    from src.intraday.candidates import IntradayCandidates as _IC; from src.pipeline_intraday import IntradayScanBody as _ISB  # parts, not shims
+    # parts, not shims
+    from src.intraday.candidates import IntradayCandidates as _IC
+    from src.pipeline_intraday import IntradayScanBody as _ISB
     src = (
         inspect.getsource(_IC._run_intraday_opportunity_scan)
         + inspect.getsource(_ISB._intraday_opportunity_scan_body)
