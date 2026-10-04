@@ -83,7 +83,7 @@ flags:
       compounding per member) and still cannot alone admit a new symbol
       (`transient_admission_eligible` stays false for it).
     decided: "2026-09-20"
-    source: "owner ruling 2026-09-19; docs/INCIDENT_HISTORY.md 2026-09-20 entry; src/config/research.py:182"
+    source: "owner ruling 2026-09-19; docs/INCIDENT_HISTORY.md 2026-09-20 entry; src/config/smart_money.py:142"
 
   - id: src.config.CashSweepConfig.enabled
     effective_value: false
@@ -173,7 +173,7 @@ flags:
       explicitly opted in" -- src/config/__init__.py docstring). Flipped on in
       settings.yaml as a deliberate opt-in.
     decided: "2026-09-02"
-    source: "commit a82f761e5; config/settings.yaml:989; src/config/risk.py:249-253"
+    source: "commit a82f761e5; config/settings.yaml:989; src/config/__init__.py:372-376"
 
   - id: src.config.RiskConfig.require_stop_loss
     effective_value: true
@@ -220,7 +220,7 @@ flags:
       any session, and the Form 4 / nomination side doors keep their
       pre-existing gates (including the dead Form 4 age gate).
     decided: "2026-09-19"
-    source: "src/config/research.py:292; config/settings.yaml:1185"
+    source: "src/config/smart_money.py:252; config/settings.yaml:1185"
 
   - id: src.config.LLMCostCircuitConfig.enabled
     effective_value: true
