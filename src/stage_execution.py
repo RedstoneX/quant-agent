@@ -11,6 +11,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.execution.entry_evidence import (
+    pinned_setup_type as _pinned_setup_type,
+    pinned_structural_ceiling as _pinned_structural_ceiling,
+)
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     LEVEL_BACKED_STOP_RULES,
     RunContext,
@@ -1564,32 +1568,28 @@ class ExecutionStage:
                 # new entry has no prior pinned row and reads the single
                 # value the constructor already classified, carried on the
                 # decision.
-                if add_prep is not None and add_prep.is_scale_in:
-                    # Carry the position's OWN pinned setup_type forward. A
-                    # short add reads the last SHORT open (item 82 mirror) —
-                    # get_symbol_last_buy defaults to BUY rows and would
-                    # otherwise miss the short's original entry.
-                    _existing_buy = pipeline.db.get_symbol_last_buy(
+                _is_scale_in = add_prep is not None and add_prep.is_scale_in
+                # Item 82: carry the position's OWN pinned classification
+                # forward on a scale-in ADD rather than re-reading today's
+                # technical, which would silently reclassify a position
+                # nobody made a new entry decision about. A short add reads
+                # the last SHORT open (item 82 mirror) — get_symbol_last_buy
+                # defaults to BUY rows and would otherwise miss the short's
+                # original entry. Where the prior row holds NO pinned value,
+                # the decision's own freshly computed one is recorded instead
+                # of propagating the hole — see src/execution/entry_evidence.py.
+                _existing_buy = (
+                    pipeline.db.get_symbol_last_buy(
                         decision.symbol,
                         action="SHORT" if is_short else "BUY",
-                    )
-                    pinned_setup_type = (_existing_buy or {}).get("setup_type") or None
-                    # Item 82: carry the position's OWN pinned MEASURED verdict
-                    # forward too (stored 0/1/NULL), for the same reason as
-                    # setup_type above — an add is the same position, not a
-                    # fresh classification. See TradeDecision.structural_ceiling.
-                    _pinned_sc = (_existing_buy or {}).get("structural_ceiling")
-                    pinned_structural_ceiling = (
-                        None if _pinned_sc is None else bool(_pinned_sc)
-                    )
-                else:
-                    pinned_setup_type = getattr(decision, "setup_type", None)
-                    # Item 82: the MEASURED half of the verdict, pinned from the
-                    # constructor's TradeDecision (see _build_buy/_build_short),
-                    # alongside setup_type. None for a legacy notional target.
-                    pinned_structural_ceiling = getattr(
-                        decision, "structural_ceiling", None,
-                    )
+                    ) if _is_scale_in else None
+                )
+                pinned_setup_type = _pinned_setup_type(
+                    _existing_buy, decision, is_scale_in=_is_scale_in,
+                )
+                pinned_structural_ceiling = _pinned_structural_ceiling(
+                    _existing_buy, decision, is_scale_in=_is_scale_in,
+                )
                 entry_side = "sell_short" if is_short else "buy"
                 pending_row_id = pipeline.db.insert_trade(
                     symbol=decision.symbol, action=decision.action, qty=qty,
