@@ -2853,7 +2853,7 @@ numbers:
       fix actually shipped instead reserves a small, bounded number of
       `max_observations` slots so a genuinely clustered symbol cannot be
       crowded out entirely by unrelated higher-dollar buys on OTHER symbols
-      (`_reserve_cluster_symbols`). 5 is an undderived round number picked
+      (`reserve_cluster_symbols`). 5 is an undderived round number picked
       only to keep the reservation small relative to `max_observations`
       (=40): nothing measures how many genuine same-day clusters occur on a
       typical day, so this cap could as easily starve a legitimately busy
@@ -2939,8 +2939,8 @@ numbers:
       constant had TWO uses and the schema carries one status per site: USE ONE
       (the `rolling(200)` moving-average window) is sourced -- 200 is a
       conventional published trend reference, named here not chosen here -- but
-      USE TWO, the constructor's `_require_sufficient_history` young-listing
-      refusal, read the same 200 as a data-sufficiency gate with no citation
+      USE TWO, the constructor's young-listing
+      refusal (a since-removed function), read the same 200 as a data-sufficiency gate with no citation
       anywhere, so the row took the weaker use's status. The owner has now
       DROPPED that refusal (a young listing is judged on whether a protective
       stop is readable from whatever bars exist, via the existing
