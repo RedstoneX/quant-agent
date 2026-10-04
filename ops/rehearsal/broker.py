@@ -68,6 +68,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time as dt_time, timezone
 from types import SimpleNamespace
 
+from ops.rehearsal.stand_in import AmendEndpoint, LoudStandIn, status_matches
+
 logger = logging.getLogger(__name__)
 
 FILL_IMMEDIATE = "immediate"
@@ -255,7 +257,7 @@ class RecordedOrder:
         }
 
 
-class RehearsalTradingClient:
+class RehearsalTradingClient(LoudStandIn, AmendEndpoint):
     """Stands in for `alpaca.trading.TradingClient`. Submits nothing."""
 
     def __init__(self, snapshot: BrokerSnapshot, *, now: datetime,
@@ -361,22 +363,21 @@ class RehearsalTradingClient:
     # -- orders -------------------------------------------------------------
 
     def get_orders(self, filter=None):  # noqa: A002 — alpaca-py's parameter name
-        """Only orders this rehearsal itself placed.
-
-        The database copy carries no open-order book, so a rehearsal starts
-        with a clean order book. That is a real divergence from production,
-        where stale entry orders and standing protective stops exist at
-        session open, and it is reported.
-        """
+        """The seeded standing stops plus whatever this rehearsal placed;
+        `status=OPEN` hides filled, cancelled and replaced orders exactly as
+        the broker does, so an amended stop reads back as ONE open order."""
         wanted_symbols = {
             str(s).replace("-", ".") for s in (getattr(filter, "symbols", None) or [])
         }
         side = getattr(getattr(filter, "side", None), "value", getattr(filter, "side", None))
+        status = getattr(filter, "status", None)
         out = []
         for order in self._orders.values():
             if wanted_symbols and order.symbol not in wanted_symbols:
                 continue
             if side and str(side).lower() != order.side:
+                continue
+            if not status_matches(status, order.status):
                 continue
             out.append(SimpleNamespace(
                 id=order.order_id,
@@ -469,18 +470,15 @@ class RehearsalTradingClient:
         return []
 
     def close_position(self, symbol, *args, **kwargs):
+        # A liquidation the stand-in cannot model is a gap, never a soft no.
+        self.unsupported_calls.append(f"close_position({symbol})")
         raise BrokerReachAttempted(
-            f"close_position({symbol}) is a live liquidation and is refused in "
-            f"a rehearsal"
-        )
+            f"close_position({symbol}) is a live liquidation the rehearsal "
+            f"cannot model; the run is void")
 
     def get_asset(self, symbol):
-        """No asset directory offline — refuse rather than guess eligibility.
-
-        `get_transient_equity_eligibility` catches this and returns
-        ``asset_lookup_failed``, which is the fail-closed answer. A rehearsal
-        must never grant a trading eligibility it cannot verify.
-        """
+        """No asset directory offline: the desk fails closed on this, and the
+        run is void because the real broker would have answered."""
         self.unsupported_calls.append(f"get_asset({symbol})")
         raise BrokerReachAttempted(
             "asset directory is unavailable offline; eligibility fails closed"
@@ -490,7 +488,7 @@ class RehearsalTradingClient:
         return float(self._snapshot.prices.get(symbol.replace(".", "-"), 0.0) or 0.0)
 
 
-class RehearsalDataClient:
+class RehearsalDataClient(LoudStandIn):
     """Stands in for `StockHistoricalDataClient`. Serves recorded prices only."""
 
     def __init__(self, snapshot: BrokerSnapshot):
@@ -571,6 +569,7 @@ def install_rehearsal_broker(
 
     trading = RehearsalTradingClient(snapshot, now=now, fill_model=fill_model)
     data = RehearsalDataClient(snapshot)
+    data.unsupported_calls = trading.unsupported_calls  # one journal, one verdict
     broker.client = trading
     broker._data_client = data
     broker.api_key = SENTINEL_KEY

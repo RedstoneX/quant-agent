@@ -10,10 +10,6 @@
    "src.execution.scale_in"
   ],
   [
-   "src.coverage_watchdog",
-   "src.execution.stop_repair"
-  ],
-  [
    "src.execution.broker",
    "src.execution.scale_in"
   ],
@@ -23,10 +19,6 @@
   ],
   [
    "src.execution.scale_in",
-   "src.execution.broker"
-  ],
-  [
-   "src.execution.stop_repair",
    "src.execution.broker"
   ],
   [
