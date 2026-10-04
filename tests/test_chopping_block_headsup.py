@@ -81,3 +81,21 @@ def test_margins_for_uses_the_desks_own_net_score():
     out = margins_for(["ZZA", "ZZB", "ZZC"], a, {"ZZA": {}}, None, None)
     assert out["ZZA"] == {"rating": "buy", "r2_steps_from_neutral": 1, "r5_net_evidence": 0}
     assert "r5_net_evidence" not in out["ZZB"] and "ZZC" not in out
+
+
+def test_dispositions_writer_output_reaches_the_panel_for_uncut_names():
+    """Round trip: what item 219 records for a name it did NOT cut is what the owner reads."""
+    from types import SimpleNamespace as NS
+
+    from src.rotation_dispositions import disposition_payload
+
+    opp = NS(ineligible_candidates=[("ZZA", ["R2 neutral rating"]),
+                                    ("ZZB", ["R5 net evidence -1"])])
+    pre = NS(opportunity=opp, held_below_entry_bar=("ZZA", "ZZB"))
+    payload = disposition_payload(pre, {"ZZA"}, True)
+    p = _p("2026-10-02T10", ["ZZA", "ZZB"], ["ZZA", "ZZB"])
+    p["disposition"] = payload
+    by = {h.symbol: h for h in build_rows([p]).holdings}
+    assert "R5 net evidence -1" in by["ZZB"].reason
+    assert "Not sold yet" in by["ZZB"].reason
+    assert "does not say" not in by["ZZB"].reason
