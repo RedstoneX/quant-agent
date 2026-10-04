@@ -36,6 +36,7 @@ walk above genuinely has nothing to walk.
 from __future__ import annotations
 
 import logging
+import inspect
 import sqlite3
 
 logger = logging.getLogger(__name__)
@@ -65,23 +66,37 @@ class _LazyLedger:
             return None
 
 
+def _probe(obj, name: str):
+    """`getattr(obj, name, None)`, but only for names the object really has.
+
+    A stand-in that answers unknown names through ``__getattr__`` (the
+    rehearsal broker journals each as an unanswered broker call) must not see
+    this lookup: asking whether a ledger handle exists is not a broker call.
+    """
+    try:
+        inspect.getattr_static(obj, name)
+    except AttributeError:
+        return None
+    return getattr(obj, name, None)
+
+
 def _ledger_on(obj, hops: int):
     if obj is None or obj is NO_LEDGER:
         return None
-    lent = getattr(obj, RECON_DB_ATTR, None)
+    lent = _probe(obj, RECON_DB_ATTR)
     if lent is not None:
         return lent
-    if isinstance(getattr(obj, "conn", None), sqlite3.Connection):
+    if isinstance(_probe(obj, "conn"), sqlite3.Connection):
         return obj
-    db = getattr(obj, "db", None)
-    if isinstance(getattr(db, "conn", None), sqlite3.Connection):
+    db = _probe(obj, "db")
+    if isinstance(_probe(db, "conn"), sqlite3.Connection):
         return db
-    getter = getattr(obj, "_conn_getter", None)
+    getter = _probe(obj, "_conn_getter")
     if callable(getter):
         return _LazyLedger(getter)
     if hops > 0:
         for hop in ("client", "broker"):
-            found = _ledger_on(getattr(obj, hop, None), hops - 1)
+            found = _ledger_on(_probe(obj, hop), hops - 1)
             if found is not None:
                 return found
     return None

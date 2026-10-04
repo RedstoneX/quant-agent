@@ -79,7 +79,10 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
         try:
             order = replace_stop_and_record(broker, db, symbol, intended)
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass((db, broker), "pending_stop_drain.apply", exc, log=logger, context={"symbol": symbol, "intended": intended, "note": "old stop remains in force; row kept for next pass"})
+            record_guarded_pass(
+                (db, broker), "pending_stop_drain.apply", exc, log=logger,
+                context={"symbol": symbol, "intended": intended,
+                         "note": "old stop remains in force; row kept for next pass"})
             continue
         record_guarded_pass((db, broker), "pending_stop_drain.apply", context={"symbol": symbol, "intended": intended})
         if accepted_stop_order(order):
@@ -106,6 +109,8 @@ def drain_safely(broker: Any, db: Any) -> None:
     try:
         drain_pending_stop_amends(broker, db)
     except Exception as exc:  # noqa: BLE001
-        record_guarded_pass((db, broker), "pending_stop_drain.drain_safely", exc, log=logger, context={"note": "owed levels are STILL owed"})
+        record_guarded_pass(
+            (db, broker), "pending_stop_drain.drain_safely", exc, log=logger,
+            context={"note": "owed levels are STILL owed"})
         return
     record_guarded_pass((db, broker), "pending_stop_drain.drain_safely")
