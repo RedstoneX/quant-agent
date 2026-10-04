@@ -108,3 +108,25 @@ def test_unreachable_call_sites_do_not_grow():
         " runs and the assertion still passes; patch the owning module instead,"
         " or stop importing the name inside the function."
     )
+
+
+def test_unreadable_trunk_refuses_instead_of_passing(monkeypatch):
+    """No readable ``origin/main`` means REFUSE, never pass by default."""
+    import pytest
+    from scripts import guard_reference
+
+    monkeypatch.setattr(guard_reference, "TRUNK", "origin/no-such-branch-for-test")
+    with pytest.raises(ReferenceUnavailable):
+        _trunk_report()
+
+
+def test_guard_bites_on_a_new_leak_and_clears_when_removed():
+    """Real leak set vs itself is clean; one genuinely new offender goes red;
+    taking it away goes green again."""
+    real = _leaks_of(_working_report())
+    assert added_sites(real, _leaks_of(_trunk_report())) == []
+    injected = real | {("src.pipeline.brand_new_name", "src.fake_module")}
+    assert [k for k, _, _ in added_sites(injected, real)] == [
+        ("src.pipeline.brand_new_name", "src.fake_module")
+    ]
+    assert added_sites(injected - {("src.pipeline.brand_new_name", "src.fake_module")}, real) == []
