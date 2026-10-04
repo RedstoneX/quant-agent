@@ -1,6 +1,6 @@
 """src.cost_circuit.parts.owner_notify -- Owner notification scans for the cost circuit (suspend / quota / recovery / resume).
 
-Bodies moved verbatim from src/cost_circuit/breaker_notify.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_notify.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ class OwnerNotify:
         self, *,
         enabled,
         infrastructure_lock,
-        unavailable_sentinel,
+        read_unavailable_sentinel,
         connect,
         refresh_latched_snapshot_locked,
         state_row,
@@ -36,7 +36,7 @@ class OwnerNotify:
     ) -> None:
         self.enabled = enabled
         self._infrastructure_lock = infrastructure_lock
-        self._unavailable_sentinel = unavailable_sentinel
+        self._read_unavailable_sentinel = read_unavailable_sentinel
         self._connect = connect
         self._refresh_latched_snapshot_locked = refresh_latched_snapshot_locked
         self._state_row = state_row
@@ -57,6 +57,11 @@ class OwnerNotify:
             self._notify_quota_recoveries_if_needed = notify_quota_recoveries_if_needed
         if notify_auto_resets_if_needed is not None:
             self._notify_auto_resets_if_needed = notify_auto_resets_if_needed
+
+    @property
+    def _unavailable_sentinel(self):
+        # Read live: the sentinel is installed on the host after construction.
+        return self._read_unavailable_sentinel()
 
     def _notify_if_needed(self) -> None:
         if not self.enabled:
