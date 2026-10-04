@@ -49,8 +49,8 @@ git ls-tree -r --name-only origin/main src | grep '\.py$' |
   broker. The guard in `src/execution/broker.py` is the reference, and it has
   to see through a `functools.partial`, because tests bind bodies onto mock
   hosts that way.
-- **Build a package, never siblings.** `tests/import_layers.json` matches
-  importers by prefix, so `src/x/y.py` stays inside `src/x`'s existing
+- **Build a package, never siblings.** the `broker-seam` layer rule (`LAYER_RULES` in
+  `scripts/import_graph.py`) matches importers by prefix, so `src/x/y.py` stays inside `src/x`'s existing
   allowance while `src/x_y.py` does not.
 - **`FLOOR = 400` in `scripts/file_size_guard.py` is the cap on a file that is
   not on `origin/main`.** Files already on the trunk are judged only by whether

@@ -28,16 +28,16 @@
 # IN FOUR PLACES --
 #
 #   * it said the number was absent from config/settings.yaml. It is at
-#     config/settings.yaml:685, and that is the LIVE value.
+#     config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any`, and that is the LIVE value.
 #   * it said the number was absent from every document. It is the
-#     owner-ratified risk-envelope row at docs/OUTCOME.md:84.
+#     owner-ratified risk-envelope row at docs/OUTCOME.md@`| Min risk per trade | 0.5% — below this, do not`.
 #   * it said the number was absent from any ratification record. It was
 #     ratified 2026-08-27, commit 75c02335.
 #   * it said the number existed in exactly one place, while this same file
-#     listed it twice -- and a third site (src/config/__init__.py:770) was invisible to
+#     listed it twice -- and a third site (src/config/__init__.py::RiskConfig) was invisible to
 #     the scanner because its default was bound to a NAME.
 #
-# It also cited a comment at src/portfolio_constructor/config.py:480-488 as calling
+# It also cited a comment at src/portfolio_constructor/config.py::ConstructorConfig.min_risk_pct as calling
 # that 0.50% "a constructor default nobody chose". That comment is about
 # `risk_budget_pct`'s prior value, a legacy NOTIONAL target -- a different
 # quantity that shares a digit. Every one of those five claims was one grep
@@ -93,9 +93,9 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/scheduler.py:56 (`for tick_min in range(lo_min, hi_min + 1, 30)` in
+      src/scheduler.py::TradingScheduler._build_intra_check_trigger (`for tick_min in range(lo_min, hi_min + 1, 30)` in
       `_build_intra_check_trigger`, the authority for how often the intraday
-      control actually fires) and src/trading_calendar.py:48 (the window those
+      control actually fires) and src/trading_calendar.py::SESSION_WINDOWS (the window those
       ticks span). Not an independent number: it is pinned in config only so
       the cost circuit's transient-latch cooldown can be derived from the gap
       between consecutive PAID runs instead of chosen, and
@@ -430,10 +430,10 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py:483 (the derivation at the definition site: the quantity
+      src/config/llm.py::LLMConfig._provider_order_is_wellformed (the derivation at the definition site: the quantity
       is FLOORED, never rounded up, so the only exposure is under-spending the
       budget, and 4dp is under a tenth of a cent of notional at any price this
-      desk trades) and docs/QAMC_REMEDIATION_SPEC.md:1457 (the
+      desk trades) and docs/QAMC_REMEDIATION_SPEC.md@`share count is FLOORED to that many places, neve` (the
       fractional-order spec, which names this key and its default).
   - id: src.config.ExecutionConfig.max_entry_slippage_bps
     settles_by:
@@ -825,7 +825,7 @@ numbers:
       points of binding, and nothing records whether it ever has been.
     cost_while_unanswered: >-
       A concentrated sector book is capped at a number the spec never set
-      (src/config/__init__.py:1004 says 90 was chosen when section 12.3 was built and
+      (src/config/__init__.py::RiskConfig says 90 was chosen when section 12.3 was built and
       is open for the owner to move).
     settles_by:
       kind: recording
@@ -846,7 +846,7 @@ numbers:
     source: >-
       docs/QAMC_REMEDIATION_SPEC.md section 10.3, ratified: the hard sector
       ceiling is defined there as a multiple of the sector target. Definition
-      site: src/config/__init__.py:1000. The multiple is the spec's, not this file's.
+      site: src/config/__init__.py::RiskConfig. The multiple is the spec's, not this file's.
   - id: src.config.RiskConfig.absolute_min_stop_atr_multiple
     settles_by:
       kind: measurement
@@ -866,10 +866,10 @@ numbers:
     note: >-
       The HARD FLOOR under every stop this desk sets. A level-backed stop is
       honoured however tight down to this many ATRs; inside it the stop is
-      pushed out to exactly this floor (src/config/__init__.py:840-848). It was hidden
+      pushed out to exactly this floor (src/config/__init__.py::RiskConfig). It was hidden
       from the first version of this gate by a blanket 1.0 exclusion justified
       as "the identity, not a setting". It is not an identity.
-      src/config/__init__.py:842 says section 12.1's safety argument rests on the same
+      src/config/__init__.py::RiskConfig says section 12.1's safety argument rests on the same
       1xATR figure in config/prompts/tech_analyst.md - a PROMPT, which
       Invariant 2 says cannot be the final authority.
     open_question: >-
@@ -905,14 +905,14 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py:884 and src/data/levels.py:766-769. 1.0 means the
+      src/config/__init__.py::RiskConfig and src/data/levels.py@`def cluster_span(`. 1.0 means the
       projection IS the instrument's typical excursion over the stated horizon
       and nothing more, so the claim is read off the instrument rather than
       chosen. Note the documented interaction with min_stop_atr_multiple at
-      src/config/__init__.py:880-883.
+      src/config/__init__.py::RiskConfig.
     note: >-
       The measured move claimed when no structural level stands in the way, in
-      sqrt(session)-scaled ATRs (src/config/__init__.py:879-884).
+      sqrt(session)-scaled ATRs (src/config/__init__.py::RiskConfig).
   - id: src.agents.llm_retry._INSUFFICIENT_CREDIT_STATUS
     value: 402
     status: instrument
@@ -924,7 +924,7 @@ numbers:
       It is a PROTOCOL CONSTANT fixed by that specification and by the model
       provider's use of it for an exhausted credit balance -- the desk does
       not choose it and cannot change it, exactly as it does not choose a
-      broker tick size. It is read only at src/agents/base.py:1305 and :2530,
+      broker tick size. It is read only at src/agents/base.py::BaseAgent._execute and :2530,
       both of them an equality test against `status_code` on a provider
       exception, and it governs whether the desk re-asks the provider once at
       a smaller allowance. It never enters a price, a size, a stop or a
@@ -940,7 +940,7 @@ numbers:
       of the current market value of margin securities held long.
       https://www.finra.org/rules-guidance/rulebooks/finra-rules/4210 (fetched
       and confirmed 2026-09-18). Quoted at the definition site
-      src/config/__init__.py:952. Not a desk choice, and used only to report
+      src/config/__init__.py::RiskConfig. Not a desk choice, and used only to report
       distance-to-forced-liquidation. CAVEAT recorded rather than asserted
       away: 25% is the REGULATORY FLOOR and brokers routinely enforce 30-40%,
       so a distance-to-liquidation computed from it is the most optimistic
@@ -955,9 +955,9 @@ numbers:
       https://files.alpaca.markets/disclosures/library/BrokFeeSched.pdf , and
       https://docs.alpaca.markets/us/docs/margin-and-short-selling (fetched
       and confirmed 2026-09-18; the Elite tier is 4.75%). Applied on the
-      broker's own (debit x rate)/360 convention at src/margin_interest.py:1.
+      broker's own (debit x rate)/360 convention at src/margin_interest.py@`**MEASURES, never gates.** Nothing here touches`.
       The fee schedule says the rate MAY CHANGE OVER TIME, so this is a source
-      with an expiry. The definition site src/config/__init__.py:921 already labels
+      with an expiry. The definition site src/config/__init__.py::RiskConfig already labels
       every figure derived from it an ESTIMATE until the broker's own INT
       activity confirms paper accounts are charged at all.
   - id: src.config.RiskConfig.max_cluster_risk_share_pct
@@ -1002,7 +1002,12 @@ numbers:
       separate ideas are refused as if they were the same bet.
     settles_by:
       kind: recording
-      state: specified
+      state: built
+      writes:
+      - realised_risk_budget.committed_pct
+      - realised_risk_budget.cluster_shares_json
+      - realised_risk_budget.held_only_pct
+      - realised_risk_budget.allocator_ran
       where: docs/board_notes/ (item 186, the 2026-10-01 pass)
       records: >-
         each session's cluster membership as the correlation-distance tree cut
@@ -1019,13 +1024,13 @@ numbers:
       margin on a margin equity security, so the largest position a margin account may OPEN is twice
       its own equity; Alpaca restates the same limit as 2x overnight buying power against 4x intraday
       for a pattern-day-trade account, which is the `Alpaca''s own 4x` the sizing module''s comment
-      at src/pipeline_sizing.py:282 refers to and which applies only within a session. The desk is
+      at src/pipeline_sizing.py@`# ladder-resolved gross headroom, so the de-leve` refers to and which applies only within a session. The desk is
       flat-to-long overnight by construction, so the binding external bound is the 2x initial one
       and the configured cap sits EXACTLY on it. WHAT THE OWNER SHOULD READ IN THIS: the standing
       gross ceiling is `as much as the law allows`. That is the ABSENCE of a leverage decision, not
       a leverage decision, and the only thing standing between the book and the regulatory maximum
       is the de-levering ladder below (GROSS_LADDER), whose own rungs are owner appetite. The field
-      validator at src/config/__init__.py:942 permits up to 4.0, a value Regulation T would not let
+      validator at src/config/__init__.py::RiskConfig permits up to 4.0, a value Regulation T would not let
       the desk hold overnight at all. The old `measurement` route is retired with this change: a measurement
       of this account''s gap behaviour can only argue for a cap BELOW the regulatory maximum, which
       is an appetite question about the ladder, not a source for this number. PRIOR NOTE, kept verbatim:
@@ -1079,7 +1084,12 @@ numbers:
       are rationed against it.
     settles_by:
       kind: recording
-      state: specified
+      state: built
+      writes:
+      - realised_risk_budget.committed_pct
+      - realised_risk_budget.cluster_shares_json
+      - realised_risk_budget.held_only_pct
+      - realised_risk_budget.allocator_ran
       where: docs/board_notes/ (item 186, the 2026-10-01 pass)
       records: >-
         each session's total loss-if-stopped across the whole book, with the
@@ -1293,7 +1303,7 @@ numbers:
       stays at 5 because moving it would be inventing a number; the status no
       longer claims a measurement that stands.
     source: >-
-      In-repo measured study at src/config/__init__.py:722-740 (Phase 12.1, 2026-09-03,
+      In-repo measured study at src/config/__init__.py::RiskConfig (Phase 12.1, 2026-09-03,
       docs/RESEARCH_FINDINGS.md section 7): a real-vs-shuffled bounce-probability
       table over 101 symbols, 5 years of daily bars, separates with
       non-overlapping 95% confidence intervals only at 5+ touches -- real 0.644
@@ -1356,10 +1366,10 @@ numbers:
     base_value: 0.5
     note: >-
       The deployed floor. `min_position_risk_pct: float =
-      Field(default=STARTER_POSITION_RISK_PCT, ...)` at src/config/__init__.py:770 - a
+      Field(default=STARTER_POSITION_RISK_PCT, ...)` at src/config/__init__.py::RiskConfig - a
       default bound to a NAME, which the first version of this scanner could
       not see at all, so the LIVE 0.50% floor was invisible to the gate that
-      was built around it. config/settings.yaml:685 sets the same 0.5.
+      was built around it. config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any` sets the same 0.5.
   - id: src.config.RiskConfig.min_stop_atr_multiple
     value: 2.5
     status: arbitrary
@@ -1408,7 +1418,7 @@ numbers:
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
       than), owner-ratified appetite 2026-09-25 (delegated to the adversary) as
       a point WITHIN the published band. The definition site
-      (src/config/__init__.py:779-796) carries a real derivation - measured 2026-08-27
+      (src/config/__init__.py::RiskConfig) carries a real derivation - measured 2026-08-27
       stop/ATR geometry, and a published 2.5-3.0x entry-stop consensus for
       swing holds; the 2-3x band IS sourced, and the effective floor already
       varies live within it because the setup and regime scalers multiply into
@@ -1579,7 +1589,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py:877 and src/data/levels.py:762-764. One ATR is the
+      src/config/__init__.py::RiskConfig and src/data/levels.py::_cluster. One ATR is the
       instrument's own typical single-session range, so this is read off the
       instrument rather than chosen: the number says "one ordinary session's
       travel and nothing more".
@@ -1604,7 +1614,7 @@ numbers:
     settles_by:
       kind: measurement
       state: specified
-      where: docs/board_notes/item-186.md -- this is board item 186's question, not this constant's,
+      where: board item 186 in docs/WORK.md -- this is board item 186's question, not this constant's,
         and it is routed here rather than re-derived
       records: the overnight gap distribution of the SHORTABLE part of the universe the desk could
         trade, on public daily bars against the short side, beside the same distribution against the
@@ -1632,7 +1642,7 @@ numbers:
       Sizing-only haircut on a short's risk-per-share, never applied to stop
       placement: a short gaps through its stop upward with no bound, so the
       same risk allocation opens a SMALLER short than an equivalent long
-      (src/config/__init__.py:961-965). The direction is reasoned; the 1.5 magnitude is
+      (src/config/__init__.py::RiskConfig). The direction is reasoned; the 1.5 magnitude is
       not measured against any gap distribution.
       ITEM 186 PASS 2026-09-26 — RESEARCHED. The DIRECTION survives and needs
       no citation: a short's loss above its stop is unbounded while a long's
@@ -1802,7 +1812,7 @@ numbers:
       is therefore the latest date the statute allows, which is exactly the
       CONSERVATIVE estimate wanted when a trade carries no filing date - never
       an earlier one that would overstate freshness. Definition site:
-      src/config/__init__.py:1379.
+      src/config/smart_money.py::SmartMoneyConfig.
   - id: src.config.SmartMoneyConfig.congress_lookback_days
     value: 180
     status: arbitrary
@@ -2013,7 +2023,7 @@ numbers:
     site: src/config/__init__.py
     note: >-
       How long fetched insider-filing history is kept on disk, written as `5 *
-      366` at src/config/__init__.py:1347 - constant arithmetic, which the first
+      366` at src/config/smart_money.py::SmartMoneyConfig - constant arithmetic, which the first
       version of this scanner could not see. A retention window for a local
       cache: too short costs a re-fetch, and it never decides whether or how
       much to trade.
@@ -2297,10 +2307,10 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py:1410 -- the field is declared
+      src/config/smart_money.py::SmartMoneyConfig -- the field is declared
       `min_cluster_owners: int = Field(default=2, ge=2, le=10)`, so 2 is the
-      smallest value the field may legally hold, and src/data/smart_money.py:464
-      and src/data/congressional_trading.py:425 both clamp it again with
+      smallest value the field may legally hold, and src/data/smart_money.py::SECForm4Provider.__init__
+      and src/data/congressional_trading.py::CongressionalTradingProvider.__init__ both clamp it again with
       `max(2, int(min_cluster_owners))`. It is the DOMAIN FLOOR of the quantity,
       not a point chosen inside a range.
     note: >-
@@ -2499,7 +2509,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      Derivation at src/config/__init__.py:1299 (the comment above the field), from a
+      Derivation at src/config/research.py::IntradayScanConfig (the comment above the field), from a
       read-only measurement against SEC on 2026-09-19 with the desk's own
       User-Agent and 8 req/s limiter: 82 watched issuers indexed in 11.0 s;
       5,431 unread Form 4s inside lookback_days on them; 0.156 s per filing
@@ -2671,7 +2681,7 @@ numbers:
     open_question: >-
       What decay rate, if any, does the desk's own bounce data support for
       strength-by-distance, as opposed to the touch-count effect that
-      src/data/level_quality.py already measured separately?
+      the level-quality module already measured separately?
     cost_while_unanswered: >-
       This ranks the six levels shown to the Tech Analyst and feeds into
       which level a stop or target is read from, on a fall-off rate nothing
@@ -2703,13 +2713,13 @@ numbers:
       travel estimate, and by construction the longest horizon over which any
       trade on this desk may ask how far the instrument travels - which is why
       the level scan reads it as the relevance horizon
-      (src/data/levels.py:229-235). Same number as the deployed risk setting.
+      (src/data/levels.py::stop_rests_on_level). Same number as the deployed risk setting.
   - id: src.data.levels.MAX_LEVELS_PER_SIDE
     value: 6
     status: not-trade-governing
     site: src/data/levels.py
     note: >-
-      How many levels to report per side (src/data/levels.py:203-205): enough
+      How many levels to report per side (src/data/levels.py::stop_rests_on_level): enough
       to describe the structure, few enough to stay readable in a prompt. It
       truncates a PRESENTATION list after the scan has already ranked by
       strength; it does not change which level is strongest, where a stop goes
@@ -2724,7 +2734,7 @@ numbers:
       The single reachability estimate - how far price can plausibly get
       within the horizon, in sqrt(session)-scaled ATRs - reused by BOTH the
       target derivation and the level-relevance window
-      (src/data/levels.py:216-227). Same number as the deployed risk setting.
+      (src/data/levels.py::stop_rests_on_level). Same number as the deployed risk setting.
   - id: src.data.levels.MIN_TARGET_ATR_MULTIPLE
     value: 1
     status: derived
@@ -2744,7 +2754,7 @@ numbers:
     status: sourced
     site: src/data/levels.py
     source: >-
-      src/data/levels.py:170-183 carries the measurement: on NASDAQ, two-local
+      src/data/levels.py::stop_rests_on_level carries the measurement: on NASDAQ, two-local
       levels were hit 26,868 times and bounced 60.99% of the time, three-local
       levels 6,661 times and bounced 61.04%. Anything above 2 discards levels
       for no measured gain, so 2 is a floor read off the geometry and
@@ -2759,7 +2769,7 @@ numbers:
     site: src/data/levels.py
     note: >-
       Bars either side of a candidate swing point for the LEVEL scan. Levels
-      place stops, so this reaches a trade. src/risk/trailing.py:107 records
+      place stops, so this reaches a trade. src/risk/trailing.py::__all__ records
       that this is 5 while the trailing-stop pivot window is 3, that nothing
       downstream compares a level from here against a pivot from there, and
       that tests/test_pivot_window_independence.py pins both facts.
@@ -2802,7 +2812,7 @@ numbers:
     site: src/data/levels.py
     note: >-
       How far a bar's high or low must exceed its neighbours' median to be
-      rejected as a bad print. src/data/levels.py:207-210 says 5x is
+      rejected as a bad print. src/data/levels.py::stop_rests_on_level says 5x is
       deliberately permissive because real markets gap, halt and limit-move,
       and discarding genuine volatility is worse than tolerating a rare bad
       print. Same data-hygiene boundary as _CLEAN_WINDOW.
@@ -2811,7 +2821,7 @@ numbers:
     status: not-trade-governing
     site: src/data/levels.py
     note: >-
-      Neighbour window for bad-print detection (src/data/levels.py:207-211).
+      Neighbour window for bad-print detection (src/data/levels.py::stop_rests_on_level).
       Part of the data-hygiene filter that drops an implausible bar before the
       scan runs; it decides what counts as a bad PRINT, not what counts as a
       trade.
@@ -2872,9 +2882,9 @@ numbers:
       required before a same-window set of purchases is called a cluster --
       at a second definition site in the same module family. The configured
       value is threaded to the clustering function as `min_cluster_owners`
-      (src/pipeline.py:778 and :815 -> src/data/smart_money_cluster.py:89,121);
+      (src/pipeline.py::TradingPipeline.__init__ and :815 -> src/data/smart_money_cluster.py::cluster_survivors,121);
       this module-level constant guards the purchase-cluster branch at
-      src/data/smart_money_cluster.py:223, which takes no parameter. Recorded
+      src/data/smart_money_cluster.py::insider_purchase_clusters, which takes no parameter. Recorded
       as `derived` so the two cannot drift apart silently: raising the
       configured floor without raising this one would leave the purchase
       branch admitting pairs the rest of the pipeline had stopped admitting.
@@ -2889,7 +2899,7 @@ numbers:
       Wilder's original lookback, as published in J. Welles Wilder, New
       Concepts in Technical Trading Systems (1978), and the period every chart
       package means by "ATR(14)". Definition site and reasoning:
-      src/data/technical.py:7-10.
+      src/data/technical.py@`from src.models import OHLCV, TechnicalIndicator`.
     note: >-
       The ATR lookback. Every stop, every noise band and every ATR multiple in
       this ledger is a multiple of THIS unit, and it was out of scope while
@@ -2903,7 +2913,7 @@ numbers:
       Wilder's original lookback for the Average Directional Index, as
       published in J. Welles Wilder, New Concepts in Technical Trading Systems
       (1978), and the period every chart package means by "ADX(14)". Definition
-      site and reasoning: src/data/technical.py:11-20.
+      site and reasoning: src/data/technical.py@`ATR_PERIOD = 14`.
     note: >-
       The ADX lookback. ADX measures trend STRENGTH only; the exit guard reads
       it (with the 50/200-MA regime and 200-MA slope for direction) to select a
@@ -2922,7 +2932,7 @@ numbers:
       47(5), which studied the 1-200 moving-average pair among others. Only the
       MA WINDOW is sourced -- the desk plots it as a trend reference; it is no
       longer a data-sufficiency test (that use was removed, board item 180).
-      Definition site and reasoning: src/data/technical.py:63-74.
+      Definition site and reasoning: src/data/technical.py::atr_series.
     note: >-
       RE-SOURCED 2026-09-25 (board item 180, owner ruling): back to `sourced`
       after a 2026-09-23 spell at `arbitrary`. It went `arbitrary` because the
@@ -3048,7 +3058,7 @@ numbers:
     site: src/nominations.py
     note: >-
       An ordinal for sorting nominations by stated conviction
-      (src/nominations.py:26-27, higher sorts first). Only the ORDER is used;
+      (src/nominations.py@`return _CONVICTION_RANK.get(conviction, 0)`, higher sorts first). Only the ORDER is used;
       the values never enter an arithmetic expression, unlike
       src/verdicts.py::CONVICTION_SCORE which does become a magnitude.
   - id: src.nominations._CONVICTION_RANK['medium']
@@ -3064,7 +3074,7 @@ numbers:
     status: sourced
     site: src/pipeline_stages.py
     source: >-
-      src/pipeline_stages.py:108-116: 1.0 is the unambiguous case - literally
+      src/pipeline_stages.py::_MOVED_NAME_OWNERS: 1.0 is the unambiguous case - literally
       every symbol came back empty, which cannot be a legitimate market
       reading because the thing that varies per symbol produced the same null
       across 60-100 unrelated instruments. Read off the logic, not chosen.
@@ -3078,7 +3088,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       Below this many resolved symbols a share is noise - one empty result out
-      of three is 33% and means nothing (src/pipeline_stages.py:129-134). It
+      of three is 33% and means nothing (src/pipeline_stages.py@`from src.config import AppConfig`). It
       only suppresses a false ALARM on small or degenerate universes (tests, a
       misconfigured owner universe); production runs 100+ symbols so it never
       binds there, and it changes no trade either way.
@@ -3088,7 +3098,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The partial-outage alarm: a feed serving short or stale history to MOST
-      but not literally ALL requests. src/pipeline_stages.py:118-127 states
+      but not literally ALL requests. src/pipeline_stages.py@`STARTER_POSITION_RISK_PCT,` states
       plainly that 0.5 is deliberately coarse and NOT a fitted percentile,
       because only one clean baseline run exists to derive it from
       (2026-09-02: 1 of 64 resolved symbols, 1.6%, with no computed level) and
@@ -3133,7 +3143,7 @@ numbers:
     base_value: 5
     note: >-
       The fallback used when the configured risk budget cannot be read.
-      src/pipeline_sizing.py:123-136 records the incident it came out of -
+      src/pipeline_sizing.py@`# connected the two, so this independent recheck` records the incident it came out of -
       real NVDA/ORCL/RSG rows risking ~$49 on a ~$9.85k book where ~$490 was
       ratified - and says the 5.0 here is the ratified default, not an
       invented one. Recorded as derived so it cannot drift from the
@@ -3145,7 +3155,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       Absolute floor stopping that same post-hoc percentage test from
-      exploding on a near-zero true value (src/pipeline_earnings_quality.py:194-204).
+      exploding on a near-zero true value (src/pipeline_earnings_quality.py@`# Floors stop the percentage test from exploding`).
       Same boundary as the tolerance above: a data-quality record, not a trade
       decision.
   - id: src.pipeline_earnings_quality._EARNINGS_XBRL_EPS_FLOOR
@@ -3154,7 +3164,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The same floor for EPS - one cent above ordinary EPS reporting precision
-      (src/pipeline_earnings_quality.py:205). Same boundary: it grades a stored
+      (src/pipeline_earnings_quality.py::_EARNINGS_XBRL_EPS_FLOOR). Same boundary: it grades a stored
       analysis, it does not gate a trade.
   - id: src.pipeline_earnings_quality._EARNINGS_XBRL_TOLERANCE_PCT
     value: 0.05
@@ -3163,7 +3173,7 @@ numbers:
     note: >-
       Tolerance for a POST-HOC data-quality comparison between an earnings
       analysis's numeric fields and the filer's own XBRL figures
-      (src/pipeline_earnings_quality.py:184-192). It records whether the analyst's
+      (src/pipeline_earnings_quality.py@`# 5% mirrors the traditional accounting-material`). It records whether the analyst's
       number and the filing disagree; nothing in the entry, sizing, stop or
       exit path reads the result. The 5% itself mirrors the accounting
       materiality rule of thumb discussed in SEC Staff Accounting Bulletin No.
@@ -3174,7 +3184,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "b" when parsing a magnitude out of
-      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py::_UNIT_MULTIPLIERS). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
   - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['billion']
@@ -3183,7 +3193,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "billion" when parsing a magnitude out of
-      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py::_UNIT_MULTIPLIERS). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
   - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['bn']
@@ -3192,7 +3202,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "bn" when parsing a magnitude out of
-      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py::_UNIT_MULTIPLIERS). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
   - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['k']
@@ -3201,7 +3211,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "k" when parsing a magnitude out of
-      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py::_UNIT_MULTIPLIERS). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
   - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['m']
@@ -3210,7 +3220,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "m" when parsing a magnitude out of
-      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py::_UNIT_MULTIPLIERS). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
   - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['million']
@@ -3219,7 +3229,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "million" when parsing a magnitude out of
-      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py::_UNIT_MULTIPLIERS). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
   - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['mm']
@@ -3228,7 +3238,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "mm" when parsing a magnitude out of
-      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py::_UNIT_MULTIPLIERS). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
   - id: src.pipeline_earnings_quality._UNIT_MULTIPLIERS['thousand']
@@ -3237,7 +3247,7 @@ numbers:
     site: src/pipeline_stages.py
     note: >-
       The numeric value of the word "thousand" when parsing a magnitude out of
-      analyst prose (src/pipeline_earnings_quality.py:136-140). Definitional: it is
+      analyst prose (src/pipeline_earnings_quality.py::_UNIT_MULTIPLIERS). Definitional: it is
       what the unit MEANS, not a threshold anybody chose, and the parser feeds
       only the post-hoc XBRL data-quality comparison above.
   - id: src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple
@@ -3356,8 +3366,8 @@ numbers:
       NOT A SECOND NUMBER. 2026-10-02: this field is overwritten on every
       live run. `build_constructor_config` sets
       `max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct`
-      (src/pipeline.py:363), and `sector_hard_ceiling_pct`
-      (src/config/__init__.py:1031-1037) returns
+      (src/pipeline.py::build_constructor_config), and `sector_hard_ceiling_pct`
+      (src/config/__init__.py::RiskConfig.sector_hard_ceiling_pct) returns
       `min(100.0, max(max_sector_pct, min(SECTOR_HARD_CEILING_MAX,
       max_sector_pct * SECTOR_HARD_MULTIPLE)))`. With the deployed
       `max_sector_pct` of 75 and `SECTOR_HARD_MULTIPLE` of 1.5 the inner
@@ -3502,21 +3512,21 @@ numbers:
     id: src.portfolio_constructor.config.ConstructorConfig.min_risk_pct
     note: 'DERIVED 2026-10-02 (fix #4, first slice). This is not an independent number: it is a MIRROR
       of src.config.RiskConfig.min_position_risk_pct, and in every live run the default written here
-      is overwritten before the constructor sees it -- src/pipeline.py:349 builds it as `min_risk_pct=_risk_setting("min_position_risk_pct",
+      is overwritten before the constructor sees it -- src/pipeline.py::build_constructor_config builds it as `min_risk_pct=_risk_setting("min_position_risk_pct",
       0.5, allow_zero=True)`. The default survives only when a caller builds a ConstructorConfig by
       hand (tests and direct constructor use), and it is the same value as the field it mirrors, so
       it cannot disagree with the risk engine. Counting it as a separate arbitrary number double-counted
       one decision; the open question belongs to the base entry and is answered there, not twice.
       PRIOR NOTE, kept verbatim: Every new trade plan sized under 0.50% of the account is DENIED OUTRIGHT
-      rather than shrunk (src/portfolio_constructor/config.py:488). One of three sites holding the
-      same ratified number; the other two are src/risk/constants.py:144 and src/config/__init__.py:770.'
-    prior_source: 'Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335). docs/OUTCOME.md:84
-      states it as "Min risk per trade | 0.5% - below this, do not trade", and config/settings.yaml:685
+      rather than shrunk (src/portfolio_constructor/config.py::ConstructorConfig.min_risk_pct). One of three sites holding the
+      same ratified number; the other two are src/risk/constants.py@`and it is the unique point on the scale that can` and src/config/__init__.py::RiskConfig.'
+    prior_source: 'Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335). docs/OUTCOME.md@`| Min risk per trade | 0.5% — below this, do not`
+      states it as "Min risk per trade | 0.5% - below this, do not trade", and config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any`
       carries the deployed key `risk.min_position_risk_pct: 0.5`. CORRECTION 2026-09-18: this ledger''s
       first version called this entry "THE CASE THIS CHECK WAS BUILT FOR" and said the number was
       absent from settings.yaml, absent from every document and absent from any ratification record.
       All three were false and each was one grep from being disproved. It also cited the comment at
-      src/portfolio_constructor/config.py:480-488 as calling this 0.5% "a constructor default nobody
+      src/portfolio_constructor/config.py::ConstructorConfig.min_risk_pct as calling this 0.5% "a constructor default nobody
       chose" - that comment is about `risk_budget_pct`''s prior value, a legacy NOTIONAL target. A
       0.5% notional budget and a 0.5% minimum-risk floor are different quantities that share a digit.'
     site: src/portfolio_constructor/config.py
@@ -3569,7 +3579,7 @@ numbers:
     id: src.portfolio_constructor.config.ConstructorConfig.risk_budget_pct
     note: 'DERIVED 2026-10-02 (fix #4, first slice). This is not an independent number: it is a MIRROR
       of src.config.RiskConfig.max_position_risk_pct, and in every live run the default written here
-      is overwritten before the constructor sees it -- src/pipeline.py:348 builds it as `risk_budget_pct=_risk_setting("max_position_risk_pct",
+      is overwritten before the constructor sees it -- src/pipeline.py::build_constructor_config builds it as `risk_budget_pct=_risk_setting("max_position_risk_pct",
       5.0)`. The default survives only when a caller builds a ConstructorConfig by hand (tests and
       direct constructor use), and it is the same value as the field it mirrors, so it cannot disagree
       with the risk engine. Counting it as a separate arbitrary number double-counted one decision;
@@ -3638,7 +3648,7 @@ numbers:
       per-name volatility reading today, which is why this stays open.
     cost_while_unanswered: >-
       Every stop in a high-volatility regime is widened by a scaler no
-      measurement supports (src/portfolio_constructor/config.py:636-646 says exactly
+      measurement supports (src/portfolio_constructor/config.py::RiskPlan says exactly
       that).
     settles_by:
       kind: measurement
@@ -3743,11 +3753,11 @@ numbers:
     status: sourced
     site: src/portfolio_constructor/config.py
     source: >-
-      src/portfolio_constructor/config.py:640-646. 1.0 here is the declared absence
+      src/portfolio_constructor/config.py::RiskPlan. 1.0 here is the declared absence
       of a scaler, not a chosen magnitude - the sibling range rung 0.90
       carries the arbitrary entry.
     note: >-
-      The breakout rung of the setup scaler. src/portfolio_constructor/config.py:642
+      The breakout rung of the setup scaler. src/portfolio_constructor/config.py::RiskPlan
       states it explicitly: breakout runs AT THE BASE, because no measurement
       supports widening beyond it.
   - id: src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[1][1]
@@ -3768,7 +3778,7 @@ numbers:
       Does a range setup warrant a tighter stop than a breakout, and by how
       much, measured per setup type?
     cost_while_unanswered: >-
-      src/portfolio_constructor/config.py:644 calls it "a modest tightening off the
+      src/portfolio_constructor/config.py::RiskPlan calls it "a modest tightening off the
       base, not a specific measured number" - and it multiplies into every
       range trade's stop and therefore its size.
     settles_by:
@@ -3811,7 +3821,7 @@ numbers:
     note: >-
       One dollar of cash deficit, below which negative cash is treated as
       rounding noise - fill rounding, commission leftovers, mid-vs-fill drift
-      (src/risk/constants.py:10-14). It decides whether a cash-only-policy
+      (src/risk/constants.py@`import math`). It decides whether a cash-only-policy
       ACTION fires on what is arithmetically dust; it does not size, price,
       gate or exit a trade.
   - id: src.risk.constants.REWARD_RISK_PARITY
@@ -3821,7 +3831,7 @@ numbers:
     source: >-
       docs/board_notes/:1198 (section "## item 218 — Arithmetically losing
       geometry is refused (owner ruling 2026-10-01)") records the ruling
-      verbatim, and src/portfolio_constructor/config.py:517 carries it beside the
+      verbatim, and src/portfolio_constructor/config.py@`STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY =` carries it beside the
       constant that applies it. Owner ruling 2026-10-01, verbatim: "For now,
       let's refuse a bad risk
       reward ratio. See if that improves the desk purchases." He was shown
@@ -3884,24 +3894,24 @@ numbers:
     site: src/risk/constants.py
     prior_source: >-
       Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335).
-      docs/OUTCOME.md:84 states it as "Min risk per trade | 0.5% - below this,
-      do not trade", and config/settings.yaml:685 carries the deployed key
+      docs/OUTCOME.md@`| Min risk per trade | 0.5% — below this, do not` states it as "Min risk per trade | 0.5% - below this,
+      do not trade", and config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any` carries the deployed key
       `risk.min_position_risk_pct: 0.5`. CORRECTION 2026-09-18: this ledger's
       first version called this entry "THE CASE THIS CHECK WAS BUILT FOR" and
       said the number was absent from settings.yaml, absent from every
       document and absent from any ratification record. All three were false
       and each was one grep from being disproved. It also cited the comment at
-      src/portfolio_constructor/config.py:480-488 as calling this 0.5% "a constructor
+      src/portfolio_constructor/config.py::ConstructorConfig.min_risk_pct as calling this 0.5% "a constructor
       default nobody chose" - that comment is about `risk_budget_pct`'s prior
       value, a legacy NOTIONAL target. A 0.5% notional budget and a 0.5%
       minimum-risk floor are different quantities that share a digit.
     note: >-
       The smallest position this desk will hold. Its own docstring
-      (src/risk/constants.py:145) says it is not a new number: it is
+      (src/risk/constants.py@`a number. Any higher figure (1.5, 2.0) would be`) says it is not a new number: it is
       `RiskConfig.min_position_risk_pct`, the floor `allocate_risk_budget`
       already denies requests under. CORRECTION 2026-09-18: the first version
       of this entry called it "the size a range ticket is cut to" and cited
-      RSG. docs/INCIDENT_HISTORY.md:330 attributes that shrinking to the 1.5
+      RSG. docs/INCIDENT_HISTORY.md@`He was right. The work to that point had been co` attributes that shrinking to the 1.5
       reward:risk starter cap, not to this 0.5% floor - two different numbers
       in one sentence.
     open_question: >-
@@ -4023,10 +4033,18 @@ numbers:
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
       records: >-
         every midday gate evaluation in front of a non-external SELL, carrying the adverse move from
-        AVERAGE ENTRY PRICE in the name's own ATR, the sqrt(sessions_held) widening applied, whether
-        the band blocked the exit, and what the position did afterwards -- this row's own
-        `settlement_route` and `derivation_attempts` fields hold the two spent derivation attempts and
-        must not be re-opened blind
+        AVERAGE ENTRY PRICE in the name's own ATR, the sqrt(sessions_held) widening applied, and
+        whether the band blocked the exit. CORRECTED 2026-10-04: this row previously also claimed to
+        record "what the position did afterwards", and it does not -- a noise-band row is written at
+        the MOMENT of the decision and is never revisited, and the band is only evaluated when an exit
+        is proposed, so these rows alone cannot say whether an adverse move was followed by further
+        adverse travel or by recovery. That second half, which the settlement needs, is reconstructed
+        by joining these rows on (symbol, session) to `alignment_exit_readings`, which is written for
+        every open position every session. It is deliberately NOT collected by adding a follow-up
+        recorder to this payload: any such recorder must fix a look-ahead horizon, and that horizon
+        would be a second chosen number imported into a fix whose whole purpose is to remove one.
+        This row's own `settlement_route` and `derivation_attempts` fields hold the two spent
+        derivation attempts and must not be re-opened blind
       closes_when: >-
         the recording holds enough blocked and unblocked evaluations to show where the adverse move
         from entry stops being ordinary wobble for THIS anchor, which is the anchor no published
@@ -4038,7 +4056,7 @@ numbers:
     site: src/risk/exit_guard.py
     note: >-
       The exit-guard noise band, in ATRs, before the sqrt(sessions_held)
-      widening described at src/risk/exit_guard.py:260-278. How far an adverse
+      widening described at src/risk/exit_guard.py::MetricDeltas.stop_driven. How far an adverse
       move must travel FROM ENTRY before it stops being ordinary daily wobble.
       RECLASSIFIED 2026-09-26, board item 70: this entry read `derived` from
       `src.risk.trailing.NOISE_BAND_ATR_MULTIPLE` with `base_value: 1.25`
@@ -4244,8 +4262,8 @@ numbers:
       The two-consecutive-day close filter for a level break in Edwards & Magee,
       Technical Analysis of Stock Trends: a level breaks on a decisive close and
       is confirmed on the NEXT day's close, with a reclaim in between resetting
-      (a Wyckoff spring). Definition and regime use: src/risk/exit_guard.py:517
-      and the module note at src/risk/exit_guard.py:476-509.
+      (a Wyckoff spring). Definition and regime use: src/risk/exit_guard.py@`BREAK_CONFIRMATION_ATR_MULTIPLE = 1.0`
+      and the module note at src/risk/exit_guard.py::TREND_CONFIRMING_CLOSES.
     note: >-
       Consecutive confirmed closes required to treat ANY break as real, in BOTH
       regimes, under the owner mandate 2026-09-24 trend-scaled exit — the
@@ -4261,7 +4279,7 @@ numbers:
       Wilder's own ADX threshold for a strong trend, as published in J. Welles
       Wilder, New Concepts in Technical Trading Systems (1978), the standard
       convention (ADX above 25 = trend strong enough to trade with). Definition
-      and use: src/risk/exit_guard.py:524.
+      and use: src/risk/exit_guard.py@`# A support/resistance break is confirmed by a d`.
     note: >-
       Trade-governing: at or above this ADX a with-trend structural break enters
       the patient strong-with-trend regime (two confirmed closes AND the prior
@@ -4419,7 +4437,7 @@ numbers:
     status: not-trade-governing
     site: src/risk/rules.py
     note: >-
-      The desk's capital-deployment target. src/risk/rules.py:1534-1539 states
+      The desk's capital-deployment target. src/risk/rules.py@`# sitting in T-bills or any other positions that` states
       it as a MANDATE, not a tuned number - the whole of equity, because cash
       earning less than inflation is a loss and the desk can always go long or
       short. Compared against `BookExposure.deployed_pct` by the PM facts
@@ -4694,7 +4712,7 @@ numbers:
     status: sourced
     site: src/risk/rules.py
     source: >-
-      src/risk/rules.py:420-429, and enforced by tests/test_signed_dissent.py.
+      src/risk/rules.py::distance_to_forced_liquidation_pct, and enforced by tests/test_signed_dissent.py.
       The owner's standing rule of 2026-08-31 (src/conviction_ledger.py) is
       that a confidence weight may only be DERIVED from an analyst's own
       measured history, never chosen up front, and the minimum sample is 20
@@ -4709,7 +4727,7 @@ numbers:
     site: src/risk/size_override.py
     note: >-
       An ordinal in the size-override absorbing algebra (`no_trading > close >
-      reduce_only > multiplier`, src/risk/size_override.py:44-55). `combine()`
+      reduce_only > multiplier`, src/risk/size_override.py@`from typing import Literal`). `combine()`
       keeps the operand with the lower rank. The VALUE carries no magnitude -
       only the ordering does, and the ordering is item 13's, not this file's.
       Any strictly increasing encoding behaves identically.
@@ -4741,30 +4759,63 @@ numbers:
       (https://corporatefinanceinstitute.com/resources/wealth-management/chandelier-exit/).
       NUANCE: only the MULTIPLE (3.0) is sourced, not the whole formula. The
       desk's fallback trail multiplies this by a PASSED-IN ATR off the
-      highest-high / lowest-low since entry (src/risk/trail_evaluate.py:262,271),
+      highest-high / lowest-low since entry (src/risk/trail_evaluate.py::evaluate_trailing_stop,271),
       NOT the published indicator's fixed 22-bar lookback and ATR(22); so the
       3.0 multiple carries this citation, the surrounding geometry does not.
-  - id: src.risk.trailing.MIN_RATCHET_PCT
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
-      records: >-
-        the broker's own behaviour -- what an amend of a resting stop costs and whether it is charged
-        at all, read off the broker's fee schedule and confirmed against real amends -- paired with the
-        distribution of proposed ratchet sizes the trailing logic generates before this gate is applied
-      closes_when: >-
-        the cost of an amend is known from the broker rather than assumed, and the proposed-move
-        distribution shows how many moves this gate suppresses. DELETE OUTCOME, and the likely one: the
-        desk's broker charges nothing for amending a stop and the noise band already refuses the moves
-        that would be unsafe, so if the recording shows this percentage gate suppressing only moves the
-        noise band would also have refused, it is doing nothing and is deleted rather than re-set
-    value: 2
-    status: arbitrary
-    site: src/risk/trailing.py
+  - id: src.risk.trail_tick.MIN_RATCHET_TICKS
+    value: 1
+    status: instrument
+    site: src/risk/trail_tick.py
+    source: >-
+      SEC Rule 612 (Regulation NMS, 17 CFR 242.612), the minimum pricing
+      increment: no order may be priced in an increment smaller than
+      $0.01 at or above $1.00, or $0.0001 below $1.00.
+      https://www.ecfr.gov/current/title-17/section-242.612 ONE tick is
+      not an appetite: two prices less than one increment apart are the
+      SAME price once the venue quantizes them, so a sub-tick amend
+      cannot change the resting stop at all. The count is 1 because that
+      is the smallest difference that is a difference; any larger count
+      would be a picked churn appetite, which is what this retired.
     note: >-
+      RETIRED AND REPLACED 2026-10-02. The 2% floor (MIN_RATCHET_PCT = 2.0)
+      is GONE. A proposed stop must now clear the live stop by one VENUE
+      TICK -- the smallest price increment the venue will accept, Alpaca's
+      published $0.01-at-or-above-$1 / $0.0001-below split (SEC Rule 612),
+      the same split `src/execution/broker_parts/stop_amend.py::_quantize_price`
+      and `src/execution/stop_records.py::_prices_match` already carry.
+      DERIVATION: two prices less than one tick apart are the SAME stop
+      after the venue quantizes them, so a sub-tick amend cannot improve
+      protection by construction; the floor is a reading off the instrument,
+      not a chosen appetite. The condition this entry itself named for
+      retirement has fired: `_amend_resting_stop_price` is on main (verified
+      against origin/main 2026-10-02), so a stop move is an atomic in-place
+      amend with no instant of naked protection, which was the ONLY
+      surviving cost defending the percentage gate.
+      REJECTED ALTERNATIVES. (a) No minimum at all -- rejected: with no
+      floor a proposal a hundredth of a cent above the live stop quantizes
+      to the same price, so the desk would amend a resting order to the
+      price it already rests at, spending a broker call and an
+      owner-visible "stop moved" line for a stop that did not move.
+      (b) A smaller percentage (0.5%, 1%) -- rejected as the identical
+      failure to the 2.0 it would replace: a picked constant, and one that
+      still demands a ratchet three times larger on one name than another
+      when expressed in each name's own ATR (measured 2026-09-30, below).
+      (c) k x ATR -- already measured and failed 2026-09-30, below.
+      COSTS MEASURED, not assumed. Money: zero (commission-free US equity
+      orders; an amend crosses no spread and prints no fill). Rate limit:
+      nothing on the stop path counts or budgets requests -- the only 429
+      handling in src/execution is the trade-stream reconnect -- and the
+      deterministic trail runs once per session per position, so the amend
+      count is bounded at one per position per session whatever the floor
+      is; a floor cannot reduce a bound of one. Rejection: an amend the
+      venue cannot apply returns the amender's sentinel and the caller
+      falls back; this repo records no measured amend-rejection rate, so
+      none is claimed. Owner noise: real, and it is exactly what the tick
+      floor removes -- the only amends it suppresses change no price.
+      HISTORY BELOW is kept verbatim because it records why the 2% floor
+      survived three earlier passes.
       A proposed stop must sit at least this far above the live stop.
-      src/risk/trailing.py:87-89 says it mirrors the reviewer's historical ">=
+      src/risk/trailing.py@`existing call site — which only ever knows about` says it mirrors the reviewer's historical ">=
       1.02x old stop" min-bump rule so the deterministic path does not churn
       orders the discretionary one would have skipped. CORRECTION 2026-09-18:
       the first version rendered that as the quotation "new_stop >= old_stop x
@@ -4828,7 +4879,7 @@ numbers:
       surviving cost to defend and the honest floor becomes the venue
       minimum price increment -- one tick, SEC Rule 612 / Alpaca's published
       $0.01-at-or-above-$1 and $0.0001-below split, which
-      `src/execution/broker.py::_quantize_price` and
+      `src/execution/broker_parts/stop_amend.py::_quantize_price` and
       `src/execution/stop_records.py::_prices_match` already carry. That is
       a reading off the instrument rather than a picked percentage, and it
       is the same shape as item 183's removal of the picked
@@ -4850,25 +4901,25 @@ numbers:
       measurement.
     cost_while_unanswered: >-
       None outstanding. The refusal codes written to `specialist_evidence`
-      (`kind='trail_state'`, `src/risk/trailing.py::TRAIL_CODE_*`) already
+      (`kind='trail_state'`, `src/risk/trailing.py::TRAIL_CODE_TRAILED`) already
       name which gate refused each trail, which is what this entry wanted.
     wrong_as_of_2026_10_02: >-
       THIS NUMBER IS NOW WRONG BY ITS OWN RECORDED TEST, AND THE TEST WAS
       PRE-COMMITTED. The only cost this gate was kept for was measured and
-      written down at src/risk/trailing.py:152-168: every stop replacement was
+      written down at src/risk/trailing.py@`A move must clear the existing stop by`: every stop replacement was
       a cancel-then-resubmit, so each admitted tighten opened a real window in
       which the position carried no protective order, and removing the gate
       would have added seven such windows across nine evaluation runs. The
       same comment named the exact condition that would end that defence --
       `_amend_resting_stop_price` reaching main -- and recorded "It is NOT on
       main (verified 2026-09-30)". IT IS ON MAIN. It is defined at
-      src/execution/broker.py:1467, constructed into the stop placer at
-      src/execution/broker_parts/stop_place.py:186 and :209, and
+      src/execution/broker.py::AlpacaBroker._amend_resting_stop_price, constructed into the stop placer at
+      src/execution/broker_parts/stop_place.py::StopPlacer.__init__ and :209, and
       `replace_stop_loss` now PREFERS it: src/execution/broker_parts/
       stop_place.py:1030-1062 amends the resting stop's price in place and
       falls back to cancel+resubmit only when the pre-amend position re-read
       fails or the order is not amendable, with the fallback's naked window
-      timed and recorded (src/execution/broker_parts/stop_window.py:53). So on
+      timed and recorded (src/execution/broker_parts/stop_window.py::UnprotectedWindow.close). So on
       the preferred path there is no unprotected instant, and the measured
       cost that defended 2.0 is gone. By the derivation this entry already
       committed to, the honest floor is now ONE VENUE TICK -- SEC Rule 612
@@ -4882,6 +4933,27 @@ numbers:
       than taken by the agent that found it. The change itself is small and
       fully specified above: replace the percentage gate with a one-tick
       minimum read from `_quantize_price`.
+  - id: src.risk.trail_tick._TICK_AT_OR_ABOVE_DOLLAR
+    value: 0.01
+    status: instrument
+    site: src/risk/trail_tick.py
+    source: >-
+      SEC Rule 612(a) (17 CFR 242.612): the minimum pricing increment for
+      a quotation or order in an NMS stock priced at or above $1.00 per
+      share is $0.01. https://www.ecfr.gov/current/title-17/section-242.612
+      The same split src/execution/broker_parts/stop_amend.py
+      (`_quantize_price`) and src/execution/stop_records.py
+      (`_prices_match`) already carry; duplicated here only because
+      src.risk does not depend on src.execution.
+  - id: src.risk.trail_tick._TICK_BELOW_DOLLAR
+    value: 0.0001
+    status: instrument
+    site: src/risk/trail_tick.py
+    source: >-
+      SEC Rule 612(b) (17 CFR 242.612): the minimum pricing increment for
+      an NMS stock priced below $1.00 per share is $0.0001.
+      https://www.ecfr.gov/current/title-17/section-242.612 Same mirror
+      note as the at-or-above-$1 increment above.
   - id: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
     settles_by:
       kind: measurement
@@ -4943,7 +5015,7 @@ numbers:
       `arbitrary` rather than being dressed up as sourced.
     open_question: >-
       How many bars either side make a swing point a swing point?
-      src/risk/trailing.py:107 records that the level scan uses 5 and this
+      src/risk/trailing.py::__all__ records that the level scan uses 5 and this
       uses 3 with no shared consumer.
     cost_while_unanswered: >-
       Trailing stops are placed on pivots found by a window nothing measured,
@@ -4984,7 +5056,7 @@ numbers:
     site: src/risk/trailing.py
     note: >-
       How many R of profit a range trade banks before its stop ratchets to
-      breakeven. src/risk/trailing.py:160-168 is explicit that 1.0 is a
+      breakeven. src/risk/trailing.py::RANGE_BREAKEVEN_R_MULTIPLE is explicit that 1.0 is a
       widely-cited conventional default (Van Tharp's R-multiple framework,
       Elder's Triple Screen) and NOT a backtested or desk-specific tuning - a
       convention adopted is still a number this desk did not read off
@@ -5142,7 +5214,7 @@ numbers:
     status: sourced
     site: src/verdicts.py
     source: >-
-      src/verdicts.py:146-148. The maximum of a scale defined as 0..1.
+      src/verdicts.py@`from __future__ import annotations`. The maximum of a scale defined as 0..1.
     note: >-
       The top of the same 0..1 encoding.
   - id: src.verdicts.CONVICTION_SCORE['medium']
@@ -5150,14 +5222,14 @@ numbers:
     status: sourced
     site: src/verdicts.py
     source: >-
-      src/verdicts.py:146-148: equal spacing on a three-point scale puts the
+      src/verdicts.py@`from __future__ import annotations`: equal spacing on a three-point scale puts the
       midpoint at 0.5 by construction, and the comment states nothing measured
       justifies anything else. The spacing is read off the scale; whether the
       scale should be equally spaced is the open question on the SEAT_WEIGHT
       entries.
     note: >-
       Ordinal encoding of the desk's own three-point conviction scale onto
-      0..1, read at src/verdicts.py:176 and multiplied by SEAT_WEIGHT into a
+      0..1, read at src/verdicts.py::CONVICTION_SCORE and multiplied by SEAT_WEIGHT into a
       magnitude that orders the book.
   - id: src.verdicts.SEAT_WEIGHT['earnings']
     settles_by:
@@ -5178,7 +5250,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py:43-45 cites five WebSearch-verified literature reviews
+      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here post-earnings-announcement drift (Ball &
       Brown 1968; Bernard & Thomas 1989/1990). The MAGNITUDE is not: nothing
@@ -5191,7 +5263,7 @@ numbers:
       20-resolved-call bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py:38-41 already
+      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['macro']
     settles_by:
@@ -5212,7 +5284,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py:43-45 cites five WebSearch-verified literature reviews
+      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here macro forecast effects fitting in-sample
       and failing out-of-sample (Benhenda 2026). The MAGNITUDE is not: nothing
@@ -5225,7 +5297,7 @@ numbers:
       bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py:38-41 already
+      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['news']
     value: 1
@@ -5235,7 +5307,7 @@ numbers:
     base_value: 1
     note: >-
       The news seat sits at the unweighted baseline rather than above or below
-      it (src/verdicts.py:52-59). Same number and same baseline as
+      it (src/verdicts.py@`both are documented to be decaying over time as`). Same number and same baseline as
       _DEFAULT_SEAT_WEIGHT.
   - id: src.verdicts.SEAT_WEIGHT['smart_money']
     settles_by:
@@ -5256,7 +5328,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py:43-45 cites five WebSearch-verified literature reviews
+      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here insider edges living almost entirely in the
       pre-disclosure window. The MAGNITUDE is not: nothing in that literature
@@ -5269,7 +5341,7 @@ numbers:
       20-resolved-call bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py:38-41 already
+      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
       commits to overriding it with measured history.
   - id: src.verdicts.SEAT_WEIGHT['technical']
     settles_by:
@@ -5290,7 +5362,7 @@ numbers:
     site: src/verdicts.py
     note: >-
       Per-seat ranking multiplier. The DIRECTION is genuinely sourced -
-      src/verdicts.py:43-45 cites five WebSearch-verified literature reviews
+      src/verdicts.py@`(five parallel literature reviews, 2026-09-03, W` cites five WebSearch-verified literature reviews
       of 2026-09-03 and docs/QAMC_REMEDIATION_SPEC.md section 13.3 for the
       per-seat citation list, here cross-sectional momentum (Jegadeesh &
       Titman 1993; replicated by Rouwenhorst 1998). The MAGNITUDE is not:
@@ -5303,14 +5375,14 @@ numbers:
       20-resolved-call bar once this desk has that sample?
     cost_while_unanswered: >-
       Ranking decides which names get taken when the book is full, so a wrong
-      spacing silently reorders the book; src/verdicts.py:38-41 already
+      spacing silently reorders the book; src/verdicts.py@`analyst prompts are) — and let it be overridden` already
       commits to overriding it with measured history.
   - id: src.verdicts._DEFAULT_SEAT_WEIGHT
     value: 1
     status: sourced
     site: src/verdicts.py
     source: >-
-      src/verdicts.py:165-168: unweighted, never zero, so a seat added before
+      src/verdicts.py::__all__: unweighted, never zero, so a seat added before
       its own literature review lands is never silently muted. 1.0 is the
       unweighted baseline the table itself is expressed against, not a chosen
       magnitude.
@@ -5350,10 +5422,10 @@ numbers:
     note: >-
       Handshake-attempt ceiling for one trade_updates session, derived from
       the equal-jitter curve run off the reconnect min/max above (1, 2, 4,
-      8, 16, 30 -- saturates at attempt 6, src/execution/broker.py:245-253).
+      8, 16, 30 -- saturates at attempt 6, src/execution/broker.py::AlpacaBroker.__init__).
       One of three constants added 2026-09-18 to close an unbounded retry
       loop that logged 32,896 handshakes and 32,666 HTTP 429s in one day
-      (src/execution/broker.py:218-242); none of the three decides, sizes,
+      (src/execution/broker.py::AlpacaBroker.__init__); none of the three decides, sizes,
       prices or exits a trade -- the bounded REST fill path is unchanged and
       is what runs when this ceiling fires.
   - id: src.execution.broker_parts.trade_stream._STREAM_ATTEMPT_CEILING_PER_DAY
@@ -5363,7 +5435,7 @@ numbers:
     note: >-
       Handshake-attempt ceiling per process per day for the same socket,
       set to Alpaca's own published account-wide rate limit of 200
-      requests/minute (src/execution/broker.py:255-264, cross-checked
+      requests/minute (src/execution/broker.py::AlpacaBroker.__init__, cross-checked
       against measured 56 and 50 attempts on 2026-09-16/17). Same
       not-trade-governing reasoning as
       src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
@@ -5374,7 +5446,7 @@ numbers:
     note: >-
       Stand-down after the broker answers HTTP 429 on the same socket, set
       to Alpaca's published one-minute rate-limit window
-      (src/execution/broker.py:267-274). Same not-trade-governing reasoning
+      (src/execution/broker.py::AlpacaBroker.__init__). Same not-trade-governing reasoning
       as src.execution.broker._STREAM_ATTEMPT_CEILING_PER_SESSION.
   - id: src.execution.broker_parts.market_data._BROKER_HTTP_TIMEOUT
     value: 30.0
@@ -5400,7 +5472,7 @@ numbers:
     site: src/execution/broker.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap.
-      src/execution/broker.py:1313-1327 records that the real-time
+      src/execution/broker.py::AlpacaBroker._list_open_stop_orders_by_side records that the real-time
       trade_updates stream now detects a fill first and this is purely the
       ceiling for the rare fallback where that stream itself could not be
       used. It decides how long the desk waits, never whether or how much
@@ -5411,7 +5483,7 @@ numbers:
     site: src/execution/broker_parts/stop_place.py
     note: >-
       Retry ceiling for placing the protective stop immediately after an
-      entry fills (src/execution/broker.py:1329-1348). docs/WORK.md item
+      entry fills (src/execution/broker.py::AlpacaBroker._list_open_stop_orders_by_side). docs/WORK.md item
       129: the stated reasoning -- that a failure surviving three attempts
       must be a rejection rather than a transient fault -- is falsified by
       2026-09-16 (item 127), where a transient concurrency conflict
@@ -5557,7 +5629,7 @@ numbers:
       Network deadline, timeout, poll interval or fetch batch cap.
       Bounds how many weekdays the watchdog's diagnostic sweep searches
       backward for the most recent trading day
-      (src/coverage_watchdog.py:141-143); it decides how far the sweep
+      (src/coverage_watchdog.py@`logger = logging.getLogger(__name__)`); it decides how far the sweep
       looks, never whether or how much to trade.
   - id: src.coverage_watchdog._QTY_EPSILON
     value: 1.0e-6
@@ -5565,7 +5637,7 @@ numbers:
     site: src/coverage_watchdog.py
     note: >-
       Floating-point tolerance for "covered < held" comparisons
-      (src/coverage_watchdog.py:145-146, same tolerance the coverage
+      (src/coverage_watchdog.py::DB_PATH, same tolerance the coverage
       reconciler uses). Guards against representation error rather than
       choosing a policy magnitude, same reasoning as
       src.execution.broker_parts.stop_place._FRACTIONAL_QTY_EPSILON.
@@ -5576,7 +5648,7 @@ numbers:
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. Ceiling
       on how many symbols get a company-profile network lookup for PM's
-      informational facts block (src/pipeline.py:134-140); it decides how
+      informational facts block (src/pipeline.py@`RiskVerdict,`); it decides how
       much the desk fetches for that block, never whether or how much to
       trade.
   - id: src.agents.llm_providers._DEEPSEEK_MAX_OUTPUT['deepseek-v4-flash']
@@ -5774,7 +5846,7 @@ numbers:
     site: src/agents/smart_money_analyst.py
     note: >-
       Caps how many representative transactions are kept per finding
-      (src/agents/smart_money_analyst.py:199-204). Same reasoning as
+      (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._representative_transactions). Same reasoning as
       src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS: a silent
       truncation of the evidence a verdict reads, not a fetch/network cap.
     open_question: >-
@@ -5808,7 +5880,7 @@ numbers:
     site: src/agents/smart_money_analyst.py
     note: >-
       Word cap the synthesis prompt is told to write each finding within
-      (src/agents/smart_money_analyst.py:137-139). Same reasoning as
+      (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent.build_user_message). Same reasoning as
       src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS: shapes the
       evidence text a verdict reads, not a fetch/network cap.
     open_question: >-
@@ -5841,7 +5913,7 @@ numbers:
     site: src/agents/smart_money_analyst.py
     note: >-
       Character cap applied to context text via `_bounded_context`
-      (src/agents/smart_money_analyst.py:182). Same reasoning as
+      (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._transaction_rank). Same reasoning as
       src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS.
     open_question: >-
       Does truncating context text at 96 characters ever cut the part that
@@ -5873,7 +5945,7 @@ numbers:
     site: src/agents/smart_money_analyst.py
     note: >-
       Character cap for the discount-reason text via `_bounded_context`
-      (src/agents/smart_money_analyst.py:93-95, 322). Same reasoning as
+      (src/agents/smart_money_analyst.py@`# room than an actor name so the sentence surviv`, 322). Same reasoning as
       src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS; the comment
       there says only that this leaves "more room than an actor name", not
       why 220 rather than another figure.
@@ -5905,7 +5977,7 @@ numbers:
     site: src/agents/smart_money_analyst.py
     note: >-
       Caps how many actor roles are kept per finding
-      (src/agents/smart_money_analyst.py:300). Same reasoning as
+      (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._compact_symbol). Same reasoning as
       src.agents.smart_money_analyst._MAX_SYNTHESIS_SYMBOLS.
     open_question: >-
       Does a finding ever carry more than 8 actor roles, and does dropping
@@ -5920,11 +5992,11 @@ numbers:
       state: specified
       where: >-
         docs/board_notes/item-090.md (item 90, the 2026-10-01 smart-money tranche);
-        src/agents/smart_money_analyst.py:153-155, 174-176
+        src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank, 174-176
       records: >-
         the measured fact that this table's integers enter the code only as
         elements of a lexicographic tuple sort key
-        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank and 174-176) and are never
         summed, scaled, averaged or compared across tables, so the SPACING
         algebraically cancels: any order-preserving relabelling of the table
         ranks every finding identically. What is load-bearing is the ORDER, plus
@@ -5940,7 +6012,7 @@ numbers:
     site: src/agents/smart_money_analyst.py
     note: >-
       Ranking weight deciding which smart-money findings are prioritised
-      into synthesis (src/agents/smart_money_analyst.py:98-102). The
+      into synthesis (src/agents/smart_money_analyst.py::_ROLE_RANK). The
       ORDER (actionable > confirmatory > contradictory > historical) is the
       only part this desk states a reason for; the point values 3/2/1/0 (0
       excluded from the ledger as the neutral floor) carry no cited
@@ -5961,11 +6033,11 @@ numbers:
       state: specified
       where: >-
         docs/board_notes/item-090.md (item 90, the 2026-10-01 smart-money tranche);
-        src/agents/smart_money_analyst.py:153-155, 174-176
+        src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank, 174-176
       records: >-
         the measured fact that this table's integers enter the code only as
         elements of a lexicographic tuple sort key
-        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank and 174-176) and are never
         summed, scaled, averaged or compared across tables, so the SPACING
         algebraically cancels: any order-preserving relabelling of the table
         ranks every finding identically. What is load-bearing is the ORDER, plus
@@ -5994,11 +6066,11 @@ numbers:
       state: specified
       where: >-
         docs/board_notes/item-090.md (item 90, the 2026-10-01 smart-money tranche);
-        src/agents/smart_money_analyst.py:153-155, 174-176
+        src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank, 174-176
       records: >-
         the measured fact that this table's integers enter the code only as
         elements of a lexicographic tuple sort key
-        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank and 174-176) and are never
         summed, scaled, averaged or compared across tables, so the SPACING
         algebraically cancels: any order-preserving relabelling of the table
         ranks every finding identically. What is load-bearing is the ORDER, plus
@@ -6027,11 +6099,11 @@ numbers:
       state: specified
       where: >-
         docs/board_notes/item-090.md (item 90, the 2026-10-01 smart-money tranche);
-        src/agents/smart_money_analyst.py:153-155, 174-176
+        src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank, 174-176
       records: >-
         the measured fact that this table's integers enter the code only as
         elements of a lexicographic tuple sort key
-        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank and 174-176) and are never
         summed, scaled, averaged or compared across tables, so the SPACING
         algebraically cancels: any order-preserving relabelling of the table
         ranks every finding identically. What is load-bearing is the ORDER, plus
@@ -6063,11 +6135,11 @@ numbers:
       state: specified
       where: >-
         docs/board_notes/item-090.md (item 90, the 2026-10-01 smart-money tranche);
-        src/agents/smart_money_analyst.py:153-155, 174-176
+        src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank, 174-176
       records: >-
         the measured fact that this table's integers enter the code only as
         elements of a lexicographic tuple sort key
-        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank and 174-176) and are never
         summed, scaled, averaged or compared across tables, so the SPACING
         algebraically cancels: any order-preserving relabelling of the table
         ranks every finding identically. What is load-bearing is the ORDER, plus
@@ -6096,11 +6168,11 @@ numbers:
       state: specified
       where: >-
         docs/board_notes/item-090.md (item 90, the 2026-10-01 smart-money tranche);
-        src/agents/smart_money_analyst.py:153-155, 174-176
+        src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank, 174-176
       records: >-
         the measured fact that this table's integers enter the code only as
         elements of a lexicographic tuple sort key
-        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank and 174-176) and are never
         summed, scaled, averaged or compared across tables, so the SPACING
         algebraically cancels: any order-preserving relabelling of the table
         ranks every finding identically. What is load-bearing is the ORDER, plus
@@ -6134,11 +6206,11 @@ numbers:
       state: specified
       where: >-
         docs/board_notes/item-090.md (item 90, the 2026-10-01 smart-money tranche);
-        src/agents/smart_money_analyst.py:153-155, 174-176
+        src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank, 174-176
       records: >-
         the measured fact that this table's integers enter the code only as
         elements of a lexicographic tuple sort key
-        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank and 174-176) and are never
         summed, scaled, averaged or compared across tables, so the SPACING
         algebraically cancels: any order-preserving relabelling of the table
         ranks every finding identically. What is load-bearing is the ORDER, plus
@@ -6168,11 +6240,11 @@ numbers:
       state: specified
       where: >-
         docs/board_notes/item-090.md (item 90, the 2026-10-01 smart-money tranche);
-        src/agents/smart_money_analyst.py:153-155, 174-176
+        src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank, 174-176
       records: >-
         the measured fact that this table's integers enter the code only as
         elements of a lexicographic tuple sort key
-        (src/agents/smart_money_analyst.py:153-155 and 174-176) and are never
+        (src/agents/smart_money_analyst.py::SmartMoneyAnalystAgent._symbol_rank and 174-176) and are never
         summed, scaled, averaged or compared across tables, so the SPACING
         algebraically cancels: any order-preserving relabelling of the table
         ranks every finding identically. What is load-bearing is the ORDER, plus
@@ -6204,10 +6276,10 @@ numbers:
       history depth back to it in sessions as well as calendar days (board
       item 168); it is not a lookback, a threshold or a weight, and changing
       it changes no fetch, no indicator and no trade. Consistency with the
-      desk's existing weekday counter (src/trading_calendar.py:106, which
+      desk's existing weekday counter (src/trading_calendar.py::is_weekday, which
       shares the same Monday-to-Friday assumption rather than independently
       evidencing it) is asserted at
-      tests/test_tech_analyst_history_window.py:312.
+      tests/test_tech_analyst_history_window.py::test_weekday_arithmetic_matches_the_desks_own_session_counter.
   - id: src.agents.tech_analyst._DAYS_PER_WEEK
     value: 7
     status: sourced
@@ -6215,7 +6287,7 @@ numbers:
     source: >-
       The definition of the week: seven days. The denominator of the weekday
       fraction above, checked for consistency at the same site,
-      tests/test_tech_analyst_history_window.py:312. Same scope, same absence
+      tests/test_tech_analyst_history_window.py::test_weekday_arithmetic_matches_the_desks_own_session_counter. Same scope, same absence
       of any trading effect.
   - id: src.agents.tech_analyst._BARS_PER_SYMBOL
     value: 40
@@ -6223,7 +6295,7 @@ numbers:
     site: src/agents/tech_analyst.py
     note: >-
       OHLCV bars attached per symbol in the technical seat's prompt
-      (src/agents/tech_analyst.py:19-24). The comment gives only qualitative
+      (src/agents/tech_analyst.py@`TechAnalystAnswer,`). The comment gives only qualitative
       reasoning ("enough for swing pivots... not so many that context
       balloons"); structural levels are computed separately in
       src/data/levels.py, but the recent-bar window itself still shapes
@@ -6259,7 +6331,7 @@ numbers:
     site: src/agents/tech_analyst.py
     note: >-
       LLM plumbing: ceiling before the technical seat's symbol batch is
-      auto-chunked across more calls (src/agents/tech_analyst.py:59-76).
+      auto-chunked across more calls (src/agents/tech_analyst.py::_BARS_PLACEHOLDER_RE).
       Every symbol is still analysed, only split across more requests, so
       this decides call shape, not whether or how much to trade.
   - id: src.agents.tech_analyst._CHUNK_SIZE
@@ -6268,7 +6340,7 @@ numbers:
     site: src/agents/tech_analyst.py
     note: >-
       LLM plumbing: chunk size once a batch is split
-      (src/agents/tech_analyst.py:63-76). Same reasoning as
+      (src/agents/tech_analyst.py::render_bars_per_symbol). Same reasoning as
       src.agents.tech_analyst._MAX_SYMBOLS_PER_CALL -- every symbol is still
       analysed.
   - id: src.agents.tech_analyst._MAX_MISSING_RETRIES
@@ -6277,7 +6349,7 @@ numbers:
     site: src/agents/tech_analyst.py
     note: >-
       LLM plumbing: bounded re-ask count for a symbol a chunk's first
-      response dropped (src/agents/tech_analyst.py:78-85). The comment
+      response dropped (src/agents/tech_analyst.py@`# cannot resolve, and on the only seat allowed t`). The comment
       records that a symbol still missing after this is given an explicit
       failed outcome rather than silently treated as analysed, which is
       what keeps this a plumbing retry rather than a silent evidence drop.
@@ -6294,8 +6366,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6342,8 +6414,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6390,8 +6462,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6438,8 +6510,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6486,8 +6558,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6534,8 +6606,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6582,8 +6654,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6630,8 +6702,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6678,8 +6750,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6726,8 +6798,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6774,8 +6846,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6822,8 +6894,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6870,8 +6942,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6918,8 +6990,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6966,8 +7038,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py:784-836). Parse
-      plumbing that has decided trades: src/agents/base.py:790-797 records
+      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
+      plumbing that has decided trades: src/agents/base.py::BaseAgent records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -7014,14 +7086,14 @@ numbers:
     site: src/agents/base.py
     note: >-
       Counter default: one logical result is normally one provider request
-      (src/agents/base.py:777-779). Bookkeeping.
+      (src/agents/base.py::_build_llm_client). Bookkeeping.
   - id: src.agents.base.BaseAgent.__init__(max_tokens)
     value: 4096
     status: not-trade-governing
     site: src/agents/base.py
     note: >-
       LLM plumbing: output-token budget for a seat that does not set its own
-      (src/agents/base.py:1173). Same class as the token budgets recorded not-
+      (src/agents/base.py::BaseAgent._execute). Same class as the token budgets recorded not-
       trade-governing on 2026-09-19; a seat that truncates fails its parse
       loudly rather than trading on a partial answer.
   - id: src.agents.macro_analyst.MacroAnalystAgent.analyze(event_horizon_days)
@@ -7031,10 +7103,10 @@ numbers:
     derived_from: src.config.EventRiskConfig.horizon_days
     base_value: 10
     note: >-
-      Default macro-event horizon (src/agents/macro_analyst.py:211);
-      production passes event_risk.horizon_days (src/stage_risk.py:412).
+      Default macro-event horizon (src/agents/macro_analyst.py::MacroAnalystAgent.analyze);
+      production passes event_risk.horizon_days (src/stage_risk.py::RiskStage._build_event_risk_block).
       A further inline `or 10` fallback sits at
-      src/agents/macro_analyst.py:37, which no rule sees.
+      src/agents/macro_analyst.py::MacroAnalystAgent.build_user_message, which no rule sees.
   - id: src.agents.portfolio_manager.candidate_ranking.CandidateRanking.candidate_eligibility(rr_floor)
     value: 1.5
     status: derived
@@ -7043,10 +7115,10 @@ numbers:
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py::CandidateRanking.candidate_eligibility says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
+      (src/agents/portfolio_manager/candidate_ranking.py::CandidateRanking.rank_candidates).
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(max_portfolio_risk_pct)
     value: 25
     status: derived
@@ -7055,9 +7127,9 @@ numbers:
     base_value: 25
     note: >-
       Default rotation-check risk ceiling for the PM
-      (src/agents/portfolio_manager/__init__.py:406). Same 25 as the deployed ceiling;
+      (src/agents/portfolio_manager/__init__.py::PortfolioManagerAgent.build_user_message). Same 25 as the deployed ceiling;
       a second inline 25.0 fallback sits at
-      src/agents/portfolio_manager/__init__.py:1307-1308, which no rule sees.
+      src/agents/portfolio_manager/__init__.py::PortfolioManagerAgent.decide, which no rule sees.
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(rr_floor)
     value: 1.5
     status: derived
@@ -7066,10 +7138,10 @@ numbers:
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py::CandidateRanking.candidate_eligibility says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
+      (src/agents/portfolio_manager/candidate_ranking.py::CandidateRanking.rank_candidates).
   - id: src.agents.portfolio_manager.PortfolioManagerAgent.decide(starter_risk_pct)
     value: 0.5
     status: derived
@@ -7078,7 +7150,7 @@ numbers:
     base_value: 0.5
     note: >-
       Parameter default bound to the imported STARTER_POSITION_RISK_PCT
-      (src/agents/portfolio_manager/__init__.py:1253-1308).
+      (src/agents/portfolio_manager/__init__.py::PortfolioManagerAgent.decide).
   - id: src.agents.portfolio_manager.candidate_ranking.CandidateRanking.rank_candidates(rr_floor)
     value: 1.5
     status: derived
@@ -7087,10 +7159,10 @@ numbers:
     base_value: 1.5
     note: >-
       Parameter default bound to the imported REWARD_RISK_FLOOR
-      (src/agents/portfolio_manager/candidate_ranking.py:72-80 says the defaults are 'the
+      (src/agents/portfolio_manager/candidate_ranking.py::CandidateRanking.candidate_eligibility says the defaults are 'the
       shared constants RiskConfig itself defaults to'). candidate_eligibility
       accepts and ignores it since 2026-09-17
-      (src/agents/portfolio_manager/candidate_ranking.py:376-381).
+      (src/agents/portfolio_manager/candidate_ranking.py::CandidateRanking.rank_candidates).
   - id: src.execution.broker.AlpacaBroker.STOP_LIMIT_BUFFER_PCT
     value: 0.03
     status: arbitrary
@@ -7150,7 +7222,7 @@ numbers:
     site: src/execution/broker.py
     note: >-
       Loop bound on following a replaced order's replaced_by chain
-      (src/execution/broker_parts/order_desk.py:1070-1108), so a broker-side cycle cannot spin
+      (src/execution/broker_parts/order_desk.py::OrderDesk.resolve_replacement_chain), so a broker-side cycle cannot spin
       forever. Decides how far a lookup walks, not whether or how much to
       trade.
   - id: src.execution.broker_parts.trade_stream.TradeStreamWaits._wait_for_order_status_via_stream(poll_interval)
@@ -7159,7 +7231,7 @@ numbers:
     site: src/execution/broker_parts/trade_stream.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker_parts/trade_stream.py:1538). Same class as
+      (src/execution/broker_parts/trade_stream.py::TradeStreamWaits._wait_for_order_status_via_stream). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.execution.broker_parts.order_desk.OrderDesk._wait_for_order_terminal_via_stream(poll_interval)
@@ -7168,7 +7240,7 @@ numbers:
     site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker_parts/order_desk.py:667). Same class as
+      (src/execution/broker_parts/order_desk.py::OrderDesk._wait_for_order_status_via_polling). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.execution.broker_parts.order_desk.OrderDesk.await_replacement_confirmed(timeout_seconds)
@@ -7177,7 +7249,7 @@ numbers:
     site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker_parts/order_desk.py:1214). Same class as
+      (src/execution/broker_parts/order_desk.py::OrderDesk.await_replacement_confirmed). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.execution.broker_parts.account_reads.AccountReads.get_all_account_activities(page_size)
@@ -7190,7 +7262,7 @@ numbers:
       (documented maximum, fetched 2026-09-24). Set to the maximum so the
       margin-interest historical backfill
       (`src.margin_interest.reconstruct_daily_cash_balances`,
-      src/execution/broker_parts/account_reads.py:128-173) pages Alpaca's full activity ledger
+      src/execution/broker_parts/account_reads.py::AccountReads) pages Alpaca's full activity ledger
       in as few round trips as possible; a smaller value would still be
       correct, a larger one is rejected by the API, so 100 is the API's own
       ceiling rather than a desk choice.
@@ -7199,21 +7271,21 @@ numbers:
     status: not-trade-governing
     site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker_parts/market_data.py:184): the one caller passes the
+      Dead default (src/execution/broker_parts/market_data.py::MarketData.get_bars): the one caller passes the
       window explicitly.
   - id: src.execution.broker_parts.account_reads.AccountReads.get_recent_daily_closes(lookback_days)
     value: 10
     status: not-trade-governing
     site: src/execution/broker_parts/account_reads.py
     note: >-
-      Dead default (src/execution/broker_parts/account_reads.py:390): every caller passes the
+      Dead default (src/execution/broker_parts/account_reads.py::AccountReads): every caller passes the
       window explicitly.
   - id: src.execution.broker_parts.market_data.MarketData.get_top_movers(n)
     value: 15
     status: not-trade-governing
     site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker_parts/market_data.py:112): the one caller passes the
+      Dead default (src/execution/broker_parts/market_data.py::MarketData.get_top_movers): the one caller passes the
       count explicitly.
   - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_at_exchange(poll_interval)
     value: 1
@@ -7221,7 +7293,7 @@ numbers:
     site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker_parts/order_desk.py:569). Same class as
+      (src/execution/broker_parts/order_desk.py::OrderDesk.wait_for_order_at_exchange). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_at_exchange(timeout_seconds)
@@ -7230,7 +7302,7 @@ numbers:
     site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker_parts/order_desk.py:569). Same class as
+      (src/execution/broker_parts/order_desk.py::OrderDesk.wait_for_order_at_exchange). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_terminal(poll_interval)
@@ -7239,7 +7311,7 @@ numbers:
     site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker_parts/order_desk.py:608). Same class as
+      (src/execution/broker_parts/order_desk.py::OrderDesk.wait_for_order_terminal). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_terminal(timeout_seconds)
@@ -7248,7 +7320,7 @@ numbers:
     site: src/execution/broker_parts/order_desk.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker_parts/order_desk.py:608). Same class as
+      (src/execution/broker_parts/order_desk.py::OrderDesk.wait_for_order_terminal). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.execution.broker_parts.trade_stream._TradeUpdatesHub.wait(poll_interval)
@@ -7257,7 +7329,7 @@ numbers:
     site: src/execution/broker_parts/trade_stream.py
     note: >-
       Poll interval or wait deadline on an order-status lookup
-      (src/execution/broker_parts/trade_stream.py:486). Same class as
+      (src/execution/broker_parts/trade_stream.py::_TradeUpdatesHub.wait). Same class as
       src.execution.broker._ENTRY_FILL_TIMEOUT_S: it decides how long the desk
       waits for the broker to report, never whether or how much to trade.
   - id: src.pipeline.TradingPipeline._EMERGENCY_LIMIT_CUSHION_PCT
@@ -7265,7 +7337,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline.py
     note: >-
-      Dead. Defined at src/pipeline_admission.py:247 and described in comments as the
+      Dead. Defined at src/pipeline_admission.py::AdmissionService._evaluate_screened_admission and described in comments as the
       de-lever cushion, but nothing reads it: the de-lever no longer prices off
       a fixed % of the mark at all -- it crosses the LIVE quote or sends a
       MARKET order (src.pipeline.TradingPipeline._live_delever_price, branch
@@ -7276,7 +7348,7 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_intraday.py
     note: >-
-      No caller in src/, and the docstring (src/pipeline_intraday.py:520-532)
+      No caller in src/, and the docstring (src/pipeline_intraday.py::IntradayMixin._another_session_recently_active)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
   - id: src.prompt_facts.review.blocked.ReviewBlocked._build_blocked_proposals(lookback_days)
@@ -7285,10 +7357,10 @@ numbers:
     site: src/prompt_facts/review/blocked.py
     note: >-
       Window of the PM's 'names you keep proposing and never get' memory
-      (src/pipeline_intraday.py:847-861). Its only caller passes nothing, so this
+      (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7315,10 +7387,10 @@ numbers:
     site: src/prompt_facts/review/blocked.py
     note: >-
       Maximum blocked names shown to the PM in that memory
-      (src/pipeline_intraday.py:847-861). Its only caller passes nothing, so this
+      (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7345,10 +7417,10 @@ numbers:
     site: src/prompt_facts/review/blocked.py
     note: >-
       Proposal count before a blocked name is shown to the PM in that memory
-      (src/pipeline_intraday.py:847-861). Its only caller passes nothing, so this
+      (src/pipeline_intraday.py::IntradayMixin._intraday_paid_scan_skip). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7375,10 +7447,10 @@ numbers:
     site: src/prompt_facts/review/calibration.py
     note: >-
       Window of the PM's own hit-rate/return calibration note
-      (src/pipeline_intraday.py:739-744). Its only caller passes nothing, so this
+      (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7405,7 +7477,7 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
+      (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
@@ -7415,10 +7487,10 @@ numbers:
     note: >-
       Dollar-volume floor ($M) for a top-mover to enter the evening missed-
       opportunity review, which feeds the PM's missed-lessons memory
-      (src/pipeline_intraday.py:1132-1146). Its only caller passes nothing, so this
+      (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7445,7 +7517,7 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
+      (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
@@ -7457,10 +7529,10 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       How many broker top-movers are added to the evening missed-opportunity
-      review (src/pipeline_intraday.py:1132-1146). Its only caller passes nothing, so
+      review (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
-      trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7487,7 +7559,7 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline_intraday.py:296-299). The LIVE number is the keyword literal at
+      (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.pipeline_prompt_facts.PromptFactsMixin._build_own_recent_decisions(limit)
@@ -7496,10 +7568,10 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many previous position-reviewer sessions the reviewer is shown
-      (anti-flip-flop memory) (src/pipeline_prompt_facts.py:1511-1515). Its only caller
+      (anti-flip-flop memory) (src/pipeline_prompt_facts.py::PromptFactsMixin._build_own_recent_decisions). Its only caller
       passes nothing, so this default is live. Same class as the smart-money
       prompt-truncation caps classified arbitrary on 2026-09-19: it decides
-      what evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      what evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7526,10 +7598,10 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many of its own previous decision sets the PM is shown (anti-flip-
-      flop memory) (src/pipeline_research_continuity.py:184-189). Its only caller passes
+      flop memory) (src/pipeline_research_continuity.py::ResearchContinuityMixin._macro_series_prints_changed). Its only caller passes
       nothing, so this default is live. Same class as the smart-money prompt-
       truncation caps classified arbitrary on 2026-09-19: it decides what
-      evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7555,7 +7627,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/exits.py
     note: >-
-      Dead default (src/prompt_facts/review/exits.py:29-117): every caller in src/ passes
+      Dead default (src/prompt_facts/review/exits.py::ReviewExits._build_post_exit_reality): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
@@ -7565,10 +7637,10 @@ numbers:
     site: src/prompt_facts/review/exits.py
     note: >-
       Maximum exits audited in that post-exit block
-      (src/prompt_facts/review/exits.py:29-117). Its only caller passes nothing, so this
+      (src/prompt_facts/review/exits.py::ReviewExits._build_post_exit_reality). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7595,10 +7667,10 @@ numbers:
     site: src/prompt_facts/review/exits.py
     note: >-
       Minimum age of an exit before its after-the-fact move is shown to the
-      position reviewer (src/prompt_facts/review/exits.py:29-117). Its only caller passes
+      position reviewer (src/prompt_facts/review/exits.py::ReviewExits._build_post_exit_reality). Its only caller passes
       nothing, so this default is live. Same class as the smart-money prompt-
       truncation caps classified arbitrary on 2026-09-19: it decides what
-      evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      evidence a trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7624,7 +7696,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/prompt_facts/review/grading.py:104-221): every caller in src/ passes
+      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_recent_buys_for_grading): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
@@ -7633,11 +7705,11 @@ numbers:
     status: arbitrary
     site: src/prompt_facts/review/exits.py
     note: >-
-      Window of the PM's repeat-loss-cause memory (src/pipeline_intraday.py:770-779).
+      Window of the PM's repeat-loss-cause memory (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates).
       Its only caller passes nothing, so this default is live. Same class as
       the smart-money prompt-truncation caps classified arbitrary on
       2026-09-19: it decides what evidence a trading seat's verdict is built
-      from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7664,10 +7736,10 @@ numbers:
     site: src/prompt_facts/review/exits.py
     note: >-
       Window of the PM's recurring-missed-theme memory
-      (src/prompt_facts/review/exits.py:118-253). Its only caller passes nothing, so this
+      (src/prompt_facts/review/exits.py::ReviewExits._build_recent_missed_lessons). Its only caller passes nothing, so this
       default is live. Same class as the smart-money prompt-truncation caps
       classified arbitrary on 2026-09-19: it decides what evidence a trading
-      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7693,7 +7765,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/calibration.py
     note: >-
-      Dead default (src/pipeline_intraday.py:1222): every caller in src/ passes this
+      Dead default (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7702,7 +7774,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/calibration.py
     note: >-
-      Dead default (src/pipeline_intraday.py:1268): every caller in src/ passes this
+      Dead default (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7711,7 +7783,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/prompt_facts/review/grading.py:32-103): every caller in src/ passes
+      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_recent_sells_for_grading): every caller in src/ passes
       this argument explicitly, so this value never runs in production. The
       value passed at the call site is an inline literal or computed
       expression that no scanner rule sees.
@@ -7721,10 +7793,10 @@ numbers:
     site: src/pipeline_prompt_facts.py
     note: >-
       How many recent risk-seat verdicts the PM is shown to self-calibrate
-      size (src/pipeline_research_continuity.py:117-122). Its only caller passes nothing, so
+      size (src/pipeline_research_continuity.py::_carry_forward_readers). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
-      trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7751,10 +7823,10 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       News/rating window of the evening thesis-health review of every held
-      position (src/prompt_facts/missed_ops_signals.py:379-531). Its only caller passes nothing, so
+      position (src/prompt_facts/missed_ops_signals.py::MissedOpsSignals._build_thesis_health_context). Its only caller passes nothing, so
       this default is live. Same class as the smart-money prompt-truncation
       caps classified arbitrary on 2026-09-19: it decides what evidence a
-      trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md:75): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
+      trading seat's verdict is built from. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED, and both failed derivation attempts are written down so nobody repeats them. (1) Derive the window from the desk's ratified SWING mandate (days to weeks, docs/OUTCOME.md@`**Horizon:** swing — days to weeks.`): FAILED -- the mandate deliberately names no number and holds hold-length to be an output, not a setting, so it cannot fix a lookback. (2) Derive it from another ledgered window row: FAILED -- every sibling evidence window in this ledger is itself `arbitrary`, so the arithmetic would only relabel one unsourced number as another's child. Two attempts is the limit, exactly as the smart-money truncation caps found on 2026-09-19, and the same reason applies: nothing records how much evidence existed BEFORE the cut, so the RECORDING is the route. The value is unchanged by this pass.
     open_question: >-
       How much history does this memory need before its signal is
       distinguishable from noise, and how much before older rows stop changing
@@ -7780,7 +7852,7 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/pipeline.py:2344): every caller in src/ passes this
+      Dead default (src/pipeline.py::TradingPipeline._run_evening_body): every caller in src/ passes this
       argument explicitly, so this value never runs in production. The value
       passed at the call site is an inline literal or computed expression that
       no scanner rule sees.
@@ -7789,9 +7861,9 @@ numbers:
     status: not-trade-governing
     site: src/pipeline_prompt_facts.py
     note: >-
-      Owner-facing universe-expansion report (src/pipeline_intraday.py:715-726); no
+      Owner-facing universe-expansion report (src/pipeline_intraday.py::IntradayMixin._intraday_scan_mover_candidates); no
       caller in the trading path, and the only caller
-      (scripts/watchlist_candidates.py:127) passes it explicitly. It proposes
+      (scripts/watchlist_candidates.py::main) passes it explicitly. It proposes
       names for a human to add; it never adds one.
   - id: src.pipeline_delever.DeleverMixin._force_delever:factor[0]
     value: 0.97
@@ -7838,7 +7910,7 @@ numbers:
     note: >-
       Research pre-filter: a symbol whose MA20/MA50 spread is under 0.5 x
       ATR14 counts as having an actionable signal and is sent to the technical
-      seat (src/pipeline.py:2198-2201). The same function has further inline
+      seat (src/pipeline.py::TradingPipeline._collab). The same function has further inline
       thresholds (50% volume change, 2% MA spread) that no rule sees because
       they are comparisons, not multipliers. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive 0.5 from the ledgered noise-band multiple of 1.25 ATR as a half-band. FAILED -- the noise band bounds a STOP against daily range, this bounds a moving-average SPREAD; they share a unit and nothing else. Attempt (2): treat it as a sort-key position with no magnitude, the shape that explained eight rows in tranche 1. FAILED -- checked at the definition site and it is a genuine magnitude: it is compared against a computed spread and decides inclusion, it is not a position in any ordering. Value unchanged.
     open_question: >-
@@ -7867,7 +7939,7 @@ numbers:
     base_value: 1.25
     note: >-
       Midday noise-band clamp: a new stop inside 1.25 x ATR14 of price is
-      refused (src/pipeline_intraday.py:1027-1034). The same 1.25 as the trailing-
+      refused (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). The same 1.25 as the trailing-
       stop noise band, which carries the open question.
   - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[1]
     value: 1.005
@@ -7877,7 +7949,7 @@ numbers:
     base_value: 0.995
     note: >-
       Board item 138: the midday COVER limit, price x 1.005
-      (src/pipeline_intraday.py:1079-1086). Its comment ties it to the ExecutionStage
+      (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Its comment ties it to the ExecutionStage
       COVER loop. One number, mirrored.
   - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[2]
     value: 0.995
@@ -7887,15 +7959,15 @@ numbers:
     base_value: 0.995
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
-      (src/pipeline_intraday.py:1152). Same number as the ExecutionStage SELL offset.
+      (src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body). Same number as the ExecutionStage SELL offset.
   - id: src.pipeline_exits.ExitEngineMixin._trail_tightened_recently(calendar_days)
     value: 4
     status: arbitrary
     site: src/pipeline_exits.py
     note: >-
       Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
-      the last 4 calendar days (src/pipeline_exits.py:551-596, caller
-      src/pipeline_intraday.py:1076 passes nothing). The docstring's reason is a
+      the last 4 calendar days (src/pipeline_exits.py::ExitEngineMixin._trail_tightened_recently, caller
+      src/pipeline_intraday.py::IntradayMixin._intraday_opportunity_scan_body passes nothing). The docstring's reason is a
       forensic observation, not a measured cooldown length. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive the 4 calendar days from the ratified swing mandate. FAILED -- the mandate names no number, by design. Attempt (2): derive it from the reviewer's >=1.02x min-bump rule, i.e. the sessions needed for 2% of range to accumulate. FAILED -- that rule bounds the SIZE of one tighten and says nothing about spacing, and the 1.02 is itself unsourced. The measurement below is the route. Value unchanged.
     open_question: >-
       Over how many sessions does a tightened trail on this desk's names stay
@@ -7920,8 +7992,8 @@ numbers:
     site: src/pipeline.py
     note: >-
       Window of the quarterly meta-reflection digest
-      (src/pipeline_intraday.py:882-896). Its output reaches a prompt only as a
-      STAGED edit a human applies: config/settings.yaml:1362-1363 deploys
+      (src/pipeline_intraday.py::IntradayMixin._intraday_open_overlap_skip). Its output reaches a prompt only as a
+      STAGED edit a human applies: config/settings.yaml@`# (launchd fires it every 30-min tick across 09:` deploys
       evolution enabled with dry_run true (stage-only).
   - id: src.stage_execution.ExecutionStage._run_session:factor[0]
     settles_by:
@@ -7940,7 +8012,7 @@ numbers:
     site: src/stage_execution.py
     note: >-
       Board item 138, the 0.5% offset: an ordinary decision-path SELL is
-      limited at price x 0.995 (src/stage_execution.py:240-241). The midday
+      limited at price x 0.995 (src/stage_execution.py::ExecutionStage._run_session). The midday
       and cover sites mirror it.
     open_question: >-
       What limit distance fills an ordinary exit on this desk's names without
@@ -8017,7 +8089,7 @@ numbers:
     base_value: 0.995
     note: >-
       Board item 138: the COVER mirror of the 0.5% SELL offset
-      (src/stage_execution.py:396-397), 1.005 = 2 - 0.995. One number,
+      (src/stage_execution.py::ExecutionStage._run_session), 1.005 = 2 - 0.995. One number,
       mirrored.
   - id: src.risk.budget.allocate_risk_budget(ceiling_pct)
     value: 25
@@ -8027,9 +8099,9 @@ numbers:
     base_value: 25
     note: >-
       Default portfolio risk ceiling of the allocator
-      (src/risk/budget.py:193). Every caller passes it
-      (src/portfolio_constructor/__init__.py:705-710,
-      src/agents/portfolio_manager/__init__.py:437-440); same 25 as the deployed
+      (src/risk/budget.py::allocate_risk_budget). Every caller passes it
+      (src/portfolio_constructor/__init__.py::PortfolioConstructor._construct_orders_impl,
+      src/agents/portfolio_manager/__init__.py::PortfolioManagerAgent.build_user_message); same 25 as the deployed
       ceiling.
   - id: src.risk.budget.allocate_risk_budget(cluster_share_pct)
     value: 40
@@ -8038,9 +8110,9 @@ numbers:
     derived_from: src.config.RiskConfig.max_cluster_risk_share_pct
     base_value: 40
     note: >-
-      Default per-cluster risk share (src/risk/budget.py:194). The constructor
+      Default per-cluster risk share (src/risk/budget.py::allocate_risk_budget). The constructor
       passes the config value; the PM rotation pre-check
-      (src/agents/portfolio_manager/__init__.py:437-440) relies on this default but
+      (src/agents/portfolio_manager/__init__.py::PortfolioManagerAgent.build_user_message) relies on this default but
       passes clusters=None. Same 40 as the deployed field.
   - id: src.risk.budget.allocate_risk_budget(floor_pct)
     value: 0.5
@@ -8049,14 +8121,14 @@ numbers:
     derived_from: src.risk.constants.STARTER_POSITION_RISK_PCT
     base_value: 0.5
     note: >-
-      Default risk floor of the allocator (src/risk/budget.py:195); every
+      Default risk floor of the allocator (src/risk/budget.py::allocate_risk_budget); every
       caller passes it. Same 0.5 as the ratified starter floor.
   - id: src.risk.metrics.r_multiple(qty)
     value: 1
     status: not-trade-governing
     site: src/risk/metrics.py
     note: >-
-      Unit default for a quantity (src/risk/metrics.py:110); every caller
+      Unit default for a quantity (src/risk/metrics.py::r_multiple); every caller
       passes the real quantity.
   - id: src.risk.rules.RiskRuleEngine.check(max_correlated_cluster_pct)
     settles_by:
@@ -8078,9 +8150,9 @@ numbers:
     note: >-
       Correlated-cluster advisory cap: a BUY whose |corr|>=0.7 cluster would
       exceed 50% of the book raises an advisory violation
-      (src/risk/rules.py:1700-1740). The one caller (src/pipeline.py:2113)
+      (src/risk/rules.py::RiskRuleEngine.check). The one caller (src/pipeline.py::TradingPipeline._run_morning_body)
       passes nothing, so the default is live. Advisory (absent from
-      HARD_BLOCK_RULES, src/pipeline.py:176), but advisories reach the risk
+      HARD_BLOCK_RULES, src/pipeline.py::_threaded_risk_settings), but advisories reach the risk
       seat.
     open_question: >-
       What share of the book in one correlated cluster does the ratified per-
@@ -8093,22 +8165,22 @@ numbers:
     correction_2026_10_02: >-
       TWO CITATIONS IN THE `note` ABOVE ARE FALSE AND ARE CORRECTED HERE
       RATHER THAN LEFT TO BE RE-DISCOVERED. (1) "The one caller
-      (src/pipeline.py:2113)" -- the one production caller is now
-      src/pipeline_risk_gate.py:165; it still passes nothing, so the finding
+      (src/pipeline.py::TradingPipeline._run_morning_body)" -- the one production caller is now
+      src/pipeline_risk_gate.py::RiskGate._filter_hard_risk_decisions; it still passes nothing, so the finding
       that the default is the live value STANDS, but the path given for it
-      does not exist. (2) "src/pipeline.py:176" for HARD_BLOCK_RULES is the
-      same stale path; the rule set is defined at src/risk/rules.py:966-982
+      does not exist. (2) "src/pipeline.py::_threaded_risk_settings" for HARD_BLOCK_RULES is the
+      same stale path; the rule set is defined at src/risk/rules.py::RiskRuleEngine.check
       and `correlation_cluster` is absent from it, so the advisory claim also
-      stands. The rule body is at src/risk/rules.py:2202-2239, not 1700-1740.
+      stands. The rule body is at src/risk/rules.py::RiskRuleEngine.check, not 1700-1740.
       WHAT WAS CHECKED AND DELIBERATELY NOT CHANGED. The obvious repair --
       wire `max_cluster_risk_share_pct` (40) through to this parameter so one
       configured number governs both -- was examined and REJECTED as a
       category error, and this is recorded so the next pass does not re-make
       it. The two caps measure different quantities in different units:
-      src/risk/rules.py:2222-2226 computes `cluster_pct` as
+      src/risk/rules.py@`cluster_pct = (peer_value + gross_new) / total_value * 100` computes `cluster_pct` as
       `(peer_value + gross_new) / total_value * 100`, a share of GROSS
       NOTIONAL, while `max_cluster_risk_share_pct` is a share of the RISK
-      budget consumed by a cluster (src/portfolio_constructor/__init__.py:1186).
+      budget consumed by a cluster (src/portfolio_constructor/__init__.py::PortfolioConstructor._plan_risk_targets).
       Feeding the risk share into the notional test would silently tighten a
       live advisory on an arithmetic confusion. The row stays `arbitrary` and
       its recorded settlement route is unchanged.
@@ -8136,8 +8208,8 @@ numbers:
     derived_from: src.config.RiskConfig.maintenance_margin_pct
     base_value: 25
     note: >-
-      Default maintenance margin (src/risk/rules.py:1468); the one caller
-      passes risk.maintenance_margin_pct (src/pipeline_intraday.py:96-98,
+      Default maintenance margin (src/risk/rules.py::distance_to_forced_liquidation_pct); the one caller
+      passes risk.maintenance_margin_pct (src/pipeline_intraday.py::IntradayMixin.run_intra_safety,
       11742-11744).
   - id: src.risk.target_revision.assess_target_revision(breakout_projection_atr_multiple)
     value: 1
@@ -8147,7 +8219,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant
-      BREAKOUT_PROJECTION_ATR_MULTIPLE (src/risk/target_revision.py:105-115).
+      BREAKOUT_PROJECTION_ATR_MULTIPLE (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`).
       One number, reached through a second name; the base carries the
       question.
   - id: src.risk.target_revision.raw_trigger_flags(break_margin_atr_multiple)
@@ -8199,7 +8271,7 @@ numbers:
     base_value: 60
     note: >-
       Parameter default bound to the imported constant MAX_HORIZON_SESSIONS
-      (src/risk/target_revision.py:105-115). One number, reached through a
+      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.assess_target_revision(max_reach_atr_multiple)
     value: 1.5
@@ -8209,7 +8281,7 @@ numbers:
     base_value: 1.5
     note: >-
       Parameter default bound to the imported constant MAX_REACH_ATR_MULTIPLE
-      (src/risk/target_revision.py:105-115). One number, reached through a
+      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.assess_target_revision(min_target_atr_multiple)
     value: 1
@@ -8219,7 +8291,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant MIN_TARGET_ATR_MULTIPLE
-      (src/risk/target_revision.py:105-115). One number, reached through a
+      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.assess_target_revision(break_margin_atr_multiple)
     value: 1
@@ -8229,7 +8301,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant
-      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py:105-115).
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`).
       One number, reached through a second name; the base carries the
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
@@ -8242,7 +8314,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant
-      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py:105-115).
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`).
       One number, reached through a second name; the base carries the
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
@@ -8255,7 +8327,7 @@ numbers:
     base_value: 60
     note: >-
       Parameter default bound to the imported constant MAX_HORIZON_SESSIONS
-      (src/risk/target_revision.py:105-115). One number, reached through a
+      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.stale_reach_trigger(max_reach_atr_multiple)
     value: 1.5
@@ -8265,7 +8337,7 @@ numbers:
     base_value: 1.5
     note: >-
       Parameter default bound to the imported constant MAX_REACH_ATR_MULTIPLE
-      (src/risk/target_revision.py:105-115). One number, reached through a
+      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.stale_reach_trigger(min_target_atr_multiple)
     value: 1
@@ -8275,7 +8347,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant MIN_TARGET_ATR_MULTIPLE
-      (src/risk/target_revision.py:105-115). One number, reached through a
+      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.target_level_broken(break_margin_atr_multiple)
     value: 1
@@ -8285,7 +8357,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant
-      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py:105-115).
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`).
       One number, reached through a second name; the base carries the
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
@@ -8302,24 +8374,26 @@ numbers:
   # under its existing entry. These four rows exist only because a parameter
   # default written as a NAME (`window: int = PIVOT_WINDOW`) imported from
   # another file is a site in the importing module; each is the same number.
-  - id: src.risk.trail_evaluate.compute_trailing_stop(min_ratchet_pct)
-    value: 2
+  - id: src.risk.trail_evaluate.compute_trailing_stop(min_ratchet_ticks)
+    value: 1
     status: derived
     site: src/risk/trail_evaluate.py
-    derived_from: src.risk.trailing.MIN_RATCHET_PCT
-    base_value: 2
+    derived_from: src.risk.trail_tick.MIN_RATCHET_TICKS
+    base_value: 1
     note: >-
-      `min_ratchet_pct: float = MIN_RATCHET_PCT`, the name imported from
-      src/risk/trailing.py; the body moved verbatim on 2026-10-04.
-  - id: src.risk.trail_evaluate.evaluate_trailing_stop(min_ratchet_pct)
-    value: 2
+      `min_ratchet_ticks: int = MIN_RATCHET_TICKS`, the name imported from
+      src/risk/trailing.py; repointed when the 2% floor was retired for the
+      one-venue-tick floor on 2026-10-02.
+  - id: src.risk.trail_evaluate.evaluate_trailing_stop(min_ratchet_ticks)
+    value: 1
     status: derived
     site: src/risk/trail_evaluate.py
-    derived_from: src.risk.trailing.MIN_RATCHET_PCT
-    base_value: 2
+    derived_from: src.risk.trail_tick.MIN_RATCHET_TICKS
+    base_value: 1
     note: >-
-      `min_ratchet_pct: float = MIN_RATCHET_PCT`, the name imported from
-      src/risk/trailing.py; the body moved verbatim on 2026-10-04.
+      `min_ratchet_ticks: int = MIN_RATCHET_TICKS`, the name imported from
+      src/risk/trailing.py; repointed when the 2% floor was retired for the
+      one-venue-tick floor on 2026-10-02.
   - id: src.risk.trail_structure._swing_lows(window)
     value: 3
     status: derived

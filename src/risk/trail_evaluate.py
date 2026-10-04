@@ -12,10 +12,14 @@ from dataclasses import replace as _replace
 
 from src.risk.trail_range_ratchet import _range_breakeven_ratchet, _range_second_ratchet
 from src.risk.trail_structure import _structural_pivot, _swing_highs, _swing_lows
+from src.risk.trail_tick import (
+    MIN_RATCHET_TICKS,
+    min_ratchet_floor,
+    venue_tick,
+)
 from src.risk.trailing import (
     CHANDELIER_ATR_MULTIPLE,
     MIN_BARS_FOR_A_READING,
-    MIN_RATCHET_PCT,
     NOISE_BAND_ATR_MULTIPLE,
     TRAIL_CODE_BAD_PRICE_INPUT,
     TRAIL_CODE_BELOW_MIN_RATCHET,
@@ -43,7 +47,7 @@ def compute_trailing_stop(
     reference_target: float | None,
     bars=None,
     atr: float | None = None,
-    min_ratchet_pct: float = MIN_RATCHET_PCT,
+    min_ratchet_ticks: int = MIN_RATCHET_TICKS,
     qty: float = 1.0,
     initial_stop: float | None = None,
     structural_ceiling: bool | None = None,
@@ -77,7 +81,7 @@ def compute_trailing_stop(
         symbol=symbol, setup_type=setup_type, entry=entry,
         current_price=current_price, current_stop=current_stop,
         reference_target=reference_target, bars=bars, atr=atr,
-        min_ratchet_pct=min_ratchet_pct, qty=qty, initial_stop=initial_stop,
+        min_ratchet_ticks=min_ratchet_ticks, qty=qty, initial_stop=initial_stop,
         structural_ceiling=structural_ceiling,
     ).proposal
 
@@ -92,7 +96,7 @@ def evaluate_trailing_stop(
     reference_target: float | None,
     bars=None,
     atr: float | None = None,
-    min_ratchet_pct: float = MIN_RATCHET_PCT,
+    min_ratchet_ticks: int = MIN_RATCHET_TICKS,
     qty: float | None = None,  # None reads as a long — see `is_short` below
     initial_stop: float | None = None,
     structural_ceiling: bool | None = None,
@@ -169,10 +173,16 @@ def evaluate_trailing_stop(
         once this says yes, because the alternative is placing a stop inside
         the very daily-noise band the structural leg was just refused for.
         Returns the refusal code, or None when the level is placeable."""
+        floor = min_ratchet_floor(stop, is_short=is_short,
+                                  min_ratchet_ticks=min_ratchet_ticks)
+        # Half-a-tick tolerance is the float<->Decimal round-trip this repo
+        # already allows in `_prices_match`, not a threshold: a level that
+        # quantizes ONTO the floor is a real one-tick improvement.
+        _slack = venue_tick(stop) / 2.0
         if is_short:
-            if level >= stop * (1 - min_ratchet_pct / 100.0):
+            if level > floor + _slack:
                 return TRAIL_CODE_BELOW_MIN_RATCHET
-        elif level <= stop * (1 + min_ratchet_pct / 100.0):
+        elif level < floor - _slack:
             return TRAIL_CODE_BELOW_MIN_RATCHET
         if atr_f is not None and atr_f > 0:
             if is_short:
