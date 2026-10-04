@@ -13,23 +13,6 @@ Measured 2026-10-04 on main: six construction sites in `src/` outside the funnel
 
 Fix: route each sender through the funnel (or justify and allow-list it), then add a guard that fails on any new direct construction. Sized at roughly 150-250 lines for the `src/` sites and the guard [estimate: earlier agent sizing, not re-derived]; the scripts would add to it.
 
-## The cost circuit is eleven mixins, not eleven modules
-
-It sits under the ceiling, but eleven of its nineteen pieces are mixin groups,
-which cannot be built or exercised on their own. Smaller files, not
-boundaries. Fix: convert them the way the sessions, exits, protection, broker
-and storage packages were done, and add witness tests.
-
-CLOSED 2026-10-02 (fourth and fifth instalments): all eleven parts are HELD
-instances on `LLMCostCircuitBreaker` (`_hold_parts`, wired by `assembly.py`); every `breaker_*.py`
-shim module is deleted and the class inherits from nothing. Three
-collaborators had to be handed in live rather than snapshotted (`notifier`,
-`_connect`, the owner-notify sentinel); see docs/ARCHITECTURE.md.
-
-VERIFIED CLOSED 2026-10-04 (re-measured on main f85da78d, no code change needed): the gap the 2026-10-02 verdict left open is gone. `src/cost_circuit/parts/` holds eleven classes, each with no base class and keyword-only collaborators (admission 310, alert_formats 151, circuit_state 363, emergency_latch 260, episode_wording 223, infra_retry 280, operator_controls 275, owner_notify 344, quota_holds 346, session_lifecycle 228, settlement 399 lines -- all at or under the 400 ceiling). No `breaker_*.py` shim module exists on disk and no `Mixin` name survives anywhere under `src/cost_circuit/`. `tests/test_cost_circuit_parts_boundary.py` passes 38 tests (not 35): it CONSTRUCTS all eleven from stubs alone, EXERCISES each one with no breaker behind it, asserts `LLMCostCircuitBreaker.__mro__ == (LLMCostCircuitBreaker, object)`, asserts each former shim module now raises `ModuleNotFoundError` on import, and asserts the live-collaborator contract (a body swapped on a held part after construction is what runs -- the snapshotted-`getattr` defect). Nothing remains open in this section.
-
-VERDICT 2026-10-02 (isolation pass): INCORRECT. Earlier verdict read only the `class LLMCostCircuitBreaker(...)` line; the parts ARE already standalone. `src/cost_circuit/parts/` has eleven standalone classes (merged #1064, #1066, #1070 on 2026-10-02); `tests/test_cost_circuit_parts_boundary.py` passes 35 tests, building all eleven from stubs with no breaker composition. The `breaker_*.py` files are thin per-call shims. ONE genuine gap remains: the breaker still INHERITS the shims rather than HOLDING part instances; that conversion changes every test patch target, so it is a separate deliberate instalment.
-
 ## Real boundaries still owed
 
 The position builder, the portfolio-manager seat and the prompt-facts review
@@ -63,6 +46,17 @@ Fix: a stdlib-only scope-analysing guard in `scripts/` plus one workflow edit, r
 # Resolved history
 
 These findings have been addressed through code fixes or established as not defects. Preserved here for completeness and context.
+
+### The cost circuit is eleven mixins, not eleven modules (CLOSED 2026-10-04)
+
+Eleven of the circuit's nineteen pieces were mixin groups: smaller files, not
+boundaries, buildable only as one object with one shared state.
+
+CLOSED 2026-10-02 (fourth and fifth instalments): all eleven are standalone classes under `src/cost_circuit/parts/` with no base class and keyword-only collaborators, HELD as instances on `LLMCostCircuitBreaker` (`_hold_parts`, wired by `assembly.py`); every `breaker_*.py` shim is deleted and the class inherits from nothing. Three collaborators are handed in live rather than snapshotted (`notifier`, `_connect`, the owner-notify sentinel); see docs/ARCHITECTURE.md.
+
+VERIFIED 2026-10-04 twice (main f85da78d, then 976ed3e9 in a fresh checkout, no code change either time): `tests/test_cost_circuit_parts_boundary.py` 38 passed; it CONSTRUCTS all eleven parts from stubs with no breaker behind them, exercises each, asserts `LLMCostCircuitBreaker.__mro__ == (LLMCostCircuitBreaker, object)`, asserts each former shim module raises `ModuleNotFoundError`, and asserts the live-collaborator contract. No `Mixin` name survives under `src/cost_circuit/`. Moved out of the open list because it sat there after being closed.
+
+An earlier 2026-10-02 verdict judged the parts still inherited as shims; that was the one real gap and the hold conversion closed it.
 
 ### The midnight clock bug (CLOSED -- both halves, 2026-10-04)
 
