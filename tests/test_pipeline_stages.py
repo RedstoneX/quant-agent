@@ -3275,7 +3275,7 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
 # --------------------------------------------------------------------------
 
 def test_build_active_state_changes_renders_direction_per_symbol():
-    from src.pipeline import TradingPipeline
+    from src.prompt_facts.history import PromptHistory
 
     fake_pipeline = MagicMock()
     fake_pipeline.news_store.recent_state_changes.return_value = [{
@@ -3284,7 +3284,7 @@ def test_build_active_state_changes_renders_direction_per_symbol():
         "affected_symbols": ["XOM", "CVX", "COST"],
         "symbol_direction": {"XOM": "bullish", "CVX": "bullish", "COST": "bearish"},
     }]
-    rendered = TradingPipeline._build_active_state_changes(fake_pipeline)
+    rendered = PromptHistory._build_active_state_changes(fake_pipeline)
     assert rendered == (
         "- [2026-08-31] Oil majors expand footprint, bearish for airlines "
         "→ XOM(bullish), CVX(bullish), COST(bearish)"
@@ -3296,7 +3296,7 @@ def test_build_active_state_changes_renders_unknown_for_a_symbol_with_no_directi
     `symbol_direction` (older persisted report predating this field, or a
     genuine analyst omission) renders as `(unknown)` — never silently
     treated as agreeing with any trade direction."""
-    from src.pipeline import TradingPipeline
+    from src.prompt_facts.history import PromptHistory
 
     fake_pipeline = MagicMock()
     fake_pipeline.news_store.recent_state_changes.return_value = [{
@@ -3305,7 +3305,7 @@ def test_build_active_state_changes_renders_unknown_for_a_symbol_with_no_directi
         "affected_symbols": ["FOO"],
         # no "symbol_direction" key at all — pre-Phase-13 persisted shape
     }]
-    rendered = TradingPipeline._build_active_state_changes(fake_pipeline)
+    rendered = PromptHistory._build_active_state_changes(fake_pipeline)
     assert rendered == "- [2026-08-30] Some older event → FOO(unknown)"
 
 

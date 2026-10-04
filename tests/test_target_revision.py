@@ -153,9 +153,10 @@ def test_pipeline_measures_progress_against_the_pinned_target():
     """Pins the wiring, not just the arithmetic: `_build_position_facts`
     must divide by `initial_take_profit`, never by the mutable
     `take_profit`. A regression here reintroduces the defect silently."""
+    from src.prompt_facts.position_facts import PromptPositionFacts
     from src.pipeline import TradingPipeline
 
-    src = inspect.getsource(TradingPipeline._build_position_facts)
+    src = inspect.getsource(PromptPositionFacts._build_position_facts)
     assert 'progress_target = float(' in src
     assert '"initial_take_profit"' in src
     assert "(cur - entry) / (progress_target - entry)" in src
