@@ -412,7 +412,10 @@ does not, the manifest is wrong and the step is not done.
 the running count of test files importing `TradingPipeline` (115 today) as a
 reported metric with a ratchet that may only go down.
 *Proof:* the harness passes `src/pipeline_sizing.py` (0 `self.` references,
-measured) and fails every mixin. A harness that passes something it should fail
+measured) and fails every mixin. Since 2026-10-04 it also passes
+`src/pipeline_cost_gate.py` and `src/pipeline_halt_gates.py` (the run gates lifted out of
+`TradingPipeline` as duck-typed functions; `tests/test_pipeline_run_gates_boundary.py` drives
+them from `SimpleNamespace` stubs). A harness that passes something it should fail
 is not yet a harness.
 
 ### Phase B — fix the layer violations that are already there (small, high value)
