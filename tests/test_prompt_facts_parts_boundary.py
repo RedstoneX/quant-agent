@@ -166,3 +166,43 @@ def test_decisions_part_runs_against_a_stub_db():
     part = _build(PromptDecisions, db=db)
     assert isinstance(part._build_rm_recent_verdicts(), str)
     assert db.method_calls, "the body never read the db collaborator"
+
+
+# --- The trade-review SEAT (src/prompt_facts/review/held.py): built alone with a host handed in,
+# every collaborator read off the host at each call. The pipeline holds one and inherits nothing.
+
+from src.prompt_facts.review.held import HOST_COLLABORATORS, PromptFactsReview  # noqa: E402
+
+
+def test_review_seat_is_constructible_alone_and_passes_the_boundary_check():
+    part = PromptFactsReview(host=SimpleNamespace())
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in inspect.signature(PromptFactsReview).parameters.values())
+    assert all(getattr(part, name) is None for name in HOST_COLLABORATORS)  # a bare host: every read is None, nothing raises
+    verdict = check_boundary("src.prompt_facts.review.held")
+    assert verdict.passed, verdict.failures
+
+
+def test_review_seat_runs_a_body_and_reads_a_collaborator_swapped_after_construction():
+    """Exercised, not just built; and the db swapped on the host AFTER the part was built is the one that runs."""
+    first, second = MagicMock(name="first_db"), MagicMock(name="second_db")
+    first.get_daily_pnl.return_value = []
+    second.get_daily_pnl.return_value = []
+    host = SimpleNamespace(db=first)
+    part = PromptFactsReview(host=host)
+    assert isinstance(part._compute_recent_performance(current_equity=100_000.0), dict)
+    first.get_daily_pnl.assert_called()
+    host.db = second
+    part._compute_recent_performance(current_equity=100_000.0)
+    second.get_daily_pnl.assert_called()
+    assert first.get_daily_pnl.call_count == 1
+
+
+def test_review_seat_hands_the_grading_part_the_hosts_post_exit_reality_live():
+    """`_build_post_exit_reality` is a collaborator: the grading part gets whatever the host carries NOW."""
+    host = SimpleNamespace()
+    part = PromptFactsReview(host=host)
+    assert part._review_grading()._build_post_exit_reality is None
+    host._build_post_exit_reality = lambda *a, **k: "SWAPPED AFTER CONSTRUCTION"
+    assert part._review_grading()._build_post_exit_reality() == "SWAPPED AFTER CONSTRUCTION"
+    host._sweeper = lambda: "SWEPT"
+    assert part._review_exits()._sweeper() == "SWEPT"

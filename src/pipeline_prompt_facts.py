@@ -1,8 +1,8 @@
 """Prompt-facts builders: read-only DB/broker reads turned into LLM context.
 
-Bodies live in src/prompt_facts/ (eight constructed parts); this mixin keeps same-named
-thin shims, built per call so a collaborator swapped after construction is what the body
-sees. The module-level names below are re-exported unchanged for importers and patchers
+Bodies live in src/prompt_facts/ (eight constructed parts plus the HELD trade-review seat,
+`src/prompt_facts/review/held.py`); this mixin keeps same-named thin shims, built per call so a
+collaborator swapped after construction is what the body sees. The module-level names below are re-exported unchanged for importers and patchers
 of this module (the ONE mirror block for this module).
 
 Step 1 of `docs/PIPELINE_SPLIT_PLAN.md` (board item 210). Moved verbatim out of
@@ -31,7 +31,7 @@ from src.pipeline_prompt_facts_pure import (  # noqa: F401  re-exports, see pipe
     _missed_ops_quality_metrics,
     _valuation_signal_from,
 )
-from src.pipeline_prompt_facts_review import PromptFactsReviewMixin
+from src.pipeline_prompt_facts_review import hold_prompt_facts_review
 from src.prompt_facts.decisions import PromptDecisions
 from src.prompt_facts.heat import PromptHeat
 from src.prompt_facts.missed_ops_signals import MissedOpsSignals
@@ -690,13 +690,13 @@ class PromptPositionFacts:
         return facts
 
 
-class PromptFactsMixin(PromptFactsReviewMixin):
+@hold_prompt_facts_review  # the seat HOLDS the trade-review part (one per instance, collaborators read live), never inherits it
+class PromptFactsMixin:
     """Read-only prompt-context builders mixed into `TradingPipeline`; every body lives on a part under src/prompt_facts/.
 
-    Each `_prompt_*` builder reads the host's collaborators at call time. Cross-family reads
-    (pm facts -> heat and history; heat -> stop map) are handed the host's shim, never a body
-    the part owns, so no recursion guard is needed. The projected-portfolio part is handed the
-    host as its sector-cache owner, so `_last_symbol_sectors` is read and written through live."""
+    Each `_prompt_*` builder reads the host's collaborators at call time. Cross-family reads (pm facts -> heat and
+    history; heat -> stop map) are handed the host's shim, never a body the part owns, so no recursion guard is needed.
+    The projected part is handed the host as its sector-cache owner, so `_last_symbol_sectors` is read and written live."""
 
     # Free-standing helpers now live in src/pipeline_prompt_facts_pure.py;
     # re-bound here so `self._x(...)` / `PromptFactsMixin._x` keep working.
