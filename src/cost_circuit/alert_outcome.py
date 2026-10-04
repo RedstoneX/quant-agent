@@ -31,10 +31,13 @@ def _send_alert_outcome(
     """
 
     try:
-        from src.notifier import CATEGORY_OPERATIONAL, was_suppressed
+        from src.notifier import CATEGORY_OPERATIONAL
+        from src.notifier.owner_alert_delivery import deliver_with_outcome
 
-        outcome = notifier.send(message, category=CATEGORY_OPERATIONAL)
-        return bool(outcome), was_suppressed(outcome)
+        return deliver_with_outcome(
+            notifier, message, category=CATEGORY_OPERATIONAL,
+            max_attempts=1,
+        )
     except Exception:
         logger.exception(log_label)
         return False, False

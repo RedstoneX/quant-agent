@@ -483,7 +483,7 @@ def _read_hour_evidence(hour_window_minutes: int = _HOUR_WINDOW_MINUTES) -> list
             if symbol:
                 rows[symbol] = data
     except Exception as exc:  # noqa: BLE001
-        logger.warning("hourly desk check: evidence read failed: %s", exc)
+        logger.error("hourly: evidence read failed", exc_info=True)
     finally:
         if conn is not None:
             try:
@@ -516,7 +516,7 @@ def _read_hour_trades(hour_window_minutes: int = _HOUR_WINDOW_MINUTES) -> list[d
         ).fetchall()
         return [dict(row) for row in rows]
     except Exception as exc:  # noqa: BLE001
-        logger.warning("hourly desk check: trade read failed: %s", exc)
+        logger.error("hourly: trade read failed", exc_info=True)
         return []
     finally:
         if conn is not None:

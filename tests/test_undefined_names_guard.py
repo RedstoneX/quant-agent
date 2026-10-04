@@ -40,3 +40,8 @@ def test_star_import_module_is_skipped_not_guessed():
 def test_module_level_read_of_a_name_nothing_binds_is_caught():
     assert [n for _, n in g.check_source("x = _missing + 1\n")[0]] == ["_missing"]
     assert g.check_source("_missing = 1\nx = _missing + 1\n")[0] == []
+
+
+def test_a_missing_or_empty_tree_is_refused_not_read_as_clean(tmp_path):
+    assert g.main([str(tmp_path / "nope")]) == 1
+    assert g.main([str(tmp_path)]) == 1

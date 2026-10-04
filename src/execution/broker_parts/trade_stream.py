@@ -10,7 +10,7 @@ collaborators are keyword-only, and the per-broker state the bodies mutate
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from src.trading_calendar import session_date_key
 from pathlib import Path
 import asyncio
 import json
@@ -22,6 +22,7 @@ import time
 
 from src.execution.broker_parts.trade_stream_errors import _stream_http_status, _stream_retry_after_seconds  # noqa: F401
 from src.sentinel.guarded import record_guarded_pass
+from src.execution.broker_parts.trade_stream_flags import _signal_event
 from src.execution.broker_parts.trade_stream_lease import _TradeUpdatesLease  # noqa: F401
 
 try:
@@ -188,27 +189,27 @@ class _StreamAttemptBudget:
 
     def record_attempt(self, today: str | None = None) -> int:
         """Count one handshake failure; return attempts spent today."""
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             self._attempts += 1
             return self._attempts
 
     def day_exhausted(self, today: str | None = None) -> bool:
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             return self._attempts >= _STREAM_ATTEMPT_CEILING_PER_DAY
 
     def attempts_today(self, today: str | None = None) -> int:
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             return self._attempts
 
     def claim_alert(self, today: str | None = None) -> bool:
         """True exactly ONCE per day, for the caller that should page the owner."""
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             if self._alerted_day == day:
@@ -984,25 +985,10 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
                 "trade_updates websocket authenticated (endpoint=%s)",
                 getattr(stream, "_endpoint", "unknown"),
             )
-            authed = getattr(stream, "_qamc_authed", None)
-            if authed is not None:
-                try:
-                    authed.set()
-                except Exception:
-                    pass
+            _signal_event(stream, "_qamc_authed", "set")
         except Exception as exc:
-            authed = getattr(stream, "_qamc_authed", None)
-            if authed is not None:
-                try:
-                    authed.clear()
-                except Exception:
-                    pass
-            connected = getattr(stream, "_qamc_connected", None)
-            if connected is not None:
-                try:
-                    connected.clear()
-                except Exception:
-                    pass
+            _signal_event(stream, "_qamc_authed", "clear")
+            _signal_event(stream, "_qamc_connected", "clear")
             failures += 1
             spent_today = _STREAM_ATTEMPT_BUDGET.record_attempt()
             status = _stream_http_status(exc)

@@ -60,7 +60,13 @@ def main(argv=None) -> int:
     files = []
     for r in args.roots:
         p = Path(r)
+        if not p.exists():
+            print(f"{p}: root does not exist; refusing to read an unreadable tree as clean")
+            return 1
         files += sorted(p.rglob("*.py")) if p.is_dir() else [p]
+    if not files:
+        print("scanned no modules; refusing to read an empty tree as clean")
+        return 1
     bad = 0
     for f in files:
         try:

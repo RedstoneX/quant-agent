@@ -54,6 +54,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Hashable, Iterable, Mapping, TypeVar
 
+from scripts.trunk_refresh import refresh_trunk
+
 Identity = TypeVar("Identity", bound=Hashable)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -118,13 +120,14 @@ def trunk_rev() -> str:
     refinement below is only ever applied to a trunk that WAS read; it can
     never stand in for one that could not be.
     """
+    stale_note = refresh_trunk(ROOT, TRUNK)
     tip = _rev_parse(TRUNK)
     if not tip:
         raise ReferenceUnavailable(
             f"cannot read {TRUNK}: this guard compares the working tree against the "
             f"trunk and stores nothing, so without {TRUNK} it REFUSES rather than "
             "pass. Fix: `git fetch origin main` locally; in CI, check out with "
-            "fetch-depth: 0. git said: ref not found"
+            f"fetch-depth: 0. git said: ref not found. {stale_note}"
         )
     return _merge_ref_main_parent() or tip
 

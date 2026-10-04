@@ -15,13 +15,17 @@ from datetime import date
 from alpaca.trading.enums import QueryOrderStatus
 
 from src.execution.broker_parts.stop_place import _alpaca_symbol, _internal_symbol
+# No ledger handle on this per-call object: traceback is logged, the counted row is skipped until
+# one is lent (flagged, no new channel).
+from src.sentinel.guarded import record_guarded_pass
+from src.execution.broker_parts.account_asset_eligibility import AssetEligibilityReads
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
 logger = logging.getLogger("src.execution.broker")
 
 
-class AccountReads:
+class AccountReads(AssetEligibilityReads):
     """The broker's read-only account/asset/calendar cluster, standalone.
 
     Every collaborator is a keyword-only constructor argument. `session_edge`
@@ -106,8 +110,15 @@ class AccountReads:
             if after:
                 params["after"] = after
             raw = self.client.get("/account/activities/INT", params or None)
+            record_guarded_pass(self, "account_reads.margin_interest_activities", context={})
         except Exception as exc:
-            logger.warning("get_margin_interest_activities failed: %s", exc)
+            record_guarded_pass(
+                self,
+                "account_reads.margin_interest_activities",
+                exc,
+                log=logger,
+                context={**{}, "effect": "returned an empty list"},
+            )
             return []
         if not isinstance(raw, list):
             return []
@@ -166,10 +177,16 @@ class AccountReads:
                 if not last_id:
                     break
                 page_token = last_id
+            record_guarded_pass(
+                self, "account_reads.all_account_activities", context={"rows_before_failure": len(activities)},
+            )
         except Exception as exc:
-            logger.warning(
-                "get_all_account_activities failed after %d rows: %s",
-                len(activities), exc,
+            record_guarded_pass(
+                self,
+                "account_reads.all_account_activities",
+                exc,
+                log=logger,
+                context={**{"rows_before_failure": len(activities)}, "effect": "returned the rows fetched so far"},
             )
         return activities
 
@@ -187,8 +204,15 @@ class AccountReads:
             return {"eligible": False, "reason": "unsupported_security_suffix"}
         try:
             asset = self.client.get_asset(alpaca_symbol)
+            record_guarded_pass(self, "account_reads.asset_eligibility", context={"symbol": canonical})
         except Exception as exc:
-            logger.warning("asset eligibility lookup failed for %s: %s", canonical, exc)
+            record_guarded_pass(
+                self,
+                "account_reads.asset_eligibility",
+                exc,
+                log=logger,
+                context={**{"symbol": canonical}, "effect": "reported not eligible"},
+            )
             return {"eligible": False, "reason": "asset_lookup_failed"}
 
         def _field(name, default=None):
@@ -267,127 +291,6 @@ class AccountReads:
             raise
         return raw if isinstance(raw, dict) else None
 
-    def get_shortability(self, symbol: str) -> dict:
-        """D6 (Stage 3): the borrow gate. Alpaca's per-asset `shortable` and
-        `easy_to_borrow` flags, cached for the life of this broker instance
-        exactly like `get_transient_equity_eligibility` is (a read-only
-        asset-directory fact that does not change intra-session).
-
-        A short may open ONLY when BOTH flags are true. This is paper
-        trading against IEX data: a hard-to-borrow name fills unrealistically
-        in paper and its borrow cost is not modeled anywhere in this system,
-        so restricting to easy-to-borrow names is what keeps measured paper
-        results transferable to live capital. `reason` distinguishes the two
-        ways a short can be refused ("not_shortable" vs "hard_to_borrow") so
-        the caller can log which one fired.
-
-        Fails CLOSED: an API error or an unreadable/unknown symbol reports
-        shortable=False / easy_to_borrow=False — a short is refused, never
-        guessed open.
-        """
-        canonical = _internal_symbol(_alpaca_symbol(symbol))
-        cached = self._shortable_cache.get(canonical)
-        if cached is not None:
-            return cached
-
-        alpaca_symbol = _alpaca_symbol(canonical)
-        try:
-            asset = self.client.get_asset(alpaca_symbol)
-        except Exception as exc:
-            logger.warning("shortability lookup failed for %s: %s", canonical, exc)
-            result = {
-                "shortable": False, "easy_to_borrow": False,
-                "reason": "asset_lookup_failed", "symbol": canonical,
-            }
-            self._shortable_cache[canonical] = result
-            return result
-
-        def _field(name, default=None):
-            if isinstance(asset, dict):
-                return asset.get(name, default)
-            return getattr(asset, name, default)
-
-        shortable = bool(_field("shortable", False))
-        easy_to_borrow = bool(_field("easy_to_borrow", False))
-        if shortable and easy_to_borrow:
-            reason = "eligible"
-        elif not shortable and not easy_to_borrow:
-            reason = "not_shortable"  # the more specific/common of the two
-        elif not shortable:
-            reason = "not_shortable"
-        else:
-            reason = "hard_to_borrow"
-        result = {
-            "shortable": shortable, "easy_to_borrow": easy_to_borrow,
-            "reason": reason, "symbol": canonical,
-        }
-        self._shortable_cache[canonical] = result
-        return result
-
-    def get_fractionability(self, symbol: str) -> dict:
-        """Spec §11.1: is this symbol tradeable in fractional quantities?
-
-        Alpaca publishes a per-asset `fractionable` flag in the same
-        asset-directory record `get_shortability` reads, and it is cached the
-        same way for the same reason — it does not change intra-session.
-
-        **Fails CLOSED, and that is the whole point.** An API error, an
-        unknown symbol, an asset record with no `fractionable` field at all —
-        every one of those reports `fractionable=False`, and the caller sizes
-        in whole shares. Fractional-by-assumption is the failure this guard
-        exists to prevent: a fractional order on a non-fractionable name is
-        rejected outright by the broker, which turns an approved trade into
-        no trade at all and hides the reason in an order-rejection log.
-
-        `reason` distinguishes the three ways the answer can be no, so the
-        caller can log which one fired rather than a bare False.
-        """
-        canonical = _internal_symbol(_alpaca_symbol(symbol))
-        cached = self._fractionable_cache.get(canonical)
-        if cached is not None:
-            return cached
-
-        alpaca_symbol = _alpaca_symbol(canonical)
-        try:
-            asset = self.client.get_asset(alpaca_symbol)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "fractionability lookup failed for %s: %s — sizing in WHOLE "
-                "shares (fail closed)", canonical, exc,
-            )
-            result = {
-                "fractionable": False, "reason": "asset_lookup_failed",
-                "symbol": canonical,
-            }
-            self._fractionable_cache[canonical] = result
-            return result
-
-        def _field(name, default=None):
-            if isinstance(asset, dict):
-                return asset.get(name, default)
-            return getattr(asset, name, default)
-
-        raw = _field("fractionable", None)
-        if raw is None:
-            # The record came back but carries no flag — an older API shape,
-            # a stub, a mock. "Absent" is not "true".
-            result = {
-                "fractionable": False, "reason": "fractionable_unknown",
-                "symbol": canonical,
-            }
-        elif bool(raw):
-            result = {
-                "fractionable": True, "reason": "fractionable",
-                "symbol": canonical,
-            }
-        else:
-            result = {
-                "fractionable": False, "reason": "not_fractionable",
-                "symbol": canonical,
-            }
-        self._fractionable_cache[canonical] = result
-        return result
-
     def get_recent_daily_closes(self, lookback_days: int = 10) -> list[tuple[str, float]]:
         """Official regular-session daily CLOSE equity for recent trading days.
 
@@ -413,8 +316,15 @@ class AccountReads:
                 start=now - timedelta(days=lookback_days * 2 + 10), end=now,
             )
             history = self.client.get_portfolio_history(history_filter=req)
+            record_guarded_pass(self, "account_reads.recent_daily_closes", context={})
         except Exception as exc:
-            logger.warning("get_recent_daily_closes: portfolio_history failed: %s", exc)
+            record_guarded_pass(
+                self,
+                "account_reads.recent_daily_closes",
+                exc,
+                log=logger,
+                context={**{}, "effect": "returned an empty list"},
+            )
             return []
         timestamps = getattr(history, "timestamp", None) or []
         equities = getattr(history, "equity", None) or []
@@ -446,8 +356,15 @@ class AccountReads:
                 start=now - timedelta(days=365 * 5), end=now,
             )
             history = self.client.get_portfolio_history(history_filter=req)
+            record_guarded_pass(self, "account_reads.full_portfolio_history", context={})
         except Exception as exc:
-            logger.warning("get_full_portfolio_history failed: %s", exc)
+            record_guarded_pass(
+                self,
+                "account_reads.full_portfolio_history",
+                exc,
+                log=logger,
+                context={**{}, "effect": "returned an empty list"},
+            )
             return []
         timestamps = getattr(history, "timestamp", None) or []
         equities = getattr(history, "equity", None) or []
@@ -484,10 +401,14 @@ class AccountReads:
                 GetCalendarRequest(start=target_date, end=target_date)
             )
             result = bool(calendar)
+            record_guarded_pass(self, "account_reads.trading_calendar_confirm", context={"date": str(target_date)})
         except Exception as exc:
-            logger.warning(
-                "Failed to confirm trading calendar for %s; assuming market closed: %s",
-                target_date, exc,
+            record_guarded_pass(
+                self,
+                "account_reads.trading_calendar_confirm",
+                exc,
+                log=logger,
+                context={**{"date": str(target_date)}, "effect": "assumed market closed"},
             )
             # Do NOT cache a failed lookup — caller's session is already
             # aborted (we returned False) but a transient API hiccup
@@ -528,11 +449,17 @@ class AccountReads:
             calendar = self.client.get_calendar(
                 GetCalendarRequest(start=query_start, end=end)
             ) or []
+            record_guarded_pass(
+                self, "account_reads.trading_sessions_held", context={"start": str(start), "end": str(end)},
+            )
             return len(calendar)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "trading_sessions_held: calendar query failed (%s -> %s); "
-                "falling back to weekday count: %s", start, end, exc,
+            record_guarded_pass(
+                self,
+                "account_reads.trading_sessions_held",
+                exc,
+                log=logger,
+                context={**{"start": str(start), "end": str(end)}, "effect": "fell back to weekday count"},
             )
             from src.trading_calendar import (
                 trading_sessions_held as _weekday_sessions_held,
@@ -569,10 +496,14 @@ class AccountReads:
             calendar = self.client.get_calendar(
                 GetCalendarRequest(start=target, end=month_end)
             ) or []
+            record_guarded_pass(self, "account_reads.last_trading_day_of_quarter", context={"target": str(target)})
         except Exception as exc:
-            logger.warning(
-                "is_last_trading_day_of_quarter: calendar query failed (%s → %s): %s",
-                target, month_end, exc,
+            record_guarded_pass(
+                self,
+                "account_reads.last_trading_day_of_quarter",
+                exc,
+                log=logger,
+                context={**{"target": str(target)}, "effect": "answered not last day"},
             )
             return False
         if not calendar:
@@ -627,10 +558,16 @@ class AccountReads:
             calendar = self.client.get_calendar(
                 GetCalendarRequest(start=target_date, end=target_date)
             )
+            record_guarded_pass(
+                self, "account_reads.session_edge_calendar", context={"attr": attr, "date": str(target_date)},
+            )
         except Exception as exc:
-            logger.warning(
-                "get_session_%s: calendar query failed for %s: %s",
-                attr, target_date, exc,
+            record_guarded_pass(
+                self,
+                "account_reads.session_edge_calendar",
+                exc,
+                log=logger,
+                context={**{"attr": attr, "date": str(target_date)}, "effect": "returned None"},
             )
             return None
         if not calendar:
@@ -651,12 +588,20 @@ class AccountReads:
             # the test that was supposed to cover it used a MagicMock with
             # a `time`). Keep the `time` branch for the older SDK shape.
             if isinstance(entry_edge, _dt):
-                return entry_edge.replace(tzinfo=ET)
-            return _dt.combine(entry_date, entry_edge).replace(tzinfo=ET)
+                result = entry_edge.replace(tzinfo=ET)
+            else:
+                result = _dt.combine(entry_date, entry_edge).replace(tzinfo=ET)
+            record_guarded_pass(
+                self, "account_reads.session_edge_resolve", context={"attr": attr, "date": str(entry_date)},
+            )
+            return result
         except Exception as exc:
-            logger.warning(
-                "get_session_%s: failed to resolve date=%s %s=%s: %s",
-                attr, entry_date, attr, entry_edge, exc,
+            record_guarded_pass(
+                self,
+                "account_reads.session_edge_resolve",
+                exc,
+                log=logger,
+                context={**{"attr": attr, "date": str(entry_date)}, "effect": "returned None"},
             )
             return None
 
@@ -689,10 +634,14 @@ class AccountReads:
             calendar = self.client.get_calendar(
                 GetCalendarRequest(start=target_date, end=target_date)
             )
+            record_guarded_pass(self, "account_reads.session_open_calendar", context={"date": str(target_date)})
         except Exception as exc:
-            logger.warning(
-                "get_session_open: calendar query failed for %s: %s",
-                target_date, exc,
+            record_guarded_pass(
+                self,
+                "account_reads.session_open_calendar",
+                exc,
+                log=logger,
+                context={**{"date": str(target_date)}, "effect": "returned None, not cached"},
             )
             return None  # transient failure — do not cache
         if not calendar:
@@ -709,10 +658,14 @@ class AccountReads:
                 result = entry_open.replace(tzinfo=ET)
             else:
                 result = _dt.combine(entry_date, entry_open).replace(tzinfo=ET)
+            record_guarded_pass(self, "account_reads.session_open_resolve", context={"date": str(entry_date)})
         except Exception as exc:
-            logger.warning(
-                "get_session_open: failed to resolve date=%s open=%s: %s",
-                entry_date, entry_open, exc,
+            record_guarded_pass(
+                self,
+                "account_reads.session_open_resolve",
+                exc,
+                log=logger,
+                context={**{"date": str(entry_date)}, "effect": "cached None"},
             )
             result = None
         self._session_open_cache[target_date] = result
