@@ -52,7 +52,8 @@ def test_count_increments(tmp_path, monkeypatch):
     conn = sqlite3.connect(str(tmp_path / "n.db"))
     conn.execute("CREATE TABLE notifier_sends (status TEXT)")
     conn.execute("INSERT INTO notifier_sends VALUES (?)", (d.UNDELIVERED_STATUS,))
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
     f = _Fake([False] * 3)
     d.deliver_with_retry(f, "t")
     assert "undelivered_total=2" in f.rows[0]["detail"]
