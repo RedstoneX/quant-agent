@@ -56,10 +56,20 @@ holds `TargetRevision`, `StructuralProtection`, `ExitSubstantiation`,
 `HoldingDiscipline` and `AlignmentExit`, each a standalone class taking every
 collaborator as a keyword-only constructor argument (the `src/sessions/`
 pattern); `ExitEngineMixin` keeps a thin same-named shim per method. All five
-pass `check_boundary`; `tests/test_exits_boundary.py` is the witness. The trails
-and the AI risk review stayed in the mixin: the former imports the broker seam
-(`src.execution`, a frozen importer list), the latter reads the module-level
-`_reason_cites_hard_trigger` that a test patches on `src.pipeline_exits`.
+pass `check_boundary`; `tests/test_exits_boundary.py` is the witness.
+
+**One more followed (2026-10-04):** `ExitRecords` (today's trims, filed target
+revisions, the trail cooldown, exit-review approvals, the event-risk block),
+same shape, same shims, same witness file. The trails and the AI risk review
+were lifted the same way and REFUSED by two guards, so they stay on the mixin:
+`tests/test_import_layering.py` freezes the set of modules importing
+`src.execution` (the trails body imports four of its modules), and the same
+file's cycle check refuses a part that resolves `_reason_cites_hard_trigger`
+back on `src.pipeline_exits`, even lazily. Also still on the mixin, on purpose:
+`_alignment_exit_cached` and `_voice_structural_protection_break` hold per-run
+memos on the host (a part rebuilt per call would lose them), and
+`_midday_execute_llm_actions` is one 972-line function that cannot land under
+the 400-line new-file maximum without being rewritten.
 
 **The portfolio constructor's order builders ARE a boundary (2026-10-02, first constructor instalment).** `src/portfolio_constructor/order_build/` holds one standalone piece per leg, each under the 400-line new-file floor: `long_entry.py` (`LongEntryBuilder._build_buy`), `short_entry.py` (`ShortEntryBuilder._build_short`) and `exits.py` (`ExitOrderBuilders._build_sell`, `_build_cover`, `_hold_decision` — pure functions of their arguments, no collaborators), all lifted verbatim. Each entry builder's collaborator (`cfg`, `_derive_target`, `_resolve_entry_and_stop`, `_apply_sector_dial`, `_note_refusal`, `shipped_stop_rule`, `shipped_stop_level_basis`, `_target_note`) is a keyword-only constructor argument; the held `OrderBuilders` part (`src/portfolio_constructor/orders.py`; since 2026-10-04 HELD by `PortfolioConstructor`, which inherits from nothing, with the shims installed by `src/portfolio_constructor/assembly.py`) builds the entry builder per call from live collaborators, and no collaborator is itself a lifted method so the shim cannot recurse. Witness: `tests/test_portfolio_constructor_boundary.py`; the drop-path guard skips thin shims so it scans the moved bodies, not the shims. The stop methods were lifted separately into `entry_stop/resolver.py` (`EntryStopResolver`); still inline on `_StopMixin`: `_stop_atr_multiple`, `_level_backing_stop`, `_derive_structural_stop_no_atr`, `_reward_risk_at`, `shipped_stop_rule`, `shipped_stop_level_basis`, `_resolve_stop`, plus the risk-plan / sector-dial / weights methods on `PortfolioConstructor` itself.
 

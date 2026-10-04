@@ -7708,13 +7708,13 @@ numbers:
     note: >-
       Board item 138: the midday SELL/REDUCE limit, price x 0.995
       (src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions). Same number as the ExecutionStage SELL offset.
-  - id: src.pipeline_exits.ExitEngineMixin._trail_tightened_recently(calendar_days)
+  - id: src.exits.exit_records.ExitRecords._trail_tightened_recently(calendar_days)
     value: 4
     status: arbitrary
-    site: src/pipeline_exits.py
+    site: src/exits/exit_records.py
     note: >-
       Trail-tightening cooldown: midday skips a TRAIL_STOP when one landed in
-      the last 4 calendar days (src/pipeline_exits.py::ExitEngineMixin._trail_tightened_recently, caller
+      the last 4 calendar days (src/exits/exit_records.py::ExitRecords._trail_tightened_recently, lifted verbatim 2026-10-04, caller
       src/pipeline_exits.py::ExitEngineMixin._midday_execute_llm_actions passes nothing). The docstring's reason is a
       forensic observation, not a measured cooldown length. ITEM 90 TRANCHE 2 (PIPELINE), 2026-10-01 -- ROUTED. Derivation attempt (1): derive the 4 calendar days from the ratified swing mandate. FAILED -- the mandate names no number, by design. Attempt (2): derive it from the reviewer's >=1.02x min-bump rule, i.e. the sessions needed for 2% of range to accumulate. FAILED -- that rule bounds the SIZE of one tighten and says nothing about spacing, and the 1.02 is itself unsourced. The measurement below is the route. Value unchanged.
     open_question: >-
