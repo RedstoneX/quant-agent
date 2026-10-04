@@ -1143,3 +1143,17 @@ changes:
       multiple of the stock's own ATR (ten rows) or of R, the risk taken on
       that position (three rows), so it individualises per name and has no
       single value to measure. No value changed.
+  - delta: -2
+    date: '2026-10-04'
+    why: >-
+      Two more rows re-filed `arbitrary` to `owner-ruled` under the owner
+      ruling of 2026-10-04 ("self adjusting the 2.5 is not a made up number.
+      It is specific to its own stock move"), the same ruling and the same
+      test as the thirteen above. `RiskConfig.max_target_reach_atr_multiple`
+      caps a target at a multiple of the name's own ATR times the square root
+      of the sessions to its horizon, and the research pre-filter's 0.5 is
+      a multiple of the name's own ATR(14), so each individualises per stock.
+      No value changed. Rejected on the same check: the gross ladder and the
+      reward-to-risk floor (their notes say the owner has NOT ruled), the flat
+      percent rows, and the exit guard's R-multiple noise floor, which is one
+      flat change in R rather than a reading of the name's own dispersion.

@@ -897,19 +897,10 @@ numbers:
       trades picks the magnitude. Interacts with board item 91, the
       calendar-vs-trading-day defect.
   - id: src.config.RiskConfig.max_target_reach_atr_multiple
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
-      records: 'the same sessions-to-traverse measurement over the universe the desk could trade,
-        on public daily bars, read on the other axis: how far in ATR units price travels within the
-        horizon, so the per-session reach allowance is read off observed travel rather than picked
-        at one and a half'
-      closes_when: the travel-per-session distribution is in hand and the allowance is set at a stated
-        percentile; it is DELETED if the reach test never changes a target that the horizon test did
-        not already change, since the two are then one constraint written twice
     value: 1.5
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-10-04'
+    ruling_record: "docs/OUTCOME.md, section 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)"
     site: src/config/__init__.py
     note: >-
       The reach caps, split out of one number -- board item 56 owns the
@@ -7159,7 +7150,9 @@ numbers:
       sell while the deficit stands would delete this haircut entirely.
   - id: src.pipeline_risk_gate.RiskGate._has_actionable_signal_fn:factor[0]
     value: 0.5
-    status: arbitrary
+    status: owner-ruled
+    ruled_on: '2026-10-04'
+    ruling_record: "docs/OUTCOME.md, section 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)"
     site: src/pipeline_risk_gate.py
     note: >-
       Research pre-filter: a symbol whose MA20/MA50 spread is under 0.5 x
@@ -7173,18 +7166,6 @@ numbers:
     cost_while_unanswered: >-
       Decides which names the technical seat ever looks at; a name filtered
       out here cannot be traded that session.
-    settles_by:
-      kind: "recording"
-      state: "specified"
-      where: "docs/board_notes/item-090.md (item 90, the 2026-10-01 pipeline tranche)"
-      records: >-
-        every symbol this pre-filter DROPS each session together with its MA20/MA50 spread in ATR14s at the moment of
-        the drop, alongside the same spread for every symbol it admits, so the cut point is visible against the whole
-        universe and not only against the survivors
-      closes_when: >-
-        the recorded spreads show the point beyond which dropped names stop differing from admitted names in
-        subsequent realised RANGE -- a property of the instrument. Explicitly never the spread that would have
-        produced the best trades: that is fitting, and it is barred
   - id: src.pipeline_exits.ExitEngineMixin._midday_execute_llm_actions:factor[0]
     value: 1.25
     status: derived
