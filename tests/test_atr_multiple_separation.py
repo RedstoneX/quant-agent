@@ -133,3 +133,24 @@ def test_no_ledger_row_says_the_break_margin_is_the_noise_band() -> None:
         "ledger prose re-collapses the break margin into the noise band: "
         + "; ".join(offenders)
     )
+
+
+def test_noise_band_widening_is_uncapped_and_its_null_is_recorded() -> None:
+    """The sqrt widening is uncapped and measured-unsupported (2026-10-04).
+
+    `ops/research/noise_band_holding_scaling.py` found no adverse-excursion
+    size at which a trend is finished, at any holding length, so no cap is
+    derivable and none was invented. This pins the uncapped state and the
+    recorded null together: a future cap must land with the evidence that
+    replaces this section, not quietly.
+    """
+    from math import sqrt
+
+    from src.risk.exit_guard import noise_band_atr
+
+    assert noise_band_atr(60) == sqrt(60)
+    assert noise_band_atr(250) == sqrt(250)
+
+    findings = (Path(__file__).resolve().parents[1] / "docs/RESEARCH_FINDINGS.md").read_text()
+    assert "Does the band's sqrt(sessions_held) widening match the tape?" in findings
+    assert "No value in `exit_guard.py` is changed by this work." in findings
