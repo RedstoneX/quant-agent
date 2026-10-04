@@ -55,6 +55,7 @@ from src.protection.reprotect_records import ReprotectRecords
 from src.protection.coverage_book_read import read_positions_with_retry
 from src.protection.coverage_book_read import unverified_book_sweep
 from src.sentinel.reconciliation import record_guarded_outcome, record_reconciliation
+from src.sentinel.guarded_protection import guarded_pass
 from src.execution.broker import AlpacaBroker, _split_protective_qty
 from src.models import TradeDecision
 from src.pipeline_context import RunContext
@@ -344,12 +345,9 @@ class ReprotectResidual:
                 existing = self.broker._list_open_protective_stop_orders(symbol, side="buy")
             else:
                 existing = self.broker._list_open_sell_stop_orders(symbol)
+            guarded_pass(self, "reprotect.idempotency_check", symbol=symbol)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Reprotect idempotency check failed for %s: %s — "
-                "proceeding with submit (may duplicate if a stop already "
-                "exists)", symbol, exc,
-            )
+            guarded_pass(self, "reprotect.idempotency_check", exc, symbol=symbol, effect="proceeding with submit; may duplicate an existing stop")
             existing = []
         # HOISTED out of the per-order loop (adversary round 2, defect 4).
         # `ids_complete` does not depend on `o`. Evaluated inside the loop
@@ -674,12 +672,9 @@ class ReprotectResidual:
                 symbol=symbol, qty=residual_qty, stop_price=best_stop,
                 limit_price=None, side=side,
             )
+            guarded_pass(self, "reprotect.residual_submit", symbol=symbol)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Re-protect failed for %s residual=%s @ $%.2f: %s — position "
-                "is unprotected until the next session re-attaches a stop",
-                symbol, self._format_qty(residual_qty), best_stop, exc,
-            )
+            guarded_pass(self, "reprotect.residual_submit", exc, symbol=symbol, effect="position unprotected until the next session re-attaches a stop")
             self._alert_owner_reprotect_left_naked(
                 symbol, residual_qty, 0.0,
                 f"the protective stop submit at ${best_stop:.2f} raised: {exc}",
@@ -848,9 +843,10 @@ class CoverageRepair:
                 symbols=fresh,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "kill-switch-block owner alert failed for %s: %s", symbol, exc,
-            )
+            # NOT converted: a @staticmethod with no owner, so no ledger handle
+            # is in scope to count a row through. Made loud with the traceback
+            # the counted sites carry; the row waits for a caller to lend one.
+            logger.error("kill-switch-block owner alert failed for %s: %s", symbol, exc, exc_info=True)
 
 
 class ExitRelief:
@@ -922,8 +918,9 @@ class ExitRelief:
         for order_id, row in list(register.items()):
             try:
                 info = self.broker.get_order_fill_info(order_id)
+                guarded_pass(self, "exit_relief.repoll", order=order_id)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("open-exit re-poll failed for %s: %s", order_id, exc)
+                guarded_pass(self, "exit_relief.repoll", exc, order=order_id, effect="treated as unmeasurable; caller refuses to re-cut")
                 info = None
             if info is None:
                 unmeasurable = True
@@ -1247,8 +1244,9 @@ class ExDividends:
                 today_trades = self.db.get_trades(
                     symbol=p.symbol, today_only=True, limit=20,
                 )
+                guarded_pass(self, "exdiv.today_trades", symbol=p.symbol)
             except Exception as e:
-                logger.warning("ex-div: today trades lookup failed for %s: %s", p.symbol, e)
+                guarded_pass(self, "exdiv.today_trades", e, symbol=p.symbol, effect="skipping this name for the session")
                 continue
             already = any(
                 (t.get("action") or "").upper() == "TRAIL_STOP"
@@ -1260,8 +1258,9 @@ class ExDividends:
 
             try:
                 div = self.market.get_upcoming_ex_dividend(p.symbol)
+                guarded_pass(self, "exdiv.fetch", symbol=p.symbol)
             except Exception as e:
-                logger.warning("ex-div: fetch failed for %s: %s", p.symbol, e)
+                guarded_pass(self, "exdiv.fetch", e, symbol=p.symbol, effect="skipping this name for the session")
                 continue
             if not div:
                 continue
@@ -1296,8 +1295,9 @@ class ExDividends:
                 # consolidating replace could TIGHTEN a wide lot's stop to
                 # the tightest lot's level minus the dividend).
                 order = self.broker.shift_stops_down(p.symbol, amount)
+                guarded_pass(self, "exdiv.stop_shift", symbol=p.symbol)
             except Exception as e:
-                logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
+                guarded_pass(self, "exdiv.stop_shift", e, symbol=p.symbol, effect="stops left un-shifted across the ex-dividend open")
                 continue
             from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
             if isinstance(order, dict):
@@ -1329,8 +1329,9 @@ class ExDividends:
                             ),
                             symbols=[p.symbol],
                         )
+                        guarded_pass(self, "exdiv.incomplete_shift_alert", symbol=p.symbol)
                     except Exception as e:  # noqa: BLE001
-                        logger.warning("ex-div: owner alert failed for %s: %s", p.symbol, e)
+                        guarded_pass(self, "exdiv.incomplete_shift_alert", e, symbol=p.symbol, effect="owner not told the shift was incomplete")
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
             ):
@@ -1340,8 +1341,9 @@ class ExDividends:
                 continue
             try:
                 write_back_stop_loss(self.db, p.symbol, new_stop, is_short=False)
+                guarded_pass(self, "exdiv.stop_write_back", symbol=p.symbol)
             except Exception as e:  # noqa: BLE001
-                logger.warning("ex-div: stop write-back failed for %s: %s", p.symbol, e)
+                guarded_pass(self, "exdiv.stop_write_back", e, symbol=p.symbol, effect="recorded stop level now disagrees with the broker")
             try:
                 self.db.insert_trade(
                     symbol=p.symbol, action="TRAIL_STOP", qty=p.qty,
@@ -1357,8 +1359,9 @@ class ExDividends:
                     broker_order_id=order.get("id"),
                     fill_status="submitted",
                 )
+                guarded_pass(self, "exdiv.audit_row", symbol=p.symbol)
             except Exception as e:
-                logger.warning("ex-div: audit log failed for %s: %s", p.symbol, e)
+                guarded_pass(self, "exdiv.audit_row", e, symbol=p.symbol, effect="the TRAIL_STOP row for this shift is missing")
             if isinstance(order, dict):
                 order.setdefault("action", "TRAIL_STOP")  # audit F5
             orders.append(order)
@@ -1524,7 +1527,9 @@ class ProtectionMixin:
             pending_syms = {
                 r.get("symbol") for r in self.db.get_pending_protection_restores()
             }
-        except Exception:  # noqa: BLE001
+            guarded_pass(self, "coverage.pending_restore_read")
+        except Exception as exc:  # noqa: BLE001
+            guarded_pass(self, "coverage.pending_restore_read", exc, effect="sweep proceeds as if no restore were pending")
             pending_syms = set()
         # A failed positions read used to `return []`, which every caller
         # reads as all-clear. See src/protection/coverage_book_read.py.
@@ -1613,7 +1618,9 @@ class ProtectionMixin:
                 ok, specs = self.broker.snapshot_protective_stops(
                     symbol, side=("buy" if is_short else "sell"),
                 )
+                guarded_pass(self, "coverage.snapshot_stops", symbol=symbol)
             except Exception as exc:  # noqa: BLE001
+                guarded_pass(self, "coverage.snapshot_stops", exc, symbol=symbol, effect="symbol reported as unreadable coverage")
                 unreadable.append({
                     "symbol": symbol, "held_qty": qty,
                     "covered_qty": None, "coverage": "unreadable",
@@ -1747,12 +1754,9 @@ class ProtectionMixin:
                             symbol.strip().upper()
                             in session_awaiting_print_symbols()
                         )
+                        guarded_pass(self, "coverage.awaiting_print_read", symbol=symbol)
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning(
-                            "coverage sweep: could not read today's "
-                            "awaiting-print names (%s) — treating %s as the "
-                            "ordinary overnight lapse.", exc, symbol,
-                        )
+                        guarded_pass(self, "coverage.awaiting_print_read", exc, symbol=symbol, effect="treated as the ordinary overnight lapse")
                         never_covered = False
                     if never_covered:
                         gap["coverage"] = "partial" if covered > 1e-6 else "none"
@@ -1870,14 +1874,11 @@ class ProtectionMixin:
                             )
                             if waiting:
                                 note_awaiting_first_print(symbol)
+                            guarded_pass(self, "coverage.classify_refusal", symbol=symbol)
                         except Exception as exc:  # noqa: BLE001
                             # An unreadable marker file errs towards telling
                             # the owner, the same way the claim does.
-                            logger.warning(
-                                "coverage sweep: could not classify the "
-                                "stop-repair refusal for %s (%s) — paging.",
-                                symbol, exc,
-                            )
+                            guarded_pass(self, "coverage.classify_refusal", exc, symbol=symbol, effect="paging the owner")
                             waiting = False
                         page_now = not waiting
                         gap["session_repair_failed"] = page_now
@@ -2028,11 +2029,9 @@ class ProtectionMixin:
                 # print and must not be reported after the close as though
                 # it had waited all session.
                 clear_awaiting_first_print(repaired_symbols)
+                guarded_pass(self, "coverage.clear_awaiting_print", count=len(repaired_symbols))
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "coverage sweep: could not clear the awaiting-print "
-                    "marker for %s: %s", ", ".join(repaired_symbols), exc,
-                )
+                guarded_pass(self, "coverage.clear_awaiting_print", exc, count=len(repaired_symbols), effect="name may be reported after the close as having waited")
             self._alert_owner_repair_resolved(repaired_symbols)
         # Board item 172. Appended AFTER every filter above has been built
         # from `gaps`, so an unreadable row cannot reach the naked list, the
@@ -2057,8 +2056,9 @@ class ProtectionMixin:
             )
             mismatches = write_back_live_protective_stops(self.db, mismatches)
             report_stop_level_mismatches(record_reconciliation(db=self.db, kind="recorded_stop_levels", result=mismatches))
+            guarded_pass(self, "coverage.stop_level_reconcile")
         except Exception as exc:  # noqa: BLE001
-            logger.error("stop-level reconcile failed: %s", exc)
+            guarded_pass(self, "coverage.stop_level_reconcile", exc, effect="recorded stop levels not reconciled this pass")
         return record_reconciliation(db=self.db, kind="stop_coverage", result=gaps)
 
     def _elected_unfilled_stop_row(self, *args, **kwargs):
