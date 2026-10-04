@@ -98,7 +98,7 @@ def format_session_result(
     from src.trading_calendar import et_now
 
     _now = et_now()
-    timestamp = f"{_now.strftime('%Y-%m-%d')} {fmt_time_12h(_now)}"
+    timestamp = fmt_time_12h(_now)
     elapsed_str = _fmt_elapsed(elapsed_seconds)
 
     if error is not None:

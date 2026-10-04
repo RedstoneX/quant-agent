@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from collections.abc import Mapping
 from typing import Literal
+from src.risk.noise_band_record import fallback_outcome as noise_band_fallback_outcome
 from src.risk.exit_guard_claims import (  # noqa: F401 -- re-exported, lifted verbatim
     _REGIME_FLIP_CLAIM_RE,
     _BEARISH_STATE_CHANGE_CLAIM_RE,
@@ -2036,24 +2037,16 @@ def check_structural_protection(
         is_noise = adverse_move_is_noise(
             ent, cur, atr_f, side=("buy" if is_short else "sell"),
         )
-        if is_noise:
-            return StructuralProtectionCheck(
-                protected=True, basis="noise_band_intact",
-                detail=(
-                    f"no thesis_invalid_if and no verified structural level "
-                    f"under the stop; adverse move ({adverse:.4g}) is within "
-                    f"the {NOISE_BAND_ATR_MULTIPLE}x ATR noise band — "
-                    f"protected"
-                ),
-                raw_broken=False,
-            )
+        # BOARD ITEM 70 (2026-10-04): this home's outcome text, on BOTH
+        # outcomes, is built by `src/risk/noise_band_record.py` so the band's
+        # two homes write one comparable shape. RECORDING ONLY — `is_noise`
+        # above is the unchanged decision.
+        _protected, _basis, _detail = noise_band_fallback_outcome(
+            ent=ent, cur=cur, atr_f=atr_f, is_short=is_short,
+            is_noise=bool(is_noise), band_multiple=NOISE_BAND_ATR_MULTIPLE,
+        )
         return StructuralProtectionCheck(
-            protected=False, basis="noise_band_broken",
-            detail=(
-                f"no thesis_invalid_if and no verified structural level "
-                f"under the stop; adverse move ({adverse:.4g}) exceeds the "
-                f"{NOISE_BAND_ATR_MULTIPLE}x ATR noise band — not protected"
-            ),
+            protected=_protected, basis=_basis, detail=_detail,
             raw_broken=False,
         )
 

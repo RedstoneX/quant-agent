@@ -82,6 +82,27 @@ def _failure(exc: BaseException) -> dict:
     return {"ok": False, "error_type": type(exc).__name__, "error": str(exc) or type(exc).__name__}
 
 
+def is_error_shaped(entry) -> bool:
+    """True for a recorded entry that is a failure, not an answer."""
+    if not isinstance(entry, dict):
+        return False
+    status = entry.get("status")
+    return (
+        entry.get("ok") is False
+        or "error" in entry
+        or "error_type" in entry
+        or (isinstance(status, int) and status >= 400)
+    )
+
+
+def _admit(table: dict, key: str, entry: dict, refused: list[str], kind: str) -> None:
+    """Record an answer; an error-shaped entry is reported and NOT recorded."""
+    if is_error_shaped(entry):
+        refused.append(f"{kind} {key}: {entry.get('error_type')}: {str(entry.get('error'))[:120]}")
+        return
+    table[key] = entry
+
+
 def _raise_recorded(entry: dict, what: str):
     raise RecordedFeedFailure(
         f"recorded failure for {what}: {entry.get('error_type')}: {entry.get('error')}"
@@ -97,15 +118,17 @@ def capture(
 ) -> dict:
     """Fetch FRED series and feed URLs ONCE and write them to disk. Online by design.
 
-    Never called from a rehearsal — `run_rehearsal` only ever reads. Failures
-    are recorded as failures rather than dropped, because the failure case is
-    the one the retained log is full of.
+    Never called from a rehearsal — `run_rehearsal` only ever reads. A failed
+    fetch is REFUSED: it is reported (returned under `refused` and printed by
+    the CLI) and nothing is recorded for that input, so a replay finds the
+    input absent and says so. A recording holds answers or nothing.
     """
     from urllib.request import Request, urlopen
 
     fred_series: dict[str, dict] = {}
     fred_info: dict[str, dict] = {}
     http: dict[str, dict] = {}
+    refused: list[str] = []
 
     ids = sorted({str(s).strip().upper() for s in series_ids if str(s).strip()})
     if ids:
@@ -117,25 +140,25 @@ def capture(
         for series_id in ids:
             try:
                 series = client.get_series(series_id)
-                fred_series[series_id] = {
+                _admit(fred_series, series_id, {
                     "ok": True,
                     "index": [str(i)[:10] for i in series.index],
                     "values": [None if v != v else float(v) for v in series.values],
-                }
-            except Exception as exc:  # noqa: BLE001 — the failure IS the recording
-                fred_series[series_id] = _failure(exc)
+                }, refused, "fred_series")
+            except Exception as exc:  # noqa: BLE001 — reported, never recorded
+                _admit(fred_series, series_id, _failure(exc), refused, "fred_series")
             try:
                 raw = client.get_series_info(series_id)
                 getter = getattr(raw, "get", None)
-                fred_info[series_id] = {
+                _admit(fred_info, series_id, {
                     "ok": True,
                     "info": {
                         "observation_end": str(getter("observation_end")) if getter else None,
                         "last_updated": str(getter("last_updated")) if getter else None,
                     },
-                }
-            except Exception as exc:  # noqa: BLE001
-                fred_info[series_id] = _failure(exc)
+                }, refused, "fred_series_info")
+            except Exception as exc:  # noqa: BLE001 — reported, never recorded
+                _admit(fred_info, series_id, _failure(exc), refused, "fred_series_info")
 
     from src.data.news import SEC_USER_AGENT, USER_AGENT, _is_sec_gov
 
@@ -148,17 +171,26 @@ def capture(
             request = Request(url, headers={"User-Agent": agent})
             with urlopen(request, timeout=20) as response:  # noqa: S310 — operator command
                 body = response.read()
-            http[key] = {"ok": True, "body_b64": base64.b64encode(body).decode("ascii")}
-        except Exception as exc:  # noqa: BLE001 — the failure IS the recording
-            http[key] = _failure(exc)
+            status = getattr(response, "status", None)
+            _admit(http, key, {
+                "ok": True,
+                "body_b64": base64.b64encode(body).decode("ascii"),
+                **({"status": status} if isinstance(status, int) else {}),
+            }, refused, "http")
+        except Exception as exc:  # noqa: BLE001 — reported, never recorded
+            _admit(http, key, _failure(exc), refused, "http")
 
     if merge:
         # Add to what is already recorded instead of rewriting it: re-fetching
         # the eleven feeds and 15 series live would replace evidence, not add.
         held = load(path) or {}
-        fred_series = {**(held.get("fred_series") or {}), **fred_series}
-        fred_info = {**(held.get("fred_series_info") or {}), **fred_info}
-        http = {**(held.get("http") or {}), **http}
+
+        def _answers(table):
+            return {k: v for k, v in (table or {}).items() if not is_error_shaped(v)}
+
+        fred_series = {**_answers(held.get("fred_series")), **fred_series}
+        fred_info = {**_answers(held.get("fred_series_info")), **fred_info}
+        http = {**_answers(held.get("http")), **http}
 
     recording = {
         "captured_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
@@ -172,7 +204,7 @@ def capture(
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "wt") as handle:
         json.dump(recording, handle)
-    return recording
+    return {**recording, "refused": refused}
 
 
 def _offline_fred(record: list[str], recording: dict | None):
@@ -328,13 +360,12 @@ def _main() -> int:
     args = parser.parse_args()
     urls = list(args.url) or ([] if args.merge else _default_urls())
     result = capture(args.series, urls, args.out, merge=args.merge)
-    ok_series = sum(1 for v in result["fred_series"].values() if v.get("ok"))
-    ok_urls = sum(1 for v in result["http"].values() if v.get("ok"))
     print(
-        f"recorded {ok_series}/{len(result['fred_series'])} FRED series and "
-        f"{ok_urls}/{len(result['http'])} URLs to {args.out} "
-        "(failures are recorded as failures, not dropped)"
+        f"recorded {len(result['fred_series'])} FRED series and "
+        f"{len(result['http'])} URLs to {args.out}"
     )
+    for line in result["refused"]:
+        print(f"REFUSED (not recorded): {line}")
     return 0
 
 

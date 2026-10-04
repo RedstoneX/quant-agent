@@ -745,6 +745,152 @@ sessions live on the VPS at
 - Failed both: meta/muse-spark-1.3 and z-ai/glm-5.3 (misstated evidence counts, e.g. "claims 3/3 aligned but provenance proves 2/3" — rejected by live grounding), deepseek/deepseek-v4-flash-0731 (ungrounded targets), qwen/qwen3.8-flash (truncated at 16000 tokens).
 - Open decision for the owner: rule-following narrows the PM to five reliable models; choosing among them on decision QUALITY needs outcomes (e.g. shadow-tracking picks forward), not another rules exam.
 
+---
+
+## `midday_exit` re-examination, 2026-10-02 — the exam is invalid, not the model
+
+**Verdict: `gemini-3.5-flash-lite` did not review positions worse. It was
+marked down for obeying the live prompt.** Cost of this investigation:
+**$0.00** — no model call was made (see "why no re-run" below).
+
+### The August scores, checked against the committed files
+
+The summary that prompted this ("2.5 = 1.0/1.0, 3.5 = 0.325 mean / 0.0 worst,
+two runs each") is **partly right and materially incomplete**:
+
+| Model | Runs committed 2026-08-31 | Scores | Mean | Worst |
+|---|---|---|---|---|
+| `google/gemini-2.5-flash-lite` (OpenRouter, paid) | 4 (`merged.json`, `sweep-b.json`) | 1.00, 1.00, 1.00, 1.00 | 1.00 | 1.00 |
+| `gemini-3.5-flash-lite` (Google direct, free) | 4 (`gemini35-midday-*`, `gemini35-fullsweep-*`) | 0.65, 0.65, 0.65, 0.00 | **0.4875** | 0.00 |
+
+So "0.325 mean" is the mean of *one* of the two committed 3.5 files, not of
+the evidence on disk. Across all four runs 3.5 means 0.4875. The 1.0/1.0 for
+2.5 is confirmed.
+
+The summary's other claim — that the score is "dominated by a binary
+`parsed_and_grounded` check" — **is wrong for this scenario**. `midday_exit`
+has no such check. `_review_grade` (`ops/model_policy/scenarios.py`) weighs:
+
+| Check | Weight | Kind |
+|---|---|---|
+| `parsed` | 0.30 | schema |
+| `cot_complete` | 0.10 | schema |
+| `acts_on_broken_thesis` | **0.35** | judgement |
+| `does_not_cut_the_winner` | 0.25 | judgement |
+
+### Why each sub-1.0 run of 3.5 lost its point
+
+**Three of four runs (0.65 each): lost `acts_on_broken_thesis` only.** Schema
+passed, chain-of-thought passed, the winner was correctly held. The single
+lost check requires AMD to be `SELL`/`REDUCE`/`TRAIL_STOP` because it sits
+0.25×ATR from its stop. 3.5 answered `HOLD`, reasoning:
+
+> "AMD's distance-to-stop is 0.4% (0.25 ATR), sitting inside the critical
+> zone where broker execution is imminent; however, pre-empting the stop is
+> discouraged unless a hard trigger is cited."
+
+That is the live prompt restated. `config/prompts/position_reviewer.md`:
+
+> "**`to_stop` is ADVISORY DISTANCE, never a trigger: only the broker fills
+> stops.** 'Close to stop' or 'will gap through the stop overnight' is NOT a
+> reason to SELL ahead of it — pre-empting the stop converts protection into
+> a realized whipsaw (GS 2026-05-18: sold at +0.4%-to-stop 'before the gap';
+> no gap came, the stock ran)."
+
+**The grader's heaviest check rewards the exact behaviour the prompt bans,
+and cites a real logged loss as the reason it is banned.** 3.5 lost 0.35 for
+being right.
+
+**The incumbent's perfect score is a score for a prompt violation.** 2.5's
+winning answer:
+
+> "AMD is underperforming significantly, is stalled, and is close to its hard
+> stop. Given the risk-off macro and lack of thesis progress, a REDUCE action
+> is warranted."
+
+"Close to its hard stop" is the banned trigger, named explicitly.
+
+**One of four runs (0.00): schema failure, not reasoning.** `parsed` was
+false; the model produced 750 output tokens against a 16,000 cap, so it was
+not truncated by the cap. The precise defect is **not recoverable** from the
+committed record — the trial's `error` field is empty and `sample_output` is
+stored clipped at 1,500 characters. What is certain is the category: it is a
+formatting/validation failure, not a judgement failure. 3.5 is not alone
+here — `openai/gpt-5-nano` and `deepseek-v4-pro-0813` each produced a
+`parsed`-false run on this same scenario, which is the harness's known
+run-to-run instability, not a property of one model.
+
+### Why no re-run was performed
+
+`midday_exit` is **BLOCKED** by `refusal_reason` in `scenarios.py` and the
+run is refused before any call is made, on either route, paid or free:
+
+> `REFUSED midday_exit: BLOCKED — positions, stops and entry rows are
+> invented; ... The grader's main check rewards SELL/REDUCE/TRAIL_STOP on a
+> position near its stop, which config/prompts/position_reviewer.md says is
+> never a trigger ...`
+
+The repo had already diagnosed this defect. Twenty repeats would have
+produced twenty numbers from a grader whose heaviest check is known-wrong, at
+no gain in resolution — a tighter confidence interval around an invalid
+measurement. Bypassing the fixture gate to obtain them would also break the
+raw-public-facts-only owner rule of 2026-09-14.
+
+### What this does and does not establish
+
+- **Established:** the August verdict does not support holding
+  `position_reviewer` on the paid route. The quality gap it rests on is a
+  grader defect in 3.5's favour.
+- **Not established:** that 3.5 is *affirmatively* safe at this seat. One
+  schema failure in four runs is real and its cause is unrecovered. No valid
+  exam for this seat currently exists.
+- **Fix size — small.** Inverting `acts_on_broken_thesis` to match the prompt
+  (reward `HOLD` absent a named non-`to_stop` trigger) is a few lines. It is
+  *not* sufficient on its own: the scenario stays BLOCKED for its invented
+  positions and its `risk_off` macro regime, which is not a `MacroAnalysis`
+  value. A valid exam needs the fixture rebuilt too.
+
+No seat routing was changed by this investigation.
+
+### Can the seat move pass `test_decision_seats_run_a_model_measured_at_that_seat`? No.
+
+The gate (`tests/test_model_routing_policy.py`) requires, for
+`position_reviewer|midday_exit`, a committed pair with `runs >= 2` and
+`quality_min == 1.0`. **It cannot be satisfied today, and it should not be
+weakened to let the seat move.** Three independent blockers:
+
+1. **No result can be produced at all.** `midday_exit` is BLOCKED; the
+   harness refuses before any call, on the free Google-direct route exactly
+   as on the paid one. The block is not about cost.
+2. **The key would be right, but there is nothing to key.** The gate looks up
+   `f"{model}|{scenario}"` where `model` is the configured seat id —
+   bare `gemini-3.5-flash-lite` on the Google-direct route. The harness keys
+   results from whatever `--models` is given (`benchmark_models.py`,
+   `pairs[f"{t.model}|{t.scenario}"]`), so running
+   `--models gemini-3.5-flash-lite` files them under the bare id with **no
+   code change needed**. The August files are keyed
+   `google/gemini-3.5-flash-lite|midday_exit` because they were run over
+   OpenRouter, where the vendor prefix is part of the id. That mismatch is
+   real and would make the gate report "no committed benchmark result".
+3. **The existing worst run is 0.00, so the gate would fail on score anyway.**
+   Note the supersede rule — `_benchmark_pairs` takes later files by sorted
+   filename, so `gemini35-midday-…` overrides `gemini35-fullsweep-…` and the
+   effective committed pair is `runs=2, quality_min=0.0, quality_mean=0.325`.
+   That is where the "0.325 / 0.0" summary comes from; it is the superseding
+   file, not the whole evidence.
+
+**Honest outcome: `gemini-3.5-flash-lite` cannot be shown to pass this seat's
+gate, and the gate is right to hold.** The 0.65 runs are the grader's fault,
+but the 0.00 run is a genuine schema failure on a seat that decides whether
+to exit a live position, and `quality_min` exists precisely to catch "fine
+most days, unparseable on the others". The unblock is to rebuild the exam —
+correct `acts_on_broken_thesis` to match the prompt, replace the invented
+positions, fix the `risk_off` regime — then run it free on Google direct
+under the bare id. Until then the seat stays where it is on evidence, not on
+preference.
+
+*Update: the exam rebuild described above has since landed (#1160): `midday_exit` now uses a recorded book and grades the desk's own stop rule. The routing decision above is unchanged.*
+
 ## 2026-10-02 — CAPACITY (503) demotions: measured cause
 
 Investigation of the 37 recorded demotions, asking whether the CAPACITY
@@ -850,10 +996,14 @@ not generally.)
 - Rate limits are per project and surface as 429, not 503.
   <https://ai.google.dev/gemini-api/docs/rate-limits>
 - Developers report the identical message at length, and the consistent
-  finding is that it is Google's shared serving pool shedding load — free,
-  paid and enterprise keys are affected alike, and raising the tier does not
-  prevent it. Newer and preview model ids are hit hardest because their
-  capacity allocation has not yet been scaled.
+  finding is that it is Google's shared serving pool shedding load. Newer and
+  preview model ids are hit hardest because their capacity allocation has not
+  yet been scaled. **CORRECTED 2026-10-02:** this bullet previously also said
+  "free, paid and enterprise keys are affected alike, and raising the tier
+  does not prevent it". The first half of that is wrong — Google documents
+  tier-linked sheddability and free is the most sheddable class. Only the
+  second half survives. See the 2026-10-02 research section at the end of
+  this file.
   <https://discuss.ai.google.dev/t/gemini-api-is-returning-a-503-unavailable-high-demand-error-continuously-for-more-than-24-hours-and-i-need-help-understanding-the-cause-and-expected-resolution-time/172445>,
   <https://discuss.ai.google.dev/t/gemini-api-returns-503-unavailable-for-all-requests-on-one-account-works-on-another-account/124079>,
   <https://kunavo.com/guides/gemini-api-model-overloaded>,
@@ -863,7 +1013,10 @@ not generally.)
 
 **Cause: provider-side capacity on Google AI Studio's shared serving pool
 for `gemini-3.5-flash-lite`. Not our pacing, not our prompt size, not our
-credentials or tier.** Four independent measurements agree: zero concurrent
+credentials.** (**CORRECTED 2026-10-02:** "or tier" was struck. Being on the
+free tier does not cause the shortage, but Google documents free/Flex traffic
+as the first to be shed when there is one, so our tier plausibly decides
+whether *we* are the ones refused. See the 2026-10-02 research section.) Four independent measurements agree: zero concurrent
 requests against a 15 RPM ceiling; prompts larger than the refused ones
 succeed on the same route on other days; the code is 503 UNAVAILABLE, which
 is not the 429 a quota breach produces; and the same prompt on the same
@@ -892,3 +1045,183 @@ What remains genuinely open is **not** the 503s at all:
   road of its own (Vertex AI) on a different capacity pool. Not recommended
   now — at 17 refusals across 16 sessions, every one of which was rescued by
   an existing route, the failure is already contained.
+
+## 2026-10-02 — External research pass on the 503s (supersedes "What the research says" above)
+
+The section above concluded that tier is irrelevant to this failure. **That
+conclusion is now partly overturned.** The sweep below was done against
+primary Google documentation and dated developer reports, not from recall.
+Every source is dated; where a claim could not be verified at its source it
+is labelled as such.
+
+### (a) What Google's documentation says the error is
+
+- `503 UNAVAILABLE` is documented only as a retryable transient error,
+  grouped with `429 RESOURCE_EXHAUSTED`: *"If you receive an error indicating
+  that you should retry your request (such as a `429 RESOURCE_EXHAUSTED` or
+  `503 UNAVAILABLE`)"*, with exponential backoff prescribed and the rule
+  *"Only retry on transient errors (like `429`, `408`, or `5xx`)"*.
+  <https://ai.google.dev/gemini-api/docs/troubleshooting> (page footer:
+  last updated **2026-10-01 UTC**).
+- The error reference gives 503 as `service_unavailable` — *"The service is
+  temporarily overloaded or down"*, action *"Wait and retry with exponential
+  backoff"* — against 429 `rate_limit_exceeded` / `quota_exceeded`, *"You
+  have exceeded the per-minute or per-second request or token limit"* /
+  *"your daily quota"*. <https://ai.google.dev/gemini-api/docs/api-errors>
+  (last updated **2026-09-20 UTC**).
+- **The distinction is therefore formal and holds:** 429 is *our* consumption
+  against *our* limit; 503 is *Google's* capacity against *everyone*. Neither
+  page gives a cause for 503 beyond "overloaded", and neither mentions tier.
+
+### (b) Free-tier shedding — THIS OVERTURNS THE EARLIER CONCLUSION
+
+Google now documents service tiers with explicit, differing **reliability**,
+and the mechanism is named:
+
+| Tier | Pricing | Reliability (Google's own word) |
+|---|---|---|
+| Flex | 50% discount | **"Best-effort (Sheddable)"** |
+| Standard | full price | "High / Medium-high" |
+| Priority | "75–100% more than Standard" | **"High (Non-sheddable)"** |
+| Batch | 50% discount | "High (for throughput)" |
+
+*"Flex traffic is treated with lower priority. If there is a spike in
+standard traffic, Flex requests may be preempted or evicted."* and *"When
+Flex capacity is unavailable or the system is congested, the API will return
+standard error codes: 503 Service Unavailable: The system is currently at
+capacity."* — <https://ai.google.dev/gemini-api/docs/flex-inference> (last
+updated **2026-09-23 UTC**).
+
+So shedding is a real, documented, tier-linked mechanism, and the 503 we
+receive is the documented symptom of being shed. The remaining question is
+whether the FREE tier is sheddable. Google's search index returns, three
+times and consistently, the sentence *"Free-tier requests use sheddable
+capacity, while billed-tier requests are protected by critical priority"*
+attributed to Google's own AI Studio / Gemini API status page,
+<https://aistudio.google.com/status>. **Caveat, stated plainly: two direct
+fetches of that page (2026-10-02) returned only the incident list and could
+not reproduce the sentence**, so it is likely in a JS-rendered FAQ block.
+Treat it as strong-but-not-source-verified. It is not contradicted anywhere.
+
+**Where this contradicts the earlier conclusion.** The line above reading
+*"free, paid and enterprise keys are affected alike, and raising the tier
+does not prevent it"*, and the conclusion's *"not our credentials or tier"*,
+are **wrong as written**. Being on the free tier plausibly makes us *first*
+to be shed. What survives is the weaker and still-correct claim: **paying
+does not make 503 go away.** Dated evidence that paying is not a cure:
+
+- **2026-08-27 to 08-31**, `gemini-3.7-flash`, **Tier 2 paid with Priority
+  tier enabled**, EU/Spain: *"This model is currently experiencing high
+  demand. Spikes in demand are usually temporary."*, 8 backoff attempts over
+  4–5 minutes, 0% success. Another tester in the same thread logged **973
+  consecutive 503s before one success — 12 h 22 m 50 s** — and concluded
+  *"available capacity can vary extremely sharply over time"*. No Google
+  staff reply.
+  <https://discuss.ai.google.dev/t/persistent-503-on-gemini-3-7-flash-with-priority-tier-tier-2-paid-0-success-over-multiple-retries/179804>
+- **2026-05-14**, paid Pro tier: *"I am consistently receiving 503
+  UNAVAILABLE errors while using the Gemini API Pro"*; Google staff replied
+  2026-05-21 with a pointer to documentation and no resolution.
+  <https://discuss.ai.google.dev/t/persistent-503-service-unavailable-high-demand-errors-on-paid-pro-tier/144838>
+
+**Net: the honest position is "paying reduces the odds of being shed, and is
+documented to; it does not remove the failure."** Nobody outside Google has
+published a measurement of how much it reduces them, and Google does not say.
+
+### (c) Is `-lite`, or this model id, worse?
+
+**No external source settles this.** No published statement, from Google or
+anyone else, says `-lite` variants are more capacity-constrained. The only
+asymmetry documented is the opposite direction: Flash-Lite carries the
+*larger* free-tier allowance (reported ~15 RPM / ~500 RPD against Flash's
+5 RPM / 20 RPD). The recurring practitioner claim is that **new and preview
+model ids** are hit hardest before their allocation scales — which is about
+model age, not the `-lite` suffix. Our own data cannot separate the two: we
+only route `gemini-3.5-flash-lite` at tier 1.
+
+### (d) Region and endpoint
+
+- Vertex AI is a genuinely different road: it runs on Google Cloud capacity
+  and bills the same per token, and practitioners do add it as a second
+  route for exactly this reason (e.g. a 2026 PR adding *"Vertex AI (global
+  endpoint) as a second route to Gemini"*).
+- Vertex's default **Dynamic Shared Quota** means you draw from a global
+  shared pool and can be refused at low usage when the pool is busy — the
+  same class of failure, not a cure.
+  <https://cloud.google.com/blog/products/ai-machine-learning/reduce-429-errors-on-vertex-ai>
+- **No source found claims a regional endpoint or the global endpoint fixes
+  503.** Do not assume it does.
+
+### (e) What practitioners actually report working
+
+- **Second provider for the same model** — the single most reported working
+  fix, and the one we already run. Multiple 2026 repos ship exactly our
+  shape: Gemini primary, OpenRouter fallback on 503. Matches our measured
+  7-of-8 rescue rate.
+- **Fallback to an older/adjacent model id** — reported working **2026-08-31**
+  (a tester kept `gemini-3.6-flash` in production for this reason), reported
+  *not* working **April 2026** across the 2.5/3.x range when the whole pool
+  was short.
+- **Retries alone** — widely reported as insufficient. **2026-04-08 to 04-28**:
+  5–6 attempts needed, *"the service is effectively unusable"*,
+  *"basically not reliable"*, no Google acknowledgement.
+  <https://discuss.ai.google.dev/t/503-this-model-is-currently-experiencing-high-demand-spikes-in-demand-are-usually-temporary-please-try-again-later/138664>
+- **A free-tier trap worth knowing: 503s may still burn daily quota.** Reported
+  **2026-09-23/24** (our own worst 503 day) on free tier: five 503s were
+  followed by a 429 daily-quota exhaustion. Google staff replied 2026-09-29
+  without answering whether failed calls count. Unresolved.
+  <https://discuss.ai.google.dev/t/gemini-api-503-errors-appear-to-consume-free-tier-rpd-leading-to-429-quota-exhaustion/184644>
+  **If true, aggressive retrying on the free tier makes the day worse, not
+  better.** This is an argument against adding retries, consistent with the
+  decision already taken.
+
+### (f) Does a paid tier exist that removes this class of failure, and what does it cost?
+
+Two documented products claim non-sheddable capacity:
+
+- **Priority service tier** (Gemini Developer API). Google's own table calls
+  it *"High (Non-sheddable)"* at *"75–100% more than Standard"*. Standard
+  Flash-Lite is **$0.30 / $2.50** per million input/output tokens
+  (<https://ai.google.dev/gemini-api/docs/pricing>, last updated
+  **2026-10-01 UTC**); third-party summaries put Priority at ~1.8x, which
+  would be roughly **$0.54 / $4.50**. One fetch of the pricing page read the
+  Priority Flash-Lite row as $2.70 / $22.50 (9x) — **the multiplier is not
+  reliably established here and must be read off the live pricing page
+  before anyone budgets it.**
+- **Vertex AI Provisioned Throughput** — reserved, isolated capacity,
+  described as the only option that isolates you from the shared pay-as-you-go
+  pool. Sold as a committed reservation (monthly/annual throughput units),
+  not per token; **no credible public unit price was found, and it is
+  structurally aimed at sustained high volume, which we are not.**
+
+**Neither is free of the failure in practice:** the 2026-08-27 thread above
+is a Priority-tier customer at 0% success. Priority also overflows back to
+Standard once your allocation is exceeded.
+
+### (g) Recommended fix at the cause
+
+**No change recommended, and the earlier operational decision stands — but
+for a corrected reason.**
+
+- Route diversity remains the right fix and is already built. It is what
+  practitioners report working, and it is what our own 7-of-8 rescue measures.
+- **Correction to the record:** we should stop saying tier is irrelevant. Our
+  free-tier traffic is, by Google's own tiering model, the most sheddable
+  class of traffic there is. If 503s become frequent enough to cost a
+  decision run, **the cheapest cause-level change is to put the tier-1 Google
+  route on a billed key**, which moves us out of sheddable capacity. That is
+  a cost question, not an engineering one, and it is not warranted at 17
+  refusals across 16 sessions, every one rescued.
+- **Do not add retries.** External evidence is that retries do not clear a
+  shed, and the 2026-09-23/24 report suggests they may consume free-tier
+  daily quota and convert a 503 day into a 429 day.
+- **Priority tier and Vertex Provisioned Throughput are not recommended**:
+  one is documented non-sheddable yet observed failing on a paid Priority
+  account in August 2026, the other is a volume commitment we have no volume
+  for.
+- The real fragility named above — a single funded OpenRouter account — is
+  unchanged by any of this and remains the larger exposure.
+
+**Where nobody outside knows:** Google publishes no cause, no per-tier
+shedding rate, no capacity status per model id, and no SLA for free-tier
+availability. Every quantitative claim about how much paying helps is
+inference, including ours.

@@ -28,7 +28,8 @@ from src.portfolio_constructor import (
 )
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-CONSTRUCTOR = REPO / "src" / "portfolio_constructor" / "orders.py"
+# The sizing bodies moved VERBATIM to order_build/ (2026-10-02), one file per leg; orders.py keeps thin shims.
+CONSTRUCTOR = REPO / "src" / "portfolio_constructor" / "order_build"
 SETTINGS = REPO / "config" / "settings.yaml"
 LEDGER = REPO / "config" / "number_ledger.yaml"
 
@@ -50,7 +51,7 @@ def _risk_settings() -> dict:
 
 def test_no_third_independent_clamp_in_the_sizing_path():
     """A new upper bound on `allocation_pct` makes the ordering unreadable."""
-    tree = ast.parse(CONSTRUCTOR.read_text())
+    tree = ast.Module(body=[n for p in sorted(CONSTRUCTOR.glob("*_entry.py")) for n in ast.parse(p.read_text()).body], type_ignores=[])
     seen = {}
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in SIZING_FUNCTIONS):
@@ -101,8 +102,8 @@ def test_no_third_independent_clamp_in_the_sizing_path():
 
 def test_the_risk_cap_is_the_envelope_in_notional_units():
     """`alloc_cap_by_risk` must stay a unit conversion, not a new bound."""
-    source = CONSTRUCTOR.read_text()
-    tree = ast.parse(source)
+    source = "\n".join(p.read_text() for p in sorted(CONSTRUCTOR.glob("*_entry.py")))
+    tree = ast.Module(body=[n for p in sorted(CONSTRUCTOR.glob("*_entry.py")) for n in ast.parse(p.read_text()).body], type_ignores=[])
     found = 0
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in SIZING_FUNCTIONS):
