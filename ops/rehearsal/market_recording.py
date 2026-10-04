@@ -16,7 +16,8 @@ RECORDED once, deliberately and online, by `capture()` below — run as an
 operator command, never from inside a rehearsal — and served from disk
 afterwards.
 
-No invented data: a symbol absent from the recording is served exactly what a
+No invented data: a symbol absent from the recording (bars, or the valuation
+metrics `capture_valuations` records alongside them) is served exactly what a
 yfinance outage serves (empty), is named in the rehearsal's `unavailable` list,
 and shows up in the report as degradation rather than being silently filled in.
 """
@@ -109,6 +110,40 @@ def capture(symbols, path: Path | str = DEFAULT_RECORDING, lookback_days: int = 
     return recording
 
 
+def capture_valuations(symbols, path: Path | str = DEFAULT_RECORDING) -> dict:
+    """Fetch valuation metrics ONCE and MERGE them into the recording. Online by design.
+
+    The Tech seat reads trailing PE, forward PE and price-to-sales for every
+    name it analyses (`MarketDataProvider.get_valuation_metrics`, a third live
+    yfinance read the bars and sectors recordings did not cover). What is
+    recorded is exactly what the live provider returned — a dict whose
+    fields are None where yfinance had nothing (ETFs, new listings) — so the
+    desk sees the same shape it sees live. The bars already held are kept,
+    not re-downloaded: replacing them would replace evidence, not add to it.
+    """
+    from src.data.market import MarketDataProvider
+
+    held = load(path)
+    if held is None:
+        raise FileNotFoundError(
+            f"no market recording at {path}; capture bars first with "
+            "`python -m ops.rehearsal.market_recording SYM ...`"
+        )
+    provider = MarketDataProvider()
+    stamp = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    valuations = dict(held.get("valuations") or {})
+    for symbol in sorted({s.strip().upper() for s in symbols if s and s.strip()}):
+        metrics = provider.get_valuation_metrics(symbol) or {}
+        valuations[symbol] = {"captured_utc": stamp, "metrics": dict(metrics)}
+    held["valuations"] = valuations
+    held["valuations_source"] = "yfinance via src.data.market.MarketDataProvider.get_valuation_metrics"
+    path = Path(path)
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "wt") as handle:
+        json.dump(held, handle)
+    return held
+
+
 def recorded_market_data(record: list[str], recording: dict | None):
     """A market-data provider that reads the recording and never the network.
 
@@ -119,11 +154,13 @@ def recorded_market_data(record: list[str], recording: dict | None):
     from src.data.market import MarketDataProvider
 
     bars = dict((recording or {}).get("bars") or {})
+    valuations = dict((recording or {}).get("valuations") or {})
     captured = (recording or {}).get("captured_utc")
 
     class RecordedMarketData(MarketDataProvider):
         recording_captured_utc = captured
         recorded_symbols = sorted(bars)
+        recorded_valuation_symbols = sorted(valuations)
 
         def __init__(self):
             super().__init__()
@@ -141,10 +178,21 @@ def recorded_market_data(record: list[str], recording: dict | None):
             return series
 
         def get_valuation_metrics(self, symbol: str):
-            note = f"valuation metrics for {symbol} (not recorded; rehearsals are offline)"
-            if note not in record:
-                record.append(note)
-            return {}
+            # Served from the recording, never from yfinance. An unrecorded
+            # symbol is NAMED (and voids the run unless --allow-degraded)
+            # rather than handed an empty dict the desk could mistake for
+            # "this name simply has no PE" — that confusion is exactly what
+            # a replay must not produce.
+            entry = valuations.get((symbol or "").upper())
+            if entry is None:
+                note = (
+                    f"valuation metrics for {symbol} (not recorded; capture them with "
+                    "`python -m ops.rehearsal.market_recording --valuations SYM ...`)"
+                )
+                if note not in record:
+                    record.append(note)
+                return {}
+            return dict(entry.get("metrics") or {})
 
         def get_upcoming_ex_dividend(self, symbol: str):
             return {}
@@ -157,7 +205,18 @@ def _main() -> int:
     parser.add_argument("symbols", nargs="+", help="tickers to record")
     parser.add_argument("--out", default=str(DEFAULT_RECORDING))
     parser.add_argument("--lookback-days", type=int, default=400)
+    parser.add_argument(
+        "--valuations", action="store_true",
+        help="record valuation metrics for SYMBOLS into the EXISTING recording (bars kept)",
+    )
     args = parser.parse_args()
+    if args.valuations:
+        result = capture_valuations(args.symbols, args.out)
+        print(
+            f"recorded valuation metrics for {len(result['valuations'])} symbols to "
+            f"{args.out} (bars untouched)"
+        )
+        return 0
     result = capture(args.symbols, args.out, args.lookback_days)
     print(
         f"recorded {len(result['bars'])} symbols to {args.out} "

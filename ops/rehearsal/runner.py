@@ -414,7 +414,9 @@ def run_rehearsal(
             checks.append(
                 "market data is served from the recording captured "
                 f"{_recording.get('captured_utc')} "
-                f"({len(_recording.get('bars') or {})} symbols), not downloaded"
+                f"({len(_recording.get('bars') or {})} symbols' bars, "
+                f"{len(_recording.get('valuations') or {})} symbols' valuation "
+                "metrics), not downloaded"
             )
         else:
             _served = blocked_market_data(unavailable)

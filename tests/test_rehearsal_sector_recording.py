@@ -33,3 +33,27 @@ def test_a_symbol_with_no_recorded_sector_is_reported_unrecorded_not_invented(tm
 
 def test_missing_file_is_empty_never_a_default(tmp_path):
     assert sector_recording.load(tmp_path / "nope.json") == {}
+
+
+def test_recorded_valuation_metrics_are_served_and_unrecorded_names_are_named():
+    """Recorded valuations replay as the live dict; an unrecorded symbol is
+    named in `unavailable` (so it voids the run) rather than silently empty."""
+    from ops.rehearsal.market_recording import recorded_market_data
+
+    recording = {
+        "captured_utc": "2026-09-30T20:00:59Z",
+        "bars": {},
+        "valuations": {
+            "AAPL": {"captured_utc": "x", "metrics": {"trailing_pe": 38.31, "forward_pe": 34.82, "ps_ratio": 10.43}},
+            "SPY": {"captured_utc": "x", "metrics": {"trailing_pe": 24.87, "forward_pe": None, "ps_ratio": None}},
+        },
+    }
+    unavailable: list[str] = []
+    provider = recorded_market_data(unavailable, recording)
+    assert provider.get_valuation_metrics("aapl")["trailing_pe"] == 38.31
+    assert provider.get_valuation_metrics("SPY") == {"trailing_pe": 24.87, "forward_pe": None, "ps_ratio": None}
+    assert unavailable == []
+    assert provider.get_valuation_metrics("ZZZZ") == {}
+    assert len(unavailable) == 1 and "valuation metrics for ZZZZ" in unavailable[0]
+    provider.get_valuation_metrics("ZZZZ")
+    assert len(unavailable) == 1
