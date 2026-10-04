@@ -18059,6 +18059,16 @@ not a contention fix, and is reported as such.
 
 **Proof.** `tests/test_rehearsal_stand_in_amend.py`: the production `replace_stop_loss` over the stand-in moves `pre-existing-stop-ZZZ @ $100.00` to a new id `@ $105.00` with `cancelled=[]`; an unimplemented `get_clock` raises and the post-session check voids the run naming `RehearsalTradingClient.get_clock`; the CLI prints `REHEARSAL VOID — StandInGap: …` and exits 2.
 
+## The ledger said where every number came from, and the addresses had gone stale (item 225, 2026-10-04)
+
+**What was wrong.** `config/number_ledger.yaml` records the provenance of every money-governing number in the desk, and it cited each source as a file path and a line number. Line numbers rot the moment anything above them moves, and the splitting of the two largest files moved thousands of lines. The guard only confirmed that the cited line existed, never that it still held what the row claimed, so 267 citations read as verified while an unknown number of them pointed at unrelated code.
+
+**What changed.** Every citation is now a symbol pin (`path::Symbol`) or a pinned-text pin (``path@`text` ``), both of which survive a file moving, and the guard rejects a bare `path:line`. Four dead references were repointed at live code.
+
+**Proof.** `tests/test_ledger_citations.py` and `tests/test_number_sources.py` pass with no exemption list, and a reintroduced `path:line` citation fails.
+
+**What it did NOT fix, measured the same day.** The guard checks that a citation RESOLVES, never that it SUBSTANTIATES. Because the conversion was bulk, rows whose line numbers were already stale were pinned to whatever sat there — an export list, a bare import statement, a mid-sentence fragment. That is a separate defect with its own change; resolution is necessary and not sufficient.
+
 
 ## A provider success with no usable cost telemetry never happened, 2026-10-02 — board item 203 closed
 
