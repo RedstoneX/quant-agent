@@ -108,9 +108,12 @@ AAPL/MSFT/NVDA/AMZN/GOOGL, 2025-01-01..2025-09-30, 85 trades per arm.
 | `risk.max_position_risk_pct` (control) | 5 | 2 | -4.73% | -0.82% | +3.91pp (max drawdown -23.69pp) |
 
 `max_target_horizon_sessions` is the THIRD parameter measured inert in this
-engine, after the target reach multiple and the breakout projection. Inert
-means the deterministic path never consults it — not that 60 is right. The row
-stays `arbitrary`.
+engine, after the target reach multiple and the breakout projection. Corrected
+on review: this does NOT mean the deterministic path ignores it — three live
+modules consult it. It is a CAP that binds only when a caller passes a larger
+horizon, and that horizon is an LLM-produced field the engine states it cannot
+produce, so the knob was unreachable here rather than idle. The row stays
+`arbitrary`, and the null is no grounds for removing the constant.
 
 `max_position_risk_pct` stays `arbitrary` as well. The control proves it is the
 most outcome-moving risk dial measured on this path, but a measurement showing

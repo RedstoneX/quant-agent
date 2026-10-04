@@ -1034,8 +1034,12 @@ numbers:
       control run in the same condition (max_position_risk_pct 5 against 2)
       moved total return by +3.91 points, so the harness does register a real
       difference and this zero is a true null, not broken plumbing. The row
-      therefore STAYS `arbitrary`: inertness here is evidence the deterministic
-      backtest path never consults the horizon, not evidence that 60 is right.
+      therefore STAYS `arbitrary`, and the inertness has a SPECIFIC cause that
+      is not "the value is ignored": this is a CAP, binding only when a caller
+      passes a horizon larger than it, and the horizon is an LLM-produced field
+      the engine's own docstring says it cannot produce. Three live modules do
+      consult it. The knob could not move in this harness, so the null says
+      nothing about the value and must never license deleting the constant.
       Settling it still needs the sessions-to-traverse distribution the
       settles_by block already specifies. Reproduce with scripts/backtest.py
       --config-b against a copy differing only in max_target_horizon_sessions.

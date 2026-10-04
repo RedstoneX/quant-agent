@@ -1159,8 +1159,10 @@ changes:
       `src.config.RiskConfig.max_target_horizon_sessions`, 60 against 20, came
       back BYTE-IDENTICAL on all twelve reported metrics -- the third parameter
       measured inert in this engine, after the target reach multiple and the
-      breakout projection. Inert here means the deterministic backtest path
-      never consults the horizon, NOT that 60 is right, so the row stays
+      breakout projection. CORRECTED on review: inert here does NOT mean the
+      path ignores the horizon -- three live modules consult it. It is a CAP
+      that binds only above an LLM-produced horizon the engine cannot produce,
+      so the knob was unreachable in this harness. The row stays
       `arbitrary` and now records that a backtest cannot close it.
       `src.config.RiskConfig.max_position_risk_pct`, 5 against 2, was the
       POSITIVE CONTROL and moved total return by +3.91 points with max drawdown
