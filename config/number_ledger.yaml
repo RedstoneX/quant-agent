@@ -191,45 +191,26 @@ numbers:
       and the share of the book that number silently refuses changes as equity
       changes.
   - id: src.config.CashReserveConfig.pct
-    settles_by:
-      kind: recording
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
-      records: 'every session, the cash the reserve withheld from deployment beside the cash the account
-        actually had to meet that session: broker fees, margin interest debits, settlement timing
-        and any sizing-to-fill shortfall, so the buffer is compared against a measured obligation
-        rather than a round one percent'
-      closes_when: a run of sessions shows the largest same-day cash obligation the account met, and
-        the reserve is set above that observed maximum with the observation named; it is DELETED,
-        and deployable cash becomes the whole balance, if no session ever consumes cash the reserve
-        was holding back
     value: 1
-    status: arbitrary
+    status: not-trade-governing
     site: src/config/__init__.py
     note: >-
-      % of equity the /account liquidity view reports as held back as raw
-      cash for fees, slippage and partial fills. RELOCATED 2026-10-01 (board
-      item 190) from `CashSweepConfig.reserve_pct` to its own
-      `CashReserveConfig.pct`; the VALUE and the `arbitrary` label are
-      unchanged, only the home. Why it moved rather than died with the sweep:
-      measured over this checkout, its only readers are
-      `src.api.deps.get_cash_reserve_pct` -> `routes_live._compute_liquidity`,
-      which renders `reserve_usd` and `cash_above_reserve`, and the
-      branch-preview shim that reconstructs the same two fields. The sweeper's
-      own `CashSweeper.reserve_usd` wrapper, its last in-engine reader, had no
-      production caller left once the parking buy and funding sell were
-      deleted and went with them. The deployment-gap advisory stopped reading
-      this band at item 190 step 1 (`DeploymentGapConfig.band_pct`, same
-      value). Leaving it inside the retired feature's namespace was the live
-      risk: a later cleanup reading "cash_sweep" as dead would have deleted a
-      band the account view still reports.
-    open_question: >-
-      What is the largest observed shortfall between an order's sized cost and
-      its settled cost on this account - fees, slippage and partial fills
-      together?
-    cost_while_unanswered: >-
-      Too low and a funded order fails for want of cash; too high and equity
-      sits in raw cash earning nothing.
+      RE-FILED from `arbitrary` 2026-10-04. The percent of equity the
+      /account liquidity view reports as held back (`reserve_usd`) and the cash
+      left above it (`cash_above_reserve`). EVIDENCE, by grep over src/ and
+      scripts/ on this checkout: the only reader of `cash_reserve.pct` is
+      `src.api.deps.get_cash_reserve_pct`, whose only caller is
+      `routes_live._compute_liquidity`, which passes it to
+      `src.quantities.sweep_reserve_usd` and renders the result into the
+      account response. `reserve_usd` and `cash_above_reserve` have no reader in
+      the engine, the sizing path or any gate. `src.quantities.deployable_cash`,
+      which the docstring there names as the figure Portfolio Manager sizing,
+      the Risk Manager audit and the pre-trade cash gate all use, does not take
+      a reserve argument. The deployment-gap advisory stopped reading the band
+      at board item 190 step 1. A wrong value therefore changes a number an
+      operator reads on the dashboard and no order, size or refusal. If a
+      later change makes any engine path read it, this row must go back to
+      `arbitrary` in the same change.
   - id: src.config.DeploymentGapConfig.band_pct
     settles_by:
       kind: measurement

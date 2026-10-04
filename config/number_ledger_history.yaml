@@ -1114,3 +1114,12 @@ changes:
       meant to source it found directional overnight-gap asymmetry at a
       median 1.01 across names, nowhere near 1.5, so the count falls by
       one with no new unsourced number entering anywhere.
+  - delta: -1
+    date: '2026-10-04'
+    why: >-
+      `src.config.CashReserveConfig.pct` (1) re-filed `arbitrary` to
+      `not-trade-governing`. Measured by grep over src/ and scripts/: its only
+      reader is the /account liquidity view, which renders `reserve_usd` and
+      `cash_above_reserve`; no engine, sizing or gate path reads either, and
+      the engine's deployable cash takes no reserve argument. The evidence is
+      written into the row, with the condition that reverses it.
