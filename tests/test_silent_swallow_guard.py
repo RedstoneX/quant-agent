@@ -1,53 +1,75 @@
 """Silent-swallow ratchet: no NEW broad-except-returns-empty-records-nothing on money paths.
 
 See scripts/silent_swallow_guard.py for the pattern, what counts as a durable
-record in this codebase, and the money-module scope. Baseline in
-tests/silent_swallow_baseline.json may only shrink.
+record in this codebase, and the money-module scope. The guard stores nothing:
+it scans the working tree, scans the same modules on ``origin/main``, and fails
+on the DELTA by site IDENTITY (never a total). When the trunk cannot be read it REFUSES rather than passes
+(docs/GUARDS_WITHOUT_STORED_STATE.md).
 """
 from __future__ import annotations
 
 import ast
 
-from scripts import silent_swallow_guard as g
+import pytest
 
-_FIX = "PYTHONPATH=. .venv/bin/python -m scripts.silent_swallow_guard --shrink-baseline"
+from scripts import silent_swallow_guard as g
+from scripts.guard_reference import ReferenceUnavailable
 
 
 def test_no_new_silent_swallow_on_money_paths():
-    now = g.violations()
-    new = sorted(set(now) - g.load_baseline())
+    new = g.added()
     assert not new, (
-        "NEW silent swallow(s) on a money path (broad except -> empty return, nothing durable recorded):\n"
-        + "\n".join(f"  {k}  (line {now[k]})" for k in new)
-        + "\nA swallowed broker error that returns None/False/[] is read by the caller as "
-        "'nothing found' (get_current_stop_price -> 'no stop to adjust'). "
-        "Fix: re-raise, or record the failure durably before returning (event journal, "
-        "insert_*/save_* row, send_owner_alert / _alert_owner_*, record_*). "
-        "A logger call is NOT a record. Do NOT add it to tests/silent_swallow_baseline.json; "
-        "that list may only shrink."
+        "NEW silent swallow(s) on a money path (broad except -> empty return, "
+        "nothing durable recorded):\n" + g.delta_report(new) + "\n" + g.FIX_ADVICE
     )
 
 
-def test_baseline_only_shrinks():
-    stale = sorted(g.load_baseline() - set(g.violations()))
-    assert not stale, (
-        "These baseline silent swallows are gone (good, you fixed them): "
-        + ", ".join(stale)
-        + f"\nFix: run `{_FIX}` and commit tests/silent_swallow_baseline.json so the ratchet tightens."
-    )
+def test_guard_refuses_when_the_trunk_cannot_be_read(monkeypatch):
+    """Rule 3: no reference means a non-zero refusal, never a silent pass."""
+    def _no_trunk(paths):
+        raise ReferenceUnavailable("origin/main is unreachable in this test")
+
+    monkeypatch.setattr(g, "trunk_blobs", _no_trunk)
+    with pytest.raises(ReferenceUnavailable):
+        g.added()
+    assert g.main() == 2
 
 
-def test_baseline_keys_point_at_scoped_modules():
-    bad = sorted(k for k in g.load_baseline() if k.split("::")[0] not in g.MONEY_MODULES)
-    assert not bad, "Baseline keys outside the money-module scope: " + ", ".join(bad)
+def test_nothing_stored_on_disk():
+    """Rule 1: the baseline file is gone and nothing re-creates it."""
+    assert not (g.ROOT / "tests" / "silent_swallow_baseline.json").exists()
+    assert not hasattr(g, "load_baseline") and not hasattr(g, "shrink_baseline")
+
+
+def test_delta_report_names_the_file_and_counts_what_it_gained():
+    """Rule 4: the message is a delta, not an absolute count."""
+    text = g.delta_report([
+        (("src/execution/broker.py", "f", "except Exception:\n    return None"), 10, 1, 0),
+        (("src/execution/broker.py", "g", "except Exception:\n    return []"), 20, 2, 1),
+    ])
+    assert "src/execution/broker.py: gained 2 silently-swallowed exception(s)" in text
+    assert "src/execution/broker.py::g  (line 20, 2 here vs 1 on origin/main)" in text
+
+
+def test_swapping_one_offender_for_another_is_still_an_addition(monkeypatch):
+    """The net-zero hole: remove one swallow, add a different one, same total.
+    Identity comparison still reports the new one."""
+    before = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n"
+    after = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return []\n"
+    monkeypatch.setattr(g, "trunk_blobs", lambda paths: {"x.py": before})
+    monkeypatch.setattr(g, "scan", lambda rel: g.scan_text(rel, after))
+    new = g.added(("x.py",))
+    assert [(site[1], site[2].splitlines()[-1].strip(), n, was) for site, _, n, was in new] == [
+        ("f", "return []", 1, 0)
+    ]
+    monkeypatch.setattr(g, "scan", lambda rel: g.scan_text(rel, before))
+    assert g.added(("x.py",)) == []
 
 
 # --- self-tests: the guard fires on the pattern and stays quiet on a durable record ---
 
 def _hits(src: str) -> list[str]:
-    f = g._Finder("x.py")
-    f.visit(ast.parse(src))
-    return [k for k, _ in f.hits]
+    return [f"{rel}::{scope}" for (rel, scope, _), _ in g.scan_text("x.py", src)]
 
 
 def test_fires_on_log_only_swallow_returning_empty():
@@ -59,13 +81,13 @@ def test_fires_on_log_only_swallow_returning_empty():
             "        logger.warning('x %s', exc)\n"
             f"        return {empty}\n"
         )
-        assert _hits(src) == ["x.py::f#1"], f"guard missed `return {empty}`"
+        assert _hits(src) == ["x.py::f"], f"guard missed `return {empty}`"
 
 
 def test_fires_on_bare_except_and_baseexception():
     for clause in ("except:", "except BaseException:", "except (ValueError, Exception):"):
         src = f"def f(b):\n    try:\n        return b.stop()\n    {clause}\n        return None\n"
-        assert _hits(src) == ["x.py::f#1"], f"guard missed `{clause}`"
+        assert _hits(src) == ["x.py::f"], f"guard missed `{clause}`"
 
 
 def test_quiet_when_handler_records_durably():
@@ -98,4 +120,9 @@ def test_quiet_on_reraise_narrow_except_or_non_empty_return():
 
 def test_keys_are_stable_across_line_shifts():
     body = "def f(b):\n    try:\n        return b.stop()\n    except Exception:\n        return None\n"
-    assert _hits(body) == _hits("# moved\n\n\n" + body) == ["x.py::f#1"]
+    assert _hits(body) == _hits("# moved\n\n\n" + body) == ["x.py::f"]
+
+
+def test_scoped_modules_are_all_tracked_paths():
+    missing = sorted(m for m in g.MONEY_MODULES if not (g.ROOT / m).exists())
+    assert not missing, "MONEY_MODULES names paths that do not exist: " + ", ".join(missing)

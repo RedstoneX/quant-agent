@@ -44,6 +44,7 @@ from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
+from src.sentinel.order_attempts import record_order_attempt_from_event
 from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
@@ -718,7 +719,6 @@ def _record_scale_in_window_closed(pipeline, ctx, spec: dict, *, covered: bool) 
       * `covered` — False when the rearm did NOT land, which means the window
         is still open when the event is written and the fail-closed owner
         alert below it is the thing that matters.
-
     Nothing is emitted when no cancel happened: a naked add has no window.
     """
     from src.execution.scale_in import unprotected_window_seconds
@@ -742,11 +742,11 @@ def _record_scale_in_window_closed(pipeline, ctx, spec: dict, *, covered: bool) 
 def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
                            outcome: str, reason: str = "", **details) -> None:
     """Append one typed lifecycle fact to the existing evidence stream.
-
     Conversion step 6: shim over `EventJournal.record_pipeline_event`. Routes
     through this module's `_persist_evidence` on purpose, so a test that
     patches that name still sees every event, exactly as before.
     """
+    if stage == "order": record_order_attempt_from_event(db=pipeline.db, symbol=symbol, outcome=outcome, reason=reason, run_id=ctx.run_id, details=details)  # one Sentinel attempt row per order event
     _persist_evidence(pipeline.db, **pipeline_event_fields(
         run_id=ctx.run_id, decision_id=ctx.decision_id, symbol=symbol,
         stage=stage, outcome=outcome, reason=reason, details=details,
