@@ -872,20 +872,8 @@ class ExecutionStage:
                     sizing_price = max(sizing_print, float(decision.entry_price))
                 else:
                     sizing_price = sizing_print
-                # item 181 FIX: the RISK-BUDGET divisor must never be
-                # inflated. `sizing_price` above is the max(print, entry) —
-                # correctly conservative for the ALLOCATION path in both
-                # directions — but on the RISK-BUDGET path
-                # `risk_per_share = |price - stop|`, and for a SHORT a
-                # HIGHER price NARROWS that spread. When the analyst's entry
-                # sits above today's print, sizing the risk budget off the
-                # entry understates risk_per_share and inflates qty_by_risk
-                # past the ratified budget (bounded only by the allocation
-                # min() cap). The short actually fills near the print, so
-                # the risk budget must be measured against the print. A BUY
-                # is unaffected: there risk_per_share = price - stop GROWS
-                # with a higher divisor, which is already the conservative
-                # direction, so it keeps using `sizing_price` unchanged.
+                # item 181: a SHORT's higher divisor NARROWS |price - stop|
+                # and inflates qty_by_risk, so it falls back to the print.
                 risk_sizing_price = sizing_print if is_short else sizing_price
 
                 # Liquid-equity execution policy: cross the displayed quote
@@ -1341,6 +1329,18 @@ class ExecutionStage:
                         decision.symbol, decision.entry_price, sizing_price,
                         decision.stop_loss, stop_price,
                     )
+
+                # ROOT FIX (2026-10-04, measured live): REPLACES the fallback
+                # divisor above — size the risk budget against the price the
+                # desk is ABOUT TO PAY. It was bound before the marketable
+                # limit existed, so realised fill-to-stop was WIDER than the
+                # sized distance and positions carried more than the
+                # authorised ~1% of equity: 6.1% median BUY overshoot (25%
+                # worst), 10.9% on a short. The limit is known here, so no
+                # buffer and no multiplier — the budget divides by it.
+                # Identical both ways, the worst fill either way (ruling).
+                if isinstance(limit_price, (int, float)) and limit_price > 0:
+                    risk_sizing_price = float(limit_price)
 
                 # Spec §11.1. Exact sizing when the flag is on AND the broker
                 # confirms the symbol is fractionable; whole shares otherwise.
