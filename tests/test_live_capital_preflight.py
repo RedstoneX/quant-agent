@@ -313,7 +313,7 @@ def test_config_refuses_live_when_gate_blocks(monkeypatch):
     """Code-authorized but a condition unmet: refused, and the refusal names it."""
     from src import config as cfg
 
-    monkeypatch.setattr(cfg, "LIVE_TRADING_AUTHORIZED", True)
+    monkeypatch.setattr(cfg.broker, "LIVE_TRADING_AUTHORIZED", True)  # the flag lives in src.config.broker now
     with pytest.raises(Exception) as exc:
         cfg.AlpacaConfig(base_url="https://api.alpaca.markets", paper=False)
     message = str(exc.value)
@@ -335,7 +335,7 @@ def test_config_allows_live_only_when_code_authorized_and_gate_passes(
     def _passing(**_kwargs):
         return real(settings_path=settings, attestations_path=att)
 
-    monkeypatch.setattr(cfg, "LIVE_TRADING_AUTHORIZED", True)
+    monkeypatch.setattr(cfg.broker, "LIVE_TRADING_AUTHORIZED", True)  # the flag lives in src.config.broker now
     monkeypatch.setattr(lcp, "assert_live_capital_authorized", _passing)
 
     conf = cfg.AlpacaConfig(base_url="https://api.alpaca.markets", paper=False)
