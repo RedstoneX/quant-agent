@@ -1086,3 +1086,15 @@ changes:
       src/pipeline.py:348 and src/pipeline.py:349, so each was a second
       count of one decision that is already carried, with its open
       question, by the base row it mirrors.
+  - delta: -1
+    date: '2026-10-02'
+    why: >-
+      The 2% minimum-ratchet floor (`src.risk.trailing.MIN_RATCHET_PCT`,
+      status `arbitrary`) is RETIRED under the owner ruling to lock gains
+      in on smaller moves, and nothing arbitrary replaces it. The floor is
+      now one venue tick, read off SEC Rule 612 (17 CFR 242.612) and the
+      broker's published increments, so the three numbers that replace it
+      (`MIN_RATCHET_TICKS` = 1 and the two tick sizes) all enter as
+      `instrument` rather than `arbitrary`. The single cost that defended
+      the percentage -- the cancel-then-resubmit window with no protective
+      order -- is gone now that the in-place stop amend is on main.
