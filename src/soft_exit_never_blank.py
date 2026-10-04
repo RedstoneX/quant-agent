@@ -141,3 +141,122 @@ def refusal_tally(symbols, heals: dict | None = None) -> dict:
         "refused_symbols": unique,
         "by_heal_outcome": dict(sorted(outcomes.items())),
     }
+
+
+def soft_exit_heal_detail(ctx, symbol: str) -> str:
+    """The TRUE per-name heal outcome, for the refusal's durable reason.
+
+    Board item 78 / owner 2026-09-25 ("untrue is a lie"): the refusal used
+    to assert "after mechanical heal and one paid retry" for every name,
+    including names whose retry was never attempted. It now states what the
+    heal record says, and says plainly when there is no heal record at all.
+    """
+    heal = (getattr(ctx, "soft_exit_heals", None) or {}).get(
+        str(symbol).strip().upper()
+    )
+    if isinstance(heal, dict) and (heal.get("detail") or heal.get("outcome")):
+        return (
+            f"heal outcome '{heal.get('outcome') or 'unknown'}': "
+            f"{heal.get('detail') or ''}".strip()
+        )
+    return (
+        "no soft-exit heal was recorded for this name — the mechanical "
+        "restore did not fill it and no paid retry outcome was filed"
+    )
+
+
+def apply_mechanical_heal(decision, result, missing, record_heal, log) -> list:
+    """Heal before any spend; return the names still missing. Never invents.
+
+    Moved verbatim out of the PM's fill step. `record_heal` and `log` are
+    handed in by the caller at call time (the owner's bound recorder, its
+    module logger), so nothing here holds a frozen copy of either.
+    """
+    from src.seat_heal import HEAL_MECHANICAL
+
+    try:
+        raw_payload = result.parse_json() if result is not None else None
+    except Exception:  # noqa: BLE001 — an unparseable raw just means no heal
+        raw_payload = None
+    healed, healed_symbols = heal_targets_from_raw(
+        list(getattr(decision, "targets", None) or []), raw_payload,
+    )
+    if not healed_symbols:
+        return missing
+    decision.targets = healed
+    log.info(
+        "Soft-exit mechanical heal restored thesis_invalid_if from "
+        "the model's own raw output for %s — not invented and not "
+        "paid for", healed_symbols,
+    )
+    record_heal(
+        healed_symbols, HEAL_MECHANICAL,
+        "the falsifier the model itself already wrote was restored "
+        "from the raw seat output after a later wipe blanked it; no "
+        "text was invented and no retry was bought",
+    )
+    healed_set = {str(s).strip().upper() for s in healed_symbols}
+    return [s for s in missing if str(s).strip().upper() not in healed_set]
+
+
+def soft_exit_retry_targets(retried) -> list:
+    """The raw targets list of a retry result, or [] when there is none."""
+    reparsed = retried.parse_json() if retried is not None else None
+    retry_targets = []
+    if isinstance(reparsed, dict) and isinstance(reparsed.get("targets"), list):
+        retry_targets = reparsed["targets"]
+    return retry_targets
+
+
+def soft_exit_fill_coda(missing) -> str:
+    """The completion request appended to the replayed user message."""
+    return (
+        "\n\n## SOFT-EXIT COMPLETION REQUIRED — NOT A RE-DECISION\n"
+        "These open/increase targets are missing a real thesis_invalid_if "
+        "(I'll sell if). Fill ONLY that field on the named symbols with "
+        "one concrete observable. Do NOT invent a catalyst unless you are "
+        "citing a dated Active News State Change for the unmeasurable-"
+        "range exception. Do NOT change symbol, direction, conviction, "
+        "thesis, risk_allocation_pct, target_weight_pct, or "
+        "suggested_stop_price. Do NOT add or remove targets. If you "
+        "cannot state a real falsifier, leave that name's "
+        "thesis_invalid_if empty — Python will refuse that name; do not "
+        "invent text.\n"
+        f"Symbols: {', '.join(missing)}\n"
+        "Respond ONLY with the complete JSON object.\n"
+    )
+
+
+def add_constructor_dropped(portfolio_decision, symbols) -> None:
+    """Add refused names to `constructor_dropped`, keeping order, no repeats."""
+    existing = list(
+        getattr(portfolio_decision, "constructor_dropped", None) or []
+    )
+    for symbol in symbols:
+        if symbol not in existing:
+            existing.append(symbol)
+    portfolio_decision.constructor_dropped = existing
+
+
+def record_refusal_count(record_event, log, pipeline, ctx, symbols) -> None:
+    """COUNT the blank-falsifier refusals this run made. Never raises.
+
+    Board item 78. One counted row per run carries the count and the heal
+    outcome that preceded each refusal. Recording only: nothing reads it
+    back into a decision and it may never be swept for a threshold.
+    `record_event` is the caller's `_record_pipeline_event`, handed in at
+    call time so a patch on the caller's module is still honoured.
+    """
+    try:
+        tally = refusal_tally(
+            symbols, getattr(ctx, "soft_exit_heals", None),
+        )
+        if not tally["refused_count"]:
+            return
+        record_event(
+            pipeline, ctx, None, REFUSAL_COUNT_STAGE,
+            str(tally["refused_count"]), REFUSAL_COUNT_REASON,
+            **tally,
+        )
+    except Exception as exc:  # noqa: BLE001 — a recording never blocks a trade
+        log.error("soft-exit refusal count recording failed: %s", exc)

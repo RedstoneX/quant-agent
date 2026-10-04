@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from src.pipeline_risk_budget_recording import _record_realised_concentration
 from src.rotation_dispositions import apply_rotation_recording_dispositions
+from src.soft_exit_never_blank import add_constructor_dropped
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     FAULT_NO_PRICE,
     FAULT_STALE_PRICE,
@@ -689,13 +690,7 @@ class DecisionStage:
                 len(refused_soft_exit), SOFT_EXIT_MISSING_AFTER_RETRY,
                 refused_soft_exit,
             )
-            existing = list(
-                getattr(portfolio_decision, "constructor_dropped", None) or []
-            )
-            for symbol in refused_soft_exit:
-                if symbol not in existing:
-                    existing.append(symbol)
-            portfolio_decision.constructor_dropped = existing
+            add_constructor_dropped(portfolio_decision, refused_soft_exit)
         portfolio_decision.decisions = pipeline.portfolio_constructor.construct_orders(
             targets=book_targets,
             positions=positions,
