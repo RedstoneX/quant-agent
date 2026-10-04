@@ -306,6 +306,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from src.verdicts import RankedCandidate, score_verdict, seat_weight
+from src.rotation_unrecorded import empty_pass_lines
 
 __all__ = [
     "REQUIRED_BUY_LEG_GATES",
@@ -1728,11 +1729,7 @@ def pruning_pass_lines(record: dict | None) -> list[str]:
     tier = str(record.get("tier") or "")
 
     if count == 0:
-        lines = [
-            "\u2702\ufe0f Pruning pass: ran, and there were no holdings to "
-            "examine \u2014 the book is empty, so nothing could be cut."
-        ]
-        return lines + _tier_two_line(record)
+        return empty_pass_lines(record) + _tier_two_line(record)
 
     noun = "holding" if count == 1 else "holdings"
     lines = [

@@ -80,6 +80,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.agents.base import AgentResult, BaseAgent
+from src.agents.smart_money_cap_record import bounded
 from src.models import SmartMoneyFinding, SmartMoneyObservation, SmartMoneySynthesis
 
 logger = logging.getLogger(__name__)
@@ -186,10 +187,8 @@ class SmartMoneyAnalystAgent(BaseAgent):
         )
 
     @staticmethod
-    def _bounded_context(value: str, limit: int = _MAX_CONTEXT_TEXT_CHARS) -> str:
-        if len(value) <= limit:
-            return value
-        return value[:limit - 3] + "..."
+    def _bounded_context(value: str, limit: int = _MAX_CONTEXT_TEXT_CHARS, cap: str = "_MAX_CONTEXT_TEXT_CHARS") -> str:
+        return bounded(value, limit, cap)
 
     @classmethod
     def _representative_transactions(
@@ -343,7 +342,7 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 "is_10b5_1": row.is_10b5_1,
                 "signal_class": row.signal_class,
                 "signal_class_reason": row.signal_class_reason,
-                "signal_class_detail": cls._bounded_context(row.signal_class_detail, _MAX_REASON_TEXT_CHARS),
+                "signal_class_detail": cls._bounded_context(row.signal_class_detail, _MAX_REASON_TEXT_CHARS, "_MAX_REASON_TEXT_CHARS"),
                 "amendment": row.amendment,
                 "late_filing": row.late_filing,
                 "accession_number": row.accession_number,

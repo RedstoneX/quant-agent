@@ -36,6 +36,7 @@ import logging
 import math
 import re
 import threading
+from types import SimpleNamespace
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -47,6 +48,7 @@ from src import evidence_gate
 from src.soft_exit_never_blank import (
     record_refusal_count, soft_exit_heal_detail as _soft_exit_heal_detail,
 )
+from src.pipeline_stage_helpers import _live_stops_from_heat, _macro_regime, record_stage  # noqa: F401
 from src.sentinel.order_attempts import record_order_attempt_from_event
 from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
@@ -186,17 +188,6 @@ LEVELS_DEGRADED_RUN_EMPTY_SHARE = 0.5
 LEVELS_COVERAGE_MIN_SAMPLE = 10
 
 
-def _macro_regime(macro_analysis) -> str | None:
-    """The regime string, from either a MacroAnalysis or a carried-forward dict."""
-    if macro_analysis is None:
-        return None
-    if isinstance(macro_analysis, dict):
-        value = macro_analysis.get("regime")
-    else:
-        value = getattr(macro_analysis, "regime", None)
-    return str(value) if value else None
-
-
 def _session_gross_ceiling(pipeline, ctx):
     """Spec §11.2 — this session's ladder-resolved gross-exposure ceiling.
 
@@ -214,10 +205,7 @@ def _session_gross_ceiling(pipeline, ctx):
         ceiling = resolve(ctx)
         return ceiling if isinstance(ceiling, GrossCeiling) else None
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "§11.2: could not resolve the gross-exposure ceiling for sizing; "
-            "the constructor falls back to the standing cap: %s", exc,
-        )
+        record_stage(pipeline, "gross_ceiling", exc)
         return None
 
 
@@ -259,29 +247,12 @@ def _book_risk_inputs(ctx, total_value: float):
                 for row in heat.per_position
             }
         except Exception as e:  # noqa: BLE001 — never fail the session on telemetry
-            logger.warning("constructor: per-symbol risk map failed: %s", e)
+            record_stage(ctx, "book_risk_map", e)
             existing = None
+        else:
+            record_stage(ctx, "book_risk_map")
     return (existing, list(clusters) if clusters else None)
 
-
-
-def _live_stops_from_heat(ctx) -> dict[str, float] | None:
-    """{symbol: live broker stop} from the PM facts' heat roll-up, or None.
-
-    The stops behind `_book_risk_inputs`' per-symbol risk, so a trim sized
-    from them is sized against the very risk figure the PM was shown.
-    """
-    heat = getattr(getattr(ctx, "facts", None), "heat", None)
-    if heat is None:
-        return None
-    try:
-        return {
-            row.symbol.upper(): row.stop
-            for row in heat.per_position if row.protected and row.stop
-        }
-    except Exception as e:  # noqa: BLE001 — never fail the session on this
-        logger.warning("constructor: live stop map failed: %s", e)
-        return None
 
 
 def _today_sizing_price(pipeline, symbol) -> float | None:
@@ -528,7 +499,9 @@ def _check_levels_coverage(db: "Database", ctx: RunContext,
             "Check the market data provider before trusting a no-trade day."
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error("levels-coverage check failed: %s", exc)
+        record_stage(SimpleNamespace(db=db), "levels_coverage", exc)
+    else:
+        record_stage(SimpleNamespace(db=db), "levels_coverage")
 
 
 def _alert_owner_protection_failed(pipeline, spec: dict, protection,
@@ -572,8 +545,11 @@ def _alert_owner_protection_failed(pipeline, spec: dict, protection,
             try:
                 info = pipeline.broker.get_order_fill_info(entry_order_id) or {}
                 filled = float(info.get("filled_qty") or 0)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                record_stage(pipeline, "protection_fill_info", exc)
                 filled = None
+            else:
+                record_stage(pipeline, "protection_fill_info")
             if filled is not None and filled <= 0:
                 return
             held = _fmt_shares(filled) if filled is not None else "an unknown number of"
@@ -632,11 +608,13 @@ def _alert_owner_protection_failed(pipeline, spec: dict, protection,
 
         _notifier.send_owner_alert(body, symbols=[str(symbol)])
     except Exception as exc:  # noqa: BLE001
-        logger.error("protection-failure owner alert failed: %s", exc)
+        record_stage(pipeline, "protection_alert", exc)
+    else:
+        record_stage(pipeline, "protection_alert")
 
 
 def _alert_holding_discipline_block(
-    *, symbol: str, action: str, reasons: tuple[str, ...] | list[str],
+    pipeline, *, symbol: str, action: str, reasons: tuple[str, ...] | list[str],
 ) -> None:
     """Standalone owner alert: an exit was BLOCKED because the justification
     the Risk Manager gave for it is contradicted by the desk's own data.
@@ -674,7 +652,9 @@ def _alert_holding_discipline_block(
 
         _notifier.send_owner_alert(body, symbols=[str(symbol)])
     except Exception as exc:  # noqa: BLE001
-        logger.error("holding-discipline block owner alert failed: %s", exc)
+        record_stage(pipeline, "discipline_alert", exc)
+    else:
+        record_stage(pipeline, "discipline_alert")
 
 
 def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
@@ -862,6 +842,7 @@ def _account_for_pm_candidates(
             **{**pm_decide_kwargs, "accounting_challenge": challenge},
         )
     except Exception as exc:  # noqa: BLE001
+        record_stage(pipeline, "accounting_reask", exc)
         _record_heal_safely(pipeline, ctx, HealResult(
             seat=_PM_ACCOUNTING_SEAT, outcome=HEAL_FAILED,
             reason=f"candidate-accounting re-ask raised: {exc}",
@@ -869,6 +850,8 @@ def _account_for_pm_candidates(
         ))
         _finish(pending, asked=True)
         return
+    else:
+        record_stage(pipeline, "accounting_reask")
 
     try:
         pipeline.db.insert_agent_log(
@@ -893,9 +876,9 @@ def _account_for_pm_candidates(
             **agent_log_kwargs(reask_result),
         )
     except Exception as e:  # noqa: BLE001
-        logger.warning(
-            "PM candidate accounting: re-ask log write failed: %s", e,
-        )
+        record_stage(pipeline, "accounting_reask_log", e)
+    else:
+        record_stage(pipeline, "accounting_reask_log")
 
     if reasked is None:
         _record_heal_safely(pipeline, ctx, HealResult(
@@ -928,11 +911,9 @@ def _account_for_pm_candidates(
                 getattr(decision, "rejections", None) or [],
             ) + gained
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "PM candidate accounting: could not attach the re-asked "
-                "rejections to the decision (%s) — they are still recorded "
-                "per symbol below", e,
-            )
+            record_stage(pipeline, "accounting_rejections", e)
+        else:
+            record_stage(pipeline, "accounting_rejections")
 
     second = account_for_candidates(
         analyses=[a for a in analyses
@@ -998,10 +979,9 @@ def _record_heal_safely(pipeline, ctx, result, alert: bool = True) -> None:
     try:
         pipeline._record_heal(ctx, result, alert=alert)
     except Exception as e:  # noqa: BLE001
-        logger.warning(
-            "PM candidate accounting: could not record the heal result "
-            "(%s): %s", getattr(result, "outcome", "?"), e,
-        )
+        record_stage(pipeline, "heal_record", e)
+    else:
+        record_stage(pipeline, "heal_record")
 
 
 def _target_increase_missing_falsifier(
@@ -1097,7 +1077,9 @@ def _record_mechanical_soft_exit_restores(pipeline, ctx) -> None:
             dropped=dropped,
         )
     except Exception as exc:  # noqa: BLE001 — a recording never blocks a trade
-        logger.error("mechanical soft-exit heal recording failed: %s", exc)
+        record_stage(pipeline, "soft_exit_restore", exc)
+    else:
+        record_stage(pipeline, "soft_exit_restore")
 
 
 def _record_soft_exit_heals(pipeline, ctx) -> None:
@@ -1122,14 +1104,18 @@ def _record_soft_exit_heals(pipeline, ctx) -> None:
         drain = getattr(agent, "drain_soft_exit_heals", None)
         heals = dict(drain() if callable(drain) else {})
     except Exception as exc:  # noqa: BLE001
-        logger.error("soft-exit heal drain failed: %s", exc)
+        record_stage(pipeline, "soft_exit_drain", exc)
         return
+    else:
+        record_stage(pipeline, "soft_exit_drain")
     if not heals:
         return
     try:
         ctx.soft_exit_heals = {**(getattr(ctx, "soft_exit_heals", None) or {}), **heals}
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        record_stage(pipeline, "soft_exit_attach", exc)
+    else:
+        record_stage(pipeline, "soft_exit_attach")
     for symbol, heal in heals.items():
         _record_pipeline_event(
             pipeline, ctx, symbol, "soft_exit_heal",

@@ -99,3 +99,29 @@ def test_dispositions_writer_output_reaches_the_panel_for_uncut_names():
     assert "R5 net evidence -1" in by["ZZB"].reason
     assert "Not sold yet" in by["ZZB"].reason
     assert "does not say" not in by["ZZB"].reason
+
+
+def test_unrecorded_distance_is_shown_not_called_safe_and_sorts_ahead_of_known():
+    a = _p("2026-10-02T10", ["ZZA", "ZZB"], [])
+    a["margins"] = {"ZZB": {"r2_steps_from_neutral": 2, "r5_net_evidence": 3}}
+    r = build_rows([a])
+    by = {h.symbol: h for h in r.holdings}
+    assert by["ZZA"].distance_known is False and "NOT recorded" in by["ZZA"].distance
+    assert by["ZZB"].distance_known is True and "3 independent" in by["ZZB"].distance
+    assert [h.symbol for h in r.holdings] == ["ZZA", "ZZB"]
+    assert r.summary == "2 holdings: 0 below the bar, 0 closing in, 1 with no distance recorded."
+
+
+def test_below_bar_name_gets_no_grace_wording_and_counts_in_summary():
+    r = build_rows([_p("2026-10-02T10", ["ZZA", "ZZB"], ["ZZA"])])
+    assert "no grace" in r.holdings[0].distance and r.holdings[0].symbol == "ZZA"
+    assert r.summary.startswith("2 holdings: 1 below the bar")
+
+
+def test_panel_ships_as_cards_not_a_wide_table():
+    from pathlib import Path
+    st = Path(__file__).resolve().parents[1] / "src" / "api" / "static"
+    js = (st / "chopping_block.js").read_text()
+    assert "/chopping-block" in js and 'el("table"' not in js
+    assert "chopping_block.js" in (st / "index.html").read_text()
+    assert "function loadChoppingBlock" not in (st / "app.js").read_text()

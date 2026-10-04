@@ -29,6 +29,8 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
+from src.api.loud_reads import record_dashboard_fault
+from src.api.drift_state import deploy_drift_state as _deploy_drift_state
 from src.api.margin_interest_view import _compute_margin_interest
 from src.api.broker_reads import (
     check_broker_reachable,
@@ -129,6 +131,7 @@ def _last_run_files() -> dict[str, str | None]:
             except OSError:
                 out[mode] = None
     except Exception:
+        record_dashboard_fault("last_run_files")
         # Cache dir missing entirely, or some other unexpected OS-level
         # failure — never raise, just report "nothing known" for every mode.
         return {mode: None for mode in _LAST_RUN_MODES}
@@ -140,13 +143,6 @@ def _session_lock_active() -> bool | None:
         return os.path.isdir(_cache_dir() / "active-session.lock")
     except OSError:
         return None
-
-
-#: A drift snapshot older than this is no longer evidence of anything: the
-#: timer runs far more often, so silence means the checker itself stopped.
-#: Reported as `stale`, which is degraded — the same treatment the alert
-#: channel gets, and for the same reason.
-_DRIFT_SNAPSHOT_MAX_AGE_H = 26
 
 
 def _llm_balance_state() -> dict:
@@ -162,41 +158,8 @@ def _llm_balance_state() -> dict:
             topup_date=cc.openrouter_topup_date,
         )
     except Exception:  # noqa: BLE001
+        record_dashboard_fault("llm_balance_state")
         return {"status": "unknown", "message": "The credit check could not run."}
-
-
-def _deploy_drift_state() -> dict:
-    """Read the deploy-drift snapshot written by scripts/check_deploy_drift.py.
-
-    Never raises and never runs git. A missing file means the check has not
-    run on this box yet, which is `unknown`, not healthy.
-    """
-    try:
-        from src.drift_state import load_drift_state
-
-        record = load_drift_state().get("deploy_drift")
-        if not isinstance(record, dict) or not record.get("status"):
-            return {"status": "unknown", "reason": "no drift check recorded"}
-        record = dict(record)
-        checked_at = record.get("checked_at")
-        if checked_at:
-            try:
-                seen = datetime.fromisoformat(str(checked_at))
-                if seen.tzinfo is None:
-                    seen = seen.replace(tzinfo=timezone.utc)
-                age_h = (datetime.now(timezone.utc) - seen).total_seconds() / 3600.0
-                record["age_hours"] = round(age_h, 2)
-                if age_h > _DRIFT_SNAPSHOT_MAX_AGE_H and record["status"] != "behind":
-                    record["status"] = "stale"
-                    record["reason"] = "drift check has not run recently"
-            except (TypeError, ValueError):
-                record["age_hours"] = None
-        else:
-            record["status"] = "stale"
-            record["reason"] = "snapshot carries no timestamp"
-        return record
-    except Exception:
-        return {"status": "unknown", "reason": "drift state read failed"}
 
 
 @router.get("/alerts/suppressed", response_model=SuppressedAlertsResponse)
@@ -213,6 +176,7 @@ def get_suppressed_alerts(limit: int = 50) -> SuppressedAlertsResponse:
     try:
         payload = _read(limit=limit)
     except Exception:
+        record_dashboard_fault("get_suppressed_alerts")
         return SuppressedAlertsResponse()
     return SuppressedAlertsResponse(**payload)
 
@@ -232,6 +196,7 @@ def get_muted_backlog() -> MutedBacklogResponse:
     try:
         payload = _read()
     except Exception:
+        record_dashboard_fault("get_muted_backlog")
         return MutedBacklogResponse()
     return MutedBacklogResponse(**payload)
 
@@ -245,6 +210,7 @@ def get_health() -> HealthResponse:
             llm_health = get_llm_circuit_health()
             db_reachable = True
         except Exception:
+            record_dashboard_fault("get_health.1")
             sessions_logged_today = []
             llm_health = None
             db_reachable = False
@@ -256,6 +222,7 @@ def get_health() -> HealthResponse:
             from src.api.db_reads import get_alert_channel_health
             alert_channel = get_alert_channel_health()
         except Exception:
+            record_dashboard_fault("get_health.2")
             alert_channel = {"status": "unknown", "error": "health read failed"}
 
         # Deploy drift: read the on-box snapshot, never computed here (no
@@ -367,6 +334,7 @@ def get_health() -> HealthResponse:
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
     except Exception:
+        record_dashboard_fault("get_health.3")
         # Outermost guard: even /health itself must never 500. Report the
         # process as up but degraded; everything else is explicitly unknown.
         # unknown, rather than leaking a stack trace.
@@ -410,7 +378,7 @@ def _compute_liquidity(
         sweep_symbol = get_cash_sweep_symbol()
         reserve_pct = get_cash_reserve_pct()
     except Exception as exc:
-        logger.warning("routes_live._compute_liquidity: could not read cash_sweep config: %s", exc)
+        record_dashboard_fault("compute_liquidity", exc)
         return LiquidityBreakdown()
 
     sweep_parked_value: float | None = None
@@ -483,7 +451,7 @@ def _compute_exposure(
     try:
         sweep_symbol = get_cash_sweep_symbol()
     except Exception as exc:
-        logger.warning("routes_live._compute_exposure: could not read cash_sweep symbol: %s", exc)
+        record_dashboard_fault("compute_exposure", exc)
         sweep_symbol = None
 
     if positions_result is None:
@@ -510,7 +478,7 @@ def _compute_risk_limits() -> RiskLimits:
     try:
         limits = get_risk_limits()
     except Exception as exc:
-        logger.warning("routes_live._compute_risk_limits: could not read risk config: %s", exc)
+        record_dashboard_fault("compute_risk_limits", exc)
         return RiskLimits()
     return RiskLimits(
         max_position_pct=limits.max_position_pct,
@@ -569,6 +537,7 @@ def get_account() -> AccountResponse:
                     equity_close=row.get("equity_close"),
                 ))
         except Exception:
+            record_dashboard_fault("get_account.1")
             history = []
 
         # Total P&L since the board's own tracked start — deliberately NOT
@@ -593,7 +562,7 @@ def get_account() -> AccountResponse:
                     total_pnl_pct = total_pnl / baseline * 100
                     total_pnl_since = str(earliest.get("date") or "") or None
         except Exception as exc:
-            logger.warning("routes_live total_pnl computation failed: %s", exc)
+            record_dashboard_fault("get_account.2", exc)
             total_pnl = None
             total_pnl_pct = None
             total_pnl_since = None
@@ -634,6 +603,7 @@ def get_account() -> AccountResponse:
             error=acct.get("error"),
         )
     except Exception as exc:
+        record_dashboard_fault("get_account.3", exc)
         return AccountResponse(error=str(exc))
 
 
@@ -659,6 +629,7 @@ def get_positions() -> PositionsResponse:
         ]
         return PositionsResponse(positions=items, error=result.get("error"))
     except Exception as exc:
+        record_dashboard_fault("get_positions", exc)
         return PositionsResponse(positions=[], error=str(exc))
 
 
@@ -697,6 +668,7 @@ def get_orders(
     except HTTPException:
         raise
     except Exception as exc:
+        record_dashboard_fault("get_orders", exc)
         return OrdersResponse(orders=[], error=str(exc))
 
 
@@ -723,6 +695,7 @@ def get_quotes(symbols: str = Query(..., description="Comma-separated symbols, e
         ]
         return LiveQuotesResponse(quotes=quotes, as_of=now, error=result.get("error"))
     except Exception as exc:
+        record_dashboard_fault("get_quotes", exc)
         return LiveQuotesResponse(quotes=[], as_of=now, error=str(exc))
 
 
@@ -751,6 +724,7 @@ def get_prices(
             error=result.get("error"),
         )
     except Exception as exc:
+        record_dashboard_fault("get_prices", exc)
         return PriceBarsResponse(
             symbol=symbol, timeframe=timeframe, bars=[], error=str(exc)
         )
@@ -777,6 +751,7 @@ def get_symbol_events(
             earnings_degraded=result.get("earnings_degraded"),
         )
     except Exception as exc:
+        record_dashboard_fault("get_symbol_events", exc)
         return SymbolEventsResponse(symbol=symbol, error=str(exc))
 
 
@@ -800,6 +775,7 @@ def get_company_identity(symbol: str) -> CompanyIdentityResponse:
         profile = _peek_company(symbol)
         return CompanyIdentityResponse(symbol=profile.symbol, name=profile.name)
     except Exception as exc:
+        record_dashboard_fault("get_company_identity", exc)
         return CompanyIdentityResponse(
             symbol=symbol.strip().upper(), name=None, error=str(exc)
         )

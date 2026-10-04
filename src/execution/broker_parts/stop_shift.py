@@ -24,6 +24,7 @@ def build_stop_shifter(placer) -> StopShifter:
         amend_one_stop_price=placer._amend_one_stop_price,
         cancel_snapshotted_stops=placer.cancel_snapshotted_stops,
         restore_stop_orders=placer._restore_stop_orders,
+        window_log=placer._window_log,
     )
 
 

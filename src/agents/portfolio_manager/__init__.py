@@ -64,6 +64,10 @@ from src.agents.portfolio_manager.prompt_evidence import hold_prompt_evidence
 from src.agents.portfolio_manager.ranking import hold_candidate_ranking
 from src.agents.portfolio_manager.rotation_section import hold_rotation_section
 
+from src.agents.portfolio_manager.registry_notes import (
+    broadcast_registry_note, omitted_rows_line, stale_registry_note,
+)
+
 class PortfolioManagerAgent(
     LiveLimitPrompt,
     BaseAgent,
@@ -153,39 +157,13 @@ class PortfolioManagerAgent(
             evidence_registry, sort_keys=True, indent=2,
         )
         if stale_sources:
-            # The registry values themselves stay undecorated — the PM must
-            # copy the stance string EXACTLY for `validate_grounding`, so the
-            # staleness is carried alongside rather than inside them.
-            stale_registry_note = (
-                "\n\nSTALE (still real coverage, still citable as provenance, "
-                "but NOT counted toward the agreement score below — the "
-                f"filing is more than {EARNINGS_STANCE_MAX_AGE_DAYS} days old):\n"
-                + "\n".join(
-                    f"- {symbol}: {', '.join(sorted(sources))}"
-                    for symbol, sources in sorted(stale_sources.items())
-                    if symbol in evidence_registry
-                )
+            evidence_registry_text += stale_registry_note(
+                stale_sources, evidence_registry,
             )
-            if not stale_registry_note.rstrip().endswith(":"):
-                evidence_registry_text += stale_registry_note
         if non_corroborating_sources:
-            # A DIFFERENT fact with a different consequence, so it gets its
-            # own note rather than an "or" the reader cannot resolve: this
-            # stance is current and real, it simply is not about this name.
-            broadcast_note = (
-                "\n\nMARKET-WIDE, NOT ABOUT THIS NAME (still real coverage, "
-                "still citable as provenance, and still counted AGAINST a "
-                "trade it opposes — but it can never count FOR one: this "
-                "macro stance is the broad equity outlook, applied to a name "
-                "whose sector the macro read did not mention):\n"
-                + "\n".join(
-                    f"- {symbol}: {', '.join(sorted(sources))}"
-                    for symbol, sources in sorted(non_corroborating_sources.items())
-                    if symbol in evidence_registry
-                )
+            evidence_registry_text += broadcast_registry_note(
+                non_corroborating_sources, evidence_registry,
             )
-            if not broadcast_note.rstrip().endswith(":"):
-                evidence_registry_text += broadcast_note
         # §9.4 "agreement earns size" — tell the PM the count BEFORE it
         # sizes, not after. Rendered for both directions since the PM has
         # not chosen one yet when it reads this: a name it takes long
@@ -202,7 +180,12 @@ class PortfolioManagerAgent(
         # a broad contested one. Showing the net is not optional — a ceiling
         # the PM cannot predict is the 2026-08-20 incident class, where the
         # constructor silently sized against the PM's own stated reasoning.
-        def _agreement_line(symbol: str, sources: dict[str, str]) -> str:
+        # Why all-zero rows are omitted: see registry_notes.omitted_rows_line.
+        omitted_broadcast: list[str] = []
+        omitted_stale: list[str] = []
+        omitted_plain: list[str] = []
+
+        def _agreement_line(symbol: str, sources: dict[str, str]) -> str | None:
             ignored = stale_sources.get(symbol)
             broadcast = non_corroborating_sources.get(symbol)
             # Each caveat states its OWN reason. A merged "A or B" line let a
@@ -245,6 +228,14 @@ class PortfolioManagerAgent(
                 symbol, sources, "short", ignored_sources=ignored,
                 non_corroborating_sources=broadcast,
             )
+            if not any((long_for, long_against, short_for, short_against)):
+                if broadcast_here:
+                    omitted_broadcast.append(symbol)
+                elif stale_here:
+                    omitted_stale.append(symbol)
+                else:
+                    omitted_plain.append(symbol)
+                return None
             return (
                 f"- {symbol}: {long_for} aligned / {long_against} opposed = "
                 f"net {long_net:+d} if long, "
@@ -253,10 +244,18 @@ class PortfolioManagerAgent(
                 f"(of {len(sources)} source(s) with current coverage{stale_note})"
             )
 
-        agreement_lines = [
+        rendered_agreement = [
             _agreement_line(symbol, sources)
             for symbol, sources in sorted(evidence_registry.items())
         ]
+        agreement_lines = [line for line in rendered_agreement if line is not None]
+        omitted_agreement_rows = sum(
+            1 for line in rendered_agreement if line is None
+        )
+        if omitted_agreement_rows:
+            agreement_lines.append(omitted_rows_line(
+                omitted_agreement_rows, len(omitted_broadcast), len(omitted_stale),
+            ))
         agreement_text = (
             "\n".join(agreement_lines) if agreement_lines
             else "No symbols with current coverage."

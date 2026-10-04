@@ -24,7 +24,7 @@ logger = logging.getLogger("src.coverage_watchdog")
 MAX_WEEKDAYS_BACK = 5
 
 
-def most_recent_trading_day(now: datetime, broker: Any = None) -> date:
+def most_recent_trading_day(now: datetime, broker: Any = None, on_error: Any = None) -> date:
     """The most recent weekday whose cash session has already ENDED (plus
     the timer slack) and that the broker's calendar confirms as a trading
     day.
@@ -57,6 +57,8 @@ def most_recent_trading_day(now: datetime, broker: Any = None) -> date:
                 if broker.is_trading_day(candidate):
                     return candidate
             except Exception as exc:  # noqa: BLE001
+                if on_error is not None:
+                    on_error(exc)  # caller records it; this module stays read-only
                 logger.warning("coverage watchdog: calendar lookup failed for %s: %s", candidate, exc)
                 return candidate
         candidate -= timedelta(days=1)

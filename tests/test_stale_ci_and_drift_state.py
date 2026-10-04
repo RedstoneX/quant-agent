@@ -77,6 +77,29 @@ def test_a_completed_run_beats_an_earlier_cancelled_one():
     ]) == "ok"
 
 
+def _obs_run(started, conclusion="failure", status="completed"):
+    return {"status": status, "conclusion": conclusion, "startedAt": started}
+
+
+def test_obsolete_verdict_is_flagged_stale_case():
+    tip = stale_ci._ts("2026-10-04T13:08:54Z")
+    assert stale_ci.is_obsolete([_obs_run("2026-10-04T12:40:00Z")], tip)
+
+
+def test_fresh_verdict_is_not_flagged():
+    tip = stale_ci._ts("2026-10-04T13:08:54Z")
+    assert not stale_ci.is_obsolete([_obs_run("2026-10-04T13:30:00Z")], tip)
+    # a re-run after an old failure supersedes it
+    assert not stale_ci.is_obsolete(
+        [_obs_run("2026-10-04T12:40:00Z"), _obs_run("2026-10-04T13:30:00Z", "success")], tip)
+
+
+def test_cancelled_or_unknown_tip_never_flags():
+    tip = stale_ci._ts("2026-10-04T13:08:54Z")
+    assert not stale_ci.is_obsolete([_obs_run("2026-10-04T12:00:00Z", "cancelled")], tip)
+    assert not stale_ci.is_obsolete([_obs_run("2026-10-04T12:00:00Z")], None)
+
+
 def test_workflow_name_filter_is_the_real_workflow():
     """If the `name:` in test.yml is renamed, this guard silently reports
     everything healthy — so the two must be checked against each other."""

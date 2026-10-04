@@ -10,6 +10,20 @@ from tests.network_guard import _no_sockets_leave_the_box, offline_calendars  # 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+def _register_merge_drivers() -> None:
+    """Self-heal: register the merge drivers .gitattributes names (idempotent,
+    local to this clone and its worktrees). Without it the docs/WORK.md driver
+    is silently inert; scripts/check_merge_drivers.py is the loud check."""
+    try:
+        from scripts import check_merge_drivers as _c
+        _c.main(["--install"])
+    except Exception:
+        pass
+
+
+_register_merge_drivers()
+
+
 def _check_interpreter_matches_ci() -> None:
     """Fail loudly, at test-collection time, if the interpreter running this
     session isn't the one CI runs.
@@ -299,3 +313,4 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     import src.api.db_reads as _db_reads
 
     monkeypatch.setattr(_db_reads, "SUPPRESSION_STATE_PATHS", (heartbeat, drift))
+
