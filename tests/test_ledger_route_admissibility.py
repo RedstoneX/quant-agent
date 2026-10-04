@@ -90,11 +90,11 @@ def test_report_says_so_when_there_is_nothing_to_say() -> None:
 
 
 def test_the_live_ledger_still_carries_the_barred_envelope_routes() -> None:
-    """max_position_risk_pct still has barred route text; the duplicate is gone."""
+    """max_position_risk_pct is now `owner-ruled` and its barred routes are retired."""
     text = Path(DEFAULT_LEDGER).read_text()
     kinds = {
         f.kind
         for f in inspect(text)
         if f.row_id == "src.config.RiskConfig.max_position_risk_pct"
     }
-    assert kinds == {"BARRED-EXTREME", "BARRED-APPETITE"}
+    assert kinds == set()

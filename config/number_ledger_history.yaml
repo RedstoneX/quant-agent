@@ -1155,3 +1155,11 @@ changes:
       value changed. Rows whose note says they stay `arbitrary` on purpose,
       and the gross ladder whose open question the owner has not answered,
       were left.
+  - delta: -3
+    date: '2026-10-04'
+    why: >-
+      Second pass of the `owner-ruled` re-filing. `RiskConfig.max_cluster_risk_share_pct`
+      and `RiskConfig.max_portfolio_risk_pct` (ruled 2026-09-25) and
+      `RiskConfig.max_position_risk_pct` (ruled 2026-08-27) leave `arbitrary`:
+      their notes kept them there only because the ledger had no category
+      for an owner-ratified value, which `owner-ruled` now is. No value changed.
