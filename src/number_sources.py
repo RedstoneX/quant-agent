@@ -292,7 +292,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
     # scoped.
     "src/pipeline_admission.py",
-    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py", "src/prompt_facts/missed_ops_signals.py", "src/prompt_facts/review/grading.py", "src/prompt_facts/review/exits.py", "src/prompt_facts/review/calibration.py", "src/prompt_facts/review/blocked.py", "src/prompt_facts/review/replay.py",
+    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py", "src/prompt_facts/missed_ops_signals.py", "src/prompt_facts/review/grading.py", "src/prompt_facts/review/exits.py", "src/prompt_facts/review/calibration.py", "src/prompt_facts/review/blocked.py", "src/prompt_facts/review/replay.py", "src/prompt_facts/history.py", "src/prompt_facts/decisions.py", "src/prompt_facts/projected.py", "src/prompt_facts/watchlist.py", "src/prompt_facts/exposure.py", "src/prompt_facts/heat.py", "src/prompt_facts/pm_facts.py", "src/prompt_facts/position_facts.py",
     # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
     # application moved here out of `src/pipeline.py`.
     "src/pipeline_risk_gate.py",
