@@ -202,3 +202,39 @@ def _route_price(model: str) -> tuple[float | None, float | None]:
         return row.get("input"), row.get("output")
     except Exception:  # noqa: BLE001 — pricing must never break a call
         return None, None
+
+
+# === DECISION SEATS REFUSE THE UNMEASURED SUBSTITUTE (board item 188) ======
+#
+# The substitution reasoned about above ends the decision seats' ladder on
+# `gemini-3.5-flash-lite`, a model NOBODY HAS EVER MEASURED AT THOSE SEATS.
+# The owner's model choice for the trade seat is a CLOSED question decided on
+# 148 trials, so a route that quietly swaps in an unmeasured model does not
+# merely degrade quality: it overrides a ruling that has already been made,
+# and its output is indistinguishable from a measured one.
+#
+# The answer is NOT to benchmark the substitute (re-opening the closed
+# question) and NOT to pick a different model. It is for the seat to REFUSE:
+# produce no verdict at all, say so honestly, and leave a durable counted row.
+# Refusal is the LAST step, never the first — routes 1 and 2 are attempted in
+# full exactly as before, and only the final rung is withheld.
+#
+# NARROW BY CONSTRUCTION. This fires only when `select_tertiary_route` has
+# actually substituted the alt road (`on_alt_road`), which by that function's
+# own rule can only happen for a seat whose whole ladder sits on one provider
+# — in this deployment the three decision seats. The eight specialist seats
+# keep OpenRouter/haiku, a model route 3 has always carried, and are not
+# decision seats anyway: they describe, they do not decide.
+DECISION_SEATS = ("portfolio_manager", "risk_manager", "position_reviewer")
+
+
+def seat_must_refuse_unmeasured_route(seat_name: str,
+                                      on_alt_road: bool) -> bool:
+    """True when this seat must decline rather than answer on route 3.
+
+    `on_alt_road` is `BaseAgent._tertiary_on_alt_road`: route 3 was swapped
+    for the second-road substitute, which is unmeasured at every decision
+    seat. A free function so the rule is assertable per seat name without
+    constructing an agent.
+    """
+    return bool(on_alt_road) and (seat_name or "") in DECISION_SEATS

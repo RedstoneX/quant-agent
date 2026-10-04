@@ -92,6 +92,7 @@ from src.agents.llm_tertiary_route import (  # noqa: F401
     _DEFAULT_TERTIARY_ALT_PROVIDER,
     _DEFAULT_TERTIARY_ALT_MODEL,
     select_tertiary_route,
+    seat_must_refuse_unmeasured_route,
     _route_price,
 )
 from src.agents.llm_concurrency import (  # noqa: F401
@@ -1532,6 +1533,38 @@ class BaseAgent(ABC):
                 # already failed — which is the saturated-MODEL case route 3
                 # exists for, and precisely what happened on 2026-09-22.
                 tertiary = None
+                # BOARD ITEM 188. A decision seat does not answer on a model
+                # nobody has measured at that seat. Routes 1 and 2 have been
+                # attempted in full above; only this last rung is withheld,
+                # and the refusal is recorded as a durable counted row rather
+                # than a log line. `record` never raises, so a journal
+                # failure cannot abort the decision stage.
+                seat_refuses = seat_must_refuse_unmeasured_route(
+                    self.name, self._tertiary_on_alt_road,
+                )
+                if seat_refuses:
+                    logger.error(
+                        "Agent %s: REFUSING route 3 — the only route left is "
+                        "%s/%s, which has never been measured at this "
+                        "decision seat. The seat produces no verdict; a "
+                        "defaulted or fabricated one would be a lie.",
+                        self.name, self._tertiary_provider,
+                        self._tertiary_model,
+                    )
+                    _in_p, _out_p = _route_price(self._tertiary_model)
+                    llm_route_journal.record(
+                        "seat_refused", agent_name=self.name,
+                        run_id=getattr(reservation, "run_id", None),
+                        route=f"{self._tertiary_provider}/{self._tertiary_model}",
+                        from_route=f"{self._provider}/{self.model}", tier=3,
+                        input_usd_per_mtok=_in_p, output_usd_per_mtok=_out_p,
+                        error=primary_error,
+                        detail=(
+                            "decision seat refused the last rung: route 3 is "
+                            "a model unmeasured at this seat, and the owner's "
+                            "model choice for the trade seat is closed"
+                        ),
+                    )
                 # Route 3 is the last rung; it is NOT skipped on its own
                 # breaker being demoted when that breaker is shared with a
                 # route already skipped, because "skip the last resort too"
@@ -1545,6 +1578,7 @@ class BaseAgent(ABC):
                         "topping up.", self.name, self._tertiary_provider,
                     )
                 if (not single_provider_attempt and self._tertiary_reachable
+                        and not seat_refuses
                         and self._tertiary_provider not in refused_providers):
                     try:
                         tertiary = self._try_tertiary(
@@ -1580,6 +1614,20 @@ class BaseAgent(ABC):
                             "tertiary route carried the call (DIFFERENT "
                             "model — both routes on the primary model failed)"
                         ),
+                    )
+                elif seat_refuses:
+                    # The refusal, not the provider error, is the proximate
+                    # reason there is no answer — so it is what the caller
+                    # and the owner-facing failure summary must say. This is
+                    # the ONE case where the primary's error is not the most
+                    # truthful thing to report.
+                    last_route_error = RuntimeError(
+                        f"{self.name}: refused to answer. Every measured "
+                        f"route failed and the only route left "
+                        f"({self._tertiary_provider}/{self._tertiary_model}) "
+                        f"has never been measured at this decision seat, so "
+                        f"the seat declines rather than produce a verdict of "
+                        f"unknown quality."
                     )
                 elif primary_error is None and attempt_errors:
                     # ONLY on the demoted path. When the primary DID fail,
