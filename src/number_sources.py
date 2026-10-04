@@ -283,10 +283,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # The held-position exit engine and the exit-trigger vocabulary -- moved
     # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
     # Every trail multiple and every exit threshold it carries stays scoped.
-    "src/pipeline_exits.py",
-    # 2026-10-04: the trail-tightening cooldown moved out of src/pipeline_exits.py
-    # verbatim into the standalone ExitRecords part. Same code, same scope.
-    "src/exits/exit_records.py",
+    "src/pipeline_exits.py", "src/exits/exit_records.py",  # the trail cooldown lifted verbatim 2026-10-04
     # The intra-check session and the intraday opportunity scan -- moved here
     # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
     "src/pipeline_intraday.py",

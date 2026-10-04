@@ -72,20 +72,17 @@ def test_target_revision_with_nothing_flagged_and_nothing_held_adjudicates_nothi
     file_row.assert_not_called()
 
 
-# --- The second lift: records, deterministic trails and the risk-seat exit review,
-# built and run with no pipeline behind them.
+# --- The second lift: the exit records, built and run with no pipeline behind them.
+# (The trails and the AI risk review stay on the mixin: the broker-seam importer
+# freeze and the import-cycle guard both refuse them as standalone modules.)
 
 from datetime import datetime, timezone  # noqa: E402
 
-from src.exits.deterministic_trails import DeterministicTrails  # noqa: E402
 from src.exits.exit_records import ExitRecords  # noqa: E402
-from src.exits.risk_review_exits import RiskReviewExits  # noqa: E402
 from tests.boundary_harness import check_boundary  # noqa: E402
 
-SECOND_LIFT = [ExitRecords, DeterministicTrails, RiskReviewExits]
-SECOND_LIFT_MODULES = [
-    "src.exits.exit_records", "src.exits.deterministic_trails", "src.exits.risk_review_exits",
-]
+SECOND_LIFT = [ExitRecords]
+SECOND_LIFT_MODULES = ["src.exits.exit_records"]
 
 
 @pytest.mark.parametrize("cls", SECOND_LIFT)
@@ -121,10 +118,3 @@ def test_exit_review_approvals_record_only_the_unvetoed_symbols():
     assert record.call_args.kwargs["symbol"] == "AAA"
     assert record.call_args.kwargs["dropped"] is False
 
-
-def test_deterministic_trails_over_an_empty_book_place_nothing():
-    broker = MagicMock(name="broker")
-    trails = _build(DeterministicTrails, broker=broker)
-    out = trails._apply_deterministic_trails([], run_id="r1")
-    assert out == []
-    broker.submit_order.assert_not_called()
