@@ -1,6 +1,6 @@
 """src.cost_circuit.parts.admission -- Admission for the cost circuit (settled-limit enforcement, preflight, require_paid_analysis, begin_call).
 
-Bodies moved verbatim from src/cost_circuit/breaker_admission.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_admission.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations

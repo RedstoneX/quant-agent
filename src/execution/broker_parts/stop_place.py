@@ -25,6 +25,7 @@ from src.execution.broker_parts.stop_window import UnprotectedWindow, fallback_r
 from src.execution.broker_parts.stop_amend import (
     _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
 )
+from src.execution.broker_parts.stop_clock import defer_if_closed, reprotect_or_naked
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
 # Quantity rules + the quantity gate live in src/execution/order_gates.py (a
 # leaf); the two names are re-exported here because callers patch them here.
@@ -1062,6 +1063,8 @@ class StopPlacer(ShiftStopsMixin):
         if amended is not _AMEND_NOT_ATTEMPTED:
             return amended
 
+        if (deferred := defer_if_closed(self, symbol, stop_specs, new_stop_price, fresh)):
+            return deferred  # out of hours: cancel NOTHING (see stop_clock.py)
         # Genuinely un-amendable from here: the window is timed and RECORDED.
         window = UnprotectedWindow(symbol, fallback_reason(stop_specs, abs(float(fresh[0].qty)) if fresh else None), self._window_log)
 
@@ -1177,10 +1180,7 @@ class StopPlacer(ShiftStopsMixin):
                     len(live_stops), covered_qty, position_qty, symbol,
                 )
             restored, _failed = self._restore_stop_orders(symbol, cancelled_specs, side=side)
-            if restored == 0:
-                logger.error(
-                    "replace_stop_loss: %s has no confirmed stop protection after replacement failure",
-                    symbol,
-                )
-            window.close("restored" if restored else "no_stop_confirmed")
+            if restored == 0:  # NOTHING is resting: re-protect now, or say so
+                return reprotect_or_naked(self, symbol, qty, side, new_stop_price, cancelled_specs, window)
+            window.close("restored")
             return None

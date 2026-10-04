@@ -76,7 +76,7 @@ file that no longer exists is the clearest possible sign the file should not
 have existed.
 
 Same class, same treatment, after the five land:
-- the known-leaks list in `tests/test_no_silent_patch_targets.py`
+- ~~the known-leaks list in `tests/test_no_silent_patch_targets.py`~~ DONE — no list; the patch-target audit runs over the working tree and over `origin/main` at check time and fails on any unreachable-call-site identity that is new
 - `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` in `tests/test_status_board.py`
 - ~~the offender baseline in `tests/test_no_local_day_as_exchange_day.py`~~ DONE — the hardcoded `_BASELINE` is deleted; `scripts/local_day_guard.py` scans the working tree and `origin/main` at check time and fails on any new site identity
 - ~~`tests/replay_outbound_sites_baseline.json`~~ DONE — judged a cached
@@ -126,3 +126,9 @@ pain — and prove all four acceptance criteria on it before touching the others
 A half-converted set is worse than either the old one or the new one.
 
 Also done: ~~`tests/pipeline_method_inventory.json`~~ (a script-regenerated measurement, not policy) is deleted with its `--write` mode; `scripts/pipeline_method_guard.py` names each owner of a method defined on 2+ of `TradingPipeline` and its mixins, in the working tree and on `origin/main`, and fails any new identity. A move that leaves one copy never fails.
+
+Also done (2026-10-02, Python-clothed baselines): ~~`TRADING_PIPELINE_TEST_FILE_BASELINE = 79`~~ in `tests/test_boundary_harness.py` (a count measured on 2026-10-01, a TOTAL) is deleted; `tests/boundary_harness.py::trunk_test_files_referencing_pipeline` now names each test file that names `TradingPipeline` in the working tree and on `origin/main` at check time and fails on any new path. The skip of the harness's own files, the composition root and the one deliberate whole-system test is unchanged and is policy, not a measurement. ~~`_WORK_MD_OVERSIZE_ON_ARRIVAL`~~ / ~~`_WORK_MD_POINTERLESS_ON_ARRIVAL`~~ in `tests/test_status_board.py` (eight item sizes and four item numbers measured on 2026-10-01) are deleted; `scripts/board_item_guard.py` names each (item, rule) offence -- over the per-item budget, or without a resolving note pointer -- on the working tree's board and on `origin/main`'s, and fails on any new identity. The budget's divisor (40 open items) stays: it is a chosen policy figure, not a measurement. One consequence stated plainly: an item that is already over budget on the trunk may be edited, including grown, without failing -- pre-existing rot is the trunk's, not the change's, exactly as `board_rot_guard` treats finished-but-open items. Both refuse without `origin/main`; removals never fail.
+
+## Weakening a guard needs a written reason
+
+`tests/test_guard_weakening_gate.py` (logic in `scripts/guard_weakening_gate.py`) fails any change that edits or deletes an existing guard file without a one-line `Guard-rule-change:` of 25+ words in a commit message. Guard files are derived by naming rule (`scripts/*guard*.py`, `tests/test_*guard*.py`, `tests/test_*ratchet*.py`), never listed. Tightening cannot be told from loosening, so every behavioural edit is asked; only new guard files and docstring/comment/format-only edits (identical AST) are exempt. An unreadable base is a failure.
