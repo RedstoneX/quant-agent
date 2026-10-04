@@ -1,6 +1,6 @@
 """Shared runner for the hermetic MIDDAY and EVENING end-to-end tests.
 
-Same production objects, seat seam, broker stand-in and network wall as
+Same production objects (the pipeline is built through tests/pipeline_factory), seat seam, broker stand-in and network wall as
 tests/test_e2e_close_existing_book.py, parametrised by session, clock,
 resting stop and calendar so the two session files stay small.
 """
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import tests.test_e2e_morning_session as morning
 from tests.test_e2e_close_existing_book import (
@@ -44,15 +43,30 @@ def run_held_book(tmp_path: Path, monkeypatch, *, session: str, hour: int,
     monkeypatch.setattr(morning, "_scripted_answers", lambda: answers)
     attempts: list[str] = []
     with no_network(attempts), _sentinel_credentials(), \
-         patch("src.pipeline.MarketDataProvider", return_value=_market(bars)), \
-         patch("src.pipeline.MacroDataProvider", return_value=_macro_feed_stub()), \
-         patch("src.pipeline.NewsDataProvider", return_value=_news_feed_stub()), \
-         patch("src.pipeline.EarningsDataProvider", return_value=_earnings_feed_stub()), \
          frozen_clock(now, run_id=f"e2e-{session}"), \
          _scripted_model_seats(trace):
-        from src.pipeline import TradingPipeline
+        from src.execution.broker import AlpacaBroker
+        from tests.pipeline_factory import build_pipeline
 
-        pipeline = TradingPipeline(config)
+        # The real broker class, built as production builds it, so the
+        # rehearsal broker below is installed over a genuine instance.
+        kill_switch = Path(config.risk.kill_switch_path)
+        if not kill_switch.is_absolute():
+            kill_switch = Path(__file__).resolve().parent.parent / kill_switch
+        broker = AlpacaBroker(
+            api_key=config.api_keys.alpaca_key,
+            secret_key=config.api_keys.alpaca_secret,
+            paper=config.alpaca.paper,
+            max_position_pct=config.risk.max_position_pct,
+            kill_switch_path=str(kill_switch),
+            trade_updates_lease_path=str(tmp_path / "data" / ".trade_updates.lock"),
+            fill_stream_enabled=config.execution.fill_stream_enabled,
+        )
+        pipeline = build_pipeline(
+            config, broker=broker, market=_market(bars),
+            macro=_macro_feed_stub(), news_provider=_news_feed_stub(),
+            earnings_provider=_earnings_feed_stub(),
+        )
         _seed_open_position(pipeline.db)
         snapshot = BrokerSnapshot(
             as_of=now.date(), cash=CASH,
