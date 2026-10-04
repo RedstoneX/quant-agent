@@ -152,27 +152,16 @@ __all__ = [
 #: on an eleven-name book. The money cost of a replace is zero (the ledger
 #: entry establishes this); the naked-window cost is not.
 #:
-#: That rejection was CONTINGENT, the contingency was recorded so nobody
-#: re-derived it, AND THE CONTINGENCY HAS NOW BEEN MET. This comment said
-#: until 2026-10-02 that `_amend_resting_stop_price` was "NOT on main
-#: (verified 2026-09-30)", which is no longer true: it is defined at
-#: `src/execution/broker.py:1467`, constructed into the stop placer at
-#: `src/execution/broker_parts/stop_place.py:186` and `:209`, and
-#: `replace_stop_loss` PREFERS it -- `stop_place.py:1030-1062` amends the
-#: resting stop's price in place and falls back to cancel+resubmit only when
-#: the pre-amend position re-read fails or the order is not amendable, with
-#: that fallback's naked window timed and recorded
-#: (`src/execution/broker_parts/stop_window.py:53`). The measured cost that
-#: was the ONLY defence of this gate therefore no longer applies on the
-#: preferred path, and by the derivation above the honest floor is now one
-#: venue tick (SEC Rule 612 / Alpaca's $0.01-at-or-above-$1, $0.0001-below
-#: split, already carried by `_quantize_price` and `_prices_match`) -- a
-#: reading off the instrument instead of a picked percentage.
-#: THE VALUE IS UNCHANGED HERE ON PURPOSE: lowering this floor admits stop
-#: tightenings the desk currently refuses, and a tightened protective stop
-#: does not move back, so the one-way change is reported to the owner rather
-#: than taken by the pass that found it. See the
-#: `src.risk.trailing.MIN_RATCHET_PCT` entry in `config/number_ledger.yaml`.
+#: That rejection was CONTINGENT and the contingency HAS NOW BEEN MET:
+#: `replace_stop_loss` (`src/execution/broker_parts/stop_place.py`) now
+#: PREFERS `_amend_resting_stop_price`, falling back to cancel+resubmit only
+#: when the position re-read fails or the order is not amendable. The cost
+#: that was the ONLY defence of this gate no longer applies on that path, so
+#: the honest floor is one venue tick (SEC Rule 612 / Alpaca's $0.01 at or
+#: above $1, $0.0001 below, already in `_quantize_price`).
+#: THE VALUE IS UNCHANGED ON PURPOSE: lowering it admits stop tightenings the
+#: desk now refuses, and a tightened stop does not move back, so the one-way
+#: change is reported to the owner (ledger: `MIN_RATCHET_PCT`).
 #:
 #: What the same pass DID settle is the redundancy question the ledger left
 #: open. On THIS deterministic path there are two gates, not three: the

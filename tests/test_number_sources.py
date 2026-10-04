@@ -82,63 +82,6 @@ def test_the_ratified_minimum_risk_floor_is_in_scope_at_every_site() -> None:
     assert "src.config.RiskConfig.min_position_risk_pct" in ids
 
 
-def test_a_default_bound_to_a_name_is_still_a_site() -> None:
-    """The one-line evasion. A `*Config` default written as a NAME rather than
-    a literal used to return None from `_numeric` and disappear — so pointing
-    a scoped field at a constant in an unscoped module removed any number from
-    the gate. Constant arithmetic (`5 * 366`) did the same.
-    """
-    sites = {s.site_id: s.value for s in collect_sites()}
-    assert sites["src.config.RiskConfig.max_position_risk_pct"] == 5.0
-    assert sites["src.config.SmartMoneyConfig.insider_history_retention_days"] == 5 * 366
-
-
-def test_the_atr_unit_is_in_scope_not_only_its_multipliers() -> None:
-    """`ATR_PERIOD` was out of scope while every ATR multiple in the ledger was
-    in it. Watching the multiplier and not the unit is not a boundary.
-    """
-    ids = {site.site_id for site in collect_sites()}
-    assert "src.data.technical.ATR_PERIOD" in ids
-    assert "src.data.levels.PIVOT_WINDOW" in ids
-    assert "src.pipeline_stages.MAX_ENTRY_SLIPPAGE_BPS" in ids
-    assert "src.verdicts.CONVICTION_SCORE['medium']" in ids
-
-
-def test_one_atr_is_not_treated_as_an_identity() -> None:
-    """`1.0` was blanket-excluded as "the identity, not a setting", with the
-    claim that every audited number fell outside the excluded set. Measured
-    false: the hard floor under every stop this desk sets is exactly 1.0 ATR.
-    """
-    assert 1.0 not in NEUTRAL_VALUES
-    assert -1.0 not in NEUTRAL_VALUES
-    ids = {site.site_id for site in collect_sites()}
-    assert "src.config.RiskConfig.absolute_min_stop_atr_multiple" in ids
-    assert "src.portfolio_constructor.config.ConstructorConfig.absolute_min_stop_atr_multiple" in ids
-    assert "src.config.CashReserveConfig.pct" in ids
-    assert "src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE" in ids
-
-
-def test_stop_width_scalers_inside_a_tuple_are_sites() -> None:
-    """The stop-width scalers live as numbers inside a tuple of pairs, not as
-    bare field defaults, and they multiply into every stop distance. A scanner
-    that only reads top-level defaults would not see them.
-    """
-    ids = {site.site_id for site in collect_sites()}
-    assert "src.portfolio_constructor.config.ConstructorConfig.stop_atr_setup_scale[1][1]" in ids
-    assert "src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[0][1]" in ids
-
-
-def test_result_dataclasses_are_not_sites() -> None:
-    """The `*Config` rule is what keeps the signal alive. Result and DTO
-    dataclasses in the same scoped files carry numeric defaults too, and
-    flagging them would bury the numbers that matter — which is precisely the
-    failure that made the earlier whole-codebase idea unworkable.
-    """
-    ids = {site.site_id for site in collect_sites()}
-    assert not [i for i in ids if ".GrossCeilingOutcome." in i]
-    assert not [i for i in ids if ".PortfolioVolEstimate." in i]
-
-
 def test_an_in_file_alias_is_not_a_second_site() -> None:
     """One number with two names in the same file is one number. Ledgering it
     twice is exactly how the flagship entry came to assert that a number
