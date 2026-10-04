@@ -12,14 +12,16 @@ frozensets and immutable literals pass.
 
 Covers: `src/` (every *.py). Out of scope: tests/, scripts/, ops/, frontend/.
 
-Frozen list: `module_accumulator_frozen.txt` holds offender VARIABLE NAMES
-only (no paths, so relocating a file stays legal), computed from trunk when
-this guard was built. It may only shrink: an offender whose name is not
-listed (or listed fewer times) is refused.
+Nothing is stored. At check time each src module is compared with the SAME
+module on `origin/main` (via scripts.guard_reference, as the cram and size
+ratchets do): only an accumulator name the working copy has MORE of than the
+trunk copy is refused. A file absent from the trunk is entirely new. If the
+trunk cannot be read the guard raises ReferenceUnavailable -- it never reads
+a missing reference as "no offenders on trunk".
 
 Not caught (gameable): mutation from ANOTHER module via import; mutable
 state hidden in a class attribute, a function default arg, a closure or an
-`lru_cache`; a new offender sharing a name with a frozen one; mutation
+`lru_cache`; a new accumulator that replaces a same-named trunk one in the same module; mutation
 through an alias (`d = _REG; d[k] = v`); `globals()[...]`; sqlite/file state.
 """
 from __future__ import annotations
@@ -28,9 +30,13 @@ import ast
 from collections import Counter
 from pathlib import Path
 
+import pytest
+
+from scripts import guard_reference
+from scripts.guard_reference import ReferenceUnavailable
+
 ROOT = Path(__file__).resolve().parent.parent
 SCANNED = ("src",)
-FROZEN = Path(__file__).with_name("module_accumulator_frozen.txt")
 
 _CTORS = {"dict", "list", "set", "defaultdict", "Counter", "OrderedDict", "deque"}
 _MUTATORS = {
@@ -149,38 +155,75 @@ def offenders_in_source(source: str) -> list[str]:
     return sorted(_mutated_names(tree, cands)) if cands else []
 
 
-def scan_tree(root: Path = ROOT) -> Counter:
-    found: Counter = Counter()
-    for d in SCANNED:
-        for p in sorted((root / d).rglob("*.py")):
-            try:
-                names = offenders_in_source(p.read_text(encoding="utf-8"))
-            except SyntaxError:
-                continue
-            found.update(names)
-    return found
+def _scan(sources: dict[str, str]) -> dict[str, Counter]:
+    out: dict[str, Counter] = {}
+    for path, text in sources.items():
+        try:
+            out[path] = Counter(offenders_in_source(text))
+        except SyntaxError:
+            continue
+    return out
 
 
-def _frozen() -> Counter:
-    lines = [ln.strip() for ln in FROZEN.read_text().splitlines()]
-    return Counter(ln for ln in lines if ln and not ln.startswith("#"))
+def working_sources() -> dict[str, str]:
+    paths = [p for p in guard_reference.working_paths("*.py")
+             if p.split("/", 1)[0] in SCANNED]
+    return {p: (guard_reference.ROOT / p).read_text(encoding="utf-8")
+            for p in paths}
 
 
-def test_no_new_module_level_accumulator():
-    extra = scan_tree() - _frozen()
-    assert not extra, (
-        f"module-level mutable accumulator(s) in src/: {sorted(extra)}. "
-        "Stored bookkeeping is banned: write a counted row / compute at "
-        "check time. Do NOT add to the frozen list; it may only shrink."
+def new_accumulators(work: dict[str, str] | None = None) -> list[str]:
+    """Accumulators the working tree has beyond the same module's trunk copy."""
+    work = working_sources() if work is None else work
+    trunk = guard_reference.trunk_blobs(sorted(work))  # raises if unreadable
+    now, before = _scan(work), _scan(trunk)
+    bad = []
+    for path, names in sorted(now.items()):
+        for name in sorted(names - before.get(path, Counter())):
+            bad.append(f"{path}: {name}")
+    return bad
+
+
+def test_no_new_module_level_accumulator_against_the_trunk():
+    bad = new_accumulators()
+    assert not bad, (
+        "New module-level mutable accumulator(s) vs origin/main:\n"
+        + "\n".join(bad)
+        + "\nStored bookkeeping is banned: write a counted row / compute at "
+        "check time."
     )
 
 
-def test_frozen_list_only_shrinks():
-    stale = _frozen() - scan_tree()
-    assert not stale, (
-        f"frozen offenders no longer present: {sorted(stale)}. Delete those "
-        "lines from module_accumulator_frozen.txt so the list shrinks."
-    )
+def test_trunk_accumulators_are_actually_read():
+    """The trunk has pre-existing accumulators; seeing none would mean the
+    reference read is empty and the guard passes vacuously."""
+    paths = [p for p in guard_reference.trunk_paths(".py")
+             if p.split("/", 1)[0] in SCANNED]
+    seen = sum(sum(c.values())
+               for c in _scan(guard_reference.trunk_blobs(paths)).values())
+    assert seen > 0, "no accumulators seen on origin/main at all"
+
+
+def test_new_file_is_wholly_new_and_preexisting_passes(monkeypatch):
+    old = "_A = {}\ndef f():\n    _A['k'] = 1\n"
+    monkeypatch.setattr(guard_reference, "trunk_blobs",
+                        lambda paths: {"src/a.py": old})
+    assert new_accumulators({"src/a.py": old}) == []
+    assert new_accumulators({"src/a.py": old, "src/b.py": old}) == ["src/b.py: _A"]
+
+
+def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
+    import subprocess
+    repo = tmp_path / "norepo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "m.py").write_text("_A = []\ndef f():\n    _A.append(1)\n")
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    subprocess.run(["git", "add", "src/m.py"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c",
+                    "user.name=t", "commit", "-qm", "base"], cwd=repo, check=True)
+    monkeypatch.setattr(guard_reference, "ROOT", Path(repo))
+    with pytest.raises(ReferenceUnavailable):
+        new_accumulators()
 
 
 # --- prove it bites -------------------------------------------------------
