@@ -1,0 +1,22 @@
+# Frozen module-level accumulator names (computed from trunk; may only SHRINK).
+PRICING
+_CACHE
+_DIRECTION_TO_STANCE
+_LIST_TYPED_FIELDS_CACHE
+_MOVED_NAME_OWNERS
+_NULL_TOLERANT_FIELDS_CACHE
+_PRISTINE
+_PRISTINE
+_PRISTINE
+_RESPONSE_FORMAT_CACHE
+_ROUTE_BREAKERS
+_STAGE_CLASS_MODULES
+_STRICT_SCHEMA_FALLBACK_LOGGED
+_UNKNOWN_MODELS
+_UNRECOGNIZED_TRANSACTION_TYPES
+_alerted
+_cache
+_etag_cache
+_restore_observations
+_sector_cache
+_sector_resolution_status
