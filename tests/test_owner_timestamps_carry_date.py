@@ -15,6 +15,20 @@ from src.notifier.sections import fmt_time_12h
 SRC = Path(__file__).resolve().parent.parent / "src"
 OWNER_FACING = ("notifier", "trader_feed", "log_health", "inflight")
 _CLOCK = re.compile(r"%-?[HIl]|%[pP]|%T|%R|%X|%c")
+_DATE = re.compile(r"%-?[dejmy]|%[YyBbAaDFxc]")
+
+
+def _bare_clock(fmt: str) -> bool:
+    """The rule is a clock WITHOUT a date; a format carrying both is allowed."""
+    return bool(_CLOCK.search(fmt)) and not _DATE.search(fmt)
+
+
+def _py_files(name):
+    """A package directory OR a single module; never silently nothing."""
+    pkg_dir, one_file = SRC / name, SRC / f"{name}.py"
+    files = sorted(pkg_dir.rglob("*.py")) if pkg_dir.is_dir() else [one_file]
+    assert files and all(f.exists() for f in files), f"owner-facing {name} not found"
+    return files
 
 
 def test_shared_formatter_emits_date_then_time():
@@ -25,7 +39,7 @@ def test_shared_formatter_emits_date_then_time():
 def test_no_owner_facing_module_formats_a_clock_time_itself():
     offenders = []
     for pkg in OWNER_FACING:
-        for path in sorted((SRC / pkg).rglob("*.py")):
+        for path in _py_files(pkg):
             tree = ast.parse(path.read_text())
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
@@ -38,15 +52,29 @@ def test_no_owner_facing_module_formats_a_clock_time_itself():
                     if (
                         isinstance(arg, ast.Constant)
                         and isinstance(arg.value, str)
-                        and _CLOCK.search(arg.value)
+                        and _bare_clock(arg.value)
                     ):
                         offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
             # f-string format specs such as f"{dt:%H:%M}"
             for node in ast.walk(tree):
                 if isinstance(node, ast.FormattedValue) and node.format_spec:
                     spec = ast.unparse(node.format_spec)
-                    if _CLOCK.search(spec):
+                    if _bare_clock(spec):
                         offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
     assert offenders == [], (
         f"owner-facing clock time formatted without the shared formatter: {offenders}"
     )
+
+
+def test_health_report_window_carries_the_date_even_within_one_day():
+    from datetime import timezone
+    from types import SimpleNamespace
+
+    from src.log_health import _window_words
+
+    rep = SimpleNamespace(
+        window_start=datetime(2026, 10, 4, 14, 0, tzinfo=timezone.utc),
+        window_end=datetime(2026, 10, 4, 18, 0, tzinfo=timezone.utc),
+    )
+    words = _window_words(rep)
+    assert words.count("2026-10-04") == 2 and "today" not in words

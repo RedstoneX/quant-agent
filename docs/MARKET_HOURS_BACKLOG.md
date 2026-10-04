@@ -102,3 +102,138 @@ settle them:
   loss) rather than an add to a name whose row predates the column.
 - **Item 90** — the settling data behind the unsourced trade-governing
   numbers.
+
+---
+
+## PLAN — pointing a FULL daily session at the disposable paper account
+
+Investigation only, 2026-10-04. Nothing was run. Evidence is from the repo at
+origin/main; not exercised against the broker.
+
+**1. Credentials or code?** Credentials, plus a separate checkout. No code
+names the account: the account id appears nowhere in the repo; the account is
+chosen only by the key pair `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` (see
+`api_keys` in `config/settings.yaml`). `alpaca.base_url` is already the paper
+host and `AlpacaConfig` refuses `paper: false`, so a sandbox key pair on the
+same host needs no config edit. The one trap: the key pair, the Telegram
+token/chat and the LLM keys all arrive from the same environment or systemd
+credentials, so the sandbox keys must be supplied to a process that does NOT
+inherit the desk's unit.
+
+**2. Where writes land.** Into whichever checkout the process runs from, NOT
+into a database named by config alone. `storage.db_path` is relative
+(`data/quant_agent.db`), and the notifier, both watchdogs, the refusal-signature
+reader and the route journal each compute their own path from their source
+file's location (`Path(__file__)...`), so a second checkout with its own empty
+`data/` isolates all of them. Pointing the production checkout at other keys
+would NOT isolate: it would write sandbox trades into the production database.
+Also under `data/`: news, macro, checkpoints, evolution, and the kill-switch
+file. `QUANT_AGENT_DB_PATH` redirects only the route journal. Never run it with
+`/home/qamc` as the working directory. The rehearsal rig (`ops/rehearsal`) is
+frozen and walls off the network, so it cannot be reused for a live-paper run.
+
+**3. External cost.** One session is capped by `llm_cost_circuit`: 0.90 USD per
+session, 2.75 USD per day, 40 calls per session (`config/settings.yaml`). The
+cap counts spend in the sandbox's own database, so a fresh checkout starts the
+day at zero and the daily cap does NOT see production spend that day. The
+spend lands on the same provider accounts as production (same API keys).
+Production PM seat is the dominant cost (memory: ~91 percent). Kill switch:
+`touch data/KILL_SWITCH` in the sandbox checkout halts every order there; it
+does not stop LLM spend.
+
+**4. Evidence supplied.** Of the 8 items in the two lists above:
+- 4 sandbox-only items (1 to 4) need no session at all; a session adds nothing.
+- 6 "needs the desk running" items (78, 187, 201, 219, 226, 227): a session
+  could supply evidence for them only if the triggering condition occurs
+  (a payment refusal, a cancel-and-resubmit stop, a pruning pass); [estimate]
+  likely 3 to 4 of 6, unverified.
+- 2 production-data items (218, 90) stay blocked: an empty sandbox database
+  has no history to settle them.
+The "about 17 blocked" figure could not be reproduced from this file; the
+board was not recounted here.
+
+**5. Not recoverable by resetting the paper account.**
+- Telegram: a sandbox session with the desk's bot token messages the owner
+  and may be mistaken for real; leave those variables unset.
+- LLM spend: real money, up to the caps above, per session.
+- Running from the production checkout or `/home/qamc`: contaminates the
+  production database and its trade ledger.
+- Same key pair as the desk's own paper account: the hands-off rule above is
+  broken and that account's orders are cancelled.
+- Provider data and news caches written to the wrong `data/` are not undone
+  by an account reset.
+- A session left running past the open with resting orders.
+
+---
+
+## SIZED, NOT STARTED — the session windows ignore the calendar
+
+Measured against `origin/main` on 2026-10-04. This belongs here because the
+only honest end-to-end proof of the repair is a real early close, and the
+next one on the US equities calendar is in late November.
+
+**What is actually wrong.** The market-OPEN verdict is already correct: each
+calendar edge is read independently and a positively-established "outside the
+session" wins, so an early close reads as shut. What was never fixed is the
+SCHEDULE. Each phase is pinned to a fixed minute of the ET day in
+`SESSION_WINDOWS`, and `scripts/run_if_et_window.sh` carries a second
+hand-copied table of the same numbers, held in step by a pinning test. The
+wrapper's entire calendar awareness is a weekday short-circuit.
+
+**What that costs on a 13:00 close.** `midday` (13:00-14:30) and `close`
+(15:30-16:00) fire wholly after the market has shut, so the act-on-trigger
+end-of-day position review never runs while the desk can still trade, and
+positions go into the long weekend un-reviewed. `intra_check`, the desk's
+largest paid cost centre, keeps ticking to 16:00 against a shut market. On a
+full holiday the wrapper fires every weekday phase.
+
+**Why no fix is attached.** The repair is to express each phase relative to
+the session's real open and close, resolved per day from the broker calendar
+`src/market_session.py` already reads, and to delete the wrapper's copy of
+the table rather than maintain two. The fixed bounds are also read by
+`src/scheduler.py`, `src/silence_watchdog.py`, `src/coverage_watchdog.py` and
+`src/config/llm_cost.py` — the last three derive expected-tick counts and the
+paid-session budget from them — so all of it becomes session-dependent in the
+same change. Roughly 400-600 changed lines across six modules plus the
+wrapper and the pinning test. Half of that shipped is worse than none,
+because a phase table that is calendar-aware in one reader and wall-clock in
+another drifts silently.
+
+**Explicitly not done:** no detector, alert or warning was added. A detector
+that fires on a half day is not a fix and the owner has ruled against it.
+
+**Do not introduce a hardcoded holiday list** when this is picked up. That is
+the same time bomb wearing a different hat; the calendar is the only source.
+
+
+### HOW TO RUN IT — the single command, with the hazards blocked
+
+The plan above is now buildable. Each of its five non-recoverable hazards is a
+refusal in `src/sandbox_preflight.py`, not a warning in prose:
+
+- Owner-facing Telegram: `scripts/sandbox_session.sh` unsets the bot token and
+  chat id both before and after sourcing the sandbox env file and forces
+  `TELEGRAM_DISABLED=1`; the preflight refuses to start if either credential is
+  present, or if the mute uses a spelling the notifier ignores. The session is
+  incapable of messaging the owner, not merely muted.
+- Production database: the preflight refuses to run from inside the production
+  checkout (`/home/qamc` by default, extendable via `QAMC_PRODUCTION_CHECKOUT`),
+  refuses a `data/` that resolves outside its own checkout (so a symlink into
+  production is caught), and refuses a database that no sandbox run created.
+- The desk's own paper keys: the sandbox key is pinned by an allow-list of one —
+  `QAMC_SANDBOX_ALPACA_KEY_SHA256` must be the SHA-256 of `ALPACA_API_KEY`. Any
+  other key is refused, so neither the production key nor the desk's paper key
+  can be used by accident, and no key, account id or digest of a real key is
+  committed.
+- Live trading: the existing paper-only lock in `AlpacaConfig` is re-asserted,
+  never bypassed.
+- Real LLM spend: unchanged and still real, capped by `llm_cost_circuit` as
+  described above. The preflight does not and cannot make it free.
+
+Run it from a SEPARATE checkout with its own empty `data/`:
+
+    cp config/sandbox.env.example .env.sandbox   # fill in, never commit
+    scripts/sandbox_session.sh morning
+
+Proof lives in `tests/test_sandbox_preflight.py`: every refusal has a paired
+positive case, so deleting a check reds the suite.

@@ -150,6 +150,49 @@ WHAT THIS MEASURES — read before trusting the numbers above
     module's docstring), not a daily mark-to-market curve."""
 
 
+def format_settleability_verdict(
+    *, contested_budget_days: int, binding_budget_days: int, entry_days: int,
+    label: str = "this run",
+) -> str:
+    """The tool's own verdict on whether a parameter conclusion may be
+    read off a run, printed BEFORE the numbers rather than left for a
+    reader to work out from the caveats.
+
+    A contested day is one where two or more new candidates competed and
+    at least one was cut, so the engine's alphabetical ticker tie-break
+    chose between names. Any such day makes the run a NON-RESULT: the
+    engine compounds equity off realized P&L, so a single funding call
+    decided by spelling moves every later size and every later outcome,
+    and there is no share small enough to treat as noise.
+    """
+    share = (
+        f"{100.0 * contested_budget_days / entry_days:.1f}%"
+        if entry_days > 0 else "n/a"
+    )
+    head = (
+        f"Budget binding: {binding_budget_days} of {entry_days} entry day(s); "
+        f"of those, {contested_budget_days} were CONTESTED "
+        f"(2+ candidates competing, at least one cut) = {share} of entry days."
+    )
+    if contested_budget_days == 0:
+        return (
+            f"{head}\n"
+            f"SETTLEABLE — no funding decision in {label} was arbitrated by "
+            f"ticker spelling, so the numbers below are attributable to the "
+            f"parameter under test."
+        )
+    return (
+        f"{head}\n"
+        f"*** NON-RESULT — do not settle any parameter from {label}. ***\n"
+        f"On {contested_budget_days} day(s) this engine's equal-size, "
+        f"unranked asks were ordered ALPHABETICALLY by ticker, so spelling "
+        f"chose who was funded. Equity compounds off those fills, so every "
+        f"later size and outcome inherits the choice. Shrink the universe "
+        f"until this count reaches zero, or widen the portfolio risk ceiling "
+        f"so the budget stops binding, and re-run before reading a conclusion."
+    )
+
+
 def format_caveats(*, slippage_bps: float, slippage_source: str, skipped: int,
                     min_bars: int, symbols_with_no_data: list[str],
                     binding_budget_days: int, entry_days: int) -> str:
@@ -168,7 +211,7 @@ def format_caveats(*, slippage_bps: float, slippage_source: str, skipped: int,
 
 def format_metrics_report(
     label: str, metrics: Metrics, meta: dict, *,
-    binding_budget_days: int, entry_days: int,
+    binding_budget_days: int, entry_days: int, contested_budget_days: int = 0,
 ) -> str:
     ratio = (
         f"{metrics.avg_win_loss_ratio:.3f}"
@@ -181,6 +224,8 @@ def format_metrics_report(
         f"  Trades: {metrics.trade_count}",
         f"  Binding-budget days: {binding_budget_days} of {entry_days} entry day(s)"
         f"  (equal asks served alphabetically — ticker spelling, not a ranking)",
+        f"  Contested days: {contested_budget_days}"
+        f"  ({'NON-RESULT — spelling decided a funding call' if contested_budget_days else 'none — settleable'})",
         f"  Win rate: {metrics.win_rate_pct:.2f}%",
         f"  Avg win: ${metrics.avg_win:,.2f}   Avg loss: ${metrics.avg_loss:,.2f}   "
         f"Win/loss ratio: {ratio}",
@@ -232,6 +277,7 @@ def format_ab_table(
     label_a: str, metrics_a: Metrics, label_b: str, metrics_b: Metrics, *,
     binding_budget_days_a: int, binding_budget_days_b: int,
     entry_days_a: int, entry_days_b: int,
+    contested_budget_days_a: int = 0, contested_budget_days_b: int = 0,
 ) -> str:
     """Side-by-side comparison with a delta column (B - A). This is the
     tool's real purpose: "did this parameter change help?" """
@@ -257,7 +303,26 @@ def format_ab_table(
         f"{_fmt(bind_delta, 'int', signed=True):>16}"
     )
     lines.append(
+        f"{'Contested days':<22} {contested_budget_days_a:>20} "
+        f"{contested_budget_days_b:>20} "
+        f"{_fmt(contested_budget_days_b - contested_budget_days_a, 'int', signed=True):>16}"
+    )
+    lines.append(
         "On binding days this engine serves equal-size requests "
         "alphabetically (ticker spelling), not a ranking."
     )
+    if contested_budget_days_a or contested_budget_days_b:
+        lines.append(
+            "*** NON-RESULT — this A/B settles NOTHING. At least one arm had "
+            "a day where 2+ candidates competed and alphabetical ticker order "
+            "chose who was funded; compounding carries that into every later "
+            "size, so the delta column above is not attributable to the "
+            "parameter change. Shrink the universe until contested days reach "
+            "zero on BOTH arms, then re-run. ***"
+        )
+    else:
+        lines.append(
+            "Neither arm had a contested day: the delta column is "
+            "attributable to the parameter change."
+        )
     return "\n".join(lines)

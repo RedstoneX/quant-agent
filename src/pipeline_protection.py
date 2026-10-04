@@ -54,7 +54,8 @@ from src.protection.protected_sell import ProtectedSell
 from src.protection.reprotect_records import ReprotectRecords
 from src.protection.coverage_book_read import read_positions_with_retry
 from src.protection.coverage_book_read import unverified_book_sweep
-from src.sentinel.reconciliation import record_reconciliation
+from src.pipeline_protection_record import record_protection_fault
+from src.sentinel.reconciliation import record_guarded_outcome, record_reconciliation
 from src.execution.broker import AlpacaBroker, _split_protective_qty
 from src.models import TradeDecision
 from src.pipeline_context import RunContext
@@ -63,6 +64,11 @@ from src.trading_calendar import et_now, et_today
 from src.protection.coverage_election import _position_notional, _price_is_through_stop  # noqa: F401
 from src.protection.fill_reconciler import _finite_float_or_none, _reconciled_exit_action  # noqa: F401
 from src.protection.sell_finalization import _WAL_SELL_SENTINEL  # noqa: F401
+from src.protection.collaborator_builders import (
+    _build_coverage_election, _build_fill_reconciler, _build_owner_alerts,
+    _build_repeg_drain, _build_sell_finalization, _collab_of,
+)
+from src.execution.stop_repair import drain_owed_stop_levels
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -147,73 +153,6 @@ def _classify_coverage_gap(*, held: float, covered: float) -> tuple[str, float]:
 
 
 
-def _collab_of(obj, name: str):
-    """A collaborator for a lifted protection object: `obj._collab(name)` when the host's
-    CLASS defines the deferred-error stand-in (TradingPipeline does), else the plain
-    attribute -- so a MagicMock host hands over its own `db`/`broker`, not a child mock."""
-    collab = getattr(type(obj), "_collab", None)
-    if collab is not None:
-        return collab(obj, name)
-    return getattr(obj, name)
-
-
-def _build_owner_alerts(host):
-    """Builds the standalone OwnerAlerts from the host pipeline's collaborators (bodies moved to src/protection/owner_alerts.py)."""
-    from src.protection.owner_alerts import OwnerAlerts
-    return OwnerAlerts(
-        broker=_collab_of(host, "broker"),
-        still_uncovered=_collab_of(host, "_still_uncovered"),
-        alert_owner_no_stop=_collab_of(host, "_alert_owner_no_stop"),
-        format_qty=_collab_of(host, "_format_qty"),
-    )
-
-
-def _build_sell_finalization(host):
-    """Builds the standalone SellFinalization from the host pipeline's collaborators (bodies moved to src/protection/sell_finalization.py)."""
-    from src.protection.sell_finalization import SellFinalization
-    return SellFinalization(
-        broker=_collab_of(host, "broker"),
-        db=_collab_of(host, "db"),
-        terminal_order_statuses=host._TERMINAL_ORDER_STATUSES,
-        finalize_protection_after_sell=_collab_of(host, "_finalize_protection_after_sell"),
-        register_exit_settlement=_collab_of(host, "_register_exit_settlement"),
-        finalize_protection_after_sell_core=_collab_of(host, "_finalize_protection_after_sell_core"),
-        cancel_stray_stops_on_flat=_collab_of(host, "_cancel_stray_stops_on_flat"),
-        current_position_qty_for_finalize=_collab_of(host, "_current_position_qty_for_finalize"),
-        persist_orphaned_protection_restore=_collab_of(host, "_persist_orphaned_protection_restore"),
-        reprotect_residual_after_partial_sell=_collab_of(host, "_reprotect_residual_after_partial_sell"),
-        derive_close_side_for_drain=_collab_of(host, "_derive_close_side_for_drain"),
-    )
-
-
-def _build_fill_reconciler(host):
-    """Builds the standalone FillReconciler from the host pipeline's collaborators (bodies moved to src/protection/fill_reconciler.py)."""
-    from src.protection.fill_reconciler import FillReconciler
-    return FillReconciler(
-        broker=_collab_of(host, "broker"),
-        db=_collab_of(host, "db"),
-        config=getattr(host, "config", None),
-        flag_stop_out_anomaly=_collab_of(host, "_flag_stop_out_anomaly"),
-        format_qty=_collab_of(host, "_format_qty"),
-        parse_broker_fill_timestamp=_collab_of(host, "_parse_broker_fill_timestamp"),
-    )
-
-
-def _build_repeg_drain(host):
-    """Builds the standalone RepegDrain from the host pipeline's collaborators (bodies moved to src/protection/repeg_drain.py)."""
-    from src.protection.repeg_drain import RepegDrain
-    return RepegDrain(
-        broker=_collab_of(host, "broker"),
-        db=_collab_of(host, "db"),
-        delete_repeg_row=_collab_of(host, "_delete_repeg_row"),
-    )
-
-
-def _build_coverage_election(host):
-    """Builds the standalone CoverageElection from the host pipeline's collaborators (bodies moved to src/protection/coverage_election.py)."""
-    from src.protection.coverage_election import CoverageElection
-    return CoverageElection(
-    )
 
 
 class _HostState:
@@ -407,6 +346,7 @@ class ReprotectResidual:
             else:
                 existing = self.broker._list_open_sell_stop_orders(symbol)
         except Exception as exc:  # noqa: BLE001
+            record_protection_fault(self, "reprotect.idempotency_check", exc, symbol=symbol)
             logger.warning(
                 "Reprotect idempotency check failed for %s: %s — "
                 "proceeding with submit (may duplicate if a stop already "
@@ -737,6 +677,7 @@ class ReprotectResidual:
                 limit_price=None, side=side,
             )
         except Exception as exc:  # noqa: BLE001
+            record_protection_fault(self, "reprotect.residual_submit", exc, symbol=symbol)
             logger.warning(
                 "Re-protect failed for %s residual=%s @ $%.2f: %s — position "
                 "is unprotected until the next session re-attaches a stop",
@@ -910,116 +851,13 @@ class CoverageRepair:
                 symbols=fresh,
             )
         except Exception as exc:  # noqa: BLE001
+            record_protection_fault(None, "coverage_repair.kill_switch_alert", exc, symbol=symbol)
             logger.error(
                 "kill-switch-block owner alert failed for %s: %s", symbol, exc,
             )
 
 
-class ExitRelief:
-    """Exit-settlement registration and the open-exit relief read; standalone, built from explicit collaborators."""
-
-    def __init__(
-        self, *,
-        broker=None,
-        state=None,
-    ) -> None:
-        self.broker = broker
-        self._state = state  # live get/set view of the host's attributes this part reads and assigns
-
-    @property
-    def _unsettled_exit_orders(self):
-        return self._state.get('_unsettled_exit_orders')
-
-    @_unsettled_exit_orders.setter
-    def _unsettled_exit_orders(self, value) -> None:
-        self._state.set('_unsettled_exit_orders', value)
-
-    def _register_exit_settlement(self, prot: dict) -> None:
-        """Record or clear one exit order in the unsettled register."""
-        order_id = str(prot.get("order_id") or "")
-        if not order_id:
-            return
-        register = getattr(self, "_unsettled_exit_orders", None)
-        if register is None:
-            register = {}
-            self._unsettled_exit_orders = register
-        status = str(prot.get("terminal_status") or "").lower()
-        if status in AlpacaBroker._ORDER_TERMINAL_STATES:
-            register.pop(order_id, None)
-            return
-        register[order_id] = {
-            "symbol": str(prot.get("symbol") or "").strip().upper(),
-            "submitted_qty": abs(float(prot.get("submitted_qty") or 0.0)),
-        }
-
-    def _open_exit_relief(self, positions) -> tuple[list, bool]:
-        """Exits still WORKING at the broker, as SELL decisions, plus whether
-        any of them could not be measured.
-
-        Re-polls every order in `_unsettled_exit_orders` (a settled one is
-        dropped, so the register self-heals) and expresses each remaining
-        open quantity as an ordinary SELL `TradeDecision`.
-        `apply_gross_ceiling`'s STEP 1 already subtracts planned exits from
-        the book before it judges anything, so handing these in makes a
-        later pass cut the TRUE residual instead of re-cutting exposure that
-        is already on its way out. That is the measured answer; refusing the
-        whole pass was the blunt one, and refusing is worst exactly when this
-        fires — a marketable limit that misses in fifteen seconds means a
-        gap, a halt or a vanished book.
-
-        The second return value is True when an order's state could not be
-        read at all. Nothing is guessed there: the caller refuses to re-cut,
-        because an unmeasurable in-flight exit is precisely the case where
-        netting nothing would double the shed.
-        """
-        register = getattr(self, "_unsettled_exit_orders", None) or {}
-        if not register:
-            return [], False
-        held = {
-            str(getattr(p, "symbol", "") or "").strip().upper(): p
-            for p in (positions or [])
-        }
-        relief: list = []
-        unmeasurable = False
-        for order_id, row in list(register.items()):
-            try:
-                info = self.broker.get_order_fill_info(order_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("open-exit re-poll failed for %s: %s", order_id, exc)
-                info = None
-            if info is None:
-                unmeasurable = True
-                continue
-            status = str(info.get("status") or "").lower()
-            if status in AlpacaBroker._ORDER_TERMINAL_STATES:
-                register.pop(order_id, None)
-                continue
-            symbol = row.get("symbol") or ""
-            position = held.get(symbol)
-            held_qty = abs(float(getattr(position, "qty", 0.0) or 0.0)) if position else 0.0
-            open_qty = max(
-                0.0,
-                float(row.get("submitted_qty") or 0.0)
-                - float(info.get("filled_qty") or 0.0),
-            )
-            if open_qty <= 0:
-                continue
-            if held_qty <= 0:
-                # Still working against a position the book no longer shows:
-                # nothing to net it against, and nothing safe to assume.
-                unmeasurable = True
-                continue
-            relief.append(TradeDecision(
-                action="SELL", symbol=symbol,
-                allocation_pct=min(100.0, open_qty / held_qty * 100.0),
-                entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                reasoning=(
-                    f"Exit order {order_id} is still working at the broker "
-                    f"({open_qty:g} of {held_qty:g}); it is netted out of the "
-                    f"gross re-measure so the book is not sold down twice."
-                ),
-            ))
-        return relief, unmeasurable
+from src.pipeline_protection_exit_relief import ExitRelief  # noqa: E402,F401
 
 
 class RestoreDrain:
@@ -1056,6 +894,7 @@ class RestoreDrain:
             rows = self.db.get_pending_protection_restores()
         except Exception as exc:
             logger.warning("drain_pending_protection_restores: DB read failed: %s", exc)
+            record_guarded_outcome(db=self.db, where='drain.read_rows', exc=exc, log=logger)
             return 0
         if not rows:
             return 0
@@ -1072,17 +911,16 @@ class RestoreDrain:
                 try:
                     ok = drain_scale_in_row(self.broker, self.db, row)
                 except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "drain: scale-in WAL restore raised for %s row %d: %s "
-                        "— leaving for next session",
-                        symbol, row_id, exc,
-                    )
+                    record_guarded_outcome(
+                        db=self.db, where="drain.scale_in_restore", exc=exc, log=logger,
+                        context={"symbol": symbol, "row": row_id,
+                                 "effect": "leaving for next session"})
                     continue
                 if ok:
                     try:
                         self.db.delete_pending_protection_restore(row_id)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        record_guarded_outcome(db=self.db, where='drain.delete_after_scale_in', exc=exc, log=logger)
                     drained += 1
                     logger.info(
                         "drain: scale-in recovery rebuilt coverage for %s "
@@ -1098,14 +936,14 @@ class RestoreDrain:
                 try:
                     wal_specs = _json.loads(row["specs_json"])
                 except Exception as exc:
-                    logger.error(
-                        "drain: WAL row %d has unparseable specs_json (%s) "
-                        "— deleting orphan to unblock the queue", row_id, exc,
-                    )
+                    record_guarded_outcome(
+                        db=self.db, where="drain.wal_specs_parse", exc=exc, log=logger,
+                        context={"row": row_id,
+                                 "effect": "deleting orphan to unblock the queue"})
                     try:
                         self.db.delete_pending_protection_restore(row_id)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        record_guarded_outcome(db=self.db, where='drain.delete_unparseable_wal_row', exc=exc, log=logger)
                     continue
                 # Stage 3 (shorts): the row now carries its own `side` —
                 # written at creation time by whoever closed the position,
@@ -1127,16 +965,16 @@ class RestoreDrain:
                         **side_kwargs,
                     )
                 except Exception as exc:
-                    logger.error(
-                        "drain: WAL restore raised for %s row %d: %s — "
-                        "leaving for next session", symbol, row_id, exc,
-                    )
+                    record_guarded_outcome(
+                        db=self.db, where="drain.wal_restore", exc=exc, log=logger,
+                        context={"symbol": symbol, "row": row_id,
+                                 "effect": "leaving for next session"})
                     continue
                 if ok:
                     try:
                         self.db.delete_pending_protection_restore(row_id)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        record_guarded_outcome(db=self.db, where='drain.delete_after_wal_restore', exc=exc, log=logger)
                     drained += 1
                     logger.info(
                         "drain: WAL recovery rebuilt coverage for %s "
@@ -1148,20 +986,18 @@ class RestoreDrain:
                             row_id, _json.dumps(retry),
                         )
                     except Exception as exc:
-                        logger.warning(
-                            "drain: failed to narrow WAL row %d: %s",
-                            row_id, exc,
-                        )
+                        record_guarded_outcome(
+                            db=self.db, where="drain.narrow_wal_row", exc=exc,
+                            log=logger, context={"row": row_id})
                 continue
 
             try:
                 fill_info = self.broker.get_order_fill_info(order_id) or {}
             except Exception as exc:
-                logger.warning(
-                    "drain: broker query failed for %s (order %s): %s — "
-                    "leaving row %d for next session",
-                    symbol, order_id, exc, row_id,
-                )
+                record_guarded_outcome(
+                    db=self.db, where="drain.broker_fill_query", exc=exc, log=logger,
+                    context={"symbol": symbol, "order": order_id, "row": row_id,
+                             "effect": "leaving row for next session"})
                 continue
             status = (fill_info.get("status") or "").lower()
             if status not in self._TERMINAL_ORDER_STATUSES:
@@ -1174,15 +1010,14 @@ class RestoreDrain:
             try:
                 cancelled_specs = _json.loads(row["specs_json"])
             except Exception as exc:
-                logger.error(
-                    "drain: row %d has unparseable specs_json (%s) — "
-                    "deleting orphan to unblock the queue",
-                    row_id, exc,
-                )
+                record_guarded_outcome(
+                    db=self.db, where="drain.specs_parse", exc=exc, log=logger,
+                    context={"row": row_id,
+                             "effect": "deleting orphan to unblock the queue"})
                 try:
                     self.db.delete_pending_protection_restore(row_id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    record_guarded_outcome(db=self.db, where='drain.delete_unparseable_row', exc=exc, log=logger)
                 continue
             # Same persisted-side-first resolution as the sentinel branch
             # above (see `_resolve_wal_row_side`): a row written after the
@@ -1221,11 +1056,9 @@ class RestoreDrain:
                                 row_id, len(cancelled_specs), len(retry_specs),
                             )
                         except Exception as exc:
-                            logger.warning(
-                                "drain: failed to narrow row %d after "
-                                "partial restore: %s",
-                                row_id, exc,
-                            )
+                            record_guarded_outcome(
+                                db=self.db, where="drain.narrow_row", exc=exc,
+                                log=logger, context={"row": row_id})
                     logger.warning(
                         "drain: finalize for %s row %d did not rebuild "
                         "coverage — leaving row for next session",
@@ -1239,13 +1072,15 @@ class RestoreDrain:
                     "row %d cleared)", symbol, order_id, row_id,
                 )
             except Exception as exc:
-                logger.error(
-                    "drain: finalize replay failed for %s row %d: %s — "
-                    "leaving row for next session",
-                    symbol, row_id, exc,
-                )
+                record_guarded_outcome(
+                    db=self.db, where="drain.finalize_replay", exc=exc, log=logger,
+                    context={"symbol": symbol, "row": row_id,
+                             "effect": "leaving row for next session"})
         if drained:
             logger.info("drain: cleared %d orphaned protection-restore row(s)", drained)
+        # Proof the drain RAN. Without this, "no fault rows" is ambiguous
+        # between a clean pass and a drain that was never called at all.
+        record_guarded_outcome(db=self.db, where="drain.completed", log=logger)
         return drained
 
 
@@ -1293,6 +1128,7 @@ class ExDividends:
                 if self.broker.is_trading_day(next_trading_day):
                     break
             except Exception as e:  # noqa: BLE001
+                record_protection_fault(self, "exdiv.is_trading_day", e)
                 logger.warning("ex-div: is_trading_day failed (%s) — falling back "
                                "to calendar+1", e)
                 next_trading_day = today + _td(days=1)
@@ -1313,6 +1149,7 @@ class ExDividends:
                     symbol=p.symbol, today_only=True, limit=20,
                 )
             except Exception as e:
+                record_protection_fault(self, "exdiv.trades_lookup", e, symbol=p.symbol)
                 logger.warning("ex-div: today trades lookup failed for %s: %s", p.symbol, e)
                 continue
             already = any(
@@ -1326,6 +1163,7 @@ class ExDividends:
             try:
                 div = self.market.get_upcoming_ex_dividend(p.symbol)
             except Exception as e:
+                record_protection_fault(self, "exdiv.fetch", e, symbol=p.symbol)
                 logger.warning("ex-div: fetch failed for %s: %s", p.symbol, e)
                 continue
             if not div:
@@ -1362,6 +1200,7 @@ class ExDividends:
                 # the tightest lot's level minus the dividend).
                 order = self.broker.shift_stops_down(p.symbol, amount)
             except Exception as e:
+                record_protection_fault(self, "exdiv.stop_shift", e, symbol=p.symbol)
                 logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
                 continue
             finally:
@@ -1403,6 +1242,7 @@ class ExDividends:
                             symbols=[p.symbol],
                         )
                     except Exception as e:  # noqa: BLE001
+                        record_protection_fault(self, "exdiv.owner_alert", e, symbol=p.symbol)
                         logger.warning("ex-div: owner alert failed for %s: %s", p.symbol, e)
             if not order or (
                 isinstance(order, dict) and not accepted_stop_order(order)
@@ -1414,6 +1254,7 @@ class ExDividends:
             try:
                 write_back_stop_loss(self.db, p.symbol, new_stop, is_short=False)
             except Exception as e:  # noqa: BLE001
+                record_protection_fault(self, "exdiv.write_back", e, symbol=p.symbol)
                 logger.warning("ex-div: stop write-back failed for %s: %s", p.symbol, e)
             try:
                 self.db.insert_trade(
@@ -1431,6 +1272,7 @@ class ExDividends:
                     fill_status="submitted",
                 )
             except Exception as e:
+                record_protection_fault(self, "exdiv.audit_log", e, symbol=p.symbol)
                 logger.warning("ex-div: audit log failed for %s: %s", p.symbol, e)
             if isinstance(order, dict):
                 order.setdefault("action", "TRAIL_STOP")  # audit F5
@@ -1440,6 +1282,7 @@ class ExDividends:
                 p.symbol, div["date"], amount, current_stop, new_stop,
             )
         return orders
+
 
 
 def _build_coverage_repair(host):
@@ -1469,6 +1312,7 @@ def _build_exit_relief(host):
     return ExitRelief(
         broker=_collab_of(host, 'broker'),
         state=_HostState(host),
+        terminal_states=AlpacaBroker._ORDER_TERMINAL_STATES,
     )
 
 
@@ -1597,7 +1441,8 @@ class ProtectionMixin:
             pending_syms = {
                 r.get("symbol") for r in self.db.get_pending_protection_restores()
             }
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            record_protection_fault(self, "coverage.pending_syms", exc)
             pending_syms = set()
         # A failed positions read used to `return []`, which every caller
         # reads as all-clear. See src/protection/coverage_book_read.py.
@@ -1610,7 +1455,9 @@ class ProtectionMixin:
         # clock, or a sweep straddling 16:00 ET could call one symbol's
         # lapse expected and the next symbol's identical lapse a failure.
         market_open = _market_is_open_now(self.broker)
-        if market_open: from src.execution.stop_repair import drain_owed_stop_levels; drain_owed_stop_levels(self.broker, self.db)  # owed out-of-hours stop levels land FIRST
+        if market_open:
+            # owed out-of-hours stop levels land FIRST
+            drain_owed_stop_levels(self.broker, self.db)
         gaps: list[dict] = []
         # Positions whose protective stop has been elected and has not
         # filled. Kept OUT of `gaps`: every consumer of that list buckets a
@@ -1685,6 +1532,7 @@ class ProtectionMixin:
                     symbol, side=("buy" if is_short else "sell"),
                 )
             except Exception as exc:  # noqa: BLE001
+                record_protection_fault(self, "coverage.snapshot", exc, symbol=symbol)
                 unreadable.append({
                     "symbol": symbol, "held_qty": qty,
                     "covered_qty": None, "coverage": "unreadable",
@@ -1819,6 +1667,7 @@ class ProtectionMixin:
                             in session_awaiting_print_symbols()
                         )
                     except Exception as exc:  # noqa: BLE001
+                        record_protection_fault(self, "coverage.awaiting_print_read", exc, symbol=symbol)
                         logger.warning(
                             "coverage sweep: could not read today's "
                             "awaiting-print names (%s) — treating %s as the "
@@ -1942,6 +1791,7 @@ class ProtectionMixin:
                             if waiting:
                                 note_awaiting_first_print(symbol)
                         except Exception as exc:  # noqa: BLE001
+                            record_protection_fault(self, "coverage.refusal_classify", exc, symbol=symbol)
                             # An unreadable marker file errs towards telling
                             # the owner, the same way the claim does.
                             logger.warning(
@@ -2100,6 +1950,7 @@ class ProtectionMixin:
                 # it had waited all session.
                 clear_awaiting_first_print(repaired_symbols)
             except Exception as exc:  # noqa: BLE001
+                record_protection_fault(self, "coverage.clear_marker", exc)
                 logger.warning(
                     "coverage sweep: could not clear the awaiting-print "
                     "marker for %s: %s", ", ".join(repaired_symbols), exc,
@@ -2129,6 +1980,7 @@ class ProtectionMixin:
             mismatches = write_back_live_protective_stops(self.db, mismatches)
             report_stop_level_mismatches(record_reconciliation(db=self.db, kind="recorded_stop_levels", result=mismatches))
         except Exception as exc:  # noqa: BLE001
+            record_protection_fault(self, "coverage.stop_level_reconcile", exc)
             logger.error("stop-level reconcile failed: %s", exc)
         return record_reconciliation(db=self.db, kind="stop_coverage", result=gaps)
 

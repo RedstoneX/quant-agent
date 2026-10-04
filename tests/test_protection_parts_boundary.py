@@ -81,7 +81,7 @@ def test_every_part_reads_only_what_it_is_handed(cls):
 def test_exit_settlement_register_lands_on_the_host_state_not_the_part():
     """Exercised, not just built: the register is created on the HOST through the view and a terminal status clears it."""
     state = _State()
-    part = _build(ExitRelief, state=state)
+    part = _build(ExitRelief, state=state, terminal_states=AlpacaBroker._ORDER_TERMINAL_STATES)
     part._register_exit_settlement({"order_id": "o1", "symbol": "aapl", "submitted_qty": -3, "terminal_status": "new"})
     assert state.values["_unsettled_exit_orders"] == {"o1": {"symbol": "AAPL", "submitted_qty": 3.0}}
     assert "_unsettled_exit_orders" not in vars(part)

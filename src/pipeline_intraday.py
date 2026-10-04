@@ -36,6 +36,7 @@ from src.cost_circuit import PaidAnalysisSuspended
 from src.intraday_scan_outcome import failed_scan_result
 from src.data.technical import compute_indicators
 from src.pipeline_context import RunContext
+from src.sentinel.guarded_site import record_site as _site
 from src.pipeline_stages import _persist_evidence, _record_pipeline_event
 from src.trading_calendar import session_date_key
 
@@ -148,7 +149,9 @@ class IntradayMixin:
                 try:
                     coverage_gaps = self._reconcile_stop_coverage()
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
+                    _site(self, "coverage_reconcile", exc, log=logger)
+                else:
+                    _site(self, "coverage_reconcile", log=logger)
                 # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
                 self._release_retired_cash_park(run_id)
                 self._reconcile_orphan_pending_submits()  # audit F4
@@ -183,7 +186,9 @@ class IntradayMixin:
                 try:
                     self._reconcile_fills()
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
+                    _site(self, "fill_reconcile", exc, log=logger)
+                else:
+                    _site(self, "fill_reconcile", log=logger)
                 # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
                 # every ~30 min, so this is the tightest window this reconciler
                 # runs on — a stop that fires mid-session is written back within
@@ -193,7 +198,9 @@ class IntradayMixin:
                 try:
                     reco = self._reconcile_stop_out_fills(run_id)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
+                    _site(self, "stop_out_reconcile", exc, log=logger)
+                else:
+                    _site(self, "stop_out_reconcile", log=logger)
                 # Item 101: surface a broker-made stop-out / re-protection to
                 # owner — intra is the tightest cadence, so this is where a
                 # mid-session stop-out reaches him fastest.
@@ -234,9 +241,9 @@ class IntradayMixin:
                 run_id=run_id, date=session_date_key(), payload=result,
             )
         except Exception as exc:  # noqa: BLE001 — never break the push
-            logger.warning(
-                "intra_check report persistence failed (non-fatal): %s", exc,
-            )
+            _site(self, "report_persist", exc)
+        else:
+            _site(self, "report_persist")
 
     def _run_intra_check_body(self) -> dict:
         """Lightweight intra-session maintenance tick (no LLM calls).
@@ -295,7 +302,7 @@ class IntradayMixin:
             account = self.broker.get_account()
             positions = self.broker.get_positions()
         except Exception as e:
-            logger.error("Intra check: broker query failed: %s", e)
+            _site(self, "broker_query", e, log=logger)
             return {"status": "broker_error", "run_id": run_id, "error": str(e),
                     "stop_coverage_gaps": coverage_gaps}
 
@@ -353,6 +360,7 @@ class IntradayMixin:
             # dict (mirroring the `paid_analysis_suspended` shape
             # above) makes the crash visible through the same nested
             # path, while the tick itself still completes normally.
+            _site(self, "intraday_scan", e, log=logger)
             scan_result = failed_scan_result(e, run_id)
         if scan_result is not None:
             result["intraday_scan"] = scan_result
@@ -375,10 +383,7 @@ class IntradayMixin:
                 symbol, cooldown_hours=cooldown_hours,
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Intraday cooldown ledger failed for %s (%s) — skipping scan "
-                "for this symbol fail-closed", symbol, e,
-            )
+            _site(self, "cooldown_ledger", e, context={"symbol": symbol}, log=logger)
             return True
         if isinstance(rows, list):
             return bool(rows)
@@ -388,7 +393,8 @@ class IntradayMixin:
         # Production Database always returns a real list above.
         try:
             legacy_rows = self.db.get_trades(symbol=symbol, limit=10)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            _site(self, "cooldown_legacy_trades", exc, context={"symbol": symbol})
             return True
         from datetime import datetime as _dt, timedelta, timezone
         cutoff = _dt.now(timezone.utc) - timedelta(hours=cooldown_hours)
@@ -579,10 +585,7 @@ class IntradayMixin:
                     "lock — skipping this tick (no concurrent position sizing)",
                 )
         except Exception as e:  # noqa: BLE001 — unknowable lock state must not scan
-            logger.warning(
-                "Intraday scan: could not establish the process lock (%s) — "
-                "skipping this tick (fail-closed)", e,
-            )
+            _site(self, "scan_lock", e, log=logger)
         try:
             # Keep the yield outside the acquisition exception handler.  An
             # exception raised by the protected scan body is injected here by
@@ -594,8 +597,8 @@ class IntradayMixin:
             if fh is not None:
                 try:
                     fh.close()   # releases the flock
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    _site(self, "scan_lock_release", exc)
 
     def _track_intraday_snapshot_ok(self, symbol: str) -> None:
         """Reset a symbol's consecutive-miss streak. Never raises — a
@@ -839,10 +842,7 @@ class IntradayMixin:
                 detail=detail,
             )
         except Exception as exc:  # noqa: BLE001 — measurement, never the scan
-            logger.warning(
-                "Intraday trigger ATR context not recorded for %s (%s) — the "
-                "scan is unaffected", upper, exc,
-            )
+            _site(self, "trigger_atr_context", exc, context={"symbol": upper})
 
     def _intraday_paid_scan_skip(self, ctx: RunContext, movers: list[str]) -> dict:
         """Durable skip: lock still held, movers named, no silent drop."""
@@ -858,11 +858,8 @@ class IntradayMixin:
                     self, ctx, symbol, "opportunity", "skipped",
                     "intraday_scan_lock_contended", detail=reason,
                 )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Intraday scan: could not persist skip reason for %s",
-                    symbol, exc_info=True,
-                )
+            except Exception as exc:  # noqa: BLE001
+                _site(self, "skip_reason_lock_contended", exc, context={"symbol": symbol})
         return {
             "status": "intraday_scan_lock_contended",
             "run_id": ctx.run_id,
@@ -891,11 +888,8 @@ class IntradayMixin:
                     self, ctx, symbol, "opportunity", "skipped",
                     "intraday_scan_open_overlap", detail=reason,
                 )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Intraday scan: could not persist skip reason for %s",
-                    symbol, exc_info=True,
-                )
+            except Exception as exc:  # noqa: BLE001
+                _site(self, "skip_reason_open_overlap", exc, context={"symbol": symbol})
         return {
             "status": "intraday_scan_open_overlap",
             "run_id": ctx.run_id,
@@ -973,11 +967,7 @@ class IntradayMixin:
                 ctx.total_value = account.get("portfolio_value", ctx.total_value)
                 self._sync_positions_from_broker(positions)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Intraday scan: post-wait broker refresh failed (%s) — "
-                    "skipping paid discovery rather than sizing on a "
-                    "pre-fill snapshot", exc,
-                )
+                _site(self, "post_wait_refresh", exc, log=logger)
                 return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
             candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
 
@@ -1007,10 +997,7 @@ class IntradayMixin:
                     detail=f"move_pct={move_by_symbol[symbol]:.4f}",
                 )
             except Exception as exc:
-                logger.warning(
-                    "Intraday evaluation ledger write failed for %s (%s) — "
-                    "skipping it to avoid unbounded repeat spend", symbol, exc,
-                )
+                _site(self, "evaluation_ledger", exc, context={"symbol": symbol}, log=logger)
                 continue
             ledgered_symbols.append(symbol)
             _record_pipeline_event(
@@ -1050,7 +1037,7 @@ class IntradayMixin:
             try:
                 bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days)
             except Exception as e:  # noqa: BLE001
-                logger.warning("Intraday scan: bar fetch failed for %s: %s", symbol, e)
+                _site(self, "bar_fetch", e, context={"symbol": symbol}, log=logger)
                 _record_pipeline_event(
                     self, ctx, symbol, "specialist", "failed",
                     "market_data_exception", detail=str(e),
@@ -1077,12 +1064,14 @@ class IntradayMixin:
         try:
             prior_macro_state = self.macro_store.load_last_state() or {}
         except Exception as e:  # noqa: BLE001
-            logger.warning("Intraday scan: prior macro state load failed: %s", e)
+            _site(self, "macro_state_load", e)
         prior_ratings: dict = {}
         try:
             prior_ratings = self.tech_store.load()
         except Exception as e:  # noqa: BLE001
-            logger.warning("Intraday scan: tech store load failed: %s", e)
+            _site(self, "tech_store_load", e)
+        else:
+            _site(self, "tech_store_load")
 
         # Truthful current-session evidence for exactly the names being
         # analyzed (2026-08-19): the scan detects on live prices, so Tech
@@ -1125,10 +1114,7 @@ class IntradayMixin:
             # unparseable response) crashed the whole intraday tick
             # instead of being recorded as a LOST tech seat like every
             # other failure mode this scan already handles.
-            logger.error(
-                "Intraday scan: tech_analyst.analyze_batch raised: %s. "
-                "Tech seat LOST this tick.", e,
-            )
+            _site(self, "tech_batch", e, log=logger)
             analyses_map, ta_result = {}, None
         # analyses_map carries every candidate symbol as a key (2026-08-19
         # Tech batch-response symbol-loss fix) — None marks a symbol
@@ -1162,7 +1148,7 @@ class IntradayMixin:
                     **agent_log_kwargs(ta_result),
                 )
             except Exception as e:  # noqa: BLE001
-                logger.warning("Intraday scan: tech_analyst agent_log insert failed: %s", e)
+                _site(self, "tech_agent_log", e)
             for analysis in analyses:
                 _persist_evidence(
                     self.db, run_id=ctx.run_id, agent_name="tech_analyst",
@@ -1189,7 +1175,7 @@ class IntradayMixin:
                     if analysis.symbol in ages:
                         analysis.signal_age_days = ages[analysis.symbol]
             except Exception as e:  # noqa: BLE001
-                logger.warning("Intraday scan: tech store update failed: %s", e)
+                _site(self, "tech_store_update", e)
 
         # Item 20 (board): deliberately no early "no analyses" return here.
         # `symbols_data` was already confirmed non-empty above, so zero
@@ -1293,8 +1279,8 @@ class IntradayMixin:
             if callable(stop_updates):
                 try:
                     stop_updates()
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    _site(self, "stop_updates", exc, log=logger)
             return early_exit
 
         orders = self.execution_stage.run(ctx)

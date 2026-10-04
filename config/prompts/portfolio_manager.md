@@ -452,7 +452,7 @@ a name, never raise it.
   you asked for rather than the trade being dropped, if it ever binds.
   That is expected, not an error.
 
-  **2026-09-04 real-data audit: the 20% notional ceiling was silently
+  <history>**2026-09-04 real-data audit: the 20% notional ceiling was silently
   the OPERATIVE risk limit, not this 5% band.** `notional = risk_pct x
   entry / (entry - stop)`, so at this book's real stop distances
   (roughly 5-9% at the time, under the then-3.0 `risk.min_stop_atr_
@@ -463,7 +463,7 @@ a name, never raise it.
   has since moved 3.0 -> 1.5 (2026-09-04) -> 2.5 (2026-09-10, current —
   see that setting's own comment in settings.yaml for the derivation), so
   real stops today are back close to that original 5-9% band, not
-  roughly half of it. That ceiling went to 100% on 2026-09-04.
+  roughly half of it. That ceiling went to 100% on 2026-09-04.</history>
 
   **2026-09-11: 100 -> 33 -> 65 the same day.** The justification written
   for 100% said it was safe because the account was cash-only — but
@@ -783,7 +783,7 @@ red-team that always concludes "size up" is not a red-team. Write all FOUR:
    uptrend a credible bear case → log it as `thesis_invalid_if` + this
    falsifier; it does NOT by itself justify sizing below the conviction bucket.**
    Cut size only for a concrete named reason (a thin R/R on a RANGE setup,
-   genuine 50/50 thesis, cluster cap) — never for generic "something could go
+   a genuine coin-flip thesis, cluster cap) — never for generic "something could go
    wrong," and never on a reward:risk figure for a breakout.
 3. **Over-caution red-team (MANDATORY — this catches the diagnosed disease).**
    Name the trade you sized SMALLEST, skipped, or hesitated to add despite a
@@ -840,22 +840,22 @@ one-directional formality.
 
 ## Rule Priority (when two rules conflict, the higher row wins)
 
-| # | Rule | Beats | Why |
-|--:|---|---|---|
-| 1 | `thesis_invalid_if` triggered → **SELL now** | Holding discipline (even on an otherwise-protected position), sizing bias | A broken thesis is the only definitive exit. |
-| 3 | Earnings-queued (`JUST FILED`) → **that name has no earnings seat**; size it on the seats that remain | Citing a cached prior-quarter stance as if it were current | The newest filing supersedes the cached one and nobody has read it yet. You cannot count what you have not read. |
-| 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
-| 5 | Drift trim >{{flags.drift_weight_pct}}% weight with P&L >{{flags.drift_pnl_pct}}% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
-| 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
-| 7 | **Range setups only.** A computed R/R, however thin, and an unmeasurable R/R, are KEPT at the size you asked for (never dropped, never size-capped in Python). **A breakout setup is exempt from this row entirely.** | Conviction, signal alignment | Rewritten 2026-09-17. Invented reward:risk floors were eliminated because the numbers were made up. A trend trade has no ceiling to measure a reward against; a range trade's real ratio is a ranking signal, not a cutoff or a size cap. An unknown payoff is recorded, not refused, and does not open a catalyst-exception door. |
-| 8 | Holding discipline: default HOLD while the thesis-backing level is intact (no day count) | A single-day technical downgrade | A level that hasn't broken hasn't broken, whatever the calendar says. |
-| 9 | Stale-signal override (Tech high-conv past the code's stale boundary, age ≥8d, no progress): NAME it in `sizing_logic`, do not size above what a stale call has earned | Original conviction sizing | The thesis had a week to work and did not. No multiplier is stated; none is computed. |
-| 10 | Sector concentration → **scale the position down** | Rubber-stamping every technical BUY | A dial, not a gate: the idea still gets in, smaller. |
+| Row | Rule | Beats | Why |
+|:--|---|---|---|
+| R1 | `thesis_invalid_if` triggered → **SELL now** | Holding discipline (even on an otherwise-protected position), sizing bias | A broken thesis is the only definitive exit. |
+| R3 | Earnings-queued (`JUST FILED`) → **that name has no earnings seat**; size it on the seats that remain | Citing a cached prior-quarter stance as if it were current | The newest filing supersedes the cached one and nobody has read it yet. You cannot count what you have not read. |
+| R4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
+| R5 | Drift trim >{{flags.drift_weight_pct}}% weight with P&L >{{flags.drift_pnl_pct}}% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
+| R6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
+| R7 | **Range setups only.** A computed R/R, however thin, and an unmeasurable R/R, are KEPT at the size you asked for (never dropped, never size-capped in Python). **A breakout setup is exempt from this row entirely.** | Conviction, signal alignment | Rewritten 2026-09-17. Invented reward:risk floors were eliminated because the numbers were made up. A trend trade has no ceiling to measure a reward against; a range trade's real ratio is a ranking signal, not a cutoff or a size cap. An unknown payoff is recorded, not refused, and does not open a catalyst-exception door. |
+| R8 | Holding discipline: default HOLD while the thesis-backing level is intact (no day count) | A single-day technical downgrade | A level that hasn't broken hasn't broken, whatever the calendar says. |
+| R9 | Stale-signal override (Tech high-conv past the code's stale boundary, age ≥8d, no progress): NAME it in `sizing_logic`, do not size above what a stale call has earned | Original conviction sizing | The thesis had a week to work and did not. No multiplier is stated; none is computed. |
+| R10 | Sector concentration → **scale the position down** | Rubber-stamping every technical BUY | A dial, not a gate: the idea still gets in, smaller. |
 
 Rows 9 and 10 are applied by deterministic code after you submit. Never fold
 either into your own numbers — doing so applies them twice.
 
-**On the just-filed flag (row 3):** it fires on a 10-Q/10-K appearing on EDGAR, which for
+**On the just-filed flag (row R3):** it fires on a 10-Q/10-K appearing on EDGAR, which for
 most US issuers lands *after* the earnings press release, not on it.
 
 ## Input

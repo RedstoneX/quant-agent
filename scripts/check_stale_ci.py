@@ -34,20 +34,38 @@ deliberately muted. A cancelled run counts as stale on purpose — a cancelled
 run is not an answer, and treating it as one would be weakening the check to
 make a failure go away.
 
-SECOND RULE — OBSOLETE VERDICTS. The guards compare a branch with
-`origin/main`, and main moves constantly (85 merges on 2026-10-04). A PR's
-recorded result is a comparison against a main that no longer exists, and
-nothing re-runs it: PR 1250 failed at 12:40 UTC on a baseline entry that
-main removed at 13:08, and sat red for four and a half hours. So an open,
-non-draft, non-conflicted PR whose newest completed run STARTED before the
-current tip of main was COMMITTED is "obsolete" and gets a fresh run.
-  * No repeat dispatch: the new run starts after the tip, so next sweep it
-    is "running" and then "fresh". The (head, main tip) pair is recognised
-    by the run timestamps themselves; nothing is stored. A new main tip
-    legitimately makes the pair new.
-  * Cap: MAX_OBSOLETE_DISPATCH per sweep, oldest verdict first.
-  * Obsolete PRs never make the sweep exit non-zero (that would start the
-    job red on arrival); only the no-run-at-all rule does.
+SECOND RULE — OBSOLETE RED VERDICTS. The guards compare a branch with
+`origin/main`, and main moves constantly (85 merges on 2026-10-04, one every
+~17 minutes). A PR's recorded result is a comparison against a main that no
+longer exists, and nothing re-runs it: PR 1250 failed at 12:40 UTC on a
+baseline entry that main removed at 13:08, and sat red for four and a half
+hours. A verdict computed against a superseded trunk is UNKNOWN, not FAILED,
+and an unknown must be re-asked rather than left sitting as a red.
+
+WHY THE FIRST VERSION OF THIS RULE WAS UNAFFORDABLE, measured 2026-10-04
+19:27 UTC against the live repository: main moves faster (~17 min) than this
+sweep runs (30 min), so "the newest run started before main's tip" was true
+for ALL 26 open PRs on every single sweep, green ones included. The rule was
+a re-run-everything loop wearing a condition: 10 dispatches per sweep x 48
+sweeps = 480 runs a day, forever, and a permanently-broken PR was re-asked
+48 times a day. Two things make it meaningful instead:
+
+  * ONLY A RED REQUIRED CHECK IS RE-ASKED. A green verdict against an older
+    trunk already unblocks the merge — branch protection here is
+    deliberately non-strict — so re-running it buys nothing and spends the
+    cap that a genuinely blocked change needs. Of the 26 open PRs measured,
+    25 were red on `pytest` and 1 was green; the green one needed nothing.
+  * A HEAD COMMIT IS RE-ASKED AT MOST MAX_RERUNS_PER_HEAD TIMES. After that
+    the red is a real failure, not a stale one, and the sweep says so and
+    stops spending runners. This does not loosen anything: the check stays
+    red, stays required, and the change stays blocked.
+
+  Nothing is stored. The re-run budget already spent on a head commit is
+  read back off the `workflow_dispatch` runs recorded against that exact
+  SHA, so a new push (a new SHA) starts with a full budget.
+  Cap: MAX_OBSOLETE_DISPATCH per sweep, oldest verdict first.
+  Obsolete PRs never make the sweep exit non-zero (that would start the
+  job red on arrival); only the no-run-at-all rule does.
 
 Usage:
     scripts/check_stale_ci.py
@@ -80,6 +98,17 @@ GH_TIMEOUT_S = 60
 #: of one burst that starves real pushes. Main moves ~3.5 times an hour, so
 #: an uncapped sweep would otherwise queue a full set of runs per merge.
 MAX_OBSOLETE_DISPATCH = 10
+#: The status check branch protection requires on this repository. Only a
+#: PR whose required check is red is worth re-asking; a green one already
+#: merges. Protection is non-strict, so a green computed against an older
+#: trunk is a valid answer and is deliberately left alone.
+REQUIRED_CHECK = "pytest"
+#: How many times one head commit may be re-asked before its red is taken as
+#: a real failure rather than a superseded one. Three gives a change three
+#: separate trunks to be fixed by, and bounds the cost: ~85 merges a day
+#: produce ~85 new head commits, so even if every one landed red the ceiling
+#: is 255 re-runs a day, and in practice only the red minority qualifies.
+MAX_RERUNS_PER_HEAD = 3
 
 
 class GhError(RuntimeError):
@@ -114,7 +143,8 @@ def _gh_json(args: list[str]) -> object:
 def open_pull_requests(repo: str | None) -> list[dict]:
     """Open, non-draft PRs. Drafts are excluded: nobody is waiting on them."""
     args = ["pr", "list", "--state", "open", "--limit", "100",
-            "--json", "number,headRefName,headRefOid,isDraft,title,mergeStateStatus"]
+            "--json", "number,headRefName,headRefOid,isDraft,title,mergeStateStatus,"
+            "statusCheckRollup"]
     if repo:
         args += ["--repo", repo]
     rows = _gh_json(args)
@@ -183,6 +213,38 @@ def is_obsolete(runs: list[dict], tip: datetime | None) -> bool:
     return bool(started) and max(started) < tip
 
 
+def required_check_is_red(pr: dict) -> bool:
+    """True when the check branch protection requires is a recorded failure.
+
+    A rollup entry is a check run (`name`/`conclusion`) or a commit status
+    (`context`/`state`); both spellings are read. An entry that is missing,
+    still running, or neutral is not a red — only a settled negative is.
+    """
+    negative = {"FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE",
+                "ERROR", "CANCELLED"}
+    for entry in pr.get("statusCheckRollup") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or entry.get("context") or "").strip()
+        if name.lower() != REQUIRED_CHECK.lower():
+            continue
+        verdict = str(entry.get("conclusion") or entry.get("state") or "").upper()
+        if verdict in negative:
+            return True
+    return False
+
+
+def reruns_already_spent(runs: list[dict]) -> int:
+    """How many re-runs this sweep has already started on this head commit.
+
+    Read back off the runs themselves — this sweep dispatches by
+    `workflow_dispatch`, pushes arrive as `pull_request` — so nothing has to
+    be stored and a new push resets the budget by having a new SHA.
+    """
+    return sum(1 for run in runs
+               if str(run.get("event")) == "workflow_dispatch")
+
+
 def dispatch(branch: str, repo: str | None) -> str | None:
     """Start `test.yml` on a branch. Returns an error string, or None on success."""
     args = ["workflow", "run", WORKFLOW_FILE, "--ref", branch]
@@ -235,11 +297,16 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             return 2
         if (verdict == "ok" and is_obsolete(runs, tip)
+                and required_check_is_red(pr)
                 and pr.get("mergeStateStatus") != "DIRTY"):
-            verdict = "obsolete"
+            if reruns_already_spent(runs) >= MAX_RERUNS_PER_HEAD:
+                verdict = "red-for-real"
+            else:
+                verdict = "obsolete"
             when = min(_ts(r.get("startedAt") or r.get("createdAt")) or tip
                        for r in runs if r.get("status") == "completed")
-            obsolete.append((when, pr))
+            if verdict == "obsolete":
+                obsolete.append((when, pr))
         print(f"PR #{number} {sha[:10]} {branch}: {verdict}")
         if verdict == "stale":
             stale.append(pr)
