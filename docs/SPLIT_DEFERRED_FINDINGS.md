@@ -106,6 +106,8 @@ DONE 2026-10-04 for the position builder: `PortfolioConstructor` inherits from n
 
 VERDICT 2026-10-02 (isolation pass): REPRODUCED (structural debt). Mixins remain: `PromptFactsReviewMixin` (`src/pipeline_prompt_facts_review.py`) and in `src/agents/portfolio_manager/`: `DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`, `PromptEvidenceMixin`; `tests/test_boundary_harness.py` passes (with the other two files run, 20 passed) but only covers pipeline mixins. The note named three pieces; the portfolio-manager seat actually has four mixins. Rebuild size: medium-large, five pieces.
 
+DONE 2026-10-04 for `PromptFactsReviewMixin`: its eleven bodies moved AST-identically (11 of 11 compared against `origin/main`) into five standalone parts under `src/prompt_facts/` -- `TradeGrading`, `OutcomeReview`, `OutlookReview`, `BlockedProposals`, `EveningReplayInputs` -- each built from keyword-only collaborators (`db`, `broker`, `market`, `sweeper`, `exit_audit_actions`, `log_conviction_outcome_for_operator`, `build_post_exit_reality`) and none importing the pipeline. The mixin stays as same-named thin shims that build the part per call (1,309 lines -> 93) with ONE marked re-export block; witness `tests/test_prompt_facts_review_parts_boundary.py`. Remaining on this entry: nothing -- every mixin it named is now a shim over a part; the pipeline mixins themselves are the next instalment's owner-object question.
+
 ## `update_open_take_profit` refuses through an undefined name
 
 DONE 2026-10-02. The refusal branches called a bare `_log` that the ledger
