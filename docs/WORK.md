@@ -383,8 +383,3 @@ detail: docs/board_notes/item-232.md
 DONE WHEN:
 - [ ] one shared date+time formatter exists and every previously time-only owner-facing site calls it. (Done for `fmt_time_12h`, which every trader_feed and notifier header uses; STILL OPEN: the health report in `log_health.py` formats its own clock, and `inflight.py` shows `%H:%M ET` on the dashboard.)
 - [ ] a test fails if any owner-facing timestamp is emitted without a date. (`tests/test_owner_timestamps_carry_date.py` covers notifier and trader_feed only; extend to log_health and inflight when those move to the formatter.)
-
-**232. Ledger citations resolved but did not substantiate (bystander pins: `__all__`, bare imports, mid-sentence fragments) — FIXED.** The guard only proved a pin existed, so the bulk rewrite of item 225 left rows pinned to whatever sat at their stale line.
-DONE WHEN:
-- [x] the guard refuses `__all__`/module dunders, import-statement pins and mid-sentence or bracket-unbalanced text pins (`src/ledger_citations.py`, `tests/test_number_sources.py`).
-- [x] every row it caught (19 citations across 17 rows) was re-pointed by hand to a symbol or line-start text that supports its claim; none left unverified.

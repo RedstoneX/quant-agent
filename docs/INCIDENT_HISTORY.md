@@ -18111,3 +18111,14 @@ would be exactly the made-up number the desk bars.
 **The `telemetry` recorder (#879, merged 2026-09-30) has captured nothing in production yet -- UNPROVEN, not proven dead.** All 713 rows have `telemetry` NULL. The only session since the merge ran 2026-10-01 00:01-00:02 ET while the production checkout's HEAD was being updated at 00:01:13 ET, so no row has yet been written by a process that provably loaded the recorder. Re-check after the next full session: three consecutive successes still NULL would make it dead and a defect in its own right. Until a row carries the word, the clause added above is correct but unexercised in production.
 
 Filed 2026-09-30, carried over from item 147 at retirement. Item 147 measured zero rows in agent_logs where a provider request actually happened and returned no usable cost or token telemetry, so nothing needs building today; this item exists only so that case is tracked if it ever fires, rather than silently dropped when 147 was retired.
+
+## A citation that resolved was treated as a citation that proved something (item 232, 2026-10-04)
+
+**What was wrong.** The ledger guard checked only that a citation POINTED somewhere real, never that what it pointed at supported the claim. The bulk conversion of item 225 therefore left rows pinned to whatever happened to sit at their stale line: an export list, a bare import statement, a mid-sentence fragment. Every one of those passed the guard, so the ledger read as fully verified while some of its provenance was meaningless.
+
+**What changed.** The guard now refuses `__all__` and other module dunders, import-statement pins, and mid-sentence or bracket-unbalanced text pins. Every row it caught -- 19 citations across 17 rows -- was re-pointed by hand to a symbol or line-start text that actually supports its claim; none were left unverified.
+
+**Proof.** `src/ledger_citations.py` with `tests/test_number_sources.py`; a reintroduced bystander pin fails.
+
+**Still open, and tracked separately under the same number.** Resolution and substantiation are different questions, and correctness is a third: whether the rewritten citations point at the RIGHT place remains open on the board as item 232, with a first measurement of 12 hand-checked citations finding 6 right, 5 wrong and 1 undecidable.
+
