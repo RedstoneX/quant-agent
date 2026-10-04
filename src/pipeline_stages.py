@@ -44,6 +44,9 @@ from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from src import evidence_gate
+from src.soft_exit_never_blank import (
+    record_refusal_count, soft_exit_heal_detail as _soft_exit_heal_detail,
+)
 from src.sentinel.order_attempts import record_order_attempt_from_event
 from src.agents.base import agent_log_kwargs, seat_acceptance_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
@@ -1137,28 +1140,6 @@ def _record_soft_exit_heals(pipeline, ctx) -> None:
         )
 
 
-def _soft_exit_heal_detail(ctx, symbol: str) -> str:
-    """The TRUE per-name heal outcome, for the refusal's durable reason.
-
-    Board item 78 / owner 2026-09-25 ("untrue is a lie"): the refusal used
-    to assert "after mechanical heal and one paid retry" for every name,
-    including names whose retry was never attempted. It now states what the
-    heal record says, and says plainly when there is no heal record at all.
-    """
-    heal = (getattr(ctx, "soft_exit_heals", None) or {}).get(
-        str(symbol).strip().upper()
-    )
-    if isinstance(heal, dict) and (heal.get("detail") or heal.get("outcome")):
-        return (
-            f"heal outcome '{heal.get('outcome') or 'unknown'}': "
-            f"{heal.get('detail') or ''}".strip()
-        )
-    return (
-        "no soft-exit heal was recorded for this name — the mechanical "
-        "restore did not fill it and no paid retry outcome was filed"
-    )
-
-
 def _record_soft_exit_missing_after_retry(
     pipeline, ctx, symbol: str, *, action: str | None = None,
 ) -> None:
@@ -1181,6 +1162,10 @@ def _record_soft_exit_missing_after_retry(
         ),
         **({"action": action} if action else {}),
     )
+
+
+def _record_soft_exit_refusal_count(pipeline, ctx, symbols) -> None:
+    record_refusal_count(_record_pipeline_event, logger, pipeline, ctx, symbols)
 
 
 def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[str]:
@@ -1270,6 +1255,7 @@ def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[
         if symbol not in existing:
             existing.append(symbol)
     portfolio_decision.constructor_dropped = existing
+    _record_soft_exit_refusal_count(pipeline, ctx, unique)
     return unique
 
 
