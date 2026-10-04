@@ -32,11 +32,11 @@ def _send_alert_outcome(
 
     try:
         from src.notifier import CATEGORY_OPERATIONAL
-        from src.notifier.owner_alert_delivery import deliver_with_outcome
+        from src.notifier.owner_alert import send_owner_alert_with_outcome
 
-        return deliver_with_outcome(
-            notifier, message, category=CATEGORY_OPERATIONAL,
-            max_attempts=1,
+        return send_owner_alert_with_outcome(
+            message, notifier=notifier, category=CATEGORY_OPERATIONAL,
+            kind="cost_circuit", max_attempts=1, pnl_header=False,
         )
     except Exception:
         logger.exception(log_label)
