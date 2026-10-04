@@ -6,7 +6,7 @@ Every collaborator is an explicit keyword-only constructor argument.
 from __future__ import annotations
 import logging
 from src.cost_circuit.classification import _all_attempts_provably_free
-from src.cost_circuit.refusal import CallReservation, OUT_OF_CREDIT_DETAIL, OUT_OF_CREDIT_TRIGGER_CODE, PaidAnalysisSuspended, any_payment_refusal
+from src.cost_circuit.refusal import CallReservation, OUT_OF_CREDIT_DETAIL, out_of_credit_detail, OUT_OF_CREDIT_TRIGGER_CODE, PaidAnalysisSuspended, any_payment_refusal
 from src.cost_circuit.clock import _et_day_and_utc_bounds
 
 logger = logging.getLogger(__name__)
@@ -373,7 +373,7 @@ class Settlement:
                     trip_code = OUT_OF_CREDIT_TRIGGER_CODE
                     trip_detail = (
                         f"paid analysis is off for {reservation.agent_name} because "
-                        f"{OUT_OF_CREDIT_DETAIL}."
+                        f"{out_of_credit_detail()}"
                     )
                 else:
                     trip_code = "failed_call_unknown_cost"

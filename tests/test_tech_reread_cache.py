@@ -219,3 +219,11 @@ def test_an_input_that_cannot_be_compared_asks_the_seat(tmp_path):
     bad["indicators"] = {"atr_14": object()}
     out, _r = agent.analyze_batch([bad], prior_ratings=store.load())
     assert len(spy.calls) == n + 1 and out["AAA"].read_state != READ_CARRIED
+
+
+def test_agent_inherits_no_mixin_and_the_shim_reads_the_instance_spy():
+    from src.agents.base import BaseAgent
+    assert TechAnalystAgent.__bases__ == (BaseAgent,)
+    agent, spy = _agent_and_spy()
+    agent.analyze_batch([{"symbol": "AAA"}])
+    assert spy.calls == [["AAA"]]
