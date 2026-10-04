@@ -22,6 +22,7 @@ from src.rotation import (
     owner_precheck_lines,
     pruning_pass_lines,
 )
+from src.rotation_unrecorded import examined_count_of
 
 router = APIRouter()
 
@@ -40,7 +41,7 @@ class PruningVerdict(BaseModel):
 class PruningPass(BaseModel):
     run_id: str
     recorded_at: str | None
-    examined_count: int
+    examined_count: int | None  # None = the record never held a count
     verdicts: list[PruningVerdict]
     lines: list[str]
 
@@ -167,7 +168,7 @@ def read_passes(conn: sqlite3.Connection) -> PruningPassesResponse:
         seen.add(row["run_id"])
         passes.append(PruningPass(
             run_id=row["run_id"], recorded_at=row["timestamp"],
-            examined_count=int(record.get("held_examined_count") or 0),
+            examined_count=examined_count_of(record),
             verdicts=verdicts_for(
                 record, dispositions.get(row["run_id"]), skips.get(row["run_id"]),
             ),

@@ -1,0 +1,63 @@
+"""Guarded-failure recording for the order desk, with what each failure means for the caller."""
+import logging
+
+from src.sentinel.guarded import record_guarded_pass
+
+# ok(desk, site) records a clean pass; mark(desk, site, exc) records a swallowed fault.
+_LOG = logging.getLogger("src.execution.broker")
+
+EFFECT: dict[str, str] = {
+    "cancel_all_open_orders": (
+        "the caller is told zero orders were cancelled when the truth is unknown"
+    ),
+    "cancel_open_entry_orders": (
+        "the caller is told zero entry orders were cancelled when the truth is unknown"
+    ),
+    "list_open_entry_orders_checked": (
+        "reported as a FAILED read, not as an empty book"
+    ),
+    "open_buy_notional": (
+        "None returned; the caller cannot size against open buy notional"
+    ),
+    "list_recent_orders": (
+        "None returned so the caller retries rather than misjudging the order absent"
+    ),
+    "list_filled_sell_orders": (
+        "None returned so the caller retries rather than concluding there was no fill; a missed stop-out is "
+        "a money-relevant accounting gap"
+    ),
+    "get_order_fill_info": (
+        "None returned; no fill information for reconciliation"
+    ),
+    "read_order_status": (
+        "None returned; the order status is unknown to the caller"
+    ),
+    "poll_order_status": (
+        "polling stops and the last known status is returned"
+    ),
+    "cancel_entry_order": (
+        "if this raced a partial fill the position may end up larger than intended; the next coverage "
+        "reconcile must be checked"
+    ),
+    "resolve_replacement_chain": (
+        "None returned so the caller retries rather than concluding the order was never replaced"
+    ),
+    "replace_entry_limit": (
+        "the order most likely reached a terminal state first; the ORIGINAL id remains authoritative"
+    ),
+    "replace_confirmation_wait": (
+        "the replacement is treated as UNCONFIRMED"
+    ),
+    "replace_confirmation_chain_reread": (
+        "the replacement is treated as UNCONFIRMED"
+    ),
+}
+
+
+def ok(desk, site, **context):
+    record_guarded_pass(desk.client, "order_desk." + site, context=context)
+
+
+def mark(desk, site, exc, **context):
+    context["effect"] = EFFECT[site]
+    record_guarded_pass(desk.client, "order_desk." + site, exc, log=_LOG, context=context)

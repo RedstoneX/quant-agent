@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 from src.agents.base import (
     provider_attempt_budget,
 )
+from src import infra_retry_policy as _retry_policy
 from src.trading_calendar import SESSION_WINDOWS
 
 
@@ -52,6 +53,10 @@ class LLMCostCircuitConfig(BaseModel):
     require_telegram_alerts: bool = True
     session_cost_limit_usd: float = Field(default=0.90, gt=0, allow_inf_nan=False)
     daily_cost_limit_usd: float = Field(default=1.50, gt=0, allow_inf_nan=False)
+    # Last OpenRouter top-up (amount, ET date). Only used when the provider
+    # will not report a balance; see src/llm_balance_runway.py.
+    openrouter_topup_usd: float | None = None
+    openrouter_topup_date: str | None = None
     # Item 14 (OWNER-APPROVED 2026-09-02, docs/WORK.md): the per-call cost
     # RESERVATION layer -- and every exposure ceiling / per-mode allowance /
     # afternoon reserve / free-failure-session backstop that existed only
@@ -188,17 +193,17 @@ class LLMCostCircuitConfig(BaseModel):
     # mode" pattern this codebase already uses for FRED's transient network
     # faults (`MacroDataProvider._next_backoff`), reused rather than a fresh
     # number invented for this circuit.
-    infra_fault_max_retries: int = Field(default=2, ge=0, le=5)
+    infra_fault_max_retries: int = Field(default=_retry_policy.MAX_RETRIES, ge=0, le=5)
     """Bounded retries for a transient cost-circuit infrastructure fault
     BEFORE it escalates to the durable emergency latch. Mirrors
     `MacroConfig.max_retries`."""
 
-    infra_fault_retry_backoff_base_s: float = Field(default=2.0, gt=0, le=30.0)
+    infra_fault_retry_backoff_base_s: float = Field(default=_retry_policy.BACKOFF_BASE_S, gt=0, le=30.0)
     """First retry's backoff, in seconds; doubles each subsequent retry,
     capped at `infra_fault_retry_backoff_max_s`. Mirrors
     `MacroConfig.retry_backoff_base_s`."""
 
-    infra_fault_retry_backoff_max_s: float = Field(default=8.0, gt=0, le=60.0)
+    infra_fault_retry_backoff_max_s: float = Field(default=_retry_policy.BACKOFF_MAX_S, gt=0, le=60.0)
     """Ceiling on the exponential backoff. Mirrors
     `MacroConfig.retry_backoff_max_s`."""
 

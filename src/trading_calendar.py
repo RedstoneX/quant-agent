@@ -16,6 +16,31 @@ What does NOT belong here:
 - Alpaca-calendar queries for *market holidays*. Holiday detection needs a
   live broker connection, so `is_trading_day()` stays on `AlpacaBroker`.
   Callers that only need a weekday heuristic use `is_weekday()` here.
+
+KNOWN, UNFIXED, AND LARGER THAN IT LOOKS — the session windows are wall
+clock only. `SESSION_WINDOWS` below pins every phase to a fixed minute of
+the ET day, and `scripts/run_if_et_window.sh` carries a second hand-copied
+table of the same numbers (pinned to this one by
+`tests/test_trading_calendar.py::test_wrapper_windows_match_session_windows`).
+Neither reads a calendar; the wrapper's only calendar awareness is a
+weekday short-circuit. On an early-close day (13:00 ET) the consequence is
+not a stale bar, it is that the phases run against a shut market: `midday`
+(13:00-14:30) and `close` (15:30-16:00) fire entirely AFTER the close, so
+the act-on-trigger end-of-day position review never happens while the
+desk can still trade, and `intra_check` keeps firing its paid ticks until
+16:00. On a full market holiday the wrapper fires every weekday phase.
+
+The fix is to express each phase relative to the session's real open and
+close, resolved per day from the broker calendar that `src/market_session.py`
+already reads, and to delete the wrapper's copy of the table rather than
+keep two. That is deliberately NOT attempted piecemeal: the fixed minute
+bounds are also read by `src/scheduler.py` (intra_check trigger), both
+watchdogs (`src/silence_watchdog.py`, `src/coverage_watchdog.py`, which
+derive expected-tick counts from them) and `src/config/llm_cost.py` (the
+paid-session budget), and every one of those becomes session-dependent at
+the same moment. Sized at roughly 400-600 changed lines across those six
+modules plus the wrapper and the pinning test. Nothing here detects the
+condition, because a detector is not the fix.
 """
 
 from __future__ import annotations
@@ -57,8 +82,10 @@ SESSION_WINDOWS: dict[str, tuple[int, int]] = {
 # 9:30 a.m.-4:00 p.m. ET), the same bounds `SESSION_WINDOWS` already uses
 # for the intra_check window. Early-close days (13:00 ET) are NOT modelled
 # here — the holiday/early-close calendar needs a broker connection (see
-# module docstring); on those days this errs toward "bar not yet complete"
-# (stale-but-labelled), never toward treating a partial bar as complete.
+# module docstring); for THIS constant's own users that errs toward "bar not
+# yet complete" (stale-but-labelled), never toward treating a partial bar as
+# complete, but read the docstring before concluding the early close is
+# handled: the session-window table above has a worse exposure than this one.
 REGULAR_SESSION_OPEN_MIN = 570   # 09:30 ET
 REGULAR_SESSION_CLOSE_MIN = 960  # 16:00 ET
 

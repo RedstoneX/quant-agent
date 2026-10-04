@@ -40,12 +40,67 @@ def test_growth_is_caught_and_reported_as_a_delta(monkeypatch):
 
     def shrunk(paths):
         sizes = real(paths)
-        sizes[biggest] = now[biggest] - 50  # relative to the working copy, so a change that itself shrinks the biggest file cannot hide the simulated growth
+        # Relative to the working copy, so a change that itself shrinks the
+        # biggest file cannot hide the simulated growth.
+        sizes[biggest] = now[biggest] - 50
         return sizes
 
     monkeypatch.setattr(file_size_guard, "trunk_sizes", shrunk)
     bad = file_size_guard.violations()
     assert any(biggest in line and "grew from" in line and "+50" in line for line in bad), bad
+
+
+def _with_trunk_copy(monkeypatch, path: str, trunk_text: str):
+    """Pretend ``path`` reads as ``trunk_text`` on origin/main, all else real."""
+    real = guard_reference.trunk_blobs
+
+    def patched(paths):
+        blobs = real(paths)
+        if path in blobs:
+            blobs[path] = trunk_text
+        return blobs
+
+    monkeypatch.setattr(file_size_guard, "trunk_blobs", patched)
+
+
+def _one_file(monkeypatch, trunk_text: str, working_text: str) -> list[str]:
+    """Run the guard over ONE real tracked path with both copies substituted."""
+    path = min(file_size_guard.working_paths("*.py"))
+    monkeypatch.setattr(file_size_guard, "working_paths", lambda pattern: [path])
+    _with_trunk_copy(monkeypatch, path, trunk_text)
+    monkeypatch.setattr(type(file_size_guard.ROOT / path), "read_text",
+                        lambda self, **kw: working_text)
+    return [b for b in file_size_guard.violations() if path in b]
+
+
+def test_a_line_widened_past_the_limit_fails_and_passes_once_wrapped(monkeypatch):
+    """The 2026-10-04 route: same code, wider lines, line count unchanged."""
+    width = file_size_guard.WIDTH
+    wrapped = ["x = 1", "log.warning(", "    'stop placement failed: %s', exc,", ")"]
+    widened = ["x = 1", "log.warning(" + "'stop placement failed: %s', exc".ljust(width) + ")"]
+    assert len(widened[1]) > width and all(len(ln) <= width for ln in wrapped)
+    trunk = "\n".join(["x = 1", "pass", "pass", "pass"]) + "\n"  # same line count
+
+    bad = _one_file(monkeypatch, trunk, "\n".join(widened) + "\n")
+    assert any(f"wider than {width}" in b for b in bad), bad
+    assert _one_file(monkeypatch, trunk, "\n".join(wrapped) + "\n") == []
+
+
+def test_a_pre_existing_wide_line_is_not_reported(monkeypatch):
+    """The trunk carries ~416 wide lines; the guard must be green on arrival."""
+    bad = [b for b in file_size_guard.violations() if "wider than" in b]
+    assert bad == [], bad
+
+
+def test_more_ink_in_fewer_lines_is_still_growth(monkeypatch):
+    """Lines are not size: a file over the floor that loses a line while gaining
+    non-whitespace characters has grown, and the line ratchet alone is blind."""
+    n = file_size_guard.FLOOR + 2
+    trunk = "\n".join(["x = 1"] * n) + "\n"
+    working = "\n".join(["x = 1  # loud"] * (n - 1)) + "\n"
+    bad = _one_file(monkeypatch, trunk, working)
+    assert any("non-whitespace characters" in b for b in bad), bad
+    assert not any("lines (+" in b for b in bad), bad  # the line ratchet saw a shrink
 
 
 def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
