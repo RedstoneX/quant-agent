@@ -56,8 +56,15 @@ refuses.
    scope, the site's own source text — and fails any identity the working tree
    holds more copies of than `origin/main` (`guard_reference.added_sites`).
    Removals are never a failure. The file-size guard is numeric by nature; its
-   identity is the path, so a shrink in one file never offsets growth in
-   another.
+   identity is the path, and every grown file is named with its own delta. The
+   one place a total enters is as a *permission*, not a detection: a grown
+   file is waived only when the change as a whole removed at least as many
+   lines as it added (summed over every `.py` file it touched — added,
+   modified or deleted against `origin/main`) AND the file stays under the
+   hard ceiling. The first version refused the mixin-to-composition rewiring
+   the owner ordered (seven files deleted, one holder grown, net down,
+   2026-10-04); a guard that refuses consolidation forces a bypass. A change
+   that only adds lines still fails, and untouched files are never currency.
 
 ## What comes out
 

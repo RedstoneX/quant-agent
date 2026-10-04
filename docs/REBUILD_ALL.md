@@ -53,9 +53,12 @@ git ls-tree -r --name-only origin/main src | grep '\.py$' |
   importers by prefix, so `src/x/y.py` stays inside `src/x`'s existing
   allowance while `src/x_y.py` does not.
 - **`FLOOR = 400` in `scripts/file_size_guard.py` is the cap on a file that is
-  not on `origin/main`.** Files already on the trunk are judged only by whether
+  not on `origin/main`.** Files already on the trunk are judged by whether
   they GREW against it; there is no recorded baseline to edit any more, and
-  nothing to regenerate.
+  nothing to regenerate. Growth is waived when the change nets zero or fewer
+  lines over every `.py` file it touched (deleted files count) and the grown
+  file stays under `CEILING`, so folding mixins into one holder passes while
+  a pure addition still fails.
 - **Baselines may only shrink for existing keys.** Verify in Python against
   `origin/main` before every push. A branch cut before another landed will
   otherwise hand back every line that one removed.
