@@ -54,9 +54,12 @@ _DEFAULT_DB_RELATIVE = "data/quant_agent.db"
 #   route_restored   -- a probe succeeded; the primary is primary again.
 #   probe_failed     -- a probe failed; the cooldown was extended.
 #   retry_after      -- a server Retry-After hint was honoured.
+#   seat_refused     -- a DECISION seat declined to answer because the only
+#                       route left was a model unmeasured at that seat. Not
+#                       a provider failure: a deliberate, recorded refusal.
 EVENT_TYPES = (
     "route_switch", "route_demoted", "probe_primary",
-    "route_restored", "probe_failed", "retry_after",
+    "route_restored", "probe_failed", "retry_after", "seat_refused",
 )
 
 _SCHEMA = """
