@@ -98,12 +98,12 @@ _initialised_for: str | None = None
 # Count of writes this process could not persist.
 #
 # "Best-effort, never raises" is the right posture for a journal that must
-# not be able to fail a trading session — but a swallowed failure that
-# nobody can see is a check that does not exist. This counter is the visible
-# half: `write_failures()` is read by the health report, so a journal that
-# has silently stopped recording where the desk's money went shows up as a
-# number instead of as an absence of rows that looks exactly like "no route
-# switches happened".
+# not be able to fail a trading session. This in-process counter and the
+# ERROR log line are the only trace of a failed write: `write_failures()` is
+# read by NOTHING (not the health report, not the dashboard), and it resets
+# when the process restarts. A journal that silently stopped recording looks
+# like "no route switches happened". The rows that DO land are shown on the
+# dashboard's Model Fallbacks panel (`src/api/routes_route_events.py`).
 _write_failures = 0
 
 
