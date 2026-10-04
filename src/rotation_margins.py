@@ -34,7 +34,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_STEPS = {"strong_buy": 2, "buy": 1, "neutral": 0, "sell": 1, "strong_sell": 2}
+# Steps from neutral on the rating ladder, read off the ladder's own order
+# (distance from the "neutral" rung), not stored as separate numbers.
+_LADDER = ("strong_sell", "sell", "neutral", "buy", "strong_buy")
+_STEPS = {r: abs(i - _LADDER.index("neutral")) for i, r in enumerate(_LADDER)}
 
 
 def margins_for(held, analyses, registry, stale, non_corroborating) -> dict:
