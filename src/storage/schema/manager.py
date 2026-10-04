@@ -290,25 +290,6 @@ class DatabaseSchema:
             -- row. Without persistence, the bail branches' "next session
             -- reconcile rebuilds coverage" promise was a lie — _reconcile_fills
             -- only updates fill columns, not stop coverage.
-            -- A protective-stop level the desk INTENDED to apply while the
-            -- market was shut. Alpaca refuses `replace_order_by_id` on an
-            -- order in `accepted` status (HTTP 422, measured on the paper
-            -- broker 2026-10-02), which is the status every resting stop
-            -- carries after the 16:00 ET close. A stop cannot be triggered
-            -- by a shut tape either, so the un-made amend costs nothing
-            -- overnight -- what it must NOT do is vanish. The row is written
-            -- instead of the amend and discharged by the next open's
-            -- coverage preamble, before anything else can expose the name.
-            CREATE TABLE IF NOT EXISTS pending_stop_amends (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                symbol TEXT NOT NULL,
-                intended_stop REAL NOT NULL,
-                is_short INTEGER NOT NULL DEFAULT 0,
-                reason TEXT,
-                run_id TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
             CREATE TABLE IF NOT EXISTS pending_protection_restores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL,
@@ -1130,4 +1111,4 @@ class DatabaseSchema:
             except Exception as e:
                 _log.warning("Index creation failed for %s.%s: %s", table, col, e)
         from src.storage.schema.owner_intent_tables import apply as _owner_intents; _owner_intents(self.conn)  # idempotent, commits
-        from src.storage.schema.sentinel_tables import ensure_sentinel_tables; ensure_sentinel_tables(conn=self.conn)  # Sentinel seams, appended 2026-10-02; idempotent
+        from src.storage.schema.sentinel_tables import ensure_sentinel_tables; ensure_sentinel_tables(conn=self.conn); from src.storage.schema.pending_stop_amend_tables import ensure_pending_stop_amend_table; ensure_pending_stop_amend_table(conn=self.conn)  # Sentinel seams + owed stop amends; idempotent

@@ -1398,53 +1398,6 @@ class TradeLedger:
             )
             return [dict(r) for r in cur.fetchall()]
 
-    def record_pending_stop_amend(
-        self, symbol: str, intended_stop: float, *,
-        is_short: bool = False, reason: str = "market_closed",
-        run_id: str | None = None,
-    ) -> int:
-        """Remember a stop level the desk could not amend to while shut.
-
-        One row per symbol: a later, tighter intent REPLACES an earlier one
-        rather than queueing behind it, because only the most protective
-        level the desk has decided on is worth applying at the open. The
-        direction test lives in the drain, not here, so the record of what
-        was intended is never silently dropped by the writer.
-        """
-        def _do():
-            self.conn.execute(
-                "DELETE FROM pending_stop_amends WHERE symbol = ?", (symbol,),
-            )
-            cur = self.conn.execute(
-                "INSERT INTO pending_stop_amends "
-                "(symbol, intended_stop, is_short, reason, run_id) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (symbol, float(intended_stop), 1 if is_short else 0,
-                 reason, run_id),
-            )
-            self.conn.commit()
-            return cur.lastrowid or 0
-        return self._locked_write(_do, label="record_pending_stop_amend")
-
-    def get_pending_stop_amends(self) -> list[dict]:
-        """Every undischarged out-of-hours stop intent, oldest first."""
-        with self._lock:
-            rows = self.conn.execute(
-                "SELECT id, symbol, intended_stop, is_short, reason, run_id, "
-                "created_at FROM pending_stop_amends ORDER BY created_at ASC"
-            ).fetchall()
-        return [dict(r) for r in rows]
-
-    def delete_pending_stop_amend(self, row_id: int) -> int:
-        """Discharge one row by primary key (after it is applied, or voided)."""
-        def _do():
-            cur = self.conn.execute(
-                "DELETE FROM pending_stop_amends WHERE id = ?", (row_id,),
-            )
-            self.conn.commit()
-            return cur.rowcount or 0
-        return self._locked_write(_do, label="delete_pending_stop_amend")
-
     def get_pending_protection_restores(self) -> list[dict]:
         """All currently-pending protection-restore rows, oldest first."""
         with self._lock:

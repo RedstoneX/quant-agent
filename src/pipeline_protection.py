@@ -299,27 +299,7 @@ class ProtectionMixin:
         # clock, or a sweep straddling 16:00 ET could call one symbol's
         # lapse expected and the next symbol's identical lapse a failure.
         market_open = _market_is_open_now(self.broker)
-
-        # FIRST protective action of an open market, deliberately ahead of
-        # every gap classification and every repair below: a stop level the
-        # desk decided on while the tape was shut could not be amended then
-        # (the broker refuses a replace on a resting `accepted` order) and is
-        # owed now. Applying it here means the owed level lands before any
-        # later action in this session can expose the name. Never raises;
-        # a row it cannot apply stays owed. See
-        # `src/execution/pending_stop_amends.py`.
-        if market_open:
-            try:
-                from src.execution.pending_stop_amends import (
-                    drain_pending_stop_amends,
-                )
-                drain_pending_stop_amends(self.broker, self.db)
-            except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "coverage sweep: the pending stop-amend drain failed (%s) "
-                    "— levels owed from the closed market are STILL owed", exc,
-                )
-
+        if market_open: from src.execution.pending_stop_amends import drain_safely; drain_safely(self.broker, self.db)  # owed out-of-hours stop levels land FIRST
         gaps: list[dict] = []
         # Positions whose protective stop has been elected and has not
         # filled. Kept OUT of `gaps`: every consumer of that list buckets a
