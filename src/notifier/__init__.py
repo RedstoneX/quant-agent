@@ -207,6 +207,7 @@ _SUBMODULES = (
     "src.notifier.sections",
     "src.notifier.markup",
     "src.notifier.transport",
+    "src.notifier.send_funnel",
     "src.notifier.owner_alert",
     "src.notifier.wording",
     "src.notifier.alerts",
