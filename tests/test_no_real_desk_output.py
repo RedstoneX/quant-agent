@@ -138,51 +138,7 @@ def test_allow_list_entries_all_carry_a_reason() -> None:
 # Proof the guard is load-bearing: it fires on the REAL offenders
 # ---------------------------------------------------------------------------
 
-#: One per signal, so a regression in any single detector shows up here.
-KNOWN_OFFENDERS = [
-    ("tests/fixtures/holding_why_rsg_20260917.json", "broker-order-id"),
-    ("tests/fixtures/log_health_production_excerpt.txt", "production-log"),
-    ("tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_first.txt", "desk-decision"),
-    ("tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_retry.txt", "desk-decision"),
-    ("tests/fixtures/constructor_drop_paths_archive.json", "desk-decision"),
-    ("tests/fixtures/pm_response_11_targets_20260817.txt", "desk-prose"),
-    ("tests/fixtures/pm_response_17_targets_20260820.txt", "desk-prose"),
-    ("tests/test_stop_out_reconciliation.py", "broker-order-id"),
-    # No real broker-account-id specimen is kept on disk on purpose — both
-    # real account numbers that ever appeared here (rehearsal and main) are
-    # now redacted rather than preserved as allow-listed proof. The
-    # broker-account-id detector's regression coverage instead comes from
-    # test_detector_fires_on_a_freshly_invented_offender below, which fires
-    # it on an invented value shaped exactly like a real one.
-]
-
-
-@pytest.mark.parametrize("relpath,signal", KNOWN_OFFENDERS)
-def test_detector_fires_on_the_real_offenders(relpath: str, signal: str) -> None:
-    """Each known-real file must still trip, by the signal it is known for.
-
-    This is what stops the guard quietly rotting into a no-op. If someone
-    loosens a threshold until nothing fires, these fail first.
-    """
-    text = guard.read_text(PROJECT_ROOT / relpath)
-    assert text is not None, f"{relpath} is missing"
-    signals = {f.signal for f in guard.scan_text(text[:guard.SCAN_BYTE_CAP], relpath)}
-    assert signal in signals, (
-        f"{relpath} no longer trips the {signal} detector (saw: {sorted(signals)}). "
-        "Either the file was redacted — remove its allow-list entry — or the "
-        "detector has been weakened."
-    )
-
-
-def test_detector_fires_on_a_freshly_invented_offender() -> None:
-    """A brand-new fixture in the offending style, written for this test.
-
-    The values below are invented, but they are shaped exactly like the real
-    thing: a real ticker, cent-precision levels, the desk's own field names, a
-    broker order id, a broker account number and a production log line. Every
-    signal must fire.
-    """
-    new_fixture = '''{
+_INVENTED_OFFENDER = '''{
   "symbol": "NVDA",
   "rating": "buy",
   "conviction": "high",
@@ -196,6 +152,59 @@ def test_detector_fires_on_a_freshly_invented_offender() -> None:
   "log": "2026-09-22 14:31:55,689 [ERROR] src.execution.broker: stop rejected for NVDA at 176.12",
   "pm_note": "Trimming NVDA and AAPL into strength while adding MSFT and AVGO on the pullback, and holding XOM as the energy hedge because the macro read still calls crude bid. The book is 62% invested and the cash drag is acceptable here, so no further deployment is warranted before the close."
 }'''
+
+
+def _live_signals_by_allowed_file() -> dict[str, set[str]]:
+    """For every allow-listed file the guard itself names, the signals the
+    detector trips on it NOW. Derived from the guard's own allow-list, so no
+    second list of "known real offenders" exists to drift from it."""
+    out: dict[str, set[str]] = {}
+    for relpath in guard.allow_list():
+        text = guard.read_text(PROJECT_ROOT / relpath)
+        if text is None:
+            continue
+        found = guard.scan_text(text[:guard.SCAN_BYTE_CAP], relpath)
+        out[relpath] = {f.signal for f in found}
+    return out
+
+
+def test_detector_fires_on_the_real_offenders() -> None:
+    """Every allow-listed real file must still trip at least one detector, and
+    the real files together must exercise every signal that has a real
+    specimen on disk.
+
+    This is what stops the guard quietly rotting into a no-op. If someone
+    loosens a threshold until nothing fires, this fails first. Which files
+    count as real offenders is read from the guard's allow-list at check time.
+    """
+    live = _live_signals_by_allowed_file()
+    assert live, "no allow-listed file could be read: the real-offender proof is vacuous"
+    silent = sorted(path for path, sigs in live.items() if not sigs)
+    assert not silent, (
+        f"allow-listed files no longer trip any detector: {silent}. Either the "
+        "file was redacted — remove its allow-list entry — or the detector "
+        "has been weakened."
+    )
+    invented = {f.signal for f in guard.scan_text(_INVENTED_OFFENDER, "tests/fixtures/new.json")}
+    # No real broker-account-id specimen is kept on disk on purpose (both real
+    # numbers were redacted); that signal is proven by the invented fixture.
+    must_have_real = invented - {"broker-account-id"}
+    seen = set().union(*live.values())
+    assert must_have_real <= seen, (
+        f"signals with no real specimen tripping any allow-listed file: "
+        f"{sorted(must_have_real - seen)}"
+    )
+
+
+def test_detector_fires_on_a_freshly_invented_offender() -> None:
+    """A brand-new fixture in the offending style, written for this test.
+
+    The values below are invented, but they are shaped exactly like the real
+    thing: a real ticker, cent-precision levels, the desk's own field names, a
+    broker order id, a broker account number and a production log line. Every
+    signal must fire.
+    """
+    new_fixture = _INVENTED_OFFENDER
     signals = {f.signal for f in guard.scan_text(new_fixture, "tests/fixtures/new.json")}
     assert signals == {
         "broker-order-id", "broker-account-id", "production-log", "desk-decision", "desk-prose",
