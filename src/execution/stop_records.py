@@ -30,15 +30,17 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
 from typing import Any, Callable
 
+from src.execution.broker_parts.stop_window import record_unprotected_windows
 from src.execution.pending_stop_amends import record_deferred_amend
 logger = logging.getLogger(__name__)
 
-from src.stop_price_classification import (  # re-export mirror: defined there, still importable from here
+# re-export mirror: defined there, still importable from here
+from src.stop_price_classification import (
     STOP_ABSENT, STOP_UNUSABLE, STOP_USABLE, classify_stop_price,
 )
+from src.execution.stop_level_report import StopLevelMismatch, report_stop_level_mismatches
 
 # ---------------------------------------------------------------------------
 # THE one place a stop VALUE is judged usable (docs/WORK.md item 88).
@@ -220,17 +222,22 @@ def replace_stop_and_record(
     **kwargs: Any,
 ) -> dict | None:
     """The replacement funnel: broker replace, then archive write-back.
+
     Callers go through here so a successful replace cannot silently leave
     `trades.stop_loss` on the entry level. A failed replace writes no level.
     """
     order = broker.replace_stop_loss(symbol, new_stop_price, **kwargs)
-    from src.execution.broker_parts.stop_window import record_unprotected_windows
     record_unprotected_windows(broker, db, symbol)  # even a failed replace
     if isinstance(order, dict) and order.get("amend_status") == "market_closed":
-        return record_deferred_amend(db, symbol, new_stop_price, order, is_short=bool(_holding_is_short(broker, symbol)))
+        return record_deferred_amend(
+            db, symbol, new_stop_price, order,
+            is_short=bool(_holding_is_short(broker, symbol)),
+        )
     if accepted_stop_order(order):
         recorded = write_back_stop_loss(
-            db, symbol, new_stop_price, is_short=_holding_is_short(broker, symbol))
+            db, symbol, new_stop_price,
+            is_short=_holding_is_short(broker, symbol),
+        )
         if not recorded:
             logger.error(
                 "stop replace accepted for %s @ $%.4f but archive write-back "
@@ -238,17 +245,6 @@ def replace_stop_and_record(
                 symbol, new_stop_price,
             )
     return order
-
-
-@dataclass(frozen=True)
-class StopLevelMismatch:
-    """One symbol whose archive stop_loss is not the broker's live stop."""
-
-    symbol: str
-    recorded: float | None
-    live: float | None
-    is_short: bool
-    reason: str
 
 
 def reconcile_recorded_stop_levels(
@@ -365,42 +361,3 @@ def write_back_live_protective_stops(
             live, item.symbol, item.recorded,
         )
     return remaining
-
-
-def report_stop_level_mismatches(mismatches: list[StopLevelMismatch]) -> None:
-    """Log and page every remaining mismatch. Do not mute; do not invent.
-
-    Write-back of the live protective order happens first (see
-    `write_back_live_protective_stops`). Anything still listed here is an
-    unfixed record. 2026-09-16 once-per-day paging cleared the COP/EQNR
-    alerts without fixing the archive; that mute is gone.
-    """
-    if not mismatches:
-        return
-    for item in mismatches:
-        logger.error(
-            "STOP RECORD MISMATCH: %s — %s (short=%s)",
-            item.symbol, item.reason, item.is_short,
-        )
-    lines = "\n".join(
-        f"  {item.symbol}: {item.reason}" for item in mismatches
-    )
-    body = (
-        "STOP RECORD DOES NOT MATCH THE BROKER\n"
-        "The desk's own opening-row stop_loss is not the live protective "
-        "stop. Analysis drawn from the archive would be stale. The broker "
-        "stop was NOT changed by this check.\n"
-        f"{lines}\n"
-        "Write-back covers in-code replace/trail/repair/rearm/ex-div and "
-        "a live protective order found at reconcile. A mismatch after "
-        "that is an out-of-band move, or a write-back that failed. Do not "
-        "treat a 'traded through its stop' reading from the archive as "
-        "real until these match."
-    )
-    try:
-        from src import notifier as _notifier
-        _notifier.send_owner_alert(
-            body, symbols=[item.symbol for item in mismatches],
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.error("stop-record mismatch owner alert failed: %s", exc)

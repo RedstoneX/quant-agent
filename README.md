@@ -225,6 +225,8 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+**Merge-driver registration is automatic.** `.gitattributes` alone does not enable the `docsmerge` driver; every pytest run registers it for the clone (and its worktrees) via `tests/conftest.py`, and `python scripts/check_merge_drivers.py` fails if any `merge=<driver>` in `.gitattributes` is unregistered (`--install` fixes it).
+
 **The number-ledger ratchet needs no setup.** The fourth file every parallel
 branch used to collide on was `src/number_sources.py`: its
 `MAX_ARBITRARY_ENTRIES` was one hand-edited line carrying both the count and
@@ -288,6 +290,8 @@ reports success rather than a refusal, re-read the item you expect to be
 there. See `docs/INCIDENT_HISTORY.md`, 2026-09-18, for the full defect.
 
 ### Configure
+
+**Credentials: OneCLI is the source of truth, not `.env`** — see `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` before touching any key.
 
 1. Create `.env` (set `chmod 600` after — these are secrets):
 ```bash

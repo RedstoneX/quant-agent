@@ -990,12 +990,8 @@ risk:
   # (10) and max_gross_bearish_pct (20) were unsourced numbers and were
   # removed: one short is capped by max_position_pct exactly as one long is,
   # and total exposure either way is bounded by max_gross_exposure_x and
-  # max_total_position_pct. The haircut below is the one extra short
-  # protection the owner kept.
-  # Sizing-only haircut (never stop placement) on a short's risk-per-share:
-  # a short can gap through its stop with unbounded loss, so equal nominal
-  # risk must not buy equal real risk. Range (1.0, 3.0].
-  short_gap_risk_multiple: 1.5
+  # max_total_position_pct. Owner ruling 2026-10-04: a short gets no extra
+  # protection and no different math — the gap haircut was deleted.
   # Kill switch (2026-09-02) — a file whose mere existence halts every order
   # this desk would place, entries AND exits alike. Checked with
   # path.exists() in src/execution/broker.py, before every broker submit/
@@ -1410,6 +1406,10 @@ llm_cost_circuit:
   require_telegram_alerts: true
   session_cost_limit_usd: 0.90
   daily_cost_limit_usd: 2.75
+  # Last OpenRouter top-up, owner-recorded. Balance fallback for the dashboard
+  # runway warning (src/llm_balance_runway.py) when the provider reports none.
+  openrouter_topup_usd: 10.0
+  openrouter_topup_date: "2026-10-01"
   # Item 14 (OWNER-APPROVED 2026-09-02, docs/WORK.md): the per-call cost
   # RESERVATION layer -- and every exposure ceiling / per-mode allowance /
   # afternoon reserve / free-failure-session backstop that existed only to

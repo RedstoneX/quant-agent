@@ -1123,9 +1123,9 @@ def test_preview_dials_come_from_the_constructors_own_defaults():
     from the constructor the next time the default moves."""
     import ast
     import inspect
-    from src.pipeline import TradingPipeline
     from src.portfolio_constructor import ConstructorConfig
-    body = inspect.getsource(TradingPipeline._build_projected_portfolio)
+    from src.prompt_facts.projected import PromptProjected
+    body = inspect.getsource(PromptProjected._build_projected_portfolio)
     tree = ast.parse(textwrap.dedent(body))
     dial = next(
         n for n in ast.walk(tree)
@@ -1198,9 +1198,9 @@ def test_preview_and_constructor_share_ONE_sizing_definition():
     assert pc.risk_budget_allocation_pct is rc.risk_budget_allocation_pct
     import ast
     import inspect
-    from src.pipeline import TradingPipeline
+    from src.prompt_facts.projected import PromptProjected
     params = inspect.signature(
-        TradingPipeline._build_projected_portfolio,
+        PromptProjected._build_projected_portfolio,
     ).parameters
     assert "default_buy_pct" not in params, (
         "the flat per-candidate preview size is back in the preview path"
@@ -1208,7 +1208,7 @@ def test_preview_and_constructor_share_ONE_sizing_definition():
     # And no flat per-candidate constant survives in the body either: the
     # only `default_buy_pct` left in the module is the historical note in
     # the docstring, which is prose, not code.
-    body = inspect.getsource(TradingPipeline._build_projected_portfolio)
+    body = inspect.getsource(PromptProjected._build_projected_portfolio)
     tree = ast.parse(textwrap.dedent(body))
     names = {
         n.id for n in ast.walk(tree) if isinstance(n, ast.Name)

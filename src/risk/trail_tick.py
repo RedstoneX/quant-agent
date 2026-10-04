@@ -83,7 +83,7 @@ __all__ = ["MIN_RATCHET_TICKS", "venue_tick", "min_ratchet_floor"]
 #: amend to a sub-tick "improvement" cannot improve protection by
 #: construction. That is a property of the instrument (SEC Rule 612 /
 #: Alpaca's published $0.01-at-or-above-$1, $0.0001-below split, the same
-#: split `broker_parts/stop_amend.py::_quantize_price` and
+#: split `broker_parts/stop_amend_pure.py::_quantize_price` and
 #: `execution/stop_records.py::_prices_match` already carry), not an
 #: appetite.
 #:
