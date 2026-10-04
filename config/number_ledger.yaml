@@ -4033,10 +4033,18 @@ numbers:
       where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
       records: >-
         every midday gate evaluation in front of a non-external SELL, carrying the adverse move from
-        AVERAGE ENTRY PRICE in the name's own ATR, the sqrt(sessions_held) widening applied, whether
-        the band blocked the exit, and what the position did afterwards -- this row's own
-        `settlement_route` and `derivation_attempts` fields hold the two spent derivation attempts and
-        must not be re-opened blind
+        AVERAGE ENTRY PRICE in the name's own ATR, the sqrt(sessions_held) widening applied, and
+        whether the band blocked the exit. CORRECTED 2026-10-04: this row previously also claimed to
+        record "what the position did afterwards", and it does not -- a noise-band row is written at
+        the MOMENT of the decision and is never revisited, and the band is only evaluated when an exit
+        is proposed, so these rows alone cannot say whether an adverse move was followed by further
+        adverse travel or by recovery. That second half, which the settlement needs, is reconstructed
+        by joining these rows on (symbol, session) to `alignment_exit_readings`, which is written for
+        every open position every session. It is deliberately NOT collected by adding a follow-up
+        recorder to this payload: any such recorder must fix a look-ahead horizon, and that horizon
+        would be a second chosen number imported into a fix whose whole purpose is to remove one.
+        This row's own `settlement_route` and `derivation_attempts` fields hold the two spent
+        derivation attempts and must not be re-opened blind
       closes_when: >-
         the recording holds enough blocked and unblocked evaluations to show where the adverse move
         from entry stops being ordinary wobble for THIS anchor, which is the anchor no published
