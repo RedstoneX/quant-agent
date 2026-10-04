@@ -271,6 +271,17 @@ DONE WHEN:
 
 detail: docs/board_notes/item-224.md
 
+**228. The owner cannot see which holdings are drifting toward the chopping block -- OPEN, filed 2026-10-02; the panel is built, the live confirmation is not.** OWNER RULING 2026-10-02 (verbatim, on the rule beating any exemption): "I think the rule should win. Otherwise, things become inconsistent. But will I be able to know every day looking at the chart or some indicator that it's going on the chopping block soon? That should be for all stuff. A heads up would be nice. Uh, nothing more than that, because I still want to keep the rule of autonomy. For the desk." The margin recorder writes a run-scoped `rotation`/`margins` row each session that nothing in the trading path reads. Built beside item 219's Pruning Pass panel: `GET /chopping-block` (`src/api/routes_chopping_block.py`, read-only) lists EVERY holding the latest pass examined, healthy ones included, with whether it clears the desk's own entry bar, which way it has been moving, and the real rule it fails on. VISIBILITY ONLY: nothing in the trading path reads it, it delays and vetoes nothing, Telegram stays muted. No threshold, danger band or day-count was chosen: standing is categorical and direction is "since when, and what it was before".
+DONE WHEN:
+  - [x] every holding the latest pass examined is listed, healthy or below the bar, from the durable `rotation`/`precheck` rows
+  - [x] each below-bar name carries the entry rules it fails on in plain words, or says the record does not hold them -- never a bare name
+  - [x] direction is derived from recorded passes (slipped / recovered / steady, and since when) with no cutoff chosen
+  - [x] the route is read-only and passes the dashboard-cannot-trade guard
+  - [x] the margin each holding sits from failing each rule that has a distance is recorded per session (`src/rotation_margins.py`: R2 in rating steps from neutral, R5 in independent net-evidence points above failing) and shown with day-on-day direction; R3, R6 and R7 are yes-or-no and have none
+  - [ ] a production session is observed writing the margins row and feeding the panel with real rows, and the margin recorder's R5 value is checked against the live eligibility reasons -- desk is OFF, so proven by test only
+  - [ ] reasons for below-bar names that were not cut depend on item 219's dispositions row (PR 1108); until that merges they read "the record does not say"
+detail: docs/board_notes/item-228.md
+
 **227. A seat's read carried no record of WHEN or in WHICH run it was taken, so "is this evidence fresh?" could only be inferred -- filed 2026-10-01. [BOARD STATE: 5 of 6 ticked; the last box is PRODUCTION-BLOCKED while the desk is OFF (one observed production session) — do not dispatch build work.]** The evidence gate has classified every seat as fresh / carried / absent since 2026-09-18, but the classification was stamped with nothing: no run id, no timestamp, and no age for a carried answer. That was tolerable while the disclosure only printed a line to the owner. It stopped being tolerable on 2026-10-01, when the owner ruled that any holding failing the desk's own fresh-entry bar is SOLD and that the test is re-run several times a day -- the half-hourly `intra_check` re-reads the technical seat and carries the rest, so a sell could be taken against a reading made before the market opened and nothing in the record would say so. Measured read-only against the production database 2026-10-01: `intra_check` is 63% of lifetime model spend and produced 37 of the desk's 80 trades, so this is where most decisions are taken. This item is the RECORDING, not a rule: no freshness threshold, no expiry window, no decision gated on any of it. A cutoff would be an invented number and is the owner's call, not this item's.
 
 DONE WHEN:
@@ -369,7 +380,6 @@ detail: docs/board_notes/item-219.md
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
-
 **231. Every owner-facing timestamp shows a time but no date — OPEN, filed 2026-10-02 by the owner.** He reads the alerts on a phone hours after they fire, and a bare time cannot be placed once he scrolls back. [measured 2026-10-02, grep of `src/`] 24 call sites format a bare 12-hour time; exactly one — the notifier session header — prepends the date. Fix at the source: one shared formatter emitting date + time, used by every site that currently emits time alone, so a newly written alert cannot omit the date. Keep the existing 12-hour, no-leading-zero behaviour and the glibc caveat already documented in the sections module. This changes message TEXT only; Telegram stays muted and no new alerts are added.
 DONE WHEN:
 - [ ] one shared date+time formatter exists and every previously time-only owner-facing site calls it. (Done for `fmt_time_12h`, which every trader_feed and notifier header uses; STILL OPEN: the health report in `log_health.py` formats its own clock, and `inflight.py` shows `%H:%M ET` on the dashboard.)
