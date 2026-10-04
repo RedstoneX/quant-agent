@@ -13,13 +13,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.agents.portfolio_manager import PortfolioManagerAgent, prompt_evidence, ranking, rotation_section
+from src.agents.portfolio_manager import PortfolioManagerAgent, grounding, prompt_evidence, ranking, rotation_section
 from src.agents.portfolio_manager.candidate_ranking import CandidateRanking, _HostState
 from src.agents.portfolio_manager.decision_grounding import DecisionGrounding
 from src.agents.portfolio_manager.evidence_prompting import PromptEvidence
-from src.agents.portfolio_manager.grounding import (
-    DecisionGroundingMixin, _OWN_BODIES, _is_own_shim,
-)
+from src.agents.portfolio_manager.held_part import LiveMapping, is_delegate
 from src.agents.portfolio_manager.rotation_rendering import RotationSection
 from src.trading_calendar import et_today
 from tests.boundary_harness import check_boundary
@@ -36,7 +34,7 @@ def _bare():
     """A part with its own bodies (no swapped collaborators)."""
     return DecisionGrounding(
         build_evidence_registry=MagicMock(name="build_evidence_registry"),
-        conflict_source_aliases=DecisionGroundingMixin._CONFLICT_SOURCE_ALIASES,
+        conflict_source_aliases=PortfolioManagerAgent._CONFLICT_SOURCE_ALIASES,
     )
 
 
@@ -85,38 +83,7 @@ def test_aliases_are_read_live_off_the_host_not_the_part():
     assert not part._conflict_is_named("ABC news says", "ABC", "news")
 
 
-def test_shims_build_the_part_per_call_and_see_a_swapped_body():
-    class Host(DecisionGroundingMixin):
-        build_evidence_registry = staticmethod(lambda *a, **k: {})
-
-    # Pristine: the mixin's own shims are never handed back to the part.
-    assert all(_is_own_shim(Host, attr) for attr in _OWN_BODIES)
-    assert Host._conflict_is_named("ABC smart-money", "ABC", "smart_money") is True
-    # Swapped after construction: the next call sees the swap.
-    with patch.object(Host, "_conflict_is_named", classmethod(lambda cls, *a: "SWAPPED")):
-        assert not _is_own_shim(Host, "_conflict_is_named")
-        assert Host._grounding()._conflict_is_named("x", "y", "z") == "SWAPPED"
-    assert _is_own_shim(Host, "_conflict_is_named")
-    assert _is_own_shim(Host, "_target_intent")
-    assert not _is_own_shim(Host, "missing_attr")
-
-
-def test_shim_signatures_cover_every_body():
-    bodies = {n for n, f in vars(DecisionGrounding).items()
-              if inspect.isfunction(f) and n != "__init__"}
-    shims = {n for n, f in vars(DecisionGroundingMixin).items()
-             if isinstance(f, classmethod) and n != "_grounding"}
-    assert bodies == shims
-
-
 # --- Instalment 2: prompt evidence, rotation section, candidate ranking ----------
-
-#: (shim module, mixin, part, one body the part reads through `self.`)
-_INSTALMENT_2 = [
-    (rotation_section, rotation_section.RotationSectionMixin, RotationSection, "_rotation_constraint_line"),
-    (ranking, ranking.CandidateRankingMixin, CandidateRanking, "candidate_eligibility"),
-]
-
 
 def _ranking_part(**overrides):
     kwargs = dict(
@@ -182,55 +149,7 @@ def test_ranking_part_wires_the_host_state_from_its_arguments():
     assert _ranking_part(candidate_eligibility=swapped).candidate_eligibility is swapped
 
 
-def test_ranking_shim_reads_the_agent_class_live():
-    """The shim's getter/setter hit `PortfolioManagerAgent` at call time, with the
-    body's None default, so a test that assigns `_macro_parse_failures` on the agent
-    class is what the body sees."""
-    agent = ranking.PortfolioManagerAgent
-    before = getattr(agent, "_macro_parse_failures", None)
-    try:
-        agent._macro_parse_failures = ["live"]
-        assert ranking.CandidateRankingMixin._candidate_ranking()._host._macro_parse_failures == ["live"]
-        ranking.CandidateRankingMixin._candidate_ranking()._host._macro_parse_failures = ["written"]
-        assert agent._macro_parse_failures == ["written"]
-    finally:
-        if before is None:
-            if "_macro_parse_failures" in vars(agent):
-                del agent._macro_parse_failures
-        else:
-            agent._macro_parse_failures = before
-
-
-@pytest.mark.parametrize("module, mixin, part, body", _INSTALMENT_2)
-def test_instalment_2_shims_build_the_part_per_call_and_see_a_swapped_body(module, mixin, part, body):
-    class Host(mixin):
-        pass
-
-    builder = next(n for n, f in vars(mixin).items()
-                   if isinstance(f, classmethod) and n not in vars(part))
-    # Pristine: the mixin's own shims are never handed back to the part.
-    assert all(module._is_own_shim(Host, attr) for attr in module._OWN_BODIES)
-    assert body in module._OWN_BODIES
-    built = getattr(Host, builder)()
-    assert getattr(built, body).__func__ is getattr(part, body)
-    with patch.object(Host, body, classmethod(lambda cls, *a, **k: "SWAPPED")):
-        assert not module._is_own_shim(Host, body)
-        assert getattr(getattr(Host, builder)(), body)() == "SWAPPED"
-    assert module._is_own_shim(Host, body)
-    assert not module._is_own_shim(Host, "missing_attr")
-
-
-@pytest.mark.parametrize("module, mixin, part, body", _INSTALMENT_2)
-def test_instalment_2_shim_signatures_cover_every_body(module, mixin, part, body):
-    bodies = {n for n, f in vars(part).items() if inspect.isfunction(f) and n != "__init__"}
-    builder = next(n for n, f in vars(mixin).items()
-                   if isinstance(f, classmethod) and n not in vars(part))
-    shims = {n for n, f in vars(mixin).items() if isinstance(f, classmethod) and n != builder}
-    assert bodies == shims
-    assert set(module._OWN_BODIES) <= bodies
-
-
-# --- The agent HOLDS the prompt-evidence part; it no longer inherits it -----------
+# --- The agent HOLDS its parts; it inherits none of them --------------------------
 
 def test_agent_holds_prompt_evidence_instead_of_inheriting():
     assert not any(c.__name__ == "PromptEvidenceMixin" for c in PortfolioManagerAgent.__mro__)
@@ -258,3 +177,94 @@ def test_delegates_cover_every_prompt_evidence_body():
     bodies = {n for n, f in vars(PromptEvidence).items()
               if n != "__init__" and (inspect.isfunction(f) or isinstance(f, (classmethod, staticmethod)))}
     assert bodies == set(prompt_evidence.DELEGATED)
+
+
+# --- Candidate ranking, rotation section, decision grounding: held, not inherited ---
+
+#: (holder module, part class, held attribute, one body the part reads through `self.`, a no-arg-ish probe)
+_HELD = [
+    (ranking, CandidateRanking, "_candidate_ranking", "candidate_eligibility"),
+    (rotation_section, RotationSection, "_rotation_section", "_rotation_constraint_line"),
+    (grounding, DecisionGrounding, "_decision_grounding", "_conflict_is_named"),
+]
+_MIXINS = ("CandidateRankingMixin", "RotationSectionMixin", "DecisionGroundingMixin", "PromptEvidenceMixin")
+
+
+def _hold_fn(module):
+    return next(f for n, f in vars(module).items() if n.startswith("hold_"))
+
+
+def test_agent_inherits_no_mixin_and_holds_every_part():
+    assert not any(c.__name__ in _MIXINS for c in PortfolioManagerAgent.__mro__)
+    assert [c.__name__ for c in PortfolioManagerAgent.__mro__][:3] == ["PortfolioManagerAgent", "LiveLimitPrompt", "BaseAgent"]
+    for module, part, holder, _ in _HELD:
+        assert type(getattr(PortfolioManagerAgent, holder)) is part
+        for name in module.DELEGATED:
+            assert is_delegate(PortfolioManagerAgent, name), name
+
+
+@pytest.mark.parametrize("module, part, holder, body", _HELD)
+def test_delegates_cover_every_body_and_live_bodies_are_delegated(module, part, holder, body):
+    bodies = {n for n, f in vars(part).items() if inspect.isfunction(f) and n != "__init__"}
+    assert bodies == set(module.DELEGATED)
+    assert body in module.LIVE_BODIES
+    assert set(module.LIVE_BODIES) <= bodies
+
+
+@pytest.mark.parametrize("module, part, holder, body", _HELD)
+def test_part_is_built_held_and_run_on_a_bare_class_with_no_agent(module, part, holder, body):
+    """Constructed from a bare class, exercised through the delegates, and the held
+    part's own body runs when nothing is swapped: no agent object is built."""
+    class Bare:
+        build_evidence_registry = staticmethod(lambda *a, **k: {})
+        _macro_sectors = staticmethod(lambda *a, **k: [])
+
+    _hold_fn(module)(Bare)
+    held = getattr(Bare, holder)
+    assert type(held) is part
+    if module is grounding:  # the mixin's class attributes now ride in with the holder
+        assert Bare._CONFLICT_SOURCE_ALIASES == PortfolioManagerAgent._CONFLICT_SOURCE_ALIASES
+        assert Bare._DECISION_FIELDS == PortfolioManagerAgent._DECISION_FIELDS == ("targets",)
+    assert set(module.DELEGATED) <= set(vars(Bare))
+    # A live body on the part forwards to the part's OWN body while Bare is pristine
+    # (the recursion guard): mark the class body and see the mark come back through
+    # both the delegate and the part's `self.` read.
+    with patch.object(part, body, lambda self, *a, **k: ("OWN", self)):
+        assert getattr(Bare, body)() == ("OWN", held)
+        assert getattr(held, body)() == ("OWN", held)
+    # Swapped on the bare host after construction: the next call through the part sees it.
+    with patch.object(Bare, body, classmethod(lambda cls, *a, **k: "SWAPPED")):
+        assert not is_delegate(Bare, body)
+        assert getattr(held, body)() == "SWAPPED"
+    assert is_delegate(Bare, body)
+    # Re-holding with a caller-built part swaps the whole part.
+    assert getattr(_hold_fn(module)(Bare, held), holder) is held
+
+
+def test_aliases_are_a_live_view_of_the_agent_class():
+    view = PortfolioManagerAgent._decision_grounding._CONFLICT_SOURCE_ALIASES
+    assert isinstance(view, LiveMapping)
+    assert dict(view) == PortfolioManagerAgent._CONFLICT_SOURCE_ALIASES
+    with patch.object(PortfolioManagerAgent, "_CONFLICT_SOURCE_ALIASES", {"news": ("press",)}):
+        assert PortfolioManagerAgent._conflict_is_named("ABC press says", "ABC", "news")
+        assert not PortfolioManagerAgent._conflict_is_named("ABC news says", "ABC", "news")
+    assert PortfolioManagerAgent._conflict_is_named("ABC smart money", "ABC", "smart_money")
+
+
+def test_held_ranking_part_reads_the_agent_class_live():
+    """The held part's getter/setter hit `PortfolioManagerAgent` at call time, with the
+    body's None default, so a test that assigns `_macro_parse_failures` on the agent
+    class is what the body sees."""
+    agent = PortfolioManagerAgent
+    before = getattr(agent, "_macro_parse_failures", None)
+    try:
+        agent._macro_parse_failures = ["live"]
+        assert agent._candidate_ranking._host._macro_parse_failures == ["live"]
+        agent._candidate_ranking._host._macro_parse_failures = ["written"]
+        assert agent._macro_parse_failures == ["written"]
+    finally:
+        if before is None:
+            if "_macro_parse_failures" in vars(agent):
+                del agent._macro_parse_failures
+        else:
+            agent._macro_parse_failures = before

@@ -1,12 +1,14 @@
-"""Decision grounding: validation of the model reply, conflict/catalyst/rejection/target drops, canonical targets.
+"""Decision grounding: the agent HOLDS the standalone part instead of inheriting a mixin.
 
-Bodies live in src/agents/portfolio_manager/decision_grounding.py (`DecisionGrounding`);
-this mixin keeps same-named thin shims, built per call so a collaborator swapped
-after construction is what the body sees. The module-level names are re-exported
-unchanged for importers and for the package's patch mirror.
+Bodies live in src/agents/portfolio_manager/decision_grounding.py (`DecisionGrounding`).
+`hold_decision_grounding(agent_cls)` builds one part and installs same-named classmethod
+delegates on the agent class, so every existing call site (`self.validate_grounding(...)`,
+`PortfolioManagerAgent._canonical_targets(...)`) keeps resolving. Nothing is snapshotted:
+`build_evidence_registry` is called through the agent class, `_CONFLICT_SOURCE_ALIASES`
+(now a class attribute of the agent) is read at every lookup, and the three bodies the
+part reads through `self.` are handed in live (see held_part.live_body). The
+module-level names are re-exported unchanged for the package's patch mirror.
 """
-
-import inspect
 
 from src.agents.portfolio_manager.decision_grounding import (  # noqa: F401 — re-exported
     CONFLICT_UNADJUDICATED_STATUS,
@@ -17,104 +19,53 @@ from src.agents.portfolio_manager.decision_grounding import (  # noqa: F401 — 
     _SYMBOL_DIRECTION_RE,
     logger,
 )
-from src.cost_circuit.parts.shim_guard import _is_class_shim
+from src.agents.portfolio_manager.held_part import LiveMapping, hold, live_body
 
-#: Bodies the part owns that it also reads through `self.` — handed back to it only
-#: when swapped on the host, never as the mixin's own shim (recursion guard).
-_OWN_BODIES = ("_target_intent", "_canonical_targets", "_conflict_is_named")
+_HOLDER = "_decision_grounding"
+_BODIES = "src/agents/portfolio_manager/decision_grounding.py"
+
+#: Every name the agent exposes for decision grounding, delegated to the held part.
+DELEGATED = (
+    '_target_intent', 'validate_grounding', '_conflict_is_named', '_drop_unadjudicated_conflicts',
+    '_state_change_symbols_by_date', '_catalyst_cites_state_change', '_apply_subfloor_catalyst_rule',
+    '_drop_invalid_rejections', '_drop_invalid_targets', '_canonical_targets',
+    '_decision_fields_unchanged',
+)
+
+#: Bodies the part owns that it also reads through `self.` — handed in live.
+LIVE_BODIES = ("_target_intent", "_canonical_targets", "_conflict_is_named")
+
+# §9.3 "disagreement must be adjudicated" ------------------------------
+#
+# `source` values that need a plainer English alias to be recognised in
+# free-form prose. The four other sources (technical/news/earnings/
+# macro) are themselves ordinary words; `smart_money` is normally
+# written "smart money" by a model composing a sentence, so it is
+# aliased explicitly rather than guessed at by a second rule.
+_CONFLICT_SOURCE_ALIASES = {
+    "smart_money": ("smart_money", "smart money", "smart-money"),
+}
+
+_DECISION_FIELDS = ("targets",)
+
+#: Class attributes the mixin used to carry onto the host; installed on the agent
+#: class by `hold_decision_grounding` (the aliases are then read live off the class).
+HOST_ATTRIBUTES = ("_CONFLICT_SOURCE_ALIASES", "_DECISION_FIELDS")
 
 
-def _is_own_shim(cls, attr: str) -> bool:
-    """`_is_class_shim` sees bound methods and partials; a classmethod read off the
-    class binds fresh each time, so the raw descriptor is compared as well."""
-    own = vars(DecisionGroundingMixin).get(attr)
-    return own is not None and (
-        _is_class_shim(getattr(cls, attr, None), attr, DecisionGroundingMixin)
-        or inspect.getattr_static(cls, attr, None) is own)
+def build_decision_grounding(agent_cls) -> DecisionGrounding:
+    """The part, wired to `agent_cls` live; no agent object is constructed."""
+    return DecisionGrounding(
+        build_evidence_registry=lambda *args, **kwargs: agent_cls.build_evidence_registry(*args, **kwargs),
+        conflict_source_aliases=LiveMapping(agent_cls, "_CONFLICT_SOURCE_ALIASES"),
+        **{attr.lstrip("_"): live_body(agent_cls, _HOLDER, attr) for attr in LIVE_BODIES},
+    )
 
 
-class DecisionGroundingMixin:
-    """Decision grounding: validation of the model reply, conflict/catalyst/rejection/target drops, canonical targets."""
-
-    # §9.3 "disagreement must be adjudicated" ------------------------------
-    #
-    # `source` values that need a plainer English alias to be recognised in
-    # free-form prose. The four other sources (technical/news/earnings/
-    # macro) are themselves ordinary words; `smart_money` is normally
-    # written "smart money" by a model composing a sentence, so it is
-    # aliased explicitly rather than guessed at by a second rule.
-    _CONFLICT_SOURCE_ALIASES = {
-        "smart_money": ("smart_money", "smart money", "smart-money"),
-    }
-
-    _DECISION_FIELDS = ("targets",)
-
-    @classmethod
-    def _grounding(cls) -> DecisionGrounding:
-        """Thin shim: builds the standalone object from this class's collaborators
-        (bodies moved to src/agents/portfolio_manager/decision_grounding.py). Built per
-        call so a collaborator swapped after construction is what the body sees."""
-        return DecisionGrounding(
-            build_evidence_registry=cls.build_evidence_registry,
-            conflict_source_aliases=cls._CONFLICT_SOURCE_ALIASES,
-            **{
-                attr.lstrip("_"): getattr(cls, attr)
-                for attr in _OWN_BODIES
-                if not _is_own_shim(cls, attr)
-            },
-        )
-
-    @classmethod
-    def _target_intent(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._target_intent(*args, **kwargs)
-
-    @classmethod
-    def validate_grounding(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding().validate_grounding(*args, **kwargs)
-
-    @classmethod
-    def _conflict_is_named(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._conflict_is_named(*args, **kwargs)
-
-    @classmethod
-    def _drop_unadjudicated_conflicts(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._drop_unadjudicated_conflicts(*args, **kwargs)
-
-    @classmethod
-    def _state_change_symbols_by_date(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._state_change_symbols_by_date(*args, **kwargs)
-
-    @classmethod
-    def _catalyst_cites_state_change(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._catalyst_cites_state_change(*args, **kwargs)
-
-    @classmethod
-    def _apply_subfloor_catalyst_rule(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._apply_subfloor_catalyst_rule(*args, **kwargs)
-
-    @classmethod
-    def _drop_invalid_rejections(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._drop_invalid_rejections(*args, **kwargs)
-
-    @classmethod
-    def _drop_invalid_targets(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._drop_invalid_targets(*args, **kwargs)
-
-    @classmethod
-    def _canonical_targets(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._canonical_targets(*args, **kwargs)
-
-    @classmethod
-    def _decision_fields_unchanged(cls, *args, **kwargs):
-        """Thin shim: body moved to src/agents/portfolio_manager/decision_grounding.py."""
-        return cls._grounding()._decision_fields_unchanged(*args, **kwargs)
+def hold_decision_grounding(agent_cls, part: DecisionGrounding | None = None):
+    """Make `agent_cls` hold one `DecisionGrounding` and delegate the grounding names to it."""
+    for attr in HOST_ATTRIBUTES:
+        if attr not in vars(agent_cls):
+            setattr(agent_cls, attr, globals()[attr])
+    part = part if part is not None else build_decision_grounding(agent_cls)
+    return hold(agent_cls, holder_attr=_HOLDER, part=part, delegated=DELEGATED, bodies_module=_BODIES)
