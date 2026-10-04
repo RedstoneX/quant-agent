@@ -30,6 +30,8 @@ import json
 import logging
 from typing import Any
 
+from src.storage.event_journal import DatabaseEventJournal
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -133,8 +135,6 @@ def record_no_atr_buffer(
     try:
         if db is None:
             return
-        from src.pipeline_stages import _persist_evidence
-
         halfwidth, measured = _zone_halfwidth(analysis, level)
         payload = buffer_row(
             outcome=outcome,
@@ -150,8 +150,11 @@ def record_no_atr_buffer(
             halfwidth=halfwidth,
             halfwidth_measured=measured,
         )
-        _persist_evidence(
-            db,
+        # The journal port directly, NOT the `_persist_evidence` shim in
+        # `src.pipeline_stages`: that module pulls in the whole agent stack
+        # and importing it from inside the constructor -- even lazily, which
+        # the layering guard walks too -- closes a real import cycle.
+        DatabaseEventJournal(db).persist_evidence(
             run_id=getattr(analysis, "run_id", None),
             agent_name="portfolio_constructor",
             kind=NO_ATR_BUFFER_KIND,
