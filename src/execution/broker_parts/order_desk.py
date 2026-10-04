@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 
-from src.sentinel.guarded import record_guarded_pass
+from src.execution.broker_parts.order_desk_effects import mark, ok
 import math
 import time
 
@@ -153,11 +153,10 @@ class OrderDesk:
             count = len(cancelled) if cancelled else 0
             if count:
                 logger.info("Cancelled %d open order(s)", count)
-            record_guarded_pass(self.client, "order_desk.cancel_all_open_orders", context={})
+            ok(self, "cancel_all_open_orders")
             return count
         except Exception as exc:
-            record_guarded_pass(self.client, "order_desk.cancel_all_open_orders", exc, log=logger,
-                context={"effect": "the caller is told zero orders were cancelled when the truth is unknown"})
+            mark(self, "cancel_all_open_orders", exc)
             return 0
 
     def cancel_open_entry_orders(self, symbol: str | None = None) -> int:
@@ -209,11 +208,10 @@ class OrderDesk:
                 count += 1
             if count:
                 logger.info("Cancelled %d open entry order(s)", count)
-            record_guarded_pass(self.client, "order_desk.cancel_open_entry_orders", context={"symbol": symbol})
+            ok(self, "cancel_open_entry_orders", symbol=symbol)
             return count
         except Exception as exc:
-            record_guarded_pass(self.client, "order_desk.cancel_open_entry_orders", exc, log=logger,
-                context={**{"symbol": symbol}, "effect": "the caller is told zero entry orders were cancelled when the truth is unknown"})
+            mark(self, "cancel_open_entry_orders", exc, symbol=symbol)
             return 0
 
     def list_open_entry_order_ids(
@@ -268,10 +266,9 @@ class OrderDesk:
                     nested=True,
                 )
             )
-            record_guarded_pass(self.client, "order_desk.list_open_entry_orders_checked", context={"symbol": symbol})
+            ok(self, "list_open_entry_orders_checked", symbol=symbol)
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self.client, "order_desk.list_open_entry_orders_checked", exc, log=logger,
-                context={**{"symbol": symbol}, "effect": "reported as a FAILED read, not as an empty book"})
+            mark(self, "list_open_entry_orders_checked", exc, symbol=symbol)
             return False, []
         ids: list[str] = []
         for order in orders or []:
@@ -337,11 +334,10 @@ class OrderDesk:
                         return None
                     price = live
                 total += qty * price
-            record_guarded_pass(self.client, "order_desk.open_buy_notional", context={})
+            ok(self, "open_buy_notional")
             return total
         except Exception as exc:
-            record_guarded_pass(self.client, "order_desk.open_buy_notional", exc, log=logger,
-                context={"effect": "None returned; the caller cannot size against open buy notional"})
+            mark(self, "open_buy_notional", exc)
             return None
 
     def list_recent_orders(
@@ -394,11 +390,10 @@ class OrderDesk:
                     "status": str(getattr(getattr(o, "status", None), "value",
                                           getattr(o, "status", ""))).lower(),
                 })
-            record_guarded_pass(self.client, "order_desk.list_recent_orders", context={"symbol": symbol, "side": side})
+            ok(self, "list_recent_orders", symbol=symbol, side=side)
             return out
         except Exception as exc:
-            record_guarded_pass(self.client, "order_desk.list_recent_orders", exc, log=logger,
-                context={**{"symbol": symbol, "side": side}, "effect": "None returned so the caller retries rather than misjudging the order absent"})
+            mark(self, "list_recent_orders", exc, symbol=symbol, side=side)
             return None
 
     def list_filled_sell_orders(self, symbol: str, after) -> list[dict] | None:
@@ -504,11 +499,10 @@ class OrderDesk:
                     "filled_at": filled_at.isoformat() if hasattr(filled_at, "isoformat") else None,
                     "order_type": str(getattr(order_type, "value", order_type)) if order_type else None,
                 })
-            record_guarded_pass(self.client, "order_desk.list_filled_sell_orders", context={"symbol": symbol})
+            ok(self, "list_filled_sell_orders", symbol=symbol)
             return out
         except Exception as exc:
-            record_guarded_pass(self.client, "order_desk.list_filled_sell_orders", exc, log=logger,
-                context={**{"symbol": symbol}, "effect": "None returned so the caller retries rather than concluding there was no fill; a missed stop-out is a money-relevant accounting gap"})
+            mark(self, "list_filled_sell_orders", exc, symbol=symbol)
             return None
 
     def get_order_fill_info(self, order_id: str) -> dict | None:
@@ -519,10 +513,9 @@ class OrderDesk:
         """
         try:
             order = self.client.get_order_by_id(order_id)
-            record_guarded_pass(self.client, "order_desk.get_order_fill_info", context={"order": order_id})
+            ok(self, "get_order_fill_info", order=order_id)
         except Exception as exc:
-            record_guarded_pass(self.client, "order_desk.get_order_fill_info", exc, log=logger,
-                context={**{"order": order_id}, "effect": "None returned; no fill information for reconciliation"})
+            mark(self, "get_order_fill_info", exc, order=order_id)
             return None
         status = str(
             getattr(getattr(order, "status", None), "value",
@@ -635,11 +628,10 @@ class OrderDesk:
             order = self.client.get_order_by_id(order_id)
             status = str(getattr(getattr(order, "status", None), "value",
                                  getattr(order, "status", ""))).lower()
-            record_guarded_pass(self.client, "order_desk.read_order_status", context={"order": order_id})
+            ok(self, "read_order_status", order=order_id)
             return status or None
         except Exception as exc:
-            record_guarded_pass(self.client, "order_desk.read_order_status", exc, log=logger,
-                context={**{"order": order_id}, "effect": "None returned; the order status is unknown to the caller"})
+            mark(self, "read_order_status", exc, order=order_id)
             return None
 
     def _wait_for_order_terminal_via_stream(
@@ -687,10 +679,9 @@ class OrderDesk:
                 order = self.client.get_order_by_id(order_id)
                 status = str(getattr(getattr(order, "status", None), "value",
                                      getattr(order, "status", ""))).lower()
-                record_guarded_pass(self.client, "order_desk.poll_order_status", context={"order": order_id})
+                ok(self, "poll_order_status", order=order_id)
             except Exception as exc:
-                record_guarded_pass(self.client, "order_desk.poll_order_status", exc, log=logger,
-                    context={**{"order": order_id}, "effect": "polling stops and the last known status is returned"})
+                mark(self, "poll_order_status", exc, order=order_id)
                 return last_status
 
             last_status = status or last_status
@@ -1062,11 +1053,10 @@ class OrderDesk:
         """
         try:
             self.client.cancel_order_by_id(order_id)
-            record_guarded_pass(self.client, "order_desk.cancel_entry_order", context={"order": order_id})
+            ok(self, "cancel_entry_order", order=order_id)
             return True
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self.client, "order_desk.cancel_entry_order", exc, log=logger,
-                context={**{"order": order_id}, "effect": "if this raced a partial fill the position may end up larger than intended; the next coverage reconcile must be checked"})
+            mark(self, "cancel_entry_order", exc, order=order_id)
             return False
 
     def resolve_replacement_chain(self, order_id: str) -> str | None:
@@ -1087,10 +1077,9 @@ class OrderDesk:
         for _ in range(self._MAX_REPLACEMENT_HOPS):
             try:
                 order = self.client.get_order_by_id(current)
-                record_guarded_pass(self.client, "order_desk.resolve_replacement_chain", context={"order": current})
+                ok(self, "resolve_replacement_chain", order=current)
             except Exception as exc:  # noqa: BLE001
-                record_guarded_pass(self.client, "order_desk.resolve_replacement_chain", exc, log=logger,
-                    context={**{"order": current}, "effect": "None returned so the caller retries rather than concluding the order was never replaced"})
+                mark(self, "resolve_replacement_chain", exc, order=current)
                 return None
             status = str(
                 getattr(getattr(order, "status", None), "value",
@@ -1181,10 +1170,9 @@ class OrderDesk:
             order = self.client.replace_order_by_id(
                 order_id, ReplaceOrderRequest(**kwargs),
             )
-            record_guarded_pass(self.client, "order_desk.replace_entry_limit", context={"order": order_id})
+            ok(self, "replace_entry_limit", order=order_id)
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self.client, "order_desk.replace_entry_limit", exc, log=logger,
-                context={**{"order": order_id}, "effect": "the order most likely reached a terminal state first; the ORIGINAL id remains authoritative"})
+            mark(self, "replace_entry_limit", exc, order=order_id)
             return {"id": None, "status": "replace_rejected", "detail": str(exc)}
 
         new_id = str(getattr(order, "id", "") or "")
@@ -1257,10 +1245,9 @@ class OrderDesk:
                 str(old_order_id), timeout_seconds=timeout_seconds,
                 poll_interval=min(1.0, max(0.1, timeout_seconds)),
             )
-            record_guarded_pass(self.client, "order_desk.replace_confirmation_wait", context={"order": str(old_order_id)})
+            ok(self, "replace_confirmation_wait", order=str(old_order_id))
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self.client, "order_desk.replace_confirmation_wait", exc, log=logger,
-                context={**{"order": str(old_order_id)}, "effect": "the replacement is treated as UNCONFIRMED"})
+            mark(self, "replace_confirmation_wait", exc, order=str(old_order_id))
             return False
         if str(status or "").lower() == "replaced":
             return True
@@ -1269,10 +1256,9 @@ class OrderDesk:
         # rather than concluding either way from silence.
         try:
             resolved = self.resolve_replacement_chain(str(old_order_id))
-            record_guarded_pass(self.client, "order_desk.replace_confirmation_chain_reread", context={"order": str(old_order_id)})
+            ok(self, "replace_confirmation_chain_reread", order=str(old_order_id))
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self.client, "order_desk.replace_confirmation_chain_reread", exc, log=logger,
-                context={**{"order": str(old_order_id)}, "effect": "the replacement is treated as UNCONFIRMED"})
+            mark(self, "replace_confirmation_chain_reread", exc, order=str(old_order_id))
             return False
         if resolved is not None and str(resolved) == str(new_order_id):
             return True
