@@ -161,12 +161,6 @@ DONE WHEN:
   - [ ] half one is already DONE (2026-09-18): the ledger gate exists and the build fails on an unsourced trade-governing number. Its honest limit stands recorded — it proves a reason was WRITTEN, never that the reason is TRUE — and that limit is not something this item can close.
 detail: docs/board_notes/item-090.md
 
-**203. A provider success with no usable cost or token telemetry — carried over from item 147 (2026-09-30), zero occurrences measured across all of  as of that date. [BOARD STATE: 0 of 1 ticked; the 1 box is buildable now (classified buildable because it is ambiguous: zero occurrences were measured, so check the body before dispatching).]**
-
-DONE WHEN:
-  - [ ] a success whose provider request DID happen but returned no usable token or cost telemetry is understood and either priced from a fallback source or proven free and excluded from unknown-cost counting, the same evidentiary standard item 147 set for cache hits.
-detail: docs/board_notes/item-203.md
-
 **177. Paid intraday tick: trigger, cadence, held book are ONE decision, filed 2026-09-23. [3 of 4 ticked; 158 blocked (desk OFF).]** The trigger decides whether a tick is paid, the cadence how many, the held book what a paid one costs [measured 09-21/22; `docs/INCIDENT_HISTORY.md`].
 
 DONE WHEN:
@@ -377,6 +371,7 @@ detail: docs/board_notes/item-219.md
 - retired queue: 190
 - retired queue: 211
 - retired queue: 17
+- retired queue: 203
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
