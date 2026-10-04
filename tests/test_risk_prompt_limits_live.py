@@ -116,7 +116,6 @@ PM_WIRED_SETTINGS = (
     "max_cluster_risk_share_pct",
     "max_sector_pct",
     "max_gross_exposure_x",
-    "short_gap_risk_multiple",
 )
 
 
@@ -484,7 +483,6 @@ def test_a_null_optional_setting_is_refused_rather_than_blanked():
 def test_integer_limits_render_without_a_trailing_point_zero():
     cfg = _live_risk_config()
     assert resolve_placeholder("risk.max_position_pct", cfg) == "65"
-    assert resolve_placeholder("risk.short_gap_risk_multiple", cfg) == "1.5"
 
 
 # --------------------------------------------------------------------------
@@ -839,7 +837,7 @@ def test_every_setting_pm_renders_reaches_the_object_that_enforces_it():
 
     The sizing seat's limits are NOT all enforced by the risk engine. Grep
     `src/risk/rules.py`: it contains no reference at all to
-    `max_cluster_risk_share_pct`, `short_gap_risk_multiple`,
+    `max_cluster_risk_share_pct`,
     `min_position_risk_pct` or `max_portfolio_risk_pct`. Those four are
     enforced by `PortfolioConstructor`, from a separately built
     `ConstructorConfig` with its own fallbacks — so checking PM's sheet only

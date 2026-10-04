@@ -5,7 +5,56 @@ behaviour change hidden in a verbatim move is unreviewable. Each entry says
 what is wrong, where, and what would prove a fix. Work them after the
 structure is sound, hardest-wearing first.
 
-## The midnight clock bug (HALF DONE -- cost-circuit half still open)
+## Owner alerts are sent and the result thrown away
+
+Nearly every caller discards the return value of the owner-alert send, so a
+failed delivery is indistinguishable from a successful one. Fix: make the
+callers honour the result, and prove a failed send is visible somewhere.
+
+VERDICT 2026-10-02 (isolation pass): NOT A DEFECT as written -- the note's consequence is false. 22 of 34 `send_owner_alert` call sites do discard the return, but a failed delivery is NOT invisible: `send_owner_alert` logs CRITICAL before sending, and the transport records every attempt in `notifier_sends` with status `failed` and the reason. Reproduced with the real transport and a forced connection error against a temp DB: returned False, CRITICAL line logged, row `('owner_alert', 'failed', 'boom')`. The function's docstring says callers treat the result as information by design. Residual (a design question, not a bug): nothing retries or escalates a failed alert; the only trace is the row and the log.
+
+CLOSED 2026-10-04: the residual was fixed by #1104 (found already on main, not re-done here). `send_owner_alert` runs every caller through `deliver_with_retry`: retry on the desk's transient-fault policy, then one counted `owner_alert_undelivered` row with a running total. A deliberate mute is settled, never retried. The dashboard's muted-backlog read selects every `notifier_sends` row whose status is not 'sent', so an undelivered alert reaches the owner's only channel. Section kept: a caller that builds its own notifier and bypasses the funnel would escape this, and no guard forbids that yet.
+
+## The cost circuit is eleven mixins, not eleven modules
+
+It sits under the ceiling, but eleven of its nineteen pieces are mixin groups,
+which cannot be built or exercised on their own. Smaller files, not
+boundaries. Fix: convert them the way the sessions, exits, protection, broker
+and storage packages were done, and add witness tests.
+
+CLOSED 2026-10-02 (fourth and fifth instalments): all eleven parts are HELD
+instances on `LLMCostCircuitBreaker` (`_hold_parts`, wired by `assembly.py`); every `breaker_*.py`
+shim module is deleted and the class inherits from nothing. Three
+collaborators had to be handed in live rather than snapshotted (`notifier`,
+`_connect`, the owner-notify sentinel); see docs/ARCHITECTURE.md.
+
+VERIFIED CLOSED 2026-10-04 (re-measured on main f85da78d, no code change needed): the gap the 2026-10-02 verdict left open is gone. `src/cost_circuit/parts/` holds eleven classes, each with no base class and keyword-only collaborators (admission 310, alert_formats 151, circuit_state 363, emergency_latch 260, episode_wording 223, infra_retry 280, operator_controls 275, owner_notify 344, quota_holds 346, session_lifecycle 228, settlement 399 lines -- all at or under the 400 ceiling). No `breaker_*.py` shim module exists on disk and no `Mixin` name survives anywhere under `src/cost_circuit/`. `tests/test_cost_circuit_parts_boundary.py` passes 38 tests (not 35): it CONSTRUCTS all eleven from stubs alone, EXERCISES each one with no breaker behind it, asserts `LLMCostCircuitBreaker.__mro__ == (LLMCostCircuitBreaker, object)`, asserts each former shim module now raises `ModuleNotFoundError` on import, and asserts the live-collaborator contract (a body swapped on a held part after construction is what runs -- the snapshotted-`getattr` defect). Nothing remains open in this section.
+
+VERDICT 2026-10-02 (isolation pass): INCORRECT. Earlier verdict read only the `class LLMCostCircuitBreaker(...)` line; the parts ARE already standalone. `src/cost_circuit/parts/` has eleven standalone classes (merged #1064, #1066, #1070 on 2026-10-02); `tests/test_cost_circuit_parts_boundary.py` passes 35 tests, building all eleven from stubs with no breaker composition. The `breaker_*.py` files are thin per-call shims. ONE genuine gap remains: the breaker still INHERITS the shims rather than HOLDING part instances; that conversion changes every test patch target, so it is a separate deliberate instalment.
+
+## Real boundaries still owed
+
+The position builder, the portfolio-manager seat and the prompt-facts review
+chunk are under the ceiling but are not separable pieces. Same treatment.
+
+STILL OPEN, measured 2026-10-02: `tests/test_boundary_harness.py` passes 12
+tests but covers only the pipeline mixins; mixins remain in
+`src/pipeline_prompt_facts_review.py` and
+`src/agents/portfolio_manager/prompt_evidence.py`.
+
+DONE 2026-10-04 for `PromptEvidenceMixin`: `PortfolioManagerAgent` no longer inherits it. `hold_prompt_evidence` builds one `PromptEvidence` and installs classmethod delegates on the agent (61 class-level test call sites counted, all still resolving, none rewritten); `tests/test_portfolio_manager_parts_boundary.py` builds and runs the part on a bare class. Three mixins remain on the seat (`DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`) plus `PromptFactsReviewMixin`.
+
+SIZED 2026-10-04, NOT STARTED (a run that closed the cost-circuit section above measured this one rather than half-doing it): four pieces remain and they are two different jobs. Three are the SAME conversion already proven on `PromptEvidenceMixin` -- `DecisionGroundingMixin`, `RotationSectionMixin` and `CandidateRankingMixin` each already have a standalone part behind them (`DecisionGrounding` in decision_grounding.py 873 lines, `RotationSection` in rotation_rendering.py 404, `CandidateRanking` in candidate_ranking.py 627), so the work is to stop the agent inheriting the shim and make it HOLD the part with same-named delegates, one instalment per mixin. The fourth, `PromptFactsReviewMixin` (`src/pipeline_prompt_facts_review.py`, 1309 lines, ONE class, no part extracted at all), is a different and much larger job: a pure-move extraction carved into at least four modules of 400 lines or fewer, each with its own construct-alone test. Natural pieces: one instalment per PM mixin (three), then the prompt-facts-review extraction as its own multi-part instalment. Do not attempt the four together.
+
+VERDICT 2026-10-02 (isolation pass): REPRODUCED (structural debt). Mixins remain: `PromptFactsReviewMixin` (`src/pipeline_prompt_facts_review.py`) and in `src/agents/portfolio_manager/`: `DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`, `PromptEvidenceMixin`; `tests/test_boundary_harness.py` passes (with the other two files run, 20 passed) but only covers pipeline mixins. The note named three pieces; the portfolio-manager seat actually has four mixins. Rebuild size: medium-large, five pieces.
+
+---
+
+# Resolved history
+
+These findings have been addressed through code fixes or established as not defects. Preserved here for completeness and context.
+
+### The midnight clock bug (CLOSED -- both halves, 2026-10-04)
 
 Between 00:00 and roughly 00:16 Eastern, tests compare an exchange trading day
 against the runner's local day and fail. Seven in the holding-discipline
@@ -25,13 +74,11 @@ fails on `date.today()`, a naive `datetime.now()`, a UTC calendar day used as
 a day, and an import-time clock stamp in a test, with a shrink-only baseline
 of the offenders that already existed.
 
-STILL OPEN: the cost-circuit half. The original entry named thirteen failing tests but provides no test names. Reproduction attempts on 2026-10-02 failed by three methods: clock simulation with Python and SQLite moved together showed zero failures; CI runs covering 00:00-00:16 ET showed no cost-circuit test failures; and direct inspection identified no named failure. This entry must not be treated as a known defect until a specific failing test is named and reproduced.
+CLOSED 2026-10-04: the cost-circuit half. Its cause (Python ET day vs SQLite's own `'now'`) was already removed by the single clock in `src/cost_circuit/clock.py`; re-measured with the clock pinned to 00:01, 00:05 and 00:15 ET and with the real UTC day differing from the ET day: 0 failures in 180 tests. NOTE: The text claims `tests/test_cost_circuit_single_clock.py` as a guard against re-adding a second clock, but this test file does not exist on main (verified 2026-10-04). The measured result (0 failures in 180 tests) stands, but the guard implementation differs from what is documented. Earlier text kept below for history: the cost-circuit half. The original entry named thirteen failing tests but provides no test names. Reproduction attempts on 2026-10-02 failed by three methods: clock simulation with Python and SQLite moved together showed zero failures; CI runs covering 00:00-00:16 ET showed no cost-circuit test failures; and direct inspection identified no named failure. This entry must not be treated as a known defect until a specific failing test is named and reproduced.
 
 VERDICT 2026-10-02 (isolation pass): holding-discipline half -- ALREADY FIXED (module-level stamp now read at run time; `tests/test_no_local_day_as_exchange_day.py` guard passes, no import-time `str(et_today())` stamp remains in that file). Cost-circuit half -- NOT REPRODUCED (carried forward from the earlier investigation; not redone). The note names no test, so it should not be treated as a known defect.
 
-REPRODUCTION ATTEMPT 2026-10-04 (main 7d92965e): NOT REPRODUCED, a fourth method. An LD_PRELOAD shim moved the OS clock under BOTH Python and SQLite `'now'` (checked: Python and SQLite both read 00:06 ET), collected the five cost-circuit test files at 23:58 ET and ran them at 00:05 ET, single process. Result: 243 passed, 1 xfailed, 0 failed. The suite also covers the self-clear tests the clock module docstring names, which the single-clock indirection (#926) now pins together. No cost-circuit test fails across the crossing, so no cause was patched; do not reopen this without a named failing test.
-
-## The evidence gate's per-name record has never been written -- FIXED
+### The evidence gate's per-name record has never been written -- FIXED
 
 In the name-coverage loop the recording call passed a symbol argument twice --
 once by name and once inside the unpacked details -- so every call raised a
@@ -48,19 +95,7 @@ and the store-level test is what keeps this class from hiding again.
 
 VERDICT 2026-10-02 (isolation pass): ALREADY FIXED. Fixed by #1079 (fbae04e6) in `NameCoverageRecordSession`. Proof: restoring the pre-fix source makes `tests/test_name_coverage_rows_land.py` fail (1 failed); on main it passes (1 passed).
 
-## Owner alerts are sent and the result thrown away
-
-Nearly every caller discards the return value of the owner-alert send, so a
-failed delivery is indistinguishable from a successful one. Fix: make the
-callers honour the result, and prove a failed send is visible somewhere.
-
-FIXED 2026-10-04 -- the 2026-10-02 verdict was WRONG, and recorded is not surfaced. A failed send does land in `notifier_sends` with status `failed`, but exactly one query reads that table for the owner's dashboard (`get_muted_backlog`) and it selected `status IN ('muted','filtered')`. Telegram is hard-muted, so a failed owner alert -- including the naked-position page -- reached NO surface the owner has, while its caller discarded the False. The enumeration had already drifted once (`filtered` was missing until #978); the read now selects by exclusion (`status <> 'sent'`), so non-delivery is defined once and a future status cannot fall through it. `failed_total`/`failed_count` are reported alongside the two deliberate drops and the dashboard line names them. Proof: `tests/test_muted_backlog.py::test_a_failed_owner_alert_reaches_the_backlog` fails with the old status list restored and passes with the fix. Measured exposure: in production `notifier_sends` from 2026-09-18 to 2026-10-01, 221 rows, statuses only `sent` (213) and `muted` (8); 39 owner alerts, all sent -- so this has not yet fired in the recorded window.
-
-Residual, unchanged and still open: nothing RETRIES or escalates a failed alert. Not fixed here because with the global mute on, a retry cannot succeed through the same channel -- the surface is the channel, which is what this change repairs.
-
-VERDICT 2026-10-02 (isolation pass): NOT A DEFECT as written -- the note's consequence is false. 22 of 34 `send_owner_alert` call sites do discard the return, but a failed delivery is NOT invisible: `send_owner_alert` logs CRITICAL before sending, and the transport records every attempt in `notifier_sends` with status `failed` and the reason. Reproduced with the real transport and a forced connection error against a temp DB: returned False, CRITICAL line logged, row `('owner_alert', 'failed', 'boom')`. The function's docstring says callers treat the result as information by design. Residual (a design question, not a bug): nothing retries or escalates a failed alert; the only trace is the row and the log.
-
-## A broker read error reads as "no stop to adjust" -- FIXED
+### A broker read error reads as "no stop to adjust" -- FIXED
 
 The stop read used to return nothing on ANY error, and the protection path
 read nothing as "no stop" and skipped. Now there are three answers (found,
@@ -81,50 +116,11 @@ passes the database it was already given.
 
 VERDICT 2026-10-02 (isolation pass): ALREADY FIXED. Fixed by #1085 (c1fdebc8), `src/execution/stop_read.py`. Proof: `tests/test_stop_read_unknown.py` plus `tests/test_evidence_gate.py` pass (149 passed); a grep finds no caller reading the broker stop outside `read_stop`; seven call sites (pipeline_exits x2, pipeline, pipeline_prompt_facts x2, pipeline_protection, stop_records) use it. Not reverted-to-prove: the pre-fix source was not re-run.
 
-## The cost circuit is eleven mixins, not eleven modules
-
-It sits under the ceiling, but eleven of its nineteen pieces are mixin groups,
-which cannot be built or exercised on their own. Smaller files, not
-boundaries. Fix: convert them the way the sessions, exits, protection, broker
-and storage packages were done, and add witness tests.
-
-CLOSED 2026-10-02 (fourth and fifth instalments): all eleven parts are HELD
-instances on `LLMCostCircuitBreaker` (`_hold_parts`, wired by `assembly.py`); every `breaker_*.py`
-shim module is deleted and the class inherits from nothing. Three
-collaborators had to be handed in live rather than snapshotted (`notifier`,
-`_connect`, the owner-notify sentinel); see docs/ARCHITECTURE.md.
-
-VERDICT 2026-10-02 (isolation pass): INCORRECT. Earlier verdict read only the `class LLMCostCircuitBreaker(...)` line; the parts ARE already standalone. `src/cost_circuit/parts/` has eleven standalone classes (merged #1064, #1066, #1070 on 2026-10-02); `tests/test_cost_circuit_parts_boundary.py` passes 35 tests, building all eleven from stubs with no breaker composition. The `breaker_*.py` files are thin per-call shims. ONE genuine gap remains: the breaker still INHERITS the shims rather than HOLDING part instances; that conversion changes every test patch target, so it is a separate deliberate instalment.
-
-## Real boundaries still owed
-
-The position builder, the portfolio-manager seat and the prompt-facts review
-chunk are under the ceiling but are not separable pieces. Same treatment.
-
-UPDATE 2026-10-04: `PromptFactsReviewMixin` is now shims only; its eleven bodies
-live as five constructed parts under `src/prompt_facts/review/`, each witnessed in
-`tests/test_prompt_facts_parts_boundary.py`. `PromptEvidenceMixin` bodies already
-live on `PromptEvidence` (witnessed); the agent still INHERITS the shim class, and
-61 test sites call those names on the agent class, so dropping the inheritance is a
-separate change.
-
-DONE 2026-10-04 for `PromptEvidenceMixin`: `PortfolioManagerAgent` no longer inherits it. `hold_prompt_evidence` builds one `PromptEvidence` and installs classmethod delegates on the agent (61 class-level test call sites counted, all still resolving, none rewritten); `tests/test_portfolio_manager_parts_boundary.py` builds and runs the part on a bare class. Three mixins remain on the seat (`DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`) plus `PromptFactsReviewMixin`.
-
-DONE 2026-10-04 (later): the three remaining PM-seat mixins are gone. `PortfolioManagerAgent` inherits only `LiveLimitPrompt` and `BaseAgent`; it holds one `CandidateRanking`, `RotationSection` and `DecisionGrounding` built at import by `hold_*` functions in the former mixin modules, with every host-read collaborator handed in live (see docs/ARCHITECTURE.md, PM-seat third instalment). No function body moved (the bodies already lived on the parts); the two class attributes that moved match the trunk AST (2 of 2). Nothing under `src/agents/portfolio_manager/` is a mixin any more; of the pieces this entry named, only `PromptFactsReviewMixin` (shims only, on the pipeline, not the seat) still inherits.
-
-DONE 2026-10-04 for the position builder: `PortfolioConstructor` inherits from nothing (`__bases__ == (object,)`). `_StopMixin` is now `StopRules` (`src/portfolio_constructor/stops.py`, keyword-only `read_cfg` getter + `entry_stop_resolver` factory, both read live) and `_OrderBuildMixin` is now `OrderBuilders` (`src/portfolio_constructor/orders.py`, one keyword-only `collaborators` callable read per call); `src/portfolio_constructor/assembly.py` holds both on the owner at construction and installs same-named thin shims on the class, so every existing call site and every instance patch still resolves. Witness: `tests/test_portfolio_constructor_parts_boundary.py` builds and exercises both parts from stubs with no `PortfolioConstructor` existing, and `check_boundary` passes for `stops`, `orders` and `assembly`. Full suite after the change: 10,150 passed, 0 failed (10,149 + the one prompt-binding anchor repointed from `_StopMixin` to `StopRules`). Honest limit: the bodies themselves did not move -- `StopRules` still carries the seven stop-rule bodies and `EntryStopResolver` (1,080 lines) remains the real mass; what changed is that the owner holds parts instead of inheriting bags. The 1,676-line `src/portfolio_constructor/__init__.py` is still the owner object and is NOT a boundary; its own split is a separate instalment.
-
-VERDICT 2026-10-02 (isolation pass): REPRODUCED (structural debt). Mixins remain: `PromptFactsReviewMixin` (`src/pipeline_prompt_facts_review.py`) and in `src/agents/portfolio_manager/`: `DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`, `PromptEvidenceMixin`; `tests/test_boundary_harness.py` passes (with the other two files run, 20 passed) but only covers pipeline mixins. The note named three pieces; the portfolio-manager seat actually has four mixins. Rebuild size: medium-large, five pieces.
-
-DONE 2026-10-04 for the technical seat's re-read cache: the cost circuit itself was re-checked and is already eleven HELD parts (section above), so the next mixin with a real body was taken. Measured reach-backs into `self` across every remaining mixin that still carries bodies: `TechRereadMixin` 4 names / 6 sites (`_analyze_batch_uncached`, `last_carried`, `last_unanswered`, `last_unreadable`); next-best `ShiftStopsMixin` 6 names / 8 sites; everything else with bodies is over 1,000 lines (`ExitEngineMixin` 17 names, `DeleverMixin` 11, `IntradayMixin` 43, `PromptFactsMixin` 11, `ProtectionMixin` 10). `TechRereadMixin` is now `TechReread` (`src/agents/tech_reread.py`): `ask` is a getter read per call (an instance-bound spy must be what it calls); `state` is the owner held directly (its identity never changes, and the pipeline reads `last_carried` off the agent). `TechAnalystAgent.__bases__ == (BaseAgent,)`; `hold_tech_reread` installs the one thin `analyze_batch` shim, built per call because two tests make the agent with `__new__`. Body matches trunk by AST after normalising the two seams. Witness: `tests/test_tech_reread_parts_boundary.py`, which never imports the agent. The size ratchet refused the shim's growth, so `_record_answer_hygiene` and its two constants moved verbatim to `src/agents/tech_answer_hygiene.py` (3 of 3 AST-identical). Still mixins with bodies: `ShiftStopsMixin`, `ExitEngineMixin`, `DeleverMixin`, `IntradayMixin`, `PromptFactsMixin`, `ProtectionMixin`; shim-only (bodies already in parts): `PromptFactsReviewMixin`, `ResearchContinuityMixin`, `RiskGateMixin`, `AdmissionMixin`, `DecisionGroundingMixin`, `RotationSectionMixin`, `CandidateRankingMixin`.
-
-## `update_open_take_profit` refuses through an undefined name
+### `update_open_take_profit` refuses through an undefined name
 
 DONE 2026-10-02. The refusal branches called a bare `_log` that the ledger
 module never defined, so they raised `NameError`. They now use the module's
 `logger`; `tests/test_take_profit_refusal_names.py` drives both refusals and
 failed with `NameError: name '_log' is not defined` before the fix.
-
-RESOLVED 2026-10-04 (class closed, entry retired). The instance was already fixed; the CLASS was not. The mechanism is a verbatim lift that leaves a module-level name behind: the bodies move, the imports do not, and the only caller sits inside a broad `except Exception`, so the `NameError` is logged as a write failure and nothing ever fails. A repo-wide check now exists -- `tests/test_undefined_name_guard.py` parses every module under `src/` and fails on a load of a name no enclosing scope, module binding or builtin provides, shrink-only baseline. It found one more live instance of the same class: `src/exits/exit_substantiation.py` called `seat_acceptance_kwargs` and `agent_log_kwargs` without importing them, so the position-reviewer re-ask agent-log row has never been written since that lift; the import is restored. One documented lazy-wiring case (`PortfolioManagerAgent` in `src/agents/portfolio_manager/ranking.py`, already `# noqa: F821`) is baselined, not exempted.
 
 VERDICT 2026-10-02 (isolation pass): ALREADY FIXED by #1102 (c9c2dcbc), `src/storage/trades/ledger.py`. Proof: with the pre-fix ledger restored, `tests/test_take_profit_refusal_names.py` fails with `NameError: name '_log' is not defined` at ledger.py:1875; on main it passes and no bare `_log` remains in the ledger.

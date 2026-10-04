@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from scripts.pipeline_method_inventory import module_inventory
+from src.number_sources import SCOPED_PATHS
 from src.ledger_move import (
     MoveSpec,
     apply_move,
@@ -37,7 +38,15 @@ from src.ledger_move import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LEDGER_PATH = REPO_ROOT / "config" / "number_ledger.yaml"
-NUMBER_SOURCES_PATH = REPO_ROOT / "src" / "number_sources.py"
+
+
+def _live_scoped_text() -> str:
+    """The live `SCOPED_PATHS` rendered one entry per line, as the helper expects.
+
+    Read from the object production code imports, so no path to the defining
+    module is written down here and a relocation of it cannot trip this guard.
+    """
+    return "".join(f'    "{p}",\n' for p in SCOPED_PATHS)
 
 def test_no_new_duplicated_pipeline_method_against_trunk() -> None:
     """Mixin MRO risk (plan 5.4): two mixins defining one name is a silent win for
@@ -113,7 +122,7 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     assert len(ledger_ids_for_module("src.pipeline", ledger)) == 2
     assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 1
-    assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 5 and len(ledger_ids_for_module("src.prompt_facts.missed_ops_signals", ledger)) == 6 and len(ledger_ids_for_module("src.pipeline_prompt_facts_review", ledger)) == 0 and len(ledger_ids_for_module("src.prompt_facts.review.grading", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.exits", ledger)) == 5 and len(ledger_ids_for_module("src.prompt_facts.review.calibration", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.blocked", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.replay", ledger)) == 0  # 14 review ids split by fact family 2026-10-04; moved 2026-10-02
+    assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 0 and len(ledger_ids_for_module("src.prompt_facts.decisions", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.watchlist", ledger)) == 1 and len(ledger_ids_for_module("src.prompt_facts.pm_facts", ledger)) == 1 and len(ledger_ids_for_module("src.prompt_facts.missed_ops_signals", ledger)) == 6 and len(ledger_ids_for_module("src.pipeline_prompt_facts_review", ledger)) == 0 and len(ledger_ids_for_module("src.prompt_facts.review.grading", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.exits", ledger)) == 5 and len(ledger_ids_for_module("src.prompt_facts.review.calibration", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.blocked", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.replay", ledger)) == 0  # 14 review ids split by fact family 2026-10-04; moved 2026-10-02; the parent's 5 ids moved with their bodies to decisions/watchlist/pm_facts 2026-10-04
     # 2026-10-01, item 210 step 10: the 2 `ExecutionStage._run_session` ids moved
     # with the class into `src.stage_execution`; step 11 then moved 12 more into
     # `src.pipeline_sizing` and `src.pipeline_earnings_quality`; step 12 moved
@@ -158,7 +167,7 @@ def _synthetic_spec(ledger: str) -> MoveSpec:
 
 def test_migration_helper_rewrites_ids_and_scoped_paths_on_a_synthetic_move() -> None:
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    scoped = NUMBER_SOURCES_PATH.read_text(encoding="utf-8")
+    scoped = _live_scoped_text()
     spec = _synthetic_spec(ledger)
 
     plan = plan_move(spec, ledger, scoped)
@@ -186,7 +195,7 @@ def test_migration_helper_rewrites_ids_and_scoped_paths_on_a_synthetic_move() ->
 
 def test_migration_helper_leaves_unrelated_ids_alone() -> None:
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    scoped = NUMBER_SOURCES_PATH.read_text(encoding="utf-8")
+    scoped = _live_scoped_text()
     spec = _synthetic_spec(ledger)
     plan = plan_move(spec, ledger, scoped)
     new_ledger, _ = apply_move(plan, ledger, scoped)
@@ -198,7 +207,7 @@ def test_migration_helper_leaves_unrelated_ids_alone() -> None:
 def test_verifier_catches_a_half_applied_move() -> None:
     """Prove the checkable half can fail: drop one rewrite and a scope entry."""
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    scoped = NUMBER_SOURCES_PATH.read_text(encoding="utf-8")
+    scoped = _live_scoped_text()
     spec = _synthetic_spec(ledger)
     plan = plan_move(spec, ledger, scoped)
     new_ledger, new_scoped = apply_move(plan, ledger, scoped)
@@ -215,7 +224,7 @@ def test_verifier_catches_a_half_applied_move() -> None:
 
 def test_verifier_catches_a_duplicated_id() -> None:
     ledger = LEDGER_PATH.read_text(encoding="utf-8")
-    scoped = NUMBER_SOURCES_PATH.read_text(encoding="utf-8")
+    scoped = _live_scoped_text()
     spec = _synthetic_spec(ledger)
     plan = plan_move(spec, ledger, scoped)
     new_ledger, new_scoped = apply_move(plan, ledger, scoped)
