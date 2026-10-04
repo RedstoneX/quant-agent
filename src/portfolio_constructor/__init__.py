@@ -51,7 +51,6 @@ from src.models import (
 )
 from src.risk.constants import (
     REWARD_RISK_PARITY,
-    gap_adjusted_risk_per_share,
     reward_risk_floor_applies,
     risk_budget_allocation_pct,
     reward_risk_parity_refuses,
@@ -1259,14 +1258,8 @@ class PortfolioConstructor:
             # `entry - stop` would corrupt the weight's sign; `abs()` keeps
             # this an unsigned magnitude exactly like the long case (D4).
             risk_per_share = abs(entry - stop)
-            # D8: gap-risk sizing haircut — SIZING ONLY, never applied to
-            # the stop placed above (already resolved). One definition, in
-            # `src.risk.constants` (board item 216); a no-op for a long.
-            risk_per_share = gap_adjusted_risk_per_share(
-                risk_per_share,
-                is_short=directions.get(sym) == "short",
-                multiple=self.cfg.short_gap_risk_multiple,
-            )
+            # Owner ruling 2026-10-04: no short-side haircut — a short and
+            # a long with the same stop distance get the same weight.
             raw_weight = granted * entry / risk_per_share
             plans[sym] = RiskPlan(
                 symbol=sym,

@@ -179,7 +179,7 @@ DONE WHEN:
   - [ ] the short-side haircut CLOSES ON RECORDED EVIDENCE, NOT ON A THIRD DERIVATION. — full text: docs/board_notes/item-186.md
   - [x] RULED OUT 2026-10-04, not pending: this was filed as an owner-appetite dial and the owner has now answered it more than once -- "if the mark — full text: docs/board_notes/item-186.md
   - [x] 2026-09-30 OWNER RULING APPLIED: risk is never a global dial, so no appetite number on this item is routed to the owner any more; each remaining ceiling is either replaced by a per-name read or recorded as blocked with its blocker named. Both previously routed questions are WITHDRAWN, not pending
-  - [ ] `short_gap_risk_multiple` (1.5) becomes a read off that stock's own overnight-gap behaviour instead of one constant for every short — BLOCKED on stored daily bars, which the desk does not keep (the constructor is handed `analysis.atr_14` and no bar history, verified 2026-09-30). No value picked, no appetite asked
+  - [x] `short_gap_risk_multiple` (1.5) is DELETED, not re-derived — owner ruling 2026-10-04: "A short is not riskier than long. 1.5 is a made up number so throw that out completely... A short should be treated the same as a long, no different math no different behavior." The constant, the config fields, the ledger rows and the application site are all gone, so there is no neutral dial left to re-tune
   - [x] the queued-earnings BUY clamp (5% of the book) stops being a global share — — full text: docs/board_notes/item-186.md
 
   - [x] THE RECORDING IS BUILT, 2026-10-02 — — full text: docs/board_notes/item-186.md
