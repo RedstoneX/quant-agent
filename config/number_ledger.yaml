@@ -6935,7 +6935,10 @@ numbers:
       re-uses this same buffer via
       `getattr(broker, "STOP_LIMIT_BUFFER_PCT", AlpacaBroker.STOP_LIMIT_BUFFER_PCT)`;
       it holds no independent 0.03 literal, so this class attribute is the
-      single source of the value [verified 2026-09-25].
+      single source of the value [verified 2026-09-25]. A per-placement
+      recorder now exists (see settles_by.records); it makes the leg count
+      observable and changes no behaviour, and the value itself is STILL
+      ARBITRARY -- a counter is not a measurement.
     open_question: >-
       On this desk's names, how far past a stop trigger does a stop-LIMIT
       fill actually land on the gap/fast-market days the stop exists for --
@@ -6960,12 +6963,25 @@ numbers:
         exactly the days it exists for is read off the instrument rather than
         fitted to this desk's own fills; alongside it, a count of how often the
         fallback and de-lever legs are actually taken now that primary
-        protective stops are stop-MARKET.
+        protective stops are stop-MARKET. THAT COUNT NOW HAS A SOURCE: every
+        protective-stop placement writes one durable row to the
+        `reconciliation_runs` table under kind `stop_limit_buffer:primary` or
+        `stop_limit_buffer:fallback` (src/execution/stop_limit_buffer_records.py,
+        written from src/execution/broker_parts/stop_place.py). Each row carries
+        the trigger, the limit, the absolute trigger-to-limit distance, the
+        buffer in force and whether the limit came from this constant or from
+        an explicit caller limit, so a reader can join a placement to its fill
+        rather than only counting that the leg fired. NO TOTAL IS STORED: the
+        count is a count over the rows at read time, and the ABSENCE of rows
+        means never exercised, never zero. Building the recorder settles
+        nothing on its own -- THIS NUMBER REMAINS ARBITRARY until real
+        placements accumulate and the gap measurement above is taken.
       closes_when: >-
         the measured gap distribution identifies a distance at which an
         acceptable share of stop-limit exits would still have been marketable,
         and the fallback buffer becomes that reading. DELETE outcome: if the
-        recorded leg count shows the stop-limit fallback is never taken because
+        recorded `stop_limit_buffer:fallback` rows show the stop-limit fallback
+        is never taken because
         the primary stop-market path absorbs every protective exit, the constant
         and the leg it serves go together rather than the percentage being re-
         picked.
