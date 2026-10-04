@@ -19,21 +19,22 @@ from __future__ import annotations
 
 import pytest
 
+from tests import desk_output_audit as audit_mod
 from tests import desk_output_guard as guard
 
 PROJECT_ROOT = guard.PROJECT_ROOT
 
 
 @pytest.fixture(scope="module")
-def audit() -> guard.Audit:
-    return guard.audit_repo()
+def audit() -> audit_mod.Audit:
+    return audit_mod.audit_repo()
 
 
 # ---------------------------------------------------------------------------
 # The guard itself
 # ---------------------------------------------------------------------------
 
-def test_no_new_real_desk_output(audit: guard.Audit) -> None:
+def test_no_new_real_desk_output(audit: audit_mod.Audit) -> None:
     """No committed file carries real desk output unless it is allow-listed."""
     if not audit.new_files:
         return
@@ -61,37 +62,38 @@ def test_no_new_real_desk_output(audit: guard.Audit) -> None:
         "whole dollars so a reader can see at a glance that nothing is live.",
         "",
         "Only if the file genuinely cannot work without real data, add it to",
-        "ALLOWED in tests/desk_output_guard.py with a one-line reason and its",
-        "current finding count. That is a reviewed decision, not a shortcut.",
+        "ALLOWED in tests/desk_output_guard.py with a one-line reason. That",
+        "is a reviewed decision, not a shortcut.",
     ]
     pytest.fail("\n".join(report), pytrace=False)
 
 
-def test_allow_listed_files_have_not_grown_new_desk_output(audit: guard.Audit) -> None:
+def test_allow_listed_files_have_not_grown_new_desk_output(audit: audit_mod.Audit) -> None:
     """An allow-listed file may keep what it has; it may not accumulate more.
 
     Without this, the allow-list would be a licence: appending tomorrow's
     resting stop to an already-listed fixture would be invisible.
     """
-    if not audit.over_ceiling:
+    if not audit.grown:
         return
-    lines = ["", "These files are allow-listed, but they now carry MORE real desk", "output than when they were allow-listed:", ""]
-    for path, (ceiling, now) in sorted(audit.over_ceiling.items()):
-        lines.append(f"  {path}: was {ceiling} finding(s), now {now}")
+    lines = ["", "These files are allow-listed, but they now carry real desk output",
+             "their copy on origin/main does not:", ""]
+    for path, (then, now) in sorted(audit.grown.items()):
+        lines.append(f"  {path}: {then} finding(s) on origin/main, now {now}")
     lines.append("")
-    for f in audit.over_ceiling_findings[:12]:
+    for f in audit.grown_findings[:12]:
         lines.append(f.render())
     lines += [
         "",
         "WHAT TO DO: remove the newly added real values. Being on the",
         "allow-list excuses what was already published; it does not permit",
-        "publishing more. If the growth is genuinely unavoidable, raise that",
-        "file's count in ALLOWED and say why in the commit message.",
+        "publishing more, and nothing in this repository can be edited to",
+        "excuse it: what the file already carried is read off origin/main.",
     ]
     pytest.fail("\n".join(lines), pytrace=False)
 
 
-def test_every_allow_list_entry_still_earns_its_place(audit: guard.Audit) -> None:
+def test_every_allow_list_entry_still_earns_its_place(audit: audit_mod.Audit) -> None:
     """An allow-list entry cannot outlive the problem it excuses.
 
     When a file is redacted or deleted, its entry must go too — otherwise the
@@ -106,7 +108,7 @@ def test_every_allow_list_entry_still_earns_its_place(audit: guard.Audit) -> Non
     pytest.fail("\n".join(lines), pytrace=False)
 
 
-def test_oversize_files_are_accounted_for(audit: guard.Audit) -> None:
+def test_oversize_files_are_accounted_for(audit: audit_mod.Audit) -> None:
     """Only the first SCAN_BYTE_CAP characters of a file are scanned.
 
     That cap is a performance decision (one committed SEC corpus decompresses
@@ -117,11 +119,11 @@ def test_oversize_files_are_accounted_for(audit: guard.Audit) -> None:
         return
     pytest.fail(
         "\nThese tracked files are larger than the "
-        f"{guard.SCAN_BYTE_CAP:,}-character scan cap, so only their opening "
+        f"{audit_mod.SCAN_BYTE_CAP:,}-character scan cap, so only their opening "
         "section is checked for real desk output:\n\n"
         + "".join(f"  {p}\n" for p in audit.oversize_unlisted)
         + "\nWHAT TO DO: if the file is bulk third-party data (SEC filings, "
-        "market bars), add it to LARGE_BLOBS in tests/desk_output_guard.py "
+        "market bars), add it to LARGE_BLOBS in tests/desk_output_audit.py "
         "with a one-line reason. If it is desk output, it does not belong "
         "in a public repository at all.",
         pytrace=False,
@@ -129,9 +131,8 @@ def test_oversize_files_are_accounted_for(audit: guard.Audit) -> None:
 
 
 def test_allow_list_entries_all_carry_a_reason() -> None:
-    for path, (reason, ceiling) in guard.allow_list().items():
+    for path, reason in guard.allow_list().items():
         assert len(reason.split()) >= 6, f"{path}: reason is too thin to review"
-        assert ceiling > 0, f"{path}: a ceiling of 0 means the entry is not needed"
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +167,7 @@ def test_detector_fires_on_the_real_offenders(relpath: str, signal: str) -> None
     """
     text = guard.read_text(PROJECT_ROOT / relpath)
     assert text is not None, f"{relpath} is missing"
-    signals = {f.signal for f in guard.scan_text(text[:guard.SCAN_BYTE_CAP], relpath)}
+    signals = {f.signal for f in guard.scan_text(text[:audit_mod.SCAN_BYTE_CAP], relpath)}
     assert signal in signals, (
         f"{relpath} no longer trips the {signal} detector (saw: {sorted(signals)}). "
         "Either the file was redacted — remove its allow-list entry — or the "
@@ -371,4 +372,4 @@ def test_the_specimen_exclusion_is_exactly_this_one_file() -> None:
     ever excluded from the scan. If a second path is ever added here, it needs
     the same scrutiny this one got — not a rubber stamp.
     """
-    assert guard.SPECIMEN_FILES == frozenset({"tests/test_no_real_desk_output.py"})
+    assert audit_mod.SPECIMEN_FILES == frozenset({"tests/test_no_real_desk_output.py"})
