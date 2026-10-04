@@ -415,7 +415,20 @@ reported metric with a ratchet that may only go down.
 measured) and fails every mixin. Since 2026-10-04 it also passes
 `src/pipeline_cost_gate.py` and `src/pipeline_halt_gates.py` (the run gates lifted out of
 `TradingPipeline` as duck-typed functions; `tests/test_pipeline_run_gates_boundary.py` drives
-them from `SimpleNamespace` stubs). A harness that passes something it should fail
+them from `SimpleNamespace` stubs). Also since 2026-10-04 it passes
+`src/pipeline_candidate_records.py`: the candidate-accounting and heal-record block
+(14 names, 595 lines, moved verbatim out of `src/pipeline_stages.py`, which fell
+from 1767 to 1185 lines) — duck-typed functions over `(pipeline, ctx)`, re-exported
+through the one lazy table in `pipeline_stages` so every old import path and patch
+target still resolves to the same object; `tests/test_boundary_pipeline_candidate_records.py`
+drives them from stubs. It is deliberately NOT in `SCOPED_PATHS`: scoping it was
+measured to register zero number sites (the moved block carries no ledgered
+number), so nothing drops out of the ledger guard. What remains in
+`pipeline_stages.py` is the levels-coverage / protection-alert block
+(`_check_levels_coverage`, `_alert_owner_protection_failed`, ~290 lines), the
+seat-stance / nomination / risk-event block (~370 lines) and the sizing-price /
+book-risk helpers (~180 lines), plus the re-export table and mirror.
+A harness that passes something it should fail
 is not yet a harness.
 
 ### Phase B — fix the layer violations that are already there (small, high value)
