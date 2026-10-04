@@ -9,6 +9,28 @@
 **Structure fix shipped (2026-09-25) —** The deterministic ranking now HAS a sign. `SmartMoneyObservation.signal_direction` (derived from `direction`, never stored) returns +1 for a buy, 0 for a sale/exchange/unknown; both ranking keys in `src/agents/smart_money_analyst.py` (`_symbol_rank`, `_transaction_rank`) multiply the `value * signal_weight` term by it. So a bearish sale can no longer tie or outrank a bullish buy of the same dollar value — the exact identity this item names — and a buy's contribution is unchanged (existing behaviour preserved; covered by `tests/test_smart_money.py`). The desk is long-only on smart-money admission (admission requires `direction == "buy"`), so a sale is NEUTRALISED (0), not counted as bullish; the row still reaches the analyst as evidence, so the LLM can still read it bearish. **What stays open:** signing a sale -1 by magnitude (the sourced >50%-of-holdings band is the hook) is the SIGNED SCORING SCHEME still ruled out above — owner appetite or a published source, not a number to guess.
 
 
+## Research verdict 2026-10-04 — NO citable SIGNED scoring scheme exists; sales stay neutral at 0
+
+**What was checked.** Scott & Xu (FAJ 60(3), May 2004) read in full from the published PDF; Cohen-Malloy-Pomorski (J. Finance 67(3), 2012), Jeng-Metrick-Zeckhauser (2003), Lakonishok-Lee (2001) and Ravina-Sapienza (2010) were checked at abstract/summary level only, so they are characterised below only as far as that supports.
+
+**Scott & Xu supports an observation, not a score.**
+- Their own words: shares traded as a percentage of shares owned separates information-driven sales from liquidity or risk-motivated ones; only large sales that are also a large share of holdings predicted significantly negative returns.
+- The paper proposes no score, weight, sign rule, threshold or trading rule; its tables are average size- and book-to-price-adjusted excess returns per bucket, 1987-2002, quarterly non-overlapping periods.
+- The headline -0.81% is NOT "any sale over 50% of holdings": it is the cell with BOTH more than 50% of holdings AND more than 100,000 shares sold (Table 6). The same >50% band with 0-100,000 shares is +0.06%, insignificant. The band alone, as the desk reports it, does not reproduce the finding; an absolute share count is also needed.
+- The +0.68% is the cell with under 10% of holdings AND 0-100,000 shares; the 10-50% cell with over 100,000 shares is +0.08%, and under-10%/over-100,000 is -0.06% (both insignificant).
+- Only one cell of six is significantly negative (5% level); the authors themselves say the positive small-sale result may be specific to the period (rise of stock and option pay) and list holding period and option-exercise sales as untested.
+- No test net of trading costs, and nothing out of sample.
+
+**Other sources: none gives a signed scheme keyed to fraction of holdings.**
+- Cohen-Malloy-Pomorski classify sales as routine versus opportunistic by the insider's own past trading calendar; this is a classification, not a signed score, and does not use fraction of holdings.
+- Jeng-Metrick-Zeckhauser and Lakonishok-Lee report sales earn no significant abnormal return (neutral, supports zero).
+- Ravina-Sapienza report negative returns on director and executive sales around bad news; an observation, no scheme, not keyed to fraction.
+- Practitioner pages found (InsiderScore-style blogs) repeat the >50% rule of thumb or score sales 0; none is a citable methodology with a derivation.
+
+**Verdict.** No published, citable scheme scores a sale with a sign and magnitude off the fraction-of-holdings band. Scott & Xu supports at most "a sale is a possible negative only when large in fraction AND large in shares", one cell, 1987-2002, not a rule. Sales stay NEUTRAL at 0; no number is picked. The desk's own 2026-10-01 join also did not reproduce the sign (see above), so neither route settles it.
+
+**Board state.** The first box offers two routes (published scheme, or enough own outcomes); the published-scheme route is closed negative and the own-data route is still unmet, so that box stays unticked. No code changed.
+
 ## Production proof 2026-10-04 — the sale census DID run; it is populated; the route is still dead
 
 **Plain language —** The desk now actually records insider *sales* where before it recorded none. That recording reached the real database once, on 1 October, and it is full of real rows rather than empty. It still changes no decision, and it does not rescue the idea behind this item, because the recorded sales point the wrong way.

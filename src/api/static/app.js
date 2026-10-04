@@ -1509,6 +1509,29 @@ async function loadChoppingBlock() {
   }
 }
 
+/* Model fallbacks (route journal): everything the routing did, newest first. */
+async function loadRouteEvents() {
+  const body = document.querySelector("#panel-route-events [data-body]");
+  try {
+    const data = await fetchJSON("/route-events");
+    body.replaceChildren();
+    body.appendChild(el("div", { className: "dim", text: data.note }));
+    const rows = data.events.map((e) =>
+      el("tr", {}, [
+        el("td", { text: e.when || "" }),
+        el("td", { text: e.what }),
+        el("td", { text: e.cost }),
+        el("td", { text: e.detail }),
+      ])
+    );
+    if (rows.length) body.appendChild(el("table", {}, rows));
+    setPanelState("panel-route-events", "ok", "ok");
+  } catch (err) {
+    showMessage(body, `Could not load the model fallbacks: ${err.message}`, true);
+    setPanelState("panel-route-events", "error", "unreachable");
+  }
+}
+
 /* Pruning pass panel (item 219): every held name reviewed, verdict and reason. */
 async function loadPruning() {
   const body = document.querySelector("#panel-pruning [data-body]");
@@ -1545,6 +1568,7 @@ function refreshAll() {
   loadMutedBacklog();
   loadHealth();
   loadChoppingBlock();
+  loadRouteEvents();
 }
 
 document.getElementById("orders-status").addEventListener("change", loadOrders);
