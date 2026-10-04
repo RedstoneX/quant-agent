@@ -3,7 +3,6 @@ import math  # noqa: F401
 
 from src.config import RiskConfig
 from src.pipeline_delever import _optional_risk_number, _risk_number
-from src.risk.constants import SHORT_GAP_RISK_MULTIPLE_DEFAULT
 
 
 def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
@@ -117,7 +116,6 @@ def build_risk_config(config) -> RiskConfig:
                 # mechanism, so they carry the same parity requirement.
                 "max_cluster_risk_share_pct",
                 "max_gross_exposure_x",
-                "short_gap_risk_multiple",
             ),
     )
 
@@ -131,7 +129,7 @@ def build_constructor_config(config, risk_engine_config):
 
     This is the enforcement home for four settings the Portfolio Manager's
     standing sheet renders — `min_position_risk_pct`, `max_portfolio_risk_pct`,
-    `max_cluster_risk_share_pct` and `short_gap_risk_multiple` — none of which
+    `max_cluster_risk_share_pct` and `max_gross_exposure_x` — none of which
     `src/risk/rules.py` reads at all. The sizing seat's parity is against THIS
     object, not only against `RiskConfig`.
     """
@@ -203,11 +201,10 @@ def build_constructor_config(config, risk_engine_config):
             # `ConstructorConfig.min_order_usd` on 2026-09-26. Nothing in the
             # constructor read it — the one call that forwarded it reached an
             # argument `apply_gross_ceiling` has ignored since 2026-09-24.
-            # Stage 3 (shorts) — the sizing haircut. A short's single-name
-            # ceiling is `max_position_pct` above, the same as a long's.
-            short_gap_risk_multiple=_risk_setting(
-                "short_gap_risk_multiple", SHORT_GAP_RISK_MULTIPLE_DEFAULT,
-            ),
+            # Stage 3 (shorts): nothing direction-specific is passed. A
+            # short's single-name ceiling is `max_position_pct` above, the
+            # same as a long's, and owner ruling 2026-10-04 deleted the
+            # short-side gap haircut outright — same math, same behaviour.
             # Spec §11.2 — same "size under the hard block" pattern again.
             # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
             # breaches the ceiling would be DROPPED rather than taken

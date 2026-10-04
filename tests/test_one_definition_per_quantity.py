@@ -452,7 +452,7 @@ _HAIRCUT_NAMES = {"short_gap_risk_multiple", "gap_multiple"}
 
 
 def _multiplies_by_the_haircut(node) -> bool:
-    """Does this node multiply something by the short gap-risk multiple?"""
+    """Does this node multiply something by a short gap-risk multiple?"""
     if isinstance(node, ast.AugAssign) and isinstance(node.op, ast.Mult):
         operands = [node.value]
     elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
@@ -471,71 +471,33 @@ def _multiplies_by_the_haircut(node) -> bool:
     return False
 
 
-def test_no_second_application_of_the_short_gap_haircut():
-    """Exactly ONE place under src/ multiplies by the short gap multiple.
+def test_no_short_gap_haircut_is_applied_anywhere():
+    """ZERO places under src/ multiply by a short gap-risk multiple.
 
-    That place is `src.risk.constants.gap_adjusted_risk_per_share`. Any other
-    module that reapplies the multiple inline is a second definition of a
-    quantity that sizes live short positions, and this test fails on it.
-    Fixing the new call site is not the fix — route it through the helper.
+    This test used to assert exactly ONE application site. Owner ruling
+    2026-10-04 deleted the haircut outright — "a short should be treated
+    the same as a long, no different math no different behavior" — so the
+    assertion is now zero: the constant, the config fields and the single
+    application site are all gone and reintroducing any of them fails here.
     """
     offenders = []
     for path, _source, tree in _shared_ast_cache.parse_tree(SRC):
         for node in ast.walk(tree):
             if _multiplies_by_the_haircut(node):
                 offenders.append(f"{path}:{getattr(node, 'lineno', '?')}")
-    assert len(offenders) == 1, (
-        "the short-side gap-risk haircut must be applied in exactly one "
-        "place (src.risk.constants.gap_adjusted_risk_per_share); found: "
-        f"{offenders}"
-    )
-    assert offenders[0].startswith(str(SRC / "risk" / "constants.py")), offenders
-
-
-def test_the_haircut_default_literal_exists_once():
-    """One literal for the value, in `src.risk.constants`.
-
-    It used to be written out four times — `RiskConfig`, `ConstructorConfig`,
-    the pipeline's config read and the execution-time risk-budget read — so
-    three of them could drift from the deployed one without anything failing.
-    """
-    from src.risk.constants import SHORT_GAP_RISK_MULTIPLE_DEFAULT
-
-    hits = []
-    for path, _source, tree in _shared_ast_cache.parse_tree(SRC):
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Assign)
-                and isinstance(node.value, ast.Constant)
-                and node.value.value == SHORT_GAP_RISK_MULTIPLE_DEFAULT
-                and any(
-                    isinstance(t, ast.Name)
-                    and t.id == "SHORT_GAP_RISK_MULTIPLE_DEFAULT"
-                    for t in node.targets
-                )
-            ):
-                hits.append(path)
-    assert [str(h) for h in hits] == [str(SRC / "risk" / "constants.py")], hits
-
-
-def test_both_sizing_legs_read_the_same_haircut():
-    """The allocation leg and the execution risk leg cannot disagree.
-
-    Both call the one helper, so feeding the same configured multiple to
-    both produces the same haircut risk-per-share. A long is untouched.
-    """
-    from src.risk.constants import (
-        SHORT_GAP_RISK_MULTIPLE_DEFAULT,
-        gap_adjusted_risk_per_share,
+    assert offenders == [], (
+        "the short-side gap-risk haircut was DELETED by owner ruling "
+        f"2026-10-04; it must not be reapplied anywhere. Found: {offenders}"
     )
 
-    assert gap_adjusted_risk_per_share(10.0, is_short=False, multiple=2.0) == 10.0
-    assert gap_adjusted_risk_per_share(10.0, is_short=True, multiple=2.0) == 20.0
-    # An unreadable config (a MagicMock attribute, most often) falls back to
-    # the deployed default at BOTH legs, not to 1.0 and not to two answers.
-    assert gap_adjusted_risk_per_share(
-        10.0, is_short=True, multiple=MagicMock(),
-    ) == 10.0 * SHORT_GAP_RISK_MULTIPLE_DEFAULT
-    assert gap_adjusted_risk_per_share(10.0, is_short=True, multiple=None) == (
-        10.0 * SHORT_GAP_RISK_MULTIPLE_DEFAULT
-    )
+
+def test_the_haircut_names_are_gone_from_src():
+    """No constant, no helper, no config field survives the deletion."""
+    import src.risk.constants as rc
+    from src.config import RiskConfig
+    from src.portfolio_constructor.config import ConstructorConfig
+
+    assert not hasattr(rc, "SHORT_GAP_RISK_MULTIPLE_DEFAULT")
+    assert not hasattr(rc, "gap_adjusted_risk_per_share")
+    assert "short_gap_risk_multiple" not in RiskConfig.model_fields
+    assert not hasattr(ConstructorConfig, "short_gap_risk_multiple")

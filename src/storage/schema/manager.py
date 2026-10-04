@@ -908,13 +908,11 @@ class DatabaseSchema:
         # actually observed, so a NULL/absent reading is distinguishable
         # from "held, and never gapped against".
         #
-        # WHY IT EXISTS (item 186): the short-side sizing haircut
-        # (`src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT`, 1.5, the one
-        # definition since board item 216) is unsourced, and TWO
-        # attempts to read it off the instrument have failed — see the
-        # ledger row and docs/BOARD_NOTES.md item 186. Both failed for the
-        # same underlying reason: the desk has never recorded what a short
-        # actually suffers overnight. Bars are fetched live and discarded;
+        # WHY IT EXISTS (item 186): the short-side sizing haircut this
+        # column was added to inform was DELETED by owner ruling 2026-10-04
+        # ("a short should be treated the same as a long"). The column stays
+        # because what a short suffers overnight is still worth recording —
+        # the desk has never recorded it. Bars are fetched live and discarded;
         # no OHLCV table exists. This column, joined to the `entry_atr` and
         # `initial_stop_loss` already pinned on the same opening row, is the
         # evidence that would let the question ever be settled.

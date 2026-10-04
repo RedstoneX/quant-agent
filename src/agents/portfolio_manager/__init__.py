@@ -58,16 +58,13 @@ from src.agents.portfolio_manager.grounding import (  # noqa: F401 — re-export
     _ISO_DATE_RE,
     _STATE_CHANGE_ROW_RE,
     _SYMBOL_DIRECTION_RE,
-    DecisionGroundingMixin,
 )
+from src.agents.portfolio_manager.grounding import hold_decision_grounding
 from src.agents.portfolio_manager.prompt_evidence import hold_prompt_evidence
-from src.agents.portfolio_manager.ranking import CandidateRankingMixin
-from src.agents.portfolio_manager.rotation_section import RotationSectionMixin
+from src.agents.portfolio_manager.ranking import hold_candidate_ranking
+from src.agents.portfolio_manager.rotation_section import hold_rotation_section
 
 class PortfolioManagerAgent(
-    CandidateRankingMixin,
-    RotationSectionMixin,
-    DecisionGroundingMixin,
     LiveLimitPrompt,
     BaseAgent,
 ):
@@ -1670,6 +1667,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_NOT_ATTEMPTED, HEAL_PAID_RETRY,
             merge_retry_falsifiers,
         )
+        from src.soft_exit_never_blank import (
+            apply_mechanical_heal, soft_exit_fill_coda, soft_exit_retry_targets,
+        )
 
         if decision is None:
             return decision, result
@@ -1688,6 +1688,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 ),
             )
         ]
+        if not missing:
+            return decision, result
+
+        # Mechanical heal of last resort, before any spend (board item 78).
+        missing = apply_mechanical_heal(
+            decision, result, missing, self._record_soft_exit_heal, logger,
+        )
         if not missing:
             return decision, result
         if retry_already_used:
@@ -1711,21 +1718,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             )
             return decision, result
         self._soft_exit_retry_used = True
-        coda = (
-            "\n\n## SOFT-EXIT COMPLETION REQUIRED — NOT A RE-DECISION\n"
-            "These open/increase targets are missing a real thesis_invalid_if "
-            "(I'll sell if). Fill ONLY that field on the named symbols with "
-            "one concrete observable. Do NOT invent a catalyst unless you are "
-            "citing a dated Active News State Change for the unmeasurable-"
-            "range exception. Do NOT change symbol, direction, conviction, "
-            "thesis, risk_allocation_pct, target_weight_pct, or "
-            "suggested_stop_price. Do NOT add or remove targets. If you "
-            "cannot state a real falsifier, leave that name's "
-            "thesis_invalid_if empty — Python will refuse that name; do not "
-            "invent text.\n"
-            f"Symbols: {', '.join(missing)}\n"
-            "Respond ONLY with the complete JSON object.\n"
-        )
+        coda = soft_exit_fill_coda(missing)
         try:
             retried = self._execute(
                 str(user_message) + coda, retry_kind="soft_exit_fill",
@@ -1752,10 +1745,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 f"({type(exc).__name__}: {exc})",
             )
             return decision, result
-        reparsed = retried.parse_json() if retried is not None else None
-        retry_targets = []
-        if isinstance(reparsed, dict) and isinstance(reparsed.get("targets"), list):
-            retry_targets = reparsed["targets"]
+        retry_targets = soft_exit_retry_targets(retried)
         merged, filled = merge_retry_falsifiers(
             list(decision.targets), retry_targets,
         )
@@ -1783,15 +1773,6 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             "still did not state a falsifier for this name",
         )
         return decision, retried
-
-
-# `_collect_seat_verdicts` (ranking.py, moved verbatim) names the concrete
-# class to stash `_macro_parse_failures` and call `_macro_sectors`. It is NOT
-# free-standing on that line, so the name is wired back here after the class
-# exists rather than rewritten in the moved code.
-from src.agents.portfolio_manager import ranking as _ranking  # noqa: E402
-
-_ranking.PortfolioManagerAgent = PortfolioManagerAgent
 
 
 # --- Patch mirroring. Tests patch names on `src.agents.portfolio_manager`
@@ -1831,5 +1812,10 @@ class _PortfolioManagerMirroringModule(_types.ModuleType):
                     setattr(sub, name, pristine)
 
 
+# The seat HOLDS its four parts (one instance each, collaborators handed in live)
+# and delegates the old names to them; it inherits none of them.
 hold_prompt_evidence(PortfolioManagerAgent)
+hold_candidate_ranking(PortfolioManagerAgent)
+hold_rotation_section(PortfolioManagerAgent)
+hold_decision_grounding(PortfolioManagerAgent)
 _sys.modules[__name__].__class__ = _PortfolioManagerMirroringModule
