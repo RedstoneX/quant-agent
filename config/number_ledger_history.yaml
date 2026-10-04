@@ -1037,3 +1037,24 @@ changes:
       degraded one. Nothing downstream reads the blind/degraded lists, so
       the number cannot change what the desk buys, sells, sizes or stops.
       No VALUE was changed by this tranche.
+  - delta: -3
+    date: '2026-10-02'
+    why: >-
+      2026-10-02, fix #4 of the nine, first slice: three rows leave
+      `arbitrary` and NO VALUE CHANGES. (1)
+      `src.config.RiskConfig.max_gross_exposure_x` (2.0) becomes
+      `instrument`: Regulation T, 12 CFR 220.12(a), requires 50% initial
+      margin on a margin equity security, so twice equity is the largest
+      gross an overnight margin account is permitted to initiate, and the
+      configured cap sits exactly on that externally imposed maximum rather
+      than on a leverage preference. Its old `measurement` route is retired
+      with it, because a measurement of this account's gap behaviour can
+      only argue for a cap BELOW the regulatory maximum, which is an
+      appetite question about the de-levering ladder and not a source for
+      this number. (2) and (3)
+      `ConstructorConfig.risk_budget_pct` (5.0) and
+      `ConstructorConfig.min_risk_pct` (0.5) become `derived`: both are
+      mirrors overwritten on every live run from the risk config at
+      src/pipeline.py:348 and src/pipeline.py:349, so each was a second
+      count of one decision that is already carried, with its open
+      question, by the base row it mirrors.

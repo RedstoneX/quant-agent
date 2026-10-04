@@ -1,6 +1,6 @@
 """src.cost_circuit.parts.circuit_state -- Effective-state reads for the cost circuit (settled totals, state row, quota-hold lookup, transient-latch auto-clear).
 
-Bodies moved verbatim from src/cost_circuit/breaker_state.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_state.py shim (originally src/cost_circuit.py); held by LLMCostCircuitBreaker.
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations

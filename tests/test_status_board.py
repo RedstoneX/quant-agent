@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts import board_rot_guard, guard_reference
+from scripts.guard_reference import ReferenceUnavailable
 from src.api.server import _freshness_banner
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -2156,61 +2158,59 @@ def test_a_fully_ticked_live_event_blocked_item_does_not_trip_the_check(
     assert sb.find_finished_items_still_on_board(work, notes) == []
 
 
-#: Items on the REAL board, as of this change, whose own `DONE WHEN`
-#: checkboxes are all ticked while the item is still open — the ten this
-#: check found on its first real run (see the docstring of
-#: `find_finished_items_still_on_board`). This is an ALLOWLIST of KNOWN,
-#: pre-existing rot, not a target: retiring one of these items (writing it
-#: up in `docs/INCIDENT_HISTORY.md` and deleting its `docs/WORK.md` /
-#: `docs/board_notes/` blocks, the normal procedure) makes it disappear
-#: from the live check's output, and this set may SHRINK to match without
-#: anyone treating that as a test failure to chase down — update it in the
-#: same change that retires the item. It must never GROW silently: a NEW
-#: item joining the live check's output that is not already named here
-#: means a new item quietly finished without being moved, which is exactly
-#: the failure this whole check exists to catch, so that case still fails
-#: CI. (Item 170 has an open retirement PR, #737, at the time this set was
-#: written; it is included here because it was still open when this change
-#: was authored, and is expected to drop out of the live check, not out of
-#: this pin, the day that PR lands — a future run of this test after that
-#: merge will simply have one fewer overlap, which is fine.)
-_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26 = frozenset({
-    "item 125", "item 138", "item 139", "item 148", "item 152",
-    "item 154", "item 165", "item 170", "item 179", "item 180",
-})
-
-_REF_PREFIX_RE = re.compile(r"^(gate item \d+|item \d+)")
+# ---------------------------------------------------------------------------
+# finished-but-still-open board items: measured against the trunk, stored nowhere
+#
+# This used to be a frozenset, `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26`,
+# naming the ten items the check flagged on that date. That was a cached
+# measurement committed to the repo -- the same collision engine as the JSON
+# baselines, written in Python: every change retiring an item had to edit it,
+# and the set could be widened until the check passed. It is gone. The guard
+# in `scripts/board_rot_guard.py` stores nothing: it measures this working
+# tree and `origin/main` separately at check time and fails only on the DELTA,
+# and REFUSES (never passes) when the trunk cannot be read.
+# ---------------------------------------------------------------------------
 
 
 def test_the_real_backlog_has_no_new_finished_item_still_on_the_board():
     """The real docs/WORK.md and docs/board_notes/, not a fixture.
 
-    Unlike a plain "must find nothing" assertion, this tolerates the KNOWN,
-    already-measured backlog rot pinned in
-    `_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26` (ten items whose own DONE
-    WHEN boxes are all ticked while still open — real, pre-existing, and
-    not something this test's own change may fix by editing docs/WORK.md,
-    since that would collide with other sessions concurrently retiring
-    items in their own worktrees). What it still enforces: no item OUTSIDE
-    that known set may be flagged — a new one appearing there is a fresh
-    instance of exactly the failure this check exists to catch, and must
-    still fail CI.
+    Pre-existing rot already visible on `origin/main` is not this change's
+    business and is not something this test may fix by editing docs/WORK.md,
+    which would collide with other sessions retiring items in their own
+    worktrees. What it enforces is the delta: an item that newly declares
+    itself finished -- in its headline or by having every one of its own
+    DONE WHEN boxes ticked -- while still sitting on the board is a fresh
+    instance of exactly the failure this check exists to catch.
     """
-    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
-    notes = Path(__file__).resolve().parents[1] / "docs" / "board_notes"
-    flagged = sb.find_finished_items_still_on_board(work, notes)
-    flagged_refs = set()
-    for f in flagged:
-        m = _REF_PREFIX_RE.match(f)
-        assert m, f"unrecognised flagged-item shape: {f!r}"
-        flagged_refs.add(m.group(1))
-    unexpected = flagged_refs - _KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26
-    assert not unexpected, (
+    new_rot = board_rot_guard.violations()
+    assert not new_rot, (
         "docs/WORK.md has NEW item(s) that declare themselves finished "
-        "(in headline or DONE WHEN checkboxes) but are still on the "
-        "board, beyond the already-known set pinned in "
-        "_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26:\n  "
-        + "\n  ".join(sorted(unexpected))
+        "(in headline or DONE WHEN checkboxes) but are still on the board, "
+        "beyond what origin/main already carries:\n  " + "\n  ".join(new_rot)
+    )
+
+
+def test_a_newly_finished_item_is_caught_as_a_delta(monkeypatch):
+    """An item flagged here but not on the trunk is this branch's doing."""
+    monkeypatch.setattr(board_rot_guard, "working_flagged", lambda: board_rot_guard.trunk_flagged() | {"item 9999"})
+    assert board_rot_guard.violations() == ["item 9999"]
+    assert board_rot_guard.main() == 1
+
+
+def test_rot_already_on_the_trunk_is_not_this_branch_s_problem(monkeypatch):
+    """Pre-existing rot is reported by neither side of the delta."""
+    monkeypatch.setattr(board_rot_guard, "trunk_flagged", lambda: {"item 4242"})
+    monkeypatch.setattr(board_rot_guard, "working_flagged", lambda: {"item 4242"})
+    assert board_rot_guard.violations() == []
+
+
+def test_the_guard_stores_no_list_of_current_items():
+    """The frozen set was the defect; a replacement in the guard is too."""
+    text = (_REPO / "scripts" / "board_rot_guard.py").read_text(encoding="utf-8")
+    assert "_KNOWN_CHECKBOX_FINISHED_ITEMS_2026_09_26 = " not in text
+    assert not re.search(r'"(gate )?item \d+"', text), (
+        "the guard pins a literal board item again; the trunk is the list"
     )
 
 

@@ -1,6 +1,6 @@
 """src.cost_circuit.parts.quota_holds -- Quota holds for the cost circuit (reconcile, hold, latched-snapshot refresh, trip).
 
-Bodies moved verbatim from src/cost_circuit/breaker_holds.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_holds.py shim (originally src/cost_circuit.py); held by LLMCostCircuitBreaker.
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations
