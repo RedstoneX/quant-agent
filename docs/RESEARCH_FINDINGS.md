@@ -589,6 +589,60 @@ What this means in practice:
 - A multiple for the *noise band* — a different question from either — has
   no source at all. Item 70 remains open on exactly that basis.
 
+### Does the band's sqrt(sessions_held) widening match the tape? Measured 2026-10-04 — NO, and nothing replaces it
+
+`src/risk/exit_guard.py::noise_band_atr` widens the band as
+`ATR * sqrt(sessions_held)` with no cap, so a position held 60 sessions must
+move about 7.8 ATR against entry before a discretionary sale is allowed. The
+sqrt shape was adopted by analogy with random-walk dispersion and never
+measured; the cap was never derived because picking one is barred.
+
+`ops/research/noise_band_holding_scaling.py` measures the claim the band
+actually makes — that an adverse excursion from entry, in ATRs, marks a
+finished trend, and that the excursion size which marks it grows with holding
+length. Source: the committed public daily-bar panel
+(`ops/model_policy/fixtures/yf_daily_bars_pm_public_day_2026-09-14.json.gz`,
+101 symbols, roughly five years of sessions ending 2026-09-14). For each
+symbol, holding length and entry bar it takes the adverse move
+`(close[entry] - close[entry+h]) / ATR14[entry]` when positive, and the
+forward return over the next 10, 20 or 60 sessions minus that symbol's own
+in-sample mean forward return, so the common equity drift cannot decide the
+answer. Thresholds are discovered on the first 60% of each series and judged
+on the held-out 40%; a returns-shuffled control per symbol gives the
+no-structure baseline. Between 25,882 and 33,520 in-sample observations stand
+behind every cell.
+
+**Finding 1 — the band's premise fails even before the scaling question.**
+In no real-data cell does mean excess forward return fall as the adverse
+excursion grows. At every holding length the gradient runs the other way, and
+it steepens with holding length: at h = 60 and a 20-session forward horizon,
+the smallest-adverse decile averages -0.14% excess and the largest (left edge
+7.84 ATR) averages +4.14%. The shuffled control shows no such gradient
+(+0.36% to +0.95%, unordered), so this is structure in the tape rather than
+the return distribution. A larger adverse move is therefore not evidence the
+trend is over; if anything the tape says the opposite.
+
+**Finding 2 — no cap is derivable, and none is proposed.** Because the
+relationship never turns the way the band assumes, the measurement produces no
+excursion size above which a trend is finished, at any holding length — so
+there is no point at which such a size stops growing, which is what an honest
+cap would represent. **No value in `exit_guard.py` is changed by this work.**
+
+**What a different answer would have looked like.** Had the sqrt widening been
+right, each decile table would show a region of negative excess forward return
+beginning at a left edge that rises with holding length roughly as
+sqrt(h) — 1.0, 1.41, 2.24, 3.16, 4.47, 6.32, 7.75 at h = 1, 2, 5, 10, 20, 40,
+60 — and the discovered threshold would separate forward returns out of
+sample. The estimator can return such values: in the shuffled control at
+h = 60, forward 10, it returned 6.46 ATR. It is not pinned at zero or at
+"none" by construction.
+
+**The caveat that bounds Finding 1.** The panel is a set of symbols that
+survived the whole window, so post-drawdown rebounds in it are overstated.
+That is a reason not to trade the reversal gradient, not a reason to doubt the
+null: survivorship inflates the rebound, and the band's premise needs the
+opposite sign.
+
 ---
 
 ## 10. Trailing stops — the one genuinely academic result, and its limits (2026-09-26)
