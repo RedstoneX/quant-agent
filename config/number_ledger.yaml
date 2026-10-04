@@ -382,7 +382,12 @@ numbers:
       records: the distribution of quoted half-spread in basis points across the universe the desk
         could trade, on public daily bars, sampled at the time of day the desk actually sends entries,
         so the admission ceiling is a point on a measured spread distribution rather than a round
-        forty basis points
+        forty basis points. RECORDER BUILT 2026-10-04 in src/entry_slippage_bound.py, because the production
+        DB held no record of this check ever binding, so the count of entries it has priced away was
+        unknown and no re-derivation was possible; every BUY and SHORT entry check now writes an
+        `entry_slippage_check` evidence row with the observed slippage, the cap, whether the cap
+        bound, and that name's own latest daily range as a percent of close, behaviour unchanged, and
+        the value stays `arbitrary` until those rows exist in number
       closes_when: the half-spread distribution is in hand and the ceiling is set at a stated percentile
         with the share of the universe it excludes named; it is DELETED, and the spread is charged
         to sizing instead of gating admission, if the measured distribution has no tail the ceiling
