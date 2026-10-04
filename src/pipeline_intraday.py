@@ -241,9 +241,9 @@ class IntradayMixin:
                 run_id=run_id, date=session_date_key(), payload=result,
             )
         except Exception as exc:  # noqa: BLE001 — never break the push
-            logger.warning(
-                "intra_check report persistence failed (non-fatal): %s", exc,
-            )
+            _site(self, "report_persist", exc)
+        else:
+            _site(self, "report_persist")
 
     def _run_intra_check_body(self) -> dict:
         """Lightweight intra-session maintenance tick (no LLM calls).
@@ -393,7 +393,8 @@ class IntradayMixin:
         # Production Database always returns a real list above.
         try:
             legacy_rows = self.db.get_trades(symbol=symbol, limit=10)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            _site(self, "cooldown_legacy_trades", exc, context={"symbol": symbol})
             return True
         from datetime import datetime as _dt, timedelta, timezone
         cutoff = _dt.now(timezone.utc) - timedelta(hours=cooldown_hours)
@@ -596,8 +597,8 @@ class IntradayMixin:
             if fh is not None:
                 try:
                     fh.close()   # releases the flock
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    _site(self, "scan_lock_release", exc)
 
     def _track_intraday_snapshot_ok(self, symbol: str) -> None:
         """Reset a symbol's consecutive-miss streak. Never raises — a
@@ -841,10 +842,7 @@ class IntradayMixin:
                 detail=detail,
             )
         except Exception as exc:  # noqa: BLE001 — measurement, never the scan
-            logger.warning(
-                "Intraday trigger ATR context not recorded for %s (%s) — the "
-                "scan is unaffected", upper, exc,
-            )
+            _site(self, "trigger_atr_context", exc, context={"symbol": upper})
 
     def _intraday_paid_scan_skip(self, ctx: RunContext, movers: list[str]) -> dict:
         """Durable skip: lock still held, movers named, no silent drop."""
@@ -860,11 +858,8 @@ class IntradayMixin:
                     self, ctx, symbol, "opportunity", "skipped",
                     "intraday_scan_lock_contended", detail=reason,
                 )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Intraday scan: could not persist skip reason for %s",
-                    symbol, exc_info=True,
-                )
+            except Exception as exc:  # noqa: BLE001
+                _site(self, "skip_reason_lock_contended", exc, context={"symbol": symbol})
         return {
             "status": "intraday_scan_lock_contended",
             "run_id": ctx.run_id,
@@ -893,11 +888,8 @@ class IntradayMixin:
                     self, ctx, symbol, "opportunity", "skipped",
                     "intraday_scan_open_overlap", detail=reason,
                 )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "Intraday scan: could not persist skip reason for %s",
-                    symbol, exc_info=True,
-                )
+            except Exception as exc:  # noqa: BLE001
+                _site(self, "skip_reason_open_overlap", exc, context={"symbol": symbol})
         return {
             "status": "intraday_scan_open_overlap",
             "run_id": ctx.run_id,
@@ -1072,12 +1064,14 @@ class IntradayMixin:
         try:
             prior_macro_state = self.macro_store.load_last_state() or {}
         except Exception as e:  # noqa: BLE001
-            logger.warning("Intraday scan: prior macro state load failed: %s", e)
+            _site(self, "macro_state_load", e)
         prior_ratings: dict = {}
         try:
             prior_ratings = self.tech_store.load()
         except Exception as e:  # noqa: BLE001
-            logger.warning("Intraday scan: tech store load failed: %s", e)
+            _site(self, "tech_store_load", e)
+        else:
+            _site(self, "tech_store_load")
 
         # Truthful current-session evidence for exactly the names being
         # analyzed (2026-08-19): the scan detects on live prices, so Tech
@@ -1154,7 +1148,7 @@ class IntradayMixin:
                     **agent_log_kwargs(ta_result),
                 )
             except Exception as e:  # noqa: BLE001
-                logger.warning("Intraday scan: tech_analyst agent_log insert failed: %s", e)
+                _site(self, "tech_agent_log", e)
             for analysis in analyses:
                 _persist_evidence(
                     self.db, run_id=ctx.run_id, agent_name="tech_analyst",
@@ -1181,7 +1175,7 @@ class IntradayMixin:
                     if analysis.symbol in ages:
                         analysis.signal_age_days = ages[analysis.symbol]
             except Exception as e:  # noqa: BLE001
-                logger.warning("Intraday scan: tech store update failed: %s", e)
+                _site(self, "tech_store_update", e)
 
         # Item 20 (board): deliberately no early "no analyses" return here.
         # `symbols_data` was already confirmed non-empty above, so zero
