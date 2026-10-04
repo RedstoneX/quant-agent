@@ -124,6 +124,7 @@ the isolation checks this test itself asserts on.
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
@@ -269,6 +270,38 @@ def _reached_provider(report, agent: str) -> bool:
         f["kind"] == "missing_recorded_response" and f["agent"] == agent
         for f in report.findings
     ) or any(a["agent"] == agent for a in report.agents_ran)
+
+
+
+# Measured 2026-10-04 (du over /tmp/pytest-of-ubuntu): each run of the test below leaves two
+# prepared sandboxes, each a full snapshot of the production database, 1.35 GB per run, and
+# pytest keeps the last three runs of every worker: about 4 GB of the 6 GB pytest scratch.
+SANDBOX_DIRS = ("sandbox", "sandbox-2")
+
+
+def reclaim_sandboxes(root):
+    """Remove the prepared sandboxes under `root`; returns how many were removed."""
+    removed = 0
+    for name in SANDBOX_DIRS:
+        target = root / name
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+            removed += 1
+    return removed
+
+
+@pytest.fixture(autouse=True)
+def _reclaim_sandboxes_after(tmp_path):
+    yield
+    reclaim_sandboxes(tmp_path)
+
+
+def test_the_sandboxes_this_file_prepares_are_removed_when_the_test_ends(tmp_path):
+    for name in SANDBOX_DIRS:
+        (tmp_path / name / "data").mkdir(parents=True)
+        (tmp_path / name / "data" / "quant_agent.db").write_bytes(b"x" * 1024)
+    assert reclaim_sandboxes(tmp_path) == len(SANDBOX_DIRS)
+    assert not any((tmp_path / name).exists() for name in SANDBOX_DIRS)
 
 
 @pytest.mark.xfail(
