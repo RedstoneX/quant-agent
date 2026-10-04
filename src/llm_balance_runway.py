@@ -9,8 +9,8 @@ invents nothing. It makes NO network call of its own.
 WHERE THE BALANCE COMES FROM, in order:
   1. `data/openrouter_balance.json` -- the provider's own figure (OpenRouter
      GET /api/v1/credits: total_credits - total_usage), written by
-     `src.cost_table.record_openrouter_balance()` from the twice-daily
-     pricing-refresh timer. That fetch lives in cost_table because it is the
+     `src.openrouter_balance.record_openrouter_balance()` from the twice-daily
+     pricing-refresh timer. That fetch goes through cost_table, the
      module that already reaches openrouter.ai (replay-seam guard). When the
      provider refuses the call the timer logs the reason at ERROR, no file is
      written, and step 2 applies. Spend recorded after the snapshot day is
@@ -32,7 +32,9 @@ import json
 import sqlite3
 from pathlib import Path
 
-from src.cost_table import OPENROUTER_BALANCE_PATH as SNAPSHOT_PATH
+import yaml
+
+from src.openrouter_balance import OPENROUTER_BALANCE_PATH as SNAPSHOT_PATH
 
 
 def _day_costs(conn: sqlite3.Connection) -> dict[str, float]:
@@ -132,14 +134,15 @@ def balance_line() -> str:
     credit refusal and by the dashboard. Unreadable reads as "balance
     unknown" -- never blank, never $0.00. Never raises."""
     try:
-        from src.config import load_config
-
-        cfg = load_config("config/settings.yaml")
-        cc = cfg.llm_cost_circuit
+        # Read the YAML directly: src.config sits ABOVE this module (it pulls in
+        # src.agents.base, which reports refusals through here), so importing
+        # it would close an import cycle.
+        raw = yaml.safe_load(Path("config/settings.yaml").read_text()) or {}
+        cc = raw.get("llm_cost_circuit") or {}
         state = read_state(
-            cfg.storage.db_path,
-            topup_usd=cc.openrouter_topup_usd,
-            topup_date=cc.openrouter_topup_date,
+            raw["storage"]["db_path"],
+            topup_usd=cc.get("openrouter_topup_usd"),
+            topup_date=cc.get("openrouter_topup_date"),
         )
         if state.get("status") == "unknown":
             return UNKNOWN_LINE

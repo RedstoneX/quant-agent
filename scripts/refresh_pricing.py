@@ -74,8 +74,8 @@ from src.cost_table import (  # noqa: E402
     openrouter_cache_path,
     refresh_openrouter_pricing,
     refresh_pricing,
-    record_openrouter_balance,
 )
+from src.openrouter_balance import record_openrouter_balance  # noqa: E402
 
 
 @dataclass

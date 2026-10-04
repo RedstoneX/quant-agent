@@ -4,8 +4,8 @@ import sqlite3
 
 import pytest
 
-from src import cost_table
-from src.cost_table import OpenRouterBalanceUnavailable, fetch_openrouter_balance, record_openrouter_balance
+from src import cost_table, openrouter_balance
+from src.openrouter_balance import OpenRouterBalanceUnavailable, fetch_openrouter_balance, record_openrouter_balance
 from src.llm_balance_runway import compute_state, read_state
 from src.trading_calendar import et_today
 
@@ -46,7 +46,7 @@ def test_fetch_refuses_by_name_without_a_key(monkeypatch, tmp_path):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(OpenRouterBalanceUnavailable) as exc:
         fetch_openrouter_balance(tmp_path / "bal.json")
-    assert "OPENROUTER_API_KEY" in str(exc.value) and cost_table.OPENROUTER_CREDITS_URL in str(exc.value)
+    assert "OPENROUTER_API_KEY" in str(exc.value) and openrouter_balance.OPENROUTER_CREDITS_URL in str(exc.value)
     assert not (tmp_path / "bal.json").exists()
 
 
@@ -62,7 +62,7 @@ def test_fetch_writes_the_snapshot_on_the_exchange_day(monkeypatch, tmp_path):
 
     monkeypatch.setattr(requests, "get", _get)
     snap = fetch_openrouter_balance(tmp_path / "bal.json")
-    assert seen["url"] == cost_table.OPENROUTER_CREDITS_URL
+    assert seen["url"] == openrouter_balance.OPENROUTER_CREDITS_URL
     assert snap["remaining_usd"] == 10.25
     assert snap["as_of_day"] == et_today().isoformat()
     assert json.loads((tmp_path / "bal.json").read_text()) == snap
@@ -77,10 +77,10 @@ def test_a_refused_call_is_named_and_logged_not_swallowed(monkeypatch, tmp_path,
         raise ConnectionError("blocked by the rehearsal wall")
 
     monkeypatch.setattr(requests, "get", _get)
-    with caplog.at_level(logging.ERROR, logger="src.cost_table"):
+    with caplog.at_level(logging.ERROR, logger="src.openrouter_balance"):
         out = record_openrouter_balance(tmp_path / "bal.json")
     assert isinstance(out, str) and "blocked by the rehearsal wall" in out
-    assert cost_table.OPENROUTER_CREDITS_URL in out
+    assert openrouter_balance.OPENROUTER_CREDITS_URL in out
     assert any("NOT recorded" in r.getMessage() for r in caplog.records)
     assert not (tmp_path / "bal.json").exists()
 
@@ -90,7 +90,8 @@ def test_an_unreadable_snapshot_is_unknown_not_derived(tmp_path):
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE llm_budget_days (day TEXT, baseline_cost_usd REAL, incremental_cost_usd REAL)")
     conn.executemany("INSERT INTO llm_budget_days VALUES (?,?,?)", [(d, c, 0.0) for d, c in DAYS.items()])
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
     good = read_state(str(db), topup_usd=10.0, topup_date="2026-10-01", snapshot_path=tmp_path / "none.json")
     assert good["source"] == "derived"
     (tmp_path / "bad.json").write_text("{not json")

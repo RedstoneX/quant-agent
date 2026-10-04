@@ -29,11 +29,11 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
+from src.api.margin_interest_view import _compute_margin_interest
 from src.api.broker_reads import (
     check_broker_reachable,
     read_account,
     read_live_quotes,
-    read_margin_interest,
     read_orders,
     read_positions,
     read_price_bars,
@@ -68,8 +68,6 @@ from src.api.schemas import (
     LiquidityBreakdown,
     LiveQuote,
     LiveQuotesResponse,
-    MarginInterestCumulative,
-    MarginInterestEstimate,
     OrderItem,
     OrdersResponse,
     PositionItem,
@@ -523,43 +521,6 @@ def _compute_risk_limits() -> RiskLimits:
         max_gross_exposure_x=getattr(limits, "max_gross_exposure_x", None),
     )
 
-
-def _compute_margin_interest(cash: float | None) -> MarginInterestEstimate:
-    """Degrades to an honest all-`None` `MarginInterestEstimate()` on any
-    read failure — mirrors `_compute_liquidity`/`_compute_risk_limits`'s
-    fail-closed-to-empty posture, and is also the correct rendering of
-    today's actual state (no debit balance, `allow_margin` is `False`)."""
-    try:
-        data = read_margin_interest(cash)
-    except Exception as exc:
-        logger.warning("routes_live._compute_margin_interest failed: %s", exc)
-        return MarginInterestEstimate(error=str(exc))
-    cumulative_data = data.get("cumulative")
-    cumulative = (
-        MarginInterestCumulative(
-            this_week_usd=cumulative_data.get("this_week_usd"),
-            current_month_usd=cumulative_data.get("current_month_usd"),
-            current_month_label=cumulative_data.get("current_month_label"),
-            prior_months=cumulative_data.get("prior_months") or [],
-            all_time_usd=cumulative_data.get("all_time_usd"),
-            all_time_since=cumulative_data.get("all_time_since"),
-            is_estimate=cumulative_data.get("is_estimate"),
-            source=cumulative_data.get("source"),
-        )
-        if cumulative_data else None
-    )
-    return MarginInterestEstimate(
-        debit_balance=data.get("debit_balance"),
-        rate_pct=data.get("rate_pct"),
-        daily_usd=data.get("daily_usd"),
-        annual_usd=data.get("annual_usd"),
-        label=data.get("label"),
-        broker_check_note=data.get("broker_check_note"),
-        days_charged=data.get("days_charged"),
-        period_usd=data.get("period_usd"),
-        error=data.get("error"),
-        cumulative=cumulative,
-    )
 
 # NOTE (§11.2): Mission Control still does NOT compute the de-levering
 # ladder or distance-to-forced-liquidation — those need `src.risk.rules`,

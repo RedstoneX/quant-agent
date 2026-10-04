@@ -1340,8 +1340,7 @@ class BaseAgent(ABC):
                             "OUT OF CREDIT — the provider refused to serve the "
                             "call%s. Not retrying; topping the account up is "
                             "the only fix. %s (%s)", self.name, attempt + 1,
-                            "" if affordable is not None
-                            else " and named no allowance it would serve",
+                            "" if affordable is not None else " and named no allowance it would serve",
                             _balance_line(), e,
                         )
                     else:
