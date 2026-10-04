@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 from src.portfolio_constructor import PortfolioConstructor
 from src.portfolio_constructor.entry_stop.resolver import EntryStopResolver
 from src.portfolio_constructor.shim_guard import _is_class_shim
-from src.portfolio_constructor.stops import _StopMixin
 from tests.boundary_harness import check_boundary
 
 LIFTED = ("_resolve_entry_and_stop", "real_reward_risk_preview", "_widen_stop_past_noise")
@@ -33,11 +32,11 @@ def test_resolver_builds_from_stubs_alone():
 
 def test_host_shims_are_recognised_through_partial():
     for name in LIFTED:
-        shim = getattr(_StopMixin, name)
-        assert _is_class_shim(shim, name, _StopMixin)
-        assert _is_class_shim(functools.partial(shim, MagicMock()), name, _StopMixin)
-        assert _is_class_shim(functools.partial(functools.partial(shim)), name, _StopMixin)
-    assert not _is_class_shim(lambda *a, **k: None, LIFTED[0], _StopMixin)
+        shim = getattr(PortfolioConstructor, name)
+        assert _is_class_shim(shim, name, PortfolioConstructor)
+        assert _is_class_shim(functools.partial(shim, MagicMock()), name, PortfolioConstructor)
+        assert _is_class_shim(functools.partial(functools.partial(shim)), name, PortfolioConstructor)
+    assert not _is_class_shim(lambda *a, **k: None, LIFTED[0], PortfolioConstructor)
 
 
 def test_shim_does_not_overwrite_resolver_method_with_itself():

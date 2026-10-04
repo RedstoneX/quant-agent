@@ -1,6 +1,6 @@
 """src.cost_circuit.parts.session_lifecycle -- SessionLifecycle for the cost circuit (initialize, seed/validate the day, activate_session, context).
 
-Bodies moved verbatim from src/cost_circuit/breaker_session.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_session.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations

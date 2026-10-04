@@ -1,6 +1,6 @@
 """src.cost_circuit.parts.infra_retry -- InfraRetry for the cost circuit (infra-fault retry/backoff, mark_unavailable, raise_if_unavailable).
 
-Bodies moved verbatim from src/cost_circuit/breaker_retry.py (originally src/cost_circuit.py).
+Bodies moved verbatim from the former src/cost_circuit/breaker_retry.py (now held by LLMCostCircuitBreaker) (originally src/cost_circuit.py).
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations

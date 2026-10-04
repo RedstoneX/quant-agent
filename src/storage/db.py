@@ -477,10 +477,10 @@ class Database:
         resolved while sizing, so this write buys no market data and cannot
         disagree with the sizing it describes.
 
-        Unknown stays NULL: a symbol with no determinable sector is grouped
-        under a null sector rather than an "other" bucket, and a run that
-        built no entry orders writes `weights_json` NULL with a zero count
-        rather than an empty mapping that reads as zero concentration.
+        Unknown sector stays NULL inside the JSON, never an "other" bucket.
+        `weights_json` itself is NEVER NULL (NOT NULL in the schema): a run
+        that built no entry orders writes `[]` with `entry_orders_built` 0,
+        which cannot be mistaken for a recorder that failed to write content.
 
         Idempotent per run (UNIQUE on `run_id`).
         """
@@ -525,7 +525,7 @@ class Database:
         )
         for r in rows:
             r["weight_pct"] = round(r["weight_pct"], 6)
-        payload = json.dumps(rows) if entries else None
+        payload = json.dumps(rows)  # never NULL: [] means no entry orders
         try:
             with self._lock:
                 self.conn.execute(

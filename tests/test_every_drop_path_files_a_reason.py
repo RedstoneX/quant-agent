@@ -276,12 +276,12 @@ _DELEGATION_MARKER = "# drop-reason:"
 
 def _class_nodes():  # the resolver is LAST so its lifted bodies win by name over the host shims
     def _c(paths, names): return [(n, t.splitlines()) for p in paths for t in [p.read_text()] for n in ast.parse(t).body if isinstance(n, ast.ClassDef) and n.name in names]
-    out = _c(sorted(_SOURCE.glob("*.py")), {"PortfolioConstructor", "_StopMixin", "_OrderBuildMixin"}) + _c(sorted((_SOURCE / "entry_stop").glob("*.py")), {"EntryStopResolver"})
-    assert len(out) == 4, [n.name for n, _ in out]
+    out = _c(sorted(_SOURCE.glob("*.py")), {"PortfolioConstructor", "StopRules", "OrderBuilders"}) + _c(sorted((_SOURCE / "entry_stop").glob("*.py")), {"EntryStopResolver"}) + _c(sorted((_SOURCE / "order_build").glob("*.py")), {"ExitOrderBuilders", "LongEntryBuilder", "ShortEntryBuilder"})
+    assert len(out) == 7, [n.name for n, _ in out]
     return out
 
-def _methods(lines=False):
-    return {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body if isinstance(n, ast.FunctionDef)}
+def _methods(lines=False):  # skips "Thin shim" docstrings: a lift's same-named shim would pass vacuously; the moved body is scanned via its class above
+    return {n.name: (ls if lines else n) for c, ls in _class_nodes() for n in c.body if isinstance(n, ast.FunctionDef) and not (ast.get_docstring(n) or "").startswith("Thin shim")}
 
 
 def _drop_sites(fn):
