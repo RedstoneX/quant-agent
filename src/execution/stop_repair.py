@@ -26,6 +26,7 @@ import logging
 import math
 from typing import Any, Callable
 
+from src.execution.pending_stop_drain import drain_safely as drain_owed_stop_levels  # the sweep's first coverage repair
 from src.execution.stop_repair_parts import _refuse, derive_protective_level
 from src.execution.stop_records import (
     STOP_ABSENT, STOP_USABLE, classify_stop_price,

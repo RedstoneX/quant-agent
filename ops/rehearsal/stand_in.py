@@ -111,6 +111,12 @@ class AmendRefused(RuntimeError):
 class AmendEndpoint:
     """Mixin giving `RehearsalTradingClient` the broker's in-place amend."""
 
+    def get_clock(self):
+        """The broker clock at the rehearsal's own `now`: open 09:30-16:00 ET on a weekday."""
+        t = self._now
+        is_open = t.weekday() < 5 and (9, 30) <= (t.hour, t.minute) < (16, 0)
+        return SimpleNamespace(is_open=is_open, timestamp=t)
+
     def replace_order_by_id(self, order_id, request):
         old = self._orders.get(str(order_id))
         if old is None or old.status not in OPEN_STATUSES:

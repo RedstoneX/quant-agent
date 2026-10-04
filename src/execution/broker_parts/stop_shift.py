@@ -171,8 +171,18 @@ class ShiftStopsMixin:
 
         if (deferred := defer_shift_if_closed(self, symbol, specs, shifted, amount)):
             return deferred  # out of hours: cancel NOTHING (see stop_clock.py)
-        if not self.cancel_snapshotted_stops(symbol, specs):
-            return None   # rollback already handled inside
+        cancel = self.cancel_snapshotted_stops(symbol, specs)
+        if not cancel.cleared:
+            # Rollback handled inside; a shrunk-coverage outcome means the
+            # ORIGINAL levels are gone and could not be put back, so the
+            # un-restored specs are re-attempted here at their original
+            # level before giving up. A failed shift must never end with
+            # less protection than it started with.
+            if cancel.coverage_shrank:
+                self._restore_stop_orders(
+                    symbol, list(cancel.unprotected), check_idempotency=True,
+                )
+            return None
         restored, failed = self._restore_stop_orders(symbol, shifted)
         if failed:
             # Put the ORIGINAL levels back for whatever couldn't be shifted —

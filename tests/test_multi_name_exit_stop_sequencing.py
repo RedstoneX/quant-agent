@@ -50,7 +50,7 @@ def _wire_broker_seams(broker, events: list[tuple[str, str]]) -> None:
 
     def _cancel(symbol, _specs):
         events.append(("naked", symbol))
-        return True
+        return MagicMock(cleared=True)
 
     def _submit(*, symbol, side, **_kw):
         events.append(("submit", symbol))

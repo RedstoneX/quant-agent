@@ -13,7 +13,7 @@ from pathlib import Path
 from src.notifier.sections import fmt_time_12h
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-OWNER_FACING = ("notifier", "trader_feed")
+OWNER_FACING = ("notifier", "trader_feed", "log_health", "inflight")
 _CLOCK = re.compile(r"%-?[HIl]|%[pP]|%T|%R|%X|%c")
 
 

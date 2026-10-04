@@ -175,3 +175,29 @@ def test_empty_backlog_payload_carries_everything_the_panel_prints(muted_db):
     assert out["total"] == 0
     assert out["coverage_gap"].strip()
     assert out["oldest"] is None and out["newest"] is None
+
+
+def test_a_failed_owner_alert_reaches_the_backlog(muted_db):
+    """A send the transport TRIED and could not complete is undelivered too.
+
+    The transport writes `status='failed'` with the reason; the caller
+    discards the returned False; Telegram is muted, so this page is the
+    owner's only channel. Before this test the read enumerated only the
+    two deliberate drops, so a naked-position alert that failed to send
+    appeared nowhere at all.
+    """
+    muted_db([
+        ("owner_alert", "failed", None,
+         "PROTECTIVE STOP UNREADABLE\nthe broker would not say",
+         "send error: boom", "2026-10-01 13:00:00"),
+        ("owner_alert", "sent", None, "delivered fine", None,
+         "2026-10-01 12:00:00"),
+    ])
+    out = db_reads.get_muted_backlog()
+    assert out["total"] == 1
+    assert out["failed_total"] == 1
+    assert out["muted_total"] == 0 and out["filtered_total"] == 0
+    assert out["live_risk_total"] == 1
+    assert out["live_risk"][0]["reason"] == "failed"
+    assert out["by_kind"][0]["failed_count"] == 1
+    assert out["by_day"][0]["failed_count"] == 1

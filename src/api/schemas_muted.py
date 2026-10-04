@@ -15,6 +15,8 @@ class MutedKindCount(BaseModel):
     """Of `count`, how many the global mute swallowed."""
     filtered_count: int = 0
     """Of `count`, how many TELEGRAM_RISK_ONLY dropped as operational."""
+    failed_count: int = 0
+    """Of `count`, how many the transport tried to send and could not."""
 
 
 class MutedDayCount(BaseModel):
@@ -27,13 +29,16 @@ class MutedDayCount(BaseModel):
     """Of `count`, how many the global mute swallowed."""
     filtered_count: int = 0
     """Of `count`, how many TELEGRAM_RISK_ONLY dropped as operational."""
+    failed_count: int = 0
+    """Of `count`, how many the transport tried to send and could not."""
 
 
 class MutedLiveRiskMessage(BaseModel):
     """One undelivered message about a position whose protection was gone."""
 
     reason: str = "muted"
-    """"muted" (the global mute) or "filtered" (dropped as operational)."""
+    """"muted" (the global mute), "filtered" (dropped as operational) or
+    "failed" (the send itself errored)."""
 
     timestamp: str
     day: str
@@ -60,6 +65,9 @@ class MutedBacklogResponse(BaseModel):
     """Of `total`, how many the global mute swallowed."""
     filtered_total: int = 0
     """Of `total`, how many the per-category mute dropped as operational."""
+    failed_total: int = 0
+    """Of `total`, how many the transport tried to send and could not —
+    these were never dropped on purpose, so they are the ones that matter."""
     live_risk_total: int = 0
     by_kind: list[MutedKindCount] = []
     by_day: list[MutedDayCount] = []

@@ -107,17 +107,17 @@ def test_unimplemented_broker_call_fails_loudly_and_is_journalled():
     and the post-session check voids the run naming it."""
     trading = RehearsalTradingClient(_snapshot(), now=NOW)
     data = RehearsalDataClient(_snapshot())
-    with pytest.raises(StandInGap, match="does not implement `get_clock`"):
-        trading.get_clock()
+    with pytest.raises(StandInGap, match="does not implement `get_watchlists`"):
+        trading.get_watchlists()
     with pytest.raises(StandInGap, match="does not implement `get_news`"):
         data.get_news(None)
     # The desk catches broad exceptions on its money paths, so the raise
     # alone would be swallowed; the journal is what voids the run.
-    assert trading.unsupported_calls == ["get_clock"]
+    assert trading.unsupported_calls == ["get_watchlists"]
     with pytest.raises(StandInGap) as exc:
         assert_stand_in_answered(trading, data)
     print(f"\nVOID: {exc.value}")
-    assert "RehearsalTradingClient.get_clock" in str(exc.value)
+    assert "RehearsalTradingClient.get_watchlists" in str(exc.value)
     assert "RehearsalDataClient.get_news" in str(exc.value)
     assert "no verdict" in str(exc.value)
     # Python's own protocol lookups are untouched, so copying still works.

@@ -5,7 +5,7 @@ behaviour change hidden in a verbatim move is unreviewable. Each entry says
 what is wrong, where, and what would prove a fix. Work them after the
 structure is sound, hardest-wearing first.
 
-## The midnight clock bug (CLOSED -- both halves, 2026-10-04)
+## The midnight clock bug (HALF DONE -- cost-circuit half still open)
 
 Between 00:00 and roughly 00:16 Eastern, tests compare an exchange trading day
 against the runner's local day and fail. Seven in the holding-discipline
@@ -25,7 +25,7 @@ fails on `date.today()`, a naive `datetime.now()`, a UTC calendar day used as
 a day, and an import-time clock stamp in a test, with a shrink-only baseline
 of the offenders that already existed.
 
-CLOSED 2026-10-04: the cost-circuit half. Its cause (Python ET day vs SQLite's own `'now'`) was already removed by the single clock in `src/cost_circuit/clock.py`; re-measured with the clock pinned to 00:01, 00:05 and 00:15 ET and with the real UTC day differing from the ET day: 0 failures in 180 tests. What was missing was a check that nothing re-adds a second clock: `tests/test_cost_circuit_single_clock.py` now fails on any other clock read or bare `sqlite3.connect` in the package. `local_day_guard` already covered those files and compares identities, but could not see this shape (it looks for local-day calls). Earlier text kept below for history: the cost-circuit half. The original entry named thirteen failing tests but provides no test names. Reproduction attempts on 2026-10-02 failed by three methods: clock simulation with Python and SQLite moved together showed zero failures; CI runs covering 00:00-00:16 ET showed no cost-circuit test failures; and direct inspection identified no named failure. This entry must not be treated as a known defect until a specific failing test is named and reproduced.
+STILL OPEN: the cost-circuit half. The original entry named thirteen failing tests but provides no test names. Reproduction attempts on 2026-10-02 failed by three methods: clock simulation with Python and SQLite moved together showed zero failures; CI runs covering 00:00-00:16 ET showed no cost-circuit test failures; and direct inspection identified no named failure. This entry must not be treated as a known defect until a specific failing test is named and reproduced.
 
 VERDICT 2026-10-02 (isolation pass): holding-discipline half -- ALREADY FIXED (module-level stamp now read at run time; `tests/test_no_local_day_as_exchange_day.py` guard passes, no import-time `str(et_today())` stamp remains in that file). Cost-circuit half -- NOT REPRODUCED (carried forward from the earlier investigation; not redone). The note names no test, so it should not be treated as a known defect.
 
@@ -51,6 +51,10 @@ VERDICT 2026-10-02 (isolation pass): ALREADY FIXED. Fixed by #1079 (fbae04e6) in
 Nearly every caller discards the return value of the owner-alert send, so a
 failed delivery is indistinguishable from a successful one. Fix: make the
 callers honour the result, and prove a failed send is visible somewhere.
+
+FIXED 2026-10-04 -- the 2026-10-02 verdict was WRONG, and recorded is not surfaced. A failed send does land in `notifier_sends` with status `failed`, but exactly one query reads that table for the owner's dashboard (`get_muted_backlog`) and it selected `status IN ('muted','filtered')`. Telegram is hard-muted, so a failed owner alert -- including the naked-position page -- reached NO surface the owner has, while its caller discarded the False. The enumeration had already drifted once (`filtered` was missing until #978); the read now selects by exclusion (`status <> 'sent'`), so non-delivery is defined once and a future status cannot fall through it. `failed_total`/`failed_count` are reported alongside the two deliberate drops and the dashboard line names them. Proof: `tests/test_muted_backlog.py::test_a_failed_owner_alert_reaches_the_backlog` fails with the old status list restored and passes with the fix. Measured exposure: in production `notifier_sends` from 2026-09-18 to 2026-10-01, 221 rows, statuses only `sent` (213) and `muted` (8); 39 owner alerts, all sent -- so this has not yet fired in the recorded window.
+
+Residual, unchanged and still open: nothing RETRIES or escalates a failed alert. Not fixed here because with the global mute on, a retry cannot succeed through the same channel -- the surface is the channel, which is what this change repairs.
 
 VERDICT 2026-10-02 (isolation pass): NOT A DEFECT as written -- the note's consequence is false. 22 of 34 `send_owner_alert` call sites do discard the return, but a failed delivery is NOT invisible: `send_owner_alert` logs CRITICAL before sending, and the transport records every attempt in `notifier_sends` with status `failed` and the reason. Reproduced with the real transport and a forced connection error against a temp DB: returned False, CRITICAL line logged, row `('owner_alert', 'failed', 'boom')`. The function's docstring says callers treat the result as information by design. Residual (a design question, not a bug): nothing retries or escalates a failed alert; the only trace is the row and the log.
 
