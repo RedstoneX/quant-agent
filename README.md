@@ -291,6 +291,8 @@ there. See `docs/INCIDENT_HISTORY.md`, 2026-09-18, for the full defect.
 
 ### Configure
 
+**Credentials: OneCLI is the source of truth, not `.env`** — see `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md` before touching any key.
+
 1. Create `.env` (set `chmod 600` after — these are secrets):
 ```bash
 cat > .env << 'EOF'

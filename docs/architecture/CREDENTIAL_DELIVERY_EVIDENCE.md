@@ -1,11 +1,26 @@
 # Credential Delivery — Accepted Architecture (OneCLI)
 
+> **THE source-of-truth document for credentials.** Start with the next section.
+
 Status: **accepted, commissioned, and verified — 2026-08-12.** This is the durable architecture reference for how QAMC obtains real credentials. See `docs/STATE.md` for current authorization and why the custom proxy from commit `2207b0b74287101ea65ce79782081e51a27420ba` is rejected architecture and must not be revived.
+
+## Where credentials live — read this first
+
+- **OneCLI is the source of truth for every credential this project uses.** Both broker accounts are in it: the desk's own paper account and the separate disposable paper account. Operator runbook: `ops/onecli/README.md`.
+- **The repo's `.env` is NOT the source of truth.** It is stale leftovers. Its two broker keys were tested against the broker's account endpoint and do not authenticate at all. Finding a key in `.env` proves nothing about what is real; do not copy from it and do not "fix" it by pasting real values in.
+- **How an operator reads or changes a credential:** through OneCLI's own dashboard, bound to `127.0.0.1` port `10254` on the VPS and administered by `ubuntu` (reach it with an SSH tunnel). This repo documents no command-line retrieval; do not guess one.
+- **Agents never read the vault.** Real values never go in the repo, a prompt, a log or a doc: names and provenance only.
+- Do not confuse OneCLI with any other credential tool on this shared VPS (another tenant runs its own). Nothing in that tool is part of QAMC.
+
+Two separate questions, deliberately not conflated:
+
+- **Storage (where the truth is kept):** OneCLI.
+- **Delivery (how the running desk receives a value):** systemd materialises each credential as a read-only file on a tmpfs and points the process at it with `CREDENTIALS_DIRECTORY`, so the value never enters the process environment. `src/credentials.py` implements this and documents why. The OneCLI gateway fronts outbound REST but cannot reach the broker's websocket, which authenticates with an in-band message, so the desk process must hold that one real key itself (see "How it is delivered" below).
 
 ## OneCLI Credential Gateway
 
 - OneCLI is the credential delivery layer for QAMC. It runs under Docker on the VPS, administered by `ubuntu` (see `ops/onecli/README.md`); `qamc` and `dev` are never added to the `docker` group and cannot reach the Docker socket.
-- Secrets are stored only in OneCLI, never duplicated in QAMC's own configuration. QAMC's `.env` and `config/settings.yaml` hold placeholder values only.
+- Secrets are stored only in OneCLI, never duplicated in QAMC's own configuration. QAMC's `.env` and `config/settings.yaml` are not authoritative: the REST placeholders are inert, and any real-looking broker key left in `.env` is stale and does not authenticate. The desk's websocket key arrives by systemd credential files (below), not from `.env`.
 - Agent access uses explicit secret grants (`secretMode: "selective"` on the Default Agent). Creating a secret does not automatically make it available to an agent — granting it is a separate step.
 - The gateway (port `10255`) matches outbound requests to a secret by destination host/path and injects the real credential (header or query parameter) before forwarding; the dashboard (port `10254`) manages secrets/agents/grants. Both bind `127.0.0.1` only.
 - QAMC's consuming code needs no awareness of any of this: `src/agents/base.py`'s OpenRouter branch, `src/execution/broker.py`'s `AlpacaBroker`, and `src/data/macro.py`'s `MacroDataProvider` all construct their SDK clients (`openai`/`httpx`, `alpaca-py`/`requests`, `fredapi`/`urllib`) with no custom session/opener, so each already inherits its library's default environment-driven proxy/CA trust. Zero `src/` or `config/` changes were needed to integrate any of the four credentials.

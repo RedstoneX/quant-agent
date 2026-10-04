@@ -10,8 +10,23 @@ Judged by PR state, never content diff: squash merges make content comparison us
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
+import time
+
+# Second, age-based rule (STALE path), added so abandoned scratch trees drain.
+# Measured 2026-10-04 on the 147 kept trees, hours since newest commit-or-file mtime:
+#   live cluster 0-9.9h (n=~45, incl. this session's own trees); empty gap 9.9h-39.8h;
+#   dead clusters at 39.8-47.5h (n~70), 55-72h, 79-96h; oldest ~96h.
+# Cut = 30h = 3x the live cluster's upper edge (9.9h), 10h short of the first dead
+# cluster: nothing observed live is within 3x of it. Wrongly kept costs disk only.
+STALE_HOURS = 30
+# A STALE removal may never touch these (other tenants / system), whatever git says.
+FORBIDDEN_PREFIXES = ("/home/dev", "/home/orca", "/home/northstar", "/var/lib/docker",
+                      "/var/lib/containerd")
+STALE_BUCKETS = ("uncommitted or untracked changes", "no PR found for branch",
+                 "detached HEAD, no branch to look up")
 
 
 def run(args, cwd=None):
@@ -83,6 +98,48 @@ def judge(wt, repo, states=None, dirty=is_dirty, unpushed=has_unpushed):
     return True, "PR " + "/".join(f"#{p['number']} {p['state']}" for p in prs) + ", clean, pushed"
 
 
+def newest_commit_ts(path):
+    return int(run(["git", "log", "-1", "--format=%ct"], cwd=path).strip())
+
+
+def has_file_newer_than(path, cutoff):
+    """True if any file/dir under path (excluding .git) was modified after cutoff."""
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for n in files + dirs:
+            try:
+                if os.lstat(os.path.join(root, n)).st_mtime > cutoff:
+                    return True
+            except OSError:
+                return True  # cannot stat -> doubt -> treat as fresh
+    return False
+
+
+def judge_stale(wt, repo, reason, states=None, cwd=None, now=None,
+                commit_ts=newest_commit_ts, newer=has_file_newer_than, hours=STALE_HOURS):
+    """Second rule, only for the three never-landing buckets. Any doubt -> keep."""
+    if reason not in STALE_BUCKETS:
+        return False, reason
+    states = states or pr_states
+    path = os.path.realpath(wt["worktree"])
+    cwd = os.path.realpath(cwd or os.getcwd())
+    if path.startswith(FORBIDDEN_PREFIXES) or path == os.path.realpath(repo):
+        return False, reason + "; stale rule: protected path"
+    if cwd == path or cwd.startswith(path + os.sep):
+        return False, reason + "; stale rule: live session directory"
+    branch = (wt.get("branch") or "").removeprefix("refs/heads/")
+    try:
+        if branch and any(p.get("state") not in ("MERGED", "CLOSED")
+                          for p in states(branch, repo)):
+            return False, reason + "; stale rule: open PR"
+        cutoff = (now or time.time()) - hours * 3600
+        if commit_ts(path) > cutoff or newer(path, cutoff):
+            return False, reason + f"; stale rule: activity within {hours}h"
+    except Exception as e:
+        return False, reason + f"; stale rule: cannot prove age ({e})"
+    return True, reason + f"; STALE: no commit or file change for {hours}h+, no open PR"
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--apply", action="store_true", help="actually delete (default: dry-run)")
@@ -93,12 +150,16 @@ def main(argv=None):
         ap.error("--apply and --dry-run are exclusive")
     trees = list_worktrees(a.repo)
     main_path = trees[0]["worktree"] if trees else None
-    remove, keep = [], []
+    remove, keep, stale = [], [], set()
     for wt in trees:
         if wt["worktree"] == main_path:
             keep.append((wt["worktree"], "main checkout"))
             continue
         ok, why = judge(wt, a.repo)
+        if not ok:
+            ok, why = judge_stale(wt, a.repo, why)
+            if ok:
+                stale.add(wt["worktree"])
         (remove if ok else keep).append((wt["worktree"], why))
     verb = "REMOVING" if a.apply else "WOULD REMOVE"
     for p, why in remove:
@@ -108,8 +169,9 @@ def main(argv=None):
     failed = 0
     if a.apply:
         for p, _ in remove:
-            try:  # no --force: git itself refuses a dirty tree
-                run(["git", "worktree", "remove", p], cwd=a.repo)
+            try:  # landed trees: no --force, git refuses a dirty tree; stale ones are dirty by design
+                run(["git", "worktree", "remove"] + (["--force"] if p in stale else []) + [p],
+                    cwd=a.repo)
             except Exception as e:
                 failed += 1
                 print(f"FAILED {p}: {e}")
