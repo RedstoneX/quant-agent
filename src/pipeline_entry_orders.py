@@ -9,6 +9,8 @@ patch target keeps working.
 
 from __future__ import annotations
 
+import json
+
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     CONSTRUCTOR_REFUSED_EVENT_REASON,
     MAX_ENTRY_SLIPPAGE_BPS,
@@ -959,11 +961,12 @@ def _record_realised_sector_weights(
     db = getattr(pipeline, "db", None)
     if db is None or not hasattr(db, "record_realised_sector_weights"):
         return
-    # Plain attribute access, deliberately OUTSIDE the try and with NO default:
-    # a renamed or removed `last_order_sectors` must raise here, not silently
-    # record an empty column for the life of the feature.
-    sectors = pipeline.portfolio_constructor.last_order_sectors
     try:
+        # Plain attribute access with NO default: a renamed or removed
+        # `last_order_sectors` raises HERE, loudly, at the accessor. It is
+        # caught at this recording boundary so a recording fault can never
+        # abort the decision stage, and COUNTED below, never just logged.
+        sectors = pipeline.portfolio_constructor.last_order_sectors
         db.record_realised_sector_weights(
             decisions=list(getattr(portfolio_decision, "decisions", None) or []),
             sectors=sectors,
@@ -972,6 +975,19 @@ def _record_realised_sector_weights(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("realised sector-weight recording failed: %s", exc)
+        try:
+            db.insert_specialist_evidence(
+                run_id=str(getattr(ctx, "run_id", None) or ""),
+                agent_name="realised_sector_weights_failure",
+                kind="pipeline_event", scope="run", symbol=None,
+                evidence_json=json.dumps(
+                    {"event": "realised_sector_weights_recording_failed",
+                     "error_type": type(exc).__name__, "error": str(exc)},
+                    sort_keys=True, default=str,
+                ),
+            )
+        except Exception as exc2:  # noqa: BLE001
+            logger.error("sector-weight failure row not written: %s", exc2)
 
 def _apply_repeg(
     pipeline, ctx, *, symbol, order_id: str, trade_row_id, target: float,
