@@ -752,6 +752,11 @@ def test_a_hanging_telegram_endpoint_cannot_stall_or_fail_a_session(
         time.sleep(0.05)
         raise requests_mod.exceptions.ReadTimeout("simulated hang")
 
+    from src.notifier import owner_alert_delivery as delivery
+
+    # The naked-position alert now retries through the delivery funnel; its
+    # backoff is real seconds in production, zero here (as its own tests do).
+    monkeypatch.setattr(delivery, "RETRY_DELAYS_S", (0,) * len(delivery.RETRY_DELAYS_S))
     started = time.monotonic()
     with patch("src.notifier.requests.post", side_effect=hangs_then_times_out):
         # No pytest.raises: the session must complete, not survive an error.
@@ -760,7 +765,9 @@ def test_a_hanging_telegram_endpoint_cannot_stall_or_fail_a_session(
 
     assert calls, "the watchdog never even tried the channel"
     # Bounded work, not an unbounded retry loop against a dead endpoint.
-    assert len(calls) <= 4, f"{len(calls)} requests against a hanging endpoint"
+    # 4 before the funnel retry, plus the funnel's bounded extra attempts.
+    ceiling = 4 + (delivery.MAX_ATTEMPTS - 1)
+    assert len(calls) <= ceiling, f"{len(calls)} requests against a hanging endpoint"
     assert elapsed < 5, f"the session stalled for {elapsed:.1f}s on Telegram"
 
     # And the outage was still detected, recorded and attributed correctly.
