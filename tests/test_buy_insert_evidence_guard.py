@@ -79,7 +79,7 @@ def test_the_guard_sees_the_one_real_buy_site():
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
         and n.func.attr == "insert_trade" and _is_entry(n)
     ]
-    assert [p.name for p in sites] == ["stage_execution.py"]
+    assert [p.name for p in sites] == ["entry_record.py"]
 
 
 def test_the_guard_goes_red_on_a_broken_site(tmp_path):
