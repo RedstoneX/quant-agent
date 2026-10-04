@@ -862,6 +862,17 @@ numbers:
         ordinary one
     value: 1
     status: arbitrary
+    route_audit_2026_10_04: >-
+      The route is ADMISSIBLE and UNRUN. Unlike the single-name envelope above,
+      neither bar applies: the whipsaw-rate-against-ATR-distance measurement
+      names no extreme of a sample and asks the owner nothing. It cannot be run
+      in this repository, because the repository commits no daily bars for any
+      universe; every existing measurement script is handed a bar file from
+      outside the tree. This row therefore stays arbitrary for a reason that is
+      recorded here rather than rediscovered: the blocker is a committed bar
+      set, not a missing idea. The row also carried two settles_by blocks, so
+      the newer 2026-10-01 route was being dropped in silence; the duplicate is
+      reported by scripts/measure_ledger_route_admissibility.py.
     site: src/config/__init__.py
     note: >-
       The HARD FLOOR under every stop this desk sets. A level-backed stop is
@@ -1113,6 +1124,21 @@ numbers:
         ratified appetite is not a source, and only the recorded dollar figure and its date change
     value: 5
     status: arbitrary
+    route_audit_2026_10_04: >-
+      UNDETERMINED, and not for want of data: NEITHER recorded route can settle
+      this row. The row carries two settles_by blocks, and YAML keeps only the
+      last, so the live route is the OLDER tranche-seven one and the newer
+      2026-10-01 block above it was being dropped in silence. The live route
+      closes on "the worst observed gap multiple", which is a judgement wearing
+      the word worst: the extreme of a sample moves every time the sample grows,
+      so it never yields the same number twice. The dropped newer route closes
+      on the owner stating a per-name dollar loss he will accept, which the
+      2026-09-30 ruling withdrew along with every other risk dial. The remedy is
+      neither route: a per-name envelope must be READ OFF THE NAME, from that
+      instrument's own ATR and the seats' conviction on it, which is what the
+      ruling_check above already concluded and what no recorded route yet
+      implements. No value is changed and the status stays arbitrary. Reproduce
+      with scripts/measure_ledger_route_admissibility.py.
     site: src/config/__init__.py
     note: >-
       The 5% single-position risk envelope, owner-ratified 2026-08-27.
@@ -3994,6 +4020,18 @@ numbers:
         the recording, the band never governs an exit and is deleted
     value: 3.0
     status: arbitrary
+    route_audit_2026_10_04: >-
+      The row contradicts itself and the measurement half is the live half. Its
+      settles_by route closes when the give-back distributions of a resumed
+      trend and a finished one are separable, which asks the owner nothing and
+      names no extreme. Its open_question, written earlier, declares the same
+      number an owner dial that no research can settle. Those cannot both
+      stand, and the 2026-09-30 ruling that withdrew the risk dials settles
+      which one falls: the appetite framing is stale and the measurement route
+      is the one to run. The value is unchanged and the status stays arbitrary
+      until that measurement exists; what changed is that the row no longer
+      claims to be waiting on a person. Reproduce the contradiction with
+      scripts/measure_ledger_route_admissibility.py.
     site: src/risk/alignment_exit.py
     note: >-
       Give-back below the last CHART MARK (a moving average, or the level
