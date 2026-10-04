@@ -54,3 +54,15 @@
 **What this rules out, and what it does not.** It rules out keying a partial trim off the alignment exit's own legs, which was the only threshold-free source left after the two 2026-10-01 derivations failed. It does not prove no weakening signal exists anywhere in markets; it proves that the signal THIS desk computes does not carry one, and that any trim built on it would be selling a state measured to be as good as the one it holds through. The trim question is therefore closed as unfounded rather than deferred, and the whole-position alignment exit stands as the whole answer.
 
 **Honest limits.** Synthetic long positions on a chained re-entry model, not the desk's real holdings — deliberately, since fitting to the desk's record is barred. Daily bars only. One two-year window containing one broad market regime; a different regime could move the forward-return numbers, though it would have to reverse the sign of the 2-leg/1-leg gap to change the conclusion. The 2-of-3 state mixes three different pairs of legs and they were not separated; a pair-specific signal is the one stone left unturned, and nothing above claims otherwise.
+
+---
+
+## CORRECTION + FIX, 2026-10-04 — the table DOES exist in production, and both swallowed failures are now loud
+
+**The claim above that the table does not exist is WRONG and is corrected here.** `alignment_exit_readings` is present in `sqlite_master` in the live database [measured 2026-10-04, read-only]. So the migration HAS run and sessions HAVE executed the scan: the table is empty because the scan wrote nothing, not because nothing ever ran.
+
+**Why an empty table carried no trace of the failure.** Two broad catch-alls sit on this path — the per-position one inside `_alignment_exit_scan` and the one wrapping the write in `_record_alignment_reading`. Both downgraded any failure to a single `logger.warning` line, and those lines are not stored in the database. A session where the scan broke on every position and a session where the scan never ran produced byte-identical data: nothing.
+
+**Which of the two swallowed it is still UNCONFIRMED, and is now made observable rather than guessed.** A position the scan fails on is written as an explicit not-evaluated row naming the exception type and message — the same row shape the already-proposed-exit skip branch writes, so no chart read is bought to fill it. A write the database itself refuses is logged with `logger.exception`, so the traceback names the layer that refused it. The next session therefore distinguishes the two by itself: rows present with failure reasons means the evaluation broke; still-empty with an ERROR traceback means the write broke.
+
+Covered by `tests/test_alignment_reading_failures_are_loud.py` (4 tests), including both catch-alls firing at once.
