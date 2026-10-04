@@ -14,6 +14,7 @@ from typing import Any
 
 from src.execution.pending_stop_amends import intent_is_protective
 from src.execution.stop_records import accepted_stop_order, replace_stop_and_record
+from src.sentinel.guarded import record_guarded_pass
 from src.storage.trades import pending_stop_amends_store as _store
 
 logger = logging.getLogger("src.execution.broker")
@@ -27,10 +28,12 @@ def _resting_stop_level(broker: Any, symbol: str) -> float | None:
     of a fabricated zero.
     """
     try:
-        return broker.get_current_stop_price(symbol)
+        level = broker.get_current_stop_price(symbol)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("pending stop drain: could not read %s's resting stop: %s", symbol, exc)
+        record_guarded_pass(broker, "pending_stop_drain.resting_stop", exc, log=logger, context={"symbol": symbol})
         return None
+    record_guarded_pass(broker, "pending_stop_drain.resting_stop", context={"symbol": symbol})
+    return level
 
 
 def drain_pending_stop_amends(broker: Any, db: Any) -> int:
@@ -46,8 +49,9 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
     try:
         rows = _store.get_all(db._trades())
     except Exception as exc:  # noqa: BLE001
-        logger.warning("pending stop drain: DB read failed: %s", exc)
+        record_guarded_pass(db, "pending_stop_drain.db_read", exc, log=logger)
         return 0
+    record_guarded_pass(db, "pending_stop_drain.db_read", context={"rows": len(rows)})
     if not rows:
         return 0
     discharged = 0
@@ -75,12 +79,9 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
         try:
             order = replace_stop_and_record(broker, db, symbol, intended)
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "pending stop drain: applying %s's owed stop $%.4f RAISED (%s) "
-                "— the old stop remains in force and the row is kept for the "
-                "next pass", symbol, intended, exc,
-            )
+            record_guarded_pass((db, broker), "pending_stop_drain.apply", exc, log=logger, context={"symbol": symbol, "intended": intended, "note": "old stop remains in force; row kept for next pass"})
             continue
+        record_guarded_pass((db, broker), "pending_stop_drain.apply", context={"symbol": symbol, "intended": intended})
         if accepted_stop_order(order):
             logger.info(
                 "pending stop drain: %s's owed stop from the closed market is "
@@ -100,10 +101,11 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
     return discharged
 
 
-
 def drain_safely(broker: Any, db: Any) -> None:
     """`drain_pending_stop_amends` that never raises; a row it cannot apply stays owed."""
     try:
         drain_pending_stop_amends(broker, db)
     except Exception as exc:  # noqa: BLE001
-        logger.error("coverage sweep: the pending stop-amend drain failed (%s) - owed levels are STILL owed", exc)
+        record_guarded_pass((db, broker), "pending_stop_drain.drain_safely", exc, log=logger, context={"note": "owed levels are STILL owed"})
+        return
+    record_guarded_pass((db, broker), "pending_stop_drain.drain_safely")
