@@ -41,6 +41,8 @@ from src.execution import order_idempotency as _idem  # session key read via the
 from src.execution.order_idempotency import (
     _is_dead_stop_result, _submit_stop_request_idempotent,
 )
+# No ledger handle on this per-call object: traceback is logged, the counted row is skipped until one is lent (flagged, no new channel).
+from src.sentinel.guarded import record_guarded_pass
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
@@ -239,7 +241,9 @@ class StopPlacer:
         """
         try:
             orders = self._list_open_protective_stop_orders(symbol, side=side)
-        except Exception:  # noqa: BLE001
+            record_guarded_pass(self, "stop_place.existing_stop_covering_qty.list", context={"symbol": symbol})
+        except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(self, "stop_place.existing_stop_covering_qty.list", exc, log=logger, context={**{"symbol": symbol}, "effect": "treated as no matching stop"})
             return None
         tick = 0.01 if stop_price >= 1.0 else 0.0001
         for order in orders or []:
@@ -569,11 +573,9 @@ class StopPlacer:
                         symbol=symbol, qty=qty, stop_price=stop_price,
                         side=side, kill_switch_path=str(self._kill_switch_path),
                     )
+                    record_guarded_pass(self, "stop_place.kill_switch_block_record", context={"symbol": symbol})
                 except Exception as exc:  # noqa: BLE001 — never trading authority
-                    logger.warning(
-                        "kill-switch block record for %s could not be "
-                        "written: %s", symbol, exc,
-                    )
+                    record_guarded_pass(self, "stop_place.kill_switch_block_record", exc, log=logger, context={**{"symbol": symbol}, "effect": "block record not written"})
             return {
                 "id": None, "status": "kill_switch_halted", "symbol": symbol,
                 "blocked_by": "kill_switch",
@@ -748,15 +750,9 @@ class StopPlacer:
                 for done in placed:
                     try:
                         self.client.cancel_order_by_id(done.get("id"))
+                        record_guarded_pass(self, "stop_place.submit_stop_legs.rollback_cancel", context={"symbol": symbol, "order": done.get("id")})
                     except Exception as cancel_exc:  # noqa: BLE001
-                        logger.error(
-                            "_submit_stop_legs: leg %s failed for %s AND the "
-                            "already-placed leg %s could not be cancelled: %s "
-                            "— the symbol may carry a partial stop the caller "
-                            "does not know about; the coverage sweep will "
-                            "reconcile it.",
-                            leg_qty, symbol, done.get("id"), cancel_exc,
-                        )
+                        record_guarded_pass(self, "stop_place.submit_stop_legs.rollback_cancel", cancel_exc, log=logger, context={**{"symbol": symbol, "order": done.get("id")}, "effect": "partial leg may remain; coverage sweep reconciles"})
                 raise
         return placed
 
@@ -813,15 +809,12 @@ class StopPlacer:
                     snap = self._snapshot_stop_order(order)
                     if snap is not None:
                         existing_alive.append(snap)
+                record_guarded_pass(self, "stop_place.restore_stop_orders.list_existing", context={"symbol": symbol})
             except Exception as exc:
                 # If we can't see existing stops, fall through to the
                 # non-idempotent behavior — broker's own duplicate
                 # detection is the last line.
-                logger.warning(
-                    "_restore_stop_orders: failed to list existing stops for %s "
-                    "(idempotency check skipped): %s",
-                    symbol, exc,
-                )
+                record_guarded_pass(self, "stop_place.restore_stop_orders.list_existing", exc, log=logger, context={**{"symbol": symbol}, "effect": "idempotency check skipped"})
 
         def _spec_matches(spec: dict, alive: dict) -> bool:
             """Two specs match when qty and stop_price are within rounding."""
@@ -859,11 +852,9 @@ class StopPlacer:
                     limit_price=spec.get("limit_price"),
                     side=side,
                 )
+                record_guarded_pass(self, "stop_place.restore_stop_orders.resubmit", context={"symbol": symbol})
             except Exception as exc:
-                logger.error(
-                    "replace_stop_loss: failed to restore prior stop for %s @ $%.2f: %s",
-                    symbol, spec["stop_price"], exc,
-                )
+                record_guarded_pass(self, "stop_place.restore_stop_orders.resubmit", exc, log=logger, context={**{"symbol": symbol}, "effect": "prior stop not restored"})
                 failed_specs.append(spec)
                 continue
             # A kill-switch refusal does not raise — it comes back as a
@@ -1043,12 +1034,9 @@ class StopPlacer:
                 p for p in self.get_positions()
                 if getattr(p, "symbol", None) == symbol
             ]
+            record_guarded_pass(self, "stop_place.replace_stop_loss.reread_position", context={"symbol": symbol})
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "replace_stop_loss: could not re-read %s's position before "
-                "the in-place amend (%s) — using the cancel+resubmit path, "
-                "which re-reads and repairs coverage itself.", symbol, exc,
-            )
+            record_guarded_pass(self, "stop_place.replace_stop_loss.reread_position", exc, log=logger, context={**{"symbol": symbol}, "effect": "fell to cancel+resubmit path"})
             fresh = []
         amended = (
             _AMEND_NOT_ATTEMPTED if not fresh
@@ -1074,8 +1062,9 @@ class StopPlacer:
                 self.client.cancel_order_by_id(spec["id"])
                 cancelled_specs.append(spec)
                 window.cancelled(spec["id"])
+                record_guarded_pass(self, "stop_place.replace_stop_loss.cancel", context={"symbol": symbol, "order": spec["id"]})
             except Exception as exc:
-                logger.warning("replace_stop_loss: cancel failed for order %s: %s", spec["id"], exc)
+                record_guarded_pass(self, "stop_place.replace_stop_loss.cancel", exc, log=logger, context={**{"symbol": symbol, "order": spec["id"]}, "effect": "restore of cancelled stops follows"})
                 # Always restore whatever we already cancelled. The previous
                 # "if no open stops remain" gate was wrong for partial
                 # failures: with [A, B, C], if A and B cancel cleanly and C
@@ -1128,9 +1117,10 @@ class StopPlacer:
                 symbol, len(cancelled_specs), side, new_stop_price, len(legs),
             )
             window.close("replaced")
+            record_guarded_pass(self, "stop_place.replace_stop_loss.submit_new", context={"symbol": symbol})
             return order
         except Exception as exc:
-            logger.error("replace_stop_loss: failed to submit new stop for %s: %s", symbol, exc)
+            record_guarded_pass(self, "stop_place.replace_stop_loss.submit_new", exc, log=logger, context={**{"symbol": symbol}, "effect": "rollback of cancelled stops follows"})
             # The Alpaca QueryOrderStatus.OPEN filter INCLUDES transitional
             # statuses (pending_cancel / pending_replace), so the orders we
             # just cancelled can still appear in this list for ~1s after the
