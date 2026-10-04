@@ -5,8 +5,7 @@ TYPE_CHECKING-only imports are not real dependencies and are ignored.
 
 The cycle half stores nothing: it measures this tree and ``origin/main`` at
 check time and reports the delta, and REFUSES (never passes) when the trunk is
-unreadable. ``tests/import_layers.json`` is the hand-written layering policy,
-not a cached measurement, so the layer rules below still read it.
+unreadable. The layer rule lives in code (``ig.LAYER_RULES``) and is checked the same way.
 """
 import ast
 
@@ -40,18 +39,29 @@ def test_guard_refuses_when_trunk_is_unreadable(monkeypatch):
     assert ig.check() == 2
 
 
-def test_layer_rules_hold():
-    _, rt, sites, _ = _state()
-    cfg = ig.load_json(ig.LAYERS_PATH, {"rules": []})
-    v = ig.layer_violations(rt, sites, cfg)
-    assert not v, "Layer rule violation(s):\n" + "\n".join("  " + x for x in v)
+def test_no_new_layer_crossings():
+    try:
+        v = ig.new_layer_violations()
+    except ReferenceUnavailable as exc:  # never pass by default
+        pytest.fail(f"REFUSING: {exc}")
+    assert not v, "New layer crossing(s):\n" + "\n".join("  " + x for x in v)
 
 
-def test_layer_allowlists_only_shrink():
-    _, rt, _, _ = _state()
-    cfg = ig.load_json(ig.LAYERS_PATH, {"rules": []})
-    stale = ig.stale_allowlist_entries(rt, cfg)
-    assert not stale, "Stale layer allowlist entries:\n" + "\n".join("  " + x for x in stale)
+def test_layer_guard_refuses_when_trunk_is_unreadable(monkeypatch):
+    def boom(*_a, **_k):
+        raise ReferenceUnavailable("cannot read origin/main (simulated)")
+
+    monkeypatch.setattr(ig, "trunk_sources", boom)
+    with pytest.raises(ReferenceUnavailable):
+        ig.new_layer_violations()
+
+
+def test_layer_guard_flags_a_new_importer_even_when_another_is_removed():
+    rule = ig.LAYER_RULES[0]
+    before = {("src.a", "src.execution.x"), ("src.b", "src.execution.y")}
+    now = {("src.a", "src.execution.x"), ("src.c", "src.execution.y"), ("src.execution.z", "src.execution.x")}
+    added = ig.added_sites(ig.crossing_edges(now, rule), ig.crossing_edges(before, rule))
+    assert [e for e, _, _ in added] == [("src.c", "src.execution.y")]
 
 
 def test_type_checking_imports_are_not_runtime():

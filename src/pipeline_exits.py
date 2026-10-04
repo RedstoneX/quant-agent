@@ -2156,18 +2156,15 @@ class ExitEngineMixin:
                             symbol, new_stop, existing[0].current_price,
                         )
                         continue
-                    # Minimum-ratchet floor: a raise must clear the live stop
-                    # by at least MIN_RATCHET_PCT. The position_reviewer prompt
-                    # presents `new_stop_price >= old_stop_price × 1.02` as a
-                    # hard schema rule, but until this landed nothing here
-                    # enforced it, so an under-2% bump reached the broker —
-                    # paying cancel/replace churn for negligible protection.
-                    # Single-sourced from src.risk.trailing.MIN_RATCHET_PCT (the
-                    # same ledgered constant the deterministic trail already
-                    # uses; ledger status: arbitrary). Unlike the RC1 clamps
-                    # below, this floor is NOT bypassable by a hard trigger —
-                    # the prompt states it as an unconditional minimum, and a
-                    # sub-floor raise is churn regardless of the reason.
+                    # Minimum-ratchet floor: a raise must land on a
+                    # DIFFERENT stop price than the one resting at the
+                    # broker -- at least one venue tick above it. Until
+                    # 2026-10-02 this was 2% (`MIN_RATCHET_PCT`), a picked
+                    # churn-appetite number that existed only because a
+                    # stop move meant cancel-then-resubmit. The in-place
+                    # amend is on main, so the floor is now read off the
+                    # instrument: see `src.risk.trailing.min_ratchet_floor`
+                    # and the ledger entry `src.risk.trailing.MIN_RATCHET_TICKS`.
                     # A rejection here keeps the existing (valid, looser) stop
                     # in place: protection is never removed, only left as-is.
                     # Old stop is broker truth; if it is missing/unreadable the
@@ -2178,16 +2175,17 @@ class ExitEngineMixin:
                                           context="midday min-ratchet floor")
                     old_stop = _old_read.price if _old_read.found else None
                     if old_stop is not None and old_stop > 0:
-                        from src.risk.trailing import MIN_RATCHET_PCT
-                        min_new_stop = old_stop * (1.0 + MIN_RATCHET_PCT / 100.0)
-                        if new_stop < min_new_stop:
+                        from src.risk.trailing import (
+                            min_ratchet_floor, venue_tick,
+                        )
+                        min_new_stop = min_ratchet_floor(old_stop)
+                        if new_stop < min_new_stop - venue_tick(old_stop) / 2.0:
                             logger.warning(
                                 "Midday: TRAIL_STOP %s skipped — new_stop "
-                                "$%.2f is below the %.0f%% minimum-ratchet "
-                                "floor over the live stop $%.2f (floor $%.2f); "
-                                "sub-floor raise is churn. Old stop kept.",
-                                symbol, new_stop, MIN_RATCHET_PCT, old_stop,
-                                min_new_stop,
+                                "$%.4f does not clear the live stop $%.4f by "
+                                "one venue tick (floor $%.4f); it is the same "
+                                "stop after quantization. Old stop kept.",
+                                symbol, new_stop, old_stop, min_new_stop,
                             )
                             continue
                     # WIDTH IS ANSWERED BY ADJUSTING THE STOP, NEVER BY

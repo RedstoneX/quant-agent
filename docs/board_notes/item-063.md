@@ -8,3 +8,17 @@
 
 **Structure fix shipped (2026-09-25) —** The deterministic ranking now HAS a sign. `SmartMoneyObservation.signal_direction` (derived from `direction`, never stored) returns +1 for a buy, 0 for a sale/exchange/unknown; both ranking keys in `src/agents/smart_money_analyst.py` (`_symbol_rank`, `_transaction_rank`) multiply the `value * signal_weight` term by it. So a bearish sale can no longer tie or outrank a bullish buy of the same dollar value — the exact identity this item names — and a buy's contribution is unchanged (existing behaviour preserved; covered by `tests/test_smart_money.py`). The desk is long-only on smart-money admission (admission requires `direction == "buy"`), so a sale is NEUTRALISED (0), not counted as bullish; the row still reaches the analyst as evidence, so the LLM can still read it bearish. **What stays open:** signing a sale -1 by magnitude (the sourced >50%-of-holdings band is the hook) is the SIGNED SCORING SCHEME still ruled out above — owner appetite or a published source, not a number to guess.
 
+
+## Production proof 2026-10-04 — the sale census DID run; it is populated; the route is still dead
+
+**Plain language —** The desk now actually records insider *sales* where before it recorded none. That recording reached the real database once, on 1 October, and it is full of real rows rather than empty. It still changes no decision, and it does not rescue the idea behind this item, because the recorded sales point the wrong way.
+
+- One `insider_sale_census` row exists in the production evidence store, written by the smart-money research stage, run `run-14170a8e`, 2026-10-01 13:31:46 [measured 2026-10-04, read-only query of the production DB].
+- That is one row for the one smart-money research stage that ran after the recording shipped, so the cardinality is per-run and correct; the newest row of ANY kind in that store is 2026-10-01 15:30:44, i.e. the desk has been off since [measured, same query].
+- The payload is populated: 19,003 parsed rows, 16,409 sales against 2,594 buys, bands under_10pct 12,788 / 10_to_50pct 2,717 / over_50pct 894 / unknown 10, plus a bounded row sample carrying symbol, transaction date, holdings fraction, band and reference price [measured, same row].
+- `forward_return_joined` is false in the stored payload by design; the join is the separate offline measure (`src/insider_sale_measure.py`) that already ran against the sale cache and separated nothing.
+- Nothing reads the census: no gate, no ranking key, no sizing path. It is a recording only, and that is deliberate while the sign is unsettled.
+
+**Why this does not tick the first box.** Proving the recording works proves the data exists, not that it says anything. The desk's own join found the sourced >50%-of-holdings band to be the *most positive* of the three at both forward windows — the opposite sign to the published finding — and the 2026-10-04 literature pass found no citable signed scheme to borrow instead. Both routes offered by the first box are therefore answered negative, and inventing a sign now would be exactly the picked number the standing no-arbitrary-numbers rule forbids. Sales stay neutral at 0.
+
+**What is left on this item.** Nothing measurable without new evidence. The first box reopens only if the desk accumulates enough of its own *resolved* sale outcomes to read a separation, which needs the desk trading for a long period, or if a signed scheme is published. No production measurement remains owed; item 63 has been removed from the market-hours backlog on that basis.

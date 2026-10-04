@@ -62,9 +62,9 @@ bindings:
       nothing was retired, the numbers moved underneath the sentence.
     code:
       - file: src/portfolio_constructor/stops.py
-        symbol: _StopMixin._stop_atr_multiple
+        symbol: StopRules._stop_atr_multiple
       - file: src/portfolio_constructor/stops.py
-        symbol: _StopMixin._level_backing_stop
+        symbol: StopRules._level_backing_stop
     prose:
       - file: config/prompts/tech_analyst.md
         contains:
