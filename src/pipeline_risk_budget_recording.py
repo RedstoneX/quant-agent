@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from src.pipeline_entry_orders import _record_realised_sector_weights
+from src.pipeline_sector_weights import _record_realised_sector_weights
 from src.storage.risk_budget_record import record_realised_risk_budget
 
 logger = logging.getLogger(__name__)
