@@ -459,7 +459,7 @@ MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
 #: all passed "the column exists" and failed "something writes it" -- the
 #: break-confirmation-margin payload, for one, is built into a prose `detail`
 #: string that the only persisting call throws away.
-_DB_SOURCE_PATHS = ("src/storage/db.py", "src/storage/trades/ledger.py")  # the trades write path lifted out (db rebuild instalment 3); schema/analytics never write a row
+_DB_SOURCE_PATHS = ("src/storage/db.py", "src/storage/trades/ledger.py", "src/storage/risk_budget_record.py")  # the trades write path lifted out (db rebuild instalment 3); schema/analytics never write a row
 
 
 def written_fields(source: str | None = None) -> frozenset[str]:
