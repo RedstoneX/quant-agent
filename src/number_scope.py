@@ -93,7 +93,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # coverage, repair, protected sells, write-ahead restore, the fill and
     # stop-out reconcilers -- moved here out of `src/pipeline.py`. Scoped at
     # its new address so its numbers stay under the guard.
-    "src/pipeline_protection.py", "src/protection/coverage_repair.py", "src/protection/protected_sell.py", "src/protection/exit_relief.py", "src/protection/restore_drain.py", "src/protection/reprotect_records.py", "src/protection/ex_dividends.py",
+    "src/pipeline_protection.py", "src/protection/protected_sell.py", "src/protection/reprotect_records.py",
     # Every seat's prompt-construction and LLM-call code -- the path from
     # evidence to a seat's verdict the scope rule names. Most of what lives
     # here is LLM plumbing (timeouts, retries, token budgets) that is

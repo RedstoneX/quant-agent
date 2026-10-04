@@ -211,7 +211,7 @@ def test_monday_ex_div_is_caught_by_friday_session():
     p = _exdiv_pipeline(monday, friday)
     pos = Position(symbol="KO", qty=200, avg_entry=60, current_price=62.40,
                    market_value=12_480, unrealized_pnl=480, sector="Consumer Defensive")
-    with patch("src.protection.ex_dividends.et_today", return_value=friday):
+    with patch("src.pipeline_protection.et_today", return_value=friday):
         orders = p._handle_ex_dividends([pos], run_id="r1")
     assert len(orders) == 1
     p.broker.shift_stops_down.assert_called_once_with("KO", 0.51)
@@ -222,7 +222,7 @@ def test_midweek_ex_div_still_uses_tomorrow():
     p = _exdiv_pipeline(thu, wed)
     pos = Position(symbol="KO", qty=200, avg_entry=60, current_price=62.40,
                    market_value=12_480, unrealized_pnl=480, sector="Consumer Defensive")
-    with patch("src.protection.ex_dividends.et_today", return_value=wed):
+    with patch("src.pipeline_protection.et_today", return_value=wed):
         assert len(p._handle_ex_dividends([pos], run_id="r1")) == 1
 
 
@@ -231,7 +231,7 @@ def test_far_future_ex_div_is_not_acted_on_early():
     p = _exdiv_pipeline(next_wed, wed)
     pos = Position(symbol="KO", qty=200, avg_entry=60, current_price=62.40,
                    market_value=12_480, unrealized_pnl=480, sector="Consumer Defensive")
-    with patch("src.protection.ex_dividends.et_today", return_value=wed):
+    with patch("src.pipeline_protection.et_today", return_value=wed):
         assert p._handle_ex_dividends([pos], run_id="r1") == []
     p.broker.shift_stops_down.assert_not_called()
 

@@ -73,15 +73,16 @@ holds `OwnerAlerts`, `SellFinalization`, `FillReconciler`, `RepegDrain` and
 keyword-only constructor argument (the `src/sessions/` pattern);
 `ProtectionMixin` keeps a thin same-named shim per method. All five pass
 `check_boundary`; `tests/test_protection_boundary.py` is the witness. What
-followed on 2026-10-04: `CoverageRepair`, `ProtectedSell`, `ExitRelief`,
-`RestoreDrain`, `ReprotectRecords` and `ExDividends` joined `src/protection/`
-(`tests/test_protection_parts_boundary.py` is the witness; the ex-dividend tests
-now patch `et_today` on `src.protection.ex_dividends`). Two bodies are over the
-400-line ceiling for a new file and stay in `src/pipeline_protection.py` as
-standalone classes built the same way: `StopCoverageReconciler` (600 lines; reads
-`_market_is_open_now`, which tests patch there) and `ReprotectResidual` (537
-lines). Host attributes a body assigns or reads with a default
-(`_last_stop_clear_refusal`, `_unsettled_exit_orders`, `db`) go through a live
+followed on 2026-10-04: `ProtectedSell` and `ReprotectRecords` joined `src/protection/`
+(`tests/test_protection_parts_boundary.py` is the witness). `CoverageRepair`,
+`ExitRelief`, `RestoreDrain` and `ExDividends` import the broker seam
+(`src.execution`, a frozen importer list the layering guard enforces) so they are
+standalone classes built the same way but kept in `src/pipeline_protection.py`,
+as is `ReprotectResidual` (537 lines, over the 400-line ceiling for a new file).
+`_reconcile_stop_coverage` (600 lines) is still a mixin body: PR 1223 uncrams one
+of its lines, and the statement-cram ratchet keys by class.method, so it keeps its
+original identity until that lands. Host attributes a body assigns or reads with a
+default (`_last_stop_clear_refusal`, `_unsettled_exit_orders`, `db`) go through a live
 get/set view (`_HostState`), never a copy.
 
 **No mixin can be constructed alone.** `grep -n 'def __init__'` across

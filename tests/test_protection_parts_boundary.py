@@ -1,7 +1,10 @@
 """Boundary witnesses: the protection parts carved out of `ProtectionMixin` on 2026-10-04
 (coverage repair, the protected sell, exit relief, the restore drain, the reprotect record,
-the ex-dividend shift, and the two over-ceiling bodies kept in the shim module as standalone
-classes) build and run with no pipeline behind them.
+the ex-dividend shift, and the over-ceiling residual re-protection) build and run with no
+pipeline behind them. Only the protected sell and the reprotect record get their own module;
+the others import the broker seam (a frozen importer list) and stay standalone classes in
+`src/pipeline_protection.py`. `_reconcile_stop_coverage` stays a mixin body until PR 1223
+(which uncrams one of its lines) lands, so the statement-cram ratchet's key is unchanged.
 
 Every collaborator is an explicit keyword-only constructor argument (clause 5 of
 tests/boundary_harness.py). Follows tests/test_intraday_parts_boundary.py. This file never
@@ -17,20 +20,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.execution.broker import AlpacaBroker
-from src.pipeline_protection import ReprotectResidual, StopCoverageReconciler
+from src.pipeline_protection import CoverageRepair, ExDividends, ExitRelief, ReprotectResidual, RestoreDrain
 from src.pipeline_protection import _build_ex_dividends, _build_protected_sell
-from src.protection.coverage_repair import CoverageRepair
-from src.protection.ex_dividends import ExDividends
-from src.protection.exit_relief import ExitRelief
 from src.protection.protected_sell import ProtectedSell
 from src.protection.reprotect_records import ReprotectRecords
-from src.protection.restore_drain import RestoreDrain
 from tests.boundary_harness import check_boundary
 
-PARTS = [CoverageRepair, ProtectedSell, ExitRelief, RestoreDrain, ReprotectRecords, ExDividends,
-         StopCoverageReconciler, ReprotectResidual]
-MODULES = [f"src.protection.{m}" for m in
-           ("coverage_repair", "protected_sell", "exit_relief", "restore_drain", "reprotect_records", "ex_dividends")]
+PARTS = [CoverageRepair, ProtectedSell, ExitRelief, RestoreDrain, ReprotectRecords, ExDividends, ReprotectResidual]
+MODULES = [f"src.protection.{m}" for m in ("protected_sell", "reprotect_records")]
 
 
 def _build(cls, **overrides):
@@ -124,9 +121,8 @@ def test_protected_sell_is_handed_the_cancel_or_runs_its_own_body():
     assert own._cancel_stops_with_write_ahead.__func__ is ProtectedSell._cancel_stops_with_write_ahead
 
 
-def test_ex_dividends_and_the_reconciler_are_handed_the_repair_never_owning_it():
-    for cls in (ExDividends, StopCoverageReconciler):
-        assert not hasattr(cls, "_repair_stop_coverage"), cls
+def test_ex_dividends_is_handed_the_repair_never_owning_it():
+    assert not hasattr(ExDividends, "_repair_stop_coverage")
     assert hasattr(CoverageRepair, "_repair_stop_coverage")
     part = _build(ExDividends, repair_stop_coverage=lambda *a, **k: "HANDED IN")
     assert part._repair_stop_coverage() == "HANDED IN"
