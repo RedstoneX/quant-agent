@@ -10,17 +10,20 @@ collaborators are keyword-only, and the per-broker state the bodies mutate
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from src.trading_calendar import session_date_key
 from pathlib import Path
 import asyncio
-import fcntl
 import json
 import logging
-import os
 import random
 import re
 import threading
 import time
+
+from src.execution.broker_parts.trade_stream_errors import _stream_http_status, _stream_retry_after_seconds  # noqa: F401
+from src.sentinel.guarded import record_guarded_pass
+from src.execution.broker_parts.trade_stream_lease import _TradeUpdatesLease  # noqa: F401
+
 try:
     from alpaca.trading.stream import TradingStream
 except ImportError:  # pragma: no cover - optional dependency surface
@@ -52,74 +55,6 @@ def _default_trade_updates_lease_path() -> Path:
     """
     return Path("data") / ".trade_updates.lock"
 
-
-class _TradeUpdatesLease:
-    """Account-wide exclusive right to open Alpaca's trade_updates websocket.
-
-    flock is released when the fd closes, including process death, so a
-    killed job cannot wedge the slot. The pid written into the file is
-    diagnostic only — ownership is the lock, not the text. Not a new
-    service, not IPC, not a second trading-memory system.
-    """
-
-    def __init__(self, path: Path):
-        self.path = Path(path)
-        self._fh = None
-
-    def acquire(self, *, blocking: bool = False) -> bool:
-        if self._fh is not None:
-            return True
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fh = open(self.path, "a+")
-        except Exception:
-            logger.warning(
-                "trade_updates lease: could not open %s — refusing to open a socket",
-                self.path, exc_info=True,
-            )
-            return False
-        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
-        try:
-            fcntl.flock(fh.fileno(), flags)
-        except BlockingIOError:
-            fh.close()
-            return False
-        except Exception:
-            logger.warning(
-                "trade_updates lease: flock failed on %s — refusing to open a socket",
-                self.path, exc_info=True,
-            )
-            try:
-                fh.close()
-            except Exception:
-                pass
-            return False
-        try:
-            fh.seek(0)
-            fh.truncate()
-            fh.write(f"{os.getpid()}\n")
-            fh.flush()
-        except Exception:
-            pass
-        self._fh = fh
-        return True
-
-    def release(self) -> None:
-        fh = self._fh
-        self._fh = None
-        if fh is None:
-            return
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-        try:
-            fh.close()
-        except Exception:
-            pass
-
-    def held(self) -> bool:
-        return self._fh is not None
 
 # Fallback reconnect bounds, used only when the installed TradingStream
 # does not expose `_reconnect_min_backoff` / `_reconnect_max_backoff`.
@@ -253,27 +188,27 @@ class _StreamAttemptBudget:
 
     def record_attempt(self, today: str | None = None) -> int:
         """Count one handshake failure; return attempts spent today."""
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             self._attempts += 1
             return self._attempts
 
     def day_exhausted(self, today: str | None = None) -> bool:
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             return self._attempts >= _STREAM_ATTEMPT_CEILING_PER_DAY
 
     def attempts_today(self, today: str | None = None) -> int:
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             return self._attempts
 
     def claim_alert(self, today: str | None = None) -> bool:
         """True exactly ONCE per day, for the caller that should page the owner."""
-        day = today or date.today().isoformat()
+        day = today or session_date_key()
         with self._lock:
             self._roll(day)
             if self._alerted_day == day:
@@ -323,11 +258,10 @@ def _alert_stream_gave_up(reason: str) -> None:
         from src.notifier import send_owner_alert
 
         send_owner_alert(message)
-    except Exception:  # noqa: BLE001 - never let the alert sink break execution
-        logger.warning(
-            "could not push the trade_updates give-up alert to the owner",
-            exc_info=True,
-        )
+    except Exception as exc:  # noqa: BLE001 - never let the alert sink break execution
+        record_guarded_pass(None, "trade_stream.give_up_alert", exc, log=logger,
+                            context={"effect": "owner not told the stream gave up"})
+
 
 
 
@@ -434,11 +368,10 @@ class _TradeUpdatesHub:
                     waiter.event.set()
                 if to_signal:
                     self._kick()
-            except Exception:
-                logger.warning(
-                    "trade_updates hub handler error",
-                    exc_info=True,
-                )
+                record_guarded_pass(self._broker, "trade_stream.hub_handler", context={})
+            except Exception as exc:
+                record_guarded_pass(self._broker, "trade_stream.hub_handler", exc, log=logger,
+                                    context={"effect": "a fill update was dropped; waiters fall back to REST"})
 
         stream.subscribe_trade_updates(_handler)
 
@@ -518,8 +451,9 @@ class _TradeUpdatesHub:
                         lambda: self.authed() or self._dead.is_set(),
                         timeout=min(remaining_auth, remaining_wait),
                     )
-            except Exception:
-                pass
+                record_guarded_pass(self._broker, "trade_stream.hub_wait.auth_gate", context={})
+            except Exception as exc:
+                record_guarded_pass(self._broker, "trade_stream.hub_wait.auth_gate", exc, log=logger, context={"effect": "auth wait aborted; caller falls back to REST"})
             if not self.authed():
                 logger.warning(
                     "trade_updates websocket did not authenticate within "
@@ -584,12 +518,14 @@ class _TradeUpdatesHub:
         if stream is not None:
             try:
                 setattr(stream, "_should_run", False)
-            except Exception:
-                pass
+                record_guarded_pass(self._broker, "trade_stream.hub_stop.should_run", context={})
+            except Exception as exc:
+                record_guarded_pass(self._broker, "trade_stream.hub_stop.should_run", exc, log=logger, context={"effect": "socket may keep reconnecting after stop"})
             try:
                 stream.stop()
-            except Exception:
-                pass
+                record_guarded_pass(self._broker, "trade_stream.hub_stop.stream_stop", context={})
+            except Exception as exc:
+                record_guarded_pass(self._broker, "trade_stream.hub_stop.stream_stop", exc, log=logger, context={"effect": "socket may stay open after stop"})
         thread = self._thread
         if thread is not None:
             thread.join(timeout=5.0)
@@ -761,8 +697,9 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
             restored = True
             try:
                 ws.recv = original_recv  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                record_guarded_pass(None, "trade_stream.auth_capture.restore_recv", exc, log=logger,
+                                    context={"effect": "recv wrapper stays on the socket"})
 
         if callable(original_recv):
             async def _recv_once():
@@ -774,7 +711,9 @@ def _install_trading_stream_auth_diagnostics(stream: object) -> None:
 
             try:
                 ws.recv = _recv_once  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                record_guarded_pass(None, "trade_stream.auth_capture.wrap_recv", exc, log=logger,
+                                    context={"effect": "auth reply not captured"})
                 original_recv = None
 
         # WHICH FRAME THIS HANDSHAKE SENDS. New form unless a previous
@@ -859,7 +798,9 @@ def _fell_back_to_deprecated_auth(stream: object, raw: object) -> None:
     """
     try:
         setattr(stream, "_qamc_auth_fallback", True)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        record_guarded_pass(None, "trade_stream.auth_fallback.mark", exc, log=logger,
+                            context={"effect": "fallback flag not set"})
         return
     message, status = _parse_stream_auth_reply(raw)
     logger.warning(
@@ -910,7 +851,9 @@ def _note_stream_auth_deprecation(raw: object) -> None:
         return
     try:
         message, _status = _parse_stream_auth_reply(raw)
-    except Exception:  # noqa: BLE001 - a diagnostic must not break the handshake
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must not break the handshake
+        record_guarded_pass(None, "trade_stream.auth_deprecation.parse", exc, log=logger,
+                            context={"effect": "deprecation notice not logged"})
         return
     if not message or _STREAM_AUTH_DEPRECATION_MARKER not in message.lower():
         return
@@ -923,62 +866,6 @@ def _note_stream_auth_deprecation(raw: object) -> None:
         "_STREAM_AUTH_DEPRECATION_MARKER in this module.",
         message,
     )
-
-
-def _stream_http_status(exc: BaseException) -> int | None:
-    """Best-effort HTTP status on a websocket handshake error. Never raises."""
-    for attr in ("status_code", "status"):
-        val = getattr(exc, attr, None)
-        if isinstance(val, int):
-            return val
-    response = getattr(exc, "response", None)
-    if response is not None:
-        for attr in ("status_code", "status"):
-            val = getattr(response, attr, None)
-            if isinstance(val, int):
-                return val
-    match = re.search(r"\bHTTP\s*429\b|\bstatus(?:\s+code)?\s*[:=]?\s*429\b",
-                      str(exc), re.IGNORECASE)
-    if match:
-        return 429
-    return None
-
-
-def _stream_retry_after_seconds(exc: BaseException) -> float | None:
-    """Retry-After from a handshake 429, when the server sent one.
-
-    Numeric seconds only (same restriction as `_retry_after_hint_seconds`
-    in src/agents/base.py). The HTTP-date form is not worth parsing here:
-    the fill wait already has its own wall-clock ceiling.
-    """
-    sources = [exc, getattr(exc, "response", None)]
-    for src in sources:
-        if src is None:
-            continue
-        headers = getattr(src, "headers", None)
-        if headers is None:
-            continue
-        try:
-            raw = headers.get("retry-after") or headers.get("Retry-After")
-        except Exception:  # noqa: BLE001
-            raw = None
-        if raw is None:
-            continue
-        try:
-            hint = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if hint > 0:
-            return hint
-    match = re.search(
-        r'retry[_-]after["\']?\s*[:=]\s*"?(\d+(?:\.\d+)?)',
-        str(exc), re.IGNORECASE,
-    )
-    if match:
-        hint = float(match.group(1))
-        if hint > 0:
-            return hint
-    return None
 
 
 def _equal_jitter_backoff(attempt: int, min_backoff: float, max_backoff: float) -> float:
@@ -1075,8 +962,9 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
             # is how a "bounded" loop stays unbounded in aggregate.
             try:
                 setattr(stream, "_should_run", False)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                record_guarded_pass(None, "trade_stream.reconnect.stop_flag_exhausted", exc, log=logger,
+                                    context={"effect": "retry loop may keep running"})
             event.set()
             _alert_stream_gave_up("the daily retry budget is spent")
             raise TradeStreamGaveUp(
@@ -1140,8 +1028,9 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
                 # without abandoning the SDK's public run()/stop() contract.
                 try:
                     setattr(stream, "_should_run", False)
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    record_guarded_pass(None, "trade_stream.reconnect.stop_flag_giveup", exc, log=logger,
+                                        context={"effect": "retry loop may keep running"})
                 event.set()
                 logger.warning(
                     "trade_updates websocket give-up: %d attempts this "
@@ -1402,8 +1291,9 @@ class TradeStreamWaits:
             if hub is not None:
                 try:
                     hub.stop()
-                except Exception:
-                    pass
+                    record_guarded_pass(self._state, "trade_stream.start_trade_updates.stop_old_hub", context={})
+                except Exception as exc:
+                    record_guarded_pass(self._state, "trade_stream.start_trade_updates.stop_old_hub", exc, log=logger, context={"effect": "old hub may linger; thread check follows"})
                 if hub.thread_still_running():
                     logger.warning(
                         "previous trade_updates thread still running — "
@@ -1432,8 +1322,10 @@ class TradeStreamWaits:
                 hub = _TradeUpdatesHub(self)
                 hub.start()
                 self._trade_hub = hub
+                record_guarded_pass(self._state, "trade_stream.hub_start", context={})
             except Exception as exc:
-                logger.warning("trade_updates hub failed to start: %s", exc)
+                record_guarded_pass(self._state, "trade_stream.hub_start", exc, log=logger,
+                                    context={"effect": "no fill stream; REST confirms fills"})
                 self._release_trade_updates_slot()
                 warmup = TradeStreamWarmup(
                     ready=False, handshake_failed=True, retried=False,
@@ -1456,8 +1348,9 @@ class TradeStreamWaits:
             if hub is not None:
                 try:
                     hub.stop()
-                except Exception:
-                    pass
+                    record_guarded_pass(self._state, "trade_stream.stop_trade_updates.stop_hub", context={})
+                except Exception as exc:
+                    record_guarded_pass(self._state, "trade_stream.stop_trade_updates.stop_hub", exc, log=logger, context={"effect": "hub may linger; thread check follows"})
                 if hub.thread_still_running():
                     logger.warning(
                         "trade_updates thread still running after stop — "
@@ -1662,16 +1555,17 @@ class TradeStreamWaits:
                     matched.set()
                     match_wake.set()
                     await stream.stop_ws()
-            except Exception:
-                logger.warning(
-                    "order-fill stream handler error for %s", order_id,
-                    exc_info=True,
-                )
+                record_guarded_pass(self._state, "trade_stream.order_fill_handler", context={})
+            except Exception as exc:
+                record_guarded_pass(self._state, "trade_stream.order_fill_handler", exc, log=logger,
+                                    context={"order": order_id, "effect": "a fill update was dropped; wait falls back to REST"})
 
         try:
             stream.subscribe_trade_updates(_handler)
+            record_guarded_pass(self._state, "trade_stream.order_fill_subscribe", context={})
         except Exception as exc:
-            logger.warning("order-fill stream subscribe failed: %s", exc)
+            record_guarded_pass(self._state, "trade_stream.order_fill_subscribe", exc, log=logger,
+                                context={"order": order_id, "effect": "no stream; caller uses REST"})
             return None, False
 
         finished = threading.Event()
@@ -1711,16 +1605,18 @@ class TradeStreamWaits:
                 )
                 try:
                     stream.stop()
-                except Exception:
-                    pass
+                    record_guarded_pass(self._state, "trade_stream.order_fill_stream.stop_unauthed", context={})
+                except Exception as exc:
+                    record_guarded_pass(self._state, "trade_stream.order_fill_stream.stop_unauthed", exc, log=logger, context={"effect": "stream may linger; thread joined regardless"})
                 thread.join(timeout=2.0)
                 return None, False
         remaining = max(0.0, deadline - time.monotonic())
         match_wake.wait(timeout=remaining)
         try:
             stream.stop()
-        except Exception:
-            pass  # best-effort; the background thread is a daemon regardless
+            record_guarded_pass(self._state, "trade_stream.order_fill_stream.stop_final", context={})
+        except Exception as exc:
+            record_guarded_pass(self._state, "trade_stream.order_fill_stream.stop_final", exc, log=logger, context={"effect": "stream may linger; daemon thread"})
         thread.join(timeout=5.0)
 
         if not matched.is_set() and run_error and not connected.is_set():
