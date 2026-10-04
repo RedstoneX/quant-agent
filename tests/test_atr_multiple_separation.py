@@ -100,3 +100,57 @@ def test_ledger_marks_each_job_separately_and_honestly() -> None:
     assert mirror["status"] == "derived"
     assert mirror["derived_from"] == _MIN_STOP_ID
     assert float(mirror["base_value"]) == 1.0
+
+
+def test_no_ledger_row_says_the_break_margin_is_the_noise_band() -> None:
+    """Ledger PROSE must not re-collapse what the 2026-09-26 split separated.
+
+    The `TREND_CONFIRMING_CLOSES` note survived the split still asserting "The
+    break MARGIN is always NOISE_BAND_ATR_MULTIPLE", which contradicts
+    `check_structural_protection` in src/risk/exit_guard.py: the margin there is
+    `BREAK_CONFIRMATION_ATR_MULTIPLE`. A false provenance claim in the ledger is
+    the same defect as the shared literal was, one layer up.
+    """
+    entries = _ledger_entries()
+    offenders: list[str] = []
+    for ident, entry in entries.items():
+        if not isinstance(ident, str) or not ident.startswith("src.risk.exit_guard."):
+            continue
+        if ident.endswith("NOISE_BAND_ATR_MULTIPLE"):
+            continue
+        prose = " ".join(
+            str(entry.get(field, "")) for field in ("note", "source")
+        ).lower()
+        prose = " ".join(prose.split())
+        for claim in (
+            "break margin is always noise_band_atr_multiple",
+            "break margin is noise_band_atr_multiple",
+            "margin is always the noise band",
+        ):
+            if claim in prose:
+                offenders.append(f"{ident}: {claim!r}")
+    assert not offenders, (
+        "ledger prose re-collapses the break margin into the noise band: "
+        + "; ".join(offenders)
+    )
+
+
+def test_noise_band_widening_is_uncapped_and_its_null_is_recorded() -> None:
+    """The sqrt widening is uncapped and measured-unsupported (2026-10-04).
+
+    `ops/research/noise_band_holding_scaling.py` found no adverse-excursion
+    size at which a trend is finished, at any holding length, so no cap is
+    derivable and none was invented. This pins the uncapped state and the
+    recorded null together: a future cap must land with the evidence that
+    replaces this section, not quietly.
+    """
+    from math import sqrt
+
+    from src.risk.exit_guard import noise_band_atr
+
+    assert noise_band_atr(60) == sqrt(60)
+    assert noise_band_atr(250) == sqrt(250)
+
+    findings = (Path(__file__).resolve().parents[1] / "docs/RESEARCH_FINDINGS.md").read_text()
+    assert "Does the band's sqrt(sessions_held) widening match the tape?" in findings
+    assert "No value in `exit_guard.py` is changed by this work." in findings
