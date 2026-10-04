@@ -1114,3 +1114,49 @@ changes:
       meant to source it found directional overnight-gap asymmetry at a
       median 1.01 across names, nowhere near 1.5, so the count falls by
       one with no new unsourced number entering anywhere.
+  - delta: -1
+    date: '2026-10-04'
+    why: >-
+      `src.config.CashReserveConfig.pct` (1) re-filed `arbitrary` to
+      `not-trade-governing`. Measured by grep over src/ and scripts/: its only
+      reader is the /account liquidity view, which renders `reserve_usd` and
+      `cash_above_reserve`; no engine, sizing or gate path reads either, and
+      the engine's deployable cash takes no reserve argument. The evidence is
+      written into the row, with the condition that reverses it.
+  - delta: 0
+    date: '2026-10-04'
+    why: >-
+      No row moves, and the measurement is the point. A deterministic A/B
+      over `src/backtest/engine.py` (`scripts/backtest.py`, `--config`
+      against `--config-b` differing in exactly one field) was run on
+      `src.config.RiskConfig.max_target_reach_atr_multiple`, 1.5 against
+      0.2 -- a 7.5x tightening -- over AAPL/MSFT/NVDA from 2025-01-02 to
+      2025-04-30. Every one of the twelve reported metrics came back
+      BYTE-IDENTICAL, so the parameter is inert in that engine. That is
+      not evidence the number is right: the engine computes its own
+      nearest-level target and never reaches `_derive_target`, which is
+      the path the number governs live, so the row stays `arbitrary` and
+      now records that a backtest cannot close it. The same run reported
+      16 of 26 entry days as binding-budget days, which is written into
+      `max_portfolio_risk_pct` and `max_cluster_risk_share_pct` as the
+      reason the engine cannot settle those either -- it serves equal
+      asks by alphabetical ticker, not by the verdict order production
+      spends down. This is the second parameter measured inert in this
+      engine, after the level-touch count, so the standing order's
+      remaining risk rows are narrower than they look.
+  - delta: -2
+    date: '2026-10-04'
+    why: >-
+      A sixth ledger status, `owner-ruled`, now exists for a value the owner
+      decided on a recorded date. Two rows move to it, no value changed:
+      `RiskConfig.min_stop_atr_multiple` (2.5, owner ruling 2026-10-04 in
+      docs/OUTCOME.md) and `ConstructorConfig.max_position_pct` (65, owner
+      override 2026-09-11 in docs/INCIDENT_HISTORY.md). Their measurement
+      routes are kept in the row but parked, since a ruled value owes no route.
+      Five rows the first draft also flipped stay `arbitrary` on purpose: the
+      cluster share, the portfolio ceiling and the target horizon were
+      delegated to the adversary and never ruled by the owner; the 5% per-name
+      envelope was ratified 2026-08-27 but the owner's 2026-09-30 ruling that
+      per-name risk is read off the name supersedes it, as the row's own
+      ruling_check records; the 0.5% floor's standing under that same ruling
+      is undetermined, so it is left as found rather than promoted.

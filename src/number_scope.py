@@ -72,7 +72,8 @@ SCOPED_PATHS: tuple[str, ...] = (
     # longer exists — that gate refuses the BUY instead of sizing it (board
     # item 186, 2026-10-01) — and the rule stays because the shape recurs.
     "src/pipeline.py",
-    "src/pipeline_delever.py",
+    "src/pipeline_delever.py", "src/delever/forced.py", "src/delever/ladder.py", "src/delever/conviction.py",
+    "src/delever/enforce.py", "src/delever/trims.py", "src/delever/risk_number.py",
     # The held-position exit engine and the exit-trigger vocabulary -- moved
     # here out of `src/pipeline.py` by step 4 of docs/PIPELINE_SPLIT_PLAN.md.
     # Every trail multiple and every exit threshold it carries stays scoped.
@@ -85,7 +86,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
     # scoped.
     "src/pipeline_admission.py",
-    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py", "src/prompt_facts/missed_ops_signals.py", "src/prompt_facts/review/grading.py", "src/prompt_facts/review/exits.py", "src/prompt_facts/review/calibration.py", "src/prompt_facts/review/blocked.py", "src/prompt_facts/review/replay.py",
+    "src/pipeline_prompt_facts.py", "src/pipeline_prompt_facts_pure.py", "src/pipeline_prompt_facts_review.py", "src/prompt_facts/missed_ops_signals.py", "src/prompt_facts/review/grading.py", "src/prompt_facts/review/exits.py", "src/prompt_facts/review/calibration.py", "src/prompt_facts/review/blocked.py", "src/prompt_facts/review/replay.py", "src/prompt_facts/decisions.py", "src/prompt_facts/projected.py", "src/prompt_facts/watchlist.py", "src/prompt_facts/heat.py", "src/prompt_facts/pm_facts.py",
     # Step 5 of docs/PIPELINE_SPLIT_PLAN.md (board item 210): risk-verdict
     # application moved here out of `src/pipeline.py`.
     "src/pipeline_risk_gate.py",
@@ -93,7 +94,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # coverage, repair, protected sells, write-ahead restore, the fill and
     # stop-out reconcilers -- moved here out of `src/pipeline.py`. Scoped at
     # its new address so its numbers stay under the guard.
-    "src/pipeline_protection.py",
+    "src/pipeline_protection.py", "src/protection/protected_sell.py", "src/protection/reprotect_records.py",
     # Every seat's prompt-construction and LLM-call code -- the path from
     # evidence to a seat's verdict the scope rule names. Most of what lives
     # here is LLM plumbing (timeouts, retries, token budgets) that is

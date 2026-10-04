@@ -37,7 +37,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     select_nominations,
 )
 from src.stage_risk import _persist_dropped_reasons  # noqa: F401  moved with RiskStage
-
+from src.sentinel.morning_guarded import record_morning_fault
 if TYPE_CHECKING:
     from src.agents.earnings_analyst import EarningsAnalystAgent
     from src.agents.macro_analyst import MacroAnalystAgent
@@ -154,7 +154,7 @@ class MorningResearchStage:
         try:
             return self._live_session_context(symbols) or {}
         except Exception as exc:  # noqa: BLE001
-            logger.warning("live session context failed (%s) — Tech sees completed bars only", exc)
+            record_morning_fault(self, "live_session_context", exc)
             return {}
 
     @staticmethod
@@ -179,12 +179,12 @@ class MorningResearchStage:
         try:
             prior_macro_state = self.macro_store.load_last_state() or {}
         except Exception as e:
-            logger.warning("Failed to load prior macro state: %s", e)
+            record_morning_fault(self, "prior_macro_state", e)
             prior_macro_state = {}
         try:
             news_narrative = self.news_store.load_macro_narrative()
         except Exception as e:
-            logger.warning("Failed to load macro news narrative: %s", e)
+            record_morning_fault(self, "macro_narrative", e)
             news_narrative = None
 
         smart_config = getattr(self.config, "smart_money", None)
@@ -196,7 +196,7 @@ class MorningResearchStage:
                     self.smart_money_provider.fetch(self.config.trading.universe)
                 )
             except Exception as exc:
-                logger.warning("Smart-money cache read failed: %s", exc)
+                record_morning_fault(self, "smart_money_fetch", exc)
                 smart_money_provider_error = f"provider_error:{type(exc).__name__}"
         ctx.smart_money_observations = smart_money_observations
         if smart_money_observations and self._admit_smart_money_candidates:
@@ -211,7 +211,7 @@ class MorningResearchStage:
             except Exception as exc:
                 # Admission uncertainty fails closed; the observations can
                 # still be rendered as research evidence.
-                logger.warning("Smart-money transient admission failed closed: %s", exc)
+                record_morning_fault(self, "smart_money_admission", exc)
                 ctx.admitted_symbols = set()
                 ctx.smart_money_admissions = {}
         if self._admit_screened_universe:
@@ -221,7 +221,7 @@ class MorningResearchStage:
                 )
             except Exception as exc:  # noqa: BLE001
                 # Fails closed: no screened name this session, nothing else lost.
-                logger.warning("Screened-universe admission failed closed: %s", exc)
+                record_morning_fault(self, "screened_admission", exc)
                 screened, screened_details = set(), {}
             for symbol in sorted(screened):
                 if symbol in ctx.admitted_symbols:
@@ -296,7 +296,7 @@ class MorningResearchStage:
                     reason, before, len(effective_symbols),
                 )
         except Exception as exc:  # noqa: BLE001 - never block research
-            logger.warning("Full-book search throttle failed open: %s", exc)
+            record_morning_fault(self, "search_throttle", exc)
 
         for observation in smart_money_observations:
             symbol = str(getattr(observation, "symbol", "") or "").strip().upper()
@@ -364,7 +364,7 @@ class MorningResearchStage:
                     )
                     event_coverage = self.event_calendar.last_coverage
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("Macro event calendar fetch failed: %s", e)
+                    record_morning_fault(self, "event_calendar", e)
                     macro_events, event_coverage = [], None
             # FOMC meeting schedule, from the Fed's own free calendar. Fetched
             # in the same worker for the same reason, under its own deadline
@@ -379,7 +379,7 @@ class MorningResearchStage:
                     )
                     fomc_coverage = self.fomc_calendar.last_coverage
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("FOMC calendar fetch failed: %s", e)
+                    record_morning_fault(self, "fomc_calendar", e)
                     fomc_meetings, fomc_coverage = [], None
             analysis, result = self.macro_analyst.analyze(
                 macro_summary=macro_summary,
@@ -413,7 +413,7 @@ class MorningResearchStage:
                             analysis.regime, analysis.confidence, state, note,
                         )
                 except Exception as e:  # noqa: BLE001 — a stamp must never lose the verdict
-                    logger.warning("Could not stamp macro coverage onto verdict: %s", e)
+                    record_morning_fault(self, "macro_coverage_stamp", e)
             if analysis:
                 try:
                     from src.data.macro_store import series_prints_from_summary
@@ -425,7 +425,7 @@ class MorningResearchStage:
                         ),
                     )
                 except Exception as e:
-                    logger.warning("Failed to persist macro last state: %s", e)
+                    record_morning_fault(self, "macro_last_state", e)
             return (
                 macro_summary, analysis, result, macro_coverage,
                 macro_events, event_coverage, fomc_meetings, fomc_coverage,
@@ -533,7 +533,7 @@ class MorningResearchStage:
                     try:
                         valuations[sym] = self.market.get_valuation_metrics(sym)
                     except Exception as e:
-                        logger.warning("valuation fetch crashed for %s: %s", sym, e)
+                        record_morning_fault(self, "valuation", e, symbol=sym)
             ctx.valuations = valuations
             # analyses_map is guaranteed to carry every symbol in
             # symbols_data as a key (2026-08-19 Tech batch-response
@@ -568,7 +568,7 @@ class MorningResearchStage:
                 try:
                     self.tech_store.update(resolved)
                 except Exception as e:
-                    logger.warning("TechStore.update failed: %s", e)
+                    record_morning_fault(self, "tech_store_update", e)
                 ages = self.tech_store.compute_ages([a.symbol for a in resolved])
                 for analysis in resolved:
                     if analysis.symbol in ages:
@@ -622,7 +622,7 @@ class MorningResearchStage:
                 if not isinstance(sm_coverage, dict):
                     sm_coverage = None
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Smart-money coverage read failed: %s", exc)
+                record_morning_fault(self, "smart_money_coverage", exc)
                 sm_coverage = {"known": False, "error": type(exc).__name__}
         # How old the congressional evidence is (newest disclosure, newest
         # trade, each source's copy). No network; None when that feed is off.
@@ -632,7 +632,7 @@ class MorningResearchStage:
             try:
                 sm_congressional = congress_probe()
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Congressional freshness read failed: %s", exc)
+                record_morning_fault(self, "congressional_freshness", exc)
                 sm_congressional = {"known": False, "error": type(exc).__name__}
         # Board item 126. EDGAR publishes its own count of the Form 4s filed
         # on each day. Until this shipped, a fetch that came back with
@@ -811,7 +811,7 @@ class MorningResearchStage:
                     sm_coverage.get("watched"),
                 )
         except Exception as e:
-            logger.warning("Smart-money branch failed: %s", e)
+            record_morning_fault(self, "smart_money_branch", e)
             ctx.smart_money_provider_error = f"analysis_error:{type(e).__name__}"
             data_status["smart_money"] = "provider_error"
 
@@ -865,7 +865,7 @@ class MorningResearchStage:
                 self.db.insert_fred_fetch_coverage_run(
                     build_row(ctx.run_id, macro_coverage, event_coverage))
             except Exception as e:  # noqa: BLE001 — telemetry never costs the run
-                logger.warning("Could not record FRED fetch coverage: %s", e)
+                record_morning_fault(self, "fred_coverage_row", e)
             # Same test-double guard, same reason: anything that is not the
             # real dataclass reads as NOT FETCHED, which the renderer states
             # outright rather than showing as an empty FOMC schedule.
@@ -1002,7 +1002,7 @@ class MorningResearchStage:
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
-            logger.error("Macro analyst failed: %s. Continuing without macro.", e)
+            record_morning_fault(self, "macro_analyst", e)
             data_status["macro"] = "failed"
 
         # News
@@ -1153,7 +1153,7 @@ class MorningResearchStage:
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
-            logger.error("News analyst failed: %s. Continuing without news.", e)
+            record_morning_fault(self, "news_analyst", e)
             data_status["news"] = "failed"
         ctx.news_intel = news_intel
 
@@ -1249,7 +1249,7 @@ class MorningResearchStage:
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
-            logger.error("Tech analyst failed: %s. Continuing without technical data.", e)
+            record_morning_fault(self, "tech_analyst", e)
             data_status["tech"] = "failed"
         ctx.analyses = analyses
         # Outside the try/except above on purpose: it must run whether tech
@@ -1299,7 +1299,7 @@ class MorningResearchStage:
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
-            logger.error("Earnings check failed: %s. Continuing without earnings.", e)
+            record_morning_fault(self, "earnings_check", e)
             data_status["earnings"] = "failed"
         ctx.earnings_results = earnings_results
 
@@ -1520,7 +1520,7 @@ class MorningResearchStage:
             except Exception as exc:
                 # Admission uncertainty fails closed, same posture as the
                 # smart-money admission try/except above.
-                logger.warning("Nomination external admission failed closed: %s", exc)
+                record_morning_fault(self, "nomination_admission", exc)
                 newly_admitted, admission_details = set(), {}
 
         eligible_candidates = []
@@ -1605,7 +1605,7 @@ class MorningResearchStage:
             try:
                 valuations[sym] = self.market.get_valuation_metrics(sym)
             except Exception as e:
-                logger.warning("Nomination responder valuation fetch failed for %s: %s", sym, e)
+                record_morning_fault(self, "nomination_valuation", e, symbol=sym)
         ctx.valuations = valuations
 
         analyses_map, ta_result = self.tech_analyst.analyze_batch(
@@ -1625,7 +1625,7 @@ class MorningResearchStage:
             try:
                 self.tech_store.update(resolved)
             except Exception as e:
-                logger.warning("TechStore.update failed (nomination responder): %s", e)
+                record_morning_fault(self, "nomination_tech_store", e)
             ages = self.tech_store.compute_ages([a.symbol for a in resolved])
             for a in resolved:
                 if a.symbol in ages:

@@ -33,6 +33,10 @@ mixin class definitions, one per file.
 
 **The trade-review prompt facts are five boundaries (2026-10-04, second prompt-facts instalment).** `src/prompt_facts/review/` holds `ReviewGrading` (graded sells, graded buys, trade-grade summary), `ReviewExits` (post-exit reality, missed lessons, loss pits), `ReviewCalibration` (outlook calibration, calibration note, recent performance), `ReviewBlocked` (blocked proposals) and `ReviewReplay` (evening replay inputs): all eleven bodies lifted AST-identical from `PromptFactsReviewMixin`, each file under the 400-line floor for a new file. Collaborators (`db`, `broker`, `market`, the host's `_sweeper` callable read per use, `_EXIT_AUDIT_ACTIONS`, the operator conviction logger) are keyword-only constructor arguments; the one cross-family read, `_build_trade_grade_summary` -> `_build_post_exit_reality`, is handed into the grading part as the host's shim (or whatever a test swapped in), so no recursion guard is needed. `src/pipeline_prompt_facts_review.py` keeps same-named thin shims built per call through five `_review_*` builders; the 14 ledger ids moved with their bodies (`src/ledger_move.py`) and their line citations were re-pointed. Witnesses: `tests/test_prompt_facts_parts_boundary.py`.
 
+**The remaining prompt facts are eight boundaries (2026-10-04, third prompt-facts instalment).** `src/prompt_facts/` holds `PromptHistory` (position history, weekly narrative, macro trajectory, active state changes), `PromptDecisions` (recent risk verdicts, recent PM decisions, review metric deltas, own recent decisions), `PromptProjected` (the projected-portfolio preview; the host is handed in as the sector-cache owner, so `_last_symbol_sectors` is read and written through live), `PromptWatchlist`, `PromptExposure` (correlation matrix, live stop map), `PromptHeat` (portfolio heat; handed the host's stop-map shim), `PromptPMFacts` (PM facts block, conviction-outcome operator log; handed the host's heat and history shims) and `PromptPositionFacts`. `PromptFactsMixin` is shims only, built per call. Witnessed in `tests/test_prompt_facts_parts_boundary.py`.
+
+**The de-levering ladder is five boundaries (2026-10-04).** `src/delever/` holds `DeleverLadder` (live de-lever price, drawdown-resolved ceiling, margin-floor breach), `DeleverConviction` (weakest-conviction cut order), `DeleverEnforce` (ceiling enforcement, shortfall record), `DeleverForced` (forced de-lever against a margin deficit) and `DeleverTrims` (trim submission, by-conviction variant, deferred discharge): ten bodies plus the two risk-number helpers (`src/delever/risk_number.py`) lifted AST-identical from `DeleverMixin`, each file at or under the 400-line ceiling for a new file. Collaborators (`db`, `broker`, `config`, `_sweeper`, `_sweep_symbol`, `_open_exit_relief`, the protection-path sell helpers) are keyword-only constructor arguments read off the host per call; every cross-body call (`_force_delever` -> `_live_delever_price`, `_discharge_deferred_gross_ceiling` -> `_enforce_gross_ceiling`, ...) is handed in as the host's shim, and no part calls a body it owns, so no recursion guard is needed. `src/pipeline_delever.py` keeps same-named thin shims built per call through five `_delever_*` builders; the two owner alerts (`_alert_owner_force_delever_incomplete`, `_alert_owner_delever_incomplete`) still carry their bodies there and are handed into the parts. The one ledger id moved with its body (`src/ledger_move.py`). Witnesses: `tests/test_delever_parts_boundary.py`.
+
 **The missed-opportunities / thesis-health signal helpers are a boundary (2026-10-02, item 210 step 10b, first prompt-facts instalment).** `src/prompt_facts/missed_ops_signals.py` holds `MissedOpsSignals`: the eight per-symbol signal helpers (held set, tech, news, theme tags, earnings, macro sector map, thesis tech trajectory, thesis news events) that `_build_missed_opportunities_digest` and `_build_thesis_health_context` are built from, lifted verbatim with `db`, `news_store`, `earnings_provider`, `macro_store` and `parse_logged_agent_response` as keyword-only constructor arguments. `PromptFactsMixin` keeps same-named thin shims built per call; no lifted body is passed back in because none of the eight calls another. Still on the mixin, and why: the two builders themselves each do a function-local `from src.execution.broker import _get_sector`, so lifting them verbatim would add a new module to the frozen broker-seam importer allowlist in `tests/import_layers.json`; that needs a ruling (widen the frozen list by one relocated importer, or hand the sector lookup in as a collaborator, which changes the body) before they move. Witness: `tests/test_prompt_facts_parts_boundary.py`.
 
 **The cost circuit's state reads, quota holds and admission are boundaries (2026-10-02, second cost-circuit instalment).** `src/cost_circuit/parts/circuit_state.py` holds `CircuitState` (settled totals, state row, scope key, active-hold lookup, effective state and the transient-latch auto-clear), `src/cost_circuit/parts/quota_holds.py` holds `QuotaHolds` (reconcile, hold, latched-snapshot refresh, trip) and `src/cost_circuit/parts/admission.py` holds `Admission` (settled-limit enforcement, `enforce_current_limits`, `require_paid_analysis`, `begin_call`), all lifted verbatim. The three mixins keep same-named thin shims built per call and reuse `parts/shim_guard.py` so a part is never handed the mixin's own shim for a body it already owns. `Admission` reads the unavailable sentinel through a getter (a property on the part), not a construction-time copy: `enforce_current_limits` reads it after `_sync_emergency_latch` / `_run_with_infra_retry` can install it on the breaker, so a snapshot would have raised where the breaker returned the sentinel's answer. No lock moved: `enforce_current_limits` takes the infrastructure lock inside its body, exactly where it did on the mixin. Witness: `tests/test_cost_circuit_parts_boundary.py`.
@@ -83,12 +87,17 @@ holds `OwnerAlerts`, `SellFinalization`, `FillReconciler`, `RepegDrain` and
 keyword-only constructor argument (the `src/sessions/` pattern);
 `ProtectionMixin` keeps a thin same-named shim per method. All five pass
 `check_boundary`; `tests/test_protection_boundary.py` is the witness. What
-stayed in the mixin: the stop-coverage reconciler, the residual re-protection,
-the restore drain, the ex-dividend handler and the kill-switch wiring (all
-import the broker seam `src.execution`, a frozen importer list; the first two
-also read `_market_is_open_now`/`et_today`, which tests patch on
-`src.pipeline_protection`), and the protected sell with its write-ahead cancel,
-which pass `_last_stop_clear_refusal` between each other through the pipeline.
+followed on 2026-10-04: `ProtectedSell` and `ReprotectRecords` joined `src/protection/`
+(`tests/test_protection_parts_boundary.py` is the witness). `CoverageRepair`,
+`ExitRelief`, `RestoreDrain` and `ExDividends` import the broker seam
+(`src.execution`, a frozen importer list the layering guard enforces) so they are
+standalone classes built the same way but kept in `src/pipeline_protection.py`,
+as is `ReprotectResidual` (537 lines, over the 400-line ceiling for a new file).
+`_reconcile_stop_coverage` (600 lines) is still a mixin body: PR 1223 uncrams one
+of its lines, and the statement-cram ratchet keys by class.method, so it keeps its
+original identity until that lands. Host attributes a body assigns or reads with a
+default (`_last_stop_clear_refusal`, `_unsettled_exit_orders`, `db`) go through a live
+get/set view (`_HostState`), never a copy.
 
 **No mixin can be constructed alone.** `grep -n 'def __init__'` across
 `src/pipeline_protection.py`, `src/pipeline_exits.py`, `src/pipeline_intraday.py`
@@ -515,7 +524,7 @@ quotes: QuotePort)`.
 
 ### Phase D — the large but shallow services
 
-**Step 10. `PromptFactsMixin` → `PromptFacts`.** Large.
+**Step 10. `PromptFactsMixin` → `PromptFacts`.** Large. DONE 2026-10-04 as eight parts under `src/prompt_facts/` (see the boundary notes above).
 *Measured:* 3,614 lines, 26 distinct `self.` names, 3 foreign calls, **10**
 collaborator attributes (`broker`, `config`, `db`, `earnings_provider`,
 `macro_store`, `market`, `news_store`, `tech_store`, and two caches).
