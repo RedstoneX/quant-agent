@@ -123,12 +123,14 @@ consequence is DECLARED and COUNTED instead of disguised.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from datetime import date
 from types import SimpleNamespace
 
-from src.backtest.exit_rules import _check_exit, _existing_risk_pct  # noqa: F401
+from src.backtest.budget_days import _budget_binds, _tie_break_arbitrated  # noqa: F401
+from src.backtest.exit_rules import (  # noqa: F401
+    _check_exit, _existing_risk_pct, _size_position,
+)
 from src.config import AppConfig
 from src.data.context import compute_market_context
 from src.data.correlation import build_correlation_matrix, correlation_clusters
@@ -137,8 +139,7 @@ from src.data.technical import compute_indicators
 from src.models import OHLCV
 from src.pipeline import TradingPipeline
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
-from src.risk.budget import BudgetAllocation, RiskRequest, allocate_risk_budget
-from src.risk.rules import _gross_multiplier
+from src.risk.budget import RiskRequest, allocate_risk_budget
 from src.risk.trailing import compute_trailing_stop
 
 #: Trading days of history a symbol needs before this engine will evaluate it
@@ -388,34 +389,6 @@ def _resolve_stop_for_signal(
     return stop
 
 
-def _size_position(
-    *, equity: float, granted_risk_pct: float, fill_entry: float,
-    stop: float, symbol: str, max_position_pct: float,
-) -> tuple[int, float]:
-    """§2.1 formula: shares = equity x risk_pct/100 / |entry - stop|,
-    clamped by the single-name notional ceiling on a GROSS-leverage basis
-    (mirrors `PortfolioConstructor`'s single-name trim — see
-    src/portfolio_constructor.py around the `max_position_pct` comment).
-    Returns (whole shares, the risk_pct actually consumed after rounding
-    down to a whole share and after any clamp)."""
-    risk_per_share = abs(fill_entry - stop)
-    if risk_per_share <= 0 or granted_risk_pct <= 0 or equity <= 0:
-        return 0, 0.0
-    risk_dollars = equity * granted_risk_pct / 100.0
-    shares = risk_dollars / risk_per_share
-    notional = shares * fill_entry
-    gross_mul = _gross_multiplier(symbol)
-    gross_notional = notional * gross_mul
-    max_notional = equity * max_position_pct / 100.0
-    if max_notional > 0 and gross_notional > max_notional:
-        shares *= max_notional / gross_notional
-    shares_int = math.floor(shares)
-    if shares_int < 1:
-        return 0, 0.0
-    effective_risk_pct = shares_int * risk_per_share / equity * 100.0
-    return shares_int, effective_risk_pct
-
-
 def _close_trade(pos: _OpenPosition, exit_idx: int, exit_date_: date, raw_exit: float,
                   exit_reason: str, slippage_bps: float) -> Trade:
     fill = _fill_price(raw_exit, pos.direction, "close", slippage_bps)
@@ -435,35 +408,6 @@ def _close_trade(pos: _OpenPosition, exit_idx: int, exit_date_: date, raw_exit: 
         hold_days=exit_idx - pos.entry_index, pnl=round(pnl, 2),
         r_multiple=round(r_multiple, 4),
     )
-
-
-def _budget_binds(allocation: BudgetAllocation) -> bool:
-    """True when at least one new request was not granted in full.
-
-    That is a day the total ceiling or a cluster cap bound. A bind can
-    be two equal asks competing (alphabetical among them) or a lone
-    candidate cut by held risk — the count is the bind, not a claim
-    that ticker spelling decided every one. The report labels the
-    tie-break as alphabetical because this engine never passes
-    `priority` and every ask is the same size.
-    """
-    return any(
-        grant.requested_pct > 0.0 and grant.limited_by is not None
-        for grant in allocation.grants.values()
-    )
-
-
-def _tie_break_arbitrated(allocation: BudgetAllocation, new_request_count: int) -> bool:
-    """True when the alphabetical tie-break actually DECIDED something.
-
-    That needs two conditions together: at least two new candidates
-    competed on the day, and at least one of them was not granted in
-    full. With a single candidate there is nobody to order it against —
-    a cut there is the ceiling or a cluster cap biting, exactly as it
-    would in production. `_budget_binds` counts both cases; this counts
-    only the ones where ticker spelling chose between names.
-    """
-    return new_request_count >= 2 and _budget_binds(allocation)
 
 
 def run_backtest(

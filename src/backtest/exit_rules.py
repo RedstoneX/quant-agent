@@ -2,13 +2,15 @@
 
 Moved out of ``engine`` unchanged so that module can stop growing: how much
 risk budget an open position still consumes, and whether today's bar closes
-it. Both read only the position's attributes; ``engine`` re-exports them.
+it, plus the sizing formula. They read only plain inputs; ``engine`` re-exports them.
 """
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from src.models import OHLCV
+from src.risk.rules import _gross_multiplier
 
 if TYPE_CHECKING:
     from src.backtest.engine import _OpenPosition
@@ -55,3 +57,31 @@ def _check_exit(
     if hold_days >= max_hold_days:
         return "horizon", bar.close
     return None, None
+
+
+def _size_position(
+    *, equity: float, granted_risk_pct: float, fill_entry: float,
+    stop: float, symbol: str, max_position_pct: float,
+) -> tuple[int, float]:
+    """§2.1 formula: shares = equity x risk_pct/100 / |entry - stop|,
+    clamped by the single-name notional ceiling on a GROSS-leverage basis
+    (mirrors `PortfolioConstructor`'s single-name trim — see
+    src/portfolio_constructor.py around the `max_position_pct` comment).
+    Returns (whole shares, the risk_pct actually consumed after rounding
+    down to a whole share and after any clamp)."""
+    risk_per_share = abs(fill_entry - stop)
+    if risk_per_share <= 0 or granted_risk_pct <= 0 or equity <= 0:
+        return 0, 0.0
+    risk_dollars = equity * granted_risk_pct / 100.0
+    shares = risk_dollars / risk_per_share
+    notional = shares * fill_entry
+    gross_mul = _gross_multiplier(symbol)
+    gross_notional = notional * gross_mul
+    max_notional = equity * max_position_pct / 100.0
+    if max_notional > 0 and gross_notional > max_notional:
+        shares *= max_notional / gross_notional
+    shares_int = math.floor(shares)
+    if shares_int < 1:
+        return 0, 0.0
+    effective_risk_pct = shares_int * risk_per_share / equity * 100.0
+    return shares_int, effective_risk_pct
