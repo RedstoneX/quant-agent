@@ -3101,24 +3101,26 @@ numbers:
       up more than intended on the rare name that loses its ATR reading.
     settles_by:
       kind: recording
-      state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      state: built
+      where: src/portfolio_constructor/no_atr_stop_record.py
       records: >-
-        every no-ATR structural stop placement, carrying the level the stop was read
-        from, the half-width of the price cluster that formed that level (the
-        dispersion of the touches the level detector already groups), the distance
-        this flat 0.5% put the stop at, and whether the subsequent low pierced the
-        buffer without invalidating the level. The cluster half-width is a reading
-        off the instrument that is already computed at placement time; nothing here
-        consults the trade's profit or loss
+        every no-ATR structural stop placement, counted by the rule it took
+        (nearest verified structural level, else the signal/prior bar) and by
+        whether a per-name denominator -- the signal bar's own high-minus-low --
+        was readable at placement, with the buffer distance this flat 0.5% put
+        the stop at, that distance as a percentage of the level, and the same
+        distance in multiples of the bar range. Nothing here consults the
+        trade's profit or loss, and nothing here changes a stop
       closes_when: >-
-        the recording shows the cluster half-width is present and non-degenerate at
-        placement on a stated run of placements, at which point the buffer becomes
-        that measured half-width per name and the flat percentage is DELETED. If the
-        half-width is routinely unavailable, the flat percentage stays and the
-        recording states how often it was too tight -- pierced without the level
-        breaking -- so the cost is at least a measured number instead of an
-        assumption
+        the counts show how often this path runs at all and how often the bar-range
+        denominator is present at placement. If the denominator is routinely there,
+        the flat percentage is replaced by a multiple of the name's own bar range
+        (owner ruling 2026-10-04, prepared on branch
+        ledger/atr-express-buffer-conversion: the multiple 0.263 reproduces today's
+        buffer on a typical name, derived from a 1.904% median daily range measured
+        over the 33-symbol recorded live universe) and the flat percentage is
+        DELETED. If the path effectively never runs, the number stops mattering and
+        the ledger says so instead of guessing
   - id: src.portfolio_constructor.config.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived

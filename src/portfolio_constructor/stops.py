@@ -42,6 +42,7 @@ from src.data.levels import (
     stop_rests_on_level,
     touch_probability,
 )
+from src.portfolio_constructor.no_atr_stop_record import noted
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision,
@@ -260,8 +261,8 @@ class StopRules:
         Returns (matched_level_or_None, stop_price, rule) or None when neither
         tier yields a usable level on the protective side of entry (a monotonic
         move, no structure, or zero bars -- the ruling's genuine skip case).
-        The buffer is `ConstructorConfig.structural_stop_buffer_pct` --
-        owner-appetite, ledgered with an open question, not doctrine.
+        The buffer is `ConstructorConfig.structural_stop_buffer_pct`, owner
+        appetite, ledgered with an open question; see `no_atr_stop_record`.
         """
         buffer_pct = self.cfg.structural_stop_buffer_pct
 
@@ -301,9 +302,8 @@ class StopRules:
                 continue
             touches = touches_by_price.get(price)
             if touches is None or touches < min_touches:
-                # Unverified or under-touched: fail closed, exactly as the
-                # tight-stop exemption does. It is not trusted enough to anchor
-                # the only protection this name will get.
+                # Unverified or under-touched: fail closed, as the tight-stop
+                # exemption does -- not trusted to anchor the only protection
                 continue
             gap = abs(entry_price - price)
             if gap < best_gap:
@@ -311,7 +311,7 @@ class StopRules:
         if best_level is not None:
             stop = _beyond(best_level)
             if _usable(stop):
-                return (best_level, stop, STOP_RULE_STRUCTURAL_NO_ATR)
+                return noted(best_level, stop, STOP_RULE_STRUCTURAL_NO_ATR, analysis)
 
         # ---- Tier 2: the signal (prior) bar's far edge -------------------
         bar_edge = getattr(
@@ -326,7 +326,7 @@ class StopRules:
         ):
             stop = _beyond(bar_edge)
             if _usable(stop):
-                return (bar_edge, stop, STOP_RULE_PRIOR_BAR_NO_ATR)
+                return noted(bar_edge, stop, STOP_RULE_PRIOR_BAR_NO_ATR, analysis)
 
         return None
 
