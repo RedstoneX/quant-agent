@@ -74,21 +74,11 @@ GOOGLE_DIRECT_PREFIX = "google-direct:"
 def parse_benchmark_model(model: str) -> tuple[str, str]:
     """(effective_model_id, provider) for a `--models` entry.
 
-    Strips `GOOGLE_DIRECT_PREFIX` when present and routes to "google";
-    otherwise unchanged and routed to "openrouter", exactly as before this
-    prefix existed.
+    Strips `GOOGLE_DIRECT_PREFIX` and routes to "google"; a BARE Google id (no "vendor/", so never an OpenRouter id) routes there too, filed under its bare id; else "openrouter".
     """
     if model.startswith(GOOGLE_DIRECT_PREFIX):
         return model[len(GOOGLE_DIRECT_PREFIX):], "google"
-    # A BARE Google id ("gemini-3.5-flash-lite") has no "vendor/" segment, so
-    # it cannot be an OpenRouter id at all — OpenRouter's are always
-    # "vendor/model". Routing it to OpenRouter could only ever 404 after
-    # opening a paid connection. Send it where it actually lives, Google
-    # direct, and let it file under its bare id — which is the id
-    # config/settings.yaml carries for a Google-direct seat and the one
-    # `test_decision_seats_run_a_model_measured_at_that_seat` looks up.
-    if "/" not in model and _is_google_model(model):
-        return model, "google"
+    if "/" not in model and _is_google_model(model): return model, "google"
     return model, "openrouter"
 
 BASELINE_MODEL = "openai/gpt-5.5"
