@@ -41,7 +41,13 @@ class AssetEligibilityReads:
             asset = self.client.get_asset(alpaca_symbol)
             record_guarded_pass(self, "account_reads.shortability", context={"symbol": canonical})
         except Exception as exc:
-            record_guarded_pass(self, "account_reads.shortability", exc, log=logger, context={**{"symbol": canonical}, "effect": "reported not shortable"})
+            record_guarded_pass(
+                self,
+                "account_reads.shortability",
+                exc,
+                log=logger,
+                context={**{"symbol": canonical}, "effect": "reported not shortable"}
+            )
             result = {
                 "shortable": False, "easy_to_borrow": False,
                 "reason": "asset_lookup_failed", "symbol": canonical,
@@ -99,7 +105,13 @@ class AssetEligibilityReads:
             asset = self.client.get_asset(alpaca_symbol)
             record_guarded_pass(self, "account_reads.fractionability", context={"symbol": canonical})
         except Exception as exc:  # noqa: BLE001
-            record_guarded_pass(self, "account_reads.fractionability", exc, log=logger, context={**{"symbol": canonical}, "effect": "sized in whole shares"})
+            record_guarded_pass(
+                self,
+                "account_reads.fractionability",
+                exc,
+                log=logger,
+                context={**{"symbol": canonical}, "effect": "sized in whole shares"}
+            )
             result = {
                 "fractionable": False, "reason": "asset_lookup_failed",
                 "symbol": canonical,
