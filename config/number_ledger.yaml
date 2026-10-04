@@ -34,7 +34,7 @@
 #   * it said the number was absent from any ratification record. It was
 #     ratified 2026-08-27, commit 75c02335.
 #   * it said the number existed in exactly one place, while this same file
-#     listed it twice -- and a third site (src/config/__init__.py:770) was invisible to
+#     listed it twice -- and a third site (src/config/__init__.py:215) was invisible to
 #     the scanner because its default was bound to a NAME.
 #
 # It also cited a comment at src/portfolio_constructor/config.py:480-488 as calling
@@ -430,7 +430,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py:483 (the derivation at the definition site: the quantity
+      src/config/llm.py:358 (the derivation at the definition site: the quantity
       is FLOORED, never rounded up, so the only exposure is under-spending the
       budget, and 4dp is under a tenth of a cent of notional at any price this
       desk trades) and docs/QAMC_REMEDIATION_SPEC.md:1457 (the
@@ -825,7 +825,7 @@ numbers:
       points of binding, and nothing records whether it ever has been.
     cost_while_unanswered: >-
       A concentrated sector book is capped at a number the spec never set
-      (src/config/__init__.py:1004 says 90 was chosen when section 12.3 was built and
+      (src/config/__init__.py:449 says 90 was chosen when section 12.3 was built and
       is open for the owner to move).
     settles_by:
       kind: recording
@@ -846,7 +846,7 @@ numbers:
     source: >-
       docs/QAMC_REMEDIATION_SPEC.md section 10.3, ratified: the hard sector
       ceiling is defined there as a multiple of the sector target. Definition
-      site: src/config/__init__.py:1000. The multiple is the spec's, not this file's.
+      site: src/config/__init__.py:445. The multiple is the spec's, not this file's.
   - id: src.config.RiskConfig.absolute_min_stop_atr_multiple
     settles_by:
       kind: measurement
@@ -866,10 +866,10 @@ numbers:
     note: >-
       The HARD FLOOR under every stop this desk sets. A level-backed stop is
       honoured however tight down to this many ATRs; inside it the stop is
-      pushed out to exactly this floor (src/config/__init__.py:840-848). It was hidden
+      pushed out to exactly this floor (src/config/__init__.py:285-293). It was hidden
       from the first version of this gate by a blanket 1.0 exclusion justified
       as "the identity, not a setting". It is not an identity.
-      src/config/__init__.py:842 says section 12.1's safety argument rests on the same
+      src/config/__init__.py:287 says section 12.1's safety argument rests on the same
       1xATR figure in config/prompts/tech_analyst.md - a PROMPT, which
       Invariant 2 says cannot be the final authority.
     open_question: >-
@@ -905,14 +905,14 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py:884 and src/data/levels.py:766-769. 1.0 means the
+      src/config/__init__.py:329 and src/data/levels.py:766-769. 1.0 means the
       projection IS the instrument's typical excursion over the stated horizon
       and nothing more, so the claim is read off the instrument rather than
       chosen. Note the documented interaction with min_stop_atr_multiple at
-      src/config/__init__.py:880-883.
+      src/config/__init__.py:325-328.
     note: >-
       The measured move claimed when no structural level stands in the way, in
-      sqrt(session)-scaled ATRs (src/config/__init__.py:879-884).
+      sqrt(session)-scaled ATRs (src/config/__init__.py:324-329).
   - id: src.agents.llm_retry._INSUFFICIENT_CREDIT_STATUS
     value: 402
     status: instrument
@@ -940,7 +940,7 @@ numbers:
       of the current market value of margin securities held long.
       https://www.finra.org/rules-guidance/rulebooks/finra-rules/4210 (fetched
       and confirmed 2026-09-18). Quoted at the definition site
-      src/config/__init__.py:952. Not a desk choice, and used only to report
+      src/config/__init__.py:397. Not a desk choice, and used only to report
       distance-to-forced-liquidation. CAVEAT recorded rather than asserted
       away: 25% is the REGULATORY FLOOR and brokers routinely enforce 30-40%,
       so a distance-to-liquidation computed from it is the most optimistic
@@ -957,7 +957,7 @@ numbers:
       and confirmed 2026-09-18; the Elite tier is 4.75%). Applied on the
       broker's own (debit x rate)/360 convention at src/margin_interest.py:1.
       The fee schedule says the rate MAY CHANGE OVER TIME, so this is a source
-      with an expiry. The definition site src/config/__init__.py:921 already labels
+      with an expiry. The definition site src/config/__init__.py:366 already labels
       every figure derived from it an ESTIMATE until the broker's own INT
       activity confirms paper accounts are charged at all.
   - id: src.config.RiskConfig.max_cluster_risk_share_pct
@@ -1025,7 +1025,7 @@ numbers:
       gross ceiling is `as much as the law allows`. That is the ABSENCE of a leverage decision, not
       a leverage decision, and the only thing standing between the book and the regulatory maximum
       is the de-levering ladder below (GROSS_LADDER), whose own rungs are owner appetite. The field
-      validator at src/config/__init__.py:942 permits up to 4.0, a value Regulation T would not let
+      validator at src/config/__init__.py:387 permits up to 4.0, a value Regulation T would not let
       the desk hold overnight at all. The old `measurement` route is retired with this change: a measurement
       of this account''s gap behaviour can only argue for a cap BELOW the regulatory maximum, which
       is an appetite question about the ladder, not a source for this number. PRIOR NOTE, kept verbatim:
@@ -1293,7 +1293,7 @@ numbers:
       stays at 5 because moving it would be inventing a number; the status no
       longer claims a measurement that stands.
     source: >-
-      In-repo measured study at src/config/__init__.py:722-740 (Phase 12.1, 2026-09-03,
+      In-repo measured study at src/config/__init__.py:167-185 (Phase 12.1, 2026-09-03,
       docs/RESEARCH_FINDINGS.md section 7): a real-vs-shuffled bounce-probability
       table over 101 symbols, 5 years of daily bars, separates with
       non-overlapping 95% confidence intervals only at 5+ touches -- real 0.644
@@ -1356,7 +1356,7 @@ numbers:
     base_value: 0.5
     note: >-
       The deployed floor. `min_position_risk_pct: float =
-      Field(default=STARTER_POSITION_RISK_PCT, ...)` at src/config/__init__.py:770 - a
+      Field(default=STARTER_POSITION_RISK_PCT, ...)` at src/config/__init__.py:215 - a
       default bound to a NAME, which the first version of this scanner could
       not see at all, so the LIVE 0.50% floor was invisible to the gate that
       was built around it. config/settings.yaml:685 sets the same 0.5.
@@ -1408,7 +1408,7 @@ numbers:
       risk-sizing GUARDRAIL (the floor an unbacked stop cannot be tighter
       than), owner-ratified appetite 2026-09-25 (delegated to the adversary) as
       a point WITHIN the published band. The definition site
-      (src/config/__init__.py:779-796) carries a real derivation - measured 2026-08-27
+      (src/config/__init__.py:224-241) carries a real derivation - measured 2026-08-27
       stop/ATR geometry, and a published 2.5-3.0x entry-stop consensus for
       swing holds; the 2-3x band IS sourced, and the effective floor already
       varies live within it because the setup and regime scalers multiply into
@@ -1579,7 +1579,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py:877 and src/data/levels.py:762-764. One ATR is the
+      src/config/__init__.py:322 and src/data/levels.py:762-764. One ATR is the
       instrument's own typical single-session range, so this is read off the
       instrument rather than chosen: the number says "one ordinary session's
       travel and nothing more".
@@ -1632,7 +1632,7 @@ numbers:
       Sizing-only haircut on a short's risk-per-share, never applied to stop
       placement: a short gaps through its stop upward with no bound, so the
       same risk allocation opens a SMALLER short than an equivalent long
-      (src/config/__init__.py:961-965). The direction is reasoned; the 1.5 magnitude is
+      (src/config/__init__.py:406-410). The direction is reasoned; the 1.5 magnitude is
       not measured against any gap distribution.
       ITEM 186 PASS 2026-09-26 — RESEARCHED. The DIRECTION survives and needs
       no citation: a short's loss above its stop is unbounded while a long's
@@ -1802,7 +1802,7 @@ numbers:
       is therefore the latest date the statute allows, which is exactly the
       CONSERVATIVE estimate wanted when a trade carries no filing date - never
       an earlier one that would overstate freshness. Definition site:
-      src/config/__init__.py:1379.
+      src/config/smart_money.py:85.
   - id: src.config.SmartMoneyConfig.congress_lookback_days
     value: 180
     status: arbitrary
@@ -2013,7 +2013,7 @@ numbers:
     site: src/config/__init__.py
     note: >-
       How long fetched insider-filing history is kept on disk, written as `5 *
-      366` at src/config/__init__.py:1347 - constant arithmetic, which the first
+      366` at src/config/smart_money.py:53 - constant arithmetic, which the first
       version of this scanner could not see. A retention window for a local
       cache: too short costs a re-fetch, and it never decides whether or how
       much to trade.
@@ -2297,7 +2297,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py:1410 -- the field is declared
+      src/config/smart_money.py:116 -- the field is declared
       `min_cluster_owners: int = Field(default=2, ge=2, le=10)`, so 2 is the
       smallest value the field may legally hold, and src/data/smart_money.py:464
       and src/data/congressional_trading.py:425 both clamp it again with
@@ -2499,7 +2499,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      Derivation at src/config/__init__.py:1299 (the comment above the field), from a
+      Derivation at src/config/research.py:45 (the comment above the field), from a
       read-only measurement against SEC on 2026-09-19 with the desk's own
       User-Agent and 8 req/s limiter: 82 watched issuers indexed in 11.0 s;
       5,431 unread Form 4s inside lookback_days on them; 0.156 s per filing
@@ -3357,7 +3357,7 @@ numbers:
       live run. `build_constructor_config` sets
       `max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct`
       (src/pipeline.py:363), and `sector_hard_ceiling_pct`
-      (src/config/__init__.py:1031-1037) returns
+      (src/config/__init__.py:476-482) returns
       `min(100.0, max(max_sector_pct, min(SECTOR_HARD_CEILING_MAX,
       max_sector_pct * SECTOR_HARD_MULTIPLE)))`. With the deployed
       `max_sector_pct` of 75 and `SECTOR_HARD_MULTIPLE` of 1.5 the inner
@@ -3509,7 +3509,7 @@ numbers:
       one decision; the open question belongs to the base entry and is answered there, not twice.
       PRIOR NOTE, kept verbatim: Every new trade plan sized under 0.50% of the account is DENIED OUTRIGHT
       rather than shrunk (src/portfolio_constructor/config.py:488). One of three sites holding the
-      same ratified number; the other two are src/risk/constants.py:144 and src/config/__init__.py:770.'
+      same ratified number; the other two are src/risk/constants.py:144 and src/config/__init__.py:215.'
     prior_source: 'Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335). docs/OUTCOME.md:84
       states it as "Min risk per trade | 0.5% - below this, do not trade", and config/settings.yaml:685
       carries the deployed key `risk.min_position_risk_pct: 0.5`. CORRECTION 2026-09-18: this ledger''s

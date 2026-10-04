@@ -796,8 +796,8 @@ def _scan_module(
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     module = rel[: -len(".py")].replace("/", ".")
-    if module.endswith(".__init__"):
-        module = module[: -len(".__init__")]  # the package IS the module
+    if module.endswith(".__init__") or (config_classes and module.startswith("src.config.")):
+        module = "src.config" if config_classes else module[: -len(".__init__")]  # the package IS the module; src/config/* sections are re-exported by it
     sites: list[NumberSite] = []
 
     local = _module_constants(tree)
