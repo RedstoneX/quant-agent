@@ -353,12 +353,24 @@ def test_the_risk_seat_can_see_whether_the_macro_audit_happened() -> None:
 # symbol is not in the registry". The deterministic refusal is untouched by
 # this: `PortfolioConstructor` re-derives `signed_source_score` from the
 # registry object, never from the text rendered here.
+# Re-MEASURED 2026-10-04 on the same recorded briefing: every one of the 38
+# all-zero rows carries the identical "macro stance broadcast" boilerplate,
+# so dropping only caveat-free rows would have dropped NOTHING. An all-zero
+# row goes whatever caveat it carries; what the caveats conveyed is carried
+# by the breakdown on the single summary line.
 _EMPTY_ROW_REGISTRY = {
     "AAA": {"technical": "buy", "news": "bearish"},
     "BBB": {"news": "neutral"},
     "CCC": {"technical": "neutral", "news": "mixed"},
     "DDD": {"smart_money": "bullish"},
+    "EEE": {"macro": "neutral"},
+    "FFF": {"earnings": "buy"},
 }
+# EEE's only stance is a broadcast macro one with no direction, FFF's only
+# stance is stale. A broadcast DIRECTIONAL stance still counts AGAINST the
+# opposite side, so such a row is not all-zero and is never dropped.
+_EMPTY_ROW_BROADCAST = {"EEE": {"macro"}}
+_EMPTY_ROW_STALE = {"FFF": {"earnings"}}
 _INFORMATIVE_ROWS = (
     "- AAA: 1 aligned / 1 opposed = net +0 if long, "
     "1 aligned / 1 opposed = net +0 if short "
@@ -369,10 +381,18 @@ _INFORMATIVE_ROWS = (
 )
 
 
-def _render_with_registry(monkeypatch, registry) -> str:
+def _render_with_registry(monkeypatch, registry, *, broadcast=None, stale=None) -> str:
     monkeypatch.setattr(
         PortfolioManagerAgent, "build_evidence_registry",
         lambda self, **kwargs: dict(registry),
+    )
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "broadcast_macro_sources",
+        lambda self, **kwargs: dict(broadcast or {}),
+    )
+    monkeypatch.setattr(
+        PortfolioManagerAgent, "stale_evidence_sources",
+        lambda self, **kwargs: dict(stale or {}),
     )
     sel = _LEVEL_LESS.raw
     account = sel["account"]
@@ -410,19 +430,27 @@ def test_rows_with_no_source_on_either_side_are_omitted_and_counted(monkeypatch)
     """Both informative rows survive byte-for-byte, both all-zero rows are
     gone, and one line states how many were omitted and why."""
     agreement = _section(
-        _render_with_registry(monkeypatch, _EMPTY_ROW_REGISTRY),
+        _render_with_registry(
+            monkeypatch, _EMPTY_ROW_REGISTRY,
+            broadcast=_EMPTY_ROW_BROADCAST, stale=_EMPTY_ROW_STALE,
+        ),
         "Independent Source Agreement",
     )
     for row in _INFORMATIVE_ROWS:
         assert row in agreement
-    assert "- BBB:" not in agreement
-    assert "- CCC:" not in agreement
+    for dropped in ("BBB", "CCC", "EEE", "FFF"):
+        assert f"- {dropped}:" not in agreement
     assert "0 aligned / 0 opposed" not in agreement
+    # A caveat-bearing all-zero row goes too, and its caveat survives as a
+    # count. This is the whole fix: filtering on "no caveat" dropped 0 rows.
+    assert "stance broadcast — one-sided" not in agreement
     assert (
-        "- (2 further symbol(s) are present in the registry above but have "
+        "- (4 further symbol(s) are present in the registry above but have "
         "no aligned and no opposed source on either side — net +0 long and "
         "net +0 short — so their rows are omitted here; omitted does NOT "
-        "mean absent.)"
+        "mean absent. 1 of them have only a one-sided broadcast macro "
+        "stance, which cannot count FOR a trade — see the note below. "
+        "1 of them have only a stale stance, counted neither way.)"
     ) in agreement
 
 
