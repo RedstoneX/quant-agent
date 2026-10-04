@@ -4262,15 +4262,20 @@ numbers:
       The two-consecutive-day close filter for a level break in Edwards & Magee,
       Technical Analysis of Stock Trends: a level breaks on a decisive close and
       is confirmed on the NEXT day's close, with a reclaim in between resetting
-      (a Wyckoff spring). Definition and regime use: src/risk/exit_guard.py@`BREAK_CONFIRMATION_ATR_MULTIPLE = 1.0`
+      (a Wyckoff spring). Definition: src/risk/exit_guard.py@`TREND_CONFIRMING_CLOSES = 2`
       and the module note at src/risk/exit_guard.py::TREND_CONFIRMING_CLOSES.
     note: >-
       Consecutive confirmed closes required to treat ANY break as real, in BOTH
       regimes, under the owner mandate 2026-09-24 trend-scaled exit — the
       ratified two-close spring floor, nothing exits faster. The strong-with-
       trend regime adds a STRUCTURAL condition (the prior swing-low must also
-      break) on top, never a larger close count. The break MARGIN is always
-      NOISE_BAND_ATR_MULTIPLE.
+      break) on top, never a larger close count. This row governs the CLOSE COUNT
+      only. The break MARGIN is a separate quantity and is always
+      BREAK_CONFIRMATION_ATR_MULTIPLE, which the 2026-09-26 split (board item
+      70) made a distinct constant from NOISE_BAND_ATR_MULTIPLE; the two share
+      a value of 1.0 but not a source, and may not be re-collapsed. This note
+      said NOISE_BAND_ATR_MULTIPLE until 2026-10-04 — it predated the split
+      and contradicted src/risk/exit_guard.py::check_structural_protection.
   - id: src.risk.exit_guard.ADX_STRONG_TREND_THRESHOLD
     value: 25
     status: sourced
