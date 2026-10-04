@@ -4,7 +4,41 @@ Owner mandate, 2026-10-02: "Yes, rip it all out. Rip all out the stored
 bookkeeping. And rebuild it properly so it's not a ticking time bomb." This is
 the specification. Nothing else is started until it is built and proven.
 
-## Why, measured
+## Status, re-measured 2026-10-04 on `origin/main`
+
+The mandate is built for every guard this document names; sections below are
+kept as history and marked DONE where they describe a stored file that is gone.
+
+- Stored baselines: none. No baseline, snapshot or known-offender file exists
+  under `scripts/` or `tests/`; the only JSON/TXT there are test fixtures.
+- Computed at check time against the trunk: 15 comparison guards
+  (`file_size_guard`, `import_graph`, `pipeline_new_guard`, `pipeline_method_guard`,
+  `silent_swallow_guard`, `local_day_guard`, `replay_outbound_guard`,
+  `unscoped_number_guard`, `board_rot_guard`, `board_item_guard`,
+  `settlement_fill_guard`, `statement_cram_guard`, `guard_weakening_gate`, the
+  boundary harness, the patch-target audit) each reference `guard_reference` or
+  `origin/main` [measured: grep for `guard_reference|trunk_rev|origin/main` in each file].
+- Absolute-rule checks with no trunk comparison and no stored list: `disk_guard`,
+  `test_undefined_name_guard`, `test_holding_discipline_guard`,
+  `test_stop_read_unknown`, `test_money_path_guards_are_loud`.
+- AMBIGUOUS: `tests/test_one_definition_guard.py` keeps a registry of
+  owner/allow pairs in code, with no trunk comparison. It reads as reviewed policy
+  (each entry carries a reason), not a cached measurement, but it is a stored list.
+  Sized follow-up: decide policy vs measurement; not changed here.
+- Not stored by design: `config/number_ledger.yaml` (content, see below).
+- Source-reading tests, re-counted 2026-10-04: 119 of 480 test files by a broad
+  text heuristic (AST/getsource use, or file reads combined with a source-path or
+  git-listing pattern), 44 by a strict one (AST/getsource AND a repo path)
+  [measured: grep over `git archive origin/main tests`, top-level `test_*.py`].
+  The count cannot cleanly separate reading source from running code: the broad
+  figure errs HIGH (fixture reads, patch-target strings containing `src/`), and
+  both miss tests that call a guard script which does the scanning. The 154-of-384
+  figure below used a different method on a smaller tree and is not comparable.
+- Acceptance 1-4: the size ratchet's own tests exist; the other guards were not
+  each re-proven against all four criteria in this pass, so that is unverified
+  here rather than assumed.
+
+## Why, measured (2026-10-02, original table, kept as history)
 
 A read-only sweep of all 19 then-open changes, 2026-10-02:
 
@@ -15,10 +49,10 @@ A read-only sweep of all 19 then-open changes, 2026-10-02:
 | That day's commits touching the one shared 293-entry baseline | 48% |
 | Test files reading source TEXT/AST/paths rather than running code | 154 of 384 (40%) |
 
-`test_baseline_is_tight` makes leftover headroom a FAILURE, so headroom is
-illegal by construction. Adding one line anywhere in the tree therefore forces
+(Historical, 2026-10-02; the baseline file and the test no longer exist.) `test_baseline_is_tight` made leftover headroom a FAILURE, so headroom was
+illegal by construction. Adding one line anywhere in the tree therefore forced
 an edit to a single shared file that every other open change is also editing.
-That is not bad luck; it is arithmetic, and it is why changes jam all day.
+That was not bad luck; it was arithmetic, and it is why changes jammed all day.
 
 Branch staleness was investigated and is NOT causal: merging main into a red
 change did not make it green.
@@ -141,7 +175,7 @@ applies to a trunk that WAS read; it never stands in for one that could not be.
 
 1. **Two unrelated changes at the same time never collide.** Branch twice off
    main, add a line to a different file in each, and merge both. This must
-   succeed with no conflict. Today it cannot, because both edit the baseline.
+   succeed with no conflict. (2026-10-02: it could not, because both edited the baseline.)
    This is the test the owner was promised.
 2. **Each converted guard still catches what it caught.** Before deleting a
    baseline, record what its guard currently flags; after conversion, the same
@@ -152,7 +186,7 @@ applies to a trunk that WAS read; it never stands in for one that could not be.
 4. **No tracked file sits at exactly its cap afterwards, because no cap is
    recorded.** The 291-of-292 number should become meaningless.
 
-## Order
+## Order (DONE for the size ratchet; the rest followed, see Status)
 
 Convert ONE guard end to end first — the size ratchet, which causes most of the
 pain — and prove all four acceptance criteria on it before touching the others.
