@@ -20,7 +20,7 @@ import time
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import StopLimitOrderRequest, StopOrderRequest
 
-from src.execution.broker_parts.stop_shift import ShiftStopsMixin
+from src.execution.broker_parts.stop_shift import shift_stops_down as _shift_stops_down_via_part
 from src.execution.broker_parts.stop_window import UnprotectedWindow, fallback_reason
 from src.execution.broker_parts.stop_amend import (
     _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
@@ -168,8 +168,7 @@ def real_broker_order_id(value: object) -> str:
     return text
 
 
-
-class StopPlacer(ShiftStopsMixin):
+class StopPlacer:
     """Place, submit, restore and replace protective stops. Every collaborator is explicit.
 
     The six cluster-internal collaborators default to this object's own bodies;
@@ -227,6 +226,7 @@ class StopPlacer(ShiftStopsMixin):
             self._submit_stop_legs = submit_stop_legs
         if restore_stop_orders is not None:
             self._restore_stop_orders = restore_stop_orders
+    shift_stops_down = _shift_stops_down_via_part  # body: stop_shifter.StopShifter
 
     def _existing_stop_covering_qty(
         self, symbol: str, *, qty: float, side: str, stop_price: float,

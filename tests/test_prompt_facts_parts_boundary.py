@@ -6,6 +6,7 @@ built from stubs alone (clause 5 of tests/boundary_harness.py).
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -101,3 +102,67 @@ def test_grading_part_is_handed_post_exit_reality_not_owning_it():
     assert not hasattr(ReviewGrading, "_build_post_exit_reality") and hasattr(ReviewExits, "_build_post_exit_reality")
     part = _build(ReviewGrading, build_post_exit_reality=lambda *a, **k: "HANDED IN")
     assert part._build_post_exit_reality() == "HANDED IN"
+
+
+
+# --- The parent prompt-facts parts (src/prompt_facts/*.py): built and run with no pipeline behind them.
+
+from src.prompt_facts.decisions import PromptDecisions  # noqa: E402
+from src.pipeline_prompt_facts import PromptExposure  # noqa: E402
+from src.prompt_facts.heat import PromptHeat  # noqa: E402
+from src.pipeline_prompt_facts import PromptHistory  # noqa: E402
+from src.prompt_facts.pm_facts import PromptPMFacts  # noqa: E402
+from src.pipeline_prompt_facts import PromptPositionFacts  # noqa: E402
+from src.prompt_facts.projected import PromptProjected  # noqa: E402
+from src.prompt_facts.watchlist import PromptWatchlist  # noqa: E402
+
+FACT_PARTS = [PromptHistory, PromptDecisions, PromptProjected, PromptWatchlist, PromptExposure, PromptHeat, PromptPMFacts, PromptPositionFacts]
+FACT_MODULES = [f"src.prompt_facts.{m}" for m in ("decisions", "projected", "watchlist", "heat", "pm_facts")]
+
+
+@pytest.mark.parametrize("cls", FACT_PARTS)
+def test_every_fact_part_is_constructible_from_stubs(cls):
+    _build(cls)
+    params = inspect.signature(cls).parameters
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+
+
+@pytest.mark.parametrize("module", FACT_MODULES)
+def test_every_fact_module_passes_the_boundary_check(module):
+    verdict = check_boundary(module)
+    assert verdict.passed, verdict.failures
+
+
+def test_heat_part_is_handed_the_stop_map_not_owning_it():
+    """Portfolio heat reads the stop map through the host's shim; the heat part never defines it, and the sweeper is read per use."""
+    assert not hasattr(PromptHeat, "_build_stop_map") and hasattr(PromptExposure, "_build_stop_map")
+    reads = []
+    part = _build(PromptHeat, sweeper=lambda: reads.append("sweeper") or None,
+                  build_stop_map=lambda positions: reads.append("stop_map") or ({}, {}, set()))
+    part._build_portfolio_heat([MagicMock(name="pos", symbol="AAA")], 100_000.0)
+    assert reads[:2] == ["sweeper", "stop_map"]
+
+
+def test_pm_facts_part_is_handed_heat_and_history_not_owning_them():
+    assert not hasattr(PromptPMFacts, "_build_portfolio_heat") and not hasattr(PromptPMFacts, "_build_position_history")
+    part = _build(PromptPMFacts, build_portfolio_heat=lambda *a, **k: "HEAT", build_position_history=lambda *a, **k: {})
+    assert part._build_portfolio_heat() == "HEAT" and part._build_position_history() == {}
+    assert "config" in inspect.signature(PromptPMFacts).parameters, "the body reads getattr(self, 'config') by string; it must be handed in"
+
+
+def test_projected_part_reads_and_writes_the_sector_cache_through_its_owner():
+    """The sector cache belongs to the host: a bare part has none (so the body's getattr default applies), and a write lands on the owner."""
+    assert not hasattr(PromptProjected(), "_last_symbol_sectors")
+    owner = SimpleNamespace(_last_symbol_sectors={"AAA": "Tech"})
+    part = _build(PromptProjected, sector_cache_owner=owner)
+    assert part._last_symbol_sectors == {"AAA": "Tech"}
+    part._last_symbol_sectors = {"BBB": "Energy"}
+    assert owner._last_symbol_sectors == {"BBB": "Energy"}
+
+
+def test_decisions_part_runs_against_a_stub_db():
+    """Exercised, not just built: a db that returns nothing yields a string and reads only the db."""
+    db = MagicMock(name="db")
+    part = _build(PromptDecisions, db=db)
+    assert isinstance(part._build_rm_recent_verdicts(), str)
+    assert db.method_calls, "the body never read the db collaborator"

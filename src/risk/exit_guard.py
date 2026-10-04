@@ -43,6 +43,9 @@ from datetime import date
 from collections.abc import Mapping
 from typing import Literal
 from src.risk.noise_band_record import fallback_outcome as noise_band_fallback_outcome
+from src.risk.noise_band_anchor import (  # noqa: F401 -- noise_band_anchor re-exported
+    anchored_adverse_move, band_width_atr, noise_band_anchor,
+)
 from src.risk.exit_guard_claims import (  # noqa: F401 -- re-exported, lifted verbatim
     _REGIME_FLIP_CLAIM_RE,
     _BEARISH_STATE_CHANGE_CLAIM_RE,
@@ -68,6 +71,7 @@ __all__ = [
     "EXTERNAL_INFORMATION_PATTERNS",
     "cites_external_information",
     "adverse_move_is_noise",
+    "noise_band_anchor",
     "noise_band_atr",
     "NOISE_BAND_ATR_MULTIPLE",
     "BREAK_CONFIRMATION_ATR_MULTIPLE",
@@ -883,35 +887,9 @@ def cites_external_information(reason: str) -> bool:
 
 
 def noise_band_atr(days_held: int | float | None, *, multiple: float = NOISE_BAND_ATR_MULTIPLE) -> float:
-    """The noise-band width, in ATRs, for a position held `days_held` sessions.
-
-    `ATR * sqrt(sessions)` — the exact scaling convention already used by
-    `src/data/levels.py::derive_structural_target` for target projection
-    (`travel = volatility * math.sqrt(horizon)`), on the same random-walk
-    basis: expected price dispersion from a fixed starting point (here,
-    entry) grows with the square root of elapsed time, not linearly.
-
-    Despite the parameter name (kept for call-site compatibility), this
-    MUST be a TRADING-SESSION count, not a calendar-day count — see
-    `AlpacaBroker.trading_sessions_held` (item 165, holiday-aware) for the
-    counter `pipeline.py` feeds in. A 2026-09-04 audit follow-up caught this
-    function being fed raw calendar days, which silently over-widened the
-    band by sqrt(3) instead of sqrt(1) across a Friday-to-Monday hold (3
-    calendar days, 1 real trading session) — the opposite of this fix's own
-    intent.
-
-    `days_held` is floored at 1 session — None, non-finite, zero, or negative
-    all collapse to 1 — so a brand-new position gets exactly the old flat
-    `multiple` behaviour (sqrt(1) == 1) and only positions held longer than
-    one session see a wider band.
-    """
-    try:
-        days = float(days_held) if days_held is not None else 1.0
-    except (TypeError, ValueError):
-        days = 1.0
-    if not math.isfinite(days) or days < 1.0:
-        days = 1.0
-    return multiple * math.sqrt(days)
+    """The noise-band width, in ATRs, for `days_held` sessions (a TRADING-SESSION
+    count, floored at 1). Rule and rationale: `noise_band_anchor.band_width_atr`."""
+    return band_width_atr(days_held, multiple=multiple)
 
 
 def adverse_move_is_noise(
@@ -922,9 +900,15 @@ def adverse_move_is_noise(
     multiple: float = NOISE_BAND_ATR_MULTIPLE,
     side: str = "sell",
     days_held: int | float | None = None,
+    extreme_since_entry: float | None = None,
 ) -> bool:
-    """True when the position has moved ADVERSELY from entry by less than
-    the noise band for how long it has been held.
+    """True when the position has moved ADVERSELY from its anchor by less
+    than the noise band for how long it has been held.
+
+    ANCHOR: ENTRY by default; a caller that can read the running extreme
+    since entry may pass `extreme_since_entry` (rule and the per-home
+    measurement: `noise_band_anchor`). `None` is the entry-anchored
+    behaviour bit for bit.
 
     The band is `multiple * ATR * sqrt(days_held)` (floor 1 session) — see
     `noise_band_atr`. Passing no `days_held` (the old call shape) reproduces
@@ -949,7 +933,9 @@ def adverse_move_is_noise(
     atr_f = _finite(atr) if atr is not None else None
     if ent is None or cur is None or atr_f is None or atr_f <= 0 or ent <= 0:
         return False
-    adverse = (cur - ent) if str(side).lower() == "buy" else (ent - cur)
+    adverse = anchored_adverse_move(
+        ent, cur, extreme_since_entry, is_short=str(side).lower() == "buy",
+    )[1]
     if adverse <= 0:
         return False   # flat or winning — not this guard's business
     return adverse < noise_band_atr(days_held, multiple=multiple) * atr_f
@@ -1642,6 +1628,7 @@ def check_structural_protection(
     prior_break_streak: int | None = None,
     prior_break_records: list | None = None,
     prior_session_dates: list | None = None,
+    extreme_since_entry: float | None = None,
 ) -> StructuralProtectionCheck:
     """Decide whether a position's thesis-backing level is still intact.
 
@@ -2021,7 +2008,11 @@ def check_structural_protection(
     # applies only to the thesis/level basis.
     cur = _finite(current_price)
     if ent is not None and atr_f is not None and atr_f > 0 and cur is not None:
-        adverse = (cur - ent) if is_short else (ent - cur)
+        # Re-anchored on the running extreme since entry; why this home may
+        # (and the midday reviewer may not): `noise_band_anchor` docstring.
+        _anchor, adverse = anchored_adverse_move(
+            ent, cur, extreme_since_entry, is_short=is_short)
+        _anchor_kind = "extreme_since_entry" if _anchor != ent else "entry"
         if adverse <= 0:
             # Flat or in profit — never this fallback's business.
             return StructuralProtectionCheck(
@@ -2029,13 +2020,15 @@ def check_structural_protection(
                 detail=(
                     "no thesis_invalid_if and no verified structural level "
                     "under the stop, but price is flat/favourable versus "
-                    "entry — protected; the noise band was NOT evaluated "
+                    "its running extreme since entry — protected; the "
+                    "noise band was NOT evaluated "
                     "(there is no adverse move to compare against it)"
                 ),
                 raw_broken=False,
             )
         is_noise = adverse_move_is_noise(
             ent, cur, atr_f, side=("buy" if is_short else "sell"),
+            extreme_since_entry=extreme_since_entry,
         )
         # BOARD ITEM 70 (2026-10-04): this home's outcome text, on BOTH
         # outcomes, is built by `src/risk/noise_band_record.py` so the band's
@@ -2044,6 +2037,7 @@ def check_structural_protection(
         _protected, _basis, _detail = noise_band_fallback_outcome(
             ent=ent, cur=cur, atr_f=atr_f, is_short=is_short,
             is_noise=bool(is_noise), band_multiple=NOISE_BAND_ATR_MULTIPLE,
+            anchor=_anchor, anchor_kind=_anchor_kind,
         )
         return StructuralProtectionCheck(
             protected=_protected, basis=_basis, detail=_detail,

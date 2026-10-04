@@ -18131,3 +18131,12 @@ Root disk was 89% full; a daily sweep (`~/.claude/disk-sweep.sh`, outside the re
 
 **Still open, and tracked separately under the same number.** Resolution and substantiation are different questions, and correctness is a third: whether the rewritten citations point at the RIGHT place remains open on the board as item 232, with a first measurement of 12 hand-checked citations finding 6 right, 5 wrong and 1 undecidable.
 
+## The decision seats' last-resort route was an unmeasured small free model (item 188, 2026-10-04)
+
+**What was wrong.** When a decision seat's first two model routes failed, the desk quietly fell back to a small free model that nobody had ever tested at those seats, so a weak answer could drive a real trade decision.
+
+**What changed.** A seat whose last route is that substitute now refuses to answer instead of using it, and records a counted `seat_refused` row. Routes one and two are still tried in full, and the eight specialist seats are untouched. On a refusal the session takes no decision from that seat, exactly as when every route fails. Separately, no seat may have all its reachable routes on one provider, enforced against `config/settings.yaml`, and each decision seat now stores why its answer failed its own acceptance gate.
+
+**Proof.** `src/agents/llm_route3_policy.py` with `tests/test_seat_refuses_unmeasured_route.py`.
+
+**Still open.** The substitute was never measured, because the trade seat's model choice is closed on 148 trials and benchmarking it would reopen that ruling. The production rows for the acceptance recording were still empty when this was closed, and nothing reads `llm_route_events` back yet.

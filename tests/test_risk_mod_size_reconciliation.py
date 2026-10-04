@@ -244,28 +244,24 @@ def test_reconcile_helper_preserves_risk_fraction_exactly():
 
 
 def test_short_through_real_constructor_reconciles_within_budget():
-    """Drive a SHORT through the REAL constructor so `short_gap_risk_multiple`
-    is actually baked into the shipped `allocation_pct`, then widen its stop via
+    """Drive a SHORT through the REAL constructor, then widen its stop via
     the risk seat. The reconciliation must keep realized-at-stop dollar risk
-    within both the pre-edit budget and the 5% ceiling — pinning the "the
-    haircut cancels in the ratio" claim, so a future change that makes the
-    haircut stop-distance-dependent breaks THIS test rather than silently
-    breaking the budget math."""
+    within both the pre-edit budget and the 5% ceiling. Since owner ruling
+    2026-10-04 there is no short-side haircut to cancel in the ratio: the
+    short runs the long's arithmetic, and this test pins that the budget
+    math still holds under a stop widen."""
     from src.models import TargetPosition, TechAnalysisResult, TechReasoningChain
     from src.portfolio_constructor import PortfolioConstructor
 
     equity = 100_000.0
     constructor = PortfolioConstructor()
     budget_pct = constructor.cfg.risk_budget_pct   # 5.0
-    # The haircut is real. Read it from the ONE definition site (board item
-    # 216, 2026-10-01): `ConstructorConfig.short_gap_risk_multiple` no longer
-    # carries its own copy of the number — None there means "the deployed
-    # default", which `gap_adjusted_risk_per_share` resolves. The assertion is
-    # unchanged in substance: a short is sized smaller than an equal-risk long.
-    from src.risk.constants import gap_adjusted_risk_per_share
-    assert gap_adjusted_risk_per_share(
-        1.0, is_short=True, multiple=constructor.cfg.short_gap_risk_multiple,
-    ) > 1.0
+    # There is NO haircut any more (owner ruling 2026-10-04). Assert the
+    # plumbing is gone rather than that a short is sized smaller: that
+    # former assertion is exactly what the ruling reversed.
+    import src.risk.constants as _rc
+    assert not hasattr(_rc, "gap_adjusted_risk_per_share")
+    assert not hasattr(constructor.cfg, "short_gap_risk_multiple")
 
     rc = TechReasoningChain(trend="x", momentum="x", volatility="x",
                             volume="x", support_resistance="x")

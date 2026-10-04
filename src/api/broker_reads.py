@@ -32,6 +32,7 @@ from src.api.deps import (
     get_cash_sweep_symbol,
     get_risk_limits,
 )
+from src.api.broker_reads_record import record_read_fault
 from src.data.live_price import resolve_live_price
 from src.execution.broker import AlpacaBroker, _internal_symbol
 from src.trading_calendar import live_price_is_today
@@ -179,7 +180,7 @@ def read_account() -> dict:
             "error": None,
         }
     except Exception as exc:
-        logger.warning("broker_reads.read_account failed: %s", exc)
+        record_read_fault("read_account", exc)
         return {
             "cash": None,
             "portfolio_value": None,
@@ -203,7 +204,7 @@ def read_positions() -> dict:
             # is_cash_equivalent labeling, never the whole positions read —
             # same "one subsystem's failure never masks the rest" posture
             # as every other broker_reads function.
-            logger.warning("broker_reads.read_positions: could not read cash_sweep symbol: %s", exc)
+            record_read_fault("read_positions.cash_sweep", exc)
             sweep_symbol = None
         retrieved_at = _utc_now().isoformat()
         out = []
@@ -237,7 +238,7 @@ def read_positions() -> dict:
             })
         return {"positions": out, "error": None}
     except Exception as exc:
-        logger.warning("broker_reads.read_positions failed: %s", exc)
+        record_read_fault("read_positions", exc)
         return {"positions": [], "error": str(exc)}
 
 
@@ -297,7 +298,7 @@ def read_margin_interest(cash: float | None) -> dict:
     try:
         rate_pct = get_risk_limits().margin_interest_rate_pct
     except Exception as exc:
-        logger.warning("broker_reads.read_margin_interest: config read failed: %s", exc)
+        record_read_fault("margin.config", exc)
         return {**empty, "error": str(exc)}
 
     try:
@@ -316,14 +317,11 @@ def read_margin_interest(cash: float | None) -> dict:
                 _get_broker().is_trading_day, et_today(),
             )
         except Exception as exc:
-            logger.warning(
-                "broker_reads.read_margin_interest: calendar lookahead failed, "
-                "assuming 1 day charged: %s", exc,
-            )
+            record_read_fault("margin.calendar", exc)
             days_charged = 1
         estimate = build_estimate(debit_balance, rate_pct, days_charged)
     except Exception as exc:
-        logger.warning("broker_reads.read_margin_interest: estimate failed: %s", exc)
+        record_read_fault("margin.estimate", exc)
         return {**empty, "error": str(exc)}
 
     if estimate is None:
@@ -371,7 +369,7 @@ def read_margin_interest(cash: float | None) -> dict:
     except Exception as exc:
         # The INT-activity check is a nicety layered on top of the
         # ESTIMATE — its failure must never hide the estimate itself.
-        logger.warning("broker_reads.read_margin_interest: INT-activity check failed: %s", exc)
+        record_read_fault("margin.int_check", exc)
 
     return {
         "debit_balance": estimate.debit_balance,
@@ -421,7 +419,7 @@ def _compute_cumulative() -> dict | None:
             "source": result.source,
         }
     except Exception as exc:
-        logger.warning("broker_reads._compute_cumulative failed: %s", exc)
+        record_read_fault("compute_cumulative", exc)
         return None
 
 
@@ -539,11 +537,11 @@ def read_orders(status: str = "open", limit: int = 50) -> dict:
             try:
                 out.append(_order_to_dict(o))
             except Exception as exc:
-                logger.warning("broker_reads.read_orders: skipping malformed order row: %s", exc)
+                record_read_fault("read_orders.row", exc)
                 continue
         return {"orders": out, "error": None}
     except Exception as exc:
-        logger.warning("broker_reads.read_orders failed: %s", exc)
+        record_read_fault("read_orders", exc)
         return {"orders": [], "error": str(exc)}
 
 
@@ -605,10 +603,7 @@ def read_price_bars(
             })
         return {"bars": out, "error": None}
     except Exception as exc:
-        logger.warning(
-            "broker_reads.read_price_bars failed for %s/%s: %s",
-            symbol, timeframe, exc,
-        )
+        record_read_fault("read_price_bars", exc, symbol=symbol, timeframe=timeframe)
         return {"bars": [], "error": str(exc)}
 
 
@@ -654,7 +649,7 @@ def read_live_quotes(symbols: list[str]) -> dict:
         try:
             session_open = broker.get_session_open()
         except Exception as exc:
-            logger.warning("broker_reads.read_live_quotes: session_open lookup failed: %s", exc)
+            record_read_fault("live_quotes.session_open", exc)
             session_open = None
         quotes = {}
         any_data = False
@@ -709,7 +704,7 @@ def read_live_quotes(symbols: list[str]) -> dict:
         error = None if any_data or not symbols else "no quote data returned for any requested symbol"
         return {"quotes": quotes, "error": error}
     except Exception as exc:
-        logger.warning("broker_reads.read_live_quotes failed for %d symbol(s): %s", len(symbols), exc)
+        record_read_fault("live_quotes", exc, symbols=len(symbols))
         return {"quotes": {sym: {} for sym in symbols}, "error": str(exc)}
 
 
@@ -724,7 +719,7 @@ def check_broker_reachable() -> bool | None:
     try:
         key, secret = get_alpaca_credentials()
     except Exception as exc:
-        logger.warning("broker_reads.check_broker_reachable: could not read credentials: %s", exc)
+        record_read_fault("reachable.credentials", exc)
         return None
     if not key or not secret:
         return None
@@ -733,5 +728,5 @@ def check_broker_reachable() -> bool | None:
         broker.get_account()
         return True
     except Exception as exc:
-        logger.warning("broker_reads.check_broker_reachable: get_account failed: %s", exc)
+        record_read_fault("reachable.account", exc)
         return False
