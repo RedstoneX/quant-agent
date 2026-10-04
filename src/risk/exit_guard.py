@@ -73,6 +73,7 @@ __all__ = [
     "adverse_move_is_noise",
     "noise_band_anchor",
     "noise_band_atr",
+    "FALLBACK_PROTECTION_ATR_MULTIPLE",
     "NOISE_BAND_ATR_MULTIPLE",
     "BREAK_CONFIRMATION_ATR_MULTIPLE",
     "ThesisInvalidationCheck",
@@ -494,6 +495,50 @@ def veto_contradicted_exit(
 #: day-zero/day-one behaviour is UNCHANGED — only positions held longer than
 #: one session get a wider band than before.
 NOISE_BAND_ATR_MULTIPLE = 1.0
+
+#: BOARD ITEM 70, THE SECOND SPLIT (2026-10-04). The constant above was
+#: still doing TWO jobs, which the settlement recording added earlier the
+#: same day made visible for the first time: the two homes of the "noise
+#: band" do not compute the same quantity, and sharing one name hid that.
+#:
+#:   HOME 1, the midday gate in `src/pipeline_exits.py`, in front of every
+#:   non-external SELL/REDUCE/COVER: band = NOISE_BAND_ATR_MULTIPLE * ATR *
+#:   sqrt(trading sessions held), anchored on AVERAGE ENTRY. It asks how far
+#:   a holding must travel against the price the desk PAID before the move
+#:   stops being ordinary dispersion, and it grows with elapsed trading time
+#:   on the random-walk basis documented above.
+#:
+#:   HOME 2, the `check_structural_protection` fallback below, reached only
+#:   when a holding has neither a checkable `thesis_invalid_if` nor a
+#:   qualifying structural level under its stop: band = this constant * ATR,
+#:   FLAT, with no hold length passed at all, anchored on the RUNNING
+#:   EXTREME SINCE ENTRY rather than on entry. It asks a different question
+#:   -- how far a holding the structure test cannot read must move against
+#:   its own high-water mark before last-resort protection is lifted.
+#:
+#: Two anchors, one time-scaled and one not, so for the SAME holding on the
+#: SAME day the one named constant yielded two different widths. That is the
+#: defect board item 70 exists to end, and the fix is the same one applied to
+#: the break margin on 2026-09-26: give each job its own name at the SAME
+#: value, so nothing the desk does changes, and so that deriving one can
+#: never silently move the other.
+#:
+#: UNDERIVED, and this split does not pretend otherwise. `status: arbitrary`
+#: in `config/number_ledger.yaml`. Nothing published measures the distance a
+#: holding with no readable structure must fall below its own extreme before
+#: protection should lift; the volatility-stop literature (~3 ATR, Wilder /
+#: Chandelier / Kaufman) measures a STOP's distance from a running extreme,
+#: which is the nearest analogue but is a stop width, not a
+#: protection-lifting threshold, and adopting it would be a large loosening
+#: of when this desk gives up on a position. The settlement recording this
+#: home now emits (`src/risk/noise_band_record.py`) is what would locate it;
+#: it has accrued nothing, because the desk is off.
+#:
+#: DELIBERATELY EQUAL TO `NOISE_BAND_ATR_MULTIPLE` TODAY. Equal value, not
+#: shared value: the two names may diverge the moment either is derived, and
+#: neither was retuned in this pass. See the no-behaviour-change proof in
+#: `tests/test_fallback_protection_multiple_separation.py`.
+FALLBACK_PROTECTION_ATR_MULTIPLE = 1.0
 
 #: BOARD ITEM 70, THE SPLIT (2026-09-26). Until this date ONE literal `1.0`
 #: did TWO different jobs in the exit path: the noise band above (how far an
@@ -1999,9 +2044,10 @@ def check_structural_protection(
     # default to zero protection — that would systematically strip
     # protection from breakout/momentum trades that don't have classic
     # multi-touch support/resistance by design. Fall back instead to the
-    # noise band already used elsewhere in this module
-    # (`adverse_move_is_noise` / `NOISE_BAND_ATR_MULTIPLE`) — no second
-    # noise-band constant. A position with nothing concrete backing its
+    # noise-band MECHANISM already used elsewhere in this module
+    # (`adverse_move_is_noise`), with this home's own named multiple
+    # `FALLBACK_PROTECTION_ATR_MULTIPLE` (board item 70, 2026-10-04 — the
+    # two homes ask different questions and no longer share one name). A position with nothing concrete backing its
     # thesis stays protected unless the adverse move against it exceeds
     # that already-ratified band. This fallback lifts protection
     # immediately — it is not gated by the confirmation rule above, which
@@ -2026,8 +2072,15 @@ def check_structural_protection(
                 ),
                 raw_broken=False,
             )
+        # BOARD ITEM 70 (2026-10-04, the second split): this home uses its
+        # OWN named multiple, `FALLBACK_PROTECTION_ATR_MULTIPLE`, not the
+        # midday gate's `NOISE_BAND_ATR_MULTIPLE`. Same value today, so no
+        # decision moves; different jobs, so deriving one can never silently
+        # move the other. No `days_held` is passed here and that is
+        # deliberate and unchanged -- this home's band is FLAT.
         is_noise = adverse_move_is_noise(
             ent, cur, atr_f, side=("buy" if is_short else "sell"),
+            multiple=FALLBACK_PROTECTION_ATR_MULTIPLE,
             extreme_since_entry=extreme_since_entry,
         )
         # BOARD ITEM 70 (2026-10-04): this home's outcome text, on BOTH
@@ -2036,7 +2089,8 @@ def check_structural_protection(
         # above is the unchanged decision.
         _protected, _basis, _detail = noise_band_fallback_outcome(
             ent=ent, cur=cur, atr_f=atr_f, is_short=is_short,
-            is_noise=bool(is_noise), band_multiple=NOISE_BAND_ATR_MULTIPLE,
+            is_noise=bool(is_noise),
+            band_multiple=FALLBACK_PROTECTION_ATR_MULTIPLE,
             anchor=_anchor, anchor_kind=_anchor_kind,
         )
         return StructuralProtectionCheck(
