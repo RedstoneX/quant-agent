@@ -1114,3 +1114,14 @@ changes:
       meant to source it found directional overnight-gap asymmetry at a
       median 1.01 across names, nowhere near 1.5, so the count falls by
       one with no new unsourced number entering anywhere.
+  - delta: -1
+    date: '2026-10-04'
+    why: >-
+      The single-name ceiling (`ConstructorConfig.max_position_pct` = 65)
+      moves from `arbitrary` to `sourced` on the strength of the owner's own
+      dated override of 2026-09-11, recorded in the settings file with the
+      reviewed derivation, the rejected tighter candidate of 33, and five
+      spelled-out gap disaster cases. It is an owner risk-appetite ruling, not
+      a measurement, so the count falls by one and nothing arbitrary replaces
+      it. The citation names the settings clause by its own text rather than
+      by line number.

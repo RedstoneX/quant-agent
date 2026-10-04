@@ -2935,8 +2935,8 @@ numbers:
     status: sourced
     site: src/portfolio_constructor/config.py
     source: >-
-      config/settings.yaml:599, clause (c) OWNER OVERRIDE 2026-09-11 — the owner
-      reviewed the derivation (formula derived from account-levered emergency
+      config/settings.yaml@`# (c) OWNER OVERRIDE, 2026-09-11 — 33 -> 65, recorded honestly rather than`
+      -- the owner reviewed the derivation (formula derived from account-levered emergency
       rung and measured gap tail magnitudes) and rejected the tighter candidate
       (33) as too tight for a desk that does not trade penny/micro-cap names,
       setting 65 as his own risk-appetite call. Recorded with five gap disaster
