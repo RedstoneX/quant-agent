@@ -8,7 +8,7 @@ import re
 from src.data.levels import FAULT_NO_ENTRY, FAULT_NO_PRICE, derive_structural_target, touch_probability
 from src.models import TargetPosition, TechAnalysisResult, TradeDecision
 from src.risk.constants import REWARD_RISK_PARITY, reward_risk_floor_applies
-from src.portfolio_constructor import absolute_floor_record
+import src.portfolio_constructor.absolute_floor_record as absolute_floor_record
 from src.portfolio_constructor.config import logger
 from src.portfolio_constructor.config import STOP_RULE_LEVEL_HONOURED, STOP_RULE_ABSOLUTE_FLOOR, STOP_RULE_ATR_BAND, STOP_RULE_OUTSIDE_BAND, STOP_REFUSAL_WRONG_SIDE, STOP_RULE_SIGNAL_BAR, STOP_REFUSAL_STOP_NOT_FINITE, STOP_REFUSAL_ENTRY_NOT_FINITE, STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY, STOP_REFUSAL_NO_VALID_STOP, STOP_REFUSAL_NO_STRUCTURAL_TARGET, STOP_REFUSAL_REWARD_BELOW_RISK
 
