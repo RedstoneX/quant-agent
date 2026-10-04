@@ -105,7 +105,7 @@ class _PipelineStub:
     def __init__(self, db):
         self.db = db
 
-    _build_calibration_note = TradingPipeline._build_calibration_note
+    _build_calibration_note, _review_calibration = TradingPipeline._build_calibration_note, TradingPipeline._review_calibration
     _log_conviction_outcome_for_operator = staticmethod(
         TradingPipeline._log_conviction_outcome_for_operator
     )
