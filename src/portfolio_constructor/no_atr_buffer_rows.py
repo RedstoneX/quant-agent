@@ -165,20 +165,21 @@ def record_no_atr_buffer(
 
 
 def placement_recorder(
-    read_db: Any,
-    analysis: Any,
-    *,
-    is_short: bool,
-    entry_price: float,
-    buffer_pct: float,
-    min_touches: Any,
-    candidate_levels: int,
+    read_db, analysis, is_short, entry_price, buffer_pct, min_touches, levels,
 ):
     """A one-call row writer bound to ONE no-ATR derivation.
 
-    `read_db` is the owner's zero-argument db-handle callable (or None). It
-    is read per placement and never cached, and a failure to read it is a
-    recording failure, never a placement failure.
+    Positional deliberately: the caller is a single site inside
+    `StopRules._derive_structural_stop_no_atr`, which the file-size ratchet
+    holds at its current width, so the wiring is one line there and the
+    naming lives here.
+
+    `read_db` is `StopRules._read_db` -- the owner's zero-argument db-handle
+    callable, or None when no database was wired. It is read per placement
+    and never cached, and a failure to read it is a recording failure, never
+    a placement failure. `levels` is how many candidate levels the tier-1
+    scan had to choose from, the denominator for "how often is there any
+    structure at all".
     """
     def _write(outcome, level=None, stop_price=None, touches=None) -> None:
         db = None
@@ -191,7 +192,7 @@ def placement_recorder(
             db, analysis, outcome=outcome, is_short=is_short,
             entry_price=entry_price, buffer_pct=buffer_pct, level=level,
             stop_price=stop_price, touches=touches, min_touches=min_touches,
-            candidate_levels=candidate_levels,
+            candidate_levels=levels,
         )
 
     return _write
