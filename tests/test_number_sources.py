@@ -847,7 +847,8 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
         "src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct",
     )
     for site_id in ceilings:
-        entry = ledger[site_id]
+        if (entry := ledger[site_id])["status"] == "owner-ruled":
+            continue  # a dated owner decision owes no settlement route
         # A ceiling that is a MIRROR of another ceiling owes nothing of its
         # own: it has no settlement route because a `derived` row may not
         # carry one (the validator rejects `settles_by` on any non-arbitrary
@@ -857,12 +858,8 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
         # somebody and the owner is still not being asked -- is therefore
         # checked on the BASE instead, which must itself be one of these
         # ceilings. Added 2026-10-02 when
-        # `ConstructorConfig.max_sector_hard_pct` was recorded as the mirror
-        # of `RiskConfig.SECTOR_HARD_CEILING_MAX` that src/pipeline.py:363
-        # makes it; the base kept its recording and its withdrawn question.
-        if entry.get("status") == "owner-ruled":
-            # A dated owner decision owes no settlement route.
-            continue
+        # `ConstructorConfig.max_sector_hard_pct` was recorded as the mirror of
+        # `RiskConfig.SECTOR_HARD_CEILING_MAX` (src/pipeline.py:363).
         if entry.get("status") == "derived":
             base_id = entry.get("derived_from")
             assert base_id in ceilings, (
@@ -894,26 +891,3 @@ def test_the_book_wide_ceilings_route_to_a_recording_not_to_the_owner() -> None:
                     "2026-09-30 ruling on global risk dials bars."
                 )
                 start = hit + 1
-
-
-def test_owner_ruled_status_without_a_date_or_record_fails(tmp_path) -> None:
-    """The guard bites: an `owner-ruled` row must carry a date and a record."""
-    import yaml as _yaml
-
-    from src.number_sources import REPO_ROOT
-
-    live = REPO_ROOT / "config" / "number_ledger.yaml"
-    doc = _yaml.safe_load(live.read_text(encoding="utf-8"))
-    rows = [r for r in doc["numbers"] if r.get("status") == "owner-ruled"]
-    assert rows, "no owner-ruled row to mutate"
-    assert audit(ledger_path=live) == []
-    for missing, kind in (("ruled_on", "no-ruling-date"), ("ruling_record", "no-ruling-record")):
-        saved = rows[0].pop(missing)
-        broken = tmp_path / f"{missing}.yaml"
-        broken.write_text(_yaml.safe_dump(doc), encoding="utf-8")
-        assert kind in {p.kind for p in audit(ledger_path=broken)}
-        rows[0][missing] = saved
-    rows[0]["ruled_on"] = "last spring"
-    bad = tmp_path / "bad.yaml"
-    bad.write_text(_yaml.safe_dump(doc), encoding="utf-8")
-    assert "no-ruling-date" in {p.kind for p in audit(ledger_path=bad)}

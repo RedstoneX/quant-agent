@@ -656,10 +656,20 @@ numbers:
       ceiling is defined there as a multiple of the sector target. Definition
       site: src/config/__init__.py::RiskConfig. The multiple is the spec's, not this file's.
   - id: src.config.RiskConfig.absolute_min_stop_atr_multiple
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      records: the distribution of adverse excursion within the holding window, in ATR units, measured
+        over the universe the desk could trade, on public daily bars and NOT over this desk's own
+        fills, so the hard floor under every stop is read off how far names of this kind routinely
+        move against a position before resuming
+      closes_when: the universe excursion distribution is in hand and the absolute floor is set at
+        the point below which a stop is inside ordinary noise; it is DELETED, and the single minimum
+        multiple governs alone, if the measurement cannot distinguish the absolute floor from the
+        ordinary one
     value: 1
-    status: owner-ruled
-    ruled_on: '2026-10-04'
-    ruling_record: docs/OUTCOME.md, section 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)
+    status: arbitrary
     route_audit_2026_10_04: >-
       The route is ADMISSIBLE and UNRUN. Unlike the single-name envelope above,
       neither bar applies: the whipsaw-rate-against-ATR-distance measurement
@@ -673,8 +683,6 @@ numbers:
       reported by scripts/measure_ledger_route_admissibility.py.
     site: src/config/__init__.py
     note: >-
-      OWNER-RULED 2026-10-04: this value is a multiple of the stock's own ATR (its own average daily range), so it individualises per name by construction and there is no single value to measure. A flat percentage or dollar amount would still be made up; this is neither.
-
       The HARD FLOOR under every stop this desk sets. A level-backed stop is
       honoured however tight down to this many ATRs; inside it the stop is
       pushed out to exactly this floor (src/config/__init__.py::RiskConfig). It was hidden
@@ -2870,39 +2878,6 @@ numbers:
       7.69%-of-entry crossover with the 5% risk envelope. The earlier wording
       here, "binds most real trades", was never measured and is wrong: it
       bound 4 of 38, not most.
-    settles_by:
-      kind: measurement
-      state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
-      records: >-
-        the distribution of overnight and intraday gap moves against position, in
-        percent of prior close, measured off public daily bars for the eligible
-        universe over a stated window -- the no-stop-fill case this ceiling is the
-        only guard against. Measured on the instrument, over names the desk could
-        have held rather than names it did hold, so it is a property of the tape and
-        not of this desk's trade record
-      closes_when: >-
-        the overnight gap distribution is measured and the ceiling is read off it,
-        with NO owner tolerance asked for. The question this row once routed to the
-        owner (how much single-name loss he will tolerate when a stop does not fill)
-        is WITHDRAWN: a protective stop cannot trigger while the exchange is shut, so
-        an overnight gap is whatever the market does and not a tolerance anyone can
-        set, as the owner has ruled repeatedly (recorded 2026-10-04 in
-        docs/board_notes/item-186.md). The measurement, startable from this entry
-        alone: take the daily OHLC bars this repo already fetches for the eligible
-        universe (`src.data.market.MarketDataProvider.get_ohlcv_batch`; a recorded
-        400-session sample for 33 symbols sits in
-        ops/rehearsal/recordings/market_bars.json.gz), compute for every consecutive
-        session pair (open_t / close_t-1) - 1, pool the adverse gaps across names,
-        and write down the window, the universe, the gap count, the worst gap and the
-        gaps at the 1-in-100, 1-in-1,000 and 1-in-10,000 ranks. The ceiling then
-        becomes the notional share at which the WORST OBSERVED gap costs the account
-        no more than the per-name risk envelope the ledger already carries at
-        src.config.RiskConfig.max_position_risk_pct (share = envelope / |worst gap|):
-        a derivation from the tape and an existing number, with no percentile picked
-        and no tolerance chosen. The per-name reading of the same gap history is the
-        build item 186 names and supersedes this pooled bound once it exists. Until a
-        measured figure is written down the desk pays a round 65 nobody derived
   - id: src.portfolio_constructor.config.ConstructorConfig.max_sector_hard_pct
     value: 90
     status: derived
@@ -3423,10 +3398,23 @@ numbers:
       existing indicator set rather than picked; changing it would require
       the desk to compute an average it does not compute.
   - id: src.risk.alignment_exit.ALIGNMENT_GIVE_BACK_ATR_MULTIPLE
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        across the tradable universe, not this desk's trades: for trends that later resumed and for
+        trends that had genuinely ended, how far price gave back below the last chart mark (a moving
+        average, or a level confirmed broken) measured in that name's own ATR
+      closes_when: >-
+        the two give-back distributions are separable, so the band is read off the difference between a
+        pullback and a finished move rather than set as an appetite dial. This replaces the appetite
+        question this row used to carry: the owner withdrew the risk dials on 2026-09-30 and asked for
+        the threshold-free alternative instead. DELETE OUTCOME: if the alignment rule's own three-way
+        agreement (structure, ATR and an SMA cross) already fires before this band is ever reached in
+        the recording, the band never governs an exit and is deleted
     value: 3.0
-    status: owner-ruled
-    ruled_on: '2026-10-04'
-    ruling_record: docs/OUTCOME.md, section 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)
+    status: arbitrary
     route_audit_2026_10_04: >-
       The row contradicts itself and the measurement half is the live half. Its
       settles_by route closes when the give-back distributions of a resumed
@@ -3441,8 +3429,6 @@ numbers:
       scripts/measure_ledger_route_admissibility.py.
     site: src/risk/alignment_exit.py
     note: >-
-      OWNER-RULED 2026-10-04: this value is a multiple of the stock's own ATR (its own average daily range), so it individualises per name by construction and there is no single value to measure. A flat percentage or dollar amount would still be made up; this is neither.
-
       Give-back below the last CHART MARK (a moving average, or the level
       `check_structural_protection` confirmed broken), in the name's own
       ATR, before the alignment exit reads the move as over. AN OWNER
@@ -3474,14 +3460,34 @@ numbers:
       rest of the move is forgone. The exposure is the whole unrealised
       gain of any position this exit fires on.
   - id: src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        every midday gate evaluation in front of a non-external SELL, carrying the adverse move from
+        AVERAGE ENTRY PRICE in the name's own ATR, the sqrt(sessions_held) widening applied, and
+        whether the band blocked the exit. CORRECTED 2026-10-04: this row previously also claimed to
+        record "what the position did afterwards", and it does not -- a noise-band row is written at
+        the MOMENT of the decision and is never revisited, and the band is only evaluated when an exit
+        is proposed, so these rows alone cannot say whether an adverse move was followed by further
+        adverse travel or by recovery. That second half, which the settlement needs, is reconstructed
+        by joining these rows on (symbol, session) to `alignment_exit_readings`, which is written for
+        every open position every session. It is deliberately NOT collected by adding a follow-up
+        recorder to this payload: any such recorder must fix a look-ahead horizon, and that horizon
+        would be a second chosen number imported into a fix whose whole purpose is to remove one.
+        This row's own `settlement_route` and `derivation_attempts` fields hold the two spent
+        derivation attempts and must not be re-opened blind
+      closes_when: >-
+        the recording holds enough blocked and unblocked evaluations to show where the adverse move
+        from entry stops being ordinary wobble for THIS anchor, which is the anchor no published
+        volatility multiple uses. Its `recording_status` records the measurement of 2026-10-01: the
+        refusal payload has produced ZERO observations so far, so the route is UNPROVEN rather than
+        collecting, and the first closing condition is that the payload be shown to populate at all
     value: 1
-    status: owner-ruled
-    ruled_on: '2026-10-04'
-    ruling_record: docs/OUTCOME.md, section 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)
+    status: arbitrary
     site: src/risk/exit_guard.py
     note: >-
-      OWNER-RULED 2026-10-04: this value is a multiple of the stock's own ATR (its own average daily range), so it individualises per name by construction and there is no single value to measure. A flat percentage or dollar amount would still be made up; this is neither.
-
       The exit-guard noise band, in ATRs, before the sqrt(sessions_held)
       widening computed at src/risk/exit_guard.py::noise_band_atr. How far an adverse
       move must travel FROM ENTRY before it stops being ordinary daily wobble.
@@ -3592,14 +3598,24 @@ numbers:
       rather than recovery. That requires live sessions with exits in them and
       cannot be manufactured from the 334 rows now on disk.
   - id: src.risk.exit_guard.BREAK_CONFIRMATION_ATR_MULTIPLE
+    settles_by:
+      kind: recording
+      state: specified
+      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 tranche-five pass over src/risk)
+      records: >-
+        every structural break evaluation in `check_structural_protection`, each emitting
+        `rule=break_confirmation_margin` with the margin as an ATR multiple, the level tested, whether
+        the close cleared it, and whether the level held afterwards -- separately from the noise band,
+        which was one literal with this number until 2026-09-26 and may not be re-collapsed with it
+      closes_when: >-
+        enough break evaluations accumulate to show the margin at which a daily close beyond a level is
+        followed by the level staying broken, rather than an ATR magnitude no published work expresses
+        in ATRs. The strictly-positive floor on this number is already ratified as an arithmetic
+        non-degeneracy bound and that part does not reopen
     value: 1
-    status: owner-ruled
-    ruled_on: '2026-10-04'
-    ruling_record: docs/OUTCOME.md, section 'Every money number is expressed against the stock's own movement' (owner ruling 2026-10-04)
+    status: arbitrary
     site: src/risk/exit_guard.py
     note: >-
-      OWNER-RULED 2026-10-04: this value is a multiple of the stock's own ATR (its own average daily range), so it individualises per name by construction and there is no single value to measure. A flat percentage or dollar amount would still be made up; this is neither.
-
       How far beyond a structural LEVEL a completed daily close must sit
       before that level counts as broken -- the margin in
       `check_structural_protection` (src/risk/exit_guard.py) and in the three

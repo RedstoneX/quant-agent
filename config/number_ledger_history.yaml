@@ -1163,29 +1163,12 @@ changes:
       `RiskConfig.max_position_risk_pct` (ruled 2026-08-27) leave `arbitrary`:
       their notes kept them there only because the ledger had no category
       for an owner-ratified value, which `owner-ruled` now is. No value changed.
-  - delta: -1
+  - delta: -9
     date: '2026-10-04'
     why: >-
-      The short-side gap-risk sizing haircut
-      (`src.risk.constants.SHORT_GAP_RISK_MULTIPLE_DEFAULT` = 1.5, status
-      `arbitrary`) is DELETED under the owner ruling of 2026-10-04 -- "a
-      short is not riskier than long, 1.5 is a made up number so throw
-      that out completely... a short should be treated the same as a long,
-      no different math no different behavior" -- and nothing replaces it.
-      This is a pure removal, not a re-homing: the constant, its single
-      application site, both config fields, the settings key and both
-      ledger rows are gone, so a short now runs the long's arithmetic with
-      no direction-dependent factor anywhere. The measurement that was
-      meant to source it found directional overnight-gap asymmetry at a
-      median 1.01 across names, nowhere near 1.5, so the count falls by
-      one with no new unsourced number entering anywhere.
-
-  - delta: -13
-    date: '2026-10-04'
-    why: >-
-      Thirteen rows re-filed `arbitrary` to `owner-ruled` under the owner
+      Nine rows re-filed `arbitrary` to `owner-ruled` under the owner
       ruling of 2026-10-04 ("self adjusting the 2.5 is not a made up number.
       It is specific to its own stock move"). Each is verified in code as a
-      multiple of the stock's own ATR (ten rows) or of R, the risk taken on
+      multiple of the stock's own ATR (six rows) or of R, the risk taken on
       that position (three rows), so it individualises per name and has no
       single value to measure. No value changed.
