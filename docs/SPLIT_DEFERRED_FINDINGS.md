@@ -29,6 +29,8 @@ STILL OPEN: the cost-circuit half. The original entry named thirteen failing tes
 
 VERDICT 2026-10-02 (isolation pass): holding-discipline half -- ALREADY FIXED (module-level stamp now read at run time; `tests/test_no_local_day_as_exchange_day.py` guard passes, no import-time `str(et_today())` stamp remains in that file). Cost-circuit half -- NOT REPRODUCED (carried forward from the earlier investigation; not redone). The note names no test, so it should not be treated as a known defect.
 
+REPRODUCTION ATTEMPT 2026-10-04 (main 7d92965e): NOT REPRODUCED, a fourth method. An LD_PRELOAD shim moved the OS clock under BOTH Python and SQLite `'now'` (checked: Python and SQLite both read 00:06 ET), collected the five cost-circuit test files at 23:58 ET and ran them at 00:05 ET, single process. Result: 243 passed, 1 xfailed, 0 failed. The suite also covers the self-clear tests the clock module docstring names, which the single-clock indirection (#926) now pins together. No cost-circuit test fails across the crossing, so no cause was patched; do not reopen this without a named failing test.
+
 ## The evidence gate's per-name record has never been written -- FIXED
 
 In the name-coverage loop the recording call passed a symbol argument twice --
