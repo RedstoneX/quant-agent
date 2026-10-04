@@ -89,3 +89,34 @@ equal-ask design makes the budget bind on every entry day. The prerequisite for
 any future A/B here is a deterministic, non-alphabetical ordering for the
 engine's `RiskRequest`s — or a run configuration in which the budget does not
 bind — and neither is invented here.
+
+## 2026-10-04 (later) — horizon is inert; the per-name risk envelope is the live dial
+
+**READ THIS FIRST: an unconstrained-budget backtest figure is NEVER a desk
+expectation.** Both A/Bs here opened `risk.max_portfolio_risk_pct` and
+`risk.max_cluster_risk_share_pct` to 100 in BOTH arms (throwaway config copies;
+no repo default changed) so the allocator never arbitrated. The live desk
+rations at 25 and 40. Only the DIFFERENCE between arms is readable.
+
+Condition verified before reading anything: the engine's own counter reported
+**0 of 66 entry days arbitrated in all four arms**. Universe
+AAPL/MSFT/NVDA/AMZN/GOOGL, 2025-01-01..2025-09-30, 85 trades per arm.
+
+| field changed | arm A | arm B | total return A | total return B | delta |
+| --- | --- | --- | --- | --- | --- |
+| `risk.max_target_horizon_sessions` | 60 | 20 | -4.73% | -4.73% | 0.00pp (all twelve metrics identical) |
+| `risk.max_position_risk_pct` (control) | 5 | 2 | -4.73% | -0.82% | +3.91pp (max drawdown -23.69pp) |
+
+`max_target_horizon_sessions` is the THIRD parameter measured inert in this
+engine, after the target reach multiple and the breakout projection. Inert
+means the deterministic path never consults it — not that 60 is right. The row
+stays `arbitrary`.
+
+`max_position_risk_pct` stays `arbitrary` as well. The control proves it is the
+most outcome-moving risk dial measured on this path, but a measurement showing
+a number matters is not a criterion for picking its value, and an unrationed
+book structurally flatters the smaller envelope. Clearing it on this would be
+weak evidence.
+
+All caveats from the section above still stand: survivorship bias, the flat
+40bps slippage, the substituted deterministic stop, and the opened budget.

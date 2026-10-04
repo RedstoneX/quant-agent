@@ -1144,3 +1144,27 @@ changes:
       spends down. This is the second parameter measured inert in this
       engine, after the level-touch count, so the standing order's
       remaining risk rows are narrower than they look.
+  - delta: 0
+    date: '2026-10-04'
+    why: >-
+      No row moves, and the measurement is the point. AN UNCONSTRAINED-BUDGET
+      BACKTEST FIGURE IS NEVER A DESK EXPECTATION: both A/Bs below were run with
+      `risk.max_portfolio_risk_pct` and `risk.max_cluster_risk_share_pct` opened
+      to 100 in BOTH arms, in throwaway config copies, so the engine's own
+      counter reported 0 of 66 entry days arbitrated in every arm and no
+      alphabetical ticker tie-break could contaminate the comparison. The live
+      desk rations at 25 and 40; only the DIFFERENCE between two arms is
+      readable, never either arm's level. Universe AAPL/MSFT/NVDA/AMZN/GOOGL,
+      2025-01-01 to 2025-09-30, 85 trades per arm.
+      `src.config.RiskConfig.max_target_horizon_sessions`, 60 against 20, came
+      back BYTE-IDENTICAL on all twelve reported metrics -- the third parameter
+      measured inert in this engine, after the target reach multiple and the
+      breakout projection. Inert here means the deterministic backtest path
+      never consults the horizon, NOT that 60 is right, so the row stays
+      `arbitrary` and now records that a backtest cannot close it.
+      `src.config.RiskConfig.max_position_risk_pct`, 5 against 2, was the
+      POSITIVE CONTROL and moved total return by +3.91 points with max drawdown
+      23.69 points lower at the smaller envelope, which is what makes the
+      horizon zero a true null rather than broken plumbing. That row stays
+      `arbitrary` too: showing a number matters is not a criterion for picking
+      its value, and the unrationed budget flatters the smaller envelope.
