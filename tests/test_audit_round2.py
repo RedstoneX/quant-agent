@@ -131,7 +131,7 @@ def test_shift_stops_down_preserves_per_lot_levels(mock_tc_cls):
     b._list_open_sell_stop_orders = MagicMock(return_value=[
         _stop_order("s1", 340.0, qty=10), _stop_order("s2", 350.0, qty=16),
     ])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(2, []))
 
     out = b.shift_stops_down("GE", 0.51)
@@ -431,7 +431,7 @@ def test_shift_stops_down_amends_in_place_and_never_cancels(mock_tc_cls):
     b._list_open_sell_stop_orders = MagicMock(return_value=[
         _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
     ])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(2, []))
 
     out = b.shift_stops_down("GE", 0.51)
@@ -455,7 +455,7 @@ def test_shift_stops_down_keeps_the_fractional_hybrid_pair_as_two_stops(mock_tc_
         _plain_stop("gtc-whole", 100.0, qty=12),
         _plain_stop("day-sliver", 100.0, qty=0.3456),
     ])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(2, []))
 
     out = b.shift_stops_down("ZZZ", 0.25)
@@ -475,7 +475,7 @@ def test_shift_stops_down_leaves_the_stop_resting_when_the_amend_is_refused(mock
     b._list_open_sell_stop_orders = MagicMock(return_value=[
         _plain_stop("s1", 340.0, qty=10), _plain_stop("s2", 350.0, qty=16),
     ])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(2, []))
     client.replace_order_by_id.side_effect = [RuntimeError("422 refused"), MagicMock(id="s2b")]
 
@@ -494,7 +494,7 @@ def test_shift_stops_down_falls_back_for_an_unmeasured_shape(mock_tc_cls):
     parent = _stop_order("s2", 350.0, qty=16)
     parent.legs = [object()]
     b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 340.0, qty=10), parent])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     b._restore_stop_orders = MagicMock(return_value=(2, []))
 
     out = b.shift_stops_down("GE", 0.51)
@@ -508,7 +508,7 @@ def test_shift_stops_down_falls_back_for_an_unmeasured_shape(mock_tc_cls):
 def test_shift_stops_down_refuses_to_push_a_stop_to_zero(mock_tc_cls):
     b, client = _broker(mock_tc_cls)
     b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 0.40, qty=10)])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
 
     assert b.shift_stops_down("GE", 0.51) is None
     client.replace_order_by_id.assert_not_called()
@@ -537,7 +537,7 @@ def test_shift_amend_without_a_broker_answer_is_unknown_not_resting(mock_tc_cls)
     statement about live protection."""
     b, client = _broker(mock_tc_cls)
     b._list_open_sell_stop_orders = MagicMock(return_value=[_plain_stop("s1", 340.0, qty=10)])
-    b.cancel_snapshotted_stops = MagicMock(return_value=True)
+    b.cancel_snapshotted_stops = MagicMock(return_value=MagicMock(cleared=True))
     client.replace_order_by_id.side_effect = _ApiErr("gateway timeout", 504)
 
     out = b.shift_stops_down("GE", 0.51)

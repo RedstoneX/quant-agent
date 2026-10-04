@@ -85,16 +85,12 @@ def _is_now_call(node: ast.AST) -> bool:
 
 def _classify_call(call: ast.Call) -> str | None:
     fn = call.func
-    # date.today() / datetime.date.today() / datetime.today()
-    if isinstance(fn, ast.Attribute) and fn.attr == "today" and _name(fn.value) in {"date", "datetime"}:
+    # date.today() / datetime.date.today()
+    if isinstance(fn, ast.Attribute) and fn.attr == "today" and _name(fn.value) == "date":
         return "local_today"
     # datetime.now() with no tz
     if isinstance(fn, ast.Attribute) and fn.attr == "now" and _name(fn.value) == "datetime" \
             and not call.args and not call.keywords:
-        return "naive_now"
-    # datetime.fromtimestamp(ts) / date.fromtimestamp(ts) with no tz: the runner's local time
-    if isinstance(fn, ast.Attribute) and fn.attr == "fromtimestamp" \
-            and _name(fn.value) in {"date", "datetime"} and len(call.args) == 1 and not call.keywords:
         return "naive_now"
     # <now(...)|utcnow()>.date()
     if isinstance(fn, ast.Attribute) and fn.attr == "date" and _is_now_call(fn.value):
