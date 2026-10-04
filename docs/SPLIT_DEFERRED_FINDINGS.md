@@ -48,7 +48,7 @@ and the store-level test is what keeps this class from hiding again.
 
 VERDICT 2026-10-02 (isolation pass): ALREADY FIXED. Fixed by #1079 (fbae04e6) in `NameCoverageRecordSession`. Proof: restoring the pre-fix source makes `tests/test_name_coverage_rows_land.py` fail (1 failed); on main it passes (1 passed).
 
-## Owner alerts are sent and the result thrown away -- CLOSED
+## Owner alerts are sent and the result thrown away -- FIXED
 
 Nearly every caller discards the return value of the owner-alert send, so a
 failed delivery is indistinguishable from a successful one. Fix: make the
@@ -114,3 +114,5 @@ module never defined, so they raised `NameError`. They now use the module's
 failed with `NameError: name '_log' is not defined` before the fix.
 
 VERDICT 2026-10-02 (isolation pass): ALREADY FIXED by #1102 (c9c2dcbc), `src/storage/trades/ledger.py`. Proof: with the pre-fix ledger restored, `tests/test_take_profit_refusal_names.py` fails with `NameError: name '_log' is not defined` at ledger.py:1875; on main it passes and no bare `_log` remains in the ledger.
+
+DONE 2026-10-04 for the ex-dividend stop shift: `ShiftStopsMixin` is gone. Its one body is `StopShifter.shift_stops_down` in `src/execution/broker_parts/stop_shifter.py` (AST-identical to trunk, proven by script), taking seven keyword-only collaborators (`client` for the market-closed gate plus the six cluster methods). `stop_shift.py` is now a shim of two functions: `build_stop_shifter(placer)` reads each collaborator off the placer PER CALL, and `shift_stops_down(placer, symbol, amount)` is bound onto `StopPlacer` as a class attribute, so `StopPlacer.__bases__ == (object,)` and the broker's `shift_stops_down` shim is untouched. One marked lazy mirror in the shim keeps `_quantize_price`/`defer_shift_if_closed`/`logger` resolving. Witness tests in `tests/test_broker_parts_boundary.py`: the part runs the amend path end to end on stubs with no placer and no broker; a collaborator swapped on the placer after construction is the one the body calls (caching the part made that test fail; restoring made it pass). Still mixins with bodies: `ExitEngineMixin`, `DeleverMixin`, `IntradayMixin`, `PromptFactsMixin`, `ProtectionMixin`.
