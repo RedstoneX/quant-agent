@@ -8,7 +8,7 @@ same-named thin shims there build this object per call."""
 
 from __future__ import annotations
 from src.models import TargetPosition, TechAnalysisResult, TradeDecision, stated_soft_exit
-from src.risk.constants import gap_adjusted_risk_per_share, risk_budget_allocation_pct
+from src.risk.constants import risk_budget_allocation_pct
 from src.portfolio_constructor.config import logger
 from src.portfolio_constructor.config import STOP_REFUSAL_SIZED_TO_ZERO, STOP_REFUSAL_TARGET_NOT_BELOW_ENTRY, RiskPlan
 
@@ -103,40 +103,28 @@ class ShortEntryBuilder:
 
         # D4: unsigned risk-per-share (stop sits ABOVE entry for a short).
         risk_per_share = abs(entry_price - stop_loss)
-        # D8: gap-risk sizing haircut — SIZING ONLY, never stop placement
-        # (the stop above was already resolved before this line runs). Paper
-        # trading fills unrealistically through a gap on IEX data with no
-        # borrow-cost model, so this haircut is what keeps the measured size
-        # honest relative to what live capital would actually risk. One
-        # definition, in `src.risk.constants` (board item 216).
-        risk_per_share = gap_adjusted_risk_per_share(
-            risk_per_share, is_short=True,
-            multiple=self.cfg.short_gap_risk_multiple,
-        )
+        # Owner ruling 2026-10-04: no short-side haircut. A short runs the
+        # SAME arithmetic as a long from here on.
         cap_note = ""
         if risk_per_share > 0:
             # Same ONE definition the long leg and the preview call (item
-            # 221). The gap haircut is applied inside it, exactly once.
+            # 221), with identical arguments: same math for both sides.
             alloc_cap_by_risk = risk_budget_allocation_pct(
                 entry_price=entry_price, stop_price=stop_loss,
                 total_value=total_value,
                 risk_budget_pct=self.cfg.risk_budget_pct,
-                is_short=True,
-                short_gap_risk_multiple=self.cfg.short_gap_risk_multiple,
             )
             if alloc_cap_by_risk is not None and allocation_pct > alloc_cap_by_risk:
                 logger.info(
                     "Constructor: SHORT %s alloc capped by risk budget "
-                    "(delta %.2f%% → %.2f%% at %.1f%% risk budget, %.1fx "
-                    "gap-risk haircut)",
+                    "(delta %.2f%% → %.2f%% at %.1f%% risk budget)",
                     target.symbol, allocation_pct, alloc_cap_by_risk,
-                    self.cfg.risk_budget_pct, self.cfg.short_gap_risk_multiple,
+                    self.cfg.risk_budget_pct,
                 )
                 cap_note = (
                     f" [constructor: PM target delta {allocation_pct:.2f}% "
                     f"capped to {alloc_cap_by_risk:.2f}% by the "
-                    f"{self.cfg.risk_budget_pct:.1f}% risk budget (x"
-                    f"{self.cfg.short_gap_risk_multiple:.1f} gap-risk haircut) "
+                    f"{self.cfg.risk_budget_pct:.1f}% risk budget "
                     f"— the size difference vs PM's stated weight is "
                     f"deterministic, not PM inconsistency]"
                 )

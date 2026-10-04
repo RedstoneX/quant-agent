@@ -491,11 +491,9 @@ phases:
         path: "src/pipeline_stages.py"
         symbol: "borrow_gate"
         note: "the borrow gate is wired into the execution path — a refused short is logged and recorded as an execution skip with reason borrow_gate."
-      - kind: setting_equals
-        path: "config/settings.yaml"
-        key: "risk.short_gap_risk_multiple"
-        value: 1.5
-        note: "sizing-only haircut on a short's risk-per-share, for its unbounded gap risk."
+      - kind: test_exists
+        path: "tests/test_short_long_sizing_parity.py"
+        test: "test_short_and_long_get_identical_risk_budget_and_stop_distance"
       - kind: test_exists
         path: "tests/test_shorts_stage3.py"
         test: "test_open_short_end_to_end_submits_sell_short_and_places_buy_stop_above_entry"
