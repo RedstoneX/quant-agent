@@ -125,6 +125,7 @@ from typing import Any
 
 from src.silence_watchdog import KNOWN_MODES, SLACK_MINUTES
 from src.trading_calendar import ET, SESSION_WINDOWS
+from src.coverage_watchdog_records import measured_window_bound_seconds, record_watchdog_pass  # noqa: F401 -- re-export
 from src.coverage_watchdog_text import (  # noqa: F401 -- re-exported, lifted verbatim
     exit_declined_text,
     unreadable_stop_text,
@@ -503,6 +504,7 @@ def most_recent_trading_day(now: datetime, broker: Any = None) -> date:
                 if broker.is_trading_day(candidate):
                     return candidate
             except Exception as exc:  # noqa: BLE001
+                record_watchdog_pass("calendar_lookup", exc)
                 logger.warning("coverage watchdog: calendar lookup failed for %s: %s", candidate, exc)
                 return candidate
         candidate -= timedelta(days=1)
@@ -537,6 +539,7 @@ def session_ran_during(day: date, db_path: str | Path | None = None) -> tuple[bo
     try:
         conn = _connect_ro(path)
     except Exception as exc:  # noqa: BLE001
+        record_watchdog_pass("session_ran.connect", exc)
         return None, f"database unreadable: {exc}"
     try:
         placeholders = ",".join("?" for _ in KNOWN_MODES)
@@ -545,6 +548,7 @@ def session_ran_during(day: date, db_path: str | Path | None = None) -> tuple[bo
             KNOWN_MODES,
         ).fetchall()
     except Exception as exc:  # noqa: BLE001
+        record_watchdog_pass("session_ran.query", exc)
         return None, f"query failed (table missing on a fresh database?): {exc}"
     finally:
         try:
@@ -630,6 +634,7 @@ def uncovered_positions(
     try:
         positions = broker.get_positions()
     except Exception as exc:  # noqa: BLE001
+        record_watchdog_pass("uncovered.get_positions", exc)
         return [], f"get_positions failed: {exc}"
     if not isinstance(positions, list):
         return [], "get_positions returned no list"
@@ -653,6 +658,7 @@ def uncovered_positions(
                 symbol, side=("buy" if is_short else "sell"),
             )
         except Exception as exc:  # noqa: BLE001
+            record_watchdog_pass("uncovered.snapshot_stops", exc)
             _record_unreadable(
                 unreadable, symbol=str(symbol), held_qty=held,
                 is_short=is_short,
@@ -789,7 +795,9 @@ def replace_missing_stops(
             _ok, specs = broker.snapshot_protective_stops(
                 gap.symbol, side=protective_side,
             )
+            record_watchdog_pass("replace.reread_stops", db=db)
         except Exception as exc:  # noqa: BLE001
+            record_watchdog_pass("replace.reread_stops", exc, db=db)
             outcomes.append(RepairOutcome(
                 gap.symbol, gap.uncovered_qty, False,
                 f"could not re-read open stops before placing ({exc})",
@@ -824,7 +832,9 @@ def replace_missing_stops(
                 is_short=gap.is_short, db=db, outcome=repair,
                 resting_stops=list(specs or []), caller="coverage_sweep",
             )
+            record_watchdog_pass("replace.placement", db=db)
         except Exception as exc:  # noqa: BLE001
+            record_watchdog_pass("replace.placement", exc, db=db)
             outcomes.append(RepairOutcome(
                 gap.symbol, shortfall, False, f"placement raised ({exc})",
             ))
@@ -1406,6 +1416,7 @@ def release_typed_alert(
         }
         save_state(state, path)
     except Exception as exc:  # noqa: BLE001
+        record_watchdog_pass("release_typed_alert", exc)
         logger.warning(
             "release_typed_alert(%s) failed: %s — the claim stays held and "
             "today's page for those symbols will not be retried", key, exc,
@@ -1524,6 +1535,7 @@ def _scale_in_skip(
         path = db_path if db_path is not None else DB_PATH
         symbols = pending_scale_in_symbols_from_path(path)
     except Exception:  # noqa: BLE001
+        record_watchdog_pass("scale_in_skip.symbols", fault=True)
         return set()
     if not symbols:
         return set()
@@ -1580,6 +1592,7 @@ def _scale_in_symbols_past_measured_bound(
         from src.execution.scale_in import pending_scale_in_rows_from_path
         rows = pending_scale_in_rows_from_path(db_path)
     except Exception:  # noqa: BLE001
+        record_watchdog_pass("scale_in_bound.rows", fault=True)
         return set()
     moment = now or _utc_now()
     stale: set[str] = set()
@@ -1591,54 +1604,6 @@ def _scale_in_symbols_past_measured_bound(
         if age is not None and age > bound:
             stale.add(symbol)
     return stale
-
-
-def measured_window_bound_seconds(
-    db_path: str | Path | None,
-) -> tuple[float | None, int]:
-    """The longest scale-in unprotected window the desk has MEASURED, and how
-    many measurements that is drawn from.
-
-    Board item 193. Nothing here is a chosen threshold. Every closed window
-    files an `unprotected_window_closed` event carrying its own
-    `window_seconds`, both ends read from the broker's acknowledgements; the
-    bound is the maximum of those. `(None, 0)` when no window has ever been
-    measured, and the caller must then decline to call anything overdue
-    rather than invent a figure to compare against.
-    """
-    if not db_path:
-        return None, 0
-    try:
-        import sqlite3
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        try:
-            rows = conn.execute(
-                "SELECT evidence_json FROM specialist_evidence "
-                "WHERE kind = 'pipeline_event' "
-                "AND evidence_json LIKE '%unprotected_window_closed%' "
-                "ORDER BY id DESC LIMIT 2000",
-            ).fetchall()
-        finally:
-            conn.close()
-    except Exception:  # noqa: BLE001
-        return None, 0
-    best: float | None = None
-    seen = 0
-    for (raw,) in rows:
-        try:
-            payload = json.loads(raw)
-        except Exception:  # noqa: BLE001
-            continue
-        if payload.get("outcome") != "unprotected_window_closed":
-            continue
-        value = payload.get("window_seconds")
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            continue
-        seen += 1
-        best = value if best is None else max(best, value)
-    return best, seen
 
 
 def deliberately_unguarded(
@@ -1663,6 +1628,7 @@ def deliberately_unguarded(
             db_path if db_path is not None else DB_PATH,
         )
     except Exception:  # noqa: BLE001
+        record_watchdog_pass("unguarded.rows", fault=True)
         return []
     bound, observations = measured_window_bound_seconds(
         db_path if db_path is not None else DB_PATH,
@@ -1775,6 +1741,7 @@ def repair_lock(db_path: str | Path | None = None):
         except BlockingIOError:
             held = False
     except Exception as exc:  # noqa: BLE001 — unknowable lock state: do not write
+        record_watchdog_pass("repair_lock", exc)
         logger.warning("coverage sweep: could not establish the repair lock (%s)", exc)
     try:
         yield held
@@ -1926,7 +1893,9 @@ def check_coverage(
             )
             try:
                 positions = broker.get_positions()
+                record_watchdog_pass("stop_level.get_positions", db=db)
             except Exception:
+                record_watchdog_pass("stop_level.get_positions", fault=True, db=db)
                 positions = []
             if not isinstance(positions, list):
                 positions = []
@@ -1944,7 +1913,9 @@ def check_coverage(
                     "STOP RECORD MISMATCH: %s — %s (short=%s)",
                     item.symbol, item.reason, item.is_short,
                 )
+            record_watchdog_pass("stop_level_reconcile", db=db)
         except Exception as exc:  # noqa: BLE001
+            record_watchdog_pass("stop_level_reconcile", exc, db=db)
             logger.error("coverage watchdog stop-level reconcile failed: %s", exc)
 
     # Suppression for a failed placement is per position and keyed on
@@ -2127,8 +2098,10 @@ def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
             kind="pipeline_event", scope="run", symbol=None,
             evidence_json=json.dumps(summary, sort_keys=True, default=str),
         )
+        record_watchdog_pass("sweep_run_record", db=db)
         return True
     except Exception as exc:  # noqa: BLE001 — a record is never trading authority
+        record_watchdog_pass("sweep_run_record", exc, db=db)
         logger.warning("%s: could not write the run record: %s", SWEEP_LOG_NAME, exc)
         return False
 

@@ -32,33 +32,8 @@ _WAL_REPEG_SENTINEL = "__WAL_REPEG_PENDING__"
 #: in-flight. A rotation never touches a symbol carrying one.
 _IN_FLIGHT_FILL_STATUSES = frozenset({"submitted", "pending_submit"})
 
-#: Plain-language endings for the single-shot reprice, keyed by the
-#: `repeg_outcome` written into the entry spec. Read by the end-of-session
-#: cancel alert so the owner is told what WAS and WAS NOT tried, in words —
-#: never colour or an emoji standing alone; severity must survive being
-#: read as plain text.
-_REPEG_OUTCOME_TEXT = {
-    "disabled": "automatic repricing is switched off (execution.repeg_enabled)",
-    "no_room": "it was already sitting at the slippage ceiling, so there was "
-               "no legal price left to reprice to",
-    "not_at_exchange": "the exchange had not acknowledged it within the "
-                       "window, so a reprice was NOT attempted (Alpaca "
-                       "rejects a replace on an order that has not reached "
-                       "the exchange)",
-    "market_within_limit": "the market was at or below the limit, so it "
-                           "should have filled without a reprice",
-    "replaced": "it was repriced ONCE to a market-crossing price",
-    "replace_rejected": "one reprice was attempted and the broker refused it",
-    "replace_unknown": "one reprice was attempted and its outcome could not "
-                       "be read back from the broker",
-    "wal_refused": "a reprice was NOT attempted because its recovery record "
-                   "could not be written first",
-    "wait_failed": "a reprice was NOT attempted because the order's status "
-                   "could not be read",
-    "quote_unavailable": "a reprice was NOT attempted because no quote was "
-                         "available",
-    "unpriced": "a reprice was NOT attempted (no reference or limit price)",
-}
+from src.pipeline_entry_text import _REPEG_OUTCOME_TEXT  # noqa: F401 (re-export)
+from src.sentinel.entry_guard import record_clean_pass, record_swallowed, record_swallowed_here
 
 def _entry_slippage_bps(pipeline) -> float:
     """Configured entry-limit bound in basis points, or the 40bp default.
@@ -167,6 +142,7 @@ def _start_trade_updates_early(pipeline, ctx) -> None:
     try:
         warmup = start()
     except Exception as exc:  # noqa: BLE001
+        record_swallowed(pipeline, "stream.start_early", exc)
         logger.warning("trade_updates start-during-Risk failed: %s", exc)
         ctx.desk_latency_stall = True
         return
@@ -237,6 +213,7 @@ def _warm_trade_updates(pipeline, ctx) -> None:
     try:
         warmup = ensure()
     except Exception as exc:  # noqa: BLE001
+        record_swallowed(pipeline, "stream.warm", exc)
         logger.warning("trade_updates warmup failed: %s", exc)
         ctx.desk_latency_stall = True
         return
@@ -276,6 +253,7 @@ def _today_order_price(pipeline, symbol) -> float | None:
             if isinstance(candidate, LivePrice):
                 stamped = candidate
         except Exception:  # noqa: BLE001
+            record_swallowed_here(pipeline, "price.stamped_read", symbol=symbol)
             return None
     if stamped is not None:
         if not (stamped.price > 0):
@@ -294,6 +272,7 @@ def _today_order_price(pipeline, symbol) -> float | None:
     try:
         live = getter(symbol)
     except Exception:  # noqa: BLE001
+        record_swallowed_here(pipeline, "price.bare_read", symbol=symbol)
         return None
     if isinstance(live, (int, float)) and live > 0:
         return float(live)
@@ -452,6 +431,7 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
             poll_interval=min(1.0, poll_seconds),
         )
     except Exception as exc:  # noqa: BLE001
+        record_swallowed(pipeline, "repeg.wait_terminal", exc, symbol=symbol)
         logger.warning("re-peg %s: wait failed (%s) — leaving the order "
                        "as-is", symbol, exc)
         spec["repeg_outcome"] = "wait_failed"
@@ -472,6 +452,7 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
                 poll_interval=min(1.0, poll_seconds),
             )
         except Exception as exc:  # noqa: BLE001
+            record_swallowed(pipeline, "repeg.wait_exchange", exc, symbol=symbol)
             logger.warning("re-peg %s: exchange-ack wait failed (%s) — "
                            "leaving the order as-is", symbol, exc)
             spec["repeg_outcome"] = "wait_failed"
@@ -500,10 +481,13 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
     try:
         info = pipeline.broker.get_order_fill_info(order_id) or {}
     except Exception as exc:  # noqa: BLE001
+        record_swallowed(pipeline, "repeg.fill_read", exc, symbol=symbol)
         logger.warning("re-peg %s: fill read failed (%s) — leaving the "
                        "order as-is", symbol, exc)
         spec["repeg_outcome"] = "wait_failed"
         return order_id, 0.0
+    else:
+        record_clean_pass(pipeline, "repeg.fill_read", symbol=symbol)
     if str(info.get("status") or "").lower() in pipeline.broker._TERMINAL_ORDER_STATES:
         spec["repeg_outcome"] = "terminal_before_reprice"
         return order_id, 0.0
@@ -535,6 +519,7 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
     try:
         quote = pipeline.broker.get_latest_quote(symbol)
     except Exception as exc:  # noqa: BLE001
+        record_swallowed(pipeline, "repeg.quote", exc, symbol=symbol)
         logger.warning("re-peg %s: quote failed (%s)", symbol, exc)
         spec["repeg_outcome"] = "quote_unavailable"
         return order_id, 0.0
@@ -970,6 +955,7 @@ def _apply_repeg(
             run_id=getattr(ctx, "run_id", None),
         )
     except Exception as exc:  # noqa: BLE001
+        record_swallowed(pipeline, "repeg.wal_insert", exc, symbol=symbol)
         # No durable intent ⇒ no crash-safe window ⇒ do not open one.
         logger.error(
             "re-peg %s: could not write the WAL row (%s) — NOT replacing "
@@ -978,6 +964,8 @@ def _apply_repeg(
         )
         return order_id, 0.0, "wal_refused"
 
+    else:
+        record_clean_pass(pipeline, "repeg.wal_insert", symbol=symbol)
     result = pipeline.broker.replace_entry_limit(
         order_id, target,
         qty=requested_qty if isinstance(requested_qty, (int, float)) else None,
@@ -1025,7 +1013,10 @@ def _apply_repeg(
     try:
         pipeline.db.resolve_pending_repeg(wal_row_id, str(new_id))
     except Exception as exc:  # noqa: BLE001
+        record_swallowed(pipeline, "repeg.wal_resolve", exc, symbol=symbol)
         logger.warning("re-peg %s: WAL resolve failed: %s", symbol, exc)
+    else:
+        record_clean_pass(pipeline, "repeg.wal_resolve", symbol=symbol)
     repointed = _repoint_trade(pipeline, trade_row_id, order_id, str(new_id), symbol)
     if repointed:
         _delete_repeg_wal(pipeline, wal_row_id)
@@ -1054,6 +1045,7 @@ def _apply_repeg(
         ancestor = pipeline.broker.get_order_fill_info(order_id) or {}
         ancestor_filled = float(ancestor.get("filled_qty") or 0)
     except Exception:  # noqa: BLE001
+        record_swallowed_here(pipeline, "repeg.ancestor_fill", symbol=symbol)
         ancestor_filled = 0.0
     if ancestor_filled > 0:
         logger.warning(
@@ -1088,12 +1080,15 @@ def _repoint_trade(pipeline, trade_row_id, old_order_id: str,
             trade_row_id, old_order_id=old_order_id, new_order_id=new_order_id,
         )
     except Exception as exc:  # noqa: BLE001
+        record_swallowed(pipeline, "repeg.repoint", exc, symbol=symbol)
         logger.error(
             "re-peg %s: repointing trades row %s from %s to %s FAILED: %s — "
             "the WAL row is left for the session-start drain",
             symbol, trade_row_id, old_order_id, new_order_id, exc,
         )
         return False
+    else:
+        record_clean_pass(pipeline, "repeg.repoint", symbol=symbol)
     if not rows:
         logger.warning(
             "re-peg %s: trades row %s no longer pointed at %s — leaving the "
@@ -1109,4 +1104,5 @@ def _delete_repeg_wal(pipeline, wal_row_id) -> None:
     try:
         pipeline.db.delete_pending_repeg(wal_row_id)
     except Exception as exc:  # noqa: BLE001
+        record_swallowed(pipeline, "repeg.wal_delete", exc)
         logger.warning("re-peg: could not clear WAL row %s: %s", wal_row_id, exc)
