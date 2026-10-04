@@ -8,7 +8,7 @@ that is not a builtin, would raise NameError the moment that line runs.
 Blind spots: attribute names (`mod.missing`), names created dynamically
 (`globals()[...]`, `setattr`), anything in a module with `from x import *`
 (skipped, reported), and names bound at module level only on a path that
-never runs. Module-level code reading a name before it is bound is not caught.
+never runs. A module-level read of a name that is bound later in the file is not caught (a name nothing binds at all is).
 """
 from __future__ import annotations
 
@@ -43,6 +43,11 @@ def check_source(source: str, filename: str = "<src>"):
     module_names = {s.get_name() for s in top.get_symbols()
                     if s.is_assigned() or s.is_imported() or s.is_namespace()}
     out: set = set()
+    for sym in top.get_symbols():  # module-level code reading a name nothing binds
+        n = sym.get_name()
+        if (sym.is_referenced() and not sym.is_assigned() and not sym.is_imported()
+                and not sym.is_namespace() and n not in _BUILTINS):
+            out.add((1, n))
     for child in top.get_children():
         _walk(child, module_names, out)
     return sorted(out), False
