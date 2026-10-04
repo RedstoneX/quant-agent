@@ -113,7 +113,7 @@ def test_measured_ledger_id_counts_for_the_two_modules() -> None:
     assert len(ledger_ids_for_module("src.pipeline", ledger)) == 2
     assert len(ledger_ids_for_module("src.pipeline_intraday", ledger)) == 1
     assert len(ledger_ids_for_module("src.pipeline_delever", ledger)) == 1
-    assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 5 and len(ledger_ids_for_module("src.prompt_facts.missed_ops_signals", ledger)) == 6 and len(ledger_ids_for_module("src.pipeline_prompt_facts_review", ledger)) == 14  # 14 moved 2026-10-02
+    assert len(ledger_ids_for_module("src.pipeline_prompt_facts", ledger)) == 5 and len(ledger_ids_for_module("src.prompt_facts.missed_ops_signals", ledger)) == 6 and len(ledger_ids_for_module("src.pipeline_prompt_facts_review", ledger)) == 0 and len(ledger_ids_for_module("src.prompt_facts.review.grading", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.exits", ledger)) == 5 and len(ledger_ids_for_module("src.prompt_facts.review.calibration", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.blocked", ledger)) == 3 and len(ledger_ids_for_module("src.prompt_facts.review.replay", ledger)) == 0  # 14 review ids split by fact family 2026-10-04; moved 2026-10-02
     # 2026-10-01, item 210 step 10: the 2 `ExecutionStage._run_session` ids moved
     # with the class into `src.stage_execution`; step 11 then moved 12 more into
     # `src.pipeline_sizing` and `src.pipeline_earnings_quality`; step 12 moved
