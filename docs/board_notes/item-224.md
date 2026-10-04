@@ -18,3 +18,9 @@ The recording shipped in #958: `PortfolioConstructor` keeps `last_order_sectors`
 - UNPROVEN (not POPULATING): an orchestrator reported the live store holds 3 rows [measured 2026-10-02 by the orchestrator against the production database at the desk user's data directory; not independently re-read by the author of this note].
 - Verified in code and test by the author: one row per run, `(sector, side)` weights, the named call site, and a real `construct_orders` run landing a populated row in a real store (`test_a_real_construct_orders_run_lands_a_populated_row_in_the_store`).
 - An earlier version of this note called the item UNPROVEN because the author read a different database file (the checkout's copy, not the live one); that was wrong and is corrected here.
+
+## UPDATE 2026-10-04 -- two gaps closed, box still NOT ticked
+
+- Reduce-only sessions now record their `(sector, side)` weights under kind "reduce" (the earlier test that pinned an empty list for them is replaced). The production row with NULL weights and 6 reducing orders predates the NOT NULL schema and the backfill; it was a legacy row, not a current-code result.
+- The recorder reads `last_order_sectors` with no default, outside the try, so a renamed source field raises instead of silently recording nothing.
+- Classification: UNPROVEN until a post-fix production row with reducing weights is observed.

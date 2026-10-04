@@ -1712,7 +1712,7 @@ _STAGE_CLASS_MODULES = {
     "_dropped_since_proposal": "src.pipeline_entry_orders",
     "_record_constructor_drops": "src.pipeline_entry_orders",
     "_record_constructor_side_flips": "src.pipeline_entry_orders",
-    "_record_realised_sector_weights": "src.pipeline_entry_orders",
+    "_record_realised_sector_weights": "src.pipeline_sector_weights",
     "_apply_repeg": "src.pipeline_entry_orders",
     "_repoint_trade": "src.pipeline_entry_orders",
     "_delete_repeg_wal": "src.pipeline_entry_orders",

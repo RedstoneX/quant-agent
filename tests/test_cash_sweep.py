@@ -155,7 +155,7 @@ def test_force_delever_sells_vehicle_before_real_longs():
     p.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     p.broker.wait_for_order_terminal.return_value = "filled"
     p.broker.snapshot_protective_stops.return_value = (True, [])
-    p.broker.cancel_snapshotted_stops.return_value = True
+    p.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     p.broker.get_account.return_value = {
         "cash": 100.0, "portfolio_value": 90_000.0, "last_equity": 90_000.0,
     }

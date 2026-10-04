@@ -57,6 +57,7 @@ has a valid limit — the same buffer every other protective-stop path uses.
 from __future__ import annotations
 
 import json
+from src.stop_cancel_outcome import handle_add_cancel
 import logging
 import os
 import time
@@ -407,11 +408,8 @@ def prepare_long_add(
         return prep
     prep.wal_row_id = wal_row_id if isinstance(wal_row_id, int) else wal_row_id
 
-    if not broker.cancel_snapshotted_stops(symbol, live):
-        discharge_scale_in_wal(db, prep.wal_row_id)
-        prep.wal_row_id = None
-        prep.skip_reason = "scale_in_stop_clear_failed"
-        prep.skip_detail = "protective sell could not be cancelled (rolled back)"
+    cancel = broker.cancel_snapshotted_stops(symbol, live)
+    if not handle_add_cancel(db, prep, cancel, logger, discharge_scale_in_wal):
         return prep
 
     confirmed, detail = confirm_protective_cancels(broker, live)
@@ -579,11 +577,8 @@ def prepare_short_add(
         return prep
     prep.wal_row_id = wal_row_id if isinstance(wal_row_id, int) else wal_row_id
 
-    if not broker.cancel_snapshotted_stops(symbol, live):
-        discharge_scale_in_wal(db, prep.wal_row_id)
-        prep.wal_row_id = None
-        prep.skip_reason = "scale_in_stop_clear_failed"
-        prep.skip_detail = "protective buy-stop could not be cancelled (rolled back)"
+    cancel = broker.cancel_snapshotted_stops(symbol, live)
+    if not handle_add_cancel(db, prep, cancel, logger, discharge_scale_in_wal):
         return prep
 
     status, detail = _confirm_cancels_status(broker, live)

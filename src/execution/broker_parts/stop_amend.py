@@ -10,6 +10,7 @@ import logging
 
 from alpaca.trading.requests import ReplaceOrderRequest
 
+from src.execution.broker_parts.stop_clock import deferred_payload, market_is_closed
 from src.execution.broker_parts.stop_dead_replacement import classify_after_dead_replacement
 
 # Same log channel as before the move: operators and tests filter on the
@@ -230,6 +231,12 @@ class StopAmender:
         shapes that measurement covered take this path; everything else falls
         back.
         """
+        if market_is_closed(self.client) is True:
+            # Owner ruling 2026-10-02: a shut tape cannot elect a resting stop, so
+            # the broker's refusal of an amend out of hours costs nothing. Cancel
+            # nothing; the level is owed and recorded for the next open.
+            logger.warning("replace_stop_loss: market CLOSED, %s's stop NOT amended to $%.4f; owed to the open", symbol, new_stop_price)
+            return deferred_payload(symbol, stop_specs, new_stop_price)
         if not stop_specs or len(stop_specs) != len(live_orders):
             return _AMEND_NOT_ATTEMPTED
         if not all(self._stop_order_amendable_in_place(o) for o in live_orders):

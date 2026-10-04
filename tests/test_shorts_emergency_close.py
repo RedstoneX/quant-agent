@@ -76,7 +76,7 @@ def _emergency_liquidate_pipe():
     pipe.db.insert_trade = MagicMock(return_value=1)
     pipe.broker.cancel_open_entry_orders.return_value = 0
     pipe.broker.snapshot_protective_stops.return_value = (True, [])
-    pipe.broker.cancel_snapshotted_stops.return_value = True
+    pipe.broker.cancel_snapshotted_stops.return_value = MagicMock(cleared=True)
     pipe.broker.get_order_fill_info.return_value = {
         "status": "filled", "filled_qty": None, "filled_avg_price": None,
     }
