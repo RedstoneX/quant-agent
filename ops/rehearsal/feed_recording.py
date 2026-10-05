@@ -309,7 +309,7 @@ def _offline_urlopen(record: list[str], recording: dict | None):
 _URLOPEN_MODULES = (
     "src.data.news",
     "src.data.event_calendar",
-    "src.data.earnings",
+    "src.data.sec_client",
 )
 
 

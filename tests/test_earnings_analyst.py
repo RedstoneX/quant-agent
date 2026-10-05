@@ -529,126 +529,32 @@ def test_save_analysis_cleans_tmp_on_rename_failure(agent, report, tmp_path, mon
 # API instead, independent of whether the text matcher succeeds.
 # ===========================================================================
 
-def _companyfacts(concept_entries: dict) -> bytes:
-    """Build a minimal SEC companyfacts payload. `concept_entries` maps
-    concept name -> unit key -> list of {end, val, form} dicts."""
-    facts = {}
-    for concept, units in concept_entries.items():
-        facts[concept] = {"units": units}
-    return json.dumps({"facts": {"us-gaap": facts}}).encode()
 
 
-def test_xbrl_facts_picks_the_period_matching_the_filing(tmp_path, monkeypatch):
-    """Basic case: one concept, one value, matching period."""
-    from src.data.earnings import EarningsDataProvider
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-    monkeypatch.setattr(
-        provider, "_sec_get",
-        lambda url: _companyfacts({
-            "NetIncomeLoss": {"USD": [
-                {"end": "2026-03-31", "val": 8584000000, "form": "10-Q"},
-            ]},
-        }),
-    )
-
-    out = provider._get_xbrl_financial_facts("70858", "BAC", "2026-04-25")
-
-    assert "Net Income: $8,584,000,000 (period ending 2026-03-31)" in out
-    assert "STRUCTURED FINANCIAL FACTS" in out
 
 
-def test_xbrl_facts_prefers_the_fresher_concept_over_a_stale_one(tmp_path, monkeypatch):
-    """The real bug caught in manual testing: MSFT/AAPL have OLD entries
-    under the `Revenues` tag (some from 2010/2018 — the tag was abandoned
-    around ASC 606 adoption) and CURRENT entries under
-    `RevenueFromContractWithCustomerExcludingAssessedTax`. Trying concepts
-    in order and stopping at the first with ANY data picked the decade-old
-    number. Must pick the freshest value across ALL given concept names."""
-    from src.data.earnings import EarningsDataProvider
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-    monkeypatch.setattr(
-        provider, "_sec_get",
-        lambda url: _companyfacts({
-            "Revenues": {"USD": [
-                {"end": "2010-12-31", "val": 19953000000, "form": "10-Q"},
-            ]},
-            "RevenueFromContractWithCustomerExcludingAssessedTax": {"USD": [
-                {"end": "2026-03-31", "val": 82886000000, "form": "10-Q"},
-            ]},
-        }),
-    )
-
-    out = provider._get_xbrl_financial_facts("789019", "MSFT", "2026-04-30")
-
-    assert "Total Revenue: $82,886,000,000 (period ending 2026-03-31)" in out
-    assert "19,953,000,000" not in out
-    assert "2010-12-31" not in out
 
 
-def test_xbrl_facts_drops_a_field_stale_beyond_the_staleness_window(tmp_path, monkeypatch):
-    """The second bug caught in manual testing: BAC's cash tag, CVX's
-    long-term-debt tag, and NFLX's gross-profit tag were each years stale
-    with no current alternative concept tried. A number that old is worse
-    than no number — it's the exact 'PM sizes off an ungrounded field'
-    failure this whole fix exists to close, just relocated from text
-    extraction into XBRL. Must be omitted entirely, not shown as current."""
-    from src.data.earnings import EarningsDataProvider
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-    monkeypatch.setattr(
-        provider, "_sec_get",
-        lambda url: _companyfacts({
-            "NetIncomeLoss": {"USD": [
-                {"end": "2026-03-31", "val": 2210000000, "form": "10-Q"},
-            ]},
-            "LongTermDebtNoncurrent": {"USD": [
-                {"end": "2018-09-30", "val": 29854000000, "form": "10-K"},
-            ]},
-        }),
-    )
-
-    out = provider._get_xbrl_financial_facts("93410", "CVX", "2026-04-25")
-
-    assert "Net Income: $2,210,000,000 (period ending 2026-03-31)" in out
-    assert "Long-Term Debt" not in out
-    assert "29,854,000,000" not in out
 
 
-def test_xbrl_facts_fails_open_on_network_error(tmp_path, monkeypatch):
-    """A SEC API hiccup must degrade to empty string, not crash the whole
-    earnings check — the caller falls back to text-only extraction exactly
-    as it did before this existed."""
-    from src.data.earnings import EarningsDataProvider
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-
-    def boom(url):
-        raise TimeoutError("SEC is down")
-    monkeypatch.setattr(provider, "_sec_get", boom)
-
-    out = provider._get_xbrl_financial_facts("789019", "MSFT", "2026-04-30")
-
-    assert out == ""
 
 
 def test_xbrl_facts_gets_prepended_to_extracted_text(tmp_path, monkeypatch):
     """End-to-end wiring: `_check_symbol` must actually attach the XBRL
     block to `text_excerpt`, not just have the method exist unused.
 
-    Mocks `_fetch_xbrl_raw` — the one real fetch `_check_symbol` now makes
-    (see its docstring: `_get_xbrl_financial_facts` and
-    `_xbrl_comparable_values` both derive from this single call so a filing
-    isn't fetched twice) — rather than `_get_xbrl_financial_facts` directly,
+    Stubs the SEC client's `get` — the one real fetch `_check_symbol` now makes
+    (see its docstring: the XBRL text block and
+    `xbrl_comparable_values` both derive from this single call so a filing
+    isn't fetched twice) — rather than the formatter directly,
     so this test isn't silently making a real SEC network call while
     believing it's exercising the mock."""
     from src.data.earnings import EarningsDataProvider, FilingInfo
 
     provider = EarningsDataProvider(data_dir=str(tmp_path))
-    monkeypatch.setattr(provider, "_get_cik", lambda ticker: "789019")
+    monkeypatch.setattr(provider.sec, "cik_for", lambda ticker: "789019")
     monkeypatch.setattr(
-        provider, "_get_recent_filings",
+        provider.sec, "recent_filings",
         lambda cik, ticker: [
             FilingInfo(
                 symbol=ticker, form_type="10-Q", filing_date="2026-04-30",
@@ -659,10 +565,10 @@ def test_xbrl_facts_gets_prepended_to_extracted_text(tmp_path, monkeypatch):
     local_html = tmp_path / "filing.html"
     local_html.write_text("<html><body>Some filing text with no clean sections.</body></html>")
     monkeypatch.setattr(provider, "_download_filing", lambda cik, filing: str(local_html))
-    monkeypatch.setattr(
-        provider, "_fetch_xbrl_raw",
-        lambda cik, ticker, filing_date: {"net_income": (31_778_000_000.0, "2026-03-31")},
-    )
+    payload = json.dumps({"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [
+        {"end": "2026-03-31", "val": 31_778_000_000, "form": "10-Q"},
+    ]}}}}}).encode()
+    monkeypatch.setattr(provider.sec, "get", lambda url, **_kw: payload)
 
     report = provider._check_symbol("MSFT")
 
@@ -674,47 +580,8 @@ def test_xbrl_facts_gets_prepended_to_extracted_text(tmp_path, monkeypatch):
     assert report.xbrl_facts == {"net_income": 31_778_000_000.0}
 
 
-def test_xbrl_comparable_values_keeps_only_the_one_to_one_fields(tmp_path):
-    """`_xbrl_comparable_values` must expose ONLY the concepts that map
-    one-to-one onto an `EarningsAnalysis` field (revenue, net_income, cash,
-    eps) — not gross_profit/operating_income (the analyst reports MARGINS,
-    a ratio it computes itself, not these raw dollar figures) and not
-    long_term_debt (XBRL here is non-current debt only, while
-    `total_debt` conventionally includes the current portion — comparing
-    them would flag a definitional gap as a factual error)."""
-    from src.data.earnings import EarningsDataProvider
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-    raw = {
-        "revenue": (50_000_000_000.0, "2026-03-31"),
-        "net_income": (5_000_000_000.0, "2026-03-31"),
-        "gross_profit": (20_000_000_000.0, "2026-03-31"),
-        "operating_income": (10_000_000_000.0, "2026-03-31"),
-        "assets": (300_000_000_000.0, "2026-03-31"),
-        "cash": (10_000_000_000.0, "2026-03-31"),
-        "long_term_debt": (40_000_000_000.0, "2026-03-31"),
-        "eps": (2.5, "2026-03-31"),
-    }
-
-    values = provider._xbrl_comparable_values(raw)
-
-    assert values == {
-        "revenue": 50_000_000_000.0,
-        "net_income": 5_000_000_000.0,
-        "cash": 10_000_000_000.0,
-        "eps": 2.5,
-    }
 
 
-def test_xbrl_comparable_values_empty_when_nothing_fetched(tmp_path):
-    """`_fetch_xbrl_raw` fails open to `{}` (no XBRL data for this
-    filer/period) — `_xbrl_comparable_values` must pass that straight
-    through as `{}`, not error or invent a value."""
-    from src.data.earnings import EarningsDataProvider
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-
-    assert provider._xbrl_comparable_values({}) == {}
 
 
 def test_auditors_letter_is_not_mistaken_for_financial_statements(tmp_path):

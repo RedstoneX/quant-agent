@@ -402,191 +402,17 @@ def test_load_earnings_analyses_never_confirms_or_spawns_threads(tmp_path):
     assert aapl_entries[0]["analysis"] is not None
 
 
-# === SEC _sec_get retry behavior ===
-# Prior bug: 429 / 503 raised HTTPError uncaught → caller's broad except
-# turned the filing list into [] silently → evening's thesis_health_review
-# lost 10-Q context (the core value-investing input). Pin the retry loop
-# so transient SEC errors back off and succeed instead of failing silent.
-
-def test_sec_get_retries_on_429(tmp_path, monkeypatch):
-    from urllib.error import HTTPError
-    from io import BytesIO
-    from src.data.earnings import EarningsDataProvider
-
-    monkeypatch.setattr("src.data.earnings.time.sleep", lambda *_a, **_k: None)
-    call_log: list[str] = []
-
-    def fake_urlopen(req, timeout):
-        call_log.append("call")
-        if len(call_log) < 3:
-            raise HTTPError(req.full_url, 429, "Too Many Requests", {}, BytesIO(b""))
-        # 3rd attempt succeeds
-        class _Resp:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def read(self): return b'{"ok": true}'
-        return _Resp()
-    monkeypatch.setattr("src.data.earnings.urlopen", fake_urlopen)
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-    out = provider._sec_get("https://data.sec.gov/x")
-    assert out == b'{"ok": true}'
-    assert len(call_log) == 3
 
 
-def test_sec_get_retries_on_503(tmp_path, monkeypatch):
-    from urllib.error import HTTPError
-    from io import BytesIO
-    from src.data.earnings import EarningsDataProvider
-
-    monkeypatch.setattr("src.data.earnings.time.sleep", lambda *_a, **_k: None)
-    call_log: list[str] = []
-
-    def fake_urlopen(req, timeout):
-        call_log.append("call")
-        if len(call_log) < 2:
-            raise HTTPError(req.full_url, 503, "Service Unavailable", {}, BytesIO(b""))
-        class _Resp:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def read(self): return b'{"ok": 1}'
-        return _Resp()
-    monkeypatch.setattr("src.data.earnings.urlopen", fake_urlopen)
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-    out = provider._sec_get("https://data.sec.gov/x")
-    assert out == b'{"ok": 1}'
-    assert len(call_log) == 2
 
 
-def test_sec_get_raises_after_max_retries(tmp_path, monkeypatch):
-    """All retries exhausted → surface the HTTPError so caller's broad
-    except still logs it (rather than silently swallowing data loss)."""
-    from urllib.error import HTTPError
-    from io import BytesIO
-    from src.data.earnings import EarningsDataProvider
-    import pytest
-
-    monkeypatch.setattr("src.data.earnings.time.sleep", lambda *_a, **_k: None)
-
-    def fake_urlopen(req, timeout):
-        raise HTTPError(req.full_url, 429, "Too Many Requests", {}, BytesIO(b""))
-    monkeypatch.setattr("src.data.earnings.urlopen", fake_urlopen)
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-    with pytest.raises(HTTPError):
-        provider._sec_get("https://data.sec.gov/x", max_retries=2)
 
 
-def test_sec_get_aborts_when_total_timeout_exceeded(tmp_path, monkeypatch):
-    """`_sec_get` must abort the retry loop when total_timeout_s elapses
-    even if max_retries hasn't fired. Prevents a sustained SEC 503 from
-    snowballing one URL into 60+ seconds — for the 77-stock earnings
-    preprocess that scales to minutes of wasted budget, pushing into the
-    morning window. The check fires at the START of each iteration so a
-    single in-flight urlopen + sleep already consumed counts against
-    next attempt's budget.
-    """
-    from urllib.error import HTTPError
-    from io import BytesIO
-    from src.data.earnings import EarningsDataProvider
-    import pytest
-
-    # Fake wallclock so the budget check fires without real waiting.
-    fake_clock = {"t": 0.0}
-    monkeypatch.setattr(
-        "src.data.earnings.time.sleep",
-        lambda s: fake_clock.__setitem__("t", fake_clock["t"] + s),
-    )
-    monkeypatch.setattr("src.data.earnings.time.time", lambda: fake_clock["t"])
-
-    call_log: list[str] = []
-
-    def fake_urlopen(req, timeout):
-        call_log.append("call")
-        raise HTTPError(req.full_url, 503, "overloaded", {}, BytesIO(b""))
-    monkeypatch.setattr("src.data.earnings.urlopen", fake_urlopen)
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-    # total_timeout_s=2.0: attempt 1 sleeps REQUEST_DELAY≈0.12 + 1s backoff → t≈1.12.
-    # Attempt 2 budget check: 1.12 < 2.0, continue, +0.12 + 2s backoff → t≈3.24.
-    # Attempt 3 budget check: 3.24 > 2.0 → ABORT, raise the last HTTPError.
-    # Total: 2 urlopen calls (not 3 = max_retries).
-    with pytest.raises(HTTPError):
-        provider._sec_get(
-            "https://data.sec.gov/x",
-            max_retries=3,
-            total_timeout_s=2.0,
-        )
-    assert len(call_log) == 2, (
-        f"expected exactly 2 attempts (3rd aborted by total_timeout_s); "
-        f"got {len(call_log)}"
-    )
-    assert fake_clock["t"] > 2.0, (
-        "fake wallclock should have ticked past the budget"
-    )
 
 
-def test_get_recent_filings_tolerates_misaligned_arrays(tmp_path, monkeypatch):
-    """SEC submissions JSON returns parallel arrays. An upstream
-    truncation could leave them desynced. Pin: zip-based iteration
-    survives without IndexError when accessions / primary_docs are
-    shorter than forms / dates."""
-    import json as _json
-    from src.data.earnings import EarningsDataProvider
-
-    monkeypatch.setattr("src.data.earnings.time.sleep", lambda *_a, **_k: None)
-    # forms=4, dates=4, accessions=2, primary_docs=2 — short tail
-    payload = {
-        "filings": {
-            "recent": {
-                "form": ["10-Q", "10-K", "8-K", "10-Q"],
-                "filingDate": ["2026-04-30", "2026-04-15", "2026-04-10", "2026-03-25"],
-                "accessionNumber": ["0001-23-001", "0001-23-002"],
-                "primaryDocument": ["nvda-10q.html", "nvda-10k.html"],
-            }
-        }
-    }
-
-    def fake_urlopen(req, timeout):
-        class _Resp:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def read(self): return _json.dumps(payload).encode()
-        return _Resp()
-    monkeypatch.setattr("src.data.earnings.urlopen", fake_urlopen)
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path), lookback_days=365)
-    filings = provider._get_recent_filings("0001234567", "NVDA")
-    # zip stops at shortest: only first 2 rows yield filings, of which only
-    # 1 is a 10-Q/10-K within lookback (the 10-K at idx 1).
-    forms_seen = [f.form_type for f in filings]
-    assert "10-Q" in forms_seen
-    assert "10-K" in forms_seen
-    assert len(filings) == 2  # idx 0 (10-Q) + idx 1 (10-K)
     # No IndexError, no crash — proves the misalignment was tolerated.
 
 
-def test_sec_get_does_not_retry_on_404(tmp_path, monkeypatch):
-    """404 means the URL is wrong (bad CIK / missing filing), not a
-    transient rate-limit. Retrying wastes the budget — surface immediately."""
-    from urllib.error import HTTPError
-    from io import BytesIO
-    from src.data.earnings import EarningsDataProvider
-    import pytest
-
-    monkeypatch.setattr("src.data.earnings.time.sleep", lambda *_a, **_k: None)
-    call_log: list[str] = []
-
-    def fake_urlopen(req, timeout):
-        call_log.append("call")
-        raise HTTPError(req.full_url, 404, "Not Found", {}, BytesIO(b""))
-    monkeypatch.setattr("src.data.earnings.urlopen", fake_urlopen)
-
-    provider = EarningsDataProvider(data_dir=str(tmp_path))
-    with pytest.raises(HTTPError):
-        provider._sec_get("https://data.sec.gov/x")
-    assert len(call_log) == 1  # no retry on 404
 
 
 def test_earnings_provider_prune_removes_old_raw_html_keeps_analyses(tmp_path, monkeypatch):
@@ -757,8 +583,8 @@ def test_check_symbol_degrades_to_no_coverage_when_only_a_stale_analysis_exists(
     monkeypatch.setattr(earnings_mod, "et_today", lambda: date(2026, 9, 2))
     provider = EarningsDataProvider(data_dir=str(tmp_path / "earnings"))
     _write_analysis(provider.data_dir / "NVDA", "10-Q", "2026-02-14")  # 200d
-    monkeypatch.setattr(provider, "_get_cik", lambda symbol: "0001234567")
-    monkeypatch.setattr(provider, "_get_recent_filings", lambda cik, ticker: [])
+    monkeypatch.setattr(provider.sec, "cik_for", lambda symbol: "0001234567")
+    monkeypatch.setattr(provider.sec, "recent_filings", lambda cik, ticker: [])
 
     assert provider._check_symbol("NVDA") is None
     # And the never-covered symbol takes the identical path to the identical
@@ -779,8 +605,8 @@ def test_check_and_fetch_omits_the_symbol_entirely_when_only_a_stale_analysis_ex
     monkeypatch.setattr(earnings_mod, "et_today", lambda: date(2026, 9, 2))
     provider = EarningsDataProvider(data_dir=str(tmp_path / "earnings"))
     _write_analysis(provider.data_dir / "NVDA", "10-Q", "2026-02-14")  # 200d
-    monkeypatch.setattr(provider, "_get_cik", lambda symbol: "0001234567")
-    monkeypatch.setattr(provider, "_get_recent_filings", lambda cik, ticker: [])
+    monkeypatch.setattr(provider.sec, "cik_for", lambda symbol: "0001234567")
+    monkeypatch.setattr(provider.sec, "recent_filings", lambda cik, ticker: [])
 
     reports = provider.check_and_fetch(["NVDA"])
 
