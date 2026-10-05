@@ -105,10 +105,10 @@ def test_a_direct_construction_is_refused():
 
 
 def test_the_factory_builds_through_the_patched_class(monkeypatch):
-    import src.notifier as pkg
+    import src.notifier.owner_alert_funnel as funnel
     from src.notifier.owner_alert_funnel import build_default_notifier
 
-    monkeypatch.setattr(pkg, "TelegramNotifier", lambda **kw: ("built", kw))
+    monkeypatch.setattr(funnel, "TelegramNotifier", lambda **kw: ("built", kw))
     assert build_default_notifier(a=1) == ("built", {"a": 1})
 
 
