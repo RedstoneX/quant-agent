@@ -4,7 +4,7 @@ import logging
 from src.execution import exit_path_records as epr
 from src.storage.db import Database
 
-KIND = "guarded:broker.exit_path_records.last_trail_states"
+KIND = "guarded:execution.exit_path_records.last_trail_states"
 
 
 def _db(tmp_path):

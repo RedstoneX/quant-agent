@@ -7,7 +7,7 @@ from src.sentinel.guarded import attach_reconciliation_db
 from src.sentinel.reconciliation import AGREED, DISAGREED, NOT_RUN, ReconciliationLog
 from src.storage.db import Database
 
-WHERE = "broker.trade_stream.reconnect.authed_set"
+WHERE = "execution.broker_parts.trade_stream.reconnect.authed_set"
 
 
 class _Boom:

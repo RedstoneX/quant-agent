@@ -45,7 +45,7 @@ from src.data.levels import (
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision,
-    reward_to_risk, stated_soft_exit,
+    stated_soft_exit,
 )
 from src.risk.constants import (
     REWARD_RISK_PARITY,
@@ -76,6 +76,8 @@ from src.portfolio_constructor.config import (
 from src.portfolio_constructor.entry_stop.resolver import EntryStopResolver
 import src.portfolio_constructor.level_touch_record as touch_gate
 from src.portfolio_constructor.stop_width import stop_atr_multiple
+from src.portfolio_constructor import no_atr_stop_record as no_atr_rows
+from src.portfolio_constructor.reward_risk_at import reward_risk_at
 
 
 class StopRules:
@@ -286,6 +288,10 @@ class StopRules:
         min_touches = self.cfg.min_level_touches_for_stop_honor
         best_level: float | None = None
         best_gap = float("inf")
+        candidates = 0
+        row = no_atr_rows.recorder(
+            analysis, is_short, entry_price, buffer_pct, min_touches,
+        )
         for raw in raw_levels:
             try:
                 price = float(raw)
@@ -305,13 +311,19 @@ class StopRules:
                 site=touch_gate.SITE_NO_ATR_STRUCTURAL_ANCHOR,
             ):
                 continue
+            candidates += 1
             gap = abs(entry_price - price)
             if gap < best_gap:
                 best_level, best_gap = price, gap
         if best_level is not None:
             stop = _beyond(best_level)
             if _usable(stop):
-                return (best_level, stop, STOP_RULE_STRUCTURAL_NO_ATR)
+                # Counted, never altered: `row` returns its argument.
+                return row(
+                    no_atr_rows.OUTCOME_LEVEL,
+                    (best_level, stop, STOP_RULE_STRUCTURAL_NO_ATR),
+                    touches_by_price.get(best_level), candidates,
+                )
 
         # ---- Tier 2: the signal (prior) bar's far edge -------------------
         bar_edge = getattr(
@@ -326,36 +338,19 @@ class StopRules:
         ):
             stop = _beyond(bar_edge)
             if _usable(stop):
-                return (bar_edge, stop, STOP_RULE_PRIOR_BAR_NO_ATR)
+                return row(
+                    no_atr_rows.OUTCOME_PRIOR_BAR,
+                    (bar_edge, stop, STOP_RULE_PRIOR_BAR_NO_ATR),
+                    None, candidates,
+                )
 
-        return None
+        # Ran and found nothing. The row keeps that distinguishable from
+        # "never reached", which is no row at all. Returns None regardless.
+        return row(no_atr_rows.OUTCOME_NONE, None, None, candidates)
 
-    def _reward_risk_at(
-        self,
-        entry_price: float,
-        stop_price: float,
-        target_price: float | None,
-        is_short: bool,
-    ) -> float | None:
-        """Reward:risk measured against the stop that will actually ship.
-
-        A thin alias for `models.reward_to_risk` — the ONE definition of
-        this ratio in the codebase, shared with
-        `TechAnalysisResult.risk_reward`, `TradeDecision.reward_risk` and
-        the execution-time re-check in `src/pipeline_stages.py`. It used to
-        be a fourth private copy, and the copies disagreed in ways that
-        rejected real trades (see that function's docstring for the XLE
-        1.67-vs-1.18 rejection).
-
-        None means "this is not a measurable entry geometry", including
-        every non-finite input. **A caller that had a target and got None
-        back must refuse, not permit** — a NaN makes every `ratio < floor`
-        comparison False, so treating None as "no opinion" there would wave
-        a malformed trade straight through the floor.
-        """
-        return reward_to_risk(
-            entry_price, stop_price, target_price, is_short=is_short,
-        )
+    def _reward_risk_at(self, entry_price, stop_price, target_price, is_short):
+        """Reward:risk at the stop that will ship. See `reward_risk_at`."""
+        return reward_risk_at(entry_price, stop_price, target_price, is_short)
 
     def real_reward_risk_preview(self, *args, **kwargs):
         """Thin shim: body moved to src/portfolio_constructor/entry_stop/resolver.py."""

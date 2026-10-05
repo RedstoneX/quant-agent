@@ -91,6 +91,7 @@ from src.pipeline_earnings_quality import (  # noqa: F401
     _earnings_field_disclosed, _earnings_xbrl_mismatch_fields,
     _parse_reported_figure,
 )
+from src.pipeline_gross_ceiling import _session_gross_ceiling  # noqa: F401
 from src.pipeline_sizing import (  # noqa: F401
     _DEFAULT_RISK_BUDGET_PCT, _entry_deployment_budget,
     _execution_payoff_skip_reason, _fmt_shares, _fractional_sizing_allowed,
@@ -189,27 +190,6 @@ LEVELS_DEGRADED_RUN_EMPTY_SHARE = 0.5
 #: (tests, a misconfigured owner universe) from a false alarm, and is well
 #: below anything the real desk runs.
 LEVELS_COVERAGE_MIN_SAMPLE = 10
-
-
-def _session_gross_ceiling(pipeline, ctx):
-    """Spec §11.2 — this session's ladder-resolved gross-exposure ceiling.
-
-    The run preamble already resolved it from account state before any agent
-    ran; this re-derives it so the resume lane (where the preamble did not
-    run) sizes against a real ceiling too. Returns None on any failure — the
-    constructor then falls back to the standing cap, which is still a
-    ceiling. It never falls back to "no ceiling".
-    """
-    resolve = getattr(pipeline, "_resolve_gross_ceiling", None)
-    if resolve is None:
-        return None
-    try:
-        from src.risk.rules import GrossCeiling
-        ceiling = resolve(ctx)
-        return ceiling if isinstance(ceiling, GrossCeiling) else None
-    except Exception as exc:  # noqa: BLE001
-        record_stage(pipeline, "gross_ceiling", exc)
-        return None
 
 
 def _book_risk_inputs(ctx, total_value: float):

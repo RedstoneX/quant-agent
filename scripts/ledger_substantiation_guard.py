@@ -38,6 +38,7 @@ from typing import Any, Callable, NamedTuple
 
 import yaml
 
+from scripts.ledger_locator import trunk_ledger, working_ledger
 from scripts.guard_reference import (
     ROOT,
     ReferenceUnavailable,
@@ -52,7 +53,6 @@ from src.ledger_citations import (
     _string_fields,
 )
 
-LEDGER_REL = "config/number_ledger.yaml"
 Reader = Callable[[str], "str | None"]
 
 
@@ -219,12 +219,12 @@ def _read_under(root: Path, rel: str) -> str | None:
 
 def source_pins(root: Path = ROOT) -> list[Pin]:
     """Pins made by `source` fields only, over the working tree."""
-    ledger = _entries((root / LEDGER_REL).read_text(encoding="utf-8"))
+    ledger = _entries((root / working_ledger(root)).read_text(encoding="utf-8"))
     return classify(_source_only(ledger), lambda rel: _read_under(root, rel))
 
 
 def working_pins(root: Path = ROOT) -> list[Pin]:
-    ledger = _entries((root / LEDGER_REL).read_text(encoding="utf-8"))
+    ledger = _entries((root / working_ledger(root)).read_text(encoding="utf-8"))
 
     def read(rel: str) -> str | None:
         p = root / rel
@@ -235,9 +235,10 @@ def working_pins(root: Path = ROOT) -> list[Pin]:
 
 def trunk_pins() -> list[Pin]:
     """The same classification over `origin/main`'s ledger and cited files."""
-    blob = trunk_blobs([LEDGER_REL]).get(LEDGER_REL)
+    rel = trunk_ledger()  # found by shape on trunk; refuses unless exactly one
+    blob = trunk_blobs([rel]).get(rel)
     if blob is None:
-        raise ReferenceUnavailable(f"{LEDGER_REL} is not readable on {TRUNK}")
+        raise ReferenceUnavailable(f"{rel} is not readable on {TRUNK}")
     ledger = _entries(blob)
     blobs = trunk_blobs(_cited_paths(ledger))
     return classify(ledger, blobs.get)
