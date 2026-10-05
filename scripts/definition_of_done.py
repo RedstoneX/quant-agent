@@ -50,7 +50,8 @@ THE FOUR CHECKS
 ---------------
 1. `declared_criteria_problems` — an item declares its completion criteria
    when it is FILED. Closing it accounts for every criterion declared at
-   the base commit: met, or deferred onto a named item that exists. A
+   the base commit: met, deferred onto a named item that exists, or
+   withdrawn by an owner ruling the gate finds in the decisions record. A
    criterion cannot simply stop being mentioned.
 
 2. `consumer_completeness_problems` — a change to a registered shared
@@ -474,87 +475,19 @@ def items_filed(change: Change) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
-# CHECK 1 — declared halves
+# CHECK 1 — declared halves, in `scripts/dod_declared_criteria.py`
 # ---------------------------------------------------------------------------
-
-#: `Done-criteria-deferred: 18/2 -> item 63 (2026-09-18)`. A deferred
-#: criterion must name where it went and when it was deferred, because an
-#: obligation with no date is the silent limbo this check exists to remove.
-DEFERRAL = re.compile(
-    r"(\d+)\s*/\s*(\d+)\s*(?:->|→)\s*items?\s*#?(\d+)"
-    r".*?(\d{4}-\d{2}-\d{2})", re.I)
-MET = re.compile(r"(\d+)\s*/\s*(\d+)", re.I)
 
 
 def declared_criteria_problems(change: Change) -> list[str]:
-    """Items filed without criteria, and closures that drop one.
+    """`scripts.dod_declared_criteria.declared_criteria_problems`.
 
-    Filing: a new item must carry a `DONE WHEN:` label and at least one
-    criterion bullet. An item whose whole content is a question for the
-    owner is exempt via `NO CRITERIA:` and a reason, because "he rules or he
-    does not" has no half to leave behind — and the exemption is itself in
-    the diff, which is the point.
-
-    Closing: every criterion the item carried AT THE BASE COMMIT must appear
-    in this change's `Done-criteria-met` or `Done-criteria-deferred`
-    trailers. A deferral must name a target item that exists in the board
-    after this change and a date. An item that carried no criteria at the
-    base is not held to this — that is the grandfathering, and it is why
-    this check has almost no bite on today's board.
+    Imported here rather than at module scope because that module imports
+    this one for the board shapes it reads; the seam keeps every caller and
+    the `CHECKS` registry below pointing at one name.
     """
-    problems: list[str] = []
-    after = item_blocks(change.work_md_after)
-    before = item_blocks(change.work_md_before)
-
-    for number in sorted(items_filed(change), key=int):
-        block = after[number]
-        if re.search(r"^\s*NO CRITERIA:\s*\S.{15,}", block, re.M):
-            continue
-        if not criteria(block):
-            problems.append(
-                f"board item {number} is filed by this change with no "
-                f"completion criteria. Add a `DONE WHEN:` line to its block "
-                f"in the board file followed by one `- [ ] ...` bullet per half "
-                f"of the work, so closing it later has something to verify "
-                f"against. If the item is a question only the owner can "
-                f"answer, say so with a `NO CRITERIA: <reason>` line instead."
-            )
-
-    met = {(m.group(1), m.group(2)) for v in trailer(change.messages, "Done-criteria-met")
-           for m in MET.finditer(v)}
-    deferred = {(m.group(1), m.group(2)): (m.group(3), m.group(4))
-                for v in trailer(change.messages, "Done-criteria-deferred")
-                for m in DEFERRAL.finditer(v)}
-
-    for number in sorted(items_closed(change), key=int):
-        declared = criteria(before.get(number, ""))
-        if not declared:
-            continue
-        for ordinal, _was_met, text in declared:
-            key = (number, str(ordinal))
-            if key in met:
-                continue
-            if key in deferred:
-                target, _date = deferred[key]
-                if target not in after:
-                    problems.append(
-                        f"board item {number} criterion {ordinal} "
-                        f"({text[:60]!r}) is deferred onto item {target}, "
-                        f"which does not exist in the board file after this "
-                        f"change. File the item, or account for the "
-                        f"criterion as met."
-                    )
-                continue
-            problems.append(
-                f"board item {number} is retired by this change but "
-                f"criterion {ordinal} ({text[:60]!r}), declared when the "
-                f"item was filed, is accounted for neither way. Add "
-                f"`Done-criteria-met: {number}/{ordinal}` to a commit "
-                f"message if it shipped, or "
-                f"`Done-criteria-deferred: {number}/{ordinal} -> item N "
-                f"(YYYY-MM-DD)` naming the item that now carries it."
-            )
-    return problems
+    from scripts.dod_declared_criteria import declared_criteria_problems as f
+    return f(change)
 
 
 # ---------------------------------------------------------------------------
