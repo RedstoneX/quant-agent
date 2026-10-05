@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 import math
 
+from src.sentinel.guarded import record_guarded_pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,6 +94,6 @@ class EveningStopProximitySession:
                         "stop": float(stop), "gap": gap, "atr": float(atr),
                     })
         except Exception as exc:  # noqa: BLE001 — never break the evening push
-            logger.warning("evening stop-proximity sweep failed: %s", exc)
+            record_guarded_pass((self._db, self._broker), "sessions.evening_stop_proximity", exc, log=logger)
             return []
         return rows

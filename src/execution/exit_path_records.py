@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from src.sentinel.guarded import record_guarded_pass
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +82,10 @@ def _insert(db: Any, *, run_id: str | None, kind: str, symbol: str,
             kind=kind, scope="symbol", symbol=symbol_u,
             evidence_json=json.dumps(payload, sort_keys=True, default=str),
         )
+        record_guarded_pass(db, "exit_path_records.insert", context={"kind": kind})
         return True
     except Exception as exc:  # noqa: BLE001 — a record is never trading authority
-        logger.warning(
-            "exit-path record %s for %s could not be written: %s",
-            kind, symbol_u, exc,
-        )
+        record_guarded_pass(db, "exit_path_records.insert", exc, log=logger, context={"kind": kind})
         return False
 
 
@@ -110,8 +109,9 @@ def last_trail_states(db: Any, symbols) -> dict[str, str]:
         return {}
     try:
         rows = db.get_latest_symbol_evidence(TRAIL_STATE_KIND, symbols)
+        record_guarded_pass(db, "exit_path_records.last_trail_states")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("trail-state read failed: %s", exc)
+        record_guarded_pass(db, "exit_path_records.last_trail_states", exc, log=logger)
         return {}
     out: dict[str, str] = {}
     for symbol, row in (rows or {}).items():
@@ -282,29 +282,6 @@ def record_stop_shift_legs(
                    symbol=symbol, payload=payload)
 
 
-def stop_shift_incomplete_text(symbol: str, status: str, shifted: int, total: int) -> str:
-    """The plain sentence the owner reads when a shift did not fully land."""
-    sym = str(symbol or "").upper()
-    if status == "naked":
-        return (
-            f"a protective stop on {sym} is GONE: the broker was re-read after "
-            f"a dead order replacement and shows no resting stop for it, so "
-            f"the position is UNPROTECTED until coverage repair places one"
-        )
-    if status == "unknown":
-        return (
-            f"the ex-dividend stop shift on {sym} got no answer from the broker "
-            f"for at least one of its {total} protective stop(s), so the desk "
-            f"does not know which price they are resting at — nothing was "
-            f"cancelled and nothing was written down as moved"
-        )
-    return (
-        f"only {shifted} of {total} protective stop(s) on {sym} moved down by "
-        f"the dividend; the rest are still at the pre-dividend level, which the "
-        f"ex-dividend opening gap can trigger on its own — nothing was cancelled"
-    )
-
-
 def record_stop_read_unreadable(
     db: Any, *, symbol: str, reason: str, action: str = "",
     context: str = "", run_id: str | None = None,
@@ -314,3 +291,8 @@ def record_stop_read_unreadable(
                    symbol=symbol, payload={"code": "stop_read_unreadable",
                                            "reason": reason, "action": action,
                                            "context": context})
+
+# Lifted out; re-exported (bottom, after `_insert`/`STOP_SHIFT_KIND` exist).
+from src.execution.exdiv_shift_outcome import (  # noqa: E402,F401
+    record_shift_outcome, stop_shift_incomplete_text,
+)
