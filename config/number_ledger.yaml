@@ -2005,11 +2005,11 @@ numbers:
       handed back a readable count and no page stopped short of one".
       This cap binding is explicitly NOT one of the reasons that clears
       `verified` (see `UNVERIFIED_EDGAR_REASONS` in
-      src/data/smart_money.py): a budget spent as designed is not a failed
+      src/data/smart_money_edgar_coverage.py): a budget spent as designed is not a failed
       read. The open question below is unchanged and still unanswered.
       CAVEAT for whoever answers it, found 2026-09-20 in review and
       measured live: EFTS caps `hits.total.value` at exactly 10,000 and
-      marks it `relation: "gte"`. `_edgar_total` now returns None for a
+      marks it `relation: "gte"`. `edgar_total` now returns None for a
       capped count, so `busiest_day_total` can never silently pin at the
       platform's ceiling and be mistaken for a measurement of filing
       volume. Daily Form 4 volumes sampled during that review ranged 435 to
