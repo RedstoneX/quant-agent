@@ -9,6 +9,7 @@ on the DELTA by site IDENTITY (never a total). When the trunk cannot be read it 
 from __future__ import annotations
 
 import ast
+import subprocess
 
 import pytest
 
@@ -196,3 +197,21 @@ def test_generic_names_do_not_leak_money_status(tmp_path):
              "src/other.py": "def run():\n    return 1\n",
              "src/driver.py": "def go(x):\n    return x.run()\n"}
     assert _tree(tmp_path, files) == ("src/exec/desk.py",)
+
+
+def test_money_modules_are_derived_from_every_tracked_production_file(monkeypatch):
+    from pathlib import Path
+    from scripts.guard_reference import ROOT
+    paths = {p.relative_to(ROOT).as_posix() for p in mm._source_paths(Path(ROOT), None)}
+    assert "main.py" in paths and any(p.startswith("ops/") for p in paths)
+    assert not any(p.startswith("tests/") for p in paths)
+    assert mm._source_paths(Path(ROOT), "src") == sorted((Path(ROOT) / "src").rglob("*.py"))
+
+
+def test_a_root_module_calling_a_writer_is_a_money_module(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "w.py").write_text(WRITER)
+    (tmp_path / "main.py").write_text("from src.w import place\n\ndef run(c):\n    return place(c, 1)\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "src/w.py", "main.py"], cwd=tmp_path, check=True)
+    assert "main.py" in mm.derive(tmp_path, frozenset({"submit_order"}), None)
