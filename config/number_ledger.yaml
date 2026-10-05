@@ -9766,7 +9766,8 @@ numbers:
     site: src/data/market.py
     status: not-trade-governing
     note: >-
-      Dead default: an AST scan on 2026-10-05 of every .py under src, ops and scripts for calls to `.get_ohlcv(`
+      Dead default (src/pipeline_intraday.py::IntradayScanBody._intraday_opportunity_scan_body): an AST scan on 2026-10-05 of every
+      .py under src, ops and scripts for calls to `.get_ohlcv(`
       finds NONE that omit the lookback argument (every caller passes it, e.g. config.trading.lookback_days), so
       this default is never used. Dynamic calls through getattr or star-args were not searched.
   - id: src.data.market.MarketDataProvider.get_price_chart_events(lookback_days)
@@ -9774,8 +9775,8 @@ numbers:
     site: src/data/market.py
     status: not-trade-governing
     note: >-
-      Dead default: an AST scan on 2026-10-05 of every .py under src, ops and scripts for calls to
-      `.get_price_chart_events(` finds NONE that omit the lookback argument (every caller passes it, e.g.
+      Dead default (src/api/routes_live.py::get_symbol_events): an AST scan on 2026-10-05 of every .py under
+      src, ops and scripts for calls to `.get_price_chart_events(` finds NONE that omit the lookback argument (every caller passes it, e.g.
       config.trading.lookback_days), so this default is never used. Dynamic calls through getattr or star-args
       were not searched. The one production caller, src/api/routes_live.py, serves the dashboard chart.
   - id: src.models.analysis.RATING_MAGNITUDE['buy']
