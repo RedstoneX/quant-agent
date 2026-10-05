@@ -33,7 +33,11 @@ def locate(paths: list[str], read: Callable[[list[str]], dict[str, str]], where:
     return found[0], (home + "/" if home else "") + "board_notes"
 
 
-def working_board() -> tuple[str, str]:
+def working_board(root: Path | str | None = None) -> tuple[str, str]:
+    """The board under ``root`` (default: this checkout); paths are relative to it."""
+    if root is not None:
+        return tree_board(Path(root))
+
     def read(cands):
         return {p: (ROOT / p).read_text(encoding="utf-8", errors="replace") for p in cands}
     return locate(working_paths("*.md"), read, "the working tree")

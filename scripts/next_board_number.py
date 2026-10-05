@@ -88,20 +88,13 @@ from scripts.guard_reference import ReferenceUnavailable
 DEFAULT_BOARD_REF = "origin/main"
 
 
-def _get_default_work_md() -> str:
-    """Get the board path using board_locator, or return a default."""
-    try:
-        work_md_path, _ = working_board()
-        return work_md_path
-    except ReferenceUnavailable:
-        # Fallback to docs/WORK.md if board cannot be located
-        return "docs/WORK.md"
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--work-md", default=_get_default_work_md())
+    parser.add_argument(
+        "--work-md", default=None,
+        help="The board file. Default: located by its shape; refuses if it cannot be.",
+    )
     parser.add_argument(
         "--board-ref", default=DEFAULT_BOARD_REF,
         help="The shared ref holding the authoritative board (default: "
@@ -115,7 +108,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    work_md = Path(args.work_md)
+    if args.work_md is None:
+        try:
+            work_md = PROJECT_ROOT / working_board(PROJECT_ROOT)[0]
+        except ReferenceUnavailable as exc:
+            print(f"next_board_number: {exc}", file=sys.stderr)
+            return 3
+    else:
+        work_md = Path(args.work_md)
     if not work_md.is_file():
         print(f"next_board_number: {work_md} not found", file=sys.stderr)
         return 3
