@@ -202,7 +202,7 @@ def base_ref(repo: Path | None = None) -> str | None:
 
 def get_work_md_path(repo: Path | None = None) -> str:
     """The board path via board_locator, or raise ReferenceUnavailable."""
-    work_md_path, _ = working_board()
+    work_md_path, _ = working_board(repo)
     return work_md_path
 
 
@@ -389,7 +389,7 @@ class Change:
             work_md_path = get_work_md_path(repo)
         except ReferenceUnavailable:
             return None
-        after = Path(work_md_path)
+        after = repo / work_md_path
         return cls(
             base=base,
             paths=changed_paths(base, repo),

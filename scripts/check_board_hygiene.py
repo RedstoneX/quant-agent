@@ -60,11 +60,8 @@ CAP_TEST_FUNCTION = "test_work_md_stays_under_a_hundred_thousand_bytes"
 
 def _find_work_md_path(repo_dir: Path) -> str:
     """Find the board file via board_locator, or raise ReferenceUnavailable."""
-    try:
-        work_md_path, _ = working_board()
-        return work_md_path
-    except ReferenceUnavailable:
-        raise
+    work_md_path, _ = working_board(repo_dir)
+    return work_md_path
 _CAP_ASSERT_RE = re.compile(r"assert\s+size\s*<=\s*([\d_]+)")
 
 #: PROVISIONAL — not sourced from any owner ruling or repo doctrine, because
@@ -153,7 +150,7 @@ def find_parked_finished_items(repo_path: Path) -> tuple[list[str], str | None]:
         return [], "could not import the finished-item check"
     try:
         work_md_path = _find_work_md_path(repo_path)
-        return check(Path(work_md_path)), None
+        return check(repo_path / work_md_path), None
     except ReferenceUnavailable as exc:
         return [], str(exc)
     except Exception as exc:  # noqa: BLE001 — must not crash a nightly read-only check
@@ -188,11 +185,11 @@ def build_report(repo_path: str = DEFAULT_REPO_PATH) -> BoardHygieneReport:
     report.cap_error = cap_error
     if cap is not None:
         report.cap_bytes = cap
-        work_md = Path(work_md_path)
+        work_md = repo_dir / work_md_path
         if work_md.is_file():
             report.size_bytes = work_md.stat().st_size
         else:
-            report.cap_error = f"{work_md_path} not found"
+            report.cap_error = f"{work_md_path} not found under {repo_dir}"
 
     parked, parked_error = find_parked_finished_items(repo_dir)
     report.parked_items = parked

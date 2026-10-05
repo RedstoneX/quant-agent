@@ -33,6 +33,8 @@ import pytest
 from scripts import definition_of_done as dod
 
 REPO = Path(__file__).resolve().parents[1]
+#: Where THESE TESTS put the fake board inside their own throwaway repositories.
+FAKE_BOARD = "docs/WORK.md"
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +57,10 @@ def _write(repo: Path, rel: str, text: str) -> None:
     path = repo / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
+    if rel == FAKE_BOARD:
+        # The locator finds a board by shape: title plus a notes directory beside it.
+        (path.parent / "board_notes").mkdir(exist_ok=True)
+        (path.parent / "board_notes" / "item-1.md").write_text("note\n")
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -72,6 +78,7 @@ def _commit(repo: Path, message: str, *paths: str) -> None:
 
 def _board(items: str, retired: str) -> str:
     return (
+        "# QAMC Current Work\n\n"
         "## THE FUNNEL QUEUE\n\n"
         f"{items}\n\n"
         "**Retired item numbers — never reuse.** APPEND-ONLY.\n"
@@ -85,9 +92,8 @@ def _change(repo: Path, base: str) -> dod.Change:
         base=base,
         paths=dod.changed_paths(base, repo),
         messages=dod.commit_messages(base, repo),
-        work_md_before=dod.file_at(base, dod.WORK_MD, repo),
-        work_md_after=(repo / dod.WORK_MD).read_text()
-        if (repo / dod.WORK_MD).exists() else None,
+        work_md_before=dod.file_at(base, dod.get_work_md_path(repo), repo),
+        work_md_after=(repo / dod.get_work_md_path(repo)).read_text(),
         tree=repo,
     )
 
@@ -111,8 +117,8 @@ def _change_retiring_an_item(messages: str, tmp_path: Path | None = None) -> dod
 
 def _base_with_board(tmp_path: Path, items: str, retired: str = "1, 2") -> tuple[Path, str]:
     repo = _repo(tmp_path)
-    _write(repo, dod.WORK_MD, _board(items, retired))
-    _commit(repo, "base board", dod.WORK_MD)
+    _write(repo, FAKE_BOARD, _board(items, retired))
+    _commit(repo, "base board", FAKE_BOARD)
     base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                           capture_output=True, text=True, check=True).stdout.strip()
     return repo, base
@@ -129,7 +135,7 @@ def test_the_real_board_parses_into_items_and_retired_numbers():
     heading or retired-line shape ever changes, this fails here instead of
     the whole gate silently matching nothing and passing everything.
     """
-    work_md = (REPO / dod.WORK_MD).read_text()
+    work_md = (REPO / dod.get_work_md_path(REPO)).read_text()
     blocks = dod.item_blocks(work_md)
     assert len(blocks) >= 10, "docs/WORK.md item headings no longer parse"
     retired = dod.retired_numbers(work_md)
@@ -160,11 +166,11 @@ def test_criteria_parsing_stops_at_the_end_of_the_bullets():
 
 def test_filing_an_item_without_criteria_fails(tmp_path):
     repo, base = _base_with_board(tmp_path, "**79. Existing — OPEN.**\n\nProse.")
-    _write(repo, dod.WORK_MD, _board(
+    _write(repo, FAKE_BOARD, _board(
         "**79. Existing — OPEN.**\n\nProse.\n\n"
         "**80. New work — OPEN, filed today.**\n\nSome prose and no criteria.",
         "1, 2"))
-    _commit(repo, "file item 80", dod.WORK_MD)
+    _commit(repo, "file item 80", FAKE_BOARD)
     problems = dod.declared_criteria_problems(_change(repo, base))
     assert len(problems) == 1 and "item 80" in problems[0]
     assert "DONE WHEN" in problems[0]
@@ -172,13 +178,13 @@ def test_filing_an_item_without_criteria_fails(tmp_path):
 
 def test_filing_an_item_with_criteria_passes(tmp_path):
     repo, base = _base_with_board(tmp_path, "**79. Existing — OPEN.**\n\nProse.")
-    _write(repo, dod.WORK_MD, _board(
+    _write(repo, FAKE_BOARD, _board(
         "**79. Existing — OPEN.**\n\nProse.\n\n"
         "**80. New work — OPEN, filed today.**\n\n"
         "DONE WHEN:\n"
         "  - [ ] the counter is weekend-aware\n"
         "  - [ ] every reader of it is switched over\n", "1, 2"))
-    _commit(repo, "file item 80", dod.WORK_MD)
+    _commit(repo, "file item 80", FAKE_BOARD)
     assert dod.declared_criteria_problems(_change(repo, base)) == []
 
 
@@ -189,12 +195,12 @@ def test_an_owner_question_may_declare_no_criteria(tmp_path):
     review rather than being the default.
     """
     repo, base = _base_with_board(tmp_path, "**79. Existing — OPEN.**\n\nProse.")
-    _write(repo, dod.WORK_MD, _board(
+    _write(repo, FAKE_BOARD, _board(
         "**79. Existing — OPEN.**\n\nProse.\n\n"
         "**80. Should the desk have one drawdown response or two — OWNER CALL.**\n\n"
         "NO CRITERIA: this is a ruling only the owner can give and nothing "
         "blocks on it.\n", "1, 2"))
-    _commit(repo, "file item 80", dod.WORK_MD)
+    _commit(repo, "file item 80", FAKE_BOARD)
     assert dod.declared_criteria_problems(_change(repo, base)) == []
 
 
@@ -207,8 +213,8 @@ def test_closing_an_item_and_dropping_a_criterion_fails(tmp_path):
         "DONE WHEN:\n"
         "  - [ ] the counter is weekend-aware\n"
         "  - [ ] every reader of it is switched over\n")
-    _write(repo, dod.WORK_MD, _board("", "1, 2, 80"))
-    _commit(repo, "close item 80\n\nDone-criteria-met: 80/1\n", dod.WORK_MD)
+    _write(repo, FAKE_BOARD, _board("", "1, 2, 80"))
+    _commit(repo, "close item 80\n\nDone-criteria-met: 80/1\n", FAKE_BOARD)
     problems = dod.declared_criteria_problems(_change(repo, base))
     assert len(problems) == 1
     assert "criterion 2" in problems[0] and "neither way" in problems[0]
@@ -220,14 +226,14 @@ def test_closing_an_item_accounting_for_both_halves_passes(tmp_path):
         "DONE WHEN:\n"
         "  - [ ] the counter is weekend-aware\n"
         "  - [ ] every reader of it is switched over\n")
-    _write(repo, dod.WORK_MD, _board(
+    _write(repo, FAKE_BOARD, _board(
         "**81. Readers of the session counter — OPEN, carried from item 80.**\n\n"
         "DONE WHEN:\n  - [ ] every reader of it is switched over\n", "1, 2, 80"))
     _commit(repo,
             "close item 80\n\n"
             "Done-criteria-met: 80/1\n"
             "Done-criteria-deferred: 80/2 -> item 81 (2026-09-18)\n",
-            dod.WORK_MD)
+            FAKE_BOARD)
     assert dod.declared_criteria_problems(_change(repo, base)) == []
 
 
@@ -237,11 +243,11 @@ def test_deferring_a_criterion_onto_an_item_that_does_not_exist_fails(tmp_path):
     repo, base = _base_with_board(tmp_path,
         "**80. Holding time — OPEN.**\n\n"
         "DONE WHEN:\n  - [ ] the counter is weekend-aware\n")
-    _write(repo, dod.WORK_MD, _board("", "1, 2, 80"))
+    _write(repo, FAKE_BOARD, _board("", "1, 2, 80"))
     _commit(repo,
             "close item 80\n\n"
             "Done-criteria-deferred: 80/1 -> item 99 (2026-09-18)\n",
-            dod.WORK_MD)
+            FAKE_BOARD)
     problems = dod.declared_criteria_problems(_change(repo, base))
     assert len(problems) == 1 and "item 99" in problems[0]
 
@@ -252,8 +258,8 @@ def test_a_grandfathered_item_without_criteria_closes_freely(tmp_path):
     the existing board through a new schema in one change is how a gate
     gets disabled."""
     repo, base = _base_with_board(tmp_path, "**80. Old item — OPEN.**\n\nProse only.")
-    _write(repo, dod.WORK_MD, _board("", "1, 2, 80"))
-    _commit(repo, "close item 80", dod.WORK_MD)
+    _write(repo, FAKE_BOARD, _board("", "1, 2, 80"))
+    _commit(repo, "close item 80", FAKE_BOARD)
     assert dod.declared_criteria_problems(_change(repo, base)) == []
 
 
@@ -297,8 +303,8 @@ def _consumer_repo(tmp_path: Path) -> tuple[Path, str]:
     _write(repo, "src/calendar_mod.py", _DEFINITION)
     _write(repo, "src/band.py", _CONSUMER)
     _write(repo, "src/pace.py", _SECOND_CONSUMER)
-    _write(repo, dod.WORK_MD, _board("**79. Item — OPEN.**\n\nProse.", "1, 2"))
-    _commit(repo, "base", "src", dod.WORK_MD)
+    _write(repo, FAKE_BOARD, _board("**79. Item — OPEN.**\n\nProse.", "1, 2"))
+    _commit(repo, "base", "src", FAKE_BOARD)
     base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                           capture_output=True, text=True, check=True).stdout.strip()
     return repo, base
@@ -554,8 +560,8 @@ _GOOD_RECORD = (
 
 def _closure(tmp_path: Path, message: str) -> dod.Change:
     repo, base = _base_with_board(tmp_path, "**80. Item — OPEN.**\n\nProse.")
-    _write(repo, dod.WORK_MD, _board("", "1, 2, 80"))
-    _commit(repo, message, dod.WORK_MD)
+    _write(repo, FAKE_BOARD, _board("", "1, 2, 80"))
+    _commit(repo, message, FAKE_BOARD)
     return _change(repo, base)
 
 
@@ -686,8 +692,8 @@ def test_the_retiring_commit_of_an_item_is_found_from_the_retired_line_alone(
     from scripts import check_item_deployment as cid
 
     repo, _ = _base_with_board(tmp_path, "**80. Item — OPEN.**\n\nProse.")
-    _write(repo, dod.WORK_MD, _board("", "1, 2, 80"))
-    _commit(repo, "close item 80", dod.WORK_MD)
+    _write(repo, FAKE_BOARD, _board("", "1, 2, 80"))
+    _commit(repo, "close item 80", FAKE_BOARD)
     retiring = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                               capture_output=True, text=True,
                               check=True).stdout.strip()

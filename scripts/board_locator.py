@@ -8,6 +8,7 @@ pass.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Callable
 
 from scripts.guard_reference import ROOT, ReferenceUnavailable, trunk_blobs, trunk_paths, working_paths
@@ -31,10 +32,24 @@ def locate(paths: list[str], read: Callable[[list[str]], dict[str, str]], where:
     return found[0], (home + "/" if home else "") + "board_notes"
 
 
-def working_board() -> tuple[str, str]:
+def _paths_under(root: Path) -> list[str]:
+    """Every file under ``root`` (a throwaway directory need not be a git repo)."""
+    if not root.is_dir():
+        raise ReferenceUnavailable(f"cannot locate the board: {root} is not a directory; it refuses rather than pass.")
+    return sorted(
+        f.relative_to(root).as_posix() for f in root.rglob("*")
+        if f.is_file() and ".git" not in f.relative_to(root).parts
+    )
+
+
+def working_board(root: Path | str | None = None) -> tuple[str, str]:
+    """The board under ``root`` (default: this repository); paths are relative to it."""
+    base = ROOT if root is None else Path(root)
+    paths = working_paths("*.md") if root is None else _paths_under(base)
+
     def read(cands):
-        return {p: (ROOT / p).read_text(encoding="utf-8", errors="replace") for p in cands}
-    return locate(working_paths("*.md"), read, "the working tree")
+        return {p: (base / p).read_text(encoding="utf-8", errors="replace") for p in cands}
+    return locate(paths, read, "the working tree" if root is None else f"{base}")
 
 
 def trunk_board() -> tuple[str, str]:
