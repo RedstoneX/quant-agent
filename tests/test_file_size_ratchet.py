@@ -157,15 +157,66 @@ def test_a_pre_existing_wide_line_is_not_reported(monkeypatch):
     assert bad == [], bad
 
 
-def test_more_ink_in_fewer_lines_is_still_growth(monkeypatch):
-    """Lines are not size: a file over the floor that loses a line while gaining
-    non-whitespace characters has grown, and the line ratchet alone is blind."""
-    n = file_size_guard.FLOOR + 2
-    trunk = "\n".join(["x = 1"] * n) + "\n"
-    working = "\n".join(["x = 1  # loud"] * (n - 1)) + "\n"
+def _over_floor(lines: list[str]) -> str:
+    """Pad a snippet out past the floor with statements the trunk also carries."""
+    return "\n".join(lines + ["pass"] * (file_size_guard.FLOOR + 2 - len(lines))) + "\n"
+
+
+def test_more_statements_in_fewer_lines_is_still_growth(monkeypatch):
+    """THE FAILING CASE. Lines are not size: a file over the floor that loses a
+    line while gaining real statements has grown, and the line ratchet alone is
+    blind. Delete the statement rule and this test goes green."""
+    trunk = _over_floor(["x = 1", "y = 2"])
+    working = _over_floor(["x = 1; y = 2; z = 3; w = 4"])
     bad = _one_file(monkeypatch, trunk, working)
-    assert any("non-whitespace characters" in b for b in bad), bad
+    assert any("statements" in b and "(+3)" in b for b in bad), bad
     assert not any("lines (+" in b for b in bad), bad  # the line ratchet saw a shrink
+
+
+def test_semicolon_joining_still_counts_each_statement(monkeypatch):
+    """What killed the LINE rule must not kill this one: joined statements are
+    counted individually, so cramming buys a grower nothing."""
+    assert file_size_guard._statements("a = 1; b = 2; c = 3") == 3
+    bad = _one_file(monkeypatch, _over_floor(["a = 1"]), _over_floor(["a = 1; b = 2"]))
+    assert any("statements" in b and "(+1)" in b for b in bad), bad
+
+
+def test_a_pure_rename_is_not_growth(monkeypatch):
+    """The defect that forced this rule. Moving a method onto a collaborator
+    rewrites every call site and adds characters; it adds no statements, and
+    the old character ratchet refused it, which is why shims were kept."""
+    trunk = _over_floor(["self.foo(1)", "self.foo(2)"])
+    working = _over_floor(["self.admission.foo(1)", "self.admission.foo(2)"])
+    assert len(working) > len(trunk)  # strictly more characters
+    assert _one_file(monkeypatch, trunk, working) == []
+
+
+def test_reflowing_a_call_over_more_lines_is_not_growth(monkeypatch):
+    """Wrapping is not growth either; the rule is invariant under re-layout."""
+    trunk = _over_floor(["call(a, b, c)"])
+    working = _over_floor(["call(", "    a,", "    b,", "    c,", ")"])
+    assert not [b for b in _one_file(monkeypatch, trunk, working) if "statements" in b]
+
+
+def test_a_comprehension_launders_statements_and_the_guard_says_so(monkeypatch):
+    """The NAMED RESIDUAL HOLE, pinned by a test so it cannot be forgotten.
+
+    A statement count errs PERMISSIVE on expression growth: a loop collapsed
+    into a comprehension loses three statements while the behaviour stands.
+    The guard's own docstring names this and names what binds instead -- the
+    width fence and the line ratchet. If this ever starts failing, the hole
+    closed and the docstring is the thing to fix."""
+    loop = "out = []\nfor x in r:\n    if x:\n        out.append(f(x))"
+    assert file_size_guard._statements(loop) == 4
+    assert file_size_guard._statements("out = [f(x) for x in r if x]") == 1
+    src = (file_size_guard.ROOT / "scripts" / "file_size_guard.py").read_text()
+    assert "RESIDUAL HOLE" in src and "PERMISSIVE" in src
+
+
+def test_an_unparseable_file_is_refused_not_waved_through(monkeypatch):
+    assert file_size_guard._statements("def (:\n") is None
+    bad = _one_file(monkeypatch, _over_floor(["a = 1"]), _over_floor(["def (:"]))
+    assert any("does not parse" in b for b in bad), bad
 
 
 def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
