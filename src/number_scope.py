@@ -117,4 +117,11 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/data/news_dedup.py",
     "src/token_budget.py",
     "src/backtest/engine.py",
+    # 2026-10-05 numbers sweep 2: the offline model benchmark's fixtures and
+    # sizing mirror, and the CI shard weights. Scoped so each number is
+    # ledgered with the proof that it reaches no order.
+    "ops/model_policy/scenarios.py",
+    "ops/model_policy/scenarios_midday_exit.py",
+    "ops/model_policy/deterministic_selection.py",
+    "scripts/ci_shard.py",
 )
