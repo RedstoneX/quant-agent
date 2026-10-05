@@ -17,11 +17,11 @@ depends on which pieces are actually entangled.
 
 ### 0.1 Confirmed
 
-**One class, eight mixins.** `src/pipeline.py:446` declares
+**One class, six mixins.** `src/pipeline.py` declares
 `class TradingPipeline(ProtectionMixin, PromptFactsMixin, DeleverMixin,
-ExitEngineMixin, AdmissionMixin, ResearchContinuityMixin,
-IntradayMixin, ...)`. A `grep -rn '^class \w*Mixin' src/` returns exactly eight
-mixin class definitions, one per file.
+ExitEngineMixin, ResearchContinuityMixin, IntradayMixin)`. `RiskGateMixin`
+and `AdmissionMixin` were deleted on 2026-10-05: each is now a built
+collaborator reached through a descriptor on `TradingPipeline`.
 
 **The broker's in-place stop amend is a boundary (2026-10-02, first broker instalment).** `src/execution/broker_parts/stop_amend.py` holds `StopAmender` (the amend-one-stop, classify-after-dead-replacement and amend-resting-stops bodies, lifted verbatim with the `_quantize_price` / `_is_terminal_broker_rejection` helpers and the `_AMEND_NOT_ATTEMPTED` sentinel); `AlpacaBroker` keeps same-named thin shims and re-exports the helpers so every patch target still resolves. Witness: `tests/test_broker_parts_boundary.py`. `broker.py` is 6,673 lines after it; later instalments follow the same package.
 
@@ -533,12 +533,18 @@ gate never imports `src.pipeline`.
 session must match the pre-change output exactly, field by field. Second reviewer
 required.
 
-**Step 8. `AdmissionMixin` → `AdmissionService`.**
-*Measured:* 546 lines, 10 distinct `self.` names, 1 foreign call, collaborators
-`broker`, `config`, `db`, `market`.
-*Constructor:* `AdmissionService(config, positions: PositionsPort, journal,
-quotes: QuotePort)`.
-*Proof:* standard. The admitted-symbol set for a replayed session is identical.
+**Step 8. `AdmissionMixin` → `AdmissionService`. DONE 2026-10-05.**
+*Measured before cutting:* the shell was 99 lines forwarding 11 names, and the
+seam had 54 external call sites -- the fewest of the remaining mixins (risk
+gate 165, delever 222, exits 300), which is why it was cut next.
+*Builder:* `build_admission_service(config, broker, market, db,
+sec_form4_provider, portfolio_constructor | constructor_cfg_fn)` in
+`src/admission_build.py` -- collaborators BY VALUE, no pipeline.
+*Shell:* `src/pipeline_admission_shell.py` DELETED; no forwarding method
+survives on `TradingPipeline`, which exposes only the `admission` property.
+`_constructor_cfg_or_none` went with it (the shell was its only caller).
+*Proof:* `tests/test_admission_service.py` builds and drives the service in a
+SUBPROCESS and asserts `src.pipeline` never enters `sys.modules`.
 
 **Step 9. `ResearchContinuityMixin` → `ResearchContinuity`.**
 *Measured:* 1,377 lines, 27 distinct `self.` names, 1 foreign call, collaborators

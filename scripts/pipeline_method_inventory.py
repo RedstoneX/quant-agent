@@ -19,7 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TRACKED_MODULES: tuple[str, ...] = (
     "src/pipeline.py",
     "src/pipeline_admission.py",
-    "src/pipeline_admission_shell.py",
     "src/pipeline_delever.py",
     "src/pipeline_exits.py",
     "src/pipeline_intraday.py",

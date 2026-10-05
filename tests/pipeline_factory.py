@@ -126,6 +126,16 @@ def test_config(**overrides):
     return AppConfig(**_walk_and_substitute(raw, env))
 
 
+ADMISSION_STANDINS = frozenset({
+    "_filter_supported_symbols", "_evaluate_external_admission_gates",
+    "_universe_screen_enabled", "_universe_screen_sources",
+    "_evaluate_screened_admission", "_form4_admission_is_current",
+    "_admit_screened_universe_symbols", "_run_universe_screen",
+    "_attach_universe_changes", "_admit_nominated_external_symbols",
+    "_admit_transient_smart_money_symbols",
+})
+
+
 def build_pipeline(config=None, **stand_ins):
     """Construct a GENUINE TradingPipeline through the real ``__init__``.
 
@@ -148,7 +158,23 @@ def build_pipeline(config=None, **stand_ins):
             ))
         pipeline = TradingPipeline(cfg)
 
+    admission_standins = {
+        attr: value for attr, value in stand_ins.items()
+        if attr in ADMISSION_STANDINS and value is not None
+    }
+    if admission_standins:
+        # The eleven admission names live on `AdmissionService` since the
+        # delegating `AdmissionMixin` was deleted (2026-10-05). A test still
+        # names them as pipeline stand-ins; they are wired to the service the
+        # pipeline now reads, which is where the production call sites look.
+        service = pipeline.admission
+        for attr, value in admission_standins.items():
+            setattr(service, attr, value)
+        pipeline.admission = service
+
     for attr, value in stand_ins.items():
+        if attr in admission_standins:
+            continue
         if attr in CONSTRUCTOR_SITES and value is not None:
             built = getattr(pipeline, attr, None)
             assert built is value, (

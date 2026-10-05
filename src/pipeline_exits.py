@@ -22,11 +22,11 @@ so `from src.pipeline import ...` keeps working -- but a test that PATCHES one
 of them on `src.pipeline` no longer reaches this module's code and must patch it
 here instead (plan S5, silent-behaviour risk 1).
 
-`_atr_for_symbol` and `_constructor_cfg_or_none` sit inside this cluster's range
-and deliberately did NOT move: `_atr_for_symbol` is read by the base class's
-`_evening_stop_proximity` and by `PromptFactsMixin`, and `_constructor_cfg_or_none`
-is read by the admission shell (`AdmissionMixin`), not `__init__`. Both stay in
-`src/pipeline.py` as thin delegations, which lends them back to this mixin.
+`_atr_for_symbol` sits inside this cluster's range and deliberately did NOT
+move: it is read by the base class's `_evening_stop_proximity` and by
+`PromptFactsMixin`, so it stays in `src/pipeline.py` as a thin delegation,
+which lends it back to this mixin. Its neighbour `_constructor_cfg_or_none`
+is GONE (2026-10-05): the deleted admission shell was its only caller.
 
 Nothing here may import `src.pipeline`: this module is one of its bases.
 """
