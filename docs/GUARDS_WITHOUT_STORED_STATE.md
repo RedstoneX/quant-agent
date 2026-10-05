@@ -246,7 +246,13 @@ own and it is judged in full against the CURRENT trunk exactly as before, so
 touching a file to own it buys nothing and the real component of a mixed run
 still fails. No totals cross files; with no merge base nothing is excluded.
 Tests: `test_trunk_shrinking_a_file_the_branch_never_opened_is_not_growth`,
-`test_touching_a_file_puts_it_back_under_the_full_rule`.
+`test_touching_a_file_puts_it_back_under_the_full_rule`. The width ratchet
+lives in the same function and is covered by the same skip (the live case
+showed two "new" wide lines the trunk had removed). The statement-cram ratchet
+shares the shape — a stale copy of a file the trunk has since uncrammed — and
+applies the same skip in `statement_cram_guard.violations`; tests
+`test_trunk_uncramming_a_file_the_branch_never_opened_is_not_a_violation`,
+`test_touching_a_file_puts_it_back_under_the_full_cram_rule`.
 
 ## Acceptance — proven, not asserted
 
