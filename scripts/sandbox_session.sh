@@ -40,6 +40,8 @@ unset TELEGRAM_BOT_TOKEN
 unset TELEGRAM_CHAT_ID
 unset ALPACA_API_KEY
 unset ALPACA_SECRET_KEY
+# Credentials the run never uses (see src/sandbox_credential_scope.py).
+unset ANTHROPIC_API_KEY OPENAI_API_KEY DEEPSEEK_API_KEY GH_TOKEN GITHUB_TOKEN
 unset CREDENTIALS_DIRECTORY
 
 set -a
@@ -51,6 +53,7 @@ set +a
 # the preflight will refuse on, and the mute is forced regardless of the file.
 unset TELEGRAM_BOT_TOKEN
 unset TELEGRAM_CHAT_ID
+unset ANTHROPIC_API_KEY OPENAI_API_KEY DEEPSEEK_API_KEY GH_TOKEN GITHUB_TOKEN
 export TELEGRAM_DISABLED=1
 
 PYTHON="${QAMC_SANDBOX_PYTHON:-$CHECKOUT/.venv/bin/python}"

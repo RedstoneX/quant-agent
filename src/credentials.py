@@ -45,6 +45,7 @@ import os
 import tempfile
 from pathlib import Path
 from src.data_paths import alerting_dir
+from src.session_identity import credentials_directory_var, session_identity
 
 from src.trading_calendar import et_today
 from datetime import date, datetime, timezone
@@ -80,12 +81,38 @@ class CredentialDeliveryError(RuntimeError):
     """
 
 
-def _credentials_directory() -> Path | None:
-    """The directory systemd advertised, or None when credentials are not wired."""
-    raw = os.environ.get(CREDENTIALS_DIRECTORY_ENV, "").strip()
+def _credentials_directory(env: dict | None = None) -> Path | None:
+    """The directory systemd advertised FOR THIS SESSION'S IDENTITY, or None.
+
+    The variable is derived from the identity the session declares rather than
+    being the one fixed name it used to be. That is the whole fix: a session
+    that is not the desk cannot pick up the desk's delivered key pair by
+    inheriting a variable it never asked for, and no caller has to remember to
+    opt out of anything. See `src/session_identity.py`.
+    """
+    environment = env if env is not None else os.environ
+    variable = credentials_directory_var(session_identity(environment))
+    raw = str(environment.get(variable, "")).strip()
     if not raw:
         return None
     return Path(raw)
+
+
+def session_broker_credentials(env: dict | None = None) -> tuple[str, str]:
+    """The broker key pair THIS session's identity resolves to, right now.
+
+    Delivered credentials for this identity win; otherwise the environment,
+    which is where a session that sets its own keys puts them. Returned so the
+    socket can be checked against what REST is using — never logged, never
+    formatted into any message; only `src.session_identity.fingerprint` of it
+    ever leaves this process.
+    """
+    environment = env if env is not None else os.environ
+    delivered = load_systemd_credentials(env=environment)
+    return (
+        delivered.get("ALPACA_API_KEY") or str(environment.get("ALPACA_API_KEY", "")),
+        delivered.get("ALPACA_SECRET_KEY") or str(environment.get("ALPACA_SECRET_KEY", "")),
+    )
 
 
 def load_systemd_credentials(env: dict[str, str] | None = None) -> dict[str, str]:
@@ -99,7 +126,7 @@ def load_systemd_credentials(env: dict[str, str] | None = None) -> dict[str, str
 
     Raises CredentialDeliveryError when the hand-off is visibly broken.
     """
-    directory = _credentials_directory()
+    directory = _credentials_directory(env)
     if directory is None:
         return {}
 
