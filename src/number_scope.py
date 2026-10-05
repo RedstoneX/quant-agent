@@ -115,6 +115,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     # whether a symbol may be traded at all lives here or in
     # `UniverseScreenConfig`.
     "src/universe_screen.py",
+    # 2026-10-05: the trading-day lookup lifted out of the coverage watchdog (its scoped
+    # home) so the read-only dashboard can share it; scoped so its number stays ledgered.
+    "src/trading_day.py",
     # 2026-10-05: three modules whose numbers were never classified; each is
     # scoped so every site must be ledgered, including the ones it hides.
     "src/data/news_dedup.py",
