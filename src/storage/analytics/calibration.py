@@ -19,6 +19,7 @@ import threading
 from collections.abc import Callable
 from datetime import datetime
 
+from src.storage.analytics.agent_log_reads import recent_agent_outputs
 from src.util.time import ET
 
 logger = logging.getLogger(__name__)
@@ -893,57 +894,12 @@ class TradeAnalytics:
 
     def get_recent_agent_outputs(self, agent_name: str, limit: int = 5,
                                  before_date: str | None = None) -> list[dict]:
-        """Last N agent_logs rows for agent_name, newest first.
-
-        Used by PM for self-calibration: reading its own recent decisions and
-        reading RM's recent verdicts on those decisions. `before_date` (ISO
-        'YYYY-MM-DD') skips the in-progress run so PM doesn't accidentally
-        read a log it just wrote in the same pipeline tick.
-
-        `before_date` is interpreted as an ET trading-day key (the rest of the
-        system uses ET day boundaries — see `session_date_key`). It's converted
-        to the UTC instant for "00:00 ET on that date" before comparing
-        against `timestamp`, because SQLite's default `datetime('now')` writes
-        UTC. A naive `date(timestamp) < before_date` compares UTC-date against
-        ET-date and drops rows whose UTC date has ticked over ahead of ET —
-        specifically, logs written within the last few hours of ET-today that
-        already carry a UTC-tomorrow timestamp.
-        """
-        conditions = ["agent_name = ?"]
-        params: list = [agent_name]
-        if before_date:
-            from datetime import datetime as _dt, timezone as _tz
-            try:
-                et_midnight = _dt.fromisoformat(before_date).replace(tzinfo=ET)
-                utc_cutoff = et_midnight.astimezone(_tz.utc).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
-                conditions.append("timestamp < ?")
-                params.append(utc_cutoff)
-            except (ValueError, TypeError) as exc:
-                # before_date couldn't be parsed as an ISO date, so we
-                # cannot convert it to the ET→UTC cutoff the main path uses.
-                # The old fallback (`date(timestamp) < before_date`) compared
-                # a UTC calendar date against an ET key — the exact bug this
-                # docstring warns about — and could silently drop/keep the
-                # wrong rows. All production callers pass session_date_key()
-                # (always valid ISO), so this branch is unreachable in
-                # practice; degrade by skipping the date filter entirely
-                # rather than applying a known-wrong comparison.
-                logger.warning(
-                    "get_recent_agent_outputs: unparseable before_date=%r (%s); "
-                    "skipping the date filter (returning most-recent rows "
-                    "unfiltered) to avoid a UTC-vs-ET mismatch",
-                    before_date, exc,
-                )
-        where = "WHERE " + " AND ".join(conditions)
-        with self._lock:
-            rows = self.conn.execute(
-                f"SELECT agent_name, timestamp, full_response, output_summary "
-                f"FROM agent_logs {where} ORDER BY timestamp DESC LIMIT ?",
-                (*params, limit),
-            ).fetchall()
-        return [dict(r) for r in rows]
+        """Thin shim: lifted into `src.storage.analytics.agent_log_reads`,
+        which also exposes the pre-cut candidate COUNT the prompt builders
+        need. One definition of the ET-to-UTC predicate, there."""
+        return recent_agent_outputs(conn=self.conn, lock=self._lock,
+                                    agent_name=agent_name, limit=limit,
+                                    before_date=before_date)
 
     def get_latest_insights(self, before_date: str | None = None) -> dict | None:
         if before_date:
