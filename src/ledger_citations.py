@@ -24,7 +24,7 @@ from typing import Any
 #:                        next merge and nothing could tell.
 #: A bare `path` with none of these claims only that the file exists.
 _CITATION_RE = re.compile(
-    r"\b((?:docs|src|config|tests|scripts)/[\w./-]+\.(?:md|py|yaml|yml|json|toml))"
+    r"\b((?:docs|src|config|tests|scripts|ops)/[\w./-]+\.(?:md|py|yaml|yml|json|toml))"
     r"(?:::(?P<sym>[A-Za-z_][\w.]*)|@`(?P<snip>[^`]+)`|:(?P<line>\d+)(?:-\d+)?)?"
 )
 

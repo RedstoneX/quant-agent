@@ -110,3 +110,19 @@ def test_a_note_pin_stays_ratcheted_not_absolute():
 
 def test_every_source_pin_in_the_real_ledger_carries_its_number():
     assert g.source_violations() == []
+
+
+@pytest.mark.parametrize("cite,expected", [
+    ("ops/m.py@`from os import path`", "dead"),
+    ("ops/m.py::__all__", "dead"),
+    ("ops/m.py@`# a comment that says 7 is the ceiling`", "dead"),
+    ("ops/m.py::unrelated", "no_mention"),
+    ("ops/m.py::CEILING", "mentions"),
+    ("ops/missing.py::CEILING", "unresolved"),
+])
+def test_a_pin_into_ops_is_classified_exactly_like_one_into_src(cite, expected):
+    """Widening the citation pattern to ops/ must not loosen a single verdict."""
+    ledger = {"src.m.CEILING": {"id": "src.m.CEILING", "value": 7, "source": cite}}
+    got = [p.verdict for p in g.classify(ledger, lambda rel: SRC if rel == "ops/m.py" else None)]
+    assert got == [expected]
+    assert got == _verdicts(cite.replace("ops/", "src/"))
