@@ -396,9 +396,10 @@ def main(argv: list[str] | None = None) -> int:
     print(message)
 
     if not args.no_telegram:
-        from scripts.ops_alert import push_ops_alert
+        from src.notifier import TelegramNotifier
+        from src.notifier.owner_alert_funnel import send_script_alert
 
-        push_ops_alert(message, kind="check_unit_drift")
+        send_script_alert(message, kind="unit_drift", script="check_unit_drift", factory=TelegramNotifier)
 
     return 1
 
