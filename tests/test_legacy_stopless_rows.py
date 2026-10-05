@@ -46,9 +46,9 @@ def test_resolve_never_scores_a_position_with_no_entry_stop(db):
     db.record_seat_stances(run_id="run-1", decision_id="dec-1", stances=[
         SeatStance(seat="technical", symbol="IBM", stance="buy"),
     ])
-    result = db.resolve_conviction_ledger()
+    result = db.conviction.resolve_conviction_ledger()
     assert result["skipped_no_r"] == 1
-    assert db.get_conviction_credits() == []
+    assert db.conviction.get_conviction_credits() == []
 
 
 def test_zero_entry_stop_write_back_does_not_mint_an_entry_bet(db):
