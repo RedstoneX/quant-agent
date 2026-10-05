@@ -63,6 +63,10 @@ def test_a_new_crammed_line_is_caught_and_a_pre_existing_one_is_not(monkeypatch)
     existing = next(iter(now))
     path = existing[0]
     fresh = (path, "<module>", "a = 1; b = 2")
+    texts = g.working_texts()
+    # The crammed line is written INTO the file, so the branch owns the file.
+    monkeypatch.setattr(g, "working_texts",
+                        lambda: {**texts, path: texts[path] + "a = 1; b = 2\n"})
 
     monkeypatch.setattr(g, "working_sites", lambda: now + Counter({fresh: 1}))
     monkeypatch.setattr(g, "trunk_sites", lambda paths: now)
@@ -72,6 +76,28 @@ def test_a_new_crammed_line_is_caught_and_a_pre_existing_one_is_not(monkeypatch)
 
     monkeypatch.setattr(g, "working_sites", lambda: now)
     assert g.violations() == []
+
+
+def test_trunk_uncramming_a_file_the_branch_never_opened_is_not_a_violation(monkeypatch):
+    """The 2026-10-05 phantom: trunk removed a crammed line from a file this
+    tree still holds unchanged; the stale copy is the trunk's, not the branch's."""
+    now = g.working_sites()
+    existing = next(iter(now))
+    assert existing[0] in guard_reference.untouched_paths(g.working_texts())
+    monkeypatch.setattr(g, "trunk_sites", lambda paths: now - Counter({existing: 1}))
+    assert g.violations() == []
+
+
+def test_touching_a_file_puts_it_back_under_the_full_cram_rule(monkeypatch):
+    """Delete a line so the file counts as touched, then cram one: judged in full
+    against the CURRENT trunk, the new crammed identity fails as before."""
+    texts = g.working_texts()
+    path = max(texts, key=lambda p: len(texts[p]))
+    edited = "\n".join(texts[path].splitlines()[:-1] + ["a = 1; b = 2"]) + "\n"
+    monkeypatch.setattr(g, "working_texts", lambda: {**texts, path: edited})
+    assert path not in guard_reference.untouched_paths({**texts, path: edited})
+    bad = g.violations()
+    assert len(bad) == 1 and path in bad[0] and "a = 1; b = 2" in bad[0], bad
 
 
 def test_removing_one_site_cannot_pay_for_adding_another(monkeypatch):

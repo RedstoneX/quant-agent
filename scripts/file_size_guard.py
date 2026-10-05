@@ -23,6 +23,11 @@ measures of the same files, with the same rule and no stored record:
   the line's text) against ``origin/main``, so a line widened past the limit
   fails and passes once it is wrapped. Pre-existing wide lines pass.
 
+Only files the branch itself changed are judged (byte identity with the merge
+base decides; see ``guard_reference.untouched_paths``): on 2026-10-05 the trunk
+was shrinking minute by minute as a split landed, and branches that never opened
+the split files were billed for the trunk's older copy they still carried.
+
 Run it directly: ``python -m scripts.file_size_guard``.
 """
 from __future__ import annotations
@@ -37,6 +42,7 @@ from scripts.guard_reference import (
     TRUNK,
     added_sites,
     trunk_blobs,
+    untouched_paths,
     working_paths,
 )
 
@@ -91,8 +97,17 @@ def trunk_sizes(paths: list[str]) -> dict[str, int]:
 
 
 def violations() -> list[str]:
-    """Every file this working tree made worse than ``origin/main``, as deltas."""
-    now = working_sizes()
+    """Every file this working tree made worse than ``origin/main``, as deltas.
+
+    Only files the branch wrote to are judged: a file byte-identical to the
+    merge base is the trunk's own copy, and the trunk shrinking it since is not
+    growth here (``guard_reference.untouched_paths`` carries the argument).
+    Every file that differs is judged in full against the current trunk.
+    """
+    now_text = working_texts()
+    skip = untouched_paths(now_text)
+    now = {p: n for p, n in working_sizes().items() if p not in skip}
+    now_text = {p: t for p, t in now_text.items() if p not in skip}
     before = trunk_sizes(sorted(now))
     bad: list[str] = []
     for path, size in sorted(now.items()):
@@ -114,7 +129,6 @@ def violations() -> list[str]:
                 f"{path}: crossed the {CEILING}-line hard ceiling, {was} -> {size} "
                 f"on {TRUNK}'s reckoning."
             )
-    now_text = working_texts()
     was_text = trunk_blobs(sorted(now_text))
     wide_now: Counter = Counter()
     wide_was: Counter = Counter()

@@ -32,22 +32,78 @@ def test_trunk_measurement_is_actually_read():
     assert sizes and all(n >= 0 for n in sizes.values())
 
 
+def _grown(now: dict, path: str, extra: int) -> dict:
+    """``now`` with ``path`` holding ``extra`` more lines, so it reads as touched."""
+    grown = dict(now)
+    grown[path] = now[path] + "\n".join(["pass"] * extra) + "\n"
+    return grown
+
+
+def _biggest():
+    now = file_size_guard.working_texts()
+    return now, max(now, key=lambda p: file_size_guard._count(now[p]))
+
+
 def test_growth_is_caught_and_reported_as_a_delta(monkeypatch):
-    """Pretend the trunk copy is 50 lines shorter: the guard must say so."""
-    now = file_size_guard.working_sizes()
-    biggest = max(now, key=lambda p: now[p])
+    """Grow the biggest file by 50 lines in the working copy: the guard must say so."""
+    now, biggest = _biggest()
+    grown = _grown(now, biggest, 50)
+    monkeypatch.setattr(file_size_guard, "working_texts", lambda: grown)
+    monkeypatch.setattr(file_size_guard, "working_sizes",
+                        lambda: {p: file_size_guard._count(t) for p, t in grown.items()})
+    bad = file_size_guard.violations()
+    assert any(biggest in line and "grew from" in line and "+50" in line for line in bad), bad
+
+
+def test_trunk_shrinking_a_file_the_branch_never_opened_is_not_growth(monkeypatch):
+    """The 2026-10-05 phantom: trunk split a file this tree still holds unchanged."""
+    now, biggest = _biggest()
     real = file_size_guard.trunk_sizes
 
     def shrunk(paths):
         sizes = real(paths)
-        # Relative to the working copy, so a change that itself shrinks the
-        # biggest file cannot hide the simulated growth.
-        sizes[biggest] = now[biggest] - 50
+        if biggest in sizes:
+            sizes[biggest] = file_size_guard._count(now[biggest]) - 50
         return sizes
 
     monkeypatch.setattr(file_size_guard, "trunk_sizes", shrunk)
+    assert biggest in guard_reference.untouched_paths({biggest: now[biggest]})
+    assert not [b for b in file_size_guard.violations() if biggest in b]
+
+
+def test_touching_a_file_puts_it_back_under_the_full_rule(monkeypatch):
+    """The gaming route: delete a line so the file counts as 'touched', then grow
+    it. A touched file is judged in full against the CURRENT trunk, so the net
+    growth against trunk fails exactly as it did before the untouched rule."""
+    now, biggest = _biggest()
+    lines = now[biggest].splitlines()
+    edited = "\n".join(lines[:-1] + ["pass"] * 3) + "\n"  # -1 line, +3 lines
+    grown = dict(now, **{biggest: edited})
+    sizes = {p: file_size_guard._count(t) for p, t in grown.items()}
+    monkeypatch.setattr(file_size_guard, "working_texts", lambda: grown)
+    monkeypatch.setattr(file_size_guard, "working_sizes", lambda: sizes)
+    assert biggest not in guard_reference.untouched_paths(grown)
+    bad = [b for b in file_size_guard.violations() if biggest in b and "+2" in b]
+    assert bad, file_size_guard.violations()
+
+
+def test_a_shrink_in_one_file_never_excuses_growth_in_another(monkeypatch):
+    now, biggest = _biggest()
+    others = sorted(p for p in now if p != biggest and file_size_guard._count(now[p]) > 50)
+    other = others[0]
+    grown = _grown(now, biggest, 1)
+    grown[other] = "\n".join(now[other].splitlines()[:-20]) + "\n"
+    monkeypatch.setattr(file_size_guard, "working_texts", lambda: grown)
+    monkeypatch.setattr(file_size_guard, "working_sizes",
+                        lambda: {p: file_size_guard._count(t) for p, t in grown.items()})
     bad = file_size_guard.violations()
-    assert any(biggest in line and "grew from" in line and "+50" in line for line in bad), bad
+    assert any(biggest in b and "+1" in b for b in bad), bad
+
+
+def test_no_merge_base_excludes_nothing(monkeypatch):
+    monkeypatch.setattr(guard_reference, "merge_base_rev", lambda: "")
+    now, biggest = _biggest()
+    assert guard_reference.untouched_paths({biggest: now[biggest]}) == set()
 
 
 def _with_trunk_copy(monkeypatch, path: str, trunk_text: str):
