@@ -50,6 +50,17 @@ def test_stop_width_scalers_inside_a_tuple_are_sites() -> None:
     assert "src.portfolio_constructor.config.ConstructorConfig.stop_atr_regime_scale[0][1]" in ids
 
 
+def test_named_dictionary_keys_keep_distinct_number_identities() -> None:
+    """A mapping keyed by explicit constants must not collapse every numeric
+    leaf onto the scanner's ``[?]`` fallback identity. The source keeps the
+    readable insider-class constants; the scanner owns resolving their sites.
+    """
+    ids = {site.site_id for site in collect_sites()}
+    assert "src.data.insider_signal._WEIGHTS[OPPORTUNISTIC]" in ids
+    assert "src.data.insider_signal._WEIGHTS[INDETERMINATE]" in ids
+    assert "src.data.insider_signal._WEIGHTS[?]" not in ids
+
+
 def test_result_dataclasses_are_not_sites() -> None:
     """The `*Config` rule is what keeps the signal alive. Result and DTO
     dataclasses in the same scoped files carry numeric defaults too, and

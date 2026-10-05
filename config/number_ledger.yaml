@@ -11306,3 +11306,251 @@ numbers:
       DERIVED, not chosen: 2 x (182,631,819 + 62,914,560) = 491,092,758 B = 468 MiB. The minimum free space a
       session must find before it may start; below it main.py refuses loudly. Guards against another tenant
       filling the shared disk mid-session. Governs no trade.
+  - id: src.models.analysis.RATING_MAGNITUDE['buy']
+    value: 0.5
+    site: src/models/analysis.py
+    status: arbitrary
+    note: >-
+      Equal-spacing ordinal rung of the Technical rating. It is added unscaled
+      to the separate conviction score, so its ratio to that score changes
+      candidate order and does not cancel. No measurement supports 0.5.
+    open_question: >-
+      What relative weight should a plain buy rating carry beside the recorded
+      Technical conviction when candidates are compared?
+    cost_while_unanswered: >-
+      A plain buy at high conviction can tie or outrank a strong buy at lower
+      conviction on spacing chosen by convention rather than evidence.
+    settles_by:
+      kind: recording
+      state: built
+      where: >-
+        src/stage_morning_research.py and src/pipeline_intraday.py persist each
+        Technical analysis in specialist_evidence
+      records: >-
+        each symbol's Technical rating and conviction in evidence_json, with
+        run_id, symbol and timestamp so forward bars and recorded outcomes can
+        be joined without inventing a second trading-memory system
+      closes_when: >-
+        enough recorded buy and strong-buy reads exist to compare forward
+        outcomes at like conviction, and the rung is measured, reformulated to
+        cancel, or removed if it adds no information
+      writes:
+        - specialist_evidence.evidence_json
+        - specialist_evidence.run_id
+        - specialist_evidence.symbol
+  - id: src.models.analysis.RATING_MAGNITUDE['strong_buy']
+    value: 1.0
+    site: src/models/analysis.py
+    status: arbitrary
+    note: >-
+      Upper ordinal rung of the Technical rating. Its spacing from buy and
+      from the independent conviction score is load-bearing in candidate
+      ranking; equal spacing is a convention, not a measurement.
+    open_question: >-
+      What relative weight should a strong-buy rating carry beside a plain buy
+      and beside the recorded Technical conviction?
+    cost_while_unanswered: >-
+      Mixed rating and conviction combinations can be ordered by an unmeasured
+      ratio before the Portfolio Manager sees them.
+    settles_by:
+      kind: recording
+      state: built
+      where: >-
+        src/stage_morning_research.py and src/pipeline_intraday.py persist each
+        Technical analysis in specialist_evidence
+      records: >-
+        each symbol's Technical rating and conviction in evidence_json, with
+        run_id, symbol and timestamp so forward bars and recorded outcomes can
+        be joined without inventing a second trading-memory system
+      closes_when: >-
+        enough recorded buy and strong-buy reads exist to compare forward
+        outcomes at like conviction, and the rung is measured, reformulated to
+        cancel, or removed if it adds no information
+      writes:
+        - specialist_evidence.evidence_json
+        - specialist_evidence.run_id
+        - specialist_evidence.symbol
+  - id: src.models.analysis.RATING_MAGNITUDE['sell']
+    value: 0.5
+    site: src/models/analysis.py
+    status: derived
+    derived_from: src.models.analysis.RATING_MAGNITUDE['buy']
+    base_value: 0.5
+    note: >-
+      Bearish mirror of the buy rung. Long and short verdicts use the same
+      magnitude scale, so this is the same number at a second definition site.
+  - id: src.models.analysis.RATING_MAGNITUDE['strong_sell']
+    value: 1.0
+    site: src/models/analysis.py
+    status: derived
+    derived_from: src.models.analysis.RATING_MAGNITUDE['strong_buy']
+    base_value: 1.0
+    note: >-
+      Bearish mirror of the strong-buy rung. Long and short verdicts use the
+      same magnitude scale, so this is the same number at a second site.
+  - id: src.data.insider_signal._WEIGHTS[INDETERMINATE]
+    value: 0.5
+    site: src/data/insider_signal.py
+    status: arbitrary
+    note: >-
+      Attention weight of an indeterminate insider transaction between the
+      opportunistic unit and routine zero. It multiplies transaction value in
+      the smart-money sort key, so the ratio can change which evidence is shown.
+    open_question: >-
+      How should indeterminate-class transaction value rank against
+      opportunistic value when the evidence set must be ordered and truncated?
+    cost_while_unanswered: >-
+      Indeterminate transactions may be over- or under-ranked, changing the
+      representative evidence and potentially the downstream verdict.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        config/number_ledger.yaml, the settlement route on
+        src.data.insider_signal._WEIGHTS[INDETERMINATE]
+      records: >-
+        every pre-rank insider observation's symbol, class, signed transaction
+        value and resulting rank, including observations later removed by the
+        evidence cap rather than only the representatives that survived it
+      closes_when: >-
+        the same observation sets can be replayed across candidate ratios and
+        joined to public forward returns, so the ratio is read from evidence or
+        the indeterminate rung is removed when it adds no signal
+  - id: src.data.insider_signal._WEIGHTS[OPPORTUNISTIC]
+    value: 1.0
+    site: src/data/insider_signal.py
+    status: not-trade-governing
+    note: >-
+      Unit of the positive signal-weight scale. Multiplying every nonzero
+      weight by another positive unit preserves the ordering; only the
+      indeterminate-to-opportunistic ratio is load-bearing.
+  - id: src.data.insider_signal.InsiderSignalClass.weight
+    value: 1.0
+    site: src/data/insider_signal.py
+    status: not-trade-governing
+    note: >-
+      Dataclass default not used by the production constructor:
+      InsiderSignalClass.of always supplies the value from _WEIGHTS.
+  - id: src.data.insider_signal._BAND_LOW
+    value: 0.1
+    site: src/data/insider_signal.py
+    status: not-trade-governing
+    note: >-
+      Published holdings-band boundary used only to label evidence. No gate,
+      size or rank reads the band; changing it changes reporting text only.
+  - id: src.data.insider_signal._BAND_HIGH
+    value: 0.5
+    site: src/data/insider_signal.py
+    status: not-trade-governing
+    note: >-
+      Published holdings-band boundary used only to label evidence. No gate,
+      size or rank reads the band; changing it changes reporting text only.
+  - id: src.data.insider_signal.InsiderSignalThresholds.cadence_max_gap_dispersion
+    value: 0.25
+    site: src/data/insider_signal.py
+    status: derived
+    derived_from: src.config.SmartMoneyConfig.insider_cadence_max_gap_dispersion
+    base_value: 0.25
+    note: >-
+      Fallback copy of the SmartMoneyConfig field. Production constructs the
+      thresholds from config, and base drift keeps this duplicate aligned.
+  - id: src.data.insider_signal.InsiderSignalThresholds.cadence_max_mean_gap_days
+    value: 120
+    site: src/data/insider_signal.py
+    status: derived
+    derived_from: src.config.SmartMoneyConfig.insider_cadence_max_mean_gap_days
+    base_value: 120
+    note: >-
+      Fallback copy of the SmartMoneyConfig field. Production constructs the
+      thresholds from config, and base drift keeps this duplicate aligned.
+  - id: src.data.insider_signal.InsiderSignalThresholds.cadence_min_mean_gap_days
+    value: 20
+    site: src/data/insider_signal.py
+    status: derived
+    derived_from: src.config.SmartMoneyConfig.insider_cadence_min_mean_gap_days
+    base_value: 20
+    note: >-
+      Fallback copy of the SmartMoneyConfig field. Production constructs the
+      thresholds from config, and base drift keeps this duplicate aligned.
+  - id: src.data.insider_signal.InsiderSignalThresholds.calendar_routine_years
+    value: 3
+    site: src/data/insider_signal.py
+    status: derived
+    derived_from: src.config.SmartMoneyConfig.insider_calendar_routine_years
+    base_value: 3
+    note: >-
+      Fallback copy of the SmartMoneyConfig field. Production constructs the
+      thresholds from config, and base drift keeps this duplicate aligned.
+  - id: src.data.insider_signal.InsiderSignalThresholds.min_cadence_trades
+    value: 3
+    site: src/data/insider_signal.py
+    status: derived
+    derived_from: src.config.SmartMoneyConfig.insider_min_cadence_trades
+    base_value: 3
+    note: >-
+      Fallback copy of the SmartMoneyConfig field. Production constructs the
+      thresholds from config, and base drift keeps this duplicate aligned.
+  - id: src.data.context._SLOPE_LOOKBACK
+    value: 10
+    site: src/data/context.py
+    status: arbitrary
+    note: >-
+      Sessions over which each moving-average slope is called rising or
+      falling. The resulting direction enters the Technical prompt and the
+      same count extends the screen's minimum-history requirement.
+    open_question: >-
+      What current-instrument window makes moving-average direction stable
+      enough to report without imposing the same flat duration on every name?
+    cost_while_unanswered: >-
+      The Technical seat sees a trend direction and the screen requires extra
+      history using a flat, unmeasured calendar count.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        config/number_ledger.yaml, the settlement route on
+        src.data.context._SLOPE_LOOKBACK
+      records: >-
+        slope direction across candidate windows on public bars for the
+        tradable universe, alongside each name's present volatility and the
+        persistence of that direction rather than this desk's selected trades
+      closes_when: >-
+        the window is reformulated from the instrument's current structure or
+        volatility, or the direction field is removed if no stable
+        instrument-relative formulation exists
+  - id: src.data.context._CONSOLIDATION_WINDOW
+    value: 14
+    site: src/data/context.py
+    status: derived
+    derived_from: src.data.technical.ATR_PERIOD
+    base_value: 14
+    note: >-
+      Bound directly to ATR_PERIOD in source. A base shorter than one complete
+      volatility-reading window has no comparable ATR context of its own.
+  - id: src.data.context._MAX_GAPS_REPORTED
+    value: 3
+    site: src/data/context.py
+    status: arbitrary
+    note: >-
+      Rendering cap on unfilled gaps shown to the Technical seat, nearest
+      first. It is not a deterministic trade gate, but it changes evidence the
+      seat receives and therefore can change a verdict.
+    open_question: >-
+      How many unfilled gaps can be omitted before the missing level changes a
+      Technical answer, within the prompt's measured evidence budget?
+    cost_while_unanswered: >-
+      A material older gap can be hidden from the analyst while a less useful
+      nearer gap consumes the fixed allowance.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        config/number_ledger.yaml, the settlement route on
+        src.data.context._MAX_GAPS_REPORTED
+      records: >-
+        the complete pre-truncation gap list, the subset rendered, prompt size
+        and whether omitted gaps were later referenced by the Technical answer
+      closes_when: >-
+        recorded demand shows the cap never binds and it is removed, or the
+        prompt budget supplies a derived cap that preserves every materially
+        referenced gap

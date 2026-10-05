@@ -154,9 +154,11 @@ def _leaves(
     """Every numeric leaf under `node`, with a stable path-qualified id.
 
     A bare literal yields one leaf. A tuple, list or dict literal yields one
-    leaf per numeric element, keyed by index or by its literal key, so
-    `stop_atr_setup_scale`'s `("range", 0.90)` is addressable as
-    `...stop_atr_setup_scale[1][1]` and moves only if the structure moves.
+    leaf per numeric element, keyed by index, by its literal key, or by the
+    explicit name used as its key, so `stop_atr_setup_scale`'s
+    `("range", 0.90)` is addressable as `...stop_atr_setup_scale[1][1]` and
+    `_WEIGHTS[INDETERMINATE]` does not collide with the other named keys in
+    the same mapping.
 
     `local` names the constants defined in this same file. A leaf that is
     just one of those names is NOT a second site — it is one number with two
@@ -179,6 +181,8 @@ def _leaves(
         for key, element in zip(node.keys, node.values):
             if isinstance(key, ast.Constant):
                 label = f"[{key.value!r}]"
+            elif isinstance(key, ast.Name):
+                label = f"[{key.id}]"
             else:
                 label = "[?]"
             out.extend(_leaves(element, f"{prefix}{label}", names, local))
