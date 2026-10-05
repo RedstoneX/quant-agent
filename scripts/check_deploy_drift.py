@@ -235,7 +235,7 @@ def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
     Written on EVERY run so the board can tell "checked and clean" from
     "never checked". Reuses `save_state` from `src.coverage_watchdog`.
     """
-    from src.coverage_watchdog_state import DEPLOY_DRIFT_STATE_PATH, load_state, save_state
+    from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state, save_state
 
     target = state_path or DEPLOY_DRIFT_STATE_PATH
     day = (today or datetime.now(timezone.utc).date()).isoformat()
@@ -271,7 +271,7 @@ def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
         # "nothing happened", so the refusal is recorded in the same state
         # file, through the same helper the typed-alert claim uses, and is
         # readable at /alerts/suppressed.
-        from src.coverage_watchdog_state import _record_suppressed_alert
+        from src.coverage_watchdog import _record_suppressed_alert
 
         _record_suppressed_alert(
             state, "deploy_drift", day, [report.remote_sha],
@@ -286,7 +286,7 @@ def already_alerted(report: "DriftReport", *, state_path=None,
     pushed. Five identical "QAMC deploy drift" messages went out in one day and
     changed nothing; a message that repeats unchanged is noise, and the board
     carries the state for as long as it lasts."""
-    from src.coverage_watchdog_state import DEPLOY_DRIFT_STATE_PATH, load_state
+    from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state
 
     target = state_path or DEPLOY_DRIFT_STATE_PATH
     day = (today or datetime.now(timezone.utc).date()).isoformat()

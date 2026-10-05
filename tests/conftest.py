@@ -300,6 +300,10 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     drift = alerting / "deploy_drift.json"
     monkeypatch.setattr("src.coverage_watchdog_state.STATE_PATH", heartbeat)
     monkeypatch.setattr("src.coverage_watchdog_state.DEPLOY_DRIFT_STATE_PATH", drift)
+    # The watchdog re-exports both names; patch its copies too so a reader
+    # that goes through `coverage_watchdog.<NAME>` is redirected as well.
+    monkeypatch.setattr(_cw, "STATE_PATH", heartbeat)
+    monkeypatch.setattr(_cw, "DEPLOY_DRIFT_STATE_PATH", drift)
 
     # The reading side moves with the writing side, or the isolation itself
     # would break the invariant that pins them together
