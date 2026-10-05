@@ -34,8 +34,8 @@ def test_later_blank_write_heals_back_the_stated_sentence(blank):
     assert t.thesis_invalid_if == SENTENCE
     obs, _ = drain_restore_observations()
     assert obs == [{
-        "symbol": "NVDA", "blank_found": True, "healed": True,
-        "source": "prior_assigned_value",
+        "symbol": "NVDA", "blank_found": True,
+        "healed": True, "source": "prior_assigned_value", "occurrences": 1,
     }]
 
 
@@ -46,7 +46,8 @@ def test_blank_write_with_no_original_reads_gone_and_is_counted():
     assert t.thesis_invalid_if == "unknown"  # never filled with a sentence
     obs, _ = drain_restore_observations()
     assert obs == [{
-        "symbol": "NVDA", "blank_found": True, "healed": False, "source": None,
+        "symbol": "NVDA", "blank_found": True,
+        "healed": False, "source": None, "occurrences": 1,
     }]
 
 

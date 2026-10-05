@@ -110,3 +110,47 @@ def test_a_note_pin_stays_ratcheted_not_absolute():
 
 def test_every_source_pin_in_the_real_ledger_carries_its_number():
     assert g.source_violations() == []
+
+
+@pytest.mark.parametrize("cite,expected", [
+    ("ops/m.py@`from os import path`", "dead"),
+    ("ops/m.py::__all__", "dead"),
+    ("ops/m.py@`# a comment that says 7 is the ceiling`", "dead"),
+    ("ops/m.py::unrelated", "no_mention"),
+    ("ops/m.py::CEILING", "mentions"),
+    ("ops/missing.py::CEILING", "unresolved"),
+])
+def test_a_pin_into_ops_is_classified_exactly_like_one_into_src(cite, expected):
+    """Widening the citation pattern to ops/ must not loosen a single verdict."""
+    ledger = {"src.m.CEILING": {"id": "src.m.CEILING", "value": 7, "source": cite}}
+    got = [p.verdict for p in g.classify(ledger, lambda rel: SRC if rel == "ops/m.py" else None)]
+    assert got == [expected]
+    assert got == _verdicts(cite.replace("ops/", "src/"))
+
+
+def test_a_gzipped_path_is_not_truncated_into_a_different_file():
+    from src.ledger_citations import _CITATION_RE
+    assert _CITATION_RE.search("see ops/rehearsal/recordings/market_bars.json.gz, 400") is None
+    assert _CITATION_RE.search("see ops/a/b.json, 400").group(1) == "ops/a/b.json"
+    assert _CITATION_RE.search("see src/x.py.").group(1) == "src/x.py"
+
+
+_CITED = {"id": "a.b", "value": 1, "note": "see src/m.py::CEILING"}
+_BARE = {"id": "a.b", "value": 1, "note": "prose only"}
+
+
+def test_deleting_a_citation_from_a_cited_row_fails():
+    assert g.uncited_violations({"a.b": _BARE}, {"a.b": _CITED})
+
+
+def test_a_new_bare_row_fails_but_an_already_bare_row_is_not_blamed():
+    assert g.uncited_violations({"a.b": _BARE, "c.d": _BARE}, {"a.b": _BARE})
+    assert not g.uncited_violations({"a.b": _BARE}, {"a.b": _BARE})
+
+
+def test_adding_a_citation_is_green():
+    assert not g.uncited_violations({"a.b": _CITED}, {"a.b": _BARE})
+
+
+def test_real_ledger_uncited_set_does_not_grow_past_trunk():
+    assert g.uncited_violations() == []

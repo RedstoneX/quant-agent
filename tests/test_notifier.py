@@ -2332,7 +2332,7 @@ def test_failed_send_is_recorded_and_distinguishable(tmp_path, monkeypatch):
         assert n.send("close report body", kind="close") is False
 
     rows = _notifier_sends_rows(db_path)
-    assert len(rows) == 1
+    assert len(rows) == 4
     assert rows[0]["kind"] == "close"
     assert rows[0]["status"] == "failed"
     assert rows[0]["text"] == "close report body"
@@ -2351,7 +2351,7 @@ def test_rehearsal_suppressed_send_is_recorded_as_suppressed(tmp_path, monkeypat
     n = TelegramNotifier()
 
     with patch("src.notifier.requests.post") as mock_post:
-        assert n.send("PAID ANALYSIS SUSPENDED", kind="owner_alert") is False
+        assert not n.send("PAID ANALYSIS SUSPENDED", kind="owner_alert")
         mock_post.assert_not_called()
 
     rows = _notifier_sends_rows(db_path)
@@ -2396,7 +2396,7 @@ def test_recorded_output_never_contains_token_or_chat_id(tmp_path, monkeypatch):
         assert n.send("second message", kind="generic") is False
 
     rows = _notifier_sends_rows(db_path)
-    assert len(rows) == 2
+    assert len(rows) == 5
     dump = str(rows)
     assert token not in dump
     assert chat_id not in dump

@@ -128,8 +128,16 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from scripts.board_item_blocks import (  # noqa: F401
+    CRITERION,
+    DONE_WHEN,
+    ITEM_HEADING,
+    criteria,
+    item_blocks,
+)
+from scripts.board_locator import board_path_in
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-WORK_MD = "docs/WORK.md"
 
 # ---------------------------------------------------------------------------
 # git reads
@@ -377,12 +385,15 @@ class Change:
         base = base_ref(repo)
         if not base:
             return None
-        after = (repo / WORK_MD)
+        work_md_path = board_path_in(repo)
+        if work_md_path is None:
+            return None
+        after = repo / work_md_path
         return cls(
             base=base,
             paths=changed_paths(base, repo),
             messages=commit_messages(base, repo),
-            work_md_before=file_at(base, WORK_MD, repo),
+            work_md_before=file_at(base, work_md_path, repo),
             work_md_after=after.read_text() if after.exists() else None,
             tree=repo,
         )
@@ -394,7 +405,6 @@ class Change:
 
 #: `**39(a). Title — status.**` — the heading form every item in
 #: `docs/WORK.md` already uses. Verified against the file, not its prose.
-ITEM_HEADING = re.compile(r"^\*\*(\d+)\.\s", re.M)
 
 #: The line that retires an item. Editing it IS a closure whatever the
 #: description says — the same signal `scripts/work_queue.py` uses.
@@ -418,12 +428,6 @@ RETIRED_LINE_PREFIX = "**Retired item numbers"
 _LEGACY_RETIRED_RUN = re.compile(
     r"^\*\*Retired item numbers[^*]*\*\*\s*((?:\d+\s*,\s*)*\d+)\b")
 
-#: A filed item's own completion criteria. One label, then one bullet per
-#: criterion, checkbox-style so "met" is a one-character edit and a diff
-#: shows it. The identifier is the bullet's ordinal within its item.
-DONE_WHEN = re.compile(r"^\s*DONE WHEN:\s*$", re.M)
-CRITERION = re.compile(r"^\s*[-*]\s*\[( |x|X)\]\s*(.+?)\s*$", re.M)
-
 TRAILER = r"^[ \t]*{key}[ \t]*:[ \t]*(.+?)[ \t]*$"
 
 
@@ -431,41 +435,6 @@ def trailer(messages: str, key: str) -> list[str]:
     """Every value given for a trailer key across this change's commits."""
     pattern = re.compile(TRAILER.format(key=re.escape(key)), re.I | re.M)
     return [m.group(1) for m in pattern.finditer(messages or "")]
-
-
-def item_blocks(work_md: str | None) -> dict[str, str]:
-    """Item number -> the text from its heading to the next item's heading."""
-    if not work_md:
-        return {}
-    marks = [(m.group(1), m.start()) for m in ITEM_HEADING.finditer(work_md)]
-    out: dict[str, str] = {}
-    for i, (number, start) in enumerate(marks):
-        end = marks[i + 1][1] if i + 1 < len(marks) else len(work_md)
-        out[number] = work_md[start:end]
-    return out
-
-
-def criteria(block: str) -> list[tuple[int, bool, str]]:
-    """`(ordinal, met, text)` for each criterion under this item's DONE WHEN.
-
-    Reads the bullets that follow the label and stops at the first line that
-    is neither a criterion bullet nor blank, so ordinary item prose below the
-    criteria is not swept in.
-    """
-    match = DONE_WHEN.search(block)
-    if not match:
-        return []
-    out: list[tuple[int, bool, str]] = []
-    ordinal = 0
-    for line in block[match.end():].splitlines():
-        if not line.strip():
-            continue
-        bullet = CRITERION.match(line)
-        if not bullet:
-            break
-        ordinal += 1
-        out.append((ordinal, bullet.group(1).lower() == "x", bullet.group(2)))
-    return out
 
 
 def retired_numbers(work_md: str | None) -> set[str]:
@@ -545,7 +514,7 @@ def declared_criteria_problems(change: Change) -> list[str]:
             problems.append(
                 f"board item {number} is filed by this change with no "
                 f"completion criteria. Add a `DONE WHEN:` line to its block "
-                f"in {WORK_MD} followed by one `- [ ] ...` bullet per half "
+                f"in the board file followed by one `- [ ] ...` bullet per half "
                 f"of the work, so closing it later has something to verify "
                 f"against. If the item is a question only the owner can "
                 f"answer, say so with a `NO CRITERIA: <reason>` line instead."
@@ -571,7 +540,7 @@ def declared_criteria_problems(change: Change) -> list[str]:
                     problems.append(
                         f"board item {number} criterion {ordinal} "
                         f"({text[:60]!r}) is deferred onto item {target}, "
-                        f"which does not exist in {WORK_MD} after this "
+                        f"which does not exist in the board file after this "
                         f"change. File the item, or account for the "
                         f"criterion as met."
                     )

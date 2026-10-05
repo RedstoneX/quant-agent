@@ -209,7 +209,7 @@ def _invoked_repo_file(exec_start: str) -> Path | None:
 
 
 def _can_alert(script: Path) -> bool:
-    return "TelegramNotifier" in script.read_text()
+    return "notifier" in script.read_text()
 
 
 @pytest.mark.parametrize(

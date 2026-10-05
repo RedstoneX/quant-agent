@@ -64,6 +64,7 @@ _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
 from src.execution.broker_parts.stop_rejections import (  # noqa: F401
     _is_held_for_orders_error,
     _is_unsupported_stop_market_rejection,
+    log_terminal_stop_rejection,
     real_broker_order_id,
 )
 
@@ -210,25 +211,16 @@ class StopPlacer:
                 )
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                record_guarded_pass(self, "stop_place.submit_stop_leg_retrying", exc, log=logger,
+                                    context={"symbol": symbol, "leg": leg, "attempt": attempt})
                 logger.error(
                     "protective stop [%s] attempt %d/%d FAILED for %s "
                     "(qty=%.4f, stop $%.2f): %s", leg, attempt, attempts,
                     symbol, qty, stop_price, exc,
                 )
                 if _is_terminal_broker_rejection(exc):
-                    # Board item 129: a 400/404/422 will fail identically on
-                    # every retry — it is not a blip, it is the broker's
-                    # answer. Burning the rest of the burst on a doomed
-                    # resubmit only delays the alert this ceiling exists to
-                    # deliver promptly; stop now instead.
-                    logger.error(
-                        "protective stop [%s] for %s got a terminal broker "
-                        "rejection (status %s) on attempt %d/%d — this will "
-                        "not change on retry, escalating now instead of "
-                        "spending the rest of the budget.",
-                        leg, symbol, getattr(exc, "status_code", None),
-                        attempt, attempts,
-                    )
+                    # Board item 129: a terminal 400/404/422 fails identically on every retry.
+                    log_terminal_stop_rejection(logger, leg, symbol, exc, attempt, attempts)
                     break
                 if attempt < attempts:
                     delay = _STOP_PLACEMENT_BACKOFF_S[
