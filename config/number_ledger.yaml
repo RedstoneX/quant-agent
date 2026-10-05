@@ -7198,22 +7198,23 @@ numbers:
     status: not-trade-governing
     site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker_parts/market_data.py::MarketData.get_bars): the one caller passes the
-      window explicitly.
+      Dead default (src/api/broker_reads.py::read_price_bars): the chart-bars reader passes the window explicitly;
+      the other callers (commissioning check, sentiment script, market-data fallback) do too.
   - id: src.execution.broker_parts.account_reads.AccountReads.get_recent_daily_closes(lookback_days)
     value: 10
     status: not-trade-governing
     site: src/execution/broker_parts/account_reads.py
     note: >-
-      Dead default (src/execution/broker_parts/account_reads.py::AccountReads): every caller passes the
-      window explicitly.
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the evening session passes the window
+      explicitly.
   - id: src.execution.broker_parts.market_data.MarketData.get_top_movers(n)
     value: 15
     status: not-trade-governing
     site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker_parts/market_data.py::MarketData.get_top_movers): the one caller passes the
-      count explicitly.
+      Dead default (src/prompt_facts/missed_ops_signals.py::MissedOpsSignals._build_missed_opportunities_digest):
+      the digest passes the count explicitly, but the value it passes is that method's own top_movers_count
+      default, which has its own ledger row.
   - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_at_exchange(poll_interval)
     value: 1
     status: not-trade-governing
@@ -7403,10 +7404,9 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
-      Dead default: the only caller passes this argument explicitly
-      (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
-      that call site, which no scanner rule sees -- reported as a gap, not
-      ledgered here.
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the evening session passes this argument
+      explicitly as the literal 5. That literal is the LIVE number and no scanner rule sees it -- reported as a
+      gap, not ledgered here. The digest has no intraday caller.
   - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
     value: 5
     status: arbitrary
@@ -7443,10 +7443,9 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
-      Dead default: the only caller passes this argument explicitly
-      (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
-      that call site, which no scanner rule sees -- reported as a gap, not
-      ledgered here.
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the evening session passes this argument
+      explicitly as the literal 8.0. That literal is the LIVE number and no scanner rule sees it -- reported as a
+      gap, not ledgered here. The digest has no intraday caller.
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
       number is settled together with the tick cadence and the per-run held-book
       context, never alone.
@@ -7485,10 +7484,9 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
-      Dead default: the only caller passes this argument explicitly
-      (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
-      that call site, which no scanner rule sees -- reported as a gap, not
-      ledgered here.
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the evening session passes this argument
+      explicitly as the literal 15. That literal is the LIVE number and no scanner rule sees it -- reported as a
+      gap, not ledgered here. The digest has no intraday caller.
   - id: src.prompt_facts.decisions.PromptDecisions._build_own_recent_decisions(limit)
     value: 3
     status: arbitrary
@@ -7554,10 +7552,8 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/exits.py
     note: >-
-      Dead default (src/prompt_facts/review/exits.py::ReviewExits._build_post_exit_reality): every caller in src/ passes
-      this argument explicitly, so this value never runs in production. The
-      value passed at the call site is an inline literal or computed
-      expression that no scanner rule sees.
+      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_trade_grade_summary): the one caller
+      in src/ passes max(lookback_days, 14), a computed expression no scanner rule sees.
   - id: src.prompt_facts.review.exits.ReviewExits._build_post_exit_reality(max_symbols)
     value: 12
     status: arbitrary
@@ -7623,10 +7619,8 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_recent_buys_for_grading): every caller in src/ passes
-      this argument explicitly, so this value never runs in production. The
-      value passed at the call site is an inline literal or computed
-      expression that no scanner rule sees.
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the only caller in src/ passes the
+      literal 5, which no scanner rule sees.
   - id: src.prompt_facts.review.exits.ReviewExits._build_recent_loss_pits(lookback_days)
     value: 14
     status: arbitrary
@@ -7710,10 +7704,8 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_recent_sells_for_grading): every caller in src/ passes
-      this argument explicitly, so this value never runs in production. The
-      value passed at the call site is an inline literal or computed
-      expression that no scanner rule sees.
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the only caller in src/ passes the
+      literal 2, which no scanner rule sees.
   - id: src.prompt_facts.decisions.PromptDecisions._build_rm_recent_verdicts(limit)
     value: 5
     status: arbitrary
