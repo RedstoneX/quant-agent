@@ -354,33 +354,7 @@ SETTLEMENT_ROUTE_FIELDS: tuple[str, ...] = (
 #: same failure as the one-word `note` the arbitrary schema already bars.
 MIN_ROUTE_PROSE_CHARS = 40
 
-#: The route ratchet stores nothing: no history file, no constant. It was the
-#: sum of deltas in an append-only file, and a sum accepts a positive term, so
-#: the change it refused could raise it in the same commit (the arbitrary-count
-#: ratchet was moved 127 -> 131 that way on 2026-10-05). The reference is now
-#: the trunk's own ledger, read at check time; past grounds stay in git.
-def count_routeless(text: str) -> int:
-    """`arbitrary` rows with no `settles_by` in a raw ledger document."""
-    raw = yaml.safe_load(text) or {}
-    return sum(
-        1
-        for entry in (raw.get("numbers") or [])
-        if entry.get("status") == "arbitrary" and entry.get("settles_by") is None
-    )
-
-
-def trunk_routeless_count() -> int:
-    """The routeless-`arbitrary` count on the trunk, read fresh at check time.
-
-    If the trunk cannot be read the guard REFUSES (``ReferenceUnavailable``).
-    """
-    from scripts.guard_reference import ReferenceUnavailable, trunk_blobs
-
-    rel = "config/number_ledger.yaml"
-    blobs = trunk_blobs([rel])
-    if rel not in blobs:
-        raise ReferenceUnavailable(f"{rel} is absent from the trunk")
-    return count_routeless(blobs[rel])
+from src.number_route_ratchet import count_routeless, trunk_routeless_count  # noqa: E402,F401
 
 
 #: Fields `src/storage/db.py` actually WRITES, as opposed to merely creating.
