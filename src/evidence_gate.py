@@ -650,11 +650,11 @@ class EvidenceGateVerdict:
 
 
 def evaluate(data_status: dict | None) -> EvidenceGateVerdict:
-    """Classify this run's seat statuses. NEVER raises.
+    """Classify this run's seat statuses. Never raises for an input shape.
 
-    A gate that can stop the desk trading must not be able to stop it by
-    crashing either: anything unexpected in `data_status` is reported and
-    passed, never converted into a refusal.
+    Anything unclassified in ``data_status`` is reported and passed rather
+    than accidentally widening the owner-ratified blocking set. If an internal
+    bug violates this no-raise contract, the caller fails the decision closed.
     """
     if not isinstance(data_status, dict):
         return EvidenceGateVerdict(data_status={})
