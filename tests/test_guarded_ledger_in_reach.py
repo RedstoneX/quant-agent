@@ -37,22 +37,22 @@ def _detail(db, where):
     return "" if row is None else row["detail"]
 
 
-def test_three_states_at_a_module_level_site_with_only_a_broker_in_scope(db, caplog):
-    """`_resting_stop_level(broker, symbol)` has no self and no db -- only the broker."""
+def test_three_states_at_a_module_level_site_with_only_a_broker_in_scope(db, caplog, monkeypatch):
+    """`_resting_stop_level` has no self; the ledger is reached through the broker."""
     broker = SimpleNamespace()
     attach_reconciliation_db(broker, lambda: db.conn)
     where = "pending_stop_drain.resting_stop"
     assert _status(db, where) == NOT_RUN                      # never reached: no row
 
     broker.get_current_stop_price = lambda symbol: 12.5
-    assert drain._resting_stop_level(broker, "ZZZZ") == 12.5
+    assert drain._resting_stop_level(broker, "ZZZZ", db).price == 12.5
     assert _status(db, where) == AGREED                       # ran clean: its own row
 
-    def _duplicate_argument(symbol):
+    def _duplicate_argument(*args, **kwargs):
         return dict(a=1, **{"a": 2})                          # a real TypeError
-    broker.get_current_stop_price = _duplicate_argument
+    monkeypatch.setattr(drain, "read_stop", _duplicate_argument)
     with caplog.at_level(logging.ERROR):
-        assert drain._resting_stop_level(broker, "ZZZZ") is None   # behaviour unchanged
+        assert drain._resting_stop_level(broker, "ZZZZ", db).unreadable   # never read as "none"
     assert _status(db, where) == DISAGREED                    # ran and swallowed
     assert "TypeError" in _detail(db, where) and "ZZZZ" in _detail(db, where)
     assert any(r.exc_info is not None for r in caplog.records if r.levelno >= logging.ERROR)

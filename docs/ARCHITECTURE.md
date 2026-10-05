@@ -459,6 +459,23 @@ levels-coverage / protection-alert block (`_check_levels_coverage`,
 `_alert_owner_protection_failed`, `_alert_holding_discipline_block`, ~255 lines) and
 the sizing-price / book-risk helpers (`_book_risk_inputs`, `_today_sizing_price`,
 `_session_gross_ceiling`, ~180 lines), plus imports, the re-export table and mirror.
+Also since 2026-10-04 it passes `src/pipeline_candidate_records.py` (6 names, 331 lines:
+the execution-skip row, the typed pipeline-event row, the PM candidate accounting with
+its one paid re-ask, and the never-fatal heal record) and `src/pipeline_soft_exit_records.py`
+(7 names, 298 lines: the missing-falsifier test and admitted-to-book filter, the item-78
+mechanical-restore and per-name heal records, the missing-after-retry row, the refusal
+count and the BUY/SHORT isolate), both moved verbatim out of `src/pipeline_stages.py` on
+the same duck-typed-arguments pattern and re-exported through the same one lazy table.
+The candidate-records module sits BELOW the stage module: it imports its helpers from
+their own homes (`_persist_evidence` now lives in `src/pipeline_stage_helpers.py`) and
+`pipeline_stages.py` imports it at the top, so the import-cycle guard stays clean;
+`tests/test_boundary_pipeline_candidate_records.py` and
+`tests/test_boundary_pipeline_soft_exit_records.py` drive them from stubs. One body was
+deliberately NOT moved: `_record_scale_in_window_closed` imports the broker seam
+(`src.execution.scale_in`) in its body, which the import-layering guard refuses in a part,
+so it stays in `pipeline_stages.py`. The earlier attempt at this split (PR 1229) was
+closed on a conflict with main's item-78 falsifier work; this version lifts from the
+post-item-78 bodies.
 A harness that passes something it should fail
 is not yet a harness.
 

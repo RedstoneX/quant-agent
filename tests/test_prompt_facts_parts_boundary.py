@@ -150,14 +150,13 @@ def test_pm_facts_part_is_handed_heat_and_history_not_owning_them():
     assert "config" in inspect.signature(PromptPMFacts).parameters, "the body reads getattr(self, 'config') by string; it must be handed in"
 
 
-def test_projected_part_reads_and_writes_the_sector_cache_through_its_owner():
-    """The sector cache belongs to the host: a bare part has none (so the body's getattr default applies), and a write lands on the owner."""
-    assert not hasattr(PromptProjected(), "_last_symbol_sectors")
-    owner = SimpleNamespace(_last_symbol_sectors={"AAA": "Tech"})
-    part = _build(PromptProjected, sector_cache_owner=owner)
-    assert part._last_symbol_sectors == {"AAA": "Tech"}
-    part._last_symbol_sectors = {"BBB": "Energy"}
-    assert owner._last_symbol_sectors == {"BBB": "Energy"}
+def test_projected_part_holds_no_sector_cache_and_writes_onto_the_run():
+    """The sector map belongs to ONE run: the part keeps none, the host
+    keeps none, and the write lands on the run context handed in."""
+    part = _build(PromptProjected)
+    assert not hasattr(part, "_last_symbol_sectors") and not hasattr(part, "_sector_cache_owner")
+    assert "sector_cache_owner" not in inspect.signature(PromptProjected).parameters
+    assert "run" in inspect.signature(PromptProjected._build_projected_portfolio).parameters
 
 
 def test_decisions_part_runs_against_a_stub_db():

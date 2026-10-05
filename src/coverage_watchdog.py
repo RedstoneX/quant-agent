@@ -142,16 +142,15 @@ from src.coverage_watchdog_text import (  # noqa: F401 -- re-exported, lifted ve
     sweep_summary,
     sweep_log_line,
 )
+from src.data_paths import alerting_dir, db_path
 
 logger = logging.getLogger(__name__)
 
 #: Same database every session and `src/alert_watchdog.py` write to.
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
+DB_PATH = db_path()
 
 #: On-box record, gitignored like its siblings under data/alerting/.
-STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "coverage_heartbeat.json"
-)
+STATE_PATH = alerting_dir() / "coverage_heartbeat.json"
 
 #: Deploy-drift snapshot, written by scripts/check_deploy_drift.py and read
 #: by the /health API so a checkout that is behind origin/main is VISIBLE on
@@ -160,9 +159,7 @@ STATE_PATH = (
 #: written with the same `load_state`/`save_state` helpers, so the per-day
 #: dedup that stops a repeating alert is the one already in use here rather
 #: than a fourth private implementation.
-DEPLOY_DRIFT_STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "deploy_drift.json"
-)
+DEPLOY_DRIFT_STATE_PATH = alerting_dir() / "deploy_drift.json"
 
 TABLE = "alert_channel_checks"
 

@@ -291,11 +291,12 @@ class IntradayGating:
         monitoring bug must not be able to break the scan it watches."""
         try:
             self.db.record_intraday_symbol_snapshot_result(symbol, ok=True)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "intraday snapshot health: failed to record OK for %s", symbol,
                 exc_info=True,
             )
+            _site(self, "snapshot_ok_record", exc, context={"symbol": symbol})
 
     def _track_intraday_snapshot_miss(self, symbol: str) -> None:
         """Record a missed snapshot for `symbol` and alert the owner once
@@ -304,11 +305,12 @@ class IntradayGating:
         the threshold/cooldown reasoning. Never raises."""
         try:
             result = self.db.record_intraday_symbol_snapshot_result(symbol, ok=False)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "intraday snapshot health: failed to record miss for %s", symbol,
                 exc_info=True,
             )
+            _site(self, "snapshot_miss_record", exc, context={"symbol": symbol})
             return
         if not result.get("should_alert"):
             return
@@ -324,8 +326,9 @@ class IntradayGating:
                 "resolves — check whether the ticker is still valid/tradable "
                 "on Alpaca. Will not re-alert on this symbol for 24h.", category=_notifier.CATEGORY_OPERATIONAL,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "intraday snapshot health: alert failed for %s", symbol,
                 exc_info=True,
             )
+            _site(self, "snapshot_miss_alert", exc, context={"symbol": symbol})

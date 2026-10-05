@@ -123,3 +123,13 @@ def test_the_repo_itself_adds_no_new_silent_supplier() -> None:
     except ReferenceUnavailable as exc:  # pragma: no cover - CI fetches trunk
         pytest.skip(f"origin/main unavailable: {exc}")
     assert rc == 0, "a new settlement-recording field is supplied by a silent default"
+
+
+def test_the_subject_is_every_tracked_production_module_root_included() -> None:
+    from scripts.settlement_fill_guard import _is_subject, _working_subject_paths
+    paths = _working_subject_paths()
+    assert "main.py" in paths and any(p.startswith("ops/") for p in paths)
+    assert not any(p.startswith("tests/") for p in paths)
+    assert _is_subject("main.py") and _is_subject("ops/x.py") and not _is_subject("tests/t.py")
+    assert offending_sites(_VIOLATION, "main.py", {"entry_atr"}) == [
+        ("main.py", "write_entry", "entry_atr", "silent_default_getattr")]
