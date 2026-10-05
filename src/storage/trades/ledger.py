@@ -29,6 +29,7 @@ from datetime import datetime
 
 from src.storage.analytics.calibration import _POSITION_OPEN_ACTIONS, _is_filled_trail_stop
 from src.stop_price_classification import entry_stop_for_insert
+from src.storage.trades import trade_refusals_store as _refusals_store
 from src.util.time import UTC
 
 logger = logging.getLogger(__name__)
@@ -611,63 +612,13 @@ class TradeLedger:
             return cur.lastrowid
         return self._locked_write(_do, label="insert_trade")
 
-    def insert_trade_refusal(
-        self, *, symbol: str, direction: str | None, refusal: str,
-        entry_price: float | None = None, stop_price: float | None = None,
-        level_used: float | None = None, reward_risk: float | None = None,
-        threshold: float | None = None, level_was_measured: bool | None = None,
-        stage: str | None = None, run_id: str | None = None,
-        requested_risk_pct: float | None = None,
-    ) -> int | None:
-        """Record one NAMED refusal, or one named OBSERVATION, by its numbers.
+    def insert_trade_refusal(self, **kwargs) -> int | None:
+        """Lifted into `trade_refusals_store` (2026-10-05); see it for the column meanings."""
+        return _refusals_store.insert(self, **kwargs)
 
-        Board item 218. `PortfolioConstructor.last_refusals` keeps the human
-        sentence and is drained only for the symbols that reach
-        `constructor_dropped`; this is the durable half, written at the
-        moment of refusal, and it stores no English at all. A trial the
-        owner asked to judge later ("see if that improves the desk
-        purchases") is judged from these columns.
-
-        Board item 223 (2026-10-01) adds the OBSERVATION case, which is not
-        a refusal and must never be read as one: it was ruled on the risk route 2026-10-01, on the adversary's measurement that a
-        portfolio-manager target asking for a positive risk below
-        `min_position_risk_pct` is NOT refused and NOT resized, only
-        recorded. Such a row carries `stage="observed_not_refused"`, the
-        requested risk in `requested_risk_pct` and the floor in force in
-        `threshold`. Read `refusal` and `stage` together before counting
-        anything in this table as a declined trade.
-        """
-        def _do():
-            cur = self.conn.execute(
-                "INSERT INTO trade_refusals (timestamp, run_id, symbol, "
-                "direction, refusal, stage, entry_price, stop_price, "
-                "level_used, reward_risk, threshold, level_was_measured, "
-                "requested_risk_pct) "
-                "VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (run_id, str(symbol or "").strip().upper(), direction,
-                 refusal, stage, entry_price, stop_price, level_used,
-                 reward_risk, threshold,
-                 None if level_was_measured is None else int(bool(level_was_measured)),
-                 requested_risk_pct),
-            )
-            self.conn.commit()
-            return cur.lastrowid
-        return self._locked_write(_do, label="insert_trade_refusal")
-
-    def get_trade_refusals(
-        self, *, refusal: str | None = None, limit: int = 500,
-    ) -> list[dict]:
+    def get_trade_refusals(self, *, refusal: str | None = None, limit: int = 500) -> list[dict]:
         """Read back the durable refusal rows, newest first."""
-        sql = "SELECT * FROM trade_refusals"
-        args: list = []
-        if refusal:
-            sql += " WHERE refusal = ?"
-            args.append(refusal)
-        sql += " ORDER BY id DESC LIMIT ?"
-        args.append(int(limit))
-        cur = self.conn.execute(sql, tuple(args))
-        cols = [c[0] for c in cur.description]
-        return [dict(zip(cols, r)) for r in cur.fetchall()]
+        return _refusals_store.get_all(self, refusal=refusal, limit=limit)
 
     def update_open_stop_loss(
         self, symbol: str, new_stop_price: float, *, action: str | None = None,
