@@ -1,6 +1,4 @@
 
-
-
 # QAMC Current Work
 
 ## Active finish line
@@ -197,19 +195,6 @@ DONE WHEN:
 (prose moved: docs/board_notes/item-201.md)
 detail: docs/board_notes/item-201.md
 
-**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30. EIGHT of nine boxes are ticked and no code fix remains; the only open box needs a production rehearsal run, which the desk being OFF blocks. Do not dispatch build work on this item.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. 2026-10-02: the wall itself was sealed against six more routes (UDP, async/raw libcurl, curl subprocess, DNS). Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
-
-DONE WHEN:
-  - [x] 2026-10-01 the run reaches the Portfolio Manager OFFLINE.
-  - [x] 2026-10-01 no component builds its own live market-data client.
-  - [x] 2026-10-01 every blocked outbound attempt is journalled and the breach voids the run, mechanically.
-  - [x] 2026-10-01 a missing recorded input stops the replay instead of being filled in or quietly degraded.
-  - [x] 2026-10-01 the rot guard exercises every installed HTTP transport against TEST-NET-1.
-  - [x] 2026-10-01 every other test that reaches the network is NAMED: the conftest guard journals each blocked attempt to `QAMC_NETWORK_JOURNAL` (1139 attempts from 247 tests, none failing; detail in the note, update 5).
-  - [x] 2026-10-01 FRED and the news/reference feeds replay from a recording by the same patch-where-the-client-is-built pattern; recorded failures replay as failures, a gap raises (note, update 6).
-  - [x] 2026-10-01 the TEST SUITE is closed at the socket, not just at `requests`: 17 tests reached FRED/the Fed/news feeds through `urlopen`, 2 more reached openrouter.ai on a shell key, all green only because the code degrades a failed fetch; each stubbed at its seam, and the guard now fails any test that reaches off-box, naming test and host, with no allow-list (note, update 7).
-  - [ ] STILL OPEN: a real rehearsal against the production snapshot returns a verdict it is entitled to give. Performed and VOIDED on the wall 2026-10-01 (11 unrecorded endpoints, since recorded); left: the pinned recording's zero sectors, the offline Alpaca asset directory, and repeating the settling run (note, update 6).
-
 **208. Item 18's three residuals — filed 2026-09-30. Detail: `docs/board_notes/` (item 208). OPEN. [3 of 5 ticked; both open boxes owner-blocked.]** One changes what the ranking seat decides, one is an account setting outside this repo, and one cannot be closed by building at all.
 
 DONE WHEN:
@@ -306,6 +291,15 @@ DONE WHEN:
 - [ ] no citation is left as cannot-tell: each is either confirmed or replaced with a source that settles it -- 2026-10-05: zero `source` pins fail; 61 `note` pins still fail the name-or-value test (the guard prints the list at run time, nothing stored). Most are usage pointers ("threaded to", "used by") that were never meant to settle the number; each still needs a read to decide re-point vs reword, and the ratchet refuses any new one.
 detail: docs/board_notes/item-232.md
 
+**233. Hermetic end-to-end tests replace the frozen rehearsal rig -- filed 2026-10-05. [BOARD STATE: 0 of 4 ticked; BUILDABLE, no production run needed.]** Item 202's ninth box asked for a real rehearsal against the production snapshot; the owner's 2026-10-04 ruling froze the rehearsal rig (too expensive to keep a second machine), so that box can never be ticked and is deferred to this item (202/9 -> 233). The replacement is hand-written end-to-end tests that drive one whole session from the committed recordings with the socket closed and assert the session's VERDICTS, not merely that it ran.
+
+DONE WHEN:
+- [ ] one test drives a full morning session end to end from the committed recordings with the conftest network guard on, reaching the Portfolio Manager and the protection step with zero journalled outbound attempts.
+- [ ] that test asserts the verdicts against the recorded outcome: which names were proposed, which were refused and the recorded reason, what the Portfolio Manager decided, and which stops were placed with what width.
+- [ ] a second test covers the intraday path (the half-hourly re-read and the exit engine) the same way, from a recorded intraday session.
+- [ ] every unrecorded input the two tests need is recorded by the existing patch-where-the-client-is-built pattern, and a missing recording still stops the run instead of degrading, proved by one red test per gap closed.
+detail: docs/board_notes/item-233.md
+
 **Retired item numbers — never reuse.** APPEND-ONLY as of 2026-09-30 — closing an item adds ONE NEW `- retired <scheme>: N[, N, ...]` line below, in the matching scheme, and never edits an existing line; the running lists used to live on this one physical line, and even the merge driver's own union rule (`scripts/resolve_doc_conflict.py::merge_retired`) could not save it, because GitHub's own squash-merge — what actually runs when a pull request merges on GitHub.com — never invokes a local git merge driver at all. Two closures now append two different lines and merge with no conflict, by construction; no driver needed for this part. **This still takes the NUMBER ONLY — never a reason.** Every retirement's reason lives in `docs/INCIDENT_HISTORY.md`, which is append-only and merges entry-by-entry the same way. `tests/test_status_board.py` fails a change that adds a reason to any line below, or that edits an existing line instead of appending a new one. The per-item reasons this line used to carry were moved to `docs/INCIDENT_HISTORY.md` on 2026-09-26, verbatim, losing nothing. Gate item 7 was moved, not closed: it is item 76. The two numbering schemes are separate — 3 is retired in BOTH, 20 is live here, and 40, 67 and 200 never existed [verified 2026-09-18 against this file's full git history]. Residue of items 100 and 103 lives in items 106 and 115; item 89 was SHRUNK, not retired. The §11.2 ladder stays; the ladder's own unmeasurable-drawdown behaviour is a separate live question. Run `scripts/next_board_number.py` for the next free number — it reads every line below, the live board, and open pull requests; never eyeball this list. It FAILS CLOSED as of 2026-09-30: if the open-pull-request read fails for any reason it exits non-zero and prints no number at all, because it used to print a warning and a number anyway and two pull requests both claimed item 192 that way. Treat a non-zero exit as a hard stop, not a prompt to guess; `--accept-unchecked-number` is the deliberate offline opt-out and labels its answer UNCHECKED.
 
 - retired queue: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 56, 57, 58, 59, 60, 61, 62, 65, 66, 68, 69, 71, 72, 73, 74, 79, 80, 81, 82, 83, 84, 85, 87, 88, 89, 91, 92, 93, 94, 95, 96, 97, 98, 100, 101, 102, 103, 104, 105, 106, 108, 110, 111, 113, 114, 115, 116, 117, 118, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 148, 149, 150, 151, 153, 154, 155, 156, 158, 159, 160, 161, 162, 164, 165, 166, 167, 168, 169, 170, 171, 172, 175, 176, 178, 179, 180, 181, 184, 189
@@ -354,6 +348,7 @@ detail: docs/board_notes/item-232.md
 - retired queue: 17
 - retired queue: 225
 - retired queue: 203
+- retired queue: 202
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 
 - news-narrative factual drift; `actual_provider` attribution oddity.

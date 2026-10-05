@@ -85,7 +85,8 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
                 logger.warning("pending stop drain: could not delete %s's row: %s", symbol, exc)
             continue
         try:
-            order = replace_stop_and_record(broker, db, symbol, intended)
+            # No session id reaches the janitor; the row says so (caller=...).
+            order = replace_stop_and_record(broker, db, symbol, intended, caller="pending_stop_drain")
         except Exception as exc:  # noqa: BLE001
             record_guarded_pass(
                 (db, broker), "pending_stop_drain.apply", exc, log=logger,

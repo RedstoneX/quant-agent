@@ -13,7 +13,7 @@ from pathlib import Path
 from src.notifier.sections import fmt_time_12h
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-OWNER_FACING = ("notifier", "trader_feed", "log_health", "inflight")
+OWNER_FACING = ("notifier", "trader_feed", "log_health", "inflight", "market_session")
 _CLOCK = re.compile(r"%-?[HIl]|%[pP]|%T|%R|%X|%c")
 _DATE = re.compile(r"%-?[dejmy]|%[YyBbAaDFxc]")
 
@@ -78,3 +78,21 @@ def test_health_report_window_carries_the_date_even_within_one_day():
     )
     words = _window_words(rep)
     assert words.count("2026-10-04") == 2 and "today" not in words
+
+
+def test_session_edges_carry_the_date():
+    from src.market_session import _stamp
+    from src.trading_calendar import ET
+
+    assert _stamp(datetime(2026, 10, 5, 9, 30, tzinfo=ET)) == "2026-10-05 9:30 AM ET"
+
+
+def test_dashboard_never_renders_a_bare_clock_time():
+    root = SRC.parent / "frontend" / "src"
+    offenders = [
+        str(p.relative_to(root))
+        for p in sorted(root.rglob("*.ts*"))
+        if ".test." not in p.name and "toLocaleTimeString" in p.read_text()
+    ]
+    legacy = (SRC / "api" / "static" / "app.js").read_text()
+    assert offenders == [] and "toLocaleTimeString" not in legacy, offenders

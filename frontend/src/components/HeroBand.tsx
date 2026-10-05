@@ -9,7 +9,7 @@ import {
   Title,
 } from "@tremor/react";
 import { AccountResponse, MacroBroaderContext, PositionItem } from "../api/client";
-import { fmtMoney, fmtMoneyCompact, fmtPct, pnlClass } from "../lib/format";
+import { fmtClock, fmtMoney, fmtMoneyCompact, fmtPct, pnlClass } from "../lib/format";
 import { marginInterestCompactLabel } from "./MarginInterestPanel";
 import { LevelBar } from "./ui/Meter";
 import { Pill } from "./ui/Pill";
@@ -29,7 +29,7 @@ function regimeAge(asOf: string | null): string | null {
   if (!asOf) return null;
   const d = new Date(asOf.endsWith("Z") || asOf.includes("+") ? asOf : `${asOf}Z`);
   if (isNaN(d.getTime())) return null;
-  return `as of ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return `as of ${fmtClock(d)}`;
 }
 
 /* Item 7 (cockpit trader rework): "Market Regime" used to be a permanent

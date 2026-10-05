@@ -59,11 +59,31 @@ class UnprotectedWindow:
             self.cancelled_ids)
 
 
-def record_unprotected_windows(broker: Any, db: Any, symbol: str) -> None:
+#: Payload field saying WHERE the row's run id came from. A window recorded
+#: without a session id used to be indistinguishable from one recorded with
+#: it (`_insert` substitutes `unattributed` for a null), so no window could be
+#: joined to the session that produced it. This field makes the difference
+#: readable instead of silent.
+RUN_ID_SOURCE_FIELD = "run_id_source"
+#: `run_id_source` when the calling session supplied its own id — the row is
+#: joinable to that session.
+RUN_ID_FROM_SESSION = "session"
+#: `run_id_source` when the call site genuinely carries no session id. The
+#: `caller` field in the same payload says which site.
+RUN_ID_UNATTRIBUTED = "unattributed"
+
+
+def record_unprotected_windows(broker: Any, db: Any, symbol: str, *,
+                               run_id: str | None = None,
+                               caller: str = "unknown") -> None:
     """Persist every window the broker reports, whatever the replace's outcome.
 
     A failed replace is exactly where the window mattered most. A record is
     never trading authority, so nothing here can raise.
+
+    `run_id` is the calling session's id, so the window can be joined to the
+    session that produced it. A site that has none is recorded honestly: the
+    payload says `run_id_source=unattributed` and names the `caller`.
     """
     log = getattr(broker, "_unprotected_windows", None)
     if not isinstance(log, list) or not log:
@@ -71,8 +91,12 @@ def record_unprotected_windows(broker: Any, db: Any, symbol: str) -> None:
     windows, log[:] = list(log), []
     try:
         from src.execution.exit_path_records import _insert
+        session = str(run_id or "").strip()
+        source = RUN_ID_FROM_SESSION if session else RUN_ID_UNATTRIBUTED
         for w in windows:
-            _insert(db, run_id=None, kind=STOP_UNPROTECTED_WINDOW_KIND,
-                    symbol=symbol, payload={"code": f"stop_window_{w['outcome']}", **w})
+            _insert(db, run_id=session or None, kind=STOP_UNPROTECTED_WINDOW_KIND,
+                    symbol=symbol,
+                    payload={"code": f"stop_window_{w['outcome']}", **w,
+                             RUN_ID_SOURCE_FIELD: source, "caller": str(caller)})
     except Exception as exc:  # noqa: BLE001
         logger.warning("could not record unprotected stop window for %s: %s", symbol, exc)

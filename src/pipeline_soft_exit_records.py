@@ -24,6 +24,7 @@ This module must not import `src.pipeline` and never reaches the broker seam.
 """
 from __future__ import annotations
 
+from src.recording_accessors import pinned_evidence
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     PortfolioManagerAgent,
     SOFT_EXIT_HEAL_EVENT_REASON,
@@ -128,7 +129,7 @@ def _record_mechanical_soft_exit_restores(pipeline, ctx) -> None:
             return
         writer(
             observations=observations,
-            run_id=getattr(ctx, "run_id", None),
+            run_id=pinned_evidence(ctx, "run_id"),
             dropped=dropped,
         )
     except Exception as exc:  # noqa: BLE001 — a recording never blocks a trade

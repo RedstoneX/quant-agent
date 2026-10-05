@@ -5,7 +5,7 @@ WHY THIS GUARD EXISTS -- the failure CLASS, not one recording
 Four settlement recordings in a row were built to settle a money-governing
 number, were closed against on the board, and then recorded NOTHING. The
 existing check (`tests/test_settlement_recording_writes.py`, via
-`src.number_sources.written_fields`) reads the storage layer's own AST and
+`src.storage_write_index.written_columns`) reads the tree's own AST and
 asks whether executable code writes the field. In every one of those four
 cases it answered YES and was right: the column existed, the INSERT named it,
 the migration had run. The defect was always ONE LAYER UP, in the expression
