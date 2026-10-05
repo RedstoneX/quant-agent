@@ -12,7 +12,7 @@ access. That is deliberate — it keeps the cap/dedupe/ranking rules unit
 testable without constructing a `TradingPipeline`. The deterministic
 external-symbol admission gates (broker eligibility, price, liquidity,
 history, sector — shared with the smart-money transient-admission lane)
-live on `TradingPipeline` itself (`_evaluate_external_admission_gates`),
+live on `AdmissionService` (`_evaluate_external_admission_gates`),
 since they need live broker/market access; this module only decides
 WHICH symbols are worth gating, and in what order.
 """
