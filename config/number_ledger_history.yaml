@@ -1215,4 +1215,27 @@ changes:
       backtest engine: it steps daily bars and models no intraday session
       clock, so the value never reaches code the engine runs and a sweep would
       be identical for the wrong reason. No value was changed.
-
+  - delta: 2
+    date: 2026-10-05
+    why: |
+      2026-10-05: six small modules brought into SCOPED_PATHS in one sweep --
+      src/quantities.py, src/models/analysis.py, src/models/portfolio.py,
+      src/decision_checkpoint.py, src/margin_interest.py and src/inflight.py.
+      Twenty-one numeric sites are ledgered in the same change: 9 instrument
+      (the six ETF leverage factors, the broker's 360-day margin convention,
+      and the ordinary-weeknight carry day count), 7 sourced or derived (the
+      two outer rating rungs and the two inner ones, the risk-narrative
+      tolerance that is the ratified minimum-risk floor restated, the
+      calendar lookahead bounded by the longest real exchange closure, and
+      the two carry-day parameter defaults), 3 not-trade-governing (the
+      checkpoint schema tag, the board page's HTTP deadline, and the
+      six-month reporting lookback), and 2 arbitrary -- the 20-session
+      dollar-volume averaging window the liquidity admission floor is
+      computed over, and the 90-minute staleness bound on resuming a decided
+      plan. Neither of the 2 is settleable by the backtest engine as it
+      stands: the window needs a universe-wide admission-set sweep the engine
+      does not expose, and the staleness bound is an intraday quantity the
+      engine, which steps daily bars, never reaches. No value was changed.
+      src/data/insider_signal.py was examined and deliberately NOT scoped:
+      the scanner gives both non-zero rungs of its _WEIGHTS table one site
+      id, which the ledger schema cannot represent.

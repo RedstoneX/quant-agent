@@ -110,4 +110,24 @@ SCOPED_PATHS: tuple[str, ...] = (
     # whether a symbol may be traded at all lives here or in
     # `UniverseScreenConfig`.
     "src/universe_screen.py",
+    # 2026-10-05 scope sweep: six small modules, each on the path from a
+    # seat's verdict to a broker order, brought in together because the
+    # one-module-at-a-time approach was spent.
+    # The leverage table the risk engine's multipliers and the gross
+    # ceiling's bearish test both read, and the averaging window the
+    # liquidity admission measure is computed over.
+    "src/quantities.py",
+    # The rating encoding an analyst verdict's magnitude is read from, and
+    # the risk-narrative tolerance a TargetPosition is validated against.
+    "src/models/analysis.py",
+    "src/models/portfolio.py",
+    # Decides whether a decided-but-not-yet-risk-reviewed plan may be
+    # resumed and acted on instead of re-decided against fresh state.
+    "src/decision_checkpoint.py",
+    # The margin-carry arithmetic: the broker's day-count convention and
+    # the calendar-day count every overnight debit is multiplied by.
+    "src/margin_interest.py",
+    # The in-flight board read. No number here governs a trade, but it is
+    # scoped so the ledger says that in writing rather than by omission.
+    "src/inflight.py",
 )

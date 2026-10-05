@@ -8732,3 +8732,260 @@ numbers:
       readers are the quarterly meta-reflector's last-trading-day-of-quarter
       test (src/execution/broker_parts/account_reads.py) and the quarterly
       digest's period label; neither sizes, prices, places or exits anything.
+  # 2026-10-05 scope sweep: six small modules brought into SCOPED_PATHS in
+  # one change. Each sits on the path from a seat's verdict to a broker
+  # order -- the exposure table the gross ceiling reads, the liquidity
+  # window the admission screen reads, the rating encoding a seat verdict
+  # carries, the insider classifier the smart-money seat reads, the resume
+  # checkpoint, and the margin-carry arithmetic.
+  - id: src.quantities.ETF_LEVERAGE['SH']
+    value: -1.0
+    status: instrument
+    site: src/quantities.py
+    source: >-
+      ProShares Short S&P500 (SH) states a daily investment objective of -1x
+      the S&P 500's daily return; the sign and the factor are the fund's own
+      published objective, not a desk choice. Table and its consumers:
+      src/quantities.py::ETF_LEVERAGE and https://www.proshares.com/our-etfs/leveraged-and-inverse/sh
+  - id: src.quantities.ETF_LEVERAGE['SDS']
+    value: -2.0
+    status: instrument
+    site: src/quantities.py
+    source: >-
+      ProShares UltraShort S&P500 (SDS) states a daily objective of -2x the
+      S&P 500's daily return. Read off the instrument. Definition and comment: src/quantities.py::ETF_LEVERAGE;
+      issuer page https://www.proshares.com/our-etfs/leveraged-and-inverse/sds
+  - id: src.quantities.ETF_LEVERAGE['PSQ']
+    value: -1.0
+    status: instrument
+    site: src/quantities.py
+    source: >-
+      ProShares Short QQQ (PSQ) states a daily objective of -1x the Nasdaq-100's
+      daily return. Read off the instrument. Definition: src/quantities.py::ETF_LEVERAGE; issuer page
+      https://www.proshares.com/our-etfs/leveraged-and-inverse/psq
+  - id: src.quantities.ETF_LEVERAGE['SQQQ']
+    value: -3.0
+    status: instrument
+    site: src/quantities.py
+    source: >-
+      ProShares UltraPro Short QQQ (SQQQ) states a daily objective of -3x the
+      Nasdaq-100's daily return. Read off the instrument. Definition: src/quantities.py::ETF_LEVERAGE; the same -3.0 is
+      named at src/agents/risk_manager.py::RiskManagerAgent; issuer page
+      https://www.proshares.com/our-etfs/leveraged-and-inverse/sqqq
+  - id: src.quantities.ETF_LEVERAGE['DRAM']
+    value: 1.0
+    status: instrument
+    site: src/quantities.py
+    source: >-
+      An unlevered long fund: one unit of exposure per dollar held. 1.0 is the
+      absence of a leverage adjustment, which is also what ETF_LEVERAGE.get's
+      default returns. Definition and comment: src/quantities.py::ETF_LEVERAGE. No issuer
+      page is cited for this ticker because none was verified; the claim a reader can
+      check is the unlevered-long posture the 1.0 encodes, which is the table's default.
+  - id: src.quantities.ETF_LEVERAGE['SMH']
+    value: 1.0
+    status: instrument
+    site: src/quantities.py
+    source: >-
+      VanEck Semiconductor ETF (SMH) is an unlevered long fund: one unit of
+      exposure per dollar held. Definition: src/quantities.py::ETF_LEVERAGE; issuer page
+      https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/
+  - id: src.quantities.AVG_DOLLAR_VOLUME_WINDOW
+    value: 20
+    status: arbitrary
+    site: src/quantities.py
+    open_question: >-
+      Over how many sessions must dollar volume be averaged before the
+      liquidity admission decision stops moving, and is 20 inside or outside
+      that stable range?
+    cost_while_unanswered: >-
+      Every symbol near the liquidity floor is admitted or refused on an
+      average whose window nobody chose, so the universe the desk may trade
+      has an unmeasured boundary.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-05 scope-sweep tranche)
+      records: >-
+        the sensitivity of the liquidity admission decision to the averaging
+        window, measured by recomputing average dollar volume at 10, 20, 21,
+        40 and 60 sessions over the tradable universe on committed daily bars
+        and counting how many symbols change side of the admission floor.
+      closes_when: >-
+        the window is set at the shortest length whose admission set is stable
+        against a one-week perturbation, or the measurement shows the decision
+        is insensitive across the range and the row is refiled as
+        not-trade-governing with that evidence cited.
+    note: >-
+      UNSOURCED AND TRADE-GOVERNING. This window is the denominator of the
+      liquidity admission measure the universe screen gates on. The comment at
+      src/quantities.py records only that 20 RECONCILED three call sites that
+      disagreed (20, 20, 21) -- it settles the duplicate, not the choice. One
+      trading month is about 21 sessions, so 20 is close to a month but is not
+      derived from one. Nobody measured it; recorded honestly as unsettled.
+  - id: src.models.analysis.RATING_MAGNITUDE['strong_buy']
+    value: 1.0
+    status: sourced
+    site: src/models/analysis.py
+    source: >-
+      Equal-spacing ordinal encoding of the desk's own five-rung rating scale,
+      derived at src/models/analysis.py::RATING_MAGNITUDE, directly above the table: the scale has
+      exactly two directional rungs a side, so the outer rung is 1.0 and the
+      inner 0.5. Not a tuned weight -- Phase 13 section 13.3's posture is start
+      equal, adjust only on out-of-sample proof, and nothing has been measured.
+  - id: src.models.analysis.RATING_MAGNITUDE['strong_sell']
+    value: 1.0
+    status: sourced
+    site: src/models/analysis.py
+    source: >-
+      The mirror of RATING_MAGNITUDE['strong_buy']. Magnitude is UNSIGNED -- the
+      sign lives in RATING_DIRECTION -- so the outer rung is 1.0 on both sides.
+      Derivation at src/models/analysis.py::RATING_MAGNITUDE.
+  - id: src.models.analysis.RATING_MAGNITUDE['buy']
+    value: 0.5
+    status: derived
+    derived_from: src.models.analysis.RATING_MAGNITUDE['strong_buy']
+    base_value: 1.0
+    site: src/models/analysis.py
+    source: >-
+      The inner directional rung of the same equal-spacing encoding: one of two
+      rungs a side, so 0.5. Derivation at src/models/analysis.py::RATING_MAGNITUDE.
+  - id: src.models.analysis.RATING_MAGNITUDE['sell']
+    value: 0.5
+    status: derived
+    derived_from: src.models.analysis.RATING_MAGNITUDE['strong_sell']
+    base_value: 1.0
+    site: src/models/analysis.py
+    source: >-
+      The mirror of RATING_MAGNITUDE['buy'] on the unsigned magnitude scale.
+      Derivation at src/models/analysis.py::RATING_MAGNITUDE.
+  - id: src.models.portfolio.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT
+    value: 0.5
+    status: derived
+    derived_from: src.config.RiskConfig.min_position_risk_pct
+    base_value: 0.5
+    site: src/models/portfolio.py
+    source: >-
+      NOT A SECOND NUMBER. It is RiskConfig.min_position_risk_pct, the
+      owner-ratified floor granularity the risk field is already meaningful at:
+      two risk figures less than one risk-budget increment apart are the same
+      risk. Derivation written at src/models/portfolio.py above the constant;
+      duplicated as a literal only because TargetPosition validates with no
+      RiskConfig in scope.
+  - id: src.decision_checkpoint.CHECKPOINT_VERSION
+    value: 2
+    status: not-trade-governing
+    site: src/decision_checkpoint.py
+    note: >-
+      A schema tag, not a quantity. It is compared for equality so a checkpoint
+      written by an older layout is discarded instead of misread; no arithmetic
+      consumes it and no order is sized, priced or gated by it.
+  - id: src.decision_checkpoint.MAX_AGE_MINUTES
+    value: 90.0
+    status: arbitrary
+    site: src/decision_checkpoint.py
+    open_question: >-
+      After how many minutes does a decided-but-not-yet-risk-reviewed plan
+      drift far enough from fresh quotes that resuming it would breach the
+      entry-slippage limit the execution path already enforces?
+    cost_while_unanswered: >-
+      A resumed plan can be sent at prices up to ninety minutes stale, and
+      nobody has checked that ninety minutes stays inside the slippage limit
+      the same orders are gated on.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: docs/board_notes/item-090.md (the 2026-10-05 scope-sweep tranche)
+      records: >-
+        how far a decided-but-not-yet-risk-reviewed plan's entry prices drift
+        from fresh quotes as a function of elapsed minutes, measured on
+        committed bars across the names the desk actually decided on, against
+        the entry-slippage limit the execution path already enforces.
+      closes_when: >-
+        the staleness at which a resumed plan would breach the existing
+        entry-slippage limit is measured and this bound is set at or below it,
+        or resume is deleted in favour of always re-deciding.
+    note: >-
+      UNSOURCED AND TRADE-GOVERNING. It decides whether a saved pre-risk plan
+      may be resumed and acted on rather than re-decided against fresh market
+      state (see the module docstring at
+      src/decision_checkpoint.py::MAX_AGE_MINUTES). 90
+      minutes was chosen by nobody and is not derived from the slippage limit
+      it effectively stands in front of. Recorded honestly as unsettled.
+  - id: src.inflight._TIMEOUT_S
+    value: 5
+    status: not-trade-governing
+    site: src/inflight.py
+    note: >-
+      A network deadline on a GitHub API call made to render the board page.
+      It decides how long a synchronously served page waits before failing
+      fast; it never admits, rejects, sizes, prices or exits anything. The
+      comment at src/inflight.py records that it matches the timeout the board
+      server already uses for its own live probe.
+  - id: src.margin_interest.DAYS_PER_YEAR_ALPACA_CONVENTION
+    value: 360
+    status: instrument
+    site: src/margin_interest.py
+    source: >-
+      The broker's own day-count convention for margin interest -- debit x rate
+      / 360, not 365 -- owner-supplied from Alpaca's published margin schedule.
+      This ledger already cites it in prose on the
+      src.config.RiskConfig.margin_interest_rate_pct row; this is that same
+      convention given its own structured row at its definition site,
+      src/margin_interest.py::DAYS_PER_YEAR_ALPACA_CONVENTION, not a second
+      number.
+  - id: src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS
+    value: 7
+    status: sourced
+    site: src/margin_interest.py
+    source: >-
+      A safety bound above the longest real closure on the exchange calendar: a
+      four-day holiday weekend. Seven is the next whole week beyond that, so
+      any search running past it is a broken calendar read rather than a market
+      closure, and the function degrades to one day. Derivation written at
+      src/margin_interest.py::MAX_CALENDAR_LOOKAHEAD_DAYS, and the calendar it
+      bounds is src/trading_calendar.py::session_date_key's exchange calendar.
+  - id: src.margin_interest.MAX_LOOKBACK_MONTHS
+    value: 6
+    status: not-trade-governing
+    site: src/margin_interest.py
+    note: >-
+      The owner's own ask, quoted at the definition site in src/margin_interest.py:
+      a maximum of six months ago for the cumulative margin-interest view. It
+      bounds a reporting window the owner reads and sizes nothing; it is
+      ratified rather than measured because the period a report covers is the
+      reader's call.
+  - id: src.margin_interest.MarginInterestEstimate.days_charged
+    value: 1
+    status: instrument
+    site: src/margin_interest.py
+    source: >-
+      The count of calendar days tonight's debit is carried, which the broker
+      charges for every calendar day whether or not it trades. One is the
+      ordinary weeknight; a Friday is three and a Friday before a Monday
+      holiday is four, and production computes it with
+      days_charged_until_next_trading_day in
+      src/margin_interest.py::days_charged_until_next_trading_day rather than
+      taking this default.
+  - id: src.margin_interest.build_estimate(days_charged)
+    value: 1
+    status: derived
+    derived_from: src.margin_interest.MarginInterestEstimate.days_charged
+    base_value: 1
+    site: src/margin_interest.py
+    source: >-
+      The same ordinary-weeknight day count as
+      MarginInterestEstimate.days_charged above, repeated as a parameter
+      default at src/margin_interest.py::build_estimate. Production passes the
+      computed value.
+  - id: src.margin_interest.format_daily_line(days_charged)
+    value: 1
+    status: derived
+    derived_from: src.margin_interest.MarginInterestEstimate.days_charged
+    base_value: 1
+    site: src/margin_interest.py
+    source: >-
+      The same ordinary-weeknight day count again, as the rendering helper's
+      parameter default at src/margin_interest.py. It formats a line of
+      owner-facing text at src/margin_interest.py::format_daily_line; the
+      estimate it renders carries the real count.
