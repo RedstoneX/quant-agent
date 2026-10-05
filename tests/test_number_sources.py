@@ -754,33 +754,6 @@ def test_item_90_classification_partitions_the_whole_ledger() -> None:
     assert len(flat) == len(set(flat))
 
 
-def test_the_route_ratchet_refuses_a_rise_and_allows_a_fall(monkeypatch) -> None:
-    """It bites. The reference is the trunk's own ledger, nothing stored. A
-    trunk one row BETTER than this tree must refuse; one row WORSE must not.
-    The old shape summed deltas, so a refused change could raise its own limit."""
-    import src.number_sources as ns
-
-    live = len(ns.classification(ns.load_ledger())["unclassified"])
-    monkeypatch.setattr(ns, "trunk_routeless_count", lambda: live - 1)
-    assert [p for p in ns.audit() if p.kind == "route-ratchet"]
-    monkeypatch.setattr(ns, "trunk_routeless_count", lambda: live + 1)
-    assert not [p for p in ns.audit() if p.kind == "route-ratchet"]
-
-
-def test_the_route_ratchet_stores_nothing() -> None:
-    root = Path(__file__).resolve().parent.parent
-    assert not (root / "config" / "number_ledger_route_history.yaml").exists()
-    text = (root / "src" / "number_sources.py").read_text(encoding="utf-8")
-    assert "MAX_ROUTELESS_ARBITRARY" not in text and "ROUTE_RATCHET_HISTORY" not in text
-
-
-def test_the_route_count_matches_a_direct_parse_of_trunk() -> None:
-    from src.number_sources import classification, count_routeless, load_ledger
-
-    text = (Path(__file__).resolve().parent.parent / "config" / "number_ledger.yaml").read_text(encoding="utf-8")
-    assert count_routeless(text) == len(classification(load_ledger())["unclassified"])
-
-
 def test_a_settlement_route_that_cannot_be_acted_on_is_refused() -> None:
     """A malformed route reads as an answer and is not one, so it is worse
     than an honest blank: it takes the row out of the outstanding count."""

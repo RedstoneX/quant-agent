@@ -354,7 +354,7 @@ SETTLEMENT_ROUTE_FIELDS: tuple[str, ...] = (
 #: same failure as the one-word `note` the arbitrary schema already bars.
 MIN_ROUTE_PROSE_CHARS = 40
 
-from src.number_route_ratchet import count_routeless, trunk_routeless_count  # noqa: E402,F401
+from src.number_ledger_counts import count_routeless, trunk_routeless_count  # noqa: E402,F401
 
 
 #: Fields `src/storage/db.py` actually WRITES, as opposed to merely creating.
