@@ -5534,7 +5534,7 @@ numbers:
       Network deadline, timeout, poll interval or fetch batch cap.
       Bounds how many weekdays the watchdog's diagnostic sweep searches
       backward for the most recent trading day
-      (src/coverage_watchdog.py@`logger = logging.getLogger(__name__)`); it decides how far the sweep
+      (src/coverage_watchdog_state.py::most_recent_trading_day); it decides how far the sweep
       looks, never whether or how much to trade.
   - id: src.coverage_watchdog._QTY_EPSILON
     value: 1.0e-6
