@@ -43,11 +43,43 @@ def test_pull_requests_on_one_branch_still_share_and_cancel():
     assert a == b and ca
 
 
-def test_red_opens_one_issue_per_commit_and_green_closes():
+def test_red_streak_keeps_one_issue_and_green_closes():
     t = cmr.ISSUE_PREFIX + " main is red at abcd1234"
-    assert cmr.plan_issue_actions([], "abcd1234ff") == {"create": True, "close": []}
+    assert cmr.plan_issue_actions([], "abcd1234ff") == {
+        "create": True, "close": [], "comment": None}
     same = [{"number": 7, "title": t}]
-    assert cmr.plan_issue_actions(same, "abcd1234ff") == {"create": False, "close": []}
-    assert cmr.plan_issue_actions(same, "ffff0000aa") == {"create": True, "close": [7]}
-    assert cmr.plan_issue_actions(same, None) == {"create": False, "close": [7]}
+    assert cmr.plan_issue_actions(same, "abcd1234ff") == {
+        "create": False, "close": [], "comment": None}
+    # a newer red commit comments on the one issue, never opens a second
+    assert cmr.plan_issue_actions(same, "ffff0000aa") == {
+        "create": False, "close": [], "comment": 7}
+    assert cmr.plan_issue_actions(same, None) == {
+        "create": False, "close": [7], "comment": None}
     assert cmr.plan_issue_actions([{"number": 9, "title": "other"}], None)["close"] == []
+
+
+def test_ten_red_pushes_open_exactly_one_issue():
+    issues, created = [], 0
+    for n in range(10):
+        sha = f"{n:08x}ff"
+        plan = cmr.plan_issue_actions(issues, sha)
+        if plan["create"]:
+            created += 1
+            issues.append({"number": 1, "title": f"{cmr.ISSUE_PREFIX} main is red at {sha[:8]}"})
+    assert created == 1 and len(issues) == 1
+
+
+def test_trunk_check_runs_on_push_to_main_and_keeps_schedule():
+    wf = yaml.safe_load((ROOT / ".github/workflows/stale-ci.yml").read_text())
+    on = wf.get("on", wf.get(True))
+    assert on["push"]["branches"] == ["main"] and "schedule" in on
+    assert wf["jobs"]["sweep"]["if"] == "github.event_name != 'push'"
+    assert "if" not in wf["jobs"]["main-red"]
+
+
+def test_unsyncable_issue_is_loud(monkeypatch, capsys):
+    def boom(args):
+        raise cmr.GhError("the repository has disabled issues")
+    monkeypatch.setattr(cmr, "_gh", boom)
+    assert cmr.sync_issue("o/r", ["x"], "abcd1234ff") is False
+    assert "::warning::" in capsys.readouterr().err

@@ -13,6 +13,14 @@ on:
     # stall is caught well inside the window in which somebody would still
     # have been waiting on the change.
     - cron: "*/30 * * * *"
+  # Scheduled runs are throttled and dropped on a busy account (measured
+  # 2026-10-05: the last ten runs span ~39 hours, a gap of 3-6 hours each
+  # against a declared 30 minutes), so the schedule is only a backstop. A
+  # push to main is reliable: the main-red job below runs on every one and
+  # reads the verdict of the run BEFORE it, so a red trunk is noticed within
+  # one push.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 # Never let two sweeps overlap; a second one would dispatch duplicate runs
@@ -28,6 +36,8 @@ permissions:
 
 jobs:
   sweep:
+    # The PR sweep stays on the schedule; a push only needs the trunk check.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

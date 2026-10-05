@@ -190,23 +190,33 @@ def _gh(args: list[str]) -> str:
 def plan_issue_actions(open_issues: list[dict], red_sha: str | None) -> dict:
     """What to do with the tracking issues. red_sha None means main is green.
 
-    One issue per red commit: reuse an open issue already naming this commit,
-    close every other open tracking issue (stale commit, or main now green).
+    ONE issue for the whole red streak, however many pushes it spans: reuse
+    the open tracking issue, and when a newer commit is also red, add a
+    comment to it instead of opening another. Close only when main is green.
     """
-    ours = [i for i in open_issues
-            if str(i.get("title", "")).startswith(ISSUE_PREFIX)]
-    keep = [i for i in ours if red_sha and red_sha[:8] in i["title"]]
-    close = [i["number"] for i in ours if i not in keep]
-    return {"create": bool(red_sha) and not keep, "close": close}
+    ours = sorted(
+        (i for i in open_issues
+         if str(i.get("title", "")).startswith(ISSUE_PREFIX)),
+        key=lambda i: i["number"])
+    if not red_sha:
+        return {"create": False, "close": [i["number"] for i in ours],
+                "comment": None}
+    if not ours:
+        return {"create": True, "close": [], "comment": None}
+    keep, extra = ours[0], ours[1:]
+    named = red_sha[:8] in keep["title"]
+    return {"create": False, "close": [i["number"] for i in extra],
+            "comment": None if named else keep["number"]}
 
 
 def sync_issue(repo: str | None, red: list[str] | None,
-               red_sha: str | None) -> None:
-    """Open one issue per red trunk commit; close it once main is green.
+               red_sha: str | None) -> bool:
+    """Open one issue per red streak; close it once main is green.
 
-    A failing scheduled run is invisible in practice (main sat red for three
-    hours with the sweep red every time). An issue notifies the owner through
-    GitHub itself and does not touch the muted Telegram channel.
+    Returns False when the issue could not be synced (for example issues are
+    disabled on the repository, which GitHub reports as an error). The caller
+    turns that into a visible ::warning:: and a run-summary line, so a dead
+    issue path is never silent.
     """
     base = ["--repo", repo] if repo else []
     try:
@@ -217,13 +227,18 @@ def sync_issue(repo: str | None, red: list[str] | None,
             _gh(["issue", "create", *base, "--title",
                  f"{ISSUE_PREFIX} main is red at {red_sha[:8]}",
                  "--body", "\n".join(red or [])])
+        if todo["comment"]:
+            _gh(["issue", "comment", str(todo["comment"]), *base, "--body",
+                 f"Still red at {red_sha[:8]}.\n\n" + "\n".join(red or [])])
         for number in todo["close"]:
             _gh(["issue", "close", str(number), *base, "--comment",
-                 "main is green again, or a newer commit superseded this."
-                 if not red_sha else "Superseded by a newer red commit."])
+                 "main is green again." if not red_sha
+                 else "Duplicate tracking issue; one covers the streak."])
     except (GhError, ValueError, subprocess.TimeoutExpired) as exc:
-        print(f"check_main_red: could not sync the tracking issue — {exc}",
-              file=sys.stderr)
+        print(f"::warning::check_main_red could not sync the tracking issue "
+              f"-- {exc}", file=sys.stderr)
+        return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -260,8 +275,10 @@ def main(argv: list[str] | None = None) -> int:
 
     streak = red_streak(runs)
     lines = record_lines(args.branch, streak)
-    if args.issue:
-        sync_issue(args.repo, lines, str(streak[0].get("headSha")))
+    if args.issue and not sync_issue(args.repo, lines,
+                                     str(streak[0].get("headSha"))):
+        lines.append("  tracking issue: COULD NOT BE OPENED (see the "
+                     "warning); this run's red status is the only alarm.")
     for line in lines:
         print(line)
     _write_summary(lines)
