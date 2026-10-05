@@ -302,6 +302,11 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
     monkeypatch.setattr("src.coverage_watchdog_state.DEPLOY_DRIFT_STATE_PATH", drift)
     # The watchdog re-exports both names; patch its copies too so a reader
     # that goes through `coverage_watchdog.<NAME>` is redirected as well.
+    import src.alert_claims as _claims
+
+    # `load_state`/`save_state` live in `src.alert_claims` and resolve the
+    # default path from THAT module's globals; the watchdog only re-exports.
+    monkeypatch.setattr(_claims, "STATE_PATH", heartbeat)
     monkeypatch.setattr(_cw, "STATE_PATH", heartbeat)
     monkeypatch.setattr(_cw, "DEPLOY_DRIFT_STATE_PATH", drift)
 

@@ -63,8 +63,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-WORK_MD_RELPATH = "docs/WORK.md"
-
 #: The exact heading shape `scripts/status_board.py` parses EVERY numbered
 #: item with (`_ITEM_OPEN_RE`, the parser behind `_parse_numbered_items` —
 #: the board's real, general item parser) — imported, never re-typed, so a

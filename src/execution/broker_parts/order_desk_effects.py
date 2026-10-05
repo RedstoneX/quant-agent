@@ -45,6 +45,9 @@ EFFECT: dict[str, str] = {
     "replace_entry_limit": (
         "the order most likely reached a terminal state first; the ORIGINAL id remains authoritative"
     ),
+    "submit_order_rejected": (
+        "the broker refused the order; a rejected result is returned and no order exists"
+    ),
     "replace_confirmation_wait": (
         "the replacement is treated as UNCONFIRMED"
     ),

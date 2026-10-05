@@ -146,12 +146,27 @@ from src.coverage_watchdog_text import (  # noqa: F401 -- re-exported, lifted ve
     sweep_log_line,
 )
 from src.data_paths import db_path
+from src.data_paths import alerting_dir, db_path
+from src.alert_claims import (  # noqa: F401 -- re-exported, lifted verbatim 2026-10-05
+    STATE_PATH, _SUPPRESSION_LOG_LIMIT, _record_suppressed_alert,
+    _typed_alerted_symbols, _utc_now, claim_typed_alert, load_state,
+    release_typed_alert, repair_failure_alert_day, save_state,
+)
 
 logger = logging.getLogger(__name__)
 
 #: Same database every session and `src/alert_watchdog.py` write to.
 DB_PATH = db_path()
 
+
+#: Deploy-drift snapshot, written by scripts/check_deploy_drift.py and read
+#: by the /health API so a checkout that is behind origin/main is VISIBLE on
+#: the desk's own board, not only in a Telegram message. Alerts can be muted;
+#: the board cannot. It lives beside the other alerting state and is read and
+#: written with the same `load_state`/`save_state` helpers, so the per-day
+#: dedup that stops a repeating alert is the one already in use here rather
+#: than a fourth private implementation.
+DEPLOY_DRIFT_STATE_PATH = alerting_dir() / "deploy_drift.json"
 
 TABLE = "alert_channel_checks"
 
@@ -448,6 +463,61 @@ class CoverageStatus:
         about it — so waiting for one would only delay the report.
         """
         return bool(self.unreadable) and not self.already_alerted_unreadable_for_day
+
+
+# ---------------------------------------------------------------------------
+# which session are we judging?
+# ---------------------------------------------------------------------------
+
+def most_recent_trading_day(now: datetime, broker: Any = None, db: Any = None) -> date:
+    """The most recent weekday whose cash session has already ENDED (plus
+    the timer slack) and that the broker's calendar confirms as a trading
+    day.
+
+    "Already ended" rather than "strictly before today": at the 06:15 ET
+    run this is yesterday either way, but run by hand at 23:50 ET on a
+    Friday it must judge Friday, not Thursday — a session that has not
+    finished cannot yet have failed to re-place anything, and one that has
+    finished can. Holidays are excluded through `broker.is_trading_day`
+    when available. That helper answers False on a calendar-read failure,
+    so a broker outage would walk PAST a real trading day and could judge
+    a holiday-free week as "no session, because there was no day" — to
+    keep the failure on the alerting side, the walk is bounded and falls
+    back to the most recent plain weekday, which can only over-alert on a
+    holiday, never suppress a real gap.
+    """
+    today_et = now.astimezone(ET).date()
+    _start, today_end = _session_bounds_utc(today_et)
+    candidate = today_et if now >= today_end else today_et - timedelta(days=1)
+    first_weekday: date | None = None
+    checked = 0
+    while checked < MAX_WEEKDAYS_BACK:
+        if candidate.weekday() < 5:
+            if first_weekday is None:
+                first_weekday = candidate
+            checked += 1
+            if broker is None:
+                return candidate
+            try:
+                if broker.is_trading_day(candidate):
+                    return candidate
+            except Exception as exc:  # noqa: BLE001
+                record_watchdog_pass("calendar_lookup", exc, db=db)
+                logger.warning("coverage watchdog: calendar lookup failed for %s: %s", candidate, exc)
+                return candidate
+        candidate -= timedelta(days=1)
+    return first_weekday or (today_et - timedelta(days=1))
+
+
+def _session_bounds_utc(day: date) -> tuple[datetime, datetime]:
+    """[09:30 ET, 16:00 ET + SLACK_MINUTES) for `day`, in UTC. Only a session
+    completing inside the cash session can have re-placed a DAY stop; the
+    evening run sees a shut market and, correctly, places nothing."""
+    lo, hi = SESSION_WINDOWS["intra_check"]
+    midnight = datetime(day.year, day.month, day.day, tzinfo=ET)
+    start = midnight + timedelta(minutes=lo)
+    end = midnight + timedelta(minutes=hi + SLACK_MINUTES)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 def _connect_ro(path: str) -> sqlite3.Connection:
@@ -782,6 +852,11 @@ def replace_missing_stops(
             ),
         ))
     return outcomes
+
+
+# ---------------------------------------------------------------------------
+# on-box state — one alert per trading day
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1252,45 +1327,6 @@ def claim_unreadable_stop_alert(
 # silence the exit it then refused on the strength of that same read —
 # exactly the swallowing this family of keys exists to prevent, and the two
 # happen together by construction.
-
-def release_typed_alert(
-    kind: str, symbols: Iterable[str], *, now: datetime | None = None,
-    path: Path | None = None,
-) -> None:
-    """Give back today's `kind` claim for `symbols`.
-
-    `claim_typed_alert` reserves the symbol BEFORE the message is handed to
-    the notifier, which is the right order -- two processes finding the same
-    condition at the same moment must not both send. But the reservation is
-    saved whether or not the send lands, so a muted or failed delivery used
-    to burn the symbol's one page for the whole trading day and the owner
-    was never told at all. `send_owner_alert` reports whether it landed;
-    when it did not, the caller hands the claim back here so the next
-    attempt -- the 30-minute watchdog, the next session entry -- can try
-    again. Never raises: an alerting bug must not break the path it reports
-    on. Releasing a claim that is not held is a no-op.
-    """
-    key = str(kind).strip() or "unspecified"
-    try:
-        day = repair_failure_alert_day(now)
-        state = load_state(path)
-        already = _typed_alerted_symbols(state, day, key)
-        giving_back = {
-            str(raw).strip().upper() for raw in symbols if str(raw).strip()
-        }
-        remaining = already - giving_back
-        if remaining == already:
-            return
-        state[f"typed_alerted_symbols::{key}"] = {
-            "day": day, "symbols": sorted(remaining),
-        }
-        save_state(state, path)
-    except Exception as exc:  # noqa: BLE001
-        record_watchdog_pass("release_typed_alert", exc)
-        logger.warning(
-            "release_typed_alert(%s) failed: %s — the claim stays held and "
-            "today's page for those symbols will not be retried", key, exc,
-        )
 
 
 def _exit_declined_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
@@ -1954,3 +1990,13 @@ def record_sweep_run(db: Any, summary: dict[str, Any]) -> bool:
         record_watchdog_pass("sweep_run_record", exc, db=db)
         logger.warning("%s: could not write the run record: %s", SWEEP_LOG_NAME, exc)
         return False
+
+
+# --- Generic per-symbol, per-trading-day alert claim -------------------------
+# Same state file, same trading-day key and the same claim-before-send
+# discipline as `claim_repair_failure_alert`, but keyed by an arbitrary
+# `kind` so a new fail-closed page does not need its own pair of helpers.
+# Callers that page the owner about a per-symbol condition use this; the
+# older named helpers keep their own keys so their history is unaffected.
+
+

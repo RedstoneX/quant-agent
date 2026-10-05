@@ -158,10 +158,12 @@ def test_drain_keeps_the_row_open_when_the_kill_switch_blocks_the_restore(tmp_pa
 
 @pytest.fixture
 def state_path(tmp_path, monkeypatch):
-    from src import coverage_watchdog
+    from src import alert_claims, coverage_watchdog
 
     path = tmp_path / "coverage_heartbeat.json"
     monkeypatch.setattr("src.coverage_watchdog_state.STATE_PATH", path)
+    monkeypatch.setattr(alert_claims, "STATE_PATH", path)
+    monkeypatch.setattr(coverage_watchdog, "STATE_PATH", path)
     return path
 
 
