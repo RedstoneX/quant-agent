@@ -22,8 +22,8 @@ Two separate questions, deliberately not conflated:
 - OneCLI is the credential delivery layer for QAMC. It runs under Docker on the VPS, administered by `ubuntu` (see `ops/onecli/README.md`); `qamc` and `dev` are never added to the `docker` group and cannot reach the Docker socket.
 - Secrets are stored only in OneCLI, never duplicated in QAMC's own configuration. QAMC's `.env` and `config/settings.yaml` are not authoritative: the REST placeholders are inert, and any real-looking broker key left in `.env` is stale and does not authenticate. The desk's websocket key arrives by systemd credential files (below), not from `.env`.
 - Agent access uses explicit secret grants (`secretMode: "selective"` on the Default Agent). Creating a secret does not automatically make it available to an agent — granting it is a separate step.
-- The gateway (port `10255`) matches outbound requests to a secret by destination host/path and injects the real credential (header or query parameter) before forwarding; the dashboard (port `10254`) manages secrets/agents/grants. Both bind `127.0.0.1` only.
-- QAMC's consuming code needs no awareness of any of this: `src/agents/base.py`'s OpenRouter branch, `src/execution/broker.py`'s `AlpacaBroker`, and `src/data/macro.py`'s `MacroDataProvider` all construct their SDK clients (`openai`/`httpx`, `alpaca-py`/`requests`, `fredapi`/`urllib`) with no custom session/opener, so each already inherits its library's default environment-driven proxy/CA trust. Zero `src/` or `config/` changes were needed to integrate any of the four credentials.
+- The gateway (port `10255`) matches outbound requests to a secret by destination host/path and injects the real credential (header or query parameter) before forwarding; it binds `127.0.0.1` only. The management dashboard (port `10254`) listens on loopback and this VPS's private Tailscale addresses, never a public interface, so the operator can reach it only locally or through the private tailnet.
+- QAMC's consuming code needs no awareness of OneCLI itself: `src/agents/base.py`'s OpenRouter and Google-direct branches, `src/execution/broker.py`'s `AlpacaBroker`, and `src/data/macro.py`'s `MacroDataProvider` use their normal SDK/HTTP transports (`openai`/`httpx`, `alpaca-py`/`requests`, `fredapi`/`urllib`), so each inherits environment-driven proxy/CA trust. The current Google-direct route deliberately uses Google's OpenAI-compatible endpoint so OneCLI can inject its bearer credential through the same gateway mechanism; see `.env.example` and `config/settings.yaml`.
 - Client-side wiring is three environment variables in `/home/qamc/quant-agent/.env` (operator-only — `dev` cannot write into `/home/qamc`): `HTTPS_PROXY` (`http://x:<agent-token>@127.0.0.1:10255` — note `127.0.0.1`, not the `host.docker.internal` OneCLI's own `GET /api/container-config` returns by default, which only resolves inside a Docker container and not for QAMC's bare `qamc`-account processes), `SSL_CERT_FILE`, and `REQUESTS_CA_BUNDLE` (both pointed at OneCLI's gateway CA cert — `requests`, Alpaca's transport, does not honor `SSL_CERT_FILE` alone).
 
 ## Two Alpaca accounts share the same OneCLI setup — verified 2026-08-28
@@ -69,7 +69,9 @@ concurrently.
 
 ## Configured Providers
 
-**OpenRouter** — LLM provider credential for all 9 agents. Header-based: `Authorization: Bearer {value}`, host `openrouter.ai`.
+**OpenRouter** — LLM provider credential for the configured OpenRouter seats and fallback routes. Header-based: `Authorization: Bearer {value}`, host `openrouter.ai`.
+
+**Google AI Studio direct** — primary LLM provider credential for the configured specialist seats. Header-based: `Authorization: Bearer {value}`, host `generativelanguage.googleapis.com`; QAMC uses the OpenAI-compatible `/v1beta/openai/` endpoint because the native Gemini `x-goog-api-key` scheme is not this gateway grant's injection contract.
 
 **FRED** — economic data. URL query-parameter injection, not a header: parameter `api_key`, host `api.stlouisfed.org`.
 
@@ -77,13 +79,14 @@ concurrently.
 
 ## Validation
 
-All four credentials were verified working end-to-end through the OneCLI gateway, using obviously-fake placeholder credentials sent by the client and comparing gateway-routed vs. direct requests against endpoints that actually validate the credential (not endpoints that respond regardless of auth). Every response body was discarded; no real credential value was ever read, logged, or held by `dev`.
+The commissioned QAMC REST credentials — OpenRouter, Google direct, FRED, and the Alpaca key/secret header pair — were verified working end-to-end through the OneCLI gateway, using obviously-fake placeholder credentials sent by the client and comparing gateway-routed vs. direct requests against endpoints that actually validate the credential (not endpoints that respond regardless of auth). Every response body was discarded; no real credential value was ever read, logged, or held by an engineering account.
 
 - OpenRouter connectivity verified through the OneCLI gateway.
+- Google-direct connectivity verified through the OneCLI gateway against the OpenAI-compatible endpoint used by QAMC; the real value remains in OneCLI and is granted to the Default Agent.
 - FRED connectivity verified through the OneCLI gateway.
 - Alpaca connectivity (both the trading host and the market-data host) verified through the OneCLI gateway, after the operator resolved credential-routing issues by correcting grants, host scope, and header value formatting in OneCLI directly.
 
-Remaining step: apply the `.env` wiring above to `/home/qamc/quant-agent/.env` and confirm `quant-agent-api.service`'s `/health` reports `broker_reachable: true`. Trading timers remain disabled independent of this.
+Commissioning is complete: the runtime `.env` carries the gateway/CA wiring above, and `quant-agent-api.service` health reporting `broker_reachable: true` is the end-to-end acceptance observable. Trading timers remain controlled independently of credential delivery.
 
 ## OneCLI install requirements (for reference)
 
