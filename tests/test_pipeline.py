@@ -3070,7 +3070,7 @@ def test_filter_hard_risk_decisions_skips_nan_market_value_in_sell_presum(tmp_pa
         entry_price=180.0, stop_loss=170.0, take_profit=200.0,
         reasoning="add",
     )
-    allowed, _violations, _reasons = pipeline._filter_hard_risk_decisions(
+    allowed, _violations, _reasons = pipeline.risk_gate._filter_hard_risk_decisions(
         decisions=[sell, buy],
         positions=[nan_position],
         total_value=10000.0,

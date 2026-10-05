@@ -530,7 +530,7 @@ class RiskStage:
         # unread filing is an unconvicted earnings seat, so the BUY is refused
         # outright and there is nothing to size.
         before_earnings_cap = list(portfolio_decision.decisions)
-        portfolio_decision.decisions = pipeline._refuse_queued_earnings_buys(
+        portfolio_decision.decisions = pipeline.risk_gate._refuse_queued_earnings_buys(
             portfolio_decision.decisions, earnings_results,
         )
         # Board item 164: the gate used to reach the log only, while this
@@ -602,7 +602,7 @@ class RiskStage:
 
         before_hard_gate = list(portfolio_decision.decisions)
         portfolio_decision.decisions, rule_violations, blocked_reasons = (
-            pipeline._filter_hard_risk_decisions(
+            pipeline.risk_gate._filter_hard_risk_decisions(
                 portfolio_decision.decisions,
                 positions, total_value,
                 invested_target_pct=invested_target_pct,
@@ -622,7 +622,7 @@ class RiskStage:
                         "blocked", "hard_risk", detail=reasons,
                     )
             if not portfolio_decision.decisions:
-                pipeline._persist_hard_risk_block(ctx, reasons, stage="pre_rm")
+                pipeline.risk_gate._persist_hard_risk_block(ctx, reasons, stage="pre_rm")
                 return {"status": "hard_risk_block", "orders": [], "reason": reasons}
             logger.info(
                 "Allowing %d non-blocked orders through after hard risk filter",
@@ -1312,7 +1312,7 @@ class RiskStage:
             # guard that already owns it. `tests/test_pipeline_stages.py`
             # fails the build if a duplicate reappears in this file.
             unapplied_mods: list[dict] = []
-            portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
+            portfolio_decision.decisions, rejected_mods = pipeline.risk_gate._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
                 symbols_bars=getattr(ctx, "symbols_bars", None),
                 unapplied=unapplied_mods,
@@ -1377,7 +1377,7 @@ class RiskStage:
 
         if verdict.modifications or scale < 1.0 or refused_decisions:
             portfolio_decision.decisions, post_mod_violations, blocked_reasons = (
-                pipeline._filter_hard_risk_decisions(
+                pipeline.risk_gate._filter_hard_risk_decisions(
                     portfolio_decision.decisions,
                     positions, total_value,
                     invested_target_pct=invested_target_pct,
@@ -1390,7 +1390,7 @@ class RiskStage:
                 reasons = "; ".join(dict.fromkeys(blocked_reasons))
                 logger.warning("HARD RISK BLOCK AFTER MODIFICATIONS: %s", reasons)
                 if not portfolio_decision.decisions:
-                    pipeline._persist_hard_risk_block(ctx, reasons, stage="post_rm_modifications")
+                    pipeline.risk_gate._persist_hard_risk_block(ctx, reasons, stage="post_rm_modifications")
                     return {"status": "hard_risk_block", "orders": [], "reason": reasons}
 
         for decision in portfolio_decision.decisions:

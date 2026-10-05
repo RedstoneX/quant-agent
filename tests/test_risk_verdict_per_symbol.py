@@ -403,7 +403,7 @@ def test_hard_gate_still_enforced_after_scale():
         reasoning="trim the entry side",
     )
     pipeline = _stage_pipeline(verdict=verdict, decisions=decisions)
-    pipeline._persist_hard_risk_block = MagicMock()
+    pipeline.risk_gate._persist_hard_risk_block = MagicMock()
     calls = {"n": 0}
 
     def _filter(d, *a, **kw):
@@ -413,11 +413,11 @@ def test_hard_gate_still_enforced_after_scale():
             return [], [], ["max_gross_exposure breach after scaling"]
         return list(d), [], []
 
-    pipeline._filter_hard_risk_decisions = MagicMock(side_effect=_filter)
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(side_effect=_filter)
 
     result = RiskStage(pipeline=pipeline).run(_ctx(decisions))
 
-    assert pipeline._filter_hard_risk_decisions.call_count == 2, (
+    assert pipeline.risk_gate._filter_hard_risk_decisions.call_count == 2, (
         "the hard gate re-runs after scaling"
     )
     assert result == {

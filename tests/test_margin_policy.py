@@ -131,7 +131,7 @@ def test_filter_accumulates_pending_buys_against_cash():
         entry_price=100.0, stop_loss=95.0, take_profit=110.0, reasoning="second",
     )
 
-    allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
+    allowed, _violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
         [d1, d2], positions=[], total_value=100_000.0, cash=10_000.0,)
 
     symbols = [d.symbol for d in allowed]
@@ -156,7 +156,7 @@ def test_filter_anticipates_same_session_sell_proceeds():
         entry_price=100.0, stop_loss=95.0, take_profit=110.0, reasoning="rotation target",
     )
 
-    allowed, _, blocked = pipeline._filter_hard_risk_decisions(
+    allowed, _, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
         [sell, buy], positions=[held], total_value=100_000.0, cash=5_000.0,  # low starting cash
     )
 
@@ -199,7 +199,7 @@ def test_presum_partial_sell_does_not_overcredit_proceeds():
     )
     # cash $2k + actual proceeds $54k = $56k < $58k BUY → must block.
     # The pre-fix code credited 99% ($59.4k) → $61.4k effective → wrongly allowed.
-    allowed, _, blocked = pipeline._filter_hard_risk_decisions(
+    allowed, _, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
         [sell, buy], positions=[held], total_value=100_000.0, cash=2_000.0,)
     symbols = {d.symbol for d in allowed}
     assert "NVDA" not in symbols, (
@@ -228,7 +228,7 @@ def test_presum_partial_sell_rounding_up_to_full_credits_full_proceeds():
     )
     # cash $2k + full proceeds $60k = $62k > $58k → must allow. The pre-fix
     # code credited only 40% ($24k) → $26k effective → wrongly blocked.
-    allowed, _, blocked = pipeline._filter_hard_risk_decisions(
+    allowed, _, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
         [sell, buy], positions=[held], total_value=100_000.0, cash=2_000.0,)
     symbols = {d.symbol for d in allowed}
     assert "NVDA" in symbols, (
@@ -461,7 +461,7 @@ def test_filter_does_not_credit_zero_allocation_sell_as_proceeds():
         reasoning="needs real cash, not phantom SELL proceeds",
     )
 
-    allowed, _, blocked = pipeline._filter_hard_risk_decisions(
+    allowed, _, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
         [phantom_sell, buy], positions=[held], total_value=100_000.0, cash=5_000.0,  # only $5k actual
     )
 

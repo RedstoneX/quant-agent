@@ -510,21 +510,21 @@ def test_trim_guard_still_allows_retry_after_a_zero_fill_rejection():
 def test_queued_earnings_refuses_a_top_up_on_a_held_name():
     p = build_pipeline()
     queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
-    out = p._refuse_queued_earnings_buys([_buy("NKE", alloc=5.0)], queued)
+    out = p.risk_gate._refuse_queued_earnings_buys([_buy("NKE", alloc=5.0)], queued)
     assert out == [], "the filing is unread — the seat is not convicted"
 
 
 def test_queued_earnings_refuses_a_fresh_entry_outright():
     p = build_pipeline()
     queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
-    out = p._refuse_queued_earnings_buys([_buy("NKE", alloc=12.0)], queued)
+    out = p.risk_gate._refuse_queued_earnings_buys([_buy("NKE", alloc=12.0)], queued)
     assert out == [], "no bounded entry survives an unread filing any more"
 
 
 def test_queued_earnings_untouched_symbols_pass_through():
     p = build_pipeline()
     queued = [{"symbol": "NKE", "queued": True, "analysis": None}]
-    out = p._refuse_queued_earnings_buys([_buy("AAPL", alloc=12.0)], queued)
+    out = p.risk_gate._refuse_queued_earnings_buys([_buy("AAPL", alloc=12.0)], queued)
     assert len(out) == 1 and out[0].allocation_pct == 12.0
 
 

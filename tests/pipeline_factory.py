@@ -83,7 +83,6 @@ CONSTRUCTOR_SITES = {
     "decision_stage": "DecisionStage",
     "risk_stage": "RiskStage",
     "execution_stage": "ExecutionStage",
-    "risk_gate": "RiskGate",
 }
 
 _CREDENTIAL_ENV = (

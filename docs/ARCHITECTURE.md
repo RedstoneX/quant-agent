@@ -19,7 +19,7 @@ depends on which pieces are actually entangled.
 
 **One class, eight mixins.** `src/pipeline.py:446` declares
 `class TradingPipeline(ProtectionMixin, PromptFactsMixin, DeleverMixin,
-ExitEngineMixin, RiskGateMixin, AdmissionMixin, ResearchContinuityMixin,
+ExitEngineMixin, AdmissionMixin, ResearchContinuityMixin,
 IntradayMixin, ...)`. A `grep -rn '^class \w*Mixin' src/` returns exactly eight
 mixin class definitions, one per file.
 
@@ -520,10 +520,15 @@ The journal port could NOT replace `self.db` here: the gate's one `db` use is
 `insert_agent_log` (an `agent_logs` row, read back by `scripts/replay_decision.py`),
 which is not on `EventJournal`; routing it through the journal is a body change
 and is left for its own reviewed step. The one foreign call (`_sweeper`) is a
-constructor parameter. `TradingPipeline` keeps a thin delegating `RiskGateMixin`
-(`src/pipeline_risk_gate_mixin.py`) that re-resolves the gate from the live
-collaborators per call, because tests assign `db`/`risk_engine`/`_sweeper` after
-construction.
+constructor parameter. *Converted to a built collaborator, 2026-10-05:* the
+delegating `RiskGateMixin` (`src/pipeline_risk_gate_mixin.py`) is DELETED.
+`build_risk_gate(config, risk_engine, db, sweeper)` in `src/risk_gate_build.py`
+builds the gate from values; `TradingPipeline.risk_gate` is a `RiskGateSlot`
+descriptor there that reuses the stored gate only while its collaborators are
+the pipeline's current ones (tests assign `db`/`risk_engine`/`_sweeper` after
+construction). Callers use `pipeline.risk_gate.<name>`;
+`tests/test_boundary_risk_gate.py` proves in a subprocess that building the
+gate never imports `src.pipeline`.
 *Proof:* standard, plus every refusal and every resize produced over a replayed
 session must match the pre-change output exactly, field by field. Second reviewer
 required.

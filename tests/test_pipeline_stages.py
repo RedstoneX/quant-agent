@@ -719,8 +719,8 @@ def test_persist_hard_risk_block_writes_risk_gate_agent_log():
     ctx = _RunContext.start("morning")
     ctx.decision_id = f"{ctx.run_id}-dec-000099"
 
-    TradingPipeline._persist_hard_risk_block(
-        pipeline, ctx, "AAPL position would be 25.0% and exceed max 20%",
+    pipeline.risk_gate._persist_hard_risk_block(
+        ctx, "AAPL position would be 25.0% and exceed max 20%",
         stage="pre_rm",
     )
 
@@ -747,7 +747,7 @@ def test_persist_hard_risk_block_never_raises_on_db_failure():
     pipeline.db.insert_agent_log.side_effect = RuntimeError("disk full")
     ctx = _RunContext.start("morning")
 
-    TradingPipeline._persist_hard_risk_block(pipeline, ctx, "reason", stage="pre_rm")
+    pipeline.risk_gate._persist_hard_risk_block(ctx, "reason", stage="pre_rm")
     # No exception raised — that's the assertion.
 
 
@@ -769,7 +769,7 @@ def test_risk_stage_persists_hard_risk_block_when_pre_rm_gate_blocks_everything(
 
     decisions = [_buy("AAPL", 25)]
     pipeline = _risk_stage_pipeline(decisions)
-    pipeline._filter_hard_risk_decisions = MagicMock(
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(
         return_value=([], [], ["AAPL position would be 25.0% and exceed max 20%"]),
     )
 
@@ -821,7 +821,7 @@ def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():
     pipeline.risk_manager = MagicMock()
     pipeline.risk_manager.review.return_value = (verdict, rm_result)
 
-    pipeline._filter_hard_risk_decisions = MagicMock(
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(
         side_effect=[
             ([sell], [], []),
             ([sell], [], []),
@@ -864,7 +864,7 @@ def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_ev
 
     first_pass_decisions = [_buy("AAPL", 10)]
     pipeline = _risk_stage_pipeline(first_pass_decisions)
-    pipeline._apply_risk_modifications = MagicMock(return_value=(first_pass_decisions, []))
+    pipeline.risk_gate._apply_risk_modifications = MagicMock(return_value=(first_pass_decisions, []))
 
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_risk_rc(), reasoning="trim AAPL",
@@ -880,7 +880,7 @@ def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_ev
 
     # First _filter_hard_risk_decisions call (pre-RM) lets the BUY through;
     # second call (post-modifications re-filter) blocks everything.
-    pipeline._filter_hard_risk_decisions = MagicMock(
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(
         side_effect=[
             (first_pass_decisions, [], []),
             ([], [], ["AAPL position would be 25.0% and exceed max 20%"]),
@@ -925,7 +925,7 @@ def test_risk_stage_invested_target_is_the_mandate_not_a_carried_macro_number():
     pipeline = _risk_stage_pipeline(decisions)
     # Block everything on the pre-RM hard gate so run() returns right after
     # macro_target_pct is computed, without needing to mock the RM call.
-    pipeline._filter_hard_risk_decisions = MagicMock(
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(
         return_value=([], [], ["AAPL position would be 25.0% and exceed max 20%"]),
     )
 
@@ -952,7 +952,7 @@ def test_risk_stage_invested_target_is_the_mandate_not_a_carried_macro_number():
     # The hard-risk filter itself must have been invoked WITH the mandate —
     # never with macro's old 62.5, and never with None (which would silently
     # disable the deployment-gap advisory for the rest of the run).
-    fh_kwargs = pipeline._filter_hard_risk_decisions.call_args.kwargs
+    fh_kwargs = pipeline.risk_gate._filter_hard_risk_decisions.call_args.kwargs
     assert fh_kwargs["invested_target_pct"] == 100.0
     assert "macro_target_invested_pct" not in fh_kwargs
 
@@ -969,10 +969,10 @@ def test_risk_stage_does_not_flag_same_session_reuse_as_data_degraded():
 
     decisions = [_buy("MRVL", 5)]
     pipeline = _risk_stage_pipeline(decisions)
-    pipeline._filter_hard_risk_decisions = MagicMock(
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(
         side_effect=lambda d, *a, **kw: (list(d), [], []),
     )
-    pipeline._apply_risk_modifications = MagicMock(return_value=(decisions, []))
+    pipeline.risk_gate._apply_risk_modifications = MagicMock(return_value=(decisions, []))
     pipeline._ensure_correlation_matrix = MagicMock(return_value={})
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_risk_rc(), reasoning="clean reuse",
@@ -1017,10 +1017,10 @@ def test_risk_stage_data_degraded_message_omits_reuse_statuses():
 
     decisions = [_buy("MRVL", 5)]
     pipeline = _risk_stage_pipeline(decisions)
-    pipeline._filter_hard_risk_decisions = MagicMock(
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(
         side_effect=lambda d, *a, **kw: (list(d), [], []),
     )
-    pipeline._apply_risk_modifications = MagicMock(return_value=(decisions, []))
+    pipeline.risk_gate._apply_risk_modifications = MagicMock(return_value=(decisions, []))
     pipeline._ensure_correlation_matrix = MagicMock(return_value={})
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_risk_rc(), reasoning="two real failures",
@@ -1066,7 +1066,7 @@ def test_risk_stage_invested_target_holds_when_guidance_missing():
 
     decisions = [_buy("AAPL", 5)]
     pipeline = _risk_stage_pipeline(decisions)
-    pipeline._filter_hard_risk_decisions = MagicMock(
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(
         return_value=([], [], ["blocked"]),
     )
 
@@ -1106,13 +1106,13 @@ def _parse_loss_violations(drops, decisions=None, positions=None):
     pipeline._filter_supported_symbols = MagicMock(
         side_effect=lambda d, *a, **kw: (list(d), []),
     )
-    pipeline._refuse_queued_earnings_buys = MagicMock(
+    pipeline.risk_gate._refuse_queued_earnings_buys = MagicMock(
         side_effect=lambda d, *a, **kw: list(d),
     )
-    pipeline._filter_hard_risk_decisions = MagicMock(
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(
         side_effect=lambda d, *a, **kw: (list(d), [], []),
     )
-    pipeline._apply_risk_modifications = MagicMock(
+    pipeline.risk_gate._apply_risk_modifications = MagicMock(
         side_effect=lambda d, *a, **kw: (list(d), []),
     )
     pipeline._ensure_correlation_matrix = MagicMock(return_value={})
@@ -1253,7 +1253,7 @@ def test_risk_parse_failure_is_agent_failure_not_rejection():
 
     decisions = [_buy("AAPL", 10)]
     pipeline = _risk_stage_pipeline(decisions)
-    pipeline._filter_hard_risk_decisions = MagicMock(
+    pipeline.risk_gate._filter_hard_risk_decisions = MagicMock(
         return_value=(decisions, [], []),
     )
     pipeline.risk_manager = MagicMock()
@@ -3850,7 +3850,7 @@ def _run_mods(decisions, modifications):
     from src.pipeline import TradingPipeline
 
     pipeline = build_pipeline()
-    updated, rejected = pipeline._apply_risk_modifications(decisions, modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications(decisions, modifications)
     return updated, list(rejected)
 
 
@@ -4030,10 +4030,10 @@ def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
     p = build_pipeline(market=MagicMock(), risk_manager=MagicMock(), db=MagicMock())
     p.market.get_ohlcv.return_value = []
     p._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
-    p._refuse_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
+    p.risk_gate._refuse_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
     # Hard filter is a pass-through HERE so we can isolate the scale behaviour;
     # a separate test proves the real hard filter still binds.
-    p._filter_hard_risk_decisions = MagicMock(side_effect=lambda d, *a, **k: (d, [], []))
+    p.risk_gate._filter_hard_risk_decisions = MagicMock(side_effect=lambda d, *a, **k: (d, [], []))
     p.risk_manager.review.return_value = (
         RiskVerdict(
             approved=True, modifications=[],
@@ -4123,7 +4123,7 @@ def test_item134_hard_limits_still_bind_when_scale_does_not_shrink():
     with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
-        allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
+        allowed, _violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
             out, positions=[], total_value=100000,)
 
     # The hard cap still binds: the second long is blocked.

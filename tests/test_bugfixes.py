@@ -1,5 +1,6 @@
 """Tests for bugfixes identified in code review."""
 
+from src.pipeline_risk_gate import RiskGate
 import json
 from datetime import date, datetime
 from unittest.mock import patch, MagicMock
@@ -284,7 +285,7 @@ def test_pipeline_hard_risk_filter_blocks_missing_stop_loss():
         )
     ]
 
-    allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+    allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
         decisions, positions=[], total_value=100000,)
 
     assert allowed == []
@@ -320,7 +321,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_sector_buy():
     with patch("src.pipeline_risk_gate._get_sector", return_value="Technology"), patch(
         "src.execution.broker._get_sector", return_value="Technology"
     ):
-        allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+        allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
             decisions, positions=[], total_value=100000,)
 
     assert [d.symbol for d in allowed] == ["AAPL"]
@@ -351,7 +352,7 @@ def test_pipeline_hard_risk_filter_no_longer_vetoes_at_the_sector_target():
     with patch("src.pipeline_risk_gate._get_sector", return_value="Technology"), patch(
         "src.execution.broker._get_sector", return_value="Technology"
     ):
-        allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+        allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
             decisions, positions=[], total_value=100000,)
 
     assert [d.symbol for d in allowed] == ["AAPL", "MSFT"]
@@ -377,7 +378,7 @@ def test_pipeline_hard_risk_filter_blocks_second_same_symbol_buy():
     with patch("src.pipeline_admission._get_sector", return_value="ETF"), patch(
         "src.execution.broker._get_sector", return_value="ETF"
     ):
-        allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+        allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
             decisions, positions=[], total_value=100000,)
 
     assert [d.reasoning for d in allowed] == ["first leg"]
@@ -550,7 +551,7 @@ def test_morning_prefilter_requires_real_macd_histogram_crossover(monkeypatch):
         ),
     )
 
-    assert TradingPipeline._has_actionable_signal_fn(
+    assert RiskGate._has_actionable_signal_fn(
         indicators, "SPY", bars, [],
     ) is False
 
@@ -570,7 +571,7 @@ def test_morning_prefilter_accepts_macd_histogram_sign_change(monkeypatch):
         ),
     )
 
-    assert TradingPipeline._has_actionable_signal_fn(
+    assert RiskGate._has_actionable_signal_fn(
         indicators, "SPY", bars, [],
     ) is True
 
@@ -590,7 +591,7 @@ def test_morning_prefilter_rejects_unchanged_zero_macd_histogram(monkeypatch):
         ),
     )
 
-    assert TradingPipeline._has_actionable_signal_fn(
+    assert RiskGate._has_actionable_signal_fn(
         indicators, "SPY", bars, [],
     ) is False
 
@@ -616,7 +617,7 @@ def test_pipeline_drops_decision_when_risk_modification_invalid():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([decision], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([decision], modifications)
 
     # The SPY decision is dropped — RM tried to change it, schema rejected
     # the change, so we don't execute the trade at all.
@@ -648,7 +649,7 @@ def test_pipeline_drops_only_the_decision_with_bad_mod_keeps_rest():
         ),
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([spy, qqq], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([spy, qqq], modifications)
 
     syms = [d.symbol for d in updated]
     assert syms == ["QQQ"]
@@ -683,7 +684,7 @@ def test_risk_mod_matches_decision_symbol_case_insensitively():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([decision], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([decision], modifications)
 
     assert rejected == []
     assert len(updated) == 1
@@ -729,7 +730,7 @@ def test_risk_mod_cannot_silently_zero_a_sell_allocation():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([sell], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([sell], modifications)
 
     assert len(updated) == 1
     assert updated[0].symbol == "XLE"
@@ -756,7 +757,7 @@ def test_risk_mod_cannot_zero_a_cover_allocation():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([cover], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([cover], modifications)
 
     assert updated[0].allocation_pct == 50
     assert len(rejected) == 1
@@ -780,7 +781,7 @@ def test_risk_mod_cannot_reduce_a_sell_below_its_intended_size():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([sell], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([sell], modifications)
 
     assert updated[0].allocation_pct == 100, "the exit stays at its intended size"
     assert len(rejected) == 1
@@ -803,7 +804,7 @@ def test_risk_mod_can_still_increase_a_sell_allocation():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([sell], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([sell], modifications)
 
     assert updated[0].allocation_pct == 100, "selling more is allowed"
     assert rejected == []
@@ -836,7 +837,7 @@ def test_risk_mod_stop_widening_below_rr_floor_is_now_allowed():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], modifications)
 
     assert len(updated) == 1
     assert updated[0].stop_loss == 470
@@ -859,7 +860,7 @@ def test_risk_mod_short_stop_widening_below_rr_floor_is_now_allowed():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([short], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([short], modifications)
 
     assert updated[0].stop_loss == 112
     assert rejected == []
@@ -899,7 +900,7 @@ def test_risk_mod_stop_inside_noise_band_is_rejected_when_bars_available():
     ]
     symbols_bars = {"SPY": bars}
 
-    updated, rejected = pipeline._apply_risk_modifications(
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications(
         [buy], modifications, symbols_bars=symbols_bars,
     )
 
@@ -925,7 +926,7 @@ def test_risk_mod_genuine_protective_tighten_still_applies():
         ),
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], modifications)
 
     assert updated[0].allocation_pct == 5
     assert rejected == []
@@ -1167,7 +1168,7 @@ def test_hedge_nets_out_for_total_exposure():
     with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
-        allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+        allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
             decisions, positions=[], total_value=100000,)
 
     assert [d.symbol for d in allowed] == ["SQQQ", "SPY"]
@@ -1191,7 +1192,7 @@ def test_same_direction_longs_sum_for_total_exposure():
     with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
-        allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+        allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
             decisions, positions=[], total_value=100000,)
 
     assert [d.symbol for d in allowed] == ["SPY"]
@@ -1292,7 +1293,7 @@ def test_deployment_gap_emits_advisory_violation():
     with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
-        allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+        allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
             decisions, positions=[], total_value=100000,
             invested_target_pct=100,  # mandate 100%, PM projects 40%
         )
@@ -1313,7 +1314,7 @@ def test_deployment_gap_skipped_when_within_tolerance():
     with patch("src.pipeline_admission._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
-        _, violations, _ = pipeline._filter_hard_risk_decisions(
+        _, violations, _ = pipeline.risk_gate._filter_hard_risk_decisions(
             [], positions=held, total_value=100000,
             invested_target_pct=100,  # 99.5% vs 100% = -0.5pp, under the reserve band
         )
@@ -2036,7 +2037,7 @@ def test_risk_mod_cannot_increase_a_buy_allocation():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], modifications)
 
     assert len(updated) == 1
     assert updated[0].allocation_pct == 44.23  # unchanged
@@ -2062,7 +2063,7 @@ def test_risk_mod_reducing_a_buy_allocation_still_applies():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], modifications)
 
     assert updated[0].allocation_pct == 9.23
     assert rejected == []
@@ -2086,7 +2087,7 @@ def test_out_of_range_buy_allocation_still_drops_the_decision():
         )
     ]
 
-    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], modifications)
 
     assert updated == []       # dropped, not reverted
     assert rejected == []

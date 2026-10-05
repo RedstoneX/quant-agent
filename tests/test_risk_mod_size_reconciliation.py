@@ -12,6 +12,7 @@ both the long (BUY) and short (SHORT) side, and that it never contradicts the
 existing "seat cannot enlarge a BUY" guard.
 """
 
+from src.pipeline_risk_gate import RiskGate
 import math
 
 from src.pipeline import TradingPipeline
@@ -46,7 +47,7 @@ def test_widening_buy_stop_shrinks_allocation_to_hold_dollar_risk():
         symbol="SPY", field="stop_loss",
         original_value=490, new_value=480, reason="give it room",
     )]
-    updated, rejected = pipeline._apply_risk_modifications([buy], mods)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], mods)
 
     assert rejected == []
     assert len(updated) == 1
@@ -74,7 +75,7 @@ def test_tightening_buy_stop_does_not_enlarge_allocation():
         symbol="SPY", field="stop_loss",
         original_value=480, new_value=490, reason="tighten",
     )]
-    updated, rejected = pipeline._apply_risk_modifications([buy], mods)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], mods)
 
     assert rejected == []
     d = updated[0]
@@ -100,7 +101,7 @@ def test_entry_price_edit_reconciles_size():
         symbol="AAPL", field="entry_price",
         original_value=200, new_value=210, reason="chase",
     )]
-    updated, rejected = pipeline._apply_risk_modifications([buy], mods)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], mods)
 
     assert rejected == []
     d = updated[0]
@@ -122,7 +123,7 @@ def test_take_profit_edit_does_not_touch_allocation():
         symbol="SPY", field="take_profit",
         original_value=530, new_value=540, reason="more upside",
     )]
-    updated, rejected = pipeline._apply_risk_modifications([buy], mods)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], mods)
 
     assert rejected == []
     d = updated[0]
@@ -136,7 +137,7 @@ def test_no_modifications_is_a_noop():
         action="BUY", symbol="SPY", allocation_pct=10,
         entry_price=500, stop_loss=480, take_profit=530, reasoning="t",
     )
-    updated, rejected = pipeline._apply_risk_modifications([buy], [])
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], [])
     assert rejected == []
     assert updated[0].allocation_pct == 10
     assert updated[0].stop_loss == 480
@@ -158,7 +159,7 @@ def test_reconciliation_does_not_contradict_buy_enlarge_guard():
         symbol="SPY", field="allocation_pct",
         original_value=10, new_value=20, reason="bigger",
     )]
-    updated, rejected = pipeline._apply_risk_modifications([buy], mods)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([buy], mods)
     assert updated[0].allocation_pct == 10
     assert len(rejected) == 1
 
@@ -178,7 +179,7 @@ def test_widening_short_stop_shrinks_allocation():
         symbol="TSLA", field="stop_loss",
         original_value=105, new_value=110, reason="room",
     )]
-    updated, rejected = pipeline._apply_risk_modifications([short], mods)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([short], mods)
 
     assert rejected == []
     d = updated[0]
@@ -199,7 +200,7 @@ def test_tightening_short_stop_does_not_enlarge():
         symbol="TSLA", field="stop_loss",
         original_value=110, new_value=105, reason="tighten",
     )]
-    updated, rejected = pipeline._apply_risk_modifications([short], mods)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([short], mods)
     assert rejected == []
     d = updated[0]
     assert d.stop_loss == 105
@@ -223,7 +224,7 @@ def test_sell_exit_stop_edit_not_resized():
         symbol="SPY", field="take_profit",
         original_value=0.0, new_value=0.0, reason="noop",
     )]
-    updated, rejected = pipeline._apply_risk_modifications([sell], mods)
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications([sell], mods)
     assert rejected == []
     assert updated[0].allocation_pct == 100
 
@@ -236,7 +237,7 @@ def test_reconcile_helper_preserves_risk_fraction_exactly():
         entry_price=250, stop_loss=240, take_profit=280, reasoning="t",
     )
     modified = original.model_copy(update={"stop_loss": 220})  # 10 wide -> 30
-    reconciled = TradingPipeline._reconcile_size_to_risk_budget(original, modified)
+    reconciled = RiskGate._reconcile_size_to_risk_budget(original, modified)
     rebuilt = modified.model_copy(update={"allocation_pct": reconciled})
     assert _risk_fraction(rebuilt) <= _risk_fraction(original) + 1e-9
     # 3x the stop distance -> ~1/3 the size.
@@ -289,7 +290,7 @@ def test_short_through_real_constructor_reconciles_within_budget():
     # Risk seat widens the stop well beyond its original distance.
     new_stop = short.entry_price + (short.stop_loss - short.entry_price) * 2.5
     pipeline = _pipeline()
-    updated, rejected = pipeline._apply_risk_modifications(
+    updated, rejected = pipeline.risk_gate._apply_risk_modifications(
         [short],
         [RiskModification(symbol="TSLA", field="stop_loss",
                           original_value=short.stop_loss, new_value=new_stop,
@@ -373,4 +374,4 @@ def test_reconcile_helper_degenerate_returns_none():
     )
     original = valid.model_copy(update={"stop_loss": 100})  # rps0 == 0
     modified = valid.model_copy(update={"stop_loss": 90})
-    assert TradingPipeline._reconcile_size_to_risk_budget(original, modified) is None
+    assert RiskGate._reconcile_size_to_risk_budget(original, modified) is None

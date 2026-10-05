@@ -11,6 +11,7 @@ support, and no seat could see it. These tests pin the fix:
 - a missing/stale live price is labelled STALE, never passed off as today.
 """
 
+from src.pipeline_risk_gate import RiskGate
 from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -214,8 +215,8 @@ def test_prefilter_band_proximity_uses_live_price():
                               bb_lower=158.0, volume_change_pct=0.0)
     # Last completed close far from both bands; live price at the lower band.
     far = [MagicMock(close=164.0) for _ in range(5)]
-    assert TradingPipeline._has_actionable_signal_fn(ind, "ORCL", far, []) is False
-    assert TradingPipeline._has_actionable_signal_fn(
+    assert RiskGate._has_actionable_signal_fn(ind, "ORCL", far, []) is False
+    assert RiskGate._has_actionable_signal_fn(
         ind, "ORCL", far, [], live_price=ORCL_LIVE,
     ) is True
 

@@ -1,5 +1,6 @@
 """Sanity tests for PM's multi-layer memory: position history + L3 trajectories."""
 
+from src.pipeline_risk_gate import RiskGate
 from datetime import timedelta
 import textwrap
 
@@ -718,7 +719,7 @@ def test_queued_earnings_buys_are_refused_not_capped():
          "form_type": "10-Q", "filing_date": "2026-04-18"},
         {"symbol": "MSFT", "queued": False, "analysis": {"investment_implications": {}}},
     ]
-    out = TradingPipeline._refuse_queued_earnings_buys(decisions, earnings_results)
+    out = RiskGate._refuse_queued_earnings_buys(decisions, earnings_results)
     msft = next(d for d in out if d.symbol == "MSFT")
     aapl = next(d for d in out if d.symbol == "AAPL")
     # Board item 186 (2026-10-01): an unread filing is an UNCONVICTED earnings
@@ -870,7 +871,7 @@ def test_queued_earnings_refusal_noop_when_nothing_queued():
     # Only fully-analyzed entries
     earnings_results = [{"symbol": "NVDA", "queued": False,
                          "analysis": {"investment_implications": {}}}]
-    out = TradingPipeline._refuse_queued_earnings_buys(decisions, earnings_results)
+    out = RiskGate._refuse_queued_earnings_buys(decisions, earnings_results)
     assert out[0].allocation_pct == 12.0
 
 

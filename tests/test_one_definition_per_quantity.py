@@ -178,7 +178,7 @@ def _gate_projected_pct(positions, total_value, target):
     production `deployment_gap` code (formerly `macro_exposure_deviation`).
     """
     pipeline = build_pipeline(_sweeper=lambda: None, risk_engine=MagicMock(check=MagicMock(return_value=[])))
-    _allowed, violations, _blocked = pipeline._filter_hard_risk_decisions(
+    _allowed, violations, _blocked = pipeline.risk_gate._filter_hard_risk_decisions(
         decisions=[], positions=positions, total_value=total_value, cash=0.0, invested_target_pct=target,)
     gap = [v for v in violations if v.rule == "deployment_gap"]
     return gap[0].value if gap else None
