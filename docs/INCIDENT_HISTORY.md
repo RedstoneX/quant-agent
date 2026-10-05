@@ -18188,3 +18188,13 @@ Root disk was 89% full; a daily sweep (`~/.claude/disk-sweep.sh`, outside the re
 **Proof.** `docs/board_notes/item-202.md` carries the per-box evidence; the conftest network guard and `QAMC_NETWORK_JOURNAL` name any test that still reaches off-box.
 
 **Still open.** Nothing buildable. The ninth box (a real rehearsal against the production snapshot) was withdrawn on 2026-10-04 by the owner ruling that froze the rehearsal rig as too expensive to keep a second machine; hand-written hermetic end-to-end tests replace it.
+
+## Owner alerts showed a time with no date (item 231, 2026-10-04)
+
+**What was wrong.** The owner reads alerts on a phone hours after they fire, and 24 places showed a bare time that could not be placed once he scrolled back.
+
+**What changed.** One shared date-and-time formatter now serves every owner-facing site, including the health report window, and a test fails if an owner-facing timestamp omits the date. Message text only; Telegram stays muted and no alerts were added.
+
+**Proof.** `src/notifier/sections.py` with `tests/test_owner_timestamps_carry_date.py`, which now really scans the health and in-flight modules it previously missed.
+
+**Still open.** Nothing.

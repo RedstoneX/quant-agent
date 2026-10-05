@@ -63,8 +63,8 @@ class LLMCostCircuitBreaker:
             )
         self.config = config
         if notifier is None:
-            from src.notifier import TelegramNotifier
-            notifier = TelegramNotifier()
+            from src.notifier.owner_alert_funnel import build_default_notifier
+            notifier = build_default_notifier()
         self.notifier = notifier
         # ContextVar keeps overlapping APScheduler job threads isolated.  The
         # morning research ThreadPool explicitly copies this context into its
@@ -148,8 +148,8 @@ class LLMCostCircuitBreaker:
         self.config = config
         if notifier is None:
             try:
-                from src.notifier import TelegramNotifier
-                notifier = TelegramNotifier()
+                from src.notifier.owner_alert_funnel import build_default_notifier
+                notifier = build_default_notifier()
             except Exception:
                 class _LocalOnlyNotifier:
                     enabled = False
