@@ -28,6 +28,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.sandbox_credential_scope import credential_scope_violations
+
 #: Default location of the production checkout. The desk runs as the `qamc`
 #: account and everything it writes resolves relative to its own checkout, so
 #: a sandbox session standing anywhere underneath this is writing production
@@ -195,6 +197,16 @@ def check_owner_channel_is_incapable(environment: SandboxEnvironment) -> None:
     )
 
 
+def check_credential_scope(environment: SandboxEnvironment) -> None:
+    """Refuse while the process holds a credential the sandbox has no use for."""
+    held = credential_scope_violations(environment.env)
+    if held:
+        raise SandboxRefusal(
+            "Refusing to start: this sandbox session holds credentials it "
+            f"does not need: {'; '.join(held)}. Unset them (names only shown)."
+        )
+
+
 def check_account_key_is_the_pinned_sandbox_one(environment: SandboxEnvironment) -> None:
     """Refuse unless the Alpaca key is the one the operator pinned."""
     env = environment.env
@@ -254,6 +266,7 @@ def run_preflight(checkout: Path, env: dict[str, str] | None = None) -> None:
     check_not_production_checkout(environment)
     check_home_is_not_production(environment)
     check_owner_channel_is_incapable(environment)
+    check_credential_scope(environment)
     check_account_key_is_the_pinned_sandbox_one(environment)
     config = load_config(checkout / "config" / "settings.yaml")
     check_paper_lock_still_holds(config.alpaca.paper, config.alpaca.base_url)
