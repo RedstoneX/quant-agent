@@ -34,8 +34,16 @@ RETRY_DELAYS_S = tuple(
 UNDELIVERED_STATUS = "owner_alert_undelivered"
 
 
-def _record_undelivered(notifier, text: str, attempts: int) -> None:
-    """Write one counted durable row; the detail carries the running count."""
+def _record_undelivered(
+    notifier, text: str, attempts: int,
+    *, kind: str = "owner_alert", run_id: str | None = None,
+) -> None:
+    """Write one counted durable row; the detail carries the running count.
+
+    `kind` and `run_id` come from the call that failed, so the row can be
+    tied back to its run and to the alert it was. A row nobody can attach
+    to a run is close to useless.
+    """
     try:
         import sqlite3
 
@@ -54,13 +62,14 @@ def _record_undelivered(notifier, text: str, attempts: int) -> None:
         except Exception:  # noqa: BLE001  (table may not exist yet)
             count = 1
         notifier._safe_record_send(
-            kind="owner_alert", status=UNDELIVERED_STATUS, text=text,
+            kind=kind, status=UNDELIVERED_STATUS, text=text, run_id=run_id,
             detail=f"undelivered after {attempts} attempts; "
                    f"undelivered_total={count}",
         )
         logger.critical(
-            "OWNER ALERT UNDELIVERED after %d attempts (undelivered_total=%d)",
-            attempts, count,
+            "OWNER ALERT [%s] run=%s UNDELIVERED after %d attempts "
+            "(undelivered_total=%d)",
+            kind, run_id, attempts, count,
         )
     except Exception:  # noqa: BLE001
         logger.exception("could not record an undelivered owner alert")
@@ -95,7 +104,11 @@ def deliver_with_outcome(
                     time.sleep(RETRY_DELAYS_S[min(attempt, len(RETRY_DELAYS_S) - 1)])
                 except Exception:  # noqa: BLE001
                     pass
-        _record_undelivered(notifier, text, attempts)
+        _record_undelivered(
+            notifier, text, attempts,
+            kind=send_kwargs.get("kind") or "owner_alert",
+            run_id=send_kwargs.get("run_id"),
+        )
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery discipline failed")
     return False, False

@@ -4,6 +4,7 @@ Bodies moved verbatim from the former src/cost_circuit/breaker_latch.py (now hel
 Every collaborator is an explicit keyword-only constructor argument.
 """
 from __future__ import annotations
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import logging
 import json
 import os
@@ -84,7 +85,8 @@ class EmergencyLatch:
                     "FROM llm_budget_sessions WHERE run_id=?",
                     (run_id,),
                 ).fetchone()
-        except Exception:
+        except Exception as exc:
+            record_guarded_pass(NO_LEDGER, "emergency_latch.budget_session_read", exc)
             return {}
 
         snapshot: dict[str, Any] = {

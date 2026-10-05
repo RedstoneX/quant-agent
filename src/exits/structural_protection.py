@@ -9,6 +9,7 @@ and calls it, so every existing caller and patch target is unchanged.
 
 import logging
 from src.trading_calendar import et_today
+from src.sentinel.guarded import record_guarded_pass
 
 #: Logs under `src.pipeline`, as the bodies did before the move;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -44,6 +45,7 @@ class StructuralProtection:
         try:
             row = self.db.get_symbol_last_buy(symbol) or {}
         except Exception as e:  # noqa: BLE001
+            record_guarded_pass(self.db, "structural_protection.entry_date_for_noise_band", e)
             logger.warning(
                 "structural protection: no entry date for %s (%s) — the "
                 "noise band stays anchored on entry price", symbol, e,
