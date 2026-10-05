@@ -1527,8 +1527,9 @@ class Database:
         with self._lock:
             rows = self.conn.execute(
                 "SELECT * FROM intraday_evaluations WHERE symbol=? "
-                "AND timestamp >= datetime('now', ?) ORDER BY timestamp DESC",
-                (symbol.upper(), f"-{float(cooldown_hours):g} hours"),
+                "AND timestamp >= ? ORDER BY timestamp DESC",
+                (symbol.upper(), self._sqlite_utc_timestamp(
+                    datetime.now(UTC) - timedelta(hours=float(cooldown_hours)))),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1595,7 +1596,7 @@ class Database:
             last_alert_at = row["last_alert_at"] if row else None
             should_alert = misses >= self.INTRADAY_SNAPSHOT_ALERT_THRESHOLD
             if should_alert and last_alert_at:
-                from datetime import datetime, timedelta, timezone
+                from datetime import timezone
                 try:
                     last_dt = datetime.fromisoformat(last_alert_at).replace(tzinfo=timezone.utc)
                     cutoff = datetime.now(timezone.utc) - timedelta(
@@ -1610,8 +1611,9 @@ class Database:
                 "INSERT INTO intraday_symbol_health"
                 "(symbol, consecutive_misses, last_alert_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(symbol) DO UPDATE SET consecutive_misses=excluded.consecutive_misses"
-                + (", last_alert_at=datetime('now')" if should_alert else ""),
-                (symbol, misses, last_alert_at),
+                + (", last_alert_at=?" if should_alert else ""),
+                (symbol, misses, last_alert_at)
+                + ((self._sqlite_utc_timestamp(datetime.now(UTC)),) if should_alert else ()),
             )
             self.conn.commit()
             result["consecutive_misses"] = misses
@@ -1703,8 +1705,8 @@ class Database:
             raise ValueError(f"prune_agent_logs: keep_days must be > 0, got {keep_days}")
         with self._lock:
             cursor = self.conn.execute(
-                "DELETE FROM agent_logs WHERE timestamp < datetime('now', ?)",
-                (f"-{keep_days} days",),
+                "DELETE FROM agent_logs WHERE timestamp < ?",
+                (self._sqlite_utc_timestamp(datetime.now(UTC) - timedelta(days=keep_days)),),
             )
             self.conn.commit()
             return cursor.rowcount or 0
@@ -1725,8 +1727,8 @@ class Database:
             raise ValueError(f"prune_specialist_evidence: keep_days must be > 0, got {keep_days}")
         with self._lock:
             cursor = self.conn.execute(
-                "DELETE FROM specialist_evidence WHERE timestamp < datetime('now', ?)",
-                (f"-{keep_days} days",),
+                "DELETE FROM specialist_evidence WHERE timestamp < ?",
+                (self._sqlite_utc_timestamp(datetime.now(UTC) - timedelta(days=keep_days)),),
             )
             self.conn.commit()
             return cursor.rowcount or 0
@@ -1753,8 +1755,8 @@ class Database:
             raise ValueError(f"prune_notifier_sends: keep_days must be > 0, got {keep_days}")
         with self._lock:
             cursor = self.conn.execute(
-                "DELETE FROM notifier_sends WHERE timestamp < datetime('now', ?)",
-                (f"-{keep_days} days",),
+                "DELETE FROM notifier_sends WHERE timestamp < ?",
+                (self._sqlite_utc_timestamp(datetime.now(UTC) - timedelta(days=keep_days)),),
             )
             self.conn.commit()
             return cursor.rowcount or 0
@@ -1948,8 +1950,8 @@ class Database:
                      run_id=excluded.run_id,
                      payload_json=excluded.payload_json,
                      positions_json=excluded.positions_json,
-                     timestamp=datetime('now')""",
-                (date, run_id, payload_json, positions_json),
+                     timestamp=?""",
+                (date, run_id, payload_json, positions_json, self._sqlite_utc_timestamp(datetime.now(UTC))),
             )
             self.conn.commit()
 
@@ -2226,8 +2228,8 @@ class Database:
                      run_id=excluded.run_id,
                      payload_json=excluded.payload_json,
                      positions_json=excluded.positions_json,
-                     timestamp=datetime('now')""",
-                (date, mode, run_id, payload_json, positions_json),
+                     timestamp=?""",
+                (date, mode, run_id, payload_json, positions_json, self._sqlite_utc_timestamp(datetime.now(UTC))),
             )
             self.conn.commit()
 
@@ -2260,8 +2262,8 @@ class Database:
                    ON CONFLICT(run_id) DO UPDATE SET
                      payload_json=excluded.payload_json,
                      positions_json=excluded.positions_json,
-                     timestamp=datetime('now')""",
-                (run_id, date, payload_json, positions_json),
+                     timestamp=?""",
+                (run_id, date, payload_json, positions_json, self._sqlite_utc_timestamp(datetime.now(UTC))),
             )
             self.conn.commit()
 
