@@ -8861,6 +8861,166 @@ numbers:
     status: not-trade-governing
     site: src/token_budget.py
     note: "How long a fitted size model is reused before re-reading agent_logs. Pure performance cache; the fit changes across releases, not minutes, per the comment at the definition. Reaches no trade decision."
+  - id: ops.research.item55_level_sweep.MIN_TOUCHES
+    value: 2
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Number of touches that makes a price level count; the comment at the definition says it is settled and sourced elsewhere and not swept here. Not independently verified here."
+  - id: ops.research.item55_level_sweep.SPLIT
+    value: 0.6
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary of the sweep; a research design choice with no derivation, and it changes only which rows are called out-of-sample."
+  - id: ops.research.item55_level_sweep.TOLERANCES[0]
+    value: 0.5
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+  - id: ops.research.item55_level_sweep.TOLERANCES[1]
+    value: 1.0
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+  - id: ops.research.item55_level_sweep.TOLERANCES[2]
+    value: 2.0
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+  - id: ops.research.item55_level_sweep.TOLERANCES[3]
+    value: 3.0
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+  - id: ops.research.item55_level_sweep.TOLERANCES[4]
+    value: 5.0
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+  - id: ops.research.item55_level_sweep.WINDOWS[0]
+    value: 3
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+  - id: ops.research.item55_level_sweep.WINDOWS[1]
+    value: 5
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+  - id: ops.research.item55_level_sweep.WINDOWS[2]
+    value: 10
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+  - id: ops.research.item55_level_sweep.WINDOWS[3]
+    value: 25
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+  - id: ops.research.item55_level_sweep.rate_ci:factor[0]
+    value: 1.96
+    status: not-trade-governing
+    site: ops/research/item55_level_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. The 95 percent two-sided normal quantile in a hit-rate confidence half-width; a standard statistical constant, used only to print an interval."
+  - id: ops.research.item55_volclustered_control.REPLICATIONS
+    value: 20
+    status: not-trade-governing
+    site: ops/research/item55_volclustered_control.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Count of control draws; the comment says a sample size, not a threshold. Too few draws widen the control's noise but cannot move any live number."
+  - id: ops.research.min_stop_atr_sweep.CONTROL_SEED
+    value: 20261004
+    status: not-trade-governing
+    site: ops/research/min_stop_atr_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. A random seed for the shuffled control; reproducibility only, it carries no magnitude."
+  - id: ops.research.min_stop_atr_sweep.HORIZONS[0]
+    value: 5
+    status: not-trade-governing
+    site: ops/research/min_stop_atr_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+  - id: ops.research.min_stop_atr_sweep.HORIZONS[1]
+    value: 10
+    status: not-trade-governing
+    site: ops/research/min_stop_atr_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+  - id: ops.research.min_stop_atr_sweep.HORIZONS[2]
+    value: 20
+    status: not-trade-governing
+    site: ops/research/min_stop_atr_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+  - id: ops.research.min_stop_atr_sweep.HORIZONS[3]
+    value: 40
+    status: not-trade-governing
+    site: ops/research/min_stop_atr_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+  - id: ops.research.min_stop_atr_sweep.HORIZONS[4]
+    value: 60
+    status: not-trade-governing
+    site: ops/research/min_stop_atr_sweep.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+  - id: ops.research.noise_band_holding_scaling.SPLIT
+    value: 0.6
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary for the holding-length scan; a research design choice with no derivation."
+  - id: ops.research.noise_band_holding_scaling.ATR_WINDOW
+    value: 14
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. ATR averaging window; the comment says it follows the desk's own ATR convention. Not verified here against src/data/technical.py ATR_PERIOD by this script, so treat the equality as claimed, not proven."
+  - id: ops.research.noise_band_holding_scaling.HOLDS[0]
+    value: 1
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.HOLDS[1]
+    value: 2
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.HOLDS[2]
+    value: 5
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.HOLDS[3]
+    value: 10
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.HOLDS[4]
+    value: 20
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.HOLDS[5]
+    value: 40
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.HOLDS[6]
+    value: 60
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.FORWARDS[0]
+    value: 10
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.FORWARDS[1]
+    value: 20
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.FORWARDS[2]
+    value: 60
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid."
+  - id: ops.research.noise_band_holding_scaling.DECILES
+    value: 10
+    status: not-trade-governing
+    site: ops/research/noise_band_holding_scaling.py
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Number of equal-count buckets the scan sorts by; a reporting granularity, not a threshold."
 
   # 2026-10-05 numbers sweep 2: offline model-benchmark fixtures, the benchmark's sizing mirror and the CI shard weights.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['high'][0]
@@ -9779,3 +9939,11 @@ numbers:
       src, ops and scripts for calls to `.get_price_chart_events(` finds NONE that omit the lookback argument (every caller passes it, e.g.
       config.trading.lookback_days), so this default is never used. Dynamic calls through getattr or star-args
       were not searched. The one production caller, src/api/routes_live.py, serves the dashboard chart.
+  - id: src.data.tech_store.TechStore.get_history(days)
+    value: 7
+    site: src/data/tech_store.py
+    status: not-trade-governing
+    note: >-
+      Dead default (src/pipeline_prompt_facts.py::PromptHistory._build_position_history): an AST scan on 2026-10-05 of every .py under src, ops, scripts and main.py finds
+      every production call to `get_history` passing `days` explicitly (by keyword or position), so this default is
+      never used. Dynamic calls through getattr or star-args were not searched.
