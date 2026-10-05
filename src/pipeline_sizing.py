@@ -8,10 +8,8 @@ code, so it moves without one character of its bodies changing; every name
 is re-exported from `src.pipeline_stages` so each original import path and
 each test patch target is unchanged.
 
-`_session_gross_ceiling` stays in `src/pipeline_stages.py` (the morning
-prompt and the risk stage read it too). It is imported inside
-`_entry_deployment_budget` rather than at module scope purely to keep the
-import graph acyclic — `src.pipeline_stages` imports this module.
+`_session_gross_ceiling` lives in `src/pipeline_gross_ceiling.py` (the morning
+prompt and the risk stage read it too, via `src.pipeline_stages`).
 
 This module must not import `src.pipeline`.
 """
@@ -24,6 +22,7 @@ import math
 #: The moved code logged under `src.pipeline_stages` before the move and
 #: still does; binding the name rather than `__name__` keeps log records
 #: byte-identical.
+from src.pipeline_gross_ceiling import _session_gross_ceiling
 from src.sentinel.guarded import record_guarded_pass
 logger = logging.getLogger("src.pipeline_stages")
 
@@ -281,10 +280,6 @@ def _entry_deployment_budget(pipeline, ctx, positions, equity, cash):
     short does not draw on at all (D11).
     """
     from src.risk.rules import gross_exposure
-
-    # Imported here, not at module scope: `src.pipeline_stages` imports
-    # this module, so a top-level import would close the cycle.
-    from src.pipeline_stages import _session_gross_ceiling
 
     ceiling = _session_gross_ceiling(pipeline, ctx)
     if ceiling is None:

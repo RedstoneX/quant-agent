@@ -548,8 +548,25 @@ numbers:
   - id: src.config.NominationConfig.max_per_seat_per_run
     settles_by:
       kind: recording
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      state: built
+      where: >-
+        src/nominations.py `measure_cap_demand`, emitted by
+        src/nomination_evidence.py `persist_nomination_summary` into the
+        `nomination_summary` evidence row under the key `cap_demand`
+      writes:
+        - specialist_evidence.kind
+        - specialist_evidence.evidence_json
+      built_2026_10_05: >-
+        BUILT, not yet collected. The recording that already existed carried
+        `raw_by_seat` offered counts and the surviving symbol list, but the
+        surviving list is taken AFTER the external-admission gate, so a missing
+        name could not be attributed to this cap rather than to that gate.
+        `cap_demand` now records, per seat, offered versus kept with the symbol
+        and conviction of every name the per-seat cap dropped, then the distinct
+        count after the cross-seat merge and the names the run-level cap dropped,
+        with a `bound` flag for each cap. Zero sessions of it exist yet: the desk
+        is off, so this row stays arbitrary until real runs accumulate. Nothing
+        the desk selects changed.
       records: at every run, how many nominations each seat OFFERED before the cap per seat was applied,
         how many were admitted, and which were dropped, so the demand behind the cap becomes a series
         instead of a boolean that it bound
@@ -574,8 +591,25 @@ numbers:
   - id: src.config.NominationConfig.max_total_per_run
     settles_by:
       kind: recording
-      state: specified
-      where: docs/board_notes/item-090.md (the 2026-10-01 eighth routing tranche)
+      state: built
+      where: >-
+        src/nominations.py `measure_cap_demand`, emitted by
+        src/nomination_evidence.py `persist_nomination_summary` into the
+        `nomination_summary` evidence row under the key `cap_demand`
+      writes:
+        - specialist_evidence.kind
+        - specialist_evidence.evidence_json
+      built_2026_10_05: >-
+        BUILT, not yet collected. The recording that already existed carried
+        `raw_by_seat` offered counts and the surviving symbol list, but the
+        surviving list is taken AFTER the external-admission gate, so a missing
+        name could not be attributed to this cap rather than to that gate.
+        `cap_demand` now records, per seat, offered versus kept with the symbol
+        and conviction of every name the per-seat cap dropped, then the distinct
+        count after the cross-seat merge and the names the run-level cap dropped,
+        with a `bound` flag for each cap. Zero sessions of it exist yet: the desk
+        is off, so this row stays arbitrary until real runs accumulate. Nothing
+        the desk selects changed.
       records: at every run, how many nominations each seat OFFERED before the cap across all seats
         was applied, how many were admitted, and which were dropped, so the demand behind the cap
         becomes a series instead of a boolean that it bound
@@ -787,6 +821,8 @@ numbers:
       (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
       distribution remain unread, not absent.
     value: 40
+    engine_ab_2026_10_05: >-
+      ENGINE A/B ATTEMPTED 2026-10-05, NO SETTLEMENT, for the same structural reason as max_portfolio_risk_pct: a cluster share can only bind on a day the risk budget binds, and src/backtest/engine.py calls any run with a contested budget day a NON-RESULT (measured 2026-10-05, scripts/backtest.py, eight names over calendar 2025 on public daily bars: 128 contested days of 212 entry days). A run small enough to avoid contention is too small for the cluster cap to bind. No value changed; the built realised-risk-budget recording stays the route.
     status: arbitrary
     site: src/config/__init__.py
     note: >-
@@ -889,6 +925,8 @@ numbers:
       (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
       distribution remain unread, not absent.
     value: 25
+    engine_ab_2026_10_05: >-
+      ENGINE A/B ATTEMPTED 2026-10-05, NO SETTLEMENT, and the reason is structural rather than a null result. This ceiling can only change an outcome on a day the risk budget binds, and src/backtest/engine.py declares any run with a contested budget day a NON-RESULT because equal-size requests are then served by alphabetical ticker spelling rather than by a ranking. Measured 2026-10-05 with scripts/backtest.py over 2025-01-01..2025-12-31 on public daily bars: an eight-name run had 166 binding-budget days and 128 contested days out of 212 entry days, so it fails the engine's own settleability test; the three-name run that reports zero contested days cannot bind a 25 percent ceiling at all, because at most three concurrent positions at the five percent per-name risk cap commit fifteen percent [measured run output; arithmetic]. The engine cannot settle any portfolio-level risk ceiling until it ranks candidates the way production does, and recording a settlement from it would be wrong. The built realised-risk-budget recording below stays the only route. No value changed.
     status: arbitrary
     site: src/config/__init__.py
     note: >-
@@ -1486,6 +1524,8 @@ numbers:
         the threshold is set where a warning is followed by a change; the warning is DELETED, and
         the gap is simply reported with every target, if no firing has ever been followed by a change
     value: 25
+    engine_ab_2026_10_05: >-
+      RECORDED 2026-10-05, NOT SETTLED, and this row stays arbitrary. The routed recording was specified and never built, so twenty-five could only be argued about rather than read off anything. Every computed-target vs analyst-target comparison made at the site that consumes this number (PortfolioConstructor._log_target_divergence, body in src/portfolio_constructor/divergence_counter.py) now writes ONE durable row to the trade_refusals table through the constructor's refusal recorder (TradeRefusalRecorder.record_target_divergence): refusal code target_divergence_observed, stage observed_not_refused, the symbol, the signed observed gap in percent in the observed_gap_pct column, and the threshold it was compared against in the threshold column. Nothing is accumulated in memory: the distribution of gaps, the share past the threshold and the sign bias are queries over those rows at read time, so the threshold can be set at a stated percentile of observed gaps. With no recorder wired the comparison is logged only and nothing is counted. The backtest engine cannot supply this: measured 2026-10-05, an A/B of this field at 5.0 against 50.0 over AAPL/MSFT/KO for calendar 2025 returned identical trade counts and win rates, which is the signature of the unreached _derive_target path the engine's own wiring comment describes, not of an inert number. A recording is not a settlement.
     status: arbitrary
     site: src/config/__init__.py
     note: >-
@@ -3255,23 +3295,36 @@ numbers:
     settles_by:
       kind: recording
       state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      where: >-
+        src/portfolio_constructor/no_atr_stop_record.py emits one row per branch
+        entry on the portfolio-constructor package logger, prefixed NO_ATR_STOP_ROW
+        and read back by its own rows_from/summarise. The state stays `specified`
+        and NOT `built` on purpose -- `built` in this ledger means the evidence
+        lands in a named storage field, and this recording's evidence lands in a
+        log row, so claiming `built` would mean naming a field nothing writes.
+        docs/board_notes/item-090.md (item 90)
       records: >-
-        every no-ATR structural stop placement, carrying the level the stop was read
-        from, the half-width of the price cluster that formed that level (the
-        dispersion of the touches the level detector already groups), the distance
-        this flat 0.5% put the stop at, and whether the subsequent low pierced the
-        buffer without invalidating the level. The cluster half-width is a reading
-        off the instrument that is already computed at placement time; nothing here
-        consults the trade's profit or loss
+        every entry into the no-ATR structural stop branch, ONE ROW PER DECISION and
+        no running total of any kind -- every count is computed from the rows at read
+        time. Each row carries the rule it took (nearest verified computed level, else
+        the signal/prior bar, else nothing usable), the level and its touch count, the
+        distance this flat 0.5% put the stop at, the stop's distance from entry, and
+        the half-width of the MEASURED cluster span that formed the level TOGETHER
+        WITH a flag saying whether that half-width was readable at all rather than
+        absent. A branch entry that finds no usable structure writes its own row, so
+        "never reached" (no row), "ran and placed" and "ran and found nothing" stay
+        three distinguishable facts. Nothing here consults the trade's profit or loss
+        and nothing here moves a stop
       closes_when: >-
-        the recording shows the cluster half-width is present and non-degenerate at
-        placement on a stated run of placements, at which point the buffer becomes
-        that measured half-width per name and the flat percentage is DELETED. If the
-        half-width is routinely unavailable, the flat percentage stays and the
-        recording states how often it was too tight -- pierced without the level
-        breaking -- so the cost is at least a measured number instead of an
-        assumption
+        enough rows exist to show how often this branch runs at all and how often a
+        measured cluster half-width is present at placement. BUILDING THE RECORDING
+        SETTLES NOTHING: this row stays `arbitrary` until real entries accumulate --
+        the instrumentation exists, the evidence does not. If the half-width is
+        routinely present the buffer becomes that measured half-width per name and the
+        flat percentage is DELETED; if it is routinely unavailable the flat percentage
+        stays and the recording states how often the branch ran, so the cost is at
+        least a measured number instead of an assumption; if the branch effectively
+        never runs the number stops mattering and the ledger says so instead of guessing
   - id: src.portfolio_constructor.config.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived
@@ -7145,22 +7198,23 @@ numbers:
     status: not-trade-governing
     site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker_parts/market_data.py::MarketData.get_bars): the one caller passes the
-      window explicitly.
+      Dead default (src/api/broker_reads.py::read_price_bars): the chart-bars reader passes the window explicitly;
+      the other callers (commissioning check, sentiment script, market-data fallback) do too.
   - id: src.execution.broker_parts.account_reads.AccountReads.get_recent_daily_closes(lookback_days)
     value: 10
     status: not-trade-governing
     site: src/execution/broker_parts/account_reads.py
     note: >-
-      Dead default (src/execution/broker_parts/account_reads.py::AccountReads): every caller passes the
-      window explicitly.
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the evening session passes the window
+      explicitly.
   - id: src.execution.broker_parts.market_data.MarketData.get_top_movers(n)
     value: 15
     status: not-trade-governing
     site: src/execution/broker_parts/market_data.py
     note: >-
-      Dead default (src/execution/broker_parts/market_data.py::MarketData.get_top_movers): the one caller passes the
-      count explicitly.
+      Dead default (src/prompt_facts/missed_ops_signals.py::MissedOpsSignals._build_missed_opportunities_digest):
+      the digest passes the count explicitly, but the value it passes is that method's own top_movers_count
+      default, which has its own ledger row.
   - id: src.execution.broker_parts.order_desk.OrderDesk.wait_for_order_at_exchange(poll_interval)
     value: 1
     status: not-trade-governing
@@ -7223,6 +7277,18 @@ numbers:
     site: src/pipeline_intraday.py
     note: >-
       No caller in src/, and the docstring (src/pipeline_intraday.py::IntradayMixin._another_session_recently_active)
+      records the parameter 'is kept for callers but no longer gates a
+      finished session' -- the owner lock decides.
+  - id: src.intraday.gating.IntradayGating._another_session_recently_active(within_minutes)
+    value: 15
+    status: not-trade-governing
+    site: src/intraday/gating.py
+    note: >-
+      The body of src/pipeline_intraday.py::IntradayMixin._another_session_recently_active
+      moved here AST-identical on 2026-10-04 (intraday parts conversion); the
+      mixin's shim keeps the same default at the trunk site so the row above
+      stays true. No caller in src/, and the docstring
+      (src/intraday/gating.py::IntradayGating._another_session_recently_active)
       records the parameter 'is kept for callers but no longer gates a
       finished session' -- the owner lock decides.
   - id: src.prompt_facts.review.blocked.ReviewBlocked._build_blocked_proposals(lookback_days)
@@ -7350,8 +7416,11 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the evening session passes this argument
+      explicitly as the literal 5. That literal is the LIVE number and no scanner rule sees it -- reported as a
+      gap, not ledgered here. The digest has no intraday caller.
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
+      (src/prompt_facts/missed_ops_signals.py::MissedOpsSignals._build_missed_opportunities_digest). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
@@ -7390,8 +7459,11 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the evening session passes this argument
+      explicitly as the literal 8.0. That literal is the LIVE number and no scanner rule sees it -- reported as a
+      gap, not ledgered here. The digest has no intraday caller.
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
+      (src/prompt_facts/missed_ops_signals.py::MissedOpsSignals._build_missed_opportunities_digest). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
@@ -7432,8 +7504,11 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the evening session passes this argument
+      explicitly as the literal 15. That literal is the LIVE number and no scanner rule sees it -- reported as a
+      gap, not ledgered here. The digest has no intraday caller.
       Dead default: the only caller passes this argument explicitly
-      (src/pipeline_intraday.py::IntradayMixin._run_intra_check_body). The LIVE number is the keyword literal at
+      (src/prompt_facts/missed_ops_signals.py::MissedOpsSignals._build_missed_opportunities_digest). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.prompt_facts.decisions.PromptDecisions._build_own_recent_decisions(limit)
@@ -7501,10 +7576,8 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/exits.py
     note: >-
-      Dead default (src/prompt_facts/review/exits.py::ReviewExits._build_post_exit_reality): every caller in src/ passes
-      this argument explicitly, so this value never runs in production. The
-      value passed at the call site is an inline literal or computed
-      expression that no scanner rule sees.
+      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_trade_grade_summary): the one caller
+      in src/ passes max(lookback_days, 14), a computed expression no scanner rule sees.
   - id: src.prompt_facts.review.exits.ReviewExits._build_post_exit_reality(max_symbols)
     value: 12
     status: arbitrary
@@ -7570,10 +7643,8 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_recent_buys_for_grading): every caller in src/ passes
-      this argument explicitly, so this value never runs in production. The
-      value passed at the call site is an inline literal or computed
-      expression that no scanner rule sees.
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the only caller in src/ passes the
+      literal 5, which no scanner rule sees.
   - id: src.prompt_facts.review.exits.ReviewExits._build_recent_loss_pits(lookback_days)
     value: 14
     status: arbitrary
@@ -7657,10 +7728,8 @@ numbers:
     status: not-trade-governing
     site: src/prompt_facts/review/grading.py
     note: >-
-      Dead default (src/prompt_facts/review/grading.py::ReviewGrading._build_recent_sells_for_grading): every caller in src/ passes
-      this argument explicitly, so this value never runs in production. The
-      value passed at the call site is an inline literal or computed
-      expression that no scanner rule sees.
+      Dead default (src/sessions/evening_session.py::EveningSession.run): the only caller in src/ passes the
+      literal 2, which no scanner rule sees.
   - id: src.prompt_facts.decisions.PromptDecisions._build_rm_recent_verdicts(limit)
     value: 5
     status: arbitrary
@@ -8415,3 +8484,1200 @@ numbers:
     status: not-trade-governing
     site: src/infra_retry_policy.py
     note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls; no trade quantity, price or gate reads it."
+  - id: src.trading_calendar.REGULAR_SESSION_OPEN_MIN
+    value: 570
+    status: instrument
+    site: src/trading_calendar.py
+    source: >-
+      https://www.nyse.com/markets/hours-calendars -- the NYSE core trading session opens 09:30 ET, which is minute
+      570 of the ET day (9*60+30). Not the desk's choice: it is the exchange's
+      published hour, and the desk only converts it to minutes. Scoped
+      2026-10-05 because a bar is treated as incomplete, and an order held,
+      against this bound.
+  - id: src.trading_calendar.REGULAR_SESSION_CLOSE_MIN
+    value: 960
+    status: instrument
+    site: src/trading_calendar.py
+    source: >-
+      https://www.nyse.com/markets/hours-calendars -- the NYSE core trading session closes 16:00 ET, minute 960 of
+      the ET day (16*60). The exchange's published hour, converted to minutes.
+      Early-close days (13:00 ET) are NOT modelled; the module docstring at
+      src/trading_calendar.py says so and that exposure is unchanged here.
+  - id: src.trading_calendar.SESSION_WINDOWS['intra_check'][0]
+    value: 570
+    status: derived
+    site: src/trading_calendar.py
+    derived_from: src.trading_calendar.REGULAR_SESSION_OPEN_MIN
+    base_value: 570
+    note: >-
+      The same exchange bound (09:30 ET) as the regular-session constant below
+      it in the same file, written out a second time in the window table. One
+      number, two definition sites: if the exchange bound moves this must move
+      with it, and the build fails if the base moves and this does not.
+  - id: src.trading_calendar.SESSION_WINDOWS['intra_check'][1]
+    value: 960
+    status: derived
+    site: src/trading_calendar.py
+    derived_from: src.trading_calendar.REGULAR_SESSION_CLOSE_MIN
+    base_value: 960
+    note: >-
+      The same exchange bound (16:00 ET) as the regular-session constant below
+      it in the same file, written out a second time in the window table. One
+      number, two definition sites: if the exchange bound moves this must move
+      with it, and the build fails if the base moves and this does not.
+  - id: src.trading_calendar.SESSION_WINDOWS['morning'][0]
+    value: 570
+    status: derived
+    site: src/trading_calendar.py
+    derived_from: src.trading_calendar.REGULAR_SESSION_OPEN_MIN
+    base_value: 570
+    note: >-
+      The same exchange bound (09:30 ET) as the regular-session constant below
+      it in the same file, written out a second time in the window table. One
+      number, two definition sites: if the exchange bound moves this must move
+      with it, and the build fails if the base moves and this does not.
+  - id: src.trading_calendar.SESSION_WINDOWS['close'][1]
+    value: 960
+    status: derived
+    site: src/trading_calendar.py
+    derived_from: src.trading_calendar.REGULAR_SESSION_CLOSE_MIN
+    base_value: 960
+    note: >-
+      The same exchange bound (16:00 ET) as the regular-session constant below
+      it in the same file, written out a second time in the window table. One
+      number, two definition sites: if the exchange bound moves this must move
+      with it, and the build fails if the base moves and this does not.
+  - id: src.trading_calendar.SESSION_WINDOWS['close'][0]
+    value: 930
+    status: derived
+    derived_from: src.config.INTRA_CHECK_TICK_MINUTES
+    base_value: 30
+    site: src/trading_calendar.py
+    note: >-
+      15:30 ET = the 16:00 close minus one intraday tick. The width is not a
+      taste: a 30-minute launchd tick lands inside a 30-minute window whatever
+      its phase, so a narrower window could miss the close run entirely. The
+      derivation is written at the definition site. If the tick interval
+      changes, this window must widen with it or the close run becomes
+      skippable.
+  - id: src.trading_calendar.SESSION_WINDOWS['morning'][1]
+    value: 720
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 12:00 ET (720 minutes of the ET day) is the end of the morning research window; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Measure, over the recorded session log, the distribution of the minute at which the morning stage actually finishes, and set the bound from the observed tail rather than from a round noon.
+    cost_while_unanswered: >-
+      A morning run that overruns noon is cut off or silently spills into the midday seat; nobody knows how often, because the finishing minute is not recorded per run.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['midday'][0]
+    value: 780
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 13:00 ET (780 minutes of the ET day) is the start of the midday position review; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Measure whether a position review at this hour sees information a 12:00 or 14:00 review would not, from recorded intraday snapshots on the same days.
+    cost_while_unanswered: >-
+      The patient reviewer may be looking at the quietest hour of the session or the busiest; the desk cannot say which, so it cannot say what the review is worth.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['midday'][1]
+    value: 870
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 14:30 ET (870 minutes of the ET day) is the end of the midday position review; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Same measurement as the window's start: the bound should fall out of when the review's inputs stop changing, not from a round 90 minutes.
+    cost_while_unanswered: >-
+      Same as the start bound: a review window chosen for roundness, with no recorded evidence that 90 minutes is enough or too much.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['earnings_preprocess'][0]
+    value: 480
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 08:00 ET (480 minutes of the ET day) is the start of the pre-open earnings preprocessing window; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Measure the publication-time distribution of the pre-market earnings releases the desk actually consumes, and start the window at the tail of that distribution.
+    cost_while_unanswered: >-
+      A release published before 08:00 ET is missed for that session; the desk does not count those misses, so the exposure is unmeasured rather than known-small.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['earnings_preprocess'][1]
+    value: 555
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 09:15 ET (555 minutes of the ET day) is the end of the pre-open earnings preprocessing window; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Measure how long the preprocessing stage actually takes against how much of the 15-minute pre-open cushion it leaves, from the recorded stage durations.
+    cost_while_unanswered: >-
+      If preprocessing overruns 09:15 the morning stage starts without its earnings inputs; the overrun is not counted, so the frequency is unknown.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['evening'][0]
+    value: 1200
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      20:00 ET, a bound of the evening window. The evening session is reporting
+      only -- the comment at the definition site says so and no order, size,
+      price or exit is produced in it; the market is shut for the whole window
+      in any case. Moving this bound changes when a report is written and
+      nothing a broker sees.
+  - id: src.trading_calendar.SESSION_WINDOWS['evening'][1]
+    value: 1320
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      22:00 ET, a bound of the evening window. The evening session is reporting
+      only -- the comment at the definition site says so and no order, size,
+      price or exit is produced in it; the market is shut for the whole window
+      in any case. Moving this bound changes when a report is written and
+      nothing a broker sees.
+  - id: src.trading_calendar._QUARTER_END_MONTHS[0]
+    value: 3
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      March is a calendar-quarter end by definition, not a desk choice. Its two
+      readers are the quarterly meta-reflector's last-trading-day-of-quarter
+      test (src/execution/broker_parts/account_reads.py) and the quarterly
+      digest's period label; neither sizes, prices, places or exits anything.
+  - id: src.trading_calendar._QUARTER_END_MONTHS[1]
+    value: 6
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      June is a calendar-quarter end by definition, not a desk choice. Its two
+      readers are the quarterly meta-reflector's last-trading-day-of-quarter
+      test (src/execution/broker_parts/account_reads.py) and the quarterly
+      digest's period label; neither sizes, prices, places or exits anything.
+  - id: src.trading_calendar._QUARTER_END_MONTHS[2]
+    value: 9
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      September is a calendar-quarter end by definition, not a desk choice. Its two
+      readers are the quarterly meta-reflector's last-trading-day-of-quarter
+      test (src/execution/broker_parts/account_reads.py) and the quarterly
+      digest's period label; neither sizes, prices, places or exits anything.
+  - id: src.trading_calendar._QUARTER_END_MONTHS[3]
+    value: 12
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      December is a calendar-quarter end by definition, not a desk choice. Its two
+      readers are the quarterly meta-reflector's last-trading-day-of-quarter
+      test (src/execution/broker_parts/account_reads.py) and the quarterly
+      digest's period label; neither sizes, prices, places or exits anything.
+  - id: src.backtest.engine.MIN_BARS_FOR_SIGNAL
+    value: 210
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "Derived, not chosen: 200 bars for the 200-day moving average plus 10 for the slope lookback the market-context step needs (the comment at the definition). Only the offline backtest harness imports this module; no live module imports it (grep over src/ finds only src/backtest/* and comments naming it), so it sizes, prices, places and refuses nothing live. It does decide which historic days an A/B run may use, so a sweep inherits it."
+  - id: src.backtest.engine.DEFAULT_MAX_HOLD_DAYS
+    value: 20
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "A time-stop for the OFFLINE backtest harness only; no live module imports the engine. UNSETTLED as a modelling assumption: 20 sessions is a round number with no derivation, and every backtest result inherits it. It would be settled by the desk's own recorded holding periods once enough closed trades exist; until then read any A/B result as conditional on it."
+  - id: src.backtest.engine.DEFAULT_INITIAL_EQUITY
+    value: 100000.0
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "Starting equity of the offline backtest. Sizing is a ratio of equity, so the figure scales dollars and not the percentages the harness reports. No live module imports the engine."
+  - id: src.backtest.engine.DEFAULT_SLIPPAGE_BPS
+    value: 5.0
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "Assumed fill slippage in the OFFLINE backtest; no live order reads it. UNSETTLED as an assumption: 5 bps is unmeasured. It would be settled by comparing recorded fills with the decision-time quote once the desk has traded again; every backtest cost figure inherits it until then."
+  - id: src.data.news_dedup.SIMILARITY_THRESHOLD
+    value: 0.47
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Headline-merge bar when summaries exist. Consumer: src/data/news.py clusters articles, and src/agents/news_analyst.py prints the survivor plus a text note of how many outlets carried it. It changes the text one seat reads and gates no order, size, stop or refusal. The source comment claims calibration on cached headlines (worst false pair 0.429); that claim was NOT reproduced here, so it is unverified. A wrong value mis-merges or fails to merge headlines."
+  - id: src.data.news_dedup.TITLE_ONLY_THRESHOLD
+    value: 0.55
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Stricter merge bar when neither article has a summary. Same single consumer as SIMILARITY_THRESHOLD: news text for the news seat, no order path. The cited worst false pair (0.503) is a source-comment claim, not reproduced here."
+  - id: src.data.news_dedup._TITLE_WEIGHT
+    value: 0.7
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Weight of title similarity in the merged score; text-only consumer as for SIMILARITY_THRESHOLD. A round split with no derivation, harmless to money only because it reaches no gate; if anything downstream ever reads the cluster count as a number, revisit."
+  - id: src.data.news_dedup._BODY_WEIGHT
+    value: 0.30000000000000004
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Derived as 1 - _TITLE_WEIGHT (the float rounding is why the value reads 0.3000...04). Same text-only consumer."
+  - id: src.token_budget.DEFAULT_TOKENS_PER_BYTE
+    value: 1.0
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "Fallback bytes-to-tokens ratio when logged history cannot answer; deliberately pessimistic (denser than real content) so an unmeasured agent gets smaller requests. Sole live consumer src/agents/tech_analyst.py via pack_to_budget, which splits symbols into LLM calls and is checked to lose or duplicate none (the ValueError 'packing lost or duplicated symbols'). It changes request count, not what the seat sees."
+  - id: src.token_budget.DEFAULT_FIXED_TOKENS
+    value: 6000
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "Fallback fixed prompt overhead used only before enough history exists; request packing only, same consumer and lossless-packing check as DEFAULT_TOKENS_PER_BYTE. A wrong value changes how many calls are made, not which symbols are analysed."
+  - id: src.token_budget.MIN_SAMPLES
+    value: 8
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "Fewest logged calls before a least-squares size fit is trusted over the fallback; request packing only. A statistical-hygiene minimum with no derivation; below it the pessimistic fallback applies, so the wrong-way error is more calls, not a wrong trade."
+  - id: src.token_budget._CACHE_TTL_S
+    value: 900.0
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "How long a fitted size model is reused before re-reading agent_logs. Pure performance cache; the fit changes across releases, not minutes, per the comment at the definition. Reaches no trade decision."
+
+  # 2026-10-05 numbers sweep 2: offline model-benchmark fixtures, the benchmark's sizing mirror and the CI shard weights.
+  - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['high'][0]
+    value: 2.0
+    site: ops/model_policy/deterministic_selection.py
+    status: not-trade-governing
+    note: >-
+      Offline audit shadow of the PM sizing rules (ops/model_policy/deterministic_selection.py). Mirror of
+      a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
+      live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
+      this file (grep 2026-10-05), so it sizes no order.
+  - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['high'][1]
+    value: 4.0
+    site: ops/model_policy/deterministic_selection.py
+    status: not-trade-governing
+    note: >-
+      Offline audit shadow of the PM sizing rules (ops/model_policy/deterministic_selection.py). Mirror of
+      a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
+      live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
+      this file (grep 2026-10-05), so it sizes no order.
+  - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['low'][0]
+    value: 0.5
+    site: ops/model_policy/deterministic_selection.py
+    status: not-trade-governing
+    note: >-
+      Offline audit shadow of the PM sizing rules (ops/model_policy/deterministic_selection.py). Mirror of
+      a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
+      live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
+      this file (grep 2026-10-05), so it sizes no order.
+  - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['low'][1]
+    value: 1.0
+    site: ops/model_policy/deterministic_selection.py
+    status: not-trade-governing
+    note: >-
+      Offline audit shadow of the PM sizing rules (ops/model_policy/deterministic_selection.py). Mirror of
+      a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
+      live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
+      this file (grep 2026-10-05), so it sizes no order.
+  - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['medium'][0]
+    value: 1.0
+    site: ops/model_policy/deterministic_selection.py
+    status: not-trade-governing
+    note: >-
+      Offline audit shadow of the PM sizing rules (ops/model_policy/deterministic_selection.py). Mirror of
+      a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
+      live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
+      this file (grep 2026-10-05), so it sizes no order.
+  - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['medium'][1]
+    value: 2.5
+    site: ops/model_policy/deterministic_selection.py
+    status: not-trade-governing
+    note: >-
+      Offline audit shadow of the PM sizing rules (ops/model_policy/deterministic_selection.py). Mirror of
+      a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
+      live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
+      this file (grep 2026-10-05), so it sizes no order.
+  - id: ops.model_policy.deterministic_selection.MAX_POSITION_RISK_PCT
+    value: 5.0
+    site: ops/model_policy/deterministic_selection.py
+    status: not-trade-governing
+    note: >-
+      Offline audit shadow of the PM sizing rules (ops/model_policy/deterministic_selection.py). Mirror of
+      a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
+      live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
+      this file (grep 2026-10-05), so it sizes no order.
+  - id: ops.model_policy.deterministic_selection.RR_FLOOR
+    value: 1.5
+    site: ops/model_policy/deterministic_selection.py
+    status: derived
+    derived_from: src.risk.constants.REWARD_RISK_FLOOR
+    base_value: 1.5
+    note: >-
+      Imported, not retyped: `RR_FLOOR = REWARD_RISK_FLOOR` at
+      ops/model_policy/deterministic_selection.py, so the scanner sees the resolved value of the live
+      floor. The live row is src.risk.constants.REWARD_RISK_FLOOR.
+  - id: ops.model_policy.deterministic_selection.SUBFLOOR_CATALYST_RISK_PCT
+    value: 0.5
+    site: ops/model_policy/deterministic_selection.py
+    status: derived
+    derived_from: src.risk.constants.STARTER_POSITION_RISK_PCT
+    base_value: 0.5
+    note: >-
+      Imported, not retyped: `SUBFLOOR_CATALYST_RISK_PCT = STARTER_POSITION_RISK_PCT` at
+      ops/model_policy/deterministic_selection.py. Value is the live starter-size floor.
+  - id: ops.model_policy.scenarios._DRAWDOWN_POSITION_HISTORY['AMD']['days_held']
+    value: 2.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._DRAWDOWN_POSITION_HISTORY['NVDA']['days_held']
+    value: 30.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._DRAWDOWN_RECENT_PERFORMANCE['rolling_20d_pct']
+    value: -2.1
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._DRAWDOWN_RECENT_PERFORMANCE['rolling_5d_pct']
+    value: -4.6
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._DRAWDOWN_RECENT_PERFORMANCE['trailing_days']
+    value: 24.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['consumer_sentiment']['current']
+    value: 58.2
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['credit_spread']['change_bps']
+    value: 63.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['credit_spread']['current_bps']
+    value: 412.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['fed_funds_rate']['current']
+    value: 4.25
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['inflation']['core_cpi_yoy']
+    value: 3.4
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['inflation']['headline_cpi_yoy']
+    value: 3.1
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['treasury']['spread']
+    value: 0.21
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['treasury']['ten_year']
+    value: 4.62
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['treasury']['two_year']
+    value: 4.41
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['unemployment']['current']
+    value: 4.4
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['vix']['change_pct']
+    value: 18.2
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['vix']['current']
+    value: 27.4
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._MACRO_SUMMARY['vix']['percentile_1y']
+    value: 88.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._PM_CASH
+    value: 2400.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._PM_TOTAL_VALUE
+    value: 42000.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._RISK_POSITION_HISTORY['NVDA']['days_held']
+    value: 30.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._RISK_POSITION_HISTORY['XLE']['days_held']
+    value: 46.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._RISK_RECENT_PERFORMANCE['rolling_20d_pct']
+    value: 1.4
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._RISK_RECENT_PERFORMANCE['rolling_5d_pct']
+    value: -0.8
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._RISK_RECENT_PERFORMANCE['trailing_days']
+    value: 24.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['actionable']
+    value: 34.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['actionable_with_structural_rr']
+    value: 34.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['analysed']
+    value: 64.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['bearish_actionable']
+    value: 10.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['breakout_actionable']
+    value: 14.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['eligible']
+    value: 25.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['eligible_shorts']
+    value: 1.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['famous_eligible']
+    value: 3.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['positions_held']
+    value: 5.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['with_computed_levels']
+    value: 63.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['credit_spread']['change_bps']
+    value: -22.0
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['credit_spread']['current_bps']
+    value: 263.0
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['fed_funds_rate']['current']
+    value: 3.63
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['inflation']['core_cpi_yoy']
+    value: 2.79
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['inflation']['headline_cpi_yoy']
+    value: 3.54
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['treasury']['spread']
+    value: 0.41
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['treasury']['ten_year']
+    value: 4.75
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['treasury']['two_year']
+    value: 4.34
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['unemployment']['current']
+    value: 4.1
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['vix']['change_pct']
+    value: -0.1
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['vix']['current']
+    value: 14.92
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['vix']['percentile_1y']
+    value: 12.0
+    site: ops/model_policy/scenarios_midday_exit.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: scripts.ci_shard.SECONDS_PER_TEST
+    value: 0.034
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_agent_log_attribution.py']
+    value: 8.6
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_alert_watchdog.py']
+    value: 7.3
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_api_contract.py']
+    value: 6.8
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_atr_is_wilder_everywhere.py']
+    value: 7.7
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_blocked_proposals.py']
+    value: 6.8
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_broker.py']
+    value: 5.7
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_bugfixes.py']
+    value: 5.5
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_cost_circuit.py']
+    value: 30.2
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_credential_outage_fail_closed.py']
+    value: 16.7
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_db.py']
+    value: 14.6
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_desk_reset.py']
+    value: 8.5
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_event_risk_calendar.py']
+    value: 25.5
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_fill_reconciliation.py']
+    value: 6.6
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_market_data.py']
+    value: 10.0
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_news.py']
+    value: 22.5
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_one_definition_guard.py']
+    value: 29.1
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_one_definition_per_quantity.py']
+    value: 12.0
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_ops_scripts_importable.py']
+    value: 16.0
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_order_fill_stream.py']
+    value: 13.5
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_pipeline.py']
+    value: 32.0
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_provider_attempt_budget.py']
+    value: 5.6
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_rehearsal_report_verdict.py']
+    value: 8.0
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_risk_based_sizing.py']
+    value: 6.7
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_status_board.py']
+    value: 18.1
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_stop_writeback.py']
+    value: 7.3
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: scripts.ci_shard.SLOW_FILES['test_tech_analyst.py']
+    value: 1.0
+    site: scripts/ci_shard.py
+    status: not-trade-governing
+    note: >-
+      CI shard-balancing weight in scripts/ci_shard.py (measured test seconds, 2026-09-18 runner
+      durations, or the flat-tail mean). The module docstring states a stale value is a balance problem,
+      never a correctness one; it picks which CI job runs a test file and reaches no trade decision.
+  - id: ops.model_policy.scenarios._bars(n)
+    value: 60.0
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._bars(noise)[1]
+    value: 0.4
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._bars(noise)[2]
+    value: -0.3
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._bars(noise)[3]
+    value: 0.2
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
+  - id: ops.model_policy.scenarios._bars(noise)[4]
+    value: -0.1
+    site: ops/model_policy/scenarios.py
+    status: not-trade-governing
+    note: >-
+      Hand-written input fixture for the offline model benchmark (ops/model_policy/benchmark_models.py and
+      build_pm_public_day_fixture.py), the only two importers; a grep of src/, main.py and scripts/ on
+      2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
+      models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
+      different value changes a benchmark score and nothing the desk places.
