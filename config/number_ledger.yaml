@@ -744,8 +744,11 @@ numbers:
       FINRA Rule 4210(c)(1): the margin which must be maintained is 25 percent
       of the current market value of margin securities held long.
       https://www.finra.org/rules-guidance/rulebooks/finra-rules/4210 (fetched
-      and confirmed 2026-09-18). Quoted at the definition site
-      src/config/__init__.py::RiskConfig. Not a desk choice, and used only to report
+      and confirmed 2026-09-18). That URL, not the code, is the FINRA source. The
+      definition site src/config/__init__.py::RiskConfig.maintenance_margin_pct
+      establishes only that 25 is the default, that it is Alpaca's standard equity
+      requirement, and that it reproduces the spec's published 2.0x and 1.5x
+      figures; it does not quote FINRA. Not a desk choice, and used only to report
       distance-to-forced-liquidation. CAVEAT recorded rather than asserted
       away: 25% is the REGULATORY FLOOR and brokers routinely enforce 30-40%,
       so a distance-to-liquidation computed from it is the most optimistic
@@ -1152,7 +1155,7 @@ numbers:
       (src/portfolio_constructor/level_touch_record.py) so the next attempt can
       start from how often it actually binds in production.
     source: >-
-      In-repo measured study at src/config/__init__.py::RiskConfig (Phase 12.1, 2026-09-03,
+      In-repo measured study at src/config/__init__.py::RiskConfig.min_level_touches_for_stop_honor (Phase 12.1, 2026-09-03,
       docs/RESEARCH_FINDINGS.md section 7): a real-vs-shuffled bounce-probability
       table over 101 symbols, 5 years of daily bars, separates with
       non-overlapping 95% confidence intervals only at 5+ touches -- real 0.644
@@ -2375,7 +2378,7 @@ numbers:
     note: >-
       Board item 148 (2026-09-25): named out of an inline `/ 10.0` in the
       level-strength formula (`len(cluster) / (1.0 + distance_pct /
-      LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT)`, src/data/levels.py ~608), which
+      LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT)`, src/data/levels.py::find_structural_levels), which
       was outside src/number_sources.py rule (e)'s [0.5, 2.0) factor band and
       so invisible to the scanner (see that module's own docstring, which
       names this exact literal). No value or behaviour changed in this pass.
@@ -2417,13 +2420,13 @@ numbers:
       travel estimate, and by construction the longest horizon over which any
       trade on this desk may ask how far the instrument travels - which is why
       the level scan reads it as the relevance horizon
-      (src/data/levels.py::stop_rests_on_level). Same number as the deployed risk setting.
+      (src/data/levels.py::MAX_HORIZON_SESSIONS). Same number as the deployed risk setting.
   - id: src.data.levels.MAX_LEVELS_PER_SIDE
     value: 6
     status: not-trade-governing
     site: src/data/levels.py
     note: >-
-      How many levels to report per side (src/data/levels.py::stop_rests_on_level): enough
+      How many levels to report per side (src/data/levels.py::MAX_LEVELS_PER_SIDE): enough
       to describe the structure, few enough to stay readable in a prompt. It
       truncates a PRESENTATION list after the scan has already ranked by
       strength; it does not change which level is strongest, where a stop goes
@@ -2438,7 +2441,7 @@ numbers:
       The single reachability estimate - how far price can plausibly get
       within the horizon, in sqrt(session)-scaled ATRs - reused by BOTH the
       target derivation and the level-relevance window
-      (src/data/levels.py::stop_rests_on_level). Same number as the deployed risk setting.
+      (src/data/levels.py::MAX_REACH_ATR_MULTIPLE). Same number as the deployed risk setting.
   - id: src.data.levels.MIN_TARGET_ATR_MULTIPLE
     value: 1
     status: derived
@@ -2458,7 +2461,7 @@ numbers:
     status: sourced
     site: src/data/levels.py
     source: >-
-      src/data/levels.py::stop_rests_on_level carries the measurement: on NASDAQ, two-local
+      src/data/levels.py::MIN_TOUCHES carries the measurement: on NASDAQ, two-local
       levels were hit 26,868 times and bounced 60.99% of the time, three-local
       levels 6,661 times and bounced 61.04%. Anything above 2 discards levels
       for no measured gain, so 2 is a floor read off the geometry and
@@ -2516,7 +2519,7 @@ numbers:
     site: src/data/levels.py
     note: >-
       How far a bar's high or low must exceed its neighbours' median to be
-      rejected as a bad print. src/data/levels.py::stop_rests_on_level says 5x is
+      rejected as a bad print. src/data/levels.py::_CLEAN_FACTOR says 5x is
       deliberately permissive because real markets gap, halt and limit-move,
       and discarding genuine volatility is worse than tolerating a rare bad
       print. Same data-hygiene boundary as _CLEAN_WINDOW.
@@ -2525,7 +2528,7 @@ numbers:
     status: not-trade-governing
     site: src/data/levels.py
     note: >-
-      Neighbour window for bad-print detection (src/data/levels.py::stop_rests_on_level).
+      Neighbour window for bad-print detection (src/data/levels.py::_CLEAN_WINDOW).
       Part of the data-hygiene filter that drops an implausible bar before the
       scan runs; it decides what counts as a bad PRINT, not what counts as a
       trade.
@@ -2586,7 +2589,7 @@ numbers:
       required before a same-window set of purchases is called a cluster --
       at a second definition site in the same module family. The configured
       value is threaded to the clustering function as `min_cluster_owners`
-      (src/pipeline.py::TradingPipeline.__init__ and :815 -> src/data/smart_money_cluster.py::cluster_survivors,121);
+      (src/pipeline.py::TradingPipeline.__init__ (min_cluster_owners passed at lines 510 and 547) -> src/data/smart_money_cluster.py::cluster_survivors,121);
       this module-level constant guards the purchase-cluster branch at
       src/data/smart_money_cluster.py::insider_purchase_clusters, which takes no parameter. Recorded
       as `derived` so the two cannot drift apart silently: raising the
@@ -5217,7 +5220,7 @@ numbers:
     site: src/execution/broker.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap.
-      src/execution/broker.py::AlpacaBroker._list_open_stop_orders_by_side records that the real-time
+      src/execution/broker.py::_ENTRY_FILL_TIMEOUT_S records that the real-time
       trade_updates stream now detects a fill first and this is purely the
       ceiling for the rare fallback where that stream itself could not be
       used. It decides how long the desk waits, never whether or how much
@@ -5228,7 +5231,7 @@ numbers:
     site: src/execution/broker_parts/stop_place.py
     note: >-
       Retry ceiling for placing the protective stop immediately after an
-      entry fills (src/execution/broker.py::AlpacaBroker._list_open_stop_orders_by_side). docs/WORK.md item
+      entry fills (src/execution/broker_parts/stop_place.py::_STOP_PLACEMENT_MAX_ATTEMPTS). docs/WORK.md item
       129: the stated reasoning -- that a failure surviving three attempts
       must be a rejection rather than a transient fault -- is falsified by
       2026-09-16 (item 127), where a transient concurrency conflict
@@ -6117,8 +6120,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6165,8 +6168,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6213,8 +6216,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6261,8 +6264,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6309,8 +6312,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6357,8 +6360,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6405,8 +6408,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6453,8 +6456,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6501,8 +6504,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6549,8 +6552,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6597,8 +6600,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6645,8 +6648,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6693,8 +6696,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6741,8 +6744,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6789,8 +6792,8 @@ numbers:
     site: src/agents/base.py
     note: >-
       Weight of one top-level key when choosing which JSON fragment of a
-      seat's reply is its real output (src/agents/base.py::_build_llm_client). Parse
-      plumbing that has decided trades: src/agents/base.py::BaseAgent records
+      seat's reply is its real output (src/agents/base.py::AgentResult._shape_score). Parse
+      plumbing that has decided trades: src/agents/base.py::AgentResult._EXPECTED_AGENT_KEY_WEIGHTS records
       that a stale table made 10 of 13 decision runs on 2026-08-17/20 end in
       'no trades'. The ORDERING (real anchors outrank nested fragments) has a
       stated reason; the point values do not.
@@ -6837,7 +6840,7 @@ numbers:
     site: src/agents/base.py
     note: >-
       Counter default: one logical result is normally one provider request
-      (src/agents/base.py::_build_llm_client). Bookkeeping.
+      (src/agents/base.py::AgentResult.provider_requests). Bookkeeping.
   - id: src.agents.base.BaseAgent.__init__(max_tokens)
     value: 4096
     status: not-trade-governing
@@ -8001,7 +8004,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant
-      BREAKOUT_PROJECTION_ATR_MULTIPLE (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`).
+      BREAKOUT_PROJECTION_ATR_MULTIPLE (src/risk/target_revision.py::assess_target_revision).
       One number, reached through a second name; the base carries the
       question.
   - id: src.risk.target_revision.raw_trigger_flags(break_margin_atr_multiple)
@@ -8053,7 +8056,7 @@ numbers:
     base_value: 60
     note: >-
       Parameter default bound to the imported constant MAX_HORIZON_SESSIONS
-      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
+      (src/risk/target_revision.py::assess_target_revision). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.assess_target_revision(max_reach_atr_multiple)
     value: 1.5
@@ -8063,7 +8066,7 @@ numbers:
     base_value: 1.5
     note: >-
       Parameter default bound to the imported constant MAX_REACH_ATR_MULTIPLE
-      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
+      (src/risk/target_revision.py::assess_target_revision). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.assess_target_revision(min_target_atr_multiple)
     value: 1
@@ -8073,7 +8076,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant MIN_TARGET_ATR_MULTIPLE
-      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
+      (src/risk/target_revision.py::assess_target_revision). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.assess_target_revision(break_margin_atr_multiple)
     value: 1
@@ -8083,7 +8086,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant
-      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`).
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py::assess_target_revision).
       One number, reached through a second name; the base carries the
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
@@ -8096,7 +8099,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant
-      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`).
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py::levels_still_in_the_way).
       One number, reached through a second name; the base carries the
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
@@ -8109,7 +8112,7 @@ numbers:
     base_value: 60
     note: >-
       Parameter default bound to the imported constant MAX_HORIZON_SESSIONS
-      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
+      (src/risk/target_revision.py::stale_reach_trigger). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.stale_reach_trigger(max_reach_atr_multiple)
     value: 1.5
@@ -8119,7 +8122,7 @@ numbers:
     base_value: 1.5
     note: >-
       Parameter default bound to the imported constant MAX_REACH_ATR_MULTIPLE
-      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
+      (src/risk/target_revision.py::stale_reach_trigger). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.stale_reach_trigger(min_target_atr_multiple)
     value: 1
@@ -8129,7 +8132,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant MIN_TARGET_ATR_MULTIPLE
-      (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`). One number, reached through a
+      (src/risk/target_revision.py::stale_reach_trigger). One number, reached through a
       second name; the base carries the question.
   - id: src.risk.target_revision.target_level_broken(break_margin_atr_multiple)
     value: 1
@@ -8139,7 +8142,7 @@ numbers:
     base_value: 1
     note: >-
       Parameter default bound to the imported constant
-      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py@`the same reason — a one-day spring or an intraba`).
+      BREAK_CONFIRMATION_ATR_MULTIPLE (src/risk/target_revision.py::target_level_broken).
       One number, reached through a second name; the base carries the
       question. Repointed 2026-09-26 (board item 70) from the noise band to
       the break margin, which is the job this parameter actually does; the
