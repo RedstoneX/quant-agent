@@ -125,6 +125,8 @@ from typing import Any
 
 from src.silence_watchdog import KNOWN_MODES, SLACK_MINUTES
 from src.trading_calendar import ET, SESSION_WINDOWS
+from src.trading_day import most_recent_trading_day as _read_only_most_recent_trading_day
+from src.trading_day import MAX_WEEKDAYS_BACK, _session_bounds_utc  # noqa: F401 -- moved to a read-only module
 from src.coverage_watchdog_records import record_watchdog_pass  # noqa: F401 -- re-export
 from src.coverage_watchdog_rows import (  # noqa: F401 -- re-export
     _scale_in_row_age_seconds, measured_window_bound_seconds,
@@ -155,21 +157,8 @@ logger = logging.getLogger(__name__)
 DB_PATH = db_path()
 
 
-#: Deploy-drift snapshot, written by scripts/check_deploy_drift.py and read
-#: by the /health API so a checkout that is behind origin/main is VISIBLE on
-#: the desk's own board, not only in a Telegram message. Alerts can be muted;
-#: the board cannot. It lives beside the other alerting state and is read and
-#: written with the same `load_state`/`save_state` helpers, so the per-day
-#: dedup that stops a repeating alert is the one already in use here rather
-#: than a fourth private implementation.
-DEPLOY_DRIFT_STATE_PATH = alerting_dir() / "deploy_drift.json"
-
 TABLE = "alert_channel_checks"
 
-#: How many weekdays back to look for the most recent trading day. A long
-#: weekend plus a holiday is three; five is comfortably past that and bounds
-#: the calendar lookups when the broker's calendar cannot be read at all.
-MAX_WEEKDAYS_BACK = 5
 
 #: Same tolerance the coverage reconciler uses for "covered < held".
 _QTY_EPSILON = 1e-6
@@ -470,54 +459,15 @@ class CoverageStatus:
 # ---------------------------------------------------------------------------
 
 def most_recent_trading_day(now: datetime, broker: Any = None, db: Any = None) -> date:
-    """The most recent weekday whose cash session has already ENDED (plus
-    the timer slack) and that the broker's calendar confirms as a trading
-    day.
+    """`src.trading_day.most_recent_trading_day`, recording a calendar-read failure.
 
-    "Already ended" rather than "strictly before today": at the 06:15 ET
-    run this is yesterday either way, but run by hand at 23:50 ET on a
-    Friday it must judge Friday, not Thursday — a session that has not
-    finished cannot yet have failed to re-place anything, and one that has
-    finished can. Holidays are excluded through `broker.is_trading_day`
-    when available. That helper answers False on a calendar-read failure,
-    so a broker outage would walk PAST a real trading day and could judge
-    a holiday-free week as "no session, because there was no day" — to
-    keep the failure on the alerting side, the walk is bounded and falls
-    back to the most recent plain weekday, which can only over-alert on a
-    holiday, never suppress a real gap.
+    The walk lives in a read-only module the dashboard may import; the
+    recording (a write) stays here, passed in as the error hook.
     """
-    today_et = now.astimezone(ET).date()
-    _start, today_end = _session_bounds_utc(today_et)
-    candidate = today_et if now >= today_end else today_et - timedelta(days=1)
-    first_weekday: date | None = None
-    checked = 0
-    while checked < MAX_WEEKDAYS_BACK:
-        if candidate.weekday() < 5:
-            if first_weekday is None:
-                first_weekday = candidate
-            checked += 1
-            if broker is None:
-                return candidate
-            try:
-                if broker.is_trading_day(candidate):
-                    return candidate
-            except Exception as exc:  # noqa: BLE001
-                record_watchdog_pass("calendar_lookup", exc, db=db)
-                logger.warning("coverage watchdog: calendar lookup failed for %s: %s", candidate, exc)
-                return candidate
-        candidate -= timedelta(days=1)
-    return first_weekday or (today_et - timedelta(days=1))
-
-
-def _session_bounds_utc(day: date) -> tuple[datetime, datetime]:
-    """[09:30 ET, 16:00 ET + SLACK_MINUTES) for `day`, in UTC. Only a session
-    completing inside the cash session can have re-placed a DAY stop; the
-    evening run sees a shut market and, correctly, places nothing."""
-    lo, hi = SESSION_WINDOWS["intra_check"]
-    midnight = datetime(day.year, day.month, day.day, tzinfo=ET)
-    start = midnight + timedelta(minutes=lo)
-    end = midnight + timedelta(minutes=hi + SLACK_MINUTES)
-    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+    return _read_only_most_recent_trading_day(
+        now, broker,
+        on_error=lambda exc: record_watchdog_pass("calendar_lookup", exc, db=db),
+    )
 
 
 def _connect_ro(path: str) -> sqlite3.Connection:
