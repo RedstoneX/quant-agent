@@ -36,6 +36,18 @@ def test_every_classified_status_also_has_a_freshness():
     assert not missing, f"no freshness classification for: {missing}"
 
 
+def test_the_gate_does_not_reexport_the_standalone_reader():
+    for name in (
+        "EvidenceFreshness",
+        "build_freshness_reader",
+        "READ_REFRESHED",
+        "READ_CARRIED",
+        "READ_ABSENT",
+        "READ_UNKNOWN",
+    ):
+        assert not hasattr(evidence_gate, name), name
+
+
 def test_the_disclosure_reaches_the_owner_in_plain_words():
     from src.notifier import describe_evidence_freshness
     record = evidence_gate.evaluate({
@@ -103,7 +115,11 @@ def test_an_intra_result_carries_the_seat_states_out_to_the_alert():
     have to, because a lost seat there halted the run instead. Now that an
     advisory loss proceeds, the one alert a mode's noise policy cannot
     suppress reads that field and must find it."""
-    p = build_pipeline(_last_evidence_freshness=_freshness( {"tech": "ok", "news": "failed"} ).to_evidence(), _last_decision_data_status={"tech": "ok", "news": "failed"})
+    status = {"tech": "ok", "news": "failed"}
+    p = build_pipeline(
+        _last_evidence_freshness=_freshness(status).to_evidence(),
+        _last_decision_data_status=status,
+    )
     result = {"status": "intraday_no_trades", "run_id": "intra_check-1"}
     p._attach_evidence_freshness(result)
     assert result["data_status"] == {"tech": "ok", "news": "failed"}

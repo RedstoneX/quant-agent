@@ -112,14 +112,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from src.evidence_freshness import (
-    READ_ABSENT,
-    READ_CARRIED,
-    READ_REFRESHED,
-    READ_UNKNOWN,
-    EvidenceFreshness,
-    build_freshness_reader,
-)
+from src import evidence_freshness as _freshness
 from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
@@ -498,21 +491,21 @@ class SeatReadState:
 
     @property
     def refreshed_this_session(self) -> bool:
-        return self.state == READ_REFRESHED
+        return self.state == _freshness.READ_REFRESHED
 
     @property
     def summary(self) -> str:
-        if self.state == READ_REFRESHED:
+        if self.state == _freshness.READ_REFRESHED:
             return (f"{self.seat}: read in this run"
                     f"{f' ({self.mode})' if self.mode else ''}")
-        if self.state == READ_CARRIED:
+        if self.state == _freshness.READ_CARRIED:
             if self.age_seconds is None:
                 return (f"{self.seat}: carried forward from an earlier run, "
                         f"age unknown — NOT read in this run")
             return (f"{self.seat}: carried forward, {self.age_seconds}s old "
                     f"(last read in {self.run_id or 'an earlier run'})"
                     f" — NOT read in this run")
-        if self.state == READ_ABSENT:
+        if self.state == _freshness.READ_ABSENT:
             return f"{self.seat}: no usable answer at all (absent, not stale)"
         return f"{self.seat}: state not classifiable — NOT counted as read"
 
@@ -532,28 +525,28 @@ def seat_read_state(record: dict | None, seat: str,
     """
     name = str(seat)
     if not isinstance(record, dict):
-        return SeatReadState(seat=name, state=READ_ABSENT)
+        return SeatReadState(seat=name, state=_freshness.READ_ABSENT)
     stamps = record.get("seat_stamps")
     if not isinstance(stamps, dict):
         # A record written before stamping existed. Fall back to the
         # bucket lists, which carry no provenance — so say so by leaving
         # run_id/at None rather than claiming this run's identity.
-        for key, state in (("fresh_seats", READ_REFRESHED),
-                           ("carried_seats", READ_CARRIED),
-                           ("absent_seats", READ_ABSENT),
-                           ("unknown_freshness_seats", READ_UNKNOWN)):
+        for key, state in (("fresh_seats", _freshness.READ_REFRESHED),
+                           ("carried_seats", _freshness.READ_CARRIED),
+                           ("absent_seats", _freshness.READ_ABSENT),
+                           ("unknown_freshness_seats", _freshness.READ_UNKNOWN)):
             if name in (record.get(key) or ()):
                 return SeatReadState(seat=name, state=state)
-        return SeatReadState(seat=name, state=READ_ABSENT)
+        return SeatReadState(seat=name, state=_freshness.READ_ABSENT)
     entry = stamps.get(name)
     if not isinstance(entry, dict):
-        return SeatReadState(seat=name, state=READ_ABSENT)
-    state = str(entry.get("state") or READ_UNKNOWN)
+        return SeatReadState(seat=name, state=_freshness.READ_ABSENT)
+    state = str(entry.get("state") or _freshness.READ_UNKNOWN)
     stamp_run = entry.get("run_id")
     age = entry.get("age_seconds")
-    if (state == READ_REFRESHED and run_id is not None
+    if (state == _freshness.READ_REFRESHED and run_id is not None
             and str(stamp_run) != str(run_id)):
-        state, age = READ_CARRIED, None
+        state, age = _freshness.READ_CARRIED, None
     return SeatReadState(
         seat=name, state=state,
         run_id=None if stamp_run is None else str(stamp_run),
@@ -567,7 +560,7 @@ def seat_read_state(record: dict | None, seat: str,
 #: handed every table it needs by value. `src/evidence_freshness.py` holds
 #: no view of the desk's status words of its own, so the classification
 #: here is the only place that decides what "fresh" means.
-_FRESHNESS_READER = build_freshness_reader(
+_FRESHNESS_READER = _freshness.build_freshness_reader(
     status_freshness=STATUS_FRESHNESS,
     expired_statuses=frozenset(
         word for word, cat in STATUS_CATEGORY.items() if cat == CATEGORY_EXPIRED
@@ -589,7 +582,9 @@ class EvidenceGateVerdict:
     expired: list[str] = field(default_factory=list)
     unclassified: list[str] = field(default_factory=list)
     data_status: dict[str, str] = field(default_factory=dict)
-    freshness: EvidenceFreshness = field(default_factory=EvidenceFreshness)
+    freshness: _freshness.EvidenceFreshness = field(
+        default_factory=_freshness.EvidenceFreshness
+    )
 
     @property
     def blocking_lost(self) -> list[str]:

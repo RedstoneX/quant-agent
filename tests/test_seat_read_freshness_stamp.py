@@ -24,8 +24,6 @@ from src.evidence_freshness import build_freshness_reader as _build_freshness_re
 
 from src import evidence_freshness as _ef
 
-_ef_gate_label_carried = "carried"
-
 
 
 def _freshness(data_status):
@@ -37,7 +35,7 @@ def _freshness(data_status):
             if c == evidence_gate.CATEGORY_EXPIRED
         ),
         fresh_label=evidence_gate.FRESHNESS_FRESH,
-        carried_label=_ef_gate_label_carried,
+        carried_label=evidence_gate.FRESHNESS_CARRIED,
         absent_label=evidence_gate.FRESHNESS_ABSENT,
     ).read(data_status)
 

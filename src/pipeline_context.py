@@ -329,7 +329,7 @@ class RunContext:
     # that may never have been attempted.
     soft_exit_heals: dict[str, dict] = field(default_factory=dict)
     # How much of this decision's evidence was read on THIS tick, as
-    # `evidence_gate.EvidenceFreshness.to_evidence()`. Written by the
+    # `evidence_freshness.EvidenceFreshness.to_evidence()`. Written by the
     # evidence gate, the one path every decision passes through. Owner
     # mandate 2026-09-18 made every seat but the technical one advisory, so
     # a decision can now stand on one fresh seat plus a carried-forward
