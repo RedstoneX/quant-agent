@@ -68,3 +68,60 @@ def test_type_checking_imports_are_not_runtime():
     src = "import a\nif TYPE_CHECKING:\n    import b\nelse:\n    import c\ndef f():\n    import d\n"
     got = {n.names[0].name: t for n, t in ig._collect(ast.parse(src))}
     assert got == {"a": False, "b": True, "c": False, "d": False}
+
+
+# --- the cycle rule has failing cases: a synthetic trunk and tree, no git needed ---
+
+def _tree(**mods):
+    """{'a': 'import src.b'} -> a source map the graph builder accepts."""
+    out = {f"src/{n}.py": body for n, body in mods.items()}
+    out["src/__init__.py"] = ""
+    return out
+
+
+def _measure(monkeypatch, trunk, tree):
+    monkeypatch.setattr(ig, "trunk_sources", lambda: trunk)
+    monkeypatch.setattr(ig, "build_graph", lambda *_a, **_k: ig.graph_from_sources(tree))
+
+
+def test_a_new_cycle_is_refused(monkeypatch, capsys):
+    trunk = _tree(a="import src.b\n", b="X = 1\n")
+    tree = _tree(a="import src.b\n", b="import src.a\n")
+    _measure(monkeypatch, trunk, tree)
+    new, _, _ = ig.new_cycle_edges()
+    assert set(new) == {("src.a", "src.b"), ("src.b", "src.a")}
+    assert ig.check() == 1
+    assert "closes the cycle" in capsys.readouterr().err
+
+
+def test_a_cycle_hidden_in_a_function_body_is_still_a_cycle(monkeypatch):
+    trunk = _tree(a="import src.b\n", b="X = 1\n")
+    tree = _tree(a="import src.b\n", b="def f():\n    import src.a\n")
+    _measure(monkeypatch, trunk, tree)
+    assert ig.check() == 1
+
+
+def test_net_zero_swap_is_refused(monkeypatch):
+    """Break one cycle and close a different one: a count would call it a wash."""
+    trunk = _tree(a="import src.b\n", b="import src.a\n", c="import src.d\n", d="X = 1\n")
+    tree = _tree(a="import src.b\n", b="X = 1\n", c="import src.d\n", d="import src.c\n")
+    _measure(monkeypatch, trunk, tree)
+    _, rt, _, _ = ig.build_graph()
+    assert len(ig.shortest_cycles(ig.cycle_edges({"src.a", "src.b", "src.c", "src.d"}, rt))) == 1
+    new, _, _ = ig.new_cycle_edges()
+    assert set(new) == {("src.c", "src.d"), ("src.d", "src.c")}
+    assert ig.check() == 1
+
+
+def test_breaking_a_cycle_passes(monkeypatch):
+    trunk = _tree(a="import src.b\n", b="import src.a\n")
+    tree = _tree(a="import src.b\n", b="X = 1\n")
+    _measure(monkeypatch, trunk, tree)
+    assert ig.check() == 0
+
+
+def test_type_checking_only_loop_is_not_a_cycle(monkeypatch):
+    trunk = _tree(a="import src.b\n", b="X = 1\n")
+    tree = _tree(a="import src.b\n", b="if TYPE_CHECKING:\n    import src.a\n")
+    _measure(monkeypatch, trunk, tree)
+    assert ig.check() == 0
