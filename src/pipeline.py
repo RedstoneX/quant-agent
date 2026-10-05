@@ -1774,7 +1774,8 @@ class TradingPipeline(
         the notifier was disabled, so the operator couldn't tell a delivered
         export from a silently-dropped one.
         """
-        from src.notifier import build_daily_csv, TelegramNotifier
+        from src.notifier import build_daily_csv
+        from src.notifier.owner_alert_funnel import build_default_notifier
         from src.trading_calendar import et_today
         try:
             closes = self.broker.get_full_portfolio_history()
@@ -1785,7 +1786,7 @@ class TradingPipeline(
             date_str = et_today().strftime("%Y-%m-%d")
             filename = f"pnl_history_{date_str}.csv"
             caption = f"📊 P&L History export — {date_str} ({len(closes)} trading days)"
-            notifier = TelegramNotifier()
+            notifier = build_default_notifier()
             delivered = notifier.send_document(csv_bytes, filename, caption)
             base = {"rows": len(closes), "filename": filename}
             if delivered:

@@ -70,6 +70,22 @@ def _with_pnl_header(text: str) -> str:
         return text
 
 
+def build_default_notifier(*, factory=None, **kwargs):
+    """The ONE place a notifier is built for any code outside this module.
+
+    A guard (tests/test_no_side_door_owner_alert_send.py) refuses a direct
+    `TelegramNotifier(...)` anywhere else in src/, so every holder of a
+    notifier is built here and every alert it sends is funnelled. The class
+    is looked up at call time so tests that patch `src.notifier.TelegramNotifier`
+    keep working; `factory` lets a module keep its own patch point.
+    """
+    if factory is None:
+        import src.notifier as notifier_pkg
+
+        factory = notifier_pkg.TelegramNotifier
+    return factory(**kwargs)
+
+
 def send_owner_alert_with_outcome(
     text: str,
     *,
