@@ -54,7 +54,7 @@ kept as history and marked DONE where they describe a stored file that is gone.
     own value is computed in the same run and still binds, so a branch may
     only tighten a fence, never loosen one. Re-measured on `origin/main`
     2026-10-05 [measured: 1,133 tracked `.py` files, Q1 91, Q3 401, IQR 310,
-    Q3+3*IQR = 1,331; 418,428 lines, p99 90, p99.9 120, 411 lines wider]: the
+    Q3+3*IQR = 1,331; 418,552 lines, p99 90, p99.9 120, 411 lines wider]: the
     width fence is unchanged at 120 and the line ceiling TIGHTENS from 2,561 to
     1,331. The ceiling only bites a file CROSSING it (`size > ceiling >= was`),
     so the 56 files already above it are governed by the growth rule as before.
