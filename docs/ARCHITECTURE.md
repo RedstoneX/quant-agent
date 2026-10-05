@@ -737,8 +737,11 @@ conversion step.
 ## 8. The Sentinel seams
 
 `docs/FUTURE.md` specifies a separate watchdog ("Sentinel") on another
-provider's host, built only after the desk is operational. Its two seams go in
-during the rebuild so that build is a connection, not surgery.
+provider's host, built only after the desk is operational. It also distinguishes
+the full owner Mission Control (on this VPS, Tailscale-only) from a limited
+wife-and-friends guest dashboard (on its own password-protected VPS). The guest
+VPS and Sentinel VPS are separate. The two QAMC seams go in during the rebuild
+so those later builds are connections, not surgery.
 
 **Inbound — a flag, never a call.** Already built: the broker layer refuses
 every order while the file at `RiskConfig.kill_switch_path` exists
@@ -759,10 +762,14 @@ seals the scrubbed body with HMAC-SHA256 under a key from
 `QAMC_SNAPSHOT_SIGNING_KEY`; with no key the block reads
 `{"scheme": "unsigned", "value": null}` — explicit, never a fake seal.
 `SnapshotPublisher` takes every collaborator keyword-only and drops the JSON
-atomically to a local path.
+atomically to a local path. The future Sentinel receives the signed operational
+snapshot; the future guest dashboard receives only a scrubbed, limited view.
+Neither remote host reads QAMC's database or calls back into QAMC. Mission
+Control remains the local/Tailscale read-side and does not depend on this remote
+delivery path.
 
 **Deliberately NOT built yet:** the push to the drop point (no network call),
-any schedule or daemon, the Sentinel reader, the external dashboard, the
+any schedule or daemon, the Sentinel reader, the guest dashboard, the
 exits-only flag, and the composition-root call that gathers live state and
 calls `publish()` — wiring that touches the session scheduler, so the seam
 ships unwired.
