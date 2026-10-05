@@ -18187,7 +18187,7 @@ Root disk was 89% full; a daily sweep (`~/.claude/disk-sweep.sh`, outside the re
 
 **Proof.** `docs/board_notes/item-202.md` carries the per-box evidence; the conftest network guard and `QAMC_NETWORK_JOURNAL` name any test that still reaches off-box.
 
-**Still open.** Nothing buildable. The ninth box (a real rehearsal against the production snapshot) was withdrawn on 2026-10-04 by the owner ruling that froze the rehearsal rig as too expensive to keep a second machine; hand-written hermetic end-to-end tests replace it.
+**Still open.** Nothing buildable. The ninth box (a real rehearsal against the production snapshot) was withdrawn on 2026-10-04 by the owner ruling that froze the rehearsal rig as too expensive to keep a second machine; hand-written hermetic end-to-end tests replace it, filed as item 233.
 
 ## Owner alerts showed a time with no date (item 231, 2026-10-04)
 
