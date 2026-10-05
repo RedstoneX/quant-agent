@@ -10,7 +10,6 @@ PRE=$(git rev-parse HEAD)
 git merge origin/main -m "Merge main (item-aware doc resolver)" >/dev/null 2>&1 || true
 for f in $(git diff --name-only --diff-filter=U); do
   case "$f" in
-    *route_history.yaml) python3 "$HERE/union_ratchet.py" "$f" >/dev/null; git add "$f";;
     docs/WORK.md)
       PYTHONPATH=. "$PY" - "$PRE" <<'PY'
 import subprocess, sys

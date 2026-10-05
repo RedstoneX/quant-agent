@@ -21,10 +21,8 @@ Then, from a spare worktree:
     scripts/docmerge/safe_unjam.sh <branch-name>
 
 - `safe_unjam.sh` — merge `origin/main` into a branch, resolving `docs/WORK.md`
-  three-way and unioning the ledger route-history file. Pushes nothing; review
+  three-way. Pushes nothing; review
   and push yourself.
-- `union_ratchet.py` — unions both sides of a conflict in
-  `config/number_ledger_route_history.yaml` (theirs first, then ours).
 - `union_exempt.py` — resolves the grandfathered exemption lists in
   `tests/test_status_board.py` by INTERSECTION, because those lists may only
   ever shrink. Handles both the set and the `{"63": 3431}` dict forms.
