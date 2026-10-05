@@ -24,6 +24,7 @@ import math
 #: The moved code logged under `src.pipeline_stages` before the move and
 #: still does; binding the name rather than `__name__` keeps log records
 #: byte-identical.
+from src.sentinel.guarded import record_guarded_pass
 logger = logging.getLogger("src.pipeline_stages")
 
 
@@ -53,11 +54,10 @@ def _fractional_sizing_allowed(pipeline, symbol: str, *, is_short: bool) -> bool
         if not bool(getattr(execution_cfg, "fractional_enabled", False)):
             return False
         info = pipeline.broker.get_fractionability(symbol)
+        record_guarded_pass(pipeline, "sizing.fractional_allowed")
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "fractional eligibility check failed for %s (%s) — sizing in "
-            "WHOLE shares (fail closed)", symbol, exc,
-        )
+        record_guarded_pass(pipeline, "sizing.fractional_allowed", exc, log=logger,
+                       context={"effect": "whole shares (fail closed)"})
         return False
     if not isinstance(info, dict) or not info.get("fractionable"):
         reason = (
@@ -104,17 +104,7 @@ def _size_shares(pipeline, raw_qty: float, *, fractional: bool) -> float:
     return math.floor(value * scale) / scale
 
 
-def _fmt_shares(qty: float) -> str:
-    """Render a share count for a human without a spurious `.0` on a whole
-    number or a wall of trailing zeros on a fractional one."""
-    try:
-        value = float(qty)
-    except (TypeError, ValueError):
-        return str(qty)
-    if value.is_integer():
-        return str(int(value))
-    return f"{value:.9f}".rstrip("0").rstrip(".")
-
+from src.sizing_fmt_shares import _fmt_shares  # noqa: E402,F401
 
 # Spec §11.1 vol-adjusted sizing budget: the fraction of EQUITY a single
 # entry may put at risk between its fill and its stop.

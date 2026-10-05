@@ -11,6 +11,7 @@ import logging
 
 #: Logs under `src.pipeline`, as the bodies did before the move;
 #: binding the name rather than `__name__` keeps log records byte-identical.
+from src.sentinel.guarded import record_guarded_pass
 logger = logging.getLogger("src.pipeline")
 
 
@@ -46,8 +47,9 @@ class RepegDrain:
         """
         try:
             rows = self.db.get_pending_repegs()
+            record_guarded_pass(self.db, "repeg_drain.get_pending_repegs")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("drain_pending_repegs: DB read failed: %s", exc)
+            record_guarded_pass(self.db, "repeg_drain.get_pending_repegs", exc, log=logger)
             return 0
         if not rows:
             return 0
