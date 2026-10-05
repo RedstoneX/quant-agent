@@ -26,8 +26,6 @@ import pytest
 
 from src.number_sources import (
     ARBITRARY_REQUIRED_FIELDS,
-    MAX_ARBITRARY_ENTRIES,
-    RATCHET_HISTORY_PATH,
     NEUTRAL_VALUES,
     SCOPED_CONFIG_CLASSES,
     SCOPED_PATHS,
@@ -38,6 +36,7 @@ from src.number_sources import (
     deployed_values,
     load_ledger,
     load_ratchet_history,
+    trunk_arbitrary_count,
 )
 
 # --------------------------------------------------------------------------
@@ -53,10 +52,10 @@ def test_every_trade_governing_number_is_accounted_for() -> None:
 
     If this fails on your branch you have added or moved a number that
     governs a trade. Add it to `config/number_ledger.yaml` with where it came
-    from. If nothing backs it, say `arbitrary` — and note that raising
-    `MAX_ARBITRARY_ENTRIES` to fit it — by appending an entry to
-    `config/number_ledger_history.yaml` — is an owner decision, not a build
-    fix.
+    from. If nothing backs it, say `arbitrary` — and note that the
+    arbitrary-number ratchet is DOWN-ONLY against the trunk, so there is no
+    ceiling to raise and no file to append to: a change that adds one cannot
+    be made green by the build.
     """
     problems = audit()
     assert not problems, "\n".join(
@@ -91,89 +90,68 @@ def test_an_in_file_alias_is_not_a_second_site() -> None:
     assert not [i for i in ids if "_EARNINGS_XBRL_COMPARABLE_FIELDS" in i]
 
 
-def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
-    """Rule 5. As a CEILING the ratchet rewarded deletion: move a trade
-    constant into an unscoped file, delete its ledger row, and the build went
-    green while the headline arbitrary count FELL — the metric improving while
-    the number became less visible than before the gate existed.
+def test_the_arbitrary_count_may_not_rise_above_the_trunks() -> None:
+    """Rule 5, against the live tree. The count of `status: arbitrary` rows
+    may fall and may stay level; it may not rise above the same count on
+    `origin/main`.
 
-    As an equality, a row cannot leave this ledger without a reason being
-    written down in the same commit. The count is no longer a hand-edited
-    literal: it is the sum of the deltas in
-    `config/number_ledger_history.yaml`, one appended entry per change. This
-    test is the cross-check between two independently edited files — the
-    ledger's live arbitrary rows and the history's deltas — so it is not
-    satisfied by editing either one alone.
+    It used to be an EQUALITY against a stored sum: the deltas in
+    `config/number_ledger_history.yaml`, added up. That shape had two
+    defects, and on 2026-10-05 both fired at once. The sum accepted a
+    POSITIVE delta, so a change that hit the ratchet at 131 against 127
+    appended `+4` and went green — the ceiling raised to fit the change, in
+    the opposite direction to the standing order to drive the count to zero.
+    And the reference was a committed file, so it could be edited at all.
+    Both are gone: the reference is the trunk's own ledger, read at check
+    time, and there is nothing to append to.
     """
-    ledger = load_ledger()
-    arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
-    history = load_ratchet_history()
-    assert MAX_ARBITRARY_ENTRIES == sum(int(c["delta"]) for c in history), (
-        "MAX_ARBITRARY_ENTRIES must be the sum of the recorded deltas; it is "
-        "computed from them, so a mismatch means the constant was hand-edited "
-        "back into existence."
-    )
-    assert len(arbitrary) == MAX_ARBITRARY_ENTRIES, (
-        "the ratchet moved. Do NOT edit a number anywhere to fix this: APPEND "
-        "one entry to config/number_ledger_history.yaml with the delta your "
-        "change makes to the count of `status: arbitrary` rows and a `why` "
-        "that says what moved and on what grounds. Lowering it records a "
-        "number that became sourced; raising it records an owner decision, "
-        "not a build fix. Every past move is in that file, one entry each."
+    live = len([e for e in load_ledger().values() if e.get("status") == "arbitrary"])
+    trunk = trunk_arbitrary_count()
+    assert live <= trunk, (
+        f"the arbitrary count rises from {trunk} on the trunk to {live} here. "
+        "Source, measure or reformulate the number away, or revert the "
+        "reclassification. There is no ceiling to raise."
     )
 
 
-def test_every_ratchet_move_records_why_it_moved() -> None:
-    """The half of rule 5 that the count alone cannot enforce. A delta with no
-    reason is the ratchet back as a bare number, so an entry without a `why`
-    fails here rather than being merged and forgotten.
+def test_the_ratchet_refuses_a_rise_and_allows_a_fall(monkeypatch) -> None:
+    """It bites. Two synthetic references against the real ledger: a trunk
+    one row LOWER than this tree (the tree added an arbitrary number) must
+    produce a `ratchet` problem, and a trunk one row HIGHER (the tree retired
+    one) must not. The old shape passed the first case the moment somebody
+    appended a positive delta, which is the whole reason it is gone.
     """
-    history = load_ratchet_history()
-    assert history, "the ratchet history is empty; the count has no record"
-    for position, change in enumerate(history):
-        assert isinstance(change.get("delta"), int), (
-            f"ratchet history entry {position} has no integer `delta`"
-        )
-        assert str(change.get("why", "")).strip(), (
-            f"ratchet history entry {position} moves the count by "
-            f"{change.get('delta')} and does not say why"
-        )
-        assert str(change.get("date", "")).strip(), (
-            f"ratchet history entry {position} has no `date`"
-        )
+    import src.number_sources as ns
 
+    live = len([e for e in load_ledger().values() if e.get("status") == "arbitrary"])
 
-def test_the_count_is_computed_and_not_a_hand_maintained_literal() -> None:
-    """The regression guard for the merge cost this shape was built to remove.
+    monkeypatch.setattr(ns, "trunk_arbitrary_count", lambda: live - 1)
+    added = [p for p in ns.audit() if p.kind == "ratchet"]
+    assert added, "a change that ADDS an arbitrary number must be refused"
+    assert "RISES" in added[0].detail
 
-    `MAX_ARBITRARY_ENTRIES` was a literal carrying the entire ratchet
-    narrative on ONE physical line of 11,853 characters, mirrored by one
-    assertion message here. Two branches that each retired a different number
-    both rewrote that line, so they always conflicted and every conflict was
-    resolved by hand. If anybody writes the literal back, this fails.
-    """
-    source = (RATCHET_HISTORY_PATH.parent.parent / "src" / "number_sources.py")
-    text = source.read_text(encoding="utf-8")
-    assert "MAX_ARBITRARY_ENTRIES = arbitrary_ratchet()" in text
-    assert not re.search(r"MAX_ARBITRARY_ENTRIES\s*=\s*\d", text), (
-        "the arbitrary count is computed from config/number_ledger_history.yaml; "
-        "writing it back as a literal re-creates the line every parallel "
-        "branch conflicts on"
+    monkeypatch.setattr(ns, "trunk_arbitrary_count", lambda: live + 1)
+    assert not [p for p in ns.audit() if p.kind == "ratchet"], (
+        "retiring an arbitrary number must pass; the standing order is to "
+        "drive the count to zero"
     )
 
 
-def test_the_ratchet_history_merges_without_a_conflict() -> None:
-    """Two branches each appending an entry must merge cleanly, which is the
-    whole point of moving the narrative out of one line. That property comes
-    from the file being registered for git's union merge, so the registration
-    is what is tested — a plain 3-way merge conflicts on two appends at the
-    end of the same file.
+def test_the_ratchet_stores_nothing_and_has_no_ceiling() -> None:
+    """The regression guard for the shape, not for the number. A stored
+    count — a literal, or a file of deltas that are summed — can be edited
+    upward by the change it is supposed to refuse. Neither may come back.
     """
-    attributes = (RATCHET_HISTORY_PATH.parent.parent / ".gitattributes")
-    assert "config/number_ledger_history.yaml merge=union" in attributes.read_text(
-        encoding="utf-8"
+    root = Path(__file__).resolve().parent.parent
+    assert not (root / "config" / "number_ledger_history.yaml").exists(), (
+        "the summed history file is stored bookkeeping; the trunk is the "
+        "reference"
     )
-
+    text = (root / "src" / "number_sources.py").read_text(encoding="utf-8")
+    assert not re.search(r"MAX_ARBITRARY_ENTRIES", text), (
+        "a stored ceiling is what open change 1430 raised by +4 to go green"
+    )
+    assert "def trunk_arbitrary_count" in (root / "src" / "number_ledger_counts.py").read_text(encoding="utf-8")
 
 
 def test_the_arbitrary_count_counts_numbers_not_rows() -> None:
@@ -196,7 +174,7 @@ def test_the_arbitrary_count_counts_numbers_not_rows() -> None:
         assert ledger[site_id]["derived_from"] == base, site_id
 
     values = [e["value"] for e in ledger.values() if e.get("status") == "arbitrary"]
-    assert len(values) == MAX_ARBITRARY_ENTRIES
+    assert len(values) <= trunk_arbitrary_count()
 
 
 def test_item_138_order_price_buffers_have_one_source_each() -> None:
@@ -755,7 +733,7 @@ def test_item_90_classification_partitions_the_whole_ledger() -> None:
 
 
 def test_the_settlement_route_ratchet_equals_its_own_record() -> None:
-    """Same shape, and the same reason, as `MAX_ARBITRARY_ENTRIES`.
+    """The SETTLEMENT-ROUTE ratchet, which still keeps a delta history.
 
     A count kept as a hand-edited literal drifts from its own record, and a
     count kept as a ceiling rewards deleting the row instead of answering it.
