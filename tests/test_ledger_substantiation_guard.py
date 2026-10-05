@@ -154,3 +154,24 @@ def test_adding_a_citation_is_green():
 
 def test_real_ledger_uncited_set_does_not_grow_past_trunk():
     assert g.uncited_violations() == []
+
+
+@pytest.mark.parametrize("window,wanted", [
+    ("(-0.3, -0.1)", -0.3),
+    ("THRESHOLD = -5", -5),
+    ("offsets = [1, -2.5]", -2.5),
+])
+def test_a_negative_value_is_seen_when_the_minus_is_a_sign(window, wanted):
+    """A row whose value is negative must be able to reach `mentions`."""
+    assert g.mentions(window, "m.OTHER", wanted)
+
+
+@pytest.mark.parametrize("window", ["x-1", "f(a)-1", "a[0]-1", "x - 1"])
+def test_a_subtraction_is_not_read_as_a_negative_value(window):
+    """The minus is a sign only where it cannot be an operator."""
+    assert not g.mentions(window, "m.OTHER", -1)
+
+
+def test_positive_matching_is_unchanged_by_the_sign_rule():
+    assert g.mentions("CEILING = 7", "m.OTHER", 7)
+    assert not g.mentions("CEILING = 7", "m.OTHER", 8)

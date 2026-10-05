@@ -321,6 +321,14 @@ hand on 2026-09-30 alone. This is the same throughput cost the item-aware
 merge driver removed from the three board documents, on the other file every
 parallel branch touches.
 
+**SUPERSEDED 2026-10-05.** The shape below was deleted. A summed
+append-only file accepts a POSITIVE delta, and open change 1430 appended `+4`
+to raise the ceiling from 127 to 131 rather than source a number. The
+arbitrary-number ratchet is now DOWN-ONLY and stores nothing: it counts
+`status: arbitrary` rows in the trunk's `config/number_ledger.yaml` at check
+time and refuses a rise. The account below is kept as the record of what was
+tried.
+
 **What shipped.** `MAX_ARBITRARY_ENTRIES` is now computed: it is the sum of
 the per-change deltas in `config/number_ledger_history.yaml`, whose 25
 entries are the whole previous narrative reproduced verbatim — `why` from
