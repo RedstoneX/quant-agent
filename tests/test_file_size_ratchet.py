@@ -131,14 +131,16 @@ def _one_file(monkeypatch, trunk_text: str, working_text: str) -> list[str]:
 
 def test_a_line_widened_past_the_limit_fails_and_passes_once_wrapped(monkeypatch):
     """The 2026-10-04 route: same code, wider lines, line count unchanged."""
-    width = file_size_guard.WIDTH
+    width = file_size_guard.width_fence(
+        list(guard_reference.trunk_blobs(guard_reference.trunk_paths(".py")).values())
+    )
     wrapped = ["x = 1", "log.warning(", "    'stop placement failed: %s', exc,", ")"]
     widened = ["x = 1", "log.warning(" + "'stop placement failed: %s', exc".ljust(width) + ")"]
     assert len(widened[1]) > width and all(len(ln) <= width for ln in wrapped)
     trunk = "\n".join(["x = 1", "pass", "pass", "pass"]) + "\n"  # same line count
 
     bad = _one_file(monkeypatch, trunk, "\n".join(widened) + "\n")
-    assert any(f"wider than {width}" in b for b in bad), bad
+    assert any(f"wider than the derived {width}" in b for b in bad), bad
     assert _one_file(monkeypatch, trunk, "\n".join(wrapped) + "\n") == []
 
 
@@ -202,3 +204,57 @@ def test_the_file_size_guard_is_already_per_file_identity():
     finally:
         g.working_sizes, g.trunk_sizes = orig_w, orig_t
     assert len(bad) == 1 and bad[0].startswith("b.py: grew from 500 to 501"), bad
+
+
+# --- the two fences are DERIVED, never stored -------------------------------
+
+
+def test_neither_fence_is_a_stored_number():
+    """The defect removed: two once-measured integers committed to the guard.
+
+    A stored fence rots as the tree moves and an author can edit it to pass."""
+    src = (file_size_guard.ROOT / "scripts" / "file_size_guard.py").read_text()
+    assert "CEILING = " not in src and "WIDTH = " not in src
+    assert not hasattr(file_size_guard, "CEILING")
+    assert not hasattr(file_size_guard, "WIDTH")
+
+
+def test_the_derived_fences_match_the_trunk_population():
+    trunk = guard_reference.trunk_blobs(guard_reference.trunk_paths(".py"))
+    assert len(trunk) > 100, len(trunk)
+    texts = list(trunk.values())
+    assert file_size_guard.line_ceiling(texts) > file_size_guard.FLOOR
+    assert 60 < file_size_guard.width_fence(texts) < 400
+
+
+def test_padding_lines_cannot_drag_the_width_fence_out():
+    """The gaming case for a derived percentile: fill the tree with near-fence
+    lines and it rises. The trunk side is computed in the same run and binds."""
+    trunk = ["short\n" * 50]
+    padded = ["x" * 400 + "\n"] * 50
+    _, width = file_size_guard.fences(padded, trunk)
+    assert width == file_size_guard.width_fence(trunk), width
+    _, tighter = file_size_guard.fences(trunk, padded)
+    assert tighter == file_size_guard.width_fence(trunk), tighter
+
+
+def test_deleting_small_files_cannot_raise_the_line_ceiling():
+    """Q3 rises when the small files go. The trunk's own Q3 still binds."""
+    trunk = ["x\n" * 10] * 90 + ["x\n" * 900] * 10
+    thinned = ["x\n" * 900] * 10
+    assert file_size_guard.line_ceiling(thinned) > file_size_guard.line_ceiling(trunk)
+    ceiling, _ = file_size_guard.fences(thinned, trunk)
+    assert ceiling == file_size_guard.line_ceiling(trunk), ceiling
+
+
+def test_the_ceiling_never_falls_below_the_new_module_floor():
+    """400 is the owner's ceiling for a NEW module; a derived fence under it
+    would contradict the floor rule rather than tighten it."""
+    assert file_size_guard.line_ceiling(["x\n" * 3] * 100) == file_size_guard.FLOOR
+
+
+def test_it_refuses_rather_than_invent_a_fence_from_nothing():
+    with pytest.raises(ReferenceUnavailable):
+        file_size_guard.line_ceiling([])
+    with pytest.raises(ReferenceUnavailable):
+        file_size_guard.width_fence([])

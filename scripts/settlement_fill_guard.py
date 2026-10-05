@@ -60,6 +60,7 @@ import yaml
 
 from scripts.guard_reference import (
     ROOT,
+    _git,
     ReferenceUnavailable,
     TRUNK,
     added_sites,
@@ -67,8 +68,7 @@ from scripts.guard_reference import (
     trunk_blobs,
     trunk_paths,
 )
-
-LEDGER = "config/number_ledger.yaml"
+from scripts.ledger_locator import trunk_ledger, working_ledger
 
 #: The storage layer is where the INSERT lives; the defect is in its CALLERS,
 #: and `src/storage/db.py` legitimately uses defaulted reads on payload dicts.
@@ -153,17 +153,34 @@ def describe(identity: Identity) -> str:
     return f"{path}:{scope}: {field} <- {problem} -- {why}"
 
 
+def _is_subject(rel: str) -> bool:
+    """Production code only: every tracked ``.py`` outside ``tests/``, the root included."""
+    return rel.endswith(".py") and rel.split("/", 1)[0] != "tests"
+
+
+def _working_subject_paths() -> list[str]:
+    """Tracked and not-yet-tracked ``.py`` files in the working tree, no directory list."""
+    tracked = _git("ls-files", "--", "*.py")
+    untracked = _git("ls-files", "--others", "--exclude-standard", "--", "*.py")
+    if tracked.returncode or not tracked.stdout.strip():
+        raise ReferenceUnavailable("git ls-files listed no working-tree sources; refusing")
+    lines = tracked.stdout.splitlines() + untracked.stdout.splitlines()
+    return sorted({p for p in lines if _is_subject(p)})
+
+
 def main() -> int:
     try:
-        paths = [p for p in trunk_paths(".py") if p.startswith("src/")]
-        trunk_source = trunk_blobs(paths + [LEDGER])
+        paths = [p for p in trunk_paths(".py") if _is_subject(p)]
+        trunk_rel = trunk_ledger()
+        ledger_rel = working_ledger()
+        trunk_source = trunk_blobs(paths + [trunk_rel])
     except ReferenceUnavailable as exc:
         print(f"REFUSED: cannot read {TRUNK}: {exc}", file=sys.stderr)
         return 2
 
-    ledger_now = (Path(ROOT) / LEDGER).read_text(encoding="utf-8")
+    ledger_now = (Path(ROOT) / ledger_rel).read_text(encoding="utf-8")
     fields_now = built_route_fields(ledger_now)
-    fields_trunk = built_route_fields(trunk_source.get(LEDGER, "numbers: []"))
+    fields_trunk = built_route_fields(trunk_source.get(trunk_rel, "numbers: []"))
     if not fields_now:
         print(
             "REFUSED: no settlement route is in state `built`; moving every "
@@ -172,13 +189,10 @@ def main() -> int:
         )
         return 2
 
-    working_paths = sorted(set(paths) | {
-        str(p.relative_to(ROOT))
-        for p in (Path(ROOT) / "src").rglob("*.py")
-    })
+    working_paths = sorted(set(paths) | set(_working_subject_paths()))
     now = scan(_working_blobs(working_paths), fields_now)
     before = scan(
-        {p: t for p, t in trunk_source.items() if p != LEDGER}, fields_trunk,
+        {p: t for p, t in trunk_source.items() if p != trunk_rel}, fields_trunk,
     )
     added = added_sites(now, before)
     if not added:

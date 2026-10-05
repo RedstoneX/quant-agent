@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import subprocess
 import textwrap
 from collections import Counter
 from pathlib import Path
@@ -36,7 +37,9 @@ from pathlib import Path
 from scripts.guard_reference import ROOT, ReferenceUnavailable
 
 HTTP_WRITE_VERBS = frozenset({"post", "patch", "delete", "put"})
-SOURCE_DIR = "src"
+#: ``None`` means every tracked ``.py`` outside ``tests/`` -- root ``main.py``, ``ops/``,
+#: ``scripts/`` included. Loading ``src/`` alone missed 31 money modules [measured 2026-10-05].
+SOURCE_DIR: str | None = None
 
 
 def sdk_write_methods() -> frozenset[str]:
@@ -113,9 +116,21 @@ def _call_ref(call: ast.Call) -> Call | None:
     return None
 
 
-def _load(root: Path, source_dir: str) -> dict[str, _Module]:
+def _source_paths(root: Path, source_dir: str | None) -> list[Path]:
+    """Modules to load: git's tracked production ``.py`` set, or one named directory for tests."""
+    if source_dir is not None:
+        return sorted((root / source_dir).rglob("*.py"))
+    out = subprocess.run(["git", "-C", str(root), "ls-files", "--", "*.py"],
+                         capture_output=True, text=True)
+    if out.returncode or not out.stdout.strip():
+        raise ReferenceUnavailable(f"git ls-files listed no sources under {root}; refusing")
+    return [root / p for p in sorted(out.stdout.splitlines())
+            if p.endswith(".py") and p.split("/", 1)[0] != "tests"]
+
+
+def _load(root: Path, source_dir: str | None) -> dict[str, _Module]:
     mods: dict[str, _Module] = {}
-    for path in sorted((root / source_dir).rglob("*.py")):
+    for path in _source_paths(root, source_dir):
         rel = path.relative_to(root).as_posix()
         try:
             tree = ast.parse(path.read_text(), filename=rel)
@@ -164,8 +179,10 @@ def _reaches(call: Call, mod: _Module, writers: set, seeds: frozenset[str], mods
     return bool(cands) and all(c in writers for c in cands)
 
 
-def derive(root: Path = ROOT, seeds: frozenset[str] | None = None, source_dir: str = SOURCE_DIR) -> tuple[str, ...]:
-    """Every module under ``source_dir`` that is a money path, by the definition above."""
+def derive(
+    root: Path = ROOT, seeds: frozenset[str] | None = None, source_dir: str | None = SOURCE_DIR
+) -> tuple[str, ...]:
+    """Every tracked production module (or one under ``source_dir``) that is a money path."""
     seeds = sdk_write_methods() if seeds is None else seeds
     mods = _load(root, source_dir)
     owners: dict[str, list[str]] = {}
