@@ -311,9 +311,9 @@ def test_the_prefetch_ceiling_is_computed_not_stored():
     doubles the wire half of the bound; it is not a constant anyone typed."""
     base = MacroDataProvider(api_key="test-key", request_timeout_s=15.0)
     wider = MacroDataProvider(api_key="test-key", request_timeout_s=30.0)
-    assert wider.prefetch_deadline_s > base.prefetch_deadline_s
+    assert wider.budget.prefetch_deadline_s > base.budget.prefetch_deadline_s
     # And it must clear the 08:45 -> 09:30:49 ET gap it is scheduled into.
-    assert base.prefetch_deadline_s < (9 * 3600 + 30 * 60 + 49) - (8 * 3600 + 45 * 60)
+    assert base.budget.prefetch_deadline_s < (9 * 3600 + 30 * 60 + 49) - (8 * 3600 + 45 * 60)
 
 
 def test_the_prefetch_uses_its_own_ceiling_not_the_trading_one(tmp_path):
@@ -323,7 +323,7 @@ def test_the_prefetch_uses_its_own_ceiling_not_the_trading_one(tmp_path):
     provider = MacroDataProvider(
         api_key="test-key", series_cache=MacroSeriesCache(str(tmp_path / "c")),
     )
-    assert provider.prefetch_deadline_s > provider.total_fetch_deadline_s
+    assert provider.budget.prefetch_deadline_s > provider.total_fetch_deadline_s
 
 
 @pytest.mark.parametrize("year", [2024, 2025, 2026, 2027, 2030])
