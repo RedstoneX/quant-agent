@@ -615,12 +615,12 @@ def test_resolve_scores_a_closed_position_and_persists_it(db):
         SeatStance(seat="news", symbol="AAPL", stance="neutral"),
     ])
 
-    result = db.resolve_conviction_ledger()
+    result = db.conviction.resolve_conviction_ledger()
     assert result["closed_positions"] == 1
     assert result["scored_positions"] == 1
     assert result["credits_written"] == 2  # neutral news took no side
 
-    credits = {c.seat: c for c in db.get_conviction_credits()}
+    credits = {c.seat: c for c in db.conviction.get_conviction_credits()}
     assert credits["technical"].r_multiple == pytest.approx(-0.5)
     assert credits["technical"].credit == pytest.approx(-0.5)
     assert credits["macro"].side == "opposed"
@@ -633,12 +633,12 @@ def test_resolve_is_idempotent_and_does_not_double_credit(db):
     db.record_seat_stances(run_id="run-1", decision_id="dec-1", stances=[
         SeatStance(seat="technical", symbol="AAPL", stance="buy"),
     ])
-    first = db.resolve_conviction_ledger()
-    second = db.resolve_conviction_ledger()
+    first = db.conviction.resolve_conviction_ledger()
+    second = db.conviction.resolve_conviction_ledger()
     assert first["scored_positions"] == 1
     assert second["scored_positions"] == 0
     assert second["skipped_already_scored"] == 1
-    assert len(db.get_conviction_credits()) == 1
+    assert len(db.conviction.get_conviction_credits()) == 1
 
 
 def test_resolve_leaves_an_open_position_unscored(db):
@@ -649,9 +649,9 @@ def test_resolve_leaves_an_open_position_unscored(db):
     db.record_seat_stances(run_id="run-1", decision_id="dec-1", stances=[
         SeatStance(seat="technical", symbol="MSFT", stance="buy"),
     ])
-    result = db.resolve_conviction_ledger()
+    result = db.conviction.resolve_conviction_ledger()
     assert result["closed_positions"] == 0
-    assert db.get_conviction_credits() == []
+    assert db.conviction.get_conviction_credits() == []
 
 
 def test_persisted_credits_aggregate_without_recomputation(db):
@@ -662,9 +662,9 @@ def test_persisted_credits_aggregate_without_recomputation(db):
         SeatStance(seat="technical", symbol="AAPL", stance="buy", conviction="high"),
         SeatStance(seat="macro", symbol="AAPL", stance="underweight", conviction="high"),
     ])
-    db.resolve_conviction_ledger()
+    db.conviction.resolve_conviction_ledger()
 
-    records = aggregate_seat_records(db.get_conviction_credits())
+    records = aggregate_seat_records(db.conviction.get_conviction_credits())
     assert records["macro"].resolved_calls == 1
     assert records["macro"].calls_right == 1
     assert records["technical"].calls_right == 0
@@ -792,11 +792,11 @@ def test_a_winning_short_scores_exactly_like_a_winning_long(db):
         SeatStance(seat="news", symbol="TSLA", stance="positive", conviction="low"),
     ])
 
-    result = db.resolve_conviction_ledger()
+    result = db.conviction.resolve_conviction_ledger()
     assert result["closed_positions"] == 1
     assert result["scored_positions"] == 1
 
-    credits = {c.seat: c for c in db.get_conviction_credits()}
+    credits = {c.seat: c for c in db.conviction.get_conviction_credits()}
     assert credits["technical"].r_multiple == pytest.approx(+1.0)
     assert credits["technical"].side == "supported"
     assert credits["technical"].credit == pytest.approx(+1.0)
@@ -805,7 +805,7 @@ def test_a_winning_short_scores_exactly_like_a_winning_long(db):
     assert credits["news"].credit == pytest.approx(-1.0)
 
     # And in the aggregate a short win is a win — nothing separates it out.
-    records = aggregate_seat_records(db.get_conviction_credits())
+    records = aggregate_seat_records(db.conviction.get_conviction_credits())
     assert records["technical"].calls_right == 1
     assert records["technical"].cumulative_credit == pytest.approx(+1.0)
     assert records["news"].calls_right == 0
@@ -826,9 +826,9 @@ def test_a_losing_short_scores_exactly_like_a_losing_long(db):
         SeatStance(seat="technical", symbol="TSLA", stance="sell"),
         SeatStance(seat="news", symbol="TSLA", stance="positive"),
     ])
-    db.resolve_conviction_ledger()
+    db.conviction.resolve_conviction_ledger()
 
-    credits = {c.seat: c for c in db.get_conviction_credits()}
+    credits = {c.seat: c for c in db.conviction.get_conviction_credits()}
     assert credits["technical"].credit == pytest.approx(-0.5)
     assert credits["news"].credit == pytest.approx(+0.5), (
         "arguing against a short that lost money must pay, exactly as "
@@ -844,9 +844,9 @@ def test_declared_confidence_changes_no_persisted_credit(db):
         SeatStance(seat="technical", symbol="TSLA", stance="sell", conviction="high"),
         SeatStance(seat="macro", symbol="TSLA", stance="bearish", conviction="low"),
     ])
-    db.resolve_conviction_ledger()
+    db.conviction.resolve_conviction_ledger()
 
-    credits = {c.seat: c for c in db.get_conviction_credits()}
+    credits = {c.seat: c for c in db.conviction.get_conviction_credits()}
     assert credits["technical"].credit == pytest.approx(credits["macro"].credit)
     assert credits["technical"].conviction == "high"
     assert credits["macro"].conviction == "low"
@@ -865,7 +865,7 @@ def test_a_legacy_weighted_row_is_read_back_unweighted(db):
     `r_multiple` and `side`, so one series never mixes two scales."""
     db.insert_specialist_evidence(
         run_id="run-old", decision_id="dec-old", agent_name="macro",
-        kind=db.CONVICTION_CREDIT_KIND, scope="symbol", symbol="AAPL",
+        kind=db.conviction.CONVICTION_CREDIT_KIND, scope="symbol", symbol="AAPL",
         evidence_json=json.dumps({
             "seat": "macro", "symbol": "AAPL", "side": "supported",
             "stance": "buy", "conviction": "low", "weight": 0.3,
@@ -874,7 +874,7 @@ def test_a_legacy_weighted_row_is_read_back_unweighted(db):
             "decision_id": "dec-old", "direction": "long", "nominated": False,
         }, sort_keys=True),
     )
-    credit = db.get_conviction_credits()[0]
+    credit = db.conviction.get_conviction_credits()[0]
     assert credit.credit == pytest.approx(2.0), "the stored 0.6 is the old weighted scale"
     assert credit.r_multiple == pytest.approx(2.0)
     assert credit.conviction == "low", "what it declared is still reported"
@@ -1059,7 +1059,7 @@ def test_short_chaining_touches_no_trading_decision(tmp_path, monkeypatch):
             run_id="seed", decision_id="seed-dec",
             stances=[SeatStance(seat="technical", symbol="NVDA", stance="sell")],
         )
-        database.resolve_conviction_ledger()
+        database.conviction.resolve_conviction_ledger()
 
     db_seeded = Database(str(tmp_path / "seeded.db"))
     db_seeded.initialize()
@@ -1069,7 +1069,7 @@ def test_short_chaining_touches_no_trading_decision(tmp_path, monkeypatch):
         _seed_short_history(db_seeded)
         # The seeding really did produce a scored short chain, so the
         # comparison below is not two empty ledgers agreeing.
-        assert [c.credit for c in db_seeded.get_conviction_credits()] == [1.0]
+        assert [c.credit for c in db_seeded.conviction.get_conviction_credits()] == [1.0]
 
         ctx_seeded = _run_decision_stage(db_seeded)
         ctx_bare = _run_decision_stage(db_bare)

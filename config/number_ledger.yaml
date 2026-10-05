@@ -8635,112 +8635,60 @@ numbers:
       prices anything from it.
   - id: src.data.event_calendar._FOMC_DURATION_WORDS['one']
     value: 1
-    status: arbitrary
+    status: instrument
     site: src/data/event_calendar.py
-    settles_by:
-      kind: measurement
-      state: specified
-      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
-      records: for each FOMC meeting whose page wording says the one-day form, the number of calendar days between its
-        first and last published date, so the word's value is read off the Fed's own schedule
-      closes_when: the published spans agree with 1 for every meeting using that wording; it is DELETED if the
-        Fed stops using the wording
-    open_question: >-
-      Does the Fed's own published meeting schedule agree with this word's value (1) for every meeting whose page
-      wording uses it, read as the calendar days between the meeting's first and last published date?
-    cost_while_unanswered: >-
-      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
-      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
+    source: 'https://github.com/unicode-org/cldr/blob/main/common/rbnf/en.xml (CLDR English spellout-numbering: the cardinal number words)'
     note: >-
-      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
-      citation pointed at the pattern that matches the word, which names the word but never the number 1, so it
-      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
-      Original note:
-      English number-word decoding for the Fed's own phrasing
-      ("one-day meeting") on the FOMC calendar page. The value is the
-      cardinal "one" equals 1; it transcribes what the source document
-      says rather than setting a desk policy.
+      English number-word decoding table used by the parser for the Fed's own
+      phrasing ("one-day meeting") on
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `one` is the English
+      cardinal for 1; the value is a language fact fixed by the CLDR English
+      spellout-numbering rules, not a chosen quantity, and any other value would
+      be a decoding bug rather than a different risk appetite. It only labels how
+      many days a meeting block spans, feeding prompt context and an advisory
+      event flag; nothing multiplies, sizes or prices anything from it.
   - id: src.data.event_calendar._FOMC_DURATION_WORDS['two']
     value: 2
-    status: arbitrary
+    status: instrument
     site: src/data/event_calendar.py
-    settles_by:
-      kind: measurement
-      state: specified
-      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
-      records: for each FOMC meeting whose page wording says the two-day form, the number of calendar days between its
-        first and last published date, so the word's value is read off the Fed's own schedule
-      closes_when: the published spans agree with 2 for every meeting using that wording; it is DELETED if the
-        Fed stops using the wording
-    open_question: >-
-      Does the Fed's own published meeting schedule agree with this word's value (2) for every meeting whose page
-      wording uses it, read as the calendar days between the meeting's first and last published date?
-    cost_while_unanswered: >-
-      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
-      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
+    source: 'https://github.com/unicode-org/cldr/blob/main/common/rbnf/en.xml (CLDR English spellout-numbering: the cardinal number words)'
     note: >-
-      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
-      citation pointed at the pattern that matches the word, which names the word but never the number 2, so it
-      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
-      Original note:
-      English number-word decoding for the Fed's own phrasing
-      ("two-day meeting") on the FOMC calendar page. The value is the
-      cardinal "two" equals 2; it transcribes what the source document
-      says rather than setting a desk policy.
+      English number-word decoding table used by the parser for the Fed's own
+      phrasing ("two-day meeting") on
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `two` is the English
+      cardinal for 2; the value is a language fact fixed by the CLDR English
+      spellout-numbering rules, not a chosen quantity, and any other value would
+      be a decoding bug rather than a different risk appetite. It only labels how
+      many days a meeting block spans, feeding prompt context and an advisory
+      event flag; nothing multiplies, sizes or prices anything from it.
   - id: src.data.event_calendar._FOMC_DURATION_WORDS['three']
     value: 3
-    status: arbitrary
+    status: instrument
     site: src/data/event_calendar.py
-    settles_by:
-      kind: measurement
-      state: specified
-      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
-      records: for each FOMC meeting whose page wording says the three-day form, the number of calendar days between its
-        first and last published date, so the word's value is read off the Fed's own schedule
-      closes_when: the published spans agree with 3 for every meeting using that wording; it is DELETED if the
-        Fed stops using the wording
-    open_question: >-
-      Does the Fed's own published meeting schedule agree with this word's value (3) for every meeting whose page
-      wording uses it, read as the calendar days between the meeting's first and last published date?
-    cost_while_unanswered: >-
-      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
-      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
+    source: 'https://github.com/unicode-org/cldr/blob/main/common/rbnf/en.xml (CLDR English spellout-numbering: the cardinal number words)'
     note: >-
-      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
-      citation pointed at the pattern that matches the word, which names the word but never the number 3, so it
-      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
-      Original note:
-      English number-word decoding for the Fed's own phrasing
-      ("three-day meeting") on the FOMC calendar page. The value is the
-      cardinal "three" equals 3; it transcribes what the source document
-      says rather than setting a desk policy.
+      English number-word decoding table used by the parser for the Fed's own
+      phrasing ("three-day meeting") on
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `three` is the English
+      cardinal for 3; the value is a language fact fixed by the CLDR English
+      spellout-numbering rules, not a chosen quantity, and any other value would
+      be a decoding bug rather than a different risk appetite. It only labels how
+      many days a meeting block spans, feeding prompt context and an advisory
+      event flag; nothing multiplies, sizes or prices anything from it.
   - id: src.data.event_calendar._FOMC_DURATION_WORDS['four']
     value: 4
-    status: arbitrary
+    status: instrument
     site: src/data/event_calendar.py
-    settles_by:
-      kind: measurement
-      state: specified
-      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
-      records: for each FOMC meeting whose page wording says the four-day form, the number of calendar days between its
-        first and last published date, so the word's value is read off the Fed's own schedule
-      closes_when: the published spans agree with 4 for every meeting using that wording; it is DELETED if the
-        Fed stops using the wording
-    open_question: >-
-      Does the Fed's own published meeting schedule agree with this word's value (4) for every meeting whose page
-      wording uses it, read as the calendar days between the meeting's first and last published date?
-    cost_while_unanswered: >-
-      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
-      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
+    source: 'https://github.com/unicode-org/cldr/blob/main/common/rbnf/en.xml (CLDR English spellout-numbering: the cardinal number words)'
     note: >-
-      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
-      citation pointed at the pattern that matches the word, which names the word but never the number 4, so it
-      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
-      Original note:
-      English number-word decoding for the Fed's own phrasing
-      ("four-day meeting") on the FOMC calendar page. The value is the
-      cardinal "four" equals 4; it transcribes what the source document
-      says rather than setting a desk policy.
+      English number-word decoding table used by the parser for the Fed's own
+      phrasing ("four-day meeting") on
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `four` is the English
+      cardinal for 4; the value is a language fact fixed by the CLDR English
+      spellout-numbering rules, not a chosen quantity, and any other value would
+      be a decoding bug rather than a different risk appetite. It only labels how
+      many days a meeting block spans, feeding prompt context and an advisory
+      event flag; nothing multiplies, sizes or prices anything from it.
   - id: src.data.event_calendar._FOMC_MAX_MEETING_DAYS
     value: 4
     status: sourced
