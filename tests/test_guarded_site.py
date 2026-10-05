@@ -44,7 +44,7 @@ def test_no_handle_still_logs_traceback_and_does_not_raise(caplog):
 
 
 def test_snapshot_health_failure_writes_disagreed_row_end_to_end(tmp_path):
-    from src.pipeline_intraday_snapshot_health import SnapshotHealthMixin as IntradayMixin
+    from src.intraday.gating import IntradayGating
     owner = _owner(tmp_path)
     real = owner.db
 
@@ -54,7 +54,6 @@ def test_snapshot_health_failure_writes_disagreed_row_end_to_end(tmp_path):
         def record_intraday_symbol_snapshot_result(self, symbol, ok):
             raise RuntimeError("db locked")
 
-    owner.db = _Boom()
-    IntradayMixin._track_intraday_snapshot_ok(owner, "XYZ")
+    IntradayGating(db=_Boom())._track_intraday_snapshot_ok("XYZ")
     log = ReconciliationLog(conn=real.conn)
     assert log.status(kind="guarded:intraday.snapshot_ok_record") == "disagreed"
