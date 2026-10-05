@@ -256,7 +256,7 @@ numbers:
   - id: src.config.EventRiskConfig.calendar_deadline_s
     value: 20
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -265,7 +265,7 @@ numbers:
   - id: src.config.EventRiskConfig.earnings_deadline_s
     value: 20
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -274,7 +274,7 @@ numbers:
   - id: src.config.EventRiskConfig.earnings_symbol_timeout_s
     value: 8
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -283,7 +283,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_cache_ttl_days
     value: 7
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -292,7 +292,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_deadline_s
     value: 15
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -301,7 +301,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_max_retries
     value: 2
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -310,7 +310,7 @@ numbers:
   - id: src.config.EventRiskConfig.fomc_request_timeout_s
     value: 10
     status: not-trade-governing
-    site: src/config/__init__.py
+    site: src/config/risk_adjuncts.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap. It decides
       how long the desk waits or how much it fetches, never whether or how
@@ -5528,16 +5528,17 @@ numbers:
       produces identical behaviour — a precision guard, not a policy
       choice. It decides nothing about whether or how much to trade: a real
       nonzero delta of any size, however small, is now attempted.
-  - id: src.coverage_watchdog.MAX_WEEKDAYS_BACK
+  - id: src.trading_day.MAX_WEEKDAYS_BACK
     value: 5
     status: not-trade-governing
-    site: src/coverage_watchdog.py
+    site: src/trading_day.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap.
-      Bounds how many weekdays the watchdog's diagnostic sweep searches
-      backward for the most recent trading day
-      (src/coverage_watchdog.py@`logger = logging.getLogger(__name__)`); it decides how far the sweep
-      looks, never whether or how much to trade.
+      Bounds how many weekdays the most-recent-trading-day lookup searches
+      backward (src/trading_day.py@`MAX_WEEKDAYS_BACK = 5`), moved here from
+      the coverage watchdog so the dashboard can read it without reaching
+      the repair code; it decides how far the lookup looks, never whether
+      or how much to trade.
   - id: src.coverage_watchdog._QTY_EPSILON
     value: 1.0e-6
     status: not-trade-governing
@@ -8486,6 +8487,563 @@ numbers:
     status: not-trade-governing
     site: src/infra_retry_policy.py
     note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls; no trade quantity, price or gate reads it."
+  - id: src.data.event_calendar._FOMC_MONTHS['jan']
+    value: 1
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `jan` is the
+      1th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['feb']
+    value: 2
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `feb` is the
+      2th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['mar']
+    value: 3
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `mar` is the
+      3th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['apr']
+    value: 4
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `apr` is the
+      4th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['may']
+    value: 5
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `may` is the
+      5th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['jun']
+    value: 6
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `jun` is the
+      6th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['jul']
+    value: 7
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `jul` is the
+      7th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['aug']
+    value: 8
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `aug` is the
+      8th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['sep']
+    value: 9
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `sep` is the
+      9th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['oct']
+    value: 10
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `oct` is the
+      10th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['nov']
+    value: 11
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `nov` is the
+      11th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_MONTHS['dec']
+    value: 12
+    status: instrument
+    site: src/data/event_calendar.py
+    source: 'https://www.iso.org/iso-8601-date-and-time-format.html (Gregorian month ordinals)'
+    note: >-
+      Month-name decoding table used by the HTML fallback parser for
+      federalreserve.gov/monetarypolicy/fomccalendars.htm. `dec` is the
+      12th month of the Gregorian calendar; the value is a calendar fact,
+      not a chosen quantity, and any other value would be a decoding bug
+      rather than a different risk appetite. Nothing multiplies, sizes or
+      prices anything from it.
+  - id: src.data.event_calendar._FOMC_DURATION_WORDS['one']
+    value: 1
+    status: arbitrary
+    site: src/data/event_calendar.py
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
+      records: for each FOMC meeting whose page wording says the one-day form, the number of calendar days between its
+        first and last published date, so the word's value is read off the Fed's own schedule
+      closes_when: the published spans agree with 1 for every meeting using that wording; it is DELETED if the
+        Fed stops using the wording
+    open_question: >-
+      Does the Fed's own published meeting schedule agree with this word's value (1) for every meeting whose page
+      wording uses it, read as the calendar days between the meeting's first and last published date?
+    cost_while_unanswered: >-
+      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
+      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
+    note: >-
+      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
+      citation pointed at the pattern that matches the word, which names the word but never the number 1, so it
+      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
+      Original note:
+      English number-word decoding for the Fed's own phrasing
+      ("one-day meeting") on the FOMC calendar page. The value is the
+      cardinal "one" equals 1; it transcribes what the source document
+      says rather than setting a desk policy.
+  - id: src.data.event_calendar._FOMC_DURATION_WORDS['two']
+    value: 2
+    status: arbitrary
+    site: src/data/event_calendar.py
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
+      records: for each FOMC meeting whose page wording says the two-day form, the number of calendar days between its
+        first and last published date, so the word's value is read off the Fed's own schedule
+      closes_when: the published spans agree with 2 for every meeting using that wording; it is DELETED if the
+        Fed stops using the wording
+    open_question: >-
+      Does the Fed's own published meeting schedule agree with this word's value (2) for every meeting whose page
+      wording uses it, read as the calendar days between the meeting's first and last published date?
+    cost_while_unanswered: >-
+      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
+      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
+    note: >-
+      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
+      citation pointed at the pattern that matches the word, which names the word but never the number 2, so it
+      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
+      Original note:
+      English number-word decoding for the Fed's own phrasing
+      ("two-day meeting") on the FOMC calendar page. The value is the
+      cardinal "two" equals 2; it transcribes what the source document
+      says rather than setting a desk policy.
+  - id: src.data.event_calendar._FOMC_DURATION_WORDS['three']
+    value: 3
+    status: arbitrary
+    site: src/data/event_calendar.py
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
+      records: for each FOMC meeting whose page wording says the three-day form, the number of calendar days between its
+        first and last published date, so the word's value is read off the Fed's own schedule
+      closes_when: the published spans agree with 3 for every meeting using that wording; it is DELETED if the
+        Fed stops using the wording
+    open_question: >-
+      Does the Fed's own published meeting schedule agree with this word's value (3) for every meeting whose page
+      wording uses it, read as the calendar days between the meeting's first and last published date?
+    cost_while_unanswered: >-
+      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
+      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
+    note: >-
+      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
+      citation pointed at the pattern that matches the word, which names the word but never the number 3, so it
+      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
+      Original note:
+      English number-word decoding for the Fed's own phrasing
+      ("three-day meeting") on the FOMC calendar page. The value is the
+      cardinal "three" equals 3; it transcribes what the source document
+      says rather than setting a desk policy.
+  - id: src.data.event_calendar._FOMC_DURATION_WORDS['four']
+    value: 4
+    status: arbitrary
+    site: src/data/event_calendar.py
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/data/event_calendar.py `_FOMC_DURATION_WORDS`, read against the Fed's published meeting dates
+      records: for each FOMC meeting whose page wording says the four-day form, the number of calendar days between its
+        first and last published date, so the word's value is read off the Fed's own schedule
+      closes_when: the published spans agree with 4 for every meeting using that wording; it is DELETED if the
+        Fed stops using the wording
+    open_question: >-
+      Does the Fed's own published meeting schedule agree with this word's value (4) for every meeting whose page
+      wording uses it, read as the calendar days between the meeting's first and last published date?
+    cost_while_unanswered: >-
+      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
+      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
+    note: >-
+      UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
+      citation pointed at the pattern that matches the word, which names the word but never the number 4, so it
+      resolved without substantiating. Not trade-governing; it only sets how many days a meeting block spans.
+      Original note:
+      English number-word decoding for the Fed's own phrasing
+      ("four-day meeting") on the FOMC calendar page. The value is the
+      cardinal "four" equals 4; it transcribes what the source document
+      says rather than setting a desk policy.
+  - id: src.data.event_calendar._FOMC_MAX_MEETING_DAYS
+    value: 4
+    status: sourced
+    site: src/data/event_calendar.py
+    source: 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm (meeting blocks are 1-2 days)'
+    note: >-
+      Sanity bound on one parsed FOMC meeting block, used to DROP a parse
+      result rather than show a seat a fabricated multi-week "meeting". The
+      Fed's published calendar schedules regular meetings as one-day or
+      two-day blocks and unscheduled meetings as a single day, so the longest
+      legitimate block is two days; 4 is that observed maximum with one
+      doubling of headroom so a legitimate block is never discarded and only
+      an obviously broken parse is. It only ever rejects data; it sets no
+      window a trade is measured against.
+  - id: src.data.event_calendar._FOMC_CACHE_BACKFILL_DAYS
+    value: 45
+    status: sourced
+    site: src/data/event_calendar.py
+    source: 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm (eight meetings a year)'
+    note: >-
+      How far BACK the on-disk FOMC cache keeps concluded meetings. The
+      cache is a forward calendar; the only backward requirement is that a
+      meeting which has already concluded still reads as "just happened"
+      until the next one is scheduled. The FOMC holds eight regular meetings
+      a year, i.e. one roughly every 365/8 = 45.6 days, so one full
+      inter-meeting interval is the smallest margin that never leaves the
+      cache with no recent meeting in it. No order, size, price or stop is
+      computed from it.
+  - id: src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS
+    value: 120
+    status: sourced
+    site: src/data/event_calendar.py
+    source: 'src/data/event_calendar.py::RELEASE_SCHEDULE_LOOKAHEAD_DAYS (the derivation comment above the constant)'
+    note: >-
+      FETCH window for one `/fred/release/dates` request, explicitly NOT the
+      horizon a seat judges imminence against (`get_upcoming_events`'s
+      `horizon_days` does that). The derivation is written out at the
+      definition site: every release in `MACRO_RELEASES` except weekly
+      Initial Jobless Claims publishes monthly, so four monthly cycles is the
+      smallest round multiple that still returns about three future dates per
+      release when the nearest has just passed, which is what makes an EMPTY
+      response trustworthy evidence of a genuinely unpublished schedule
+      rather than a too-narrow window. Widening it costs nothing: it is the
+      same single request with a later `realtime_end`.
+  - id: src.data.event_calendar._FAILURE_REASON_MAX_LEN
+    value: 200
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Characters of exception text kept before truncation on the way to a
+      log line or a seat's prompt. A display cap on an ERROR STRING: it bounds
+      how much of a failure message is shown, and the same cap exists at
+      `src.data.macro._FAILURE_REASON_MAX_LEN` and
+      `src.data.news._FAILURE_REASON_MAX_LEN` for the same reason. No
+      quantity, threshold or comparison a trade depends on reads it; changing
+      it changes only how much of a message a reader sees.
+  - id: src.data.event_calendar.EARNINGS_EVENT_WINDOW_SESSIONS
+    value: 3
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Sessions-to-earnings inside which a scheduled report is CALLED
+      imminent. Measured at both call sites on 2026-10-05: it formats the
+      "INSIDE THE N-SESSION EVENT WINDOW" phrase in
+      `EarningsProximity.describe()` (prompt text a seat reads) and filters
+      which held names the evening owner report lists under "reports soon"
+      (`src/trader_feed/evening.py`). No Python path sizes, prices, stops,
+      buys or sells a position from it; the gates that actually refuse a
+      trade around an event live in `EventRiskConfig`, which is separately in
+      scope. Same shape and same classification as
+      `src.risk.metrics.DRIFT_WEIGHT_PCT` in this file. HONEST CAVEAT, not
+      softened: the value 3 itself has no measurement behind it, and because
+      an LLM seat reads the phrase it can still colour a verdict. It is
+      recorded here as informational rather than `arbitrary` only because
+      nothing mechanical depends on it, and it should be re-examined the
+      moment any code branches on this window.
+  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(cache_ttl_days)
+    value: 7
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to
+      `src.config.risk_adjuncts.EventRiskConfig.fomc_cache_ttl_days` (7), the configured value that overrides it
+      in production.
+  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(max_retries)
+    value: 2
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to
+      `src.config.risk_adjuncts.EventRiskConfig.fomc_max_retries` (2) and to `src.infra_retry_policy.MAX_RETRIES`
+      (2), the desk-wide bounded-retry count already in this file.
+  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(request_timeout_s)
+    value: 10
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to
+      `src.config.risk_adjuncts.EventRiskConfig.fomc_request_timeout_s` (10).
+  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(retry_backoff_base_s)
+    value: 2
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to
+      `src.infra_retry_policy.BACKOFF_BASE_S`, the desk-wide backoff base already recorded in this
+      file.
+  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(retry_backoff_jitter_s)
+    value: 1
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. One second of random jitter
+      spread so concurrent retries do not re-collide; it shortens or lengthens a wait only.
+  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(retry_backoff_max_s)
+    value: 8
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to
+      `src.infra_retry_policy.BACKOFF_MAX_S`, the desk-wide backoff ceiling already recorded in this
+      file.
+  - id: src.data.event_calendar.FOMCCalendarProvider.__init__(total_fetch_deadline_s)
+    value: 15
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to
+      `src.config.risk_adjuncts.EventRiskConfig.fomc_deadline_s` (15); when it is exceeded the seat is told the
+      FOMC calendar is unavailable rather than shown stale dates.
+  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(breaker_after_failed_releases)
+    value: 1
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Circuit-breaker trip count: after ONE release fetch fails the remaining
+      releases are skipped for this run and the calendar is reported PARTIAL
+      rather than silently thin. The value is the minimum possible trip (fail
+      fast on the first failure), not a tuned threshold, and it changes only
+      how much is fetched and how the absence is labelled -- never a size, a
+      price, a stop or a verdict.
+  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(cache_ttl_days)
+    value: 7
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to the FOMC provider's
+      cache TTL (7) in the same module.
+  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(max_retries)
+    value: 2
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to `src.infra_retry_policy.MAX_RETRIES` (2).
+  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(request_timeout_s)
+    value: 15
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. One FRED release-dates request;
+      longer than the FOMC provider's 10s because the breaker above gives up after a single failure.
+  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(retry_backoff_base_s)
+    value: 2
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to `src.infra_retry_policy.BACKOFF_BASE_S`.
+  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(retry_backoff_jitter_s)
+    value: 1
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Same one-second jitter spread as
+      the FOMC provider in this module.
+  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(retry_backoff_max_s)
+    value: 8
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to `src.infra_retry_policy.BACKOFF_MAX_S`.
+  - id: src.data.event_calendar.MacroEventCalendarProvider.__init__(total_fetch_deadline_s)
+    value: 20
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Network deadline, timeout, retry or cache-freshness parameter default on
+      the event-calendar fetcher. It decides how long the desk waits for the
+      Fed's or FRED's servers and how long a fetched schedule stays fresh,
+      never whether or how much is traded. Same classification and same
+      reasoning as the `src.config.EventRiskConfig.*` network rows in this
+      file, which this constructor default mirrors field for field. Equal to
+      `src.config.risk_adjuncts.EventRiskConfig.calendar_deadline_s` (20), the configured whole-calendar deadline.
+  - id: src.data.event_calendar.FOMCCalendarProvider.get_meetings(horizon_days)
+    value: 10
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      How many days ahead of today a scheduled FOMC meeting is returned to a
+      caller. It selects which already-fetched meetings appear in a seat's
+      CONTEXT; no Python path sizes, prices, stops or exits a position from it,
+      and the event-risk gates that can refuse a trade live in
+      `EventRiskConfig`. HONEST CAVEAT, not softened: the value 10 has no
+      measurement behind it, and because a seat reads the resulting text it can
+      still colour a verdict. Recorded as informational rather than `arbitrary`
+      only because nothing mechanical branches on it.
+  - id: src.data.event_calendar.MacroEventCalendarProvider.get_upcoming_events(horizon_days)
+    value: 10
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      The macro-release equivalent of the FOMC horizon above, and the same
+      value. Selects which upcoming FRED releases are shown to a seat; see
+      `src.data.event_calendar.FOMCCalendarProvider.get_meetings(horizon_days)`
+      in this file for the full reasoning and the same honest caveat about the
+      value being unmeasured (not repeated, to avoid two owners of one
+      explanation).
+  - id: src.data.event_calendar.fetch_earnings_proximity(per_symbol_timeout_s)
+    value: 8.0
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Per-symbol network deadline for one earnings-date lookup inside the
+      proximity sweep. It decides how long the desk waits on one symbol
+      before marking that symbol's earnings status unavailable, never
+      whether or how much is traded. Equal to
+      `src.config.risk_adjuncts.EventRiskConfig.earnings_symbol_timeout_s` (8), the
+      configured value that overrides it in production; same
+      classification and same reasoning as the other
+      `src.config.EventRiskConfig.*` network rows in this file.
+  - id: src.data.event_calendar.fetch_earnings_proximity(total_deadline_s)
+    value: 20.0
+    status: not-trade-governing
+    site: src/data/event_calendar.py
+    note: >-
+      Whole-sweep network deadline for the earnings-proximity pass: when it
+      is exceeded the remaining symbols are reported unavailable rather
+      than waited on. It decides how long the desk waits, never whether or
+      how much is traded. Equal to
+      `src.config.risk_adjuncts.EventRiskConfig.earnings_deadline_s` (20), the configured
+      value that overrides it in production.
   - id: src.trading_calendar.REGULAR_SESSION_OPEN_MIN
     value: 570
     status: instrument
@@ -8866,163 +9424,164 @@ numbers:
   - id: ops.research.item55_level_sweep.MIN_TOUCHES
     value: 2
     status: not-trade-governing
+    source: src/data/levels.py::MIN_TOUCHES
     site: ops/research/item55_level_sweep.py
     note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Number of touches that makes a price level count; the comment at the definition says it is settled and sourced elsewhere and not swept here. Not independently verified here."
   - id: ops.research.item55_level_sweep.SPLIT
     value: 0.6
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary of the sweep; a research design choice with no derivation, and it changes only which rows are called out-of-sample."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary of the sweep; a research design choice with no derivation, and it changes only which rows are called out-of-sample. Value defined at ops/research/item55_level_sweep.py::SPLIT."
   - id: ops.research.item55_level_sweep.TOLERANCES[0]
     value: 0.5
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.TOLERANCES[1]
     value: 1.0
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.TOLERANCES[2]
     value: 2.0
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.TOLERANCES[3]
     value: 3.0
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.TOLERANCES[4]
     value: 5.0
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.WINDOWS[0]
     value: 3
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value. Value defined at ops/research/item55_level_sweep.py::WINDOWS."
   - id: ops.research.item55_level_sweep.WINDOWS[1]
     value: 5
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value. Value defined at ops/research/item55_level_sweep.py::WINDOWS."
   - id: ops.research.item55_level_sweep.WINDOWS[2]
     value: 10
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value. Value defined at ops/research/item55_level_sweep.py::WINDOWS."
   - id: ops.research.item55_level_sweep.WINDOWS[3]
     value: 25
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value. Value defined at ops/research/item55_level_sweep.py::WINDOWS."
   - id: ops.research.item55_level_sweep.rate_ci:factor[0]
     value: 1.96
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. The 95 percent two-sided normal quantile in a hit-rate confidence half-width; a standard statistical constant, used only to print an interval."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. The 95 percent two-sided normal quantile in a hit-rate confidence half-width; a standard statistical constant, used only to print an interval. Value defined at ops/research/item55_level_sweep.py::rate_ci."
   - id: ops.research.item55_volclustered_control.REPLICATIONS
     value: 20
     status: not-trade-governing
     site: ops/research/item55_volclustered_control.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Count of control draws; the comment says a sample size, not a threshold. Too few draws widen the control's noise but cannot move any live number."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Count of control draws; the comment says a sample size, not a threshold. Too few draws widen the control's noise but cannot move any live number. Value defined at ops/research/item55_volclustered_control.py::REPLICATIONS."
   - id: ops.research.min_stop_atr_sweep.CONTROL_SEED
     value: 20261004
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. A random seed for the shuffled control; reproducibility only, it carries no magnitude."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. A random seed for the shuffled control; reproducibility only, it carries no magnitude. Value defined at ops/research/min_stop_atr_sweep.py::CONTROL_SEED."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[0]
     value: 5
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[1]
     value: 10
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[2]
     value: 20
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[3]
     value: 40
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[4]
     value: 60
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.noise_band_holding_scaling.SPLIT
     value: 0.6
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary for the holding-length scan; a research design choice with no derivation."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary for the holding-length scan; a research design choice with no derivation. Value defined at ops/research/noise_band_holding_scaling.py::SPLIT."
   - id: ops.research.noise_band_holding_scaling.ATR_WINDOW
     value: 14
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. ATR averaging window; the comment says it follows the desk's own ATR convention. Not verified here against src/data/technical.py ATR_PERIOD by this script, so treat the equality as claimed, not proven."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. ATR averaging window; the comment says it follows the desk's own ATR convention. Not verified here against src/data/technical.py ATR_PERIOD by this script, so treat the equality as claimed, not proven. Value defined at ops/research/noise_band_holding_scaling.py::ATR_WINDOW."
   - id: ops.research.noise_band_holding_scaling.HOLDS[0]
     value: 1
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[1]
     value: 2
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[2]
     value: 5
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[3]
     value: 10
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[4]
     value: 20
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[5]
     value: 40
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[6]
     value: 60
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.FORWARDS[0]
     value: 10
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::FORWARDS."
   - id: ops.research.noise_band_holding_scaling.FORWARDS[1]
     value: 20
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::FORWARDS."
   - id: ops.research.noise_band_holding_scaling.FORWARDS[2]
     value: 60
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::FORWARDS."
   - id: ops.research.noise_band_holding_scaling.DECILES
     value: 10
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Number of equal-count buckets the scan sorts by; a reporting granularity, not a threshold."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Number of equal-count buckets the scan sorts by; a reporting granularity, not a threshold. Value defined at ops/research/noise_band_holding_scaling.py::DECILES."
 
   # 2026-10-05 numbers sweep 2: offline model-benchmark fixtures, the benchmark's sizing mirror and the CI shard weights.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['high'][0]
@@ -9034,6 +9593,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['high'][1]
     value: 4.0
     site: ops/model_policy/deterministic_selection.py
@@ -9043,6 +9603,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['low'][0]
     value: 0.5
     site: ops/model_policy/deterministic_selection.py
@@ -9052,6 +9613,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['low'][1]
     value: 1.0
     site: ops/model_policy/deterministic_selection.py
@@ -9061,6 +9623,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['medium'][0]
     value: 1.0
     site: ops/model_policy/deterministic_selection.py
@@ -9070,6 +9633,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['medium'][1]
     value: 2.5
     site: ops/model_policy/deterministic_selection.py
@@ -9079,6 +9643,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.MAX_POSITION_RISK_PCT
     value: 5.0
     site: ops/model_policy/deterministic_selection.py
@@ -9088,10 +9653,12 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::MAX_POSITION_RISK_PCT.
   - id: ops.model_policy.deterministic_selection.RR_FLOOR
     value: 1.5
     site: ops/model_policy/deterministic_selection.py
     status: derived
+    source: src/risk/constants.py::REWARD_RISK_FLOOR
     derived_from: src.risk.constants.REWARD_RISK_FLOOR
     base_value: 1.5
     note: >-
@@ -9102,6 +9669,7 @@ numbers:
     value: 0.5
     site: ops/model_policy/deterministic_selection.py
     status: derived
+    source: src/risk/constants.py::STARTER_POSITION_RISK_PCT
     derived_from: src.risk.constants.STARTER_POSITION_RISK_PCT
     base_value: 0.5
     note: >-
@@ -9117,6 +9685,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_POSITION_HISTORY.
   - id: ops.model_policy.scenarios._DRAWDOWN_POSITION_HISTORY['NVDA']['days_held']
     value: 30.0
     site: ops/model_policy/scenarios.py
@@ -9127,6 +9696,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_POSITION_HISTORY.
   - id: ops.model_policy.scenarios._DRAWDOWN_RECENT_PERFORMANCE['rolling_20d_pct']
     value: -2.1
     site: ops/model_policy/scenarios.py
@@ -9137,6 +9707,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._DRAWDOWN_RECENT_PERFORMANCE['rolling_5d_pct']
     value: -4.6
     site: ops/model_policy/scenarios.py
@@ -9147,6 +9718,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._DRAWDOWN_RECENT_PERFORMANCE['trailing_days']
     value: 24.0
     site: ops/model_policy/scenarios.py
@@ -9157,6 +9729,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['consumer_sentiment']['current']
     value: 58.2
     site: ops/model_policy/scenarios.py
@@ -9167,6 +9740,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['credit_spread']['change_bps']
     value: 63.0
     site: ops/model_policy/scenarios.py
@@ -9177,6 +9751,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['credit_spread']['current_bps']
     value: 412.0
     site: ops/model_policy/scenarios.py
@@ -9187,6 +9762,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['fed_funds_rate']['current']
     value: 4.25
     site: ops/model_policy/scenarios.py
@@ -9197,6 +9773,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['inflation']['core_cpi_yoy']
     value: 3.4
     site: ops/model_policy/scenarios.py
@@ -9207,6 +9784,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['inflation']['headline_cpi_yoy']
     value: 3.1
     site: ops/model_policy/scenarios.py
@@ -9217,6 +9795,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['treasury']['spread']
     value: 0.21
     site: ops/model_policy/scenarios.py
@@ -9227,6 +9806,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['treasury']['ten_year']
     value: 4.62
     site: ops/model_policy/scenarios.py
@@ -9237,6 +9817,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['treasury']['two_year']
     value: 4.41
     site: ops/model_policy/scenarios.py
@@ -9247,6 +9828,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['unemployment']['current']
     value: 4.4
     site: ops/model_policy/scenarios.py
@@ -9257,6 +9839,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['vix']['change_pct']
     value: 18.2
     site: ops/model_policy/scenarios.py
@@ -9267,6 +9850,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['vix']['current']
     value: 27.4
     site: ops/model_policy/scenarios.py
@@ -9277,6 +9861,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['vix']['percentile_1y']
     value: 88.0
     site: ops/model_policy/scenarios.py
@@ -9287,6 +9872,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._PM_CASH
     value: 2400.0
     site: ops/model_policy/scenarios.py
@@ -9297,6 +9883,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_PM_CASH.
   - id: ops.model_policy.scenarios._PM_TOTAL_VALUE
     value: 42000.0
     site: ops/model_policy/scenarios.py
@@ -9307,6 +9894,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_PM_TOTAL_VALUE.
   - id: ops.model_policy.scenarios._RISK_POSITION_HISTORY['NVDA']['days_held']
     value: 30.0
     site: ops/model_policy/scenarios.py
@@ -9317,6 +9905,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_POSITION_HISTORY.
   - id: ops.model_policy.scenarios._RISK_POSITION_HISTORY['XLE']['days_held']
     value: 46.0
     site: ops/model_policy/scenarios.py
@@ -9327,6 +9916,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_POSITION_HISTORY.
   - id: ops.model_policy.scenarios._RISK_RECENT_PERFORMANCE['rolling_20d_pct']
     value: 1.4
     site: ops/model_policy/scenarios.py
@@ -9337,6 +9927,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._RISK_RECENT_PERFORMANCE['rolling_5d_pct']
     value: -0.8
     site: ops/model_policy/scenarios.py
@@ -9347,6 +9938,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._RISK_RECENT_PERFORMANCE['trailing_days']
     value: 24.0
     site: ops/model_policy/scenarios.py
@@ -9357,6 +9949,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['actionable']
     value: 34.0
     site: ops/model_policy/scenarios.py
@@ -9367,6 +9960,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['actionable_with_structural_rr']
     value: 34.0
     site: ops/model_policy/scenarios.py
@@ -9377,6 +9971,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['analysed']
     value: 64.0
     site: ops/model_policy/scenarios.py
@@ -9387,6 +9982,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['bearish_actionable']
     value: 10.0
     site: ops/model_policy/scenarios.py
@@ -9397,6 +9993,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['breakout_actionable']
     value: 14.0
     site: ops/model_policy/scenarios.py
@@ -9407,6 +10004,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['eligible']
     value: 25.0
     site: ops/model_policy/scenarios.py
@@ -9417,6 +10015,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['eligible_shorts']
     value: 1.0
     site: ops/model_policy/scenarios.py
@@ -9427,6 +10026,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['famous_eligible']
     value: 3.0
     site: ops/model_policy/scenarios.py
@@ -9437,6 +10037,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['positions_held']
     value: 5.0
     site: ops/model_policy/scenarios.py
@@ -9447,6 +10048,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['with_computed_levels']
     value: 63.0
     site: ops/model_policy/scenarios.py
@@ -9457,6 +10059,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Enforced by tests/test_pm_selection_scenario.py::test_fixture_is_the_real_run_and_has_the_documented_shape, which asserts the fixture's shape equals _SELECTION_SHAPE_EXPECTED.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['credit_spread']['change_bps']
     value: -22.0
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9467,6 +10070,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['credit_spread']['current_bps']
     value: 263.0
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9477,6 +10081,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['fed_funds_rate']['current']
     value: 3.63
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9487,6 +10092,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['inflation']['core_cpi_yoy']
     value: 2.79
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9497,6 +10103,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['inflation']['headline_cpi_yoy']
     value: 3.54
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9507,6 +10114,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['treasury']['spread']
     value: 0.41
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9517,6 +10125,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['treasury']['ten_year']
     value: 4.75
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9527,6 +10136,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['treasury']['two_year']
     value: 4.34
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9537,6 +10147,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['unemployment']['current']
     value: 4.1
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9547,6 +10158,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['vix']['change_pct']
     value: -0.1
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9557,6 +10169,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['vix']['current']
     value: 14.92
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9567,6 +10180,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['vix']['percentile_1y']
     value: 12.0
     site: ops/model_policy/scenarios_midday_exit.py
@@ -9577,6 +10191,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: scripts.ci_shard.SECONDS_PER_TEST
     value: 0.034
     site: scripts/ci_shard.py
@@ -9803,6 +10418,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_bars.
   - id: ops.model_policy.scenarios._bars(noise)[1]
     value: 0.4
     site: ops/model_policy/scenarios.py
@@ -9813,6 +10429,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_bars.
   - id: ops.model_policy.scenarios._bars(noise)[2]
     value: -0.3
     site: ops/model_policy/scenarios.py
@@ -9833,6 +10450,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_bars.
   - id: ops.model_policy.scenarios._bars(noise)[4]
     value: -0.1
     site: ops/model_policy/scenarios.py

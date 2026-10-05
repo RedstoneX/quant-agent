@@ -89,7 +89,13 @@ def deliver_with_outcome(
         for attempt in range(max_attempts):
             attempts = attempt + 1
             try:
-                outcome = notifier.send(text, **send_kwargs)
+                # `send_once` where there is one: the real notifier's public
+                # `send` IS this funnel, so calling it here would recurse.
+                # A duck-typed test notifier with only `send` still works.
+                attempt_send = notifier.send
+                if getattr(attempt_send, "_is_delivery_funnel", None) is True:
+                    attempt_send = notifier.send_once
+                outcome = attempt_send(text, **send_kwargs)
             except Exception:  # noqa: BLE001
                 logger.exception("owner alert send raised (attempt %d)", attempts)
                 outcome = False

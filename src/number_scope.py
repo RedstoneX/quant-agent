@@ -115,6 +115,15 @@ SCOPED_PATHS: tuple[str, ...] = (
     # whether a symbol may be traded at all lives here or in
     # `UniverseScreenConfig`.
     "src/universe_screen.py",
+    # 2026-10-05: the trading-day lookup lifted out of the coverage watchdog (its scoped
+    # home) so the read-only dashboard can share it; scoped so its number stays ledgered.
+    "src/trading_day.py",
+    # 2026-10-05: the event-risk DATA module -- the FOMC schedule fetch/parse
+    # and the earnings-proximity window every seat's prompt is built from.
+    # The event-risk GATES already sit in scope via `EventRiskConfig`; this
+    # brings the fetch windows, parse sanity bounds and the 3-session
+    # earnings window under the same ledger instead of beside it.
+    "src/data/event_calendar.py",
     # 2026-10-05: three modules whose numbers were never classified; each is
     # scoped so every site must be ledgered, including the ones it hides.
     "src/data/news_dedup.py",
