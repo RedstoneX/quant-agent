@@ -100,7 +100,7 @@ def naked_position_alert(result: dict | None) -> str | None:
     )
 
 
-def send_naked_position_alert(notifier, result: dict | None) -> bool:
+def send_naked_position_alert(notifier, result: dict | None, owner=None) -> bool:
     """Raise `naked_position_alert` on `notifier`. Never raises. True if sent.
 
     Called once per session, by every entry point that sends a session
@@ -109,6 +109,10 @@ def send_naked_position_alert(notifier, result: dict | None) -> bool:
     Silence is never the output: a session that never ran the stop audit
     (died, or returned early) raises `protection_undetermined_alert`
     instead -- see PR #978 defect D.
+
+    `owner` is whatever the caller holds that reaches the ledger (the pipeline);
+    when given, a failure here also leaves a counted row. Omitted, it is logged
+    with a traceback only.
     """
     try:
         text = naked_position_alert(result) or protection_undetermined_alert(
@@ -130,7 +134,10 @@ def send_naked_position_alert(notifier, result: dict | None) -> bool:
     except Exception as exc:  # noqa: BLE001
         import logging
 
-        logging.getLogger(__name__).warning(
-            "naked-position alert failed: %s", exc,
+        from src.sentinel.guarded import record_guarded_pass
+
+        record_guarded_pass(
+            owner, "trader_feed.naked_position_alert", exc,
+            log=logging.getLogger(__name__),
         )
         return False
