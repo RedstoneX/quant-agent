@@ -106,3 +106,26 @@ def test_ratchet_refuses_without_the_trunk(monkeypatch):
     monkeypatch.setattr(g, "require_trunk", gone)
     with pytest.raises(ReferenceUnavailable):
         trunk_test_files_referencing_pipeline()
+
+
+def test_pipeline_holds_the_review_part_and_inherits_no_review_mixin():
+    """The last owed boundary (docs/SPLIT_DEFERRED_FINDINGS.md): `TradingPipeline`'s MRO carries no
+    `PromptFactsReviewMixin`; the seat holds one `PromptFactsReview` per instance, built on first use,
+    and a collaborator swapped on the seat AFTER that is the one the part runs."""
+    import src.pipeline_prompt_facts_review as shim_module
+    from src.pipeline import TradingPipeline
+    from src.pipeline_prompt_facts_review import DELEGATED, HOLDER_ATTR, review_of
+    from src.prompt_facts.review.held import PromptFactsReview
+    assert not hasattr(shim_module, "PromptFactsReviewMixin")
+    assert not any("Review" in c.__name__ for c in TradingPipeline.__mro__)
+    assert PromptFactsReview not in TradingPipeline.__mro__
+    from src.pipeline_prompt_facts import PromptFactsMixin
+    pipe = object.__new__(PromptFactsMixin)  # the seat that holds the part; no pipeline is built
+    assert getattr(pipe, HOLDER_ATTR) is None
+    held = review_of(pipe)
+    assert isinstance(held, PromptFactsReview) and review_of(pipe) is held  # held once, not rebuilt per call
+    assert all(getattr(TradingPipeline, name)._held_delegate == name for name in DELEGATED)
+    pipe._build_post_exit_reality = lambda *a, **k: "SWAPPED ON THE SEAT"
+    assert pipe._review_grading()._build_post_exit_reality() == "SWAPPED ON THE SEAT"
+    pipe.db = object()
+    assert pipe._review_blocked().db is pipe.db
