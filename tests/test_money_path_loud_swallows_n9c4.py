@@ -34,7 +34,7 @@ def test_clean_pass_and_exempt_site_never_raise():
 import sqlite3
 from types import SimpleNamespace
 
-_KIND = "guarded:broker.stop_records.holding_is_short"
+_KIND = "guarded:execution.stop_records.holding_is_short"
 
 
 def _ledger():

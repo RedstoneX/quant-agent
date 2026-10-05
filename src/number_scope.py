@@ -87,7 +87,8 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/pipeline_exits.py", "src/exits/exit_records.py",  # the trail cooldown lifted verbatim 2026-10-04
     # The intra-check session and the intraday opportunity scan -- moved here
     # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
-    "src/pipeline_intraday.py",
+    # 2026-10-04: the intraday bodies are parts under src/intraday/; the directory entry covers them all.
+    "src/pipeline_intraday.py", "src/intraday",
     # 2026-10-01, board item 210 step 6: the universe-admission cluster --
     # the external-nomination gates, the screen and its admission -- moved
     # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
@@ -121,4 +122,17 @@ SCOPED_PATHS: tuple[str, ...] = (
     # minimum-stop sweep and the noise-band holding scan); each site is ledgered so none hides unseen.
     "ops/research/item55_level_sweep.py", "ops/research/item55_volclustered_control.py",
     "ops/research/min_stop_atr_sweep.py", "ops/research/noise_band_holding_scaling.py",
+    # 2026-10-05 numbers sweep 2: the offline model benchmark's fixtures and
+    # sizing mirror, and the CI shard weights. Scoped so each number is
+    # ledgered with the proof that it reaches no order.
+    "ops/model_policy/scenarios.py",
+    "ops/model_policy/scenarios_midday_exit.py",
+    "ops/model_policy/deterministic_selection.py",
+    "scripts/ci_shard.py",
+    # 2026-10-05 numbers sweep 3: the news-verdict model and the company-profile
+    # and market-data fetch modules. Scoped so each number is ledgered with the evidence
+    # of whether it reaches a trade decision.
+    "src/models/news.py",
+    "src/data/company.py",
+    "src/data/market.py",
 )
