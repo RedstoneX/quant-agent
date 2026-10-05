@@ -213,3 +213,35 @@ def test_guard_bites_a_hand_built_sender_planted_in_a_script(monkeypatch):
     assert any("scripts/planted.py" in b for b in g.violations())
     sites.pop("scripts/planted.py")
     assert not g.violations()
+
+
+def test_the_repository_root_is_actually_scanned():
+    """`main.py` sends to the owner twice and lived outside every scanned dir.
+
+    Before the root was named, the guard listed only `src/`, `ops/` and
+    `scripts/`, so the live entry point could grow a new bypass and still be
+    reported clean. This pins the root in the measurement itself, not in a
+    constant: `scanned_paths` must really return the tracked top-level file.
+    """
+    assert "main.py" in g.scanned_paths()
+
+
+def test_root_pathspec_adds_only_top_level_files():
+    """`:(glob)*` must not cross a `/`, or the root patterns re-scan the tree."""
+    roots = [p for p in g.scanned_paths() if "/" not in p]
+    assert roots and all(p.endswith((".py", ".sh")) for p in roots)
+    assert "tests/test_owner_alert_funnel_guard.py" not in g.scanned_paths()
+
+
+def test_guard_refuses_a_bypass_planted_at_the_repository_root(monkeypatch):
+    """Plant a root-level direct send that the trunk does not have: refused."""
+    monkeypatch.setattr(g, "scanned_paths", lambda: [])
+    monkeypatch.setattr(g, "url_sites", lambda paths: set(g.EXEMPT_URL_SITES))
+    monkeypatch.setattr(g, "sender_classes", lambda paths: set(g.EXEMPT_SENDER_CLASSES))
+    monkeypatch.setattr(
+        g, "direct_send_sites",
+        lambda paths: {"main.py": ["notifier.send('a brand new root bypass')"]},
+    )
+    monkeypatch.setattr(g, "trunk_direct_send_sites", lambda paths: {})
+    bad = g.violations()
+    assert any("main.py" in b and "NEW direct notifier send" in b for b in bad)

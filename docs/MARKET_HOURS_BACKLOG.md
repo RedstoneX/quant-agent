@@ -237,3 +237,20 @@ Run it from a SEPARATE checkout with its own empty `data/`:
 
 Proof lives in `tests/test_sandbox_preflight.py`: every refusal has a paired
 positive case, so deleting a check reds the suite.
+
+**Isolation is measured, not asserted.** `scripts/check_sandbox_isolation.py`
+copies the tree's code to a scratch directory, gives the child a throwaway home
+and working directory, runs the desk's writers under an audit hook that records
+every write-capable event, and FAILS if any write lands outside the copy or the
+scratch home. The modules it loads are derived by walking the tree (the root
+`main.py` included); no list of writers and no path is stored. It also takes
+`--guard-tree` directories that must hash identically before and after.
+`tests/test_sandbox_isolation.py` proves it passes on the real tree and fails
+when a writer is made to escape. Measured 2026-10-05: 486 modules (95 with a
+write-capable call) loaded, 13 writes inside the checkout, 2 inside the scratch
+home, none elsewhere; the production checkout's code and data hashed identically
+before and after (read-only, as the `qamc` user). Writers needed no change.
+Two things the measurement found: the session lock and last-run markers sit
+under the HOME directory, not the checkout, so the preflight now also refuses a
+home directory inside production; and `log_health` and the API server name the
+production checkout as a read-only anchor (no write was observed).

@@ -36,7 +36,10 @@ Two kinds of "own messenger", both computed from the source tree at check time:
 WHAT IT COVERS, AND WHAT IT DOES NOT
 ------------------------------------
 Covered: tracked ``.py`` and ``.sh`` files under ``src/``, ``ops/`` and
-``scripts/`` -- every directory a production send can be written in.
+``scripts/``, plus the tracked ``.py``/``.sh`` files at the repository ROOT --
+every place a production send can be written in. The root is named explicitly
+because ``main.py`` is the live entry point and sends to the owner channel, and
+a directory-only list skipped it.
 
 NOT covered, so the gap is visible rather than assumed closed: ``tests/``
 (faking the wire is the point of a test), ``frontend/`` (no Python, reads the
@@ -72,6 +75,14 @@ ROOT = Path(__file__).resolve().parent.parent
 #: Where a production send could plausibly be written. Tests are excluded on
 #: purpose: a test that fakes the wire is the point of a test.
 SCAN_DIRS = ("src", "ops", "scripts")
+
+#: The repository ROOT is scanned too, and separately, because `main.py` lives
+#: there and sends to the owner channel twice. A directory list alone missed it
+#: entirely: the guard reported a clean tree while the live entry point could
+#: grow a new bypass nobody would be refused for. The pathspec uses git's
+#: `:(glob)` magic, where `*` does not cross a `/`, so this adds top-level
+#: files ONLY and does not silently re-scan the whole tree.
+ROOT_PATTERNS = (":(glob)*.py", ":(glob)*.sh")
 
 #: The funnel itself, and the package it lives in.
 FUNNEL_FILE = "src/notifier/transport.py"
@@ -137,6 +148,7 @@ class TreeUnreadable(RuntimeError):
 def scanned_paths() -> list[str]:
     """Tracked ``.py`` and ``.sh`` files in the scanned directories."""
     patterns = [f"{d}/*{ext}" for d in SCAN_DIRS for ext in (".py", ".sh")]
+    patterns += list(ROOT_PATTERNS)
     out = subprocess.run(
         ["git", "ls-files", "-z", "--", *patterns],
         cwd=ROOT, capture_output=True, text=True,

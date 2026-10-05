@@ -12,7 +12,7 @@ from src.sentinel.guarded import attach_reconciliation_db
 from src.sentinel.reconciliation import AGREED, DISAGREED, NOT_RUN, ReconciliationLog
 from src.storage.db import Database
 
-_KIND = "guarded:broker.account_reads.margin_interest_activities"
+_KIND = "guarded:execution.broker_parts.account_reads.margin_interest_activities"
 
 
 def _broker(tmp_path, client):
@@ -59,4 +59,4 @@ def test_swallowed_stop_listing_defect_is_loud(tmp_path, caplog):
     with caplog.at_level(logging.ERROR):
         assert broker._existing_stop_covering_qty("SYM", qty=1, side="sell", stop_price=5.0) is None
     assert any(r.exc_info is not None for r in caplog.records if r.levelno >= logging.ERROR)
-    assert _status(db, "guarded:broker.stop_place.existing_stop_covering_qty.list") == DISAGREED
+    assert _status(db, "guarded:execution.broker_parts.stop_place.existing_stop_covering_qty.list") == DISAGREED
