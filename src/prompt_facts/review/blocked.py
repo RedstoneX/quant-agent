@@ -43,7 +43,7 @@ class ReviewBlocked:
         stamps = [ts for _, rows in shown for ts, _ in rows if ts]
         if stamps:
             try:
-                oldest = date.fromisoformat(min(stamps)[:10])
+                oldest = date.fromisoformat(min(stamps).split("T")[0])
                 oldest_age = float((et_today() - oldest).days)
             except (TypeError, ValueError):
                 oldest_age = None

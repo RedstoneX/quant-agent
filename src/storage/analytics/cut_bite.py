@@ -93,7 +93,7 @@ def record_cut_bite(
     return True
 
 
-def read_cut_bite(*, db, site: str, seat: str = DEFAULT_SEAT, limit: int = 500) -> list[dict]:
+def read_cut_bite(*, db, site: str, seat: str = DEFAULT_SEAT) -> list[dict]:
     """Every cut-site record for `site`, newest first, joined to the seat's verdict.
 
     Each entry carries `run_id`, `ran_at`, `cuts`, `oldest_surviving_age_days`,
@@ -106,8 +106,8 @@ def read_cut_bite(*, db, site: str, seat: str = DEFAULT_SEAT, limit: int = 500) 
         return []
     rows = conn.execute(
         "SELECT ran_at, detail, run_id FROM reconciliation_runs "
-        "WHERE kind = ? AND run_id IS NOT NULL ORDER BY id DESC LIMIT ?",
-        (f"{KIND_PREFIX}{site}", int(limit)),
+        "WHERE kind = ? AND run_id IS NOT NULL ORDER BY id DESC",
+        (f"{KIND_PREFIX}{site}",),
     ).fetchall()
     out: list[dict] = []
     for ran_at, detail, run_id in rows:
@@ -137,8 +137,6 @@ def read_cut_bite(*, db, site: str, seat: str = DEFAULT_SEAT, limit: int = 500) 
     return out
 
 
-def complete_cut_bite_observations(
-    *, db, site: str, seat: str = DEFAULT_SEAT, limit: int = 500
-) -> list[dict]:
+def complete_cut_bite_observations(*, db, site: str, seat: str = DEFAULT_SEAT) -> list[dict]:
     """Only the runs where all four fields exist -- the observation series itself."""
-    return [o for o in read_cut_bite(db=db, site=site, seat=seat, limit=limit) if o["complete"]]
+    return [o for o in read_cut_bite(db=db, site=site, seat=seat) if o["complete"]]
