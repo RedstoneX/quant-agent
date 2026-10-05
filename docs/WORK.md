@@ -1,5 +1,4 @@
 
-
 # QAMC Current Work
 
 ## Active finish line
@@ -172,7 +171,7 @@ DONE WHEN:
   - [x] spend and actions re-measured — 2026-09-26, against the production cost circuit read-only. …(rest: docs/board_notes/item-177.md)
 detail: docs/board_notes/item-177.md
 
-**186. Risk ceilings are made-up — filed 2026-09-25. [5 of 8 ticked; 170, 172 buildable; 169 blocked]**
+**186. Risk ceilings are made-up — filed 2026-09-25. [5 of 8 ticked; both open boxes BLOCKED on evidence the desk does not record: the short-side haircut needs adverse overnight gaps on closed shorts (0 of 5 shorts ever taken carry one), `short_gap_risk_multiple` needs stored daily bars]**
 
 DONE WHEN:
   - [x] the three already-ratified ceilings (25 / 90 / 40) stay ratified, and the remaining three are researched to a definite verdict rather than left unexamined

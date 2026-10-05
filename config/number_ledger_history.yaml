@@ -1098,6 +1098,20 @@ changes:
       `instrument` rather than `arbitrary`. The single cost that defended
       the percentage -- the cancel-then-resubmit window with no protective
       order -- is gone now that the in-place stop amend is on main.
+  - delta: +1
+    date: '2026-10-04'
+    why: >-
+      Board item 70, the second split. One `arbitrary` row,
+      `src.risk.exit_guard.NOISE_BAND_ATR_MULTIPLE`, was carrying TWO jobs:
+      the midday gate's entry-anchored band, widened by sqrt(sessions held),
+      and the `check_structural_protection` fallback's flat band anchored on
+      the running extreme since entry. One name, two anchors, two widths for
+      the same holding on the same day. The second job now has its own row,
+      `src.risk.exit_guard.FALLBACK_PROTECTION_ATR_MULTIPLE`, at the SAME
+      value of 1.0 with no behaviour change. The count rises because the
+      ledger was UNDER-counting the unsourced numbers the desk already runs
+      on, not because a new number was invented: nothing was picked, nothing
+      was retuned, and the arithmetic the desk performs is unchanged.
   - delta: -1
     date: '2026-10-04'
     why: >-
