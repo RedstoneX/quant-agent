@@ -11321,23 +11321,19 @@ numbers:
       A plain buy at high conviction can tie or outrank a strong buy at lower
       conviction on spacing chosen by convention rather than evidence.
     settles_by:
-      kind: recording
-      state: built
+      kind: measurement
+      state: specified
       where: >-
-        src/stage_morning_research.py and src/pipeline_intraday.py persist each
-        Technical analysis in specialist_evidence
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
       records: >-
-        each symbol's Technical rating and conviction in evidence_json, with
-        run_id, symbol and timestamp so forward bars and recorded outcomes can
-        be joined without inventing a second trading-memory system
+        the complete ordering of every rating-and-conviction pair under the
+        present scalar and under admissible monotone relabellings of each
+        ordinal scale, without reading any trade or forward return
       closes_when: >-
-        enough recorded buy and strong-buy reads exist to compare forward
-        outcomes at like conviction, and the rung is measured, reformulated to
-        cancel, or removed if it adds no information
-      writes:
-        - specialist_evidence.evidence_json
-        - specialist_evidence.run_id
-        - specialist_evidence.symbol
+        the scalar is removed in favour of preserving rating and conviction as
+        separate ordered facts, or the combined order is proven invariant to
+        every admissible relabelling and therefore needs no chosen spacing
   - id: src.models.analysis.RATING_MAGNITUDE['strong_buy']
     value: 1.0
     site: src/models/analysis.py
@@ -11353,23 +11349,19 @@ numbers:
       Mixed rating and conviction combinations can be ordered by an unmeasured
       ratio before the Portfolio Manager sees them.
     settles_by:
-      kind: recording
-      state: built
+      kind: measurement
+      state: specified
       where: >-
-        src/stage_morning_research.py and src/pipeline_intraday.py persist each
-        Technical analysis in specialist_evidence
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
       records: >-
-        each symbol's Technical rating and conviction in evidence_json, with
-        run_id, symbol and timestamp so forward bars and recorded outcomes can
-        be joined without inventing a second trading-memory system
+        the complete ordering of every rating-and-conviction pair under the
+        present scalar and under admissible monotone relabellings of each
+        ordinal scale, without reading any trade or forward return
       closes_when: >-
-        enough recorded buy and strong-buy reads exist to compare forward
-        outcomes at like conviction, and the rung is measured, reformulated to
-        cancel, or removed if it adds no information
-      writes:
-        - specialist_evidence.evidence_json
-        - specialist_evidence.run_id
-        - specialist_evidence.symbol
+        the scalar is removed in favour of preserving rating and conviction as
+        separate ordered facts, or the combined order is proven invariant to
+        every admissible relabelling and therefore needs no chosen spacing
   - id: src.models.analysis.RATING_MAGNITUDE['sell']
     value: 0.5
     site: src/models/analysis.py
@@ -11406,16 +11398,16 @@ numbers:
       kind: recording
       state: specified
       where: >-
-        config/number_ledger.yaml, the settlement route on
-        src.data.insider_signal._WEIGHTS[INDETERMINATE]
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
       records: >-
-        every pre-rank insider observation's symbol, class, signed transaction
-        value and resulting rank, including observations later removed by the
-        evidence cap rather than only the representatives that survived it
+        every indeterminate classification with the source fields and exact
+        failure reason that prevented a routine-or-opportunistic result, plus
+        the unweighted transaction value before evidence truncation
       closes_when: >-
-        the same observation sets can be replayed across candidate ratios and
-        joined to public forward returns, so the ratio is read from evidence or
-        the indeterminate rung is removed when it adds no signal
+        the producing step supplies a determinate class where required, or the
+        rank preserves indeterminate as an explicit category without assigning
+        it an interpolated numeric weight; no outcome fit may choose the ratio
   - id: src.data.insider_signal._WEIGHTS[OPPORTUNISTIC]
     value: 1.0
     site: src/data/insider_signal.py
@@ -11434,17 +11426,21 @@ numbers:
   - id: src.data.insider_signal._BAND_LOW
     value: 0.1
     site: src/data/insider_signal.py
-    status: not-trade-governing
+    status: sourced
+    source: https://rpc.cfainstitute.org/research/financial-analysts-journal/2004/some-insider-sales-are-positive-signals
     note: >-
-      Published holdings-band boundary used only to label evidence. No gate,
-      size or rank reads the band; changing it changes reporting text only.
+      Scott and Xu's published holdings-fraction table boundary. The label and
+      its cited evidence text enter the Smart Money prompt/cache, so this is
+      trade-informing even though no deterministic gate reads it.
   - id: src.data.insider_signal._BAND_HIGH
     value: 0.5
     site: src/data/insider_signal.py
-    status: not-trade-governing
+    status: sourced
+    source: https://rpc.cfainstitute.org/research/financial-analysts-journal/2004/some-insider-sales-are-positive-signals
     note: >-
-      Published holdings-band boundary used only to label evidence. No gate,
-      size or rank reads the band; changing it changes reporting text only.
+      Scott and Xu's published holdings-fraction table boundary. The label and
+      its cited evidence text enter the Smart Money prompt/cache, so this is
+      trade-informing even though no deterministic gate reads it.
   - id: src.data.insider_signal.InsiderSignalThresholds.cadence_max_gap_dispersion
     value: 0.25
     site: src/data/insider_signal.py
@@ -11490,6 +11486,137 @@ numbers:
     note: >-
       Fallback copy of the SmartMoneyConfig field. Production constructs the
       thresholds from config, and base drift keeps this duplicate aligned.
+  - id: src.data.context._W_1W
+    value: 5
+    site: src/data/context.py
+    status: arbitrary
+    note: >-
+      Completed-session count used to label a return as one week. Five is a
+      normal full trading week, but exchange holidays mean it is not the same
+      quantity as one calendar week.
+    open_question: >-
+      Can the named one-week return be anchored to an actual calendar boundary
+      and the instrument's completed sessions rather than a fixed bar count?
+    cost_while_unanswered: >-
+      The Technical seat receives a horizon label whose elapsed calendar time
+      changes around holidays and exceptional exchange closures.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
+      records: >-
+        for each present analysis date, the actual completed session selected
+        at the named calendar boundary and the elapsed calendar duration, with
+        no later return or trade outcome
+      closes_when: >-
+        the return is computed from the last completed session at or before the
+        named calendar boundary and this fixed session count is removed
+  - id: src.data.context._W_1M
+    value: 21
+    site: src/data/context.py
+    status: arbitrary
+    note: >-
+      Completed-session count used to label a return as one month. Twenty-one
+      approximates a month but does not read the boundary from the calendar.
+    open_question: >-
+      Can the named one-month return be anchored to an actual calendar boundary
+      and the instrument's completed sessions rather than a fixed bar count?
+    cost_while_unanswered: >-
+      The Technical seat receives a horizon label whose elapsed calendar time
+      varies with month length, holidays and exceptional exchange closures.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
+      records: >-
+        for each present analysis date, the actual completed session selected
+        at the named calendar boundary and the elapsed calendar duration, with
+        no later return or trade outcome
+      closes_when: >-
+        the return is computed from the last completed session at or before the
+        named calendar boundary and this fixed session count is removed
+  - id: src.data.context._W_3M
+    value: 63
+    site: src/data/context.py
+    status: arbitrary
+    note: >-
+      Completed-session count used to label a return as three months. It is
+      three times the approximate monthly count, not a calendar observation.
+    open_question: >-
+      Can the named three-month return be anchored to an actual calendar
+      boundary and completed sessions rather than a multiplied approximation?
+    cost_while_unanswered: >-
+      The Technical seat receives a horizon label whose elapsed calendar time
+      varies with month length, holidays and exceptional exchange closures.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
+      records: >-
+        for each present analysis date, the actual completed session selected
+        at the named calendar boundary and the elapsed calendar duration, with
+        no later return or trade outcome
+      closes_when: >-
+        the return is computed from the last completed session at or before the
+        named calendar boundary and this fixed session count is removed
+  - id: src.data.context._W_6M
+    value: 126
+    site: src/data/context.py
+    status: arbitrary
+    note: >-
+      Completed-session count used to label a return as six months. It is six
+      times the approximate monthly count, not a calendar observation.
+    open_question: >-
+      Can the named six-month return be anchored to an actual calendar
+      boundary and completed sessions rather than a multiplied approximation?
+    cost_while_unanswered: >-
+      The Technical seat receives a horizon label whose elapsed calendar time
+      varies with month length, holidays and exceptional exchange closures.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
+      records: >-
+        for each present analysis date, the actual completed session selected
+        at the named calendar boundary and the elapsed calendar duration, with
+        no later return or trade outcome
+      closes_when: >-
+        the return is computed from the last completed session at or before the
+        named calendar boundary and this fixed session count is removed
+  - id: src.data.context._W_12M
+    value: 252
+    site: src/data/context.py
+    status: arbitrary
+    note: >-
+      Completed-session count used to label a return as twelve months. It is
+      twelve times the approximate monthly count, not a calendar observation.
+    open_question: >-
+      Can the named twelve-month return be anchored to an actual calendar
+      boundary and completed sessions rather than a multiplied approximation?
+    cost_while_unanswered: >-
+      The Technical seat receives a horizon label whose elapsed calendar time
+      varies with holidays, leap years and exceptional exchange closures.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
+      records: >-
+        for each present analysis date, the actual completed session selected
+        at the named calendar boundary and the elapsed calendar duration, with
+        no later return or trade outcome
+      closes_when: >-
+        the return is computed from the last completed session at or before the
+        named calendar boundary and this fixed session count is removed
   - id: src.data.context._SLOPE_LOOKBACK
     value: 10
     site: src/data/context.py
@@ -11521,12 +11648,31 @@ numbers:
   - id: src.data.context._CONSOLIDATION_WINDOW
     value: 14
     site: src/data/context.py
-    status: derived
-    derived_from: src.data.technical.ATR_PERIOD
-    base_value: 14
+    status: arbitrary
     note: >-
-      Bound directly to ATR_PERIOD in source. A base shorter than one complete
-      volatility-reading window has no comparable ATR context of its own.
+      Minimum sessions admitted as a consolidation. It currently equals the
+      ATR period in source, but equal values do not establish that volatility
+      estimation and base duration are the same market quantity.
+    open_question: >-
+      How can the start of the current base be read from the instrument's own
+      price structure without imposing a flat minimum duration?
+    cost_while_unanswered: >-
+      The Technical seat can be told that a base exists or does not exist
+      because of a duration borrowed from an unrelated volatility estimator.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: >-
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
+      records: >-
+        candidate base starts supplied by present-instrument pivots and range
+        containment, with the resulting span and volatility description, but
+        never this desk's later trade return
+      closes_when: >-
+        consolidation duration is read from the current instrument's detected
+        structure and the fixed minimum is removed, or the field is removed if
+        no structure-defined start can be stated
   - id: src.data.context._MAX_GAPS_REPORTED
     value: 3
     site: src/data/context.py
@@ -11542,15 +11688,16 @@ numbers:
       A material older gap can be hidden from the analyst while a less useful
       nearer gap consumes the fixed allowance.
     settles_by:
-      kind: recording
+      kind: measurement
       state: specified
       where: >-
-        config/number_ledger.yaml, the settlement route on
-        src.data.context._MAX_GAPS_REPORTED
+        docs/board_notes/item-090.md, the 2026-10-05 context-and-ranking
+        coverage repair
       records: >-
-        the complete pre-truncation gap list, the subset rendered, prompt size
-        and whether omitted gaps were later referenced by the Technical answer
+        controlled replays of an identical cached market context with the full
+        gap list and each successively truncated rendering, including prompt
+        token count and any change in extracted Technical facts or verdict
       closes_when: >-
-        recorded demand shows the cap never binds and it is removed, or the
-        prompt budget supplies a derived cap that preserves every materially
-        referenced gap
+        the cap is derived arithmetically from an explicit prompt-token budget,
+        removed when the full list fits, or replaced by a rendering proven
+        invariant in controlled replay without consulting trade outcomes

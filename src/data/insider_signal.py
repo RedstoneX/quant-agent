@@ -221,13 +221,16 @@ class InsiderSignalClass:
 # exactly these three bands. They are the paper's own column boundaries, so
 # they are module constants rather than operator-tunable settings: moving
 # them would silently detach the band label from the citation it exists to
-# carry. Nothing downstream gates on them — see BANDS_ARE_REPORTING_ONLY.
+# carry. No deterministic gate reads them, but their labels and cited evidence
+# reach the Smart Money prompt/cache — see BANDS_ARE_REPORTING_ONLY.
 _BAND_LOW = 0.10
 _BAND_HIGH = 0.50
 
-# The bands label a row; they never admit or reject one. Since 2026-09-13 no
-# holdings ratio anywhere in this module changes a classification — see
-# departure #3 in the module docstring.
+# The bands label a row; they never admit or reject one. "Reporting only"
+# describes this deterministic classifier, not the full decision chain: the
+# reported label is evidence presented to the Smart Money seat. Since
+# 2026-09-13 no holdings ratio changes a classification — see departure #3 in
+# the module docstring.
 BANDS_ARE_REPORTING_ONLY = True
 
 BAND_UNDER_LOW = "under_10pct"

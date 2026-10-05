@@ -195,6 +195,7 @@ from src.number_site_scan import (  # noqa: F401 -- re-exported, lifted verbatim
     NEUTRAL_VALUES,
     NumberSite,
     _factor_operands,
+    _bound_name_values,
     _field_default,
     _imported_constants,
     _leaves,
@@ -509,16 +510,18 @@ def _scan_module(
         if node.value is None:
             continue
         for target in targets:
-            if not isinstance(target, ast.Name):
-                continue
-            name = target.id
-            if not (name.isupper() or (name.startswith("_") and name.lstrip("_").isupper())):
-                continue
-            for site_id, value, lineno in _leaves(
-                node.value, f"{module}.{name}", names, local
-            ):
-                if value not in NEUTRAL_VALUES:
-                    sites.append(NumberSite(site_id, rel, lineno, value))
+            for name_node, value_node in _bound_name_values(target, node.value):
+                name = name_node.id
+                if not (
+                    name.isupper()
+                    or (name.startswith("_") and name.lstrip("_").isupper())
+                ):
+                    continue
+                for site_id, value, lineno in _leaves(
+                    value_node, f"{module}.{name}", names, local
+                ):
+                    if value not in NEUTRAL_VALUES:
+                        sites.append(NumberSite(site_id, rel, lineno, value))
 
     # (b) numeric defaults on `*Config` class fields.
     for node in ast.walk(tree):

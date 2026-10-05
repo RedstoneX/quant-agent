@@ -298,11 +298,10 @@ class AnalystVerdict(BaseModel):
 
 #: How a Technical rating maps onto `AnalystVerdict.magnitude`. The rating
 #: scale has exactly two directional rungs a side (buy / strong_buy), so this
-#: is an EQUAL-SPACING ordinal encoding of the desk's own scale — the same
-#: posture as `CONVICTION_SCORE` in `ops/model_policy/deterministic_selection`
-#: reading band tops — not a tuned weight. Nothing has been measured that
-#: would justify any other spacing (Phase 13 §13.3: start equal, adjust only
-#: on out-of-sample proof).
+#: is an EQUAL-SPACING ordinal encoding of the desk's own scale. It is not a
+#: measured weight: `score_verdict` adds it to the independent conviction
+#: score, making the chosen spacing load-bearing. Item 90's settlement route
+#: is structural reformulation, not fitting these values to desk outcomes.
 RATING_MAGNITUDE: dict[str, float] = {
     "strong_buy": 1.0, "buy": 0.5, "neutral": 0.0, "sell": 0.5, "strong_sell": 1.0,
 }

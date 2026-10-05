@@ -36,22 +36,21 @@ from src.data.technical import ATR_PERIOD, atr_series
 from src.models import OHLCV
 from src.quantities import avg_dollar_volume
 
-# Trading sessions per window. Calendar months are avoided deliberately —
-# indicators are computed on completed bars, so a session count is exact
-# whereas "one month" silently varies with holidays.
+# Completed-session approximations for the named calendar horizons. The bar
+# count is exact but the one-week/month labels are not: holidays and month
+# lengths vary. Item 90 routes these to real calendar boundaries without
+# choosing counts from later returns.
 _W_1W, _W_1M, _W_3M, _W_6M, _W_12M = 5, 21, 63, 126, 252
 
 # Sessions used to measure whether a moving average is rising or falling.
 _SLOPE_LOOKBACK = 10
 
-# The shortest stretch that can be called a base. NOT a chosen figure: it is
-# the ATR period this same file already reads volatility over (Wilder, via
-# `src.data.technical.ATR_PERIOD`). A stretch shorter than one full
-# volatility-measurement period has no volatility reading of its own to be
-# tight relative to, so there is nothing to compare it against. It sets
-# resolution and a minimum, not a pass/fail line: the detector then extends
-# the base backwards for as long as price stays inside the envelope, so the
-# reported length is read off the instrument.
+# The shortest stretch currently admitted as a base. It reuses the ATR period
+# this file already reads (Wilder, via `src.data.technical.ATR_PERIOD`), but
+# equal values do not derive base duration from volatility-estimator duration.
+# Item 90 therefore keeps this as an interim arbitrary number and routes the
+# detector to read the base start from present price structure. The detector
+# extends the base backwards for as long as price stays inside the envelope.
 #
 # Replaced `_CONSOLIDATION_WINDOW = 15` / `_CONSOLIDATION_MAX_RANGE_PCT = 8.0`
 # (docs/WORK.md item 58, closed 2026-09-13). The 8% was inherited convention:
@@ -60,8 +59,10 @@ _SLOPE_LOOKBACK = 10
 # this test.
 _CONSOLIDATION_WINDOW = ATR_PERIOD
 
-# How many gaps the prompt line budget will carry. A rendering budget, not a
-# market-structure claim — the nearest gaps are collected first.
+# Interim cap on gaps carried into the Technical prompt. It is a rendering
+# choice, not a market-structure claim; item 90 requires either derivation from
+# an explicit token budget, removal, or a controlled prompt-invariance result.
+# The nearest gaps are collected first.
 _MAX_GAPS_REPORTED = 3
 
 
