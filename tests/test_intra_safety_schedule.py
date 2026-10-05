@@ -16,6 +16,8 @@ from pathlib import Path
 import pytest
 
 from src import config as cfg
+from src.intraday.safety import IntradaySafety
+from src.intraday.session import IntradaySession
 from src.pipeline import TradingPipeline
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -40,8 +42,8 @@ def test_the_free_safety_work_has_a_standalone_entry_point():
 @pytest.mark.parametrize("job", SAFETY_JOBS)
 def test_each_safety_job_lives_in_the_shared_preamble_not_the_paid_body(job):
     """One implementation, two callers -- never a forked copy."""
-    preamble = inspect.getsource(TradingPipeline._run_intra_safety_preamble)
-    paid = inspect.getsource(TradingPipeline._run_intra_check_body)
+    preamble = inspect.getsource(IntradaySafety._run_intra_safety_preamble)
+    paid = inspect.getsource(IntradaySession._run_intra_check_body)
     assert f"self.{job}(" in preamble, f"{job} must run in the shared preamble"
     assert f"self.{job}(" not in paid, (
         f"{job} is duplicated into the paid tick body -- the two callers must "
@@ -51,13 +53,14 @@ def test_each_safety_job_lives_in_the_shared_preamble_not_the_paid_body(job):
 
 def test_the_paid_tick_still_runs_the_preamble():
     """Decoupling must be ADDITIVE: the paid tick loses nothing."""
-    paid = inspect.getsource(TradingPipeline._run_intra_check_body)
+    paid = inspect.getsource(IntradaySession._run_intra_check_body)
     assert "self._run_intra_safety_preamble(run_id)" in paid
+    assert callable(TradingPipeline._run_intra_safety_preamble) and callable(TradingPipeline._run_intra_check_body)
 
 
 def test_both_callers_take_the_same_broker_write_lock():
     """Two units firing together cannot race (board item 127)."""
-    preamble = inspect.getsource(TradingPipeline._run_intra_safety_preamble)
+    preamble = inspect.getsource(IntradaySafety._run_intra_safety_preamble)
     assert "self._intraday_scan_process_lock()" in preamble
     assert "self._blocking_owner_session()" in preamble
 
