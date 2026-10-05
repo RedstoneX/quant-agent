@@ -362,10 +362,10 @@ def verify_alert_channel(
     implementation of "is the channel alive" would be a self-test that can
     pass while the path it stands in for is broken.
     """
-    from src.notifier import ProbeResult, TelegramNotifier
+    from src.notifier import ProbeResult, build_default_notifier
 
     try:
-        target = notifier if notifier is not None else TelegramNotifier()
+        target = build_default_notifier(existing=notifier)
         result = target.probe()
     except Exception as exc:  # noqa: BLE001
         logger.warning("alert watchdog probe raised: %s", exc)

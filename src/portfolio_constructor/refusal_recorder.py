@@ -17,6 +17,12 @@ from src.portfolio_constructor.config import (
 )
 from src.risk.constants import REWARD_RISK_PARITY
 
+#: One row per computed-vs-analyst target comparison (ledger row
+#: `target_divergence_warn_pct`). An OBSERVATION, never a refusal: it carries
+#: stage `_SUBFLOOR_RISK_STAGE`, the signed gap in `observed_gap_pct` and the
+#: warn threshold in `threshold`.
+TARGET_DIVERGENCE_OBSERVED = "target_divergence_observed"
+
 # The constructor's own logger, so log capture and filters keep matching.
 logger = logging.getLogger("src.portfolio_constructor")
 
@@ -69,4 +75,25 @@ class TradeRefusalRecorder:
             logger.warning(
                 "Constructor: sub-floor risk observation write failed "
                 "for %s: %s", symbol, e,
+            )
+
+    def record_target_divergence(
+        self, symbol: str, gap_pct: float, threshold_pct: float,
+    ) -> None:
+        """Record ONE computed-vs-analyst target comparison. Never raises."""
+        db = self.db
+        if db is None:
+            return
+        try:
+            db.insert_trade_refusal(
+                symbol=symbol, direction=None,
+                refusal=TARGET_DIVERGENCE_OBSERVED,
+                stage=_SUBFLOOR_RISK_STAGE,
+                observed_gap_pct=float(gap_pct),
+                threshold=float(threshold_pct),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Constructor: target divergence row write failed for %s: %s",
+                symbol, e,
             )

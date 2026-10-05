@@ -30,11 +30,11 @@ def _broker(tmp_path):
 
 
 def _status(db, where: str) -> str:
-    return ReconciliationLog(conn=db.conn).status(kind=f"guarded:broker.{where}")
+    return ReconciliationLog(conn=db.conn).status(kind=f"guarded:execution.{where}")
 
 
 def _detail(db, where: str) -> str:
-    row = ReconciliationLog(conn=db.conn).latest(kind=f"guarded:broker.{where}")
+    row = ReconciliationLog(conn=db.conn).latest(kind=f"guarded:execution.{where}")
     return "" if row is None else row["detail"]
 
 

@@ -22,7 +22,7 @@ def test_alert_failure_with_owner_is_recorded(tmp_path, caplog):
     with patch("src.trader_feed.naked.naked_position_alert", side_effect=RuntimeError("boom")):
         sent = send_naked_position_alert(None, {}, owner=SimpleNamespace(db=db))
     assert sent is False
-    assert _rows(db) == ["guarded:broker.trader_feed.naked_position_alert"]
+    assert _rows(db) == ["guarded:trader_feed.naked_position_alert"]
     assert any(r.exc_info for r in caplog.records)
 
 
