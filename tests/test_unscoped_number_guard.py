@@ -23,8 +23,34 @@ def test_a_new_number_is_caught_as_a_delta(monkeypatch):
     real = unscoped_number_guard.working_sites()
     monkeypatch.setattr(unscoped_number_guard, "working_sites", lambda: real)
     monkeypatch.setattr(unscoped_number_guard, "trunk_sites", lambda: real[:-1])
+    monkeypatch.setattr(unscoped_number_guard, "working_ledger_ids", lambda: set())
+    monkeypatch.setattr(unscoped_number_guard, "trunk_ledger_ids", lambda: set())
     bad = unscoped_number_guard.violations()
     assert bad and "+1" in bad[0] and real[-1] in bad[0], bad
+
+
+def test_the_unit_is_the_number_a_registered_new_site_is_not_growth(monkeypatch):
+    real = unscoped_number_guard.working_sites()
+    monkeypatch.setattr(unscoped_number_guard, "working_sites", lambda: real)
+    monkeypatch.setattr(unscoped_number_guard, "trunk_sites", lambda: real[:-1])
+    monkeypatch.setattr(unscoped_number_guard, "trunk_ledger_ids", lambda: set())
+    # Registered in this tree's ledger: one row retires one number, module untouched.
+    monkeypatch.setattr(unscoped_number_guard, "working_ledger_ids", lambda: {real[-1]})
+    assert unscoped_number_guard.violations() == []
+    # Registering a DIFFERENT number does not excuse the new unregistered one.
+    monkeypatch.setattr(unscoped_number_guard, "working_ledger_ids", lambda: {real[0]})
+    bad = unscoped_number_guard.violations()
+    assert bad and real[-1] in bad[0], bad
+
+
+def test_the_count_falls_by_one_per_registered_number():
+    sites = unscoped_number_guard.working_sites()
+    assert len(unscoped_number_guard.unregistered(sites, set())) == len(sites)
+    assert len(unscoped_number_guard.unregistered(sites, {sites[0]})) == len(sites) - 1
+
+
+def test_the_trunk_ledger_is_actually_read():
+    assert len(unscoped_number_guard.trunk_ledger_ids()) > 100
 
 
 def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):

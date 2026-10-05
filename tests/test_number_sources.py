@@ -561,6 +561,25 @@ def test_a_renamed_or_deleted_number_leaves_a_detectable_orphan() -> None:
     assert "orphan" in _kinds(root, ledger)
 
 
+def test_a_row_registering_an_unscoped_number_is_registered_not_orphaned() -> None:
+    """The unit is the number: one row retires one unscoped site, its value still checked;
+    a row with no site in ANY production module is still an orphan."""
+    import tempfile
+
+    root, ledger = _fixture(Path(tempfile.mkdtemp()), "# empty scoped module\n", """
+        numbers:
+          - id: src.outside.LIMIT
+            value: 7
+            status: arbitrary
+        """ + _DEBT)
+    (root / "src" / "outside.py").write_text("LIMIT = 7\n")
+    assert "orphan" not in _kinds(root, ledger)
+    (root / "src" / "outside.py").write_text("LIMIT = 9\n")
+    assert "orphan" not in _kinds(root, ledger) and _kinds(root, ledger)  # value drift is still refused
+    (root / "src" / "outside.py").write_text("# gone\n")
+    assert "orphan" in _kinds(root, ledger)
+
+
 def test_zero_is_not_a_site_but_one_is() -> None:
     """0 is an empty default and the bottom of an ordinal scale. 1 is not the
     identity when it is an ATR multiple, and excluding it hid the hard floor

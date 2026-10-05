@@ -12,12 +12,22 @@ working tree, runs the SAME scanner (same scope rules) over a throwaway copy of
 ``origin/main``'s ``src/``, and reports the DELTA. If ``origin/main`` cannot be
 read it REFUSES; it never passes by default.
 
+THE UNIT IS THE NUMBER, NOT THE MODULE. A site with a ledger row is registered
+wherever its module stands; the gate and both measured counts subtract the
+ledger (this tree's for this tree, trunk's for trunk) so each registered number
+lowers the count by one, and an UNREGISTERED new site is still refused.
+Bringing a whole module into ``SCOPED_PATHS`` remains the way to make coverage
+of its FUTURE numbers an obligation; it is no longer the only way to register
+one of its present ones.
+
 Run it directly: ``python -m scripts.unscoped_number_guard``.
 """
 from __future__ import annotations
 
 import sys
 import tempfile
+
+import yaml
 from pathlib import Path
 
 from scripts.guard_reference import (
@@ -31,9 +41,30 @@ from src import number_sources
 from src.number_universe import is_production
 
 
+LEDGER_REL = "config/number_ledger.yaml"
+
+
 def working_sites() -> list[str]:
     """Site ids of every unscoped numeric constant in the working tree."""
     return [s.site_id for s in number_sources.collect_unscoped_sites(ROOT)]
+
+
+def working_ledger_ids() -> set[str]:
+    """Ids registered in this tree's ledger."""
+    return set(number_sources.load_ledger(ROOT / LEDGER_REL))
+
+
+def trunk_ledger_ids() -> set[str]:
+    """Ids registered in ``origin/main``'s ledger; refuses if it cannot be read."""
+    text = trunk_blobs([LEDGER_REL]).get(LEDGER_REL)
+    if text is None:
+        raise ReferenceUnavailable(f"{LEDGER_REL} is not on {TRUNK}; it refuses rather than pass.")
+    return {str(e.get("id")) for e in (yaml.safe_load(text) or {}).get("numbers") or []}
+
+
+def unregistered(sites: list[str], ledger_ids: set[str]) -> list[str]:
+    """The sites with no ledger row: the unit the owner's count is kept in."""
+    return [s for s in sites if s not in ledger_ids]
 
 
 def trunk_sites() -> list[str]:
@@ -70,24 +101,33 @@ def trunk_sites() -> list[str]:
 
 
 def money_reach_gap() -> tuple[int, int]:
-    """(money modules outside the ledger's scope, numbers a full scan finds in them).
+    """(money modules outside the ledger's scope, UNREGISTERED numbers in them).
 
-    MEASURED, NOT GATED: the ledger scope is a reviewed list and 135 derived money
+    MEASURED, NOT GATED: the ledger scope is a reviewed list and ~135 derived money
     modules are outside it. Making this absolute would red the trunk until those
     numbers are registered, so it is reported here and the gate stays the delta.
+    A number with a ledger row is not counted, so one row retires one number.
     """
     from scripts.money_modules import derive
 
     scoped = {p.resolve() for p in number_sources._scoped_files(ROOT)}
     scoped.update(p.resolve() for p in number_sources.config_modules(ROOT))
     outside = [m for m in derive(ROOT) if (ROOT / m).resolve() not in scoped]
-    count = sum(len(number_sources._scan_module(ROOT / m, m, None, ROOT)) for m in outside)
-    return len(outside), count
+    ledger = working_ledger_ids()
+    ids = [s.site_id for m in outside for s in number_sources._scan_module(ROOT / m, m, None, ROOT)]
+    return len(outside), len(unregistered(ids, ledger))
 
 
 def added_sites() -> list[str]:
-    """Site ids this working tree has more of than ``origin/main`` (the delta)."""
-    now, before = working_sites(), trunk_sites()
+    """Unregistered site ids this tree has more of than ``origin/main`` (the delta).
+
+    Each side is measured against its OWN ledger, so a new site that arrives with
+    its row is registered, not growth, and a new site without one is refused.
+    """
+    before_raw = trunk_sites()
+    before = unregistered(before_raw, trunk_ledger_ids())
+    now_raw = working_sites()
+    now = unregistered(now_raw, working_ledger_ids())
     remaining = list(before)
     added: list[str] = []
     for site in sorted(now):
@@ -95,8 +135,9 @@ def added_sites() -> list[str]:
             remaining.remove(site)
         else:
             added.append(site)
-    # Only a net rise fails: moving a constant elsewhere is not growth.
-    return added if len(now) > len(before) else []
+    # Only a net rise in SITES fails: moving a constant elsewhere is not growth.
+    # Of the risen sites, only the unregistered ones are named and refused.
+    return added if len(now_raw) > len(before_raw) else []
 
 
 def violations() -> list[str]:
@@ -119,9 +160,11 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"unscoped-number guard: this tree adds no unscoped numeric constant against {TRUNK}.")
+    print(f"unscoped-number guard: this tree adds no unregistered unscoped numeric constant against {TRUNK}.")
+    total = len(unregistered(working_sites(), working_ledger_ids()))
+    print(f"measured, not gated: {total} unregistered numbers in production Python outside ledger scope.")
     modules, numbers = money_reach_gap()
-    print(f"measured, not gated: {modules} money modules outside ledger scope hold {numbers} unledgered numbers.")
+    print(f"measured, not gated: {modules} money modules outside ledger scope hold {numbers} of them.")
     return 0
 
 

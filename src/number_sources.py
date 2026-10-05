@@ -654,6 +654,10 @@ def collect_unscoped_sites(repo_root: Path | None = None) -> list[NumberSite]:
     it does not shrink but nothing pins that it is whole. Counting what is
     outside it turns "somebody should widen scope" into a build failure the
     day a new unscoped constant appears.
+
+    Returns every site, registered or not: the guard subtracts the ledger's
+    ids itself, so one ledger row retires one number without the module
+    having to come into scope whole (``scripts/unscoped_number_guard.py``).
     """
     root = repo_root or REPO_ROOT
     in_scope = {p.resolve() for p in _scoped_files(root)}
@@ -720,6 +724,11 @@ def audit(
     sites = collect_sites(root)
     ledger = load_ledger(ledger_path)
     by_id = {site.site_id: site for site in sites}
+    # The unit of registration is the NUMBER, not the module: a row that registers a
+    # site OUTSIDE scope is a registered number (its value is still checked below),
+    # not an orphan. Coverage (rule 1) stays a scoped-module obligation.
+    for site in collect_unscoped_sites(root):
+        by_id.setdefault(site.site_id, site)
     problems: list[LedgerProblem] = []
 
     try:
@@ -749,11 +758,9 @@ def audit(
                 LedgerProblem(
                     "orphan",
                     site_id,
-                    "ledger entry no longer matches any definition site — the "
-                    "number was renamed, moved or deleted. Remove the entry or "
-                    "point it at the new site. If the number moved OUT of "
-                    "scope, it is still live: bring the file into scope rather "
-                    "than dropping the row.",
+                    "ledger entry no longer matches any definition site in any "
+                    "production module — the number was renamed, moved or deleted. "
+                    "Remove the entry or point it at the new site.",
                 )
             )
 
