@@ -183,12 +183,12 @@ def _gap_broker():
 def test_sweep_does_not_repair_while_intra_check_holds_the_desk_lock(tmp_path, monkeypatch):
     """`intra_check` holds its lock (its preamble or its paid scan); the
     sweep reads the gap, reports it, and places nothing."""
-    from src.execution import scale_in
+    from src.execution import held_qty
 
     db_path = tmp_path / "quant_agent.db"
     monkeypatch.setattr(alert_watchdog, "DB_PATH", db_path)
     monkeypatch.setattr(coverage_watchdog, "DB_PATH", db_path)
-    monkeypatch.setattr(scale_in, "_SESSION_LOCK_DIR", tmp_path / "no-session")
+    monkeypatch.setattr(held_qty, "_SESSION_LOCK_DIR", tmp_path / "no-session")
     intra = build_pipeline()
     intra.config = SimpleNamespace(storage=SimpleNamespace(db_path=str(db_path)))
     broker = _gap_broker()
@@ -208,12 +208,12 @@ def test_sweep_does_not_repair_while_intra_check_holds_the_desk_lock(tmp_path, m
 
 
 def test_sweep_repairs_once_the_desk_lock_is_free(tmp_path, monkeypatch):
-    from src.execution import scale_in
+    from src.execution import held_qty
 
     db_path = tmp_path / "quant_agent.db"
     monkeypatch.setattr(alert_watchdog, "DB_PATH", db_path)
     monkeypatch.setattr(coverage_watchdog, "DB_PATH", db_path)
-    monkeypatch.setattr(scale_in, "_SESSION_LOCK_DIR", tmp_path / "no-session")
+    monkeypatch.setattr(held_qty, "_SESSION_LOCK_DIR", tmp_path / "no-session")
     broker = _gap_broker()
 
     status = coverage_watchdog.check_coverage(

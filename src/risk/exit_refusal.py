@@ -48,6 +48,7 @@ which outcome a row is.
 
 from __future__ import annotations
 
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import json
 import logging
 from typing import Any, Callable, Literal
@@ -176,7 +177,8 @@ def classify_trigger_reason(
         if cites(reason):
             return "named"
         return "unnamed"
-    except Exception:  # noqa: BLE001 — matcher failure is uncertainty
+    except Exception as exc:  # noqa: BLE001 — matcher failure is uncertainty
+        record_guarded_pass(NO_LEDGER, "exit_refusal.matcher", exc)
         return "uncertain"
 
 
