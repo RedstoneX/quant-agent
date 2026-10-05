@@ -29,11 +29,20 @@ define the writes and are imported for their read methods); the reads in
 `src/api/` are confined by the name check on `src/api/` itself.
 
 ALLOWLIST: "file::name" pairs reachable today. It may only SHRINK (stale entries
-fail the test, forcing removal). All entries are one finding: `src/api/` imports
-`src.coverage_watchdog` (for its drift-state reader), and that module lazily
-imports repair/scale-in code from `src/execution/`, so the dashboard's import
-closure includes write-capable code. The dashboard never calls it; cutting the
-edge needs a production change (move the state reader out of coverage_watchdog).
+fail the test, forcing removal). All entries are ONE finding, one closure behind
+`src.coverage_watchdog`, which lazily imports repair/scale-in code from `src/execution/`.
+The dashboard never calls any of it. Re-derived 2026-10-05: no entry is dead, and the
+chain is reached by TWO doors, so cutting either alone removes nothing: (a)
+`src/api/drift_state.py` reads the drift snapshot through `coverage_watchdog.load_state`;
+(b) `src/api/{deps,routes_history}.py` import `src.config`, which reaches
+`src.agents.base` -> `src.refusal_signature` -> `coverage_watchdog.most_recent_trading_day`.
+Both readers live INSIDE coverage_watchdog (not touched here), so the fix is to lift
+`load_state`/path constants and `most_recent_trading_day` into a no-import module.
+
+DOORS: the derived set of edges from a `src/api/` module into the part of the import
+closure that can reach any of the entries above (computed from source each run, see
+`tainted_doors`). A NEW dashboard import that reaches the money path by a route not
+named in DOORS fails; a stale door fails. Both lists only shrink.
 """
 import ast
 import re
@@ -68,6 +77,14 @@ ALLOWLIST: set[str] = {  # may only shrink; see module docstring
     "src/execution/scale_in.py::cancel_entry_order",
     "src/execution/scale_in.py::insert_specialist_evidence",
     "src/execution/stop_records.py::replace_stop_loss",
+}
+
+# Each door is "api file -> first tainted module"; the reason is the one-line why it stays.
+DOORS: dict[str, str] = {
+    "src/api/drift_state.py -> src/coverage_watchdog.py": "reads drift snapshot via load_state",
+    "src/api/deps.py -> src/config/__init__.py": "config load; config -> agents.base -> refusal_signature",
+    "src/api/routes_history.py -> src/config/__init__.py": "AGENT_NAMES; same config chain",
+    "src/api/routes_history.py -> src/trader_feed/__init__.py": "feed reader; trader_feed -> config chain",
 }
 
 
@@ -220,3 +237,31 @@ def test_api_registers_no_http_write_verb():
 def test_allowlist_only_shrinks():
     stale = sorted(ALLOWLIST - _write_hits())
     assert not stale, "remove these resolved entries from ALLOWLIST (it may only shrink):\n" + "\n".join(stale)
+
+
+def tainted_doors() -> set[str]:
+    """Edges api -> non-api module from which some allow-listed write-capable file is reachable."""
+    reach = reachable_files()
+    edges = {f: {m for m in (_module_file(i) for i in _imports(_parse(f))) if m in reach} for f in reach}
+    hit_names = {h.split("::")[0] for h in _write_hits()}
+    hit_files = {f for f in reach if _rel(f) in hit_names}
+    tainted = set(hit_files)
+    grew = True
+    while grew:
+        grew = False
+        for f, outs in edges.items():
+            if f not in tainted and outs & tainted:
+                tainted.add(f)
+                grew = True
+    return {f"{_rel(f)} -> {_rel(n)}" for f in edges if f.is_relative_to(API)
+            for n in edges[f] if n in tainted and not n.is_relative_to(API)}
+
+
+def test_api_has_no_new_door_into_the_money_path():
+    new = sorted(tainted_doors() - set(DOORS))
+    assert not new, "src/api gained a NEW import route toward write-capable code:\n" + "\n".join(new)
+
+
+def test_doors_only_shrink():
+    stale = sorted(set(DOORS) - tainted_doors())
+    assert not stale, "remove these cut doors from DOORS (it may only shrink):\n" + "\n".join(stale)

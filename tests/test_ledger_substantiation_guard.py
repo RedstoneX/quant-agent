@@ -81,3 +81,32 @@ def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
         g.violations(now=[])
     assert "origin/main" in str(exc.value)
     assert g.main() == 2
+
+
+def test_a_known_wrong_source_row_fails_absolutely_even_if_the_trunk_holds_it():
+    """The MIN_TOUCHES shape as it stood on the trunk: `source` pinned a real function that
+    never mentions MIN_TOUCHES or 2. Red before the ledger fix, independent of the trunk."""
+    row = {"id": "src.data.levels.MIN_TOUCHES", "value": 2,
+           "source": "src/data/levels.py::stop_rests_on_level carries the measurement"}
+    pins = g.classify({row["id"]: row}, lambda rel: g._read_under(g.ROOT, rel))
+    assert [p.verdict for p in pins] == ["no_mention"]
+    bad = g.violations(now=[], before=pins, sources=pins)
+    assert len(bad) == 1 and "source citation" in bad[0]
+
+
+def test_the_corrected_source_row_is_green():
+    row = {"id": "src.data.levels.MIN_TOUCHES", "value": 2,
+           "source": "src/data/levels.py::MIN_TOUCHES carries the measurement"}
+    pins = g.classify({row["id"]: row}, lambda rel: g._read_under(g.ROOT, rel))
+    assert g.violations(now=[], before=[], sources=pins) == []
+
+
+def test_a_note_pin_stays_ratcheted_not_absolute():
+    row = {"id": "src.m.CEILING", "value": 7, "note": "see src/m.py::unrelated"}
+    pins = g.classify({row["id"]: row}, lambda rel: SRC if rel == "src/m.py" else None)
+    assert [p.verdict for p in pins] == ["no_mention"]
+    assert g.violations(now=pins, before=pins, sources=[]) == []
+
+
+def test_every_source_pin_in_the_real_ledger_carries_its_number():
+    assert g.source_violations() == []
