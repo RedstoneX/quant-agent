@@ -44,6 +44,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from src.data_paths import alerting_dir
 
 from src.trading_calendar import et_today
 from datetime import date, datetime, timezone
@@ -243,7 +244,7 @@ def describe_delivery(
 # use — no new mechanism, no tunable number. The log line is UNCHANGED and still
 # written on every single start; only the push is rationed.
 STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "credential_placeholder.json"
+    alerting_dir() / "credential_placeholder.json"
 )
 
 
