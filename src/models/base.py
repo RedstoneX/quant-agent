@@ -7,6 +7,23 @@ from contextlib import contextmanager
 from typing import Any, get_origin
 from pydantic import BaseModel, TypeAdapter, model_validator
 
+from src.seat_heal import restore_stated_soft_exits
+from src.sector_vocab import (  # noqa: F401 — re-exported through `src.models`
+    SECTOR_DIRECTIONS,
+    SECTOR_STANCE_TO_DIRECTION,
+    _ALLOWED_SECTORS,
+    _SECTOR_ALIASES,
+    normalize_sector_stance,
+)
+from src.soft_exit_vocab import (  # noqa: F401 — re-exported through `src.models`
+    SOFT_EXIT_HEAL_EVENT_REASON,
+    SOFT_EXIT_MISSING_AFTER_RETRY,
+    SOFT_EXIT_UNKNOWN,
+    _SOFT_EXIT_FIELDS,
+    missing_stated_falsifier,
+    stated_soft_exit,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -463,54 +480,7 @@ class AnalysisParseTelemetry:
 
 parse_telemetry = AnalysisParseTelemetry()
 
-# Recordable "don't know" for a soft-exit field (`thesis_invalid_if` /
-# `catalyst`) when the model sent JSON null on an actionable call. Not a
-# falsifier and not a catalyst — `check_thesis_invalid_if` treats it as
-# UNPARSEABLE, the same as empty. Empty remains the correct value on a
-# neutral Tech read (the prompt says leave it empty). Distinct from silent
-# schema-default "" so Risk can see "the seat said it does not know"
-# instead of "the field was wiped".
-SOFT_EXIT_UNKNOWN = "unknown"
-_SOFT_EXIT_FIELDS = frozenset({"thesis_invalid_if", "catalyst"})
-# Durable refuse-before-book reason after mechanical heal + one paid retry
-# still left an open name without a real "I'll sell if". Not invented
-# prose and not a catalyst. The #432 isolate-unknown-only gate is the
-# TEMPORARY last-resort that records this reason; delete that isolate
-# when a live session proves no actionable name arrives blank.
-SOFT_EXIT_MISSING_AFTER_RETRY = "soft-exit missing after retry"
-# Durable per-name record of what the soft-exit heal ACTUALLY did before
-# that refusal could be reached — filled on the one paid retry, blocked by
-# the spend cap, never attempted, errored, or re-asked and still blank.
-# Board item 78: without it, the refusal above asserts a retry that may
-# never have run, and a heal that quietly did nothing leaves no trace.
-SOFT_EXIT_HEAL_EVENT_REASON = "soft_exit_heal"
 ACTIONABLE_TECH_RATINGS = frozenset({"buy", "strong_buy", "sell", "strong_sell"})
-
-
-def stated_soft_exit(value: str | None) -> str:
-    """A checkable falsifier/catalyst, or empty.
-
-    `unknown` is the recordable don't-know token, not a condition. Callers
-    that need a checkable string (hard-stop substitution, constructor
-    parenthetical) treat it as absent. The raw field stays `unknown` so
-    Risk can see the seat said it does not know.
-    """
-    text = (value or "").strip()
-    if not text or text.lower() == SOFT_EXIT_UNKNOWN:
-        return ""
-    return text
-
-
-def missing_stated_falsifier(value: str | None) -> bool:
-    """True when there is no checkable 'I'll sell if' string.
-
-    Empty, whitespace, and the recordable don't-know token `unknown` are
-    all missing. Neutral Tech may omit; an actionable rating and an
-    open/increase target may not enter the ticket book in this state.
-    A reduction or close may omit the field — that omit does not make
-    PM thesis free text a sell warrant.
-    """
-    return not stated_soft_exit(value)
 
 
 def open_target_missing_falsifier(target, *, intent: str | None = None) -> bool:
@@ -783,10 +753,8 @@ class LLMOutputModel(BaseModel):
         # Mechanical heal (owner 2026-09-16): if a stated non-empty
         # thesis_invalid_if / catalyst survived on the original dict and a
         # later drop blanked the canonical field, put the stated string
-        # back. Never invents a falsifier. Lazy import: seat_heal imports
-        # sector maps from this module.
+        # back. Never invents a falsifier.
         try:
-            from src.seat_heal import restore_stated_soft_exits
             values, _restored = restore_stated_soft_exits(values, original)
         except Exception:
             pass
@@ -828,63 +796,3 @@ class LLMOutputModel(BaseModel):
             cls.__name__, ", ".join(sorted(hits)),
         )
         return values
-
-
-# yfinance sector taxonomy (matches what broker._get_sector returns).
-# "Broad" covers index ETFs (SPY/QQQ/IWM/DIA) that have no single sector tag.
-_ALLOWED_SECTORS = (
-    "Technology", "Financial Services", "Healthcare", "Consumer Cyclical",
-    "Consumer Defensive", "Energy", "Industrials", "Communication Services",
-    "Utilities", "Basic Materials", "Real Estate", "Broad",
-)
-
-# Common LLM-emitted aliases → canonical name. Applied before the Literal check
-# so a single bad label doesn't discard the whole MacroAnalysis.
-_SECTOR_ALIASES = {
-    "tech": "Technology",
-    "technology": "Technology",
-    "financials": "Financial Services",
-    "financial": "Financial Services",
-    "banks": "Financial Services",
-    "consumer discretionary": "Consumer Cyclical",
-    "consumer staples": "Consumer Defensive",
-    "materials": "Basic Materials",
-    "comm services": "Communication Services",
-    "communication": "Communication Services",
-    "telecom": "Communication Services",
-    "reits": "Real Estate",
-    "real-estate": "Real Estate",
-    "index": "Broad",
-    "broad market": "Broad",
-    "etf": "Broad",
-}
-
-
-# The macro analyst speaks TILTS (overweight/underweight); every consumer of a
-# sector stance — MacroStore's persisted snapshot, the evening thesis-health
-# block, `PositionSnapshot.macro_sector_tailwind` below, and the PM's evidence
-# registry — speaks DIRECTIONS (bullish/bearish). One macro view described in
-# two vocabularies is how a provenance mismatch gets debugged twice, so the
-# translation lives here, next to the Literal that defines the tilt side of it,
-# and every consumer imports it rather than re-spelling the pairs.
-SECTOR_STANCE_TO_DIRECTION: dict[str, str] = {
-    "overweight": "bullish",
-    "neutral": "neutral",
-    "underweight": "bearish",
-}
-
-# Directions are idempotent under the map: a stance that already arrived
-# normalized (MacroStore's shape) must survive a second pass unchanged.
-SECTOR_DIRECTIONS: frozenset[str] = frozenset(SECTOR_STANCE_TO_DIRECTION.values())
-
-
-def normalize_sector_stance(value) -> str | None:
-    """overweight|underweight|neutral (or a direction already) → direction.
-
-    Returns None for anything unrecognized so callers can drop it rather
-    than propagate a stance no validator will accept.
-    """
-    stance = str(value or "").strip().lower()
-    if stance in SECTOR_DIRECTIONS:
-        return stance
-    return SECTOR_STANCE_TO_DIRECTION.get(stance)

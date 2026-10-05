@@ -8,53 +8,15 @@ from __future__ import annotations
 from src.notifier.base import (
     logger,
 )
-from src.notifier.owner_alert_delivery import deliver_with_retry
-from src.notifier.transport import (
-    TelegramNotifier,
+from src.notifier.owner_alert_funnel import (  # noqa: F401  (re-exported)
+    _ALERT_NO_PNL_LINE, _with_pnl_header, build_default_notifier,
+    send_owner_alert_with_outcome,
+)
+from src.notifier.transport import (  # noqa: F401
+    TelegramNotifier,  # the funnel's default notifier; patched by tests HERE
 )
 
 # === Out-of-band owner alert ===
-
-#: The P&L stand-in every standalone owner alert carries directly under its
-#: heading. Owner, 2026-09-18, verbatim: "all the P&L information has to go
-#: at the very top of every telegram alert, right after the first line,
-#: which is really the heading."
-#:
-#: A standalone alert genuinely CANNOT carry a figure. It fires the instant
-#: a problem is found — from the credential check, the stop-coverage audit,
-#: a reconciliation mismatch — on paths that have done no account read, and
-#: a page about a naked position must never block on a broker round-trip or
-#: be able to fail inside one. So the line says exactly that, in one
-#: sentence, rather than being dropped (an absent block reads as a broken
-#: one) or filled with a fabricated zero.
-_ALERT_NO_PNL_LINE = (
-    "\U0001f4c8 P&L: not available in this alert — it is sent the moment a "
-    "problem is found, before any account is read."
-)
-
-
-def _with_pnl_header(text: str) -> str:
-    """Insert the P&L block directly under an alert's heading line.
-
-    Enforced HERE, in the one funnel every standalone alert already goes
-    through, rather than in each of the eighteen callers that build one.
-    The rule has been restated by the owner more than once and drifts every
-    time it depends on the next author remembering it; a single choke point
-    is the only version of it that holds.
-
-    Never raises — an alerting bug must not be able to break the thing it
-    reports on. On any fault the original text goes out unchanged.
-    """
-    try:
-        if _ALERT_NO_PNL_LINE in text:
-            return text
-        heading, sep, rest = text.partition("\n")
-        if not sep:
-            return f"{heading}\n{_ALERT_NO_PNL_LINE}"
-        return f"{heading}\n{_ALERT_NO_PNL_LINE}\n{rest}"
-    except Exception:  # noqa: BLE001
-        logger.exception("could not attach the P&L line to an owner alert")
-        return text
 
 
 def send_owner_alert(
@@ -79,15 +41,12 @@ def send_owner_alert(
     it is reporting on — see `alert_watchdog`'s "a watchdog that can break
     the thing it watches is worse than no watchdog".
     """
-    if not text:
-        return False
-    text = _with_pnl_header(text)
-    logger.critical("OWNER ALERT\n%s", text)
+    notifier = None
     try:
-        return deliver_with_retry(
-            TelegramNotifier(), text,
-            symbols=symbols, kind="owner_alert", category=category,
-        )
+        notifier = build_default_notifier(factory=TelegramNotifier)
     except Exception:  # noqa: BLE001
-        logger.exception("owner alert delivery failed")
+        logger.exception("owner alert could not build its notifier")
         return False
+    return send_owner_alert_with_outcome(
+        text, notifier=notifier, symbols=symbols, category=category,
+    )[0]

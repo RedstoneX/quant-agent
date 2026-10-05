@@ -15,6 +15,8 @@ Nothing here may import `src.pipeline`: this module is one of its bases.
 """
 
 import logging
+
+from src.sentinel.guarded import record_guarded_pass
 import math  # noqa: F401 -- re-exported
 
 from src.delever.conviction import DeleverConviction
@@ -234,6 +236,7 @@ class DeleverMixin:
             was_over = self.db.get_last_delever_over_ceiling(exclude_run_id=run_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("delever ceiling-state read failed: %s", exc)
+            record_guarded_pass(self.db, "delever.ceiling_state_read", exc, log=logger)
             was_over = None
         try:
             self.db.save_delever_ceiling_state(
@@ -241,6 +244,7 @@ class DeleverMixin:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("delever ceiling-state write failed: %s", exc)
+            record_guarded_pass(self.db, "delever.ceiling_state_write", exc, log=logger)
 
         if not still_over:
             return

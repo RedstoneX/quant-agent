@@ -8,10 +8,8 @@ code, so it moves without one character of its bodies changing; every name
 is re-exported from `src.pipeline_stages` so each original import path and
 each test patch target is unchanged.
 
-`_session_gross_ceiling` stays in `src/pipeline_stages.py` (the morning
-prompt and the risk stage read it too). It is imported inside
-`_entry_deployment_budget` rather than at module scope purely to keep the
-import graph acyclic — `src.pipeline_stages` imports this module.
+`_session_gross_ceiling` lives in `src/pipeline_gross_ceiling.py` (the morning
+prompt and the risk stage read it too, via `src.pipeline_stages`).
 
 This module must not import `src.pipeline`.
 """
@@ -24,6 +22,8 @@ import math
 #: The moved code logged under `src.pipeline_stages` before the move and
 #: still does; binding the name rather than `__name__` keeps log records
 #: byte-identical.
+from src.pipeline_gross_ceiling import _session_gross_ceiling
+from src.sentinel.guarded import record_guarded_pass
 logger = logging.getLogger("src.pipeline_stages")
 
 
@@ -53,11 +53,10 @@ def _fractional_sizing_allowed(pipeline, symbol: str, *, is_short: bool) -> bool
         if not bool(getattr(execution_cfg, "fractional_enabled", False)):
             return False
         info = pipeline.broker.get_fractionability(symbol)
+        record_guarded_pass(pipeline, "sizing.fractional_allowed")
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "fractional eligibility check failed for %s (%s) — sizing in "
-            "WHOLE shares (fail closed)", symbol, exc,
-        )
+        record_guarded_pass(pipeline, "sizing.fractional_allowed", exc, log=logger,
+                       context={"effect": "whole shares (fail closed)"})
         return False
     if not isinstance(info, dict) or not info.get("fractionable"):
         reason = (
@@ -104,17 +103,7 @@ def _size_shares(pipeline, raw_qty: float, *, fractional: bool) -> float:
     return math.floor(value * scale) / scale
 
 
-def _fmt_shares(qty: float) -> str:
-    """Render a share count for a human without a spurious `.0` on a whole
-    number or a wall of trailing zeros on a fractional one."""
-    try:
-        value = float(qty)
-    except (TypeError, ValueError):
-        return str(qty)
-    if value.is_integer():
-        return str(int(value))
-    return f"{value:.9f}".rstrip("0").rstrip(".")
-
+from src.sizing_fmt_shares import _fmt_shares  # noqa: E402,F401
 
 # Spec §11.1 vol-adjusted sizing budget: the fraction of EQUITY a single
 # entry may put at risk between its fill and its stop.
@@ -291,10 +280,6 @@ def _entry_deployment_budget(pipeline, ctx, positions, equity, cash):
     short does not draw on at all (D11).
     """
     from src.risk.rules import gross_exposure
-
-    # Imported here, not at module scope: `src.pipeline_stages` imports
-    # this module, so a top-level import would close the cycle.
-    from src.pipeline_stages import _session_gross_ceiling
 
     ceiling = _session_gross_ceiling(pipeline, ctx)
     if ceiling is None:

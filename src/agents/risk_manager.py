@@ -6,12 +6,16 @@ from pydantic import ValidationError
 from src.agents import risk_review_mode
 from src.agents.base import BaseAgent
 from src.agents.prompt_limits import LiveLimitPrompt
+from src.agents.risk_verdict_canon import (
+    canonical_modifications, canonical_rejections, drop_invalid_modifications,
+)
 from src.models import (
     ExitRiskVerdict, NewsIntelligenceReport, PortfolioDecision, Position,
-    RiskModification, RiskVerdict, SymbolRejection, TechAnalysisResult,
+    RiskVerdict, TechAnalysisResult,
 )
 from src.risk.constants import reward_risk_floor_applies
 from src.risk.rules import HARD_BLOCK_RULES, RiskViolation
+from src.sentinel.guarded import record_guarded_pass
 
 logger = logging.getLogger(__name__)
 
@@ -808,7 +812,9 @@ Review these proposed trades and provide your verdict as JSON."""
         if isinstance(parsed, dict) and not exit_mode:
             parsed = self._drop_invalid_modifications(parsed)
         try:
-            return verdict_model(**parsed), result
+            verdict = verdict_model(**parsed)
+            record_guarded_pass(self, "risk_manager.verdict_parse", log=logger)
+            return verdict, result
         except ValidationError as e:
             # 2026-08-18 incident: an APPROVING verdict with three sound
             # modifications died because two reasoning_chain prose fields
@@ -860,8 +866,10 @@ Review these proposed trades and provide your verdict as JSON."""
                         len(getattr(verdict, "modifications", ())),
                         len(verdict.rejected_symbols),
                     )
+                    record_guarded_pass(self, "risk_manager.verdict_repair_parse", log=logger)
                     return verdict, repaired
                 except Exception as e2:  # noqa: BLE001
+                    record_guarded_pass(self, "risk_manager.verdict_repair_parse", e2, log=logger)
                     logger.error(
                         "Failed to parse risk verdict after repair: %s", e2,
                     )
@@ -874,6 +882,7 @@ Review these proposed trades and provide your verdict as JSON."""
             repaired.gate_reason = "risk_repair_not_object"
             return None, repaired
         except Exception as e:
+            record_guarded_pass(self, "risk_manager.verdict_parse", e, log=logger)
             logger.error("Failed to parse risk verdict: %s", e)
             result.gate_reason = "risk_parse_exception"
             return None, result
@@ -899,72 +908,9 @@ Review these proposed trades and provide your verdict as JSON."""
         "approved", "rejected_symbols", "reason_category",
     )
 
-    @staticmethod
-    def _canonical_rejections(rejections) -> list[tuple] | None:
-        """Order-insensitive (symbol, reason) rows for the per-symbol
-        refusals, built by re-validating through `SymbolRejection` so the
-        shorthand coercions (bare string, absent reason) are the schema's own
-        and not a second ad-hoc path.
-
-        Returns None — never `==` to anything — when the shape doesn't
-        validate, so a malformed side fails closed instead of comparing
-        (incorrectly) equal. Mirrors `_canonical_modifications`.
-        """
-        if rejections is None:
-            rejections = []
-        if isinstance(rejections, (str, dict)):
-            # Same container shorthands `RiskVerdict` itself accepts; route
-            # them through the model so both sides canonicalize identically.
-            from src.models import _normalize_rejected_symbols_field
-            rejections = _normalize_rejected_symbols_field(
-                {"rejected_symbols": rejections},
-            )["rejected_symbols"]
-        if not isinstance(rejections, list):
-            return None
-        models: list[SymbolRejection] = []
-        for r in rejections:
-            if not isinstance(r, (dict, str)):
-                return None
-            try:
-                models.append(SymbolRejection.model_validate(r))
-            except Exception:  # noqa: BLE001 — any shape failure fails closed
-                return None
-        return sorted(
-            ((r.symbol, r.reason) for r in models), key=lambda row: row[0],
-        )
-
-    @staticmethod
-    def _canonical_modifications(mods) -> list[tuple] | None:
-        """Full RiskModification decision payload (symbol, field,
-        original_value, new_value, reason), order-insensitive. Built by
-        re-validating each entry through the `RiskModification` model
-        itself, so numeric coercion is the schema's own — not a second
-        ad-hoc `float()` path — and `reason` (part of what THIS
-        modification decided, unlike the top-level narrative
-        `reasoning_chain`/`reasoning`) is preserved rather than dropped.
-        Returns None — never `==` to anything — when the shape doesn't
-        validate, so a malformed side fails closed instead of comparing
-        (incorrectly) equal.
-        """
-        if mods is None:
-            mods = []
-        if not isinstance(mods, list):
-            return None
-        models: list[RiskModification] = []
-        for m in mods:
-            if not isinstance(m, dict):
-                return None
-            try:
-                models.append(RiskModification(**m))
-            except Exception:  # noqa: BLE001 — any shape failure fails closed
-                return None
-        return sorted(
-            (
-                (m.symbol, m.field, m.original_value, m.new_value, m.reason)
-                for m in models
-            ),
-            key=lambda row: (row[0], row[1]),
-        )
+    _canonical_rejections = staticmethod(canonical_rejections)
+    _canonical_modifications = staticmethod(canonical_modifications)
+    _drop_invalid_modifications = staticmethod(drop_invalid_modifications)
 
     @classmethod
     def _decision_fields_unchanged(
@@ -1021,43 +967,3 @@ Review these proposed trades and provide your verdict as JSON."""
                 return False
 
         return original.get("reason_category") == repaired.get("reason_category")
-
-    @staticmethod
-    def _drop_invalid_modifications(parsed: dict) -> dict:
-        """Pre-validate each RiskModification; drop malformed entries with a
-        warning naming the symbol (or list index when missing).
-
-        Mutates parsed in place for `modifications`. Non-list shapes
-        normalize to []. Mirrors EveningAnalyst._drop_invalid_missed_opportunities
-        (PR #73) and the news/position_reviewer/meta_reflector pattern (PR #74).
-        """
-        raw = parsed.get("modifications")
-        if raw is None:
-            return parsed
-        if not isinstance(raw, list):
-            logger.warning(
-                "Risk manager: modifications is %s, not list — replacing with []",
-                type(raw).__name__,
-            )
-            parsed["modifications"] = []
-            return parsed
-        valid: list[dict] = []
-        for i, item in enumerate(raw):
-            if not isinstance(item, dict):
-                logger.warning(
-                    "Risk manager: dropping non-dict modifications entry "
-                    "at index %d: %r", i, item,
-                )
-                continue
-            try:
-                RiskModification(**item)
-            except ValidationError as e:
-                sym = item.get("symbol") or f"<idx {i}>"
-                logger.warning(
-                    "Risk manager: dropping malformed modification for %s: %s",
-                    sym, e,
-                )
-                continue
-            valid.append(item)
-        parsed["modifications"] = valid
-        return parsed

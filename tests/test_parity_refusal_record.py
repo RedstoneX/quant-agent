@@ -17,6 +17,7 @@ from src.portfolio_constructor import (
     STOP_REFUSAL_REWARD_BELOW_RISK, SUBFLOOR_RISK_OBSERVED,
     ConstructorConfig, PortfolioConstructor,
 )
+from src.portfolio_constructor.refusal_recorder import TradeRefusalRecorder
 from src.storage.db import Database
 
 
@@ -74,7 +75,7 @@ def test_a_subfloor_risk_target_is_recorded_and_still_ships(db):
     desk then did with it.
     """
     from tests.test_stop_width_gate import _analysis, _orders
-    constructor = PortfolioConstructor(db=db)
+    constructor = PortfolioConstructor(recorder=TradeRefusalRecorder(db))
     assert constructor.cfg.min_risk_pct == 0.5
     a = _analysis("SUBF", entry=100.0, stop=94.0, levels=[94.0, 112.0])
     decisions = _orders(constructor, a, risk_pct=0.25)
@@ -98,7 +99,7 @@ def test_an_at_or_above_floor_target_records_nothing(db):
     measured over 142 PM logs, 115 risk-carrying targets, zero below the
     floor. A row per ordinary target would make the evidence worthless."""
     from tests.test_stop_width_gate import _analysis, _orders
-    constructor = PortfolioConstructor(db=db)
+    constructor = PortfolioConstructor(recorder=TradeRefusalRecorder(db))
     a = _analysis("OKAY", entry=100.0, stop=94.0, levels=[94.0, 112.0])
     _orders(constructor, a, risk_pct=1.0)
     assert db.get_trade_refusals(refusal=SUBFLOOR_RISK_OBSERVED) == []

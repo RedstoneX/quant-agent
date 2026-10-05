@@ -31,7 +31,7 @@ def test_swallowed_unlock_logs_traceback_and_a_counted_row(rows, tmp_path, caplo
     with caplog.at_level(logging.ERROR):
         lease.release()
     bad = [r for r in rows if r["exc"] is not None]
-    assert [r["where"] for r in bad] == ["broker.trade_stream.lease.unlock"]
+    assert [r["where"] for r in bad] == ["execution.broker_parts.trade_stream.lease.unlock"]
     assert isinstance(bad[0]["exc"], ValueError)
     assert any(r.exc_info for r in caplog.records) or bad  # traceback logged by the recorder
 
@@ -39,7 +39,7 @@ def test_swallowed_unlock_logs_traceback_and_a_counted_row(rows, tmp_path, caplo
 def test_clean_pass_writes_its_own_distinct_row(rows, tmp_path):
     lease = lease_mod._TradeUpdatesLease(tmp_path / "l.lock", owner=_Owner())
     assert lease.acquire()
-    assert [(r["where"], r["exc"]) for r in rows] == [("broker.trade_stream.lease.write_pid", None)]
+    assert [(r["where"], r["exc"]) for r in rows] == [("execution.broker_parts.trade_stream.lease.write_pid", None)]
     lease.release()
 
 

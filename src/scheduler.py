@@ -6,6 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from src.config import AppConfig
 from src.notifier import CATEGORY_OPERATIONAL, TelegramNotifier
+from src.notifier.owner_alert_funnel import build_default_notifier
 from src.pipeline import TradingPipeline
 from src.trader_feed import format_session_result
 from src.trading_calendar import ET, SESSION_WINDOWS
@@ -26,7 +27,8 @@ class TradingScheduler:
         # only ever constructed with an already-loaded AppConfig), so the
         # tap-through link can be wired at construction rather than
         # patched in later like main.py has to.
-        self.notifier = TelegramNotifier(
+        self.notifier = build_default_notifier(
+            factory=TelegramNotifier,
             mission_control_url=config.notifications.mission_control_url,
         )
         # Schedule times in settings.yaml are interpreted as ET (US equity
@@ -222,6 +224,7 @@ class TradingScheduler:
                         send_naked_position_alert(
                             self.notifier,
                             result if isinstance(result, dict) else None,
+                            owner=self.pipeline,
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(

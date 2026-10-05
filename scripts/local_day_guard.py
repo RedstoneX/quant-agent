@@ -21,7 +21,7 @@ removing one offender and adding a different one must still fail. If
 
 WHAT IS FORBIDDEN
 -----------------
-In ``src/`` and ``tests/``:
+In every tracked ``.py`` file (root ``main.py``, ``ops/``, ``scripts/`` included):
 
   local_today        ``date.today()`` / ``datetime.date.today()`` -- the
                      runner's local calendar day, never an exchange day.
@@ -61,11 +61,10 @@ from scripts.guard_reference import (
 #: One offending site: (path, kind, enclosing scope, source text of the site).
 Site = tuple[str, str, str, str]
 
-SCAN_DIRS = ("src", "tests")
-
-# The guard's own test states the forbidden shapes in prose and in a synthetic
-# fixture; scanning it would measure the guard, not the code.
-SELF = "tests/test_no_local_day_as_exchange_day.py"
+# No directory list: every tracked ``.py`` is scanned, the repository root
+# included -- ``main.py`` is the live entry point and a list that named
+# ``src``/``tests`` never saw it. Only ``import_time_stamp`` is tests-only.
+SCAN_PATTERN = "*.py"
 
 _CLOCK_READERS = {"et_today", "et_now", "todays_session_stamp",
                   "todays_session_bar_stamp", "todays_session_snapshot_stamps"}
@@ -138,11 +137,8 @@ def scan_sites(path: str, text: str) -> list[tuple[str, int, str, str]]:
 
 
 def scanned_paths() -> list[str]:
-    """Tracked ``.py`` files under the scanned directories, trunk's copy included."""
-    paths: set[str] = set()
-    for d in SCAN_DIRS:
-        paths.update(working_paths(f"{d}/*.py"))
-    return sorted(p for p in paths if p != SELF)
+    """Every tracked ``.py`` file, wherever git holds it; never a written-down directory list."""
+    return sorted(set(working_paths(SCAN_PATTERN)))
 
 
 def working_offences() -> dict[Site, list[int]]:
