@@ -28,10 +28,13 @@ breakeven ratchet still read THAT number, never the live one.
 """
 from __future__ import annotations
 
+
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import logging
 import math
 from typing import Any, Callable
 
+from src.execution.broker_parts.stop_window import record_unprotected_windows
 from src.execution.pending_stop_amends import record_deferred_amend
 logger = logging.getLogger(__name__)
 
@@ -132,8 +135,10 @@ def _holding_is_short(broker: Any, symbol: str) -> bool | None:
     """
     try:
         positions = broker.get_positions()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        record_guarded_pass(broker, "stop_records.holding_is_short", exc, context={"symbol": symbol})
         return None
+    record_guarded_pass(broker, "stop_records.holding_is_short", context={"symbol": symbol})
     if not isinstance(positions, list):
         return None
     for position in positions:
@@ -196,6 +201,7 @@ def write_back_stop_loss(
         try:
             return bool(updater(symbol, price))
         except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(db, "stop_records.write_back_stop_loss", exc)
             logger.error(
                 "stop write-back FAILED for %s @ $%.4f: %s — broker holds "
                 "the live level; the archive is stale until the next "
@@ -204,6 +210,7 @@ def write_back_stop_loss(
             )
             return False
     except Exception as exc:  # noqa: BLE001
+        record_guarded_pass(db, "stop_records.write_back_stop_loss", exc)
         logger.error(
             "stop write-back FAILED for %s @ $%.4f: %s — broker holds the "
             "live level; the archive is stale until the next successful "
@@ -226,7 +233,6 @@ def replace_stop_and_record(
     `trades.stop_loss` on the entry level. A failed replace writes no level.
     """
     order = broker.replace_stop_loss(symbol, new_stop_price, **kwargs)
-    from src.execution.broker_parts.stop_window import record_unprotected_windows
     record_unprotected_windows(broker, db, symbol)  # even a failed replace
     if isinstance(order, dict) and order.get("amend_status") == "market_closed":
         return record_deferred_amend(

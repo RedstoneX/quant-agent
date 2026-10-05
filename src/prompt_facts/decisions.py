@@ -7,6 +7,7 @@ constructor argument, so this builds and runs with no pipeline behind it.
 
 import logging
 
+from src.sentinel.guarded import record_guarded_pass
 from src.trading_calendar import session_date_key
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -38,7 +39,7 @@ class PromptDecisions:
                 before_date=session_date_key(),
             )
         except Exception as e:
-            logger.warning("rm_recent_verdicts: DB fetch failed: %s", e)
+            record_guarded_pass(self.db, "prompt_facts.rm_recent_verdicts", e, log=logger)
             return ""
         if not rows:
             return ""
@@ -100,7 +101,7 @@ class PromptDecisions:
                 before_date=session_date_key(),
             )
         except Exception as e:
-            logger.warning("pm_recent_decisions: DB fetch failed: %s", e)
+            record_guarded_pass(self.db, "prompt_facts.pm_recent_decisions", e, log=logger)
             return ""
         if not rows:
             return ""
@@ -226,7 +227,7 @@ class PromptDecisions:
                 agent_name="position_reviewer", limit=limit,
             )
         except Exception as e:
-            logger.warning("own_recent_decisions: DB fetch failed: %s", e)
+            record_guarded_pass(self.db, "prompt_facts.own_recent_decisions", e, log=logger)
             return ""
         if not rows:
             return ""

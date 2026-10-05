@@ -6,6 +6,7 @@ ratchet; `self` is the amender (it supplies `client`,
 """
 from __future__ import annotations
 
+from src.sentinel.guarded import NO_LEDGER, record_guarded_pass
 import logging
 
 logger = logging.getLogger("src.execution.broker")
@@ -33,7 +34,9 @@ def classify_after_dead_replacement(
     try:
         sells, buys = self._list_open_stop_orders_by_side(symbol, errors=errors)
         live_orders = list(sells or []) + list(buys or [])
+        record_guarded_pass(self, "stop_dead_replacement.reread", context={"symbol": symbol})
     except Exception as exc:  # noqa: BLE001
+        record_guarded_pass(self, "stop_dead_replacement.reread", exc, context={"symbol": symbol})
         leg["detail"] += f"; the book could not be re-read ({exc})"
         return "unknown"
     if errors:
@@ -51,7 +54,9 @@ def classify_after_dead_replacement(
                 for pos in (self.client.get_all_positions() or [])
                 if getattr(pos, "symbol", None) == symbol
             ]
+            record_guarded_pass(self, "stop_dead_replacement.positions", context={"symbol": symbol})
         except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(self, "stop_dead_replacement.positions", exc, context={"symbol": symbol})
             leg["detail"] += (
                 f"; the book is empty and the position could not be "
                 f"re-read ({exc}) — treating it as UNPROTECTED"

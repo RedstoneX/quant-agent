@@ -22,6 +22,7 @@ No bound here is invented. Each cites its source:
 """
 import logging
 import math
+from src.sentinel.guarded import record_guarded_pass
 from decimal import Decimal
 
 from alpaca.trading.enums import TimeInForce
@@ -178,7 +179,9 @@ def quantity_refusal_live(symbol: str, alpaca_symbol: str, qty, side: str, *,
         if max_position_pct is not None:
             try:
                 equity = get_account()["portfolio_value"]
+                record_guarded_pass(client, "order_gates.equity_read", context={"symbol": symbol})
             except Exception as exc:  # noqa: BLE001
+                record_guarded_pass(client, "order_gates.equity_read", exc, context={"symbol": symbol})
                 logger.error("Quantity gate: equity read failed for %s: %s",
                              symbol, exc)
     elif s == "sell":
@@ -187,7 +190,9 @@ def quantity_refusal_live(symbol: str, alpaca_symbol: str, qty, side: str, *,
             for pos in (client.get_all_positions() or []):
                 if str(pos.symbol).upper() == alpaca_symbol.upper():
                     held = max(0.0, float(pos.qty))
+            record_guarded_pass(client, "order_gates.positions_read", context={"symbol": symbol})
         except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(client, "order_gates.positions_read", exc, context={"symbol": symbol})
             held = None
             logger.error("Quantity gate: positions read failed for %s: %s "
                          "— sell proceeds unchecked.", symbol, exc)
