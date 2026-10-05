@@ -13,6 +13,7 @@ from src.data.macro_series_cache import MacroSeriesCache
 from src.trading_calendar import et_now, et_today
 from src.data.macro_coverage_views import STALE_PREFIX, split_failed, stale_prompt_text, stamp_note
 from src.data.macro_cache_serve import serve_from_cache, serve_last_good
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
 
@@ -975,9 +976,8 @@ class MacroDataProvider:
                     (day, None if pd.isna(value) else float(value))
                 )
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Could not serialise %s for the FRED series cache: %s", series_id, e,
-            )
+            record_swallowed("data.macro.series_cache_serialise", e, log=logger,
+                             series_id=series_id)
             return
         self.series_cache.save(
             series_id=series_id,
