@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+from src.sentinel.guarded import record_guarded_pass
 logger = logging.getLogger(__name__)
 
 
@@ -32,7 +33,7 @@ class ExpectedSessionsMissingSession:
         try:
             present = self._db.session_prefixes_logged_on()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("missing-session check: agent_logs read failed: %s", exc)
+            record_guarded_pass(self._db, "sessions.missing_session_check", exc, log=logger)
             return []
         # run_id prefix -> display name; morning's prefix is 'run'.
         expected = {"run": "morning", "midday": "midday", "close": "close"}

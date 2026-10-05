@@ -42,3 +42,50 @@ def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
         unscoped_number_guard.violations()
     assert "origin/main" in str(exc.value)
     assert unscoped_number_guard.main() == 2
+
+
+def _repo_with(tmp_path, files, scoped=True):
+    root = tmp_path / "r"
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    from src import number_sources
+
+    for entry in number_sources.SCOPED_PATHS if scoped else ():  # the scanner refuses a vanished scoped path
+        target = root / entry
+        if entry.endswith(".py"):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("")
+        else:
+            target.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def test_the_sentinel_reaches_root_ops_and_scripts_not_only_src(tmp_path):
+    from src import number_sources
+
+    root = _repo_with(tmp_path, {
+        "main.py": "STALE_PCT = 7.5\n",
+        "ops/x.py": "LIMIT = 11\n",
+        "scripts/s.py": "CAP = 13\n",
+        "src/a.py": "Z = 17\n",
+        "tests/t.py": "T = 19\n",
+        ".venv/v.py": "V = 23\n",
+        "src/config/__init__.py": "",
+    })
+    seen = [s.site_id for s in number_sources.collect_unscoped_sites(root)]
+    for module in ("main.", "ops.x.", "scripts.s.", "src.a."):
+        assert any(i.startswith(module) for i in seen), (module, seen)
+    assert not any(i.startswith(("tests.", "t.", ".venv", "v.")) for i in seen), seen
+
+
+def test_the_universe_is_derived_so_a_new_top_level_package_is_seen(tmp_path):
+    from src.number_universe import py_universe
+
+    root = _repo_with(tmp_path, {"newpkg/m.py": "Q = 29\n"}, scoped=False)
+    assert [p.name for p in py_universe(root)] == ["m.py"]
+
+
+def test_the_money_reach_gap_is_measured_and_nonzero():
+    modules, numbers = unscoped_number_guard.money_reach_gap()
+    assert modules > 0 and numbers > 0, (modules, numbers)

@@ -4,6 +4,10 @@ The guard stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md). It measures this
 working tree, measures ``origin/main`` at check time, and compares the two, so
 two unrelated changes can never collide over a shared record. If ``origin/main``
 cannot be read it REFUSES — it must never pass by default.
+
+Its own self-tests judge invented trees (``_universe``), never the real one: a
+self-test that assumes which files this branch left alone is itself a source
+of phantom reds.
 """
 from __future__ import annotations
 
@@ -32,22 +36,81 @@ def test_trunk_measurement_is_actually_read():
     assert sizes and all(n >= 0 for n in sizes.values())
 
 
+def _file(n: int) -> str:
+    return "\n".join(["pass"] * n) + "\n"
+
+
+_POPULATION = {f"pkg/m{i}.py": _file(100 + 7 * i) for i in range(30)}
+
+
+def _universe(monkeypatch, working: dict, trunk: dict, untouched=frozenset()):
+    """Judge a SYNTHETIC pair of trees; nothing here reads the real ones.
+
+    The self-tests below used to pick the biggest real tracked file as their
+    fixture and assume this branch had not touched it. On 2026-10-05 a branch
+    that had shrunk that file (an honest split) turned all four red: the
+    deltas the tests planted were swallowed by the branch's own shrinkage.
+    A self-test that depends on what the branch under test happens to have
+    edited is a phantom generator, so the fixtures are now invented in full.
+    """
+    g = file_size_guard
+    working = dict(_POPULATION, **working)
+    trunk = dict(_POPULATION, **trunk)
+    monkeypatch.setattr(g, "working_texts", lambda: dict(working))
+    monkeypatch.setattr(g, "working_sizes",
+                        lambda: {p: g._count(t) for p, t in working.items()})
+    monkeypatch.setattr(g, "trunk_blobs",
+                        lambda paths: {p: trunk[p] for p in paths if p in trunk})
+    monkeypatch.setattr(g, "trunk_paths", lambda suffix="": sorted(trunk))
+    monkeypatch.setattr(g, "untouched_paths",
+                        lambda texts: {p for p in texts if p in untouched})
+    return g.violations()
+
+
 def test_growth_is_caught_and_reported_as_a_delta(monkeypatch):
-    """Pretend the trunk copy is 50 lines shorter: the guard must say so."""
-    now = file_size_guard.working_sizes()
-    biggest = max(now, key=lambda p: now[p])
-    real = file_size_guard.trunk_sizes
+    bad = _universe(monkeypatch, {"big.py": _file(550)}, {"big.py": _file(500)})
+    assert any(b.startswith("big.py: grew from 500 to 550 lines (+50)") for b in bad), bad
 
-    def shrunk(paths):
-        sizes = real(paths)
-        # Relative to the working copy, so a change that itself shrinks the
-        # biggest file cannot hide the simulated growth.
-        sizes[biggest] = now[biggest] - 50
-        return sizes
 
-    monkeypatch.setattr(file_size_guard, "trunk_sizes", shrunk)
-    bad = file_size_guard.violations()
-    assert any(biggest in line and "grew from" in line and "+50" in line for line in bad), bad
+def test_trunk_shrinking_a_file_the_branch_never_opened_is_not_growth(monkeypatch):
+    """The 2026-10-05 phantom: trunk split a file this tree still holds unchanged,
+    so the working copy (500, the merge base's) is larger than trunk's (450)."""
+    bad = _universe(monkeypatch, {"big.py": _file(500)}, {"big.py": _file(450)},
+                    untouched={"big.py"})
+    assert not [b for b in bad if "big.py" in b], bad
+
+
+def test_touching_a_file_puts_it_back_under_the_full_rule(monkeypatch):
+    """The gaming route: edit the file so it counts as touched, then grow it.
+    A touched file is judged in full against the trunk it will merge into."""
+    bad = _universe(monkeypatch, {"big.py": _file(502)}, {"big.py": _file(500)})
+    assert any(b.startswith("big.py: grew from 500 to 502 lines (+2)") for b in bad), bad
+
+
+def test_a_shrink_in_one_file_never_excuses_growth_in_another(monkeypatch):
+    bad = _universe(monkeypatch, {"a.py": _file(480), "b.py": _file(501)},
+                    {"a.py": _file(500), "b.py": _file(500)})
+    assert any(b.startswith("b.py: grew from 500 to 501 lines (+1)") for b in bad), bad
+    assert not [b for b in bad if b.startswith("a.py")], bad
+
+
+def test_untouched_means_byte_identity_with_the_merge_base():
+    """Real git: the merge base's exact bytes are untouched; one byte more or
+    less is the branch's own, whatever else the branch did elsewhere."""
+    base = guard_reference.merge_base_rev()
+    assert base, "no merge base with origin/main: fetch with full history"
+    path = min(guard_reference.trunk_paths(".py"))
+    text = guard_reference.blobs_at(base, [path])[path]
+    assert path in guard_reference.untouched_paths({path: text})
+    assert path not in guard_reference.untouched_paths({path: text + "\n"})
+    assert path not in guard_reference.untouched_paths({path: text[:-1]})
+
+
+def test_no_merge_base_excludes_nothing(monkeypatch):
+    monkeypatch.setattr(guard_reference, "merge_base_rev", lambda: "")
+    path = min(file_size_guard.working_paths("*.py"))
+    text = (file_size_guard.ROOT / path).read_text(encoding="utf-8")
+    assert guard_reference.untouched_paths({path: text}) == set()
 
 
 def _with_trunk_copy(monkeypatch, path: str, trunk_text: str):
@@ -75,14 +138,16 @@ def _one_file(monkeypatch, trunk_text: str, working_text: str) -> list[str]:
 
 def test_a_line_widened_past_the_limit_fails_and_passes_once_wrapped(monkeypatch):
     """The 2026-10-04 route: same code, wider lines, line count unchanged."""
-    width = file_size_guard.WIDTH
+    width = file_size_guard.width_fence(
+        list(guard_reference.trunk_blobs(guard_reference.trunk_paths(".py")).values())
+    )
     wrapped = ["x = 1", "log.warning(", "    'stop placement failed: %s', exc,", ")"]
     widened = ["x = 1", "log.warning(" + "'stop placement failed: %s', exc".ljust(width) + ")"]
     assert len(widened[1]) > width and all(len(ln) <= width for ln in wrapped)
     trunk = "\n".join(["x = 1", "pass", "pass", "pass"]) + "\n"  # same line count
 
     bad = _one_file(monkeypatch, trunk, "\n".join(widened) + "\n")
-    assert any(f"wider than {width}" in b for b in bad), bad
+    assert any(f"wider than the derived {width}" in b for b in bad), bad
     assert _one_file(monkeypatch, trunk, "\n".join(wrapped) + "\n") == []
 
 
@@ -133,16 +198,64 @@ def test_added_sites_compares_identities_never_totals():
     assert guard_reference.added_sites([("g.py", "x")], []) == [(("g.py", "x"), 1, 0)]
 
 
-def test_the_file_size_guard_is_already_per_file_identity():
+def test_the_file_size_guard_is_already_per_file_identity(monkeypatch):
     """Lines per file is numeric by nature; its identity is the path, and a shrink
     in one file never offsets growth in another."""
-    sizes = {"a.py": 500, "b.py": 500}
-    monkeypatch_now = {"a.py": 400, "b.py": 501}
-    import scripts.file_size_guard as g
-    orig_w, orig_t = g.working_sizes, g.trunk_sizes
-    g.working_sizes, g.trunk_sizes = (lambda: monkeypatch_now), (lambda paths: sizes)
-    try:
-        bad = g.violations()
-    finally:
-        g.working_sizes, g.trunk_sizes = orig_w, orig_t
-    assert len(bad) == 1 and bad[0].startswith("b.py: grew from 500 to 501"), bad
+    bad = _universe(monkeypatch, {"a.py": _file(400), "b.py": _file(501)},
+                    {"a.py": _file(500), "b.py": _file(500)})
+    lines = [x for x in bad if " lines (+" in x]
+    assert len(lines) == 1 and lines[0].startswith("b.py: grew from 500 to 501"), bad
+
+
+# --- the two fences are DERIVED, never stored -------------------------------
+
+
+def test_neither_fence_is_a_stored_number():
+    """The defect removed: two once-measured integers committed to the guard.
+
+    A stored fence rots as the tree moves and an author can edit it to pass."""
+    src = (file_size_guard.ROOT / "scripts" / "file_size_guard.py").read_text()
+    assert "CEILING = " not in src and "WIDTH = " not in src
+    assert not hasattr(file_size_guard, "CEILING")
+    assert not hasattr(file_size_guard, "WIDTH")
+
+
+def test_the_derived_fences_match_the_trunk_population():
+    trunk = guard_reference.trunk_blobs(guard_reference.trunk_paths(".py"))
+    assert len(trunk) > 100, len(trunk)
+    texts = list(trunk.values())
+    assert file_size_guard.line_ceiling(texts) > file_size_guard.FLOOR
+    assert 60 < file_size_guard.width_fence(texts) < 400
+
+
+def test_padding_lines_cannot_drag_the_width_fence_out():
+    """The gaming case for a derived percentile: fill the tree with near-fence
+    lines and it rises. The trunk side is computed in the same run and binds."""
+    trunk = ["short\n" * 50]
+    padded = ["x" * 400 + "\n"] * 50
+    _, width = file_size_guard.fences(padded, trunk)
+    assert width == file_size_guard.width_fence(trunk), width
+    _, tighter = file_size_guard.fences(trunk, padded)
+    assert tighter == file_size_guard.width_fence(trunk), tighter
+
+
+def test_deleting_small_files_cannot_raise_the_line_ceiling():
+    """Q3 rises when the small files go. The trunk's own Q3 still binds."""
+    trunk = ["x\n" * 10] * 90 + ["x\n" * 900] * 10
+    thinned = ["x\n" * 900] * 10
+    assert file_size_guard.line_ceiling(thinned) > file_size_guard.line_ceiling(trunk)
+    ceiling, _ = file_size_guard.fences(thinned, trunk)
+    assert ceiling == file_size_guard.line_ceiling(trunk), ceiling
+
+
+def test_the_ceiling_never_falls_below_the_new_module_floor():
+    """400 is the owner's ceiling for a NEW module; a derived fence under it
+    would contradict the floor rule rather than tighten it."""
+    assert file_size_guard.line_ceiling(["x\n" * 3] * 100) == file_size_guard.FLOOR
+
+
+def test_it_refuses_rather_than_invent_a_fence_from_nothing():
+    with pytest.raises(ReferenceUnavailable):
+        file_size_guard.line_ceiling([])
+    with pytest.raises(ReferenceUnavailable):
+        file_size_guard.width_fence([])
