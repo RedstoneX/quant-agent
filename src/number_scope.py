@@ -120,6 +120,10 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/data/news_dedup.py",
     "src/token_budget.py",
     "src/backtest/engine.py",
+    # 2026-10-05: four offline research scripts (the level sweep, its volatility-clustered control, the
+    # minimum-stop sweep and the noise-band holding scan); each site is ledgered so none hides unseen.
+    "ops/research/item55_level_sweep.py", "ops/research/item55_volclustered_control.py",
+    "ops/research/min_stop_atr_sweep.py", "ops/research/noise_band_holding_scaling.py",
     # 2026-10-05 numbers sweep 2: the offline model benchmark's fixtures and
     # sizing mirror, and the CI shard weights. Scoped so each number is
     # ledgered with the proof that it reaches no order.
