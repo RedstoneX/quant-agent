@@ -21,10 +21,47 @@ kept as history and marked DONE where they describe a stored file that is gone.
 - Absolute-rule checks with no trunk comparison and no stored list: `disk_guard`,
   `test_undefined_names_guard`, `test_holding_discipline_guard`,
   `test_stop_read_unknown`, `test_money_path_guards_are_loud`.
-- AMBIGUOUS: `tests/test_one_definition_guard.py` keeps a registry of
-  owner/allow pairs in code, with no trunk comparison. It reads as reviewed policy
-  (each entry carries a reason), not a cached measurement, but it is a stored list.
-  Sized follow-up: decide policy vs measurement; not changed here.
+- RESOLVED KEPT RECORD (2026-10-04): `tests/test_one_definition_guard.py`'s
+  registry and its `KNOWN_GOOD` set are reviewed policy -- each entry carries a
+  reason, a test fails when a named site stops existing, and no scan could
+  produce "this duplicate is legitimate". Not a cached measurement; stays.
+- Python-clothed baselines found by a second sweep 2026-10-04 (shapes searched:
+  pinned integers compared against, per-path count tables, hardcoded paths that
+  tell a guard where something lives; method: grep over `scripts/` and `tests/`
+  for `== N`, `MAX_*`, `*_BASELINE`, `*_ON_ARRIVAL`, dict/frozenset literals in
+  guard files, and `"docs/|config/|tests/|src/"` path strings in `scripts/*guard*.py`):
+  - ~~48 per-file finding ceilings in `tests/desk_output_guard.py`~~ DONE -- the
+    counts (16 in `ALLOWED`, 32 in the benchmark-results table) are deleted; the
+    reasons stay as policy. The audit scans each allow-listed file as it stands
+    on `origin/main` via `scripts/guard_reference.trunk_blobs` and fails on any
+    finding identity (signal + offending line) the working copy holds more of,
+    so a swap of one real order id for another now fails where a count passed.
+    One ceiling had drifted loose (12 recorded against 9 present: three real
+    values could have been added unseen). Refuses when the trunk is unreadable.
+  - ~~`SELF` in `scripts/local_day_guard.py`~~ DONE -- a hardcoded path excusing
+    the guard's own test file, which produces zero offences when scanned
+    (measured 2026-10-04), so the exemption excused nothing and is deleted.
+  - OPEN, sized not changed: `CEILING = 2561` and `WIDTH = 120` in
+    `scripts/file_size_guard.py` are statistical fences measured once (2026-10-01
+    and 2026-10-04) and written down. Re-derived on today's `origin/main`
+    [measured 2026-10-04: 1,101 tracked `.py` files, Q1 95, Q3 417.5, Q3+3*IQR =
+    1,385; 415,755 lines, p99.9 = 120]: the width fence is unchanged, the
+    size fence would TIGHTEN to 1,385. Deriving them at check time is not done
+    here because a fence that moves with the tree can be dragged (deleting many
+    small files raises Q3; padding lines to 119 characters raises p99.9), and
+    the gaming case has to be closed before the rule changes. Decision needed:
+    keep as dated policy figures, or derive with a never-rises clamp.
+  - OPEN, sized not changed: `MONEY_MODULES` in `scripts/silent_swallow_guard.py`
+    is a hand-maintained list of 23 paths that must be edited every time a body is
+    lifted (its own comments record six such edits). Deriving "money-touching"
+    from source (modules under `src/execution/` and `src/protection/`, plus any
+    module that imports the broker adapter) is a scope change of the guard
+    itself, about half a day with the identity tests; not started.
+  - Hardcoded paths in guards on other in-flight work's ground, not touched:
+    `docs/WORK.md` / `docs/board_notes` in `board_item_guard` and `board_rot_guard`;
+    `config/number_ledger.yaml` in `ledger_prose_guard`, `ledger_substantiation_guard`
+    and `settlement_fill_guard`. Each refuses (does not silently pass) if the
+    file moves, so they are brittle, not blind.
 - Config files checked against the three-way test (kept record of a decision /
   stored baseline-allow-list a guard could compute / neither). Read 2026-10-04:
   - `config/number_ledger.yaml`: KEPT RECORD. The register of money-governing
