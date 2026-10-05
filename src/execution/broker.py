@@ -33,6 +33,7 @@ from src import sector_reference as _sector_reference
 # THE stop-value judgement (docs/WORK.md item 88). `src.execution.stop_records`
 # imports nothing from this module, so this is a leaf dependency.
 from src.execution.stop_records import STOP_USABLE, classify_stop_price
+from src.execution.held_qty import cover_qty_for_rearm
 from src.execution.broker_parts.stop_amend import (  # noqa: F401 (re-exports keep patch targets)
     StopAmender, _AMEND_NOT_ATTEMPTED, _is_terminal_broker_rejection, _quantize_price,
 )
@@ -1152,7 +1153,6 @@ class AlpacaBroker:
             )
             filled_qty += carried
         if filled_qty > 0 and cover_full_position:
-            from src.execution.scale_in import cover_qty_for_rearm
             full_qty = cover_qty_for_rearm(
                 self, symbol=symbol, filled_qty=filled_qty,
                 held_qty_before=held_qty_before,

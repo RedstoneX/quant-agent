@@ -33,6 +33,7 @@ import tempfile
 from pathlib import Path
 
 from scripts import status_board as sb
+from scripts.board_locator import trunk_board, working_board
 from scripts.guard_reference import (
     ROOT,
     ReferenceUnavailable,
@@ -41,8 +42,6 @@ from scripts.guard_reference import (
     trunk_paths,
 )
 
-WORK_MD = "docs/WORK.md"
-BOARD_NOTES = "docs/board_notes"
 
 #: The board parser's own stop markers for the funnel queue, in the order it
 #: tries them. The queue is the last numbered section of the board, so a copy
@@ -80,7 +79,7 @@ def _board_structure_problems(work: Path) -> list[str]:
     that has had its work finished, and must stay representable.
     """
     problems: list[str] = []
-    notes = sb.load_board_notes(work.parent / Path(BOARD_NOTES).name)
+    notes = sb.load_board_notes(work.parent / 'board_notes')
     for loader in (sb.load_funnel_queue, sb.load_pm_gate):
         _items, problem = loader(work, notes=notes)
         if problem:
@@ -98,14 +97,14 @@ def _board_structure_problems(work: Path) -> list[str]:
     return problems
 
 
-def _measure(root: Path) -> tuple[set[str], list[str]]:
+def _measure(root: Path, located: tuple[str, str]) -> tuple[set[str], list[str]]:
     """(flagged refs, structure problems) for one copy of the board.
 
     The problems are the anti-vacuity half: a board the parser could not read
     flags nothing, which would make the delta trivially empty forever, so the
     caller refuses whenever this list is non-empty.
     """
-    work, notes_dir = root / WORK_MD, root / BOARD_NOTES
+    work, notes_dir = root / located[0], root / located[1]
     problems = _board_structure_problems(work)
     if problems:
         return set(), problems
@@ -114,10 +113,11 @@ def _measure(root: Path) -> tuple[set[str], list[str]]:
 
 def working_flagged() -> set[str]:
     """Items this working tree declares finished while still on the board."""
-    flagged, problems = _measure(ROOT)
+    located = working_board()
+    flagged, problems = _measure(ROOT, located)
     if problems:
         raise ReferenceUnavailable(
-            f"{WORK_MD} in this working tree did not parse as a board "
+            f"{located[0]} in this working tree did not parse as a board "
             f"({' '.join(problems)}); the measurement is vacuous, so this guard "
             f"refuses rather than report an empty delta."
         )
@@ -125,15 +125,9 @@ def working_flagged() -> set[str]:
 
 
 def trunk_board_paths() -> list[str]:
-    """``docs/WORK.md`` and every ``docs/board_notes/`` file on the trunk."""
-    paths = [p for p in trunk_paths()
-             if p == WORK_MD or p.startswith(BOARD_NOTES + "/")]
-    if WORK_MD not in paths:
-        raise ReferenceUnavailable(
-            f"{TRUNK} has no {WORK_MD}: the board this guard compares against is "
-            f"not there, so it refuses rather than pass."
-        )
-    return paths
+    """The board (found by shape) and every file in its notes directory, on the trunk."""
+    work, notes = trunk_board()
+    return [p for p in trunk_paths() if p == work or p.startswith(notes + "/")]
 
 
 def trunk_flagged() -> set[str]:
@@ -143,6 +137,7 @@ def trunk_flagged() -> set[str]:
     parser takes paths, and reusing it unchanged is the whole point: a second
     parser could disagree with the real one and flag phantom rot.
     """
+    work, notes = trunk_board()
     paths = trunk_board_paths()
     blobs = trunk_blobs(paths)
     missing = [p for p in paths if p not in blobs]
@@ -157,10 +152,10 @@ def trunk_flagged() -> set[str]:
             dest = root / path
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(text, encoding="utf-8")
-        flagged, problems = _measure(root)
+        flagged, problems = _measure(root, (work, notes))
     if problems:
         raise ReferenceUnavailable(
-            f"{TRUNK}:{WORK_MD} did not parse as a board ({' '.join(problems)}); "
+            f"{TRUNK}:{work} did not parse as a board ({' '.join(problems)}); "
             f"the reference measurement is vacuous, so this guard refuses rather "
             f"than compare against nothing."
         )
@@ -181,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"REFUSING: {exc}", file=sys.stderr)
         return 2
     if bad:
+        board_path, notes_path = working_board()
         print(
             "this branch adds %d board item(s) that declare themselves finished "
             "(headline, or every DONE WHEN box ticked) while still sitting in "
@@ -188,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
             "Retire each one the normal way: write it up in "
             "docs/INCIDENT_HISTORY.md, delete its block from %s and its "
             "## item N block from %s/, and add its number to the retired line."
-            % (len(bad), WORK_MD, TRUNK, "\n  ".join(bad), WORK_MD, BOARD_NOTES),
+            % (len(bad), board_path, TRUNK, "\n  ".join(bad), board_path, notes_path),
             file=sys.stderr,
         )
         return 1
