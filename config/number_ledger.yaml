@@ -28,7 +28,7 @@
 # IN FOUR PLACES --
 #
 #   * it said the number was absent from config/settings.yaml. It is at
-#     config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any`, and that is the LIVE value.
+#     config/settings.yaml@`min_position_risk_pct: 0.5`, and that is the LIVE value.
 #   * it said the number was absent from every document. It is the
 #     owner-ratified risk-envelope row at docs/OUTCOME.md@`| Min risk per trade | 0.5% — below this, do not`.
 #   * it said the number was absent from any ratification record. It was
@@ -350,11 +350,12 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/llm.py::LLMConfig._provider_order_is_wellformed (the derivation at the definition site: the quantity
+      src/config/execution.py::ExecutionConfig.fractional_share_decimals (the derivation at the definition site: the quantity
       is FLOORED, never rounded up, so the only exposure is under-spending the
       budget, and 4dp is under a tenth of a cent of notional at any price this
-      desk trades) and docs/QAMC_REMEDIATION_SPEC.md@`share count is FLOORED to that many places, neve` (the
-      fractional-order spec, which names this key and its default).
+      desk trades) and docs/QAMC_REMEDIATION_SPEC.md (the fractional-order spec, whose
+      "The switch" paragraph names this key and its default 4; the key is written in
+      backticks there, so it cannot be text-pinned).
   - id: src.config.ExecutionConfig.max_entry_slippage_bps
     settles_by:
       kind: measurement
@@ -710,7 +711,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      src/config/__init__.py::RiskConfig and src/data/levels.py::cluster_span. 1.0 means the
+      src/config/__init__.py::RiskConfig and src/data/levels.py::BREAKOUT_PROJECTION_ATR_MULTIPLE. 1.0 means the
       projection IS the instrument's typical excursion over the stated horizon
       and nothing more, so the claim is read off the instrument rather than
       chosen. Note the documented interaction with min_stop_atr_multiple at
@@ -763,7 +764,7 @@ numbers:
       https://files.alpaca.markets/disclosures/library/BrokFeeSched.pdf , and
       https://docs.alpaca.markets/us/docs/margin-and-short-selling (fetched
       and confirmed 2026-09-18; the Elite tier is 4.75%). Applied on the
-      broker's own (debit x rate)/360 convention at src/margin_interest.py@`**MEASURES, never gates.** Nothing here touches`.
+      broker's own (debit x rate)/360 convention in src/margin_interest.py (DAYS_PER_YEAR_ALPACA_CONVENTION); the 6.25 itself is the field default at src/config/__init__.py::RiskConfig.margin_interest_rate_pct.
       The fee schedule says the rate MAY CHANGE OVER TIME, so this is a source
       with an expiry. The definition site src/config/__init__.py::RiskConfig already labels
       every figure derived from it an ESTIMATE until the broker's own INT
@@ -1197,7 +1198,7 @@ numbers:
       Field(default=STARTER_POSITION_RISK_PCT, ...)` at src/config/__init__.py::RiskConfig - a
       default bound to a NAME, which the first version of this scanner could
       not see at all, so the LIVE 0.50% floor was invisible to the gate that
-      was built around it. config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any` sets the same 0.5.
+      was built around it. config/settings.yaml@`min_position_risk_pct: 0.5` sets the same 0.5.
   - id: src.config.RiskConfig.min_stop_atr_multiple
     value: 2.5
     status: owner-ruled
@@ -2199,7 +2200,7 @@ numbers:
     status: sourced
     site: src/config/__init__.py
     source: >-
-      Derivation at src/config/research.py::IntradayScanConfig (the comment above the field), from a
+      Derivation at src/config/smart_money.py::SmartMoneyConfig.watched_drain_deadline_s (the field default and the comment above it), from a
       read-only measurement against SEC on 2026-09-19 with the desk's own
       User-Agent and 8 req/s limiter: 82 watched issuers indexed in 11.0 s;
       5,431 unread Form 4s inside lookback_days on them; 0.156 s per filing
@@ -2639,7 +2640,7 @@ numbers:
       47(5), which studied the 1-200 moving-average pair among others. Only the
       MA WINDOW is sourced -- the desk plots it as a trend reference; it is no
       longer a data-sufficiency test (that use was removed, board item 180).
-      Definition site and reasoning: src/data/technical.py::atr_series.
+      Definition site and reasoning: src/data/technical.py::LONGEST_INDICATOR_WINDOW.
     note: >-
       RE-SOURCED 2026-09-25 (board item 180, owner ruling): back to `sourced`
       after a 2026-09-23 spell at `arbitrary`. It went `arbitrary` because the
@@ -2781,7 +2782,7 @@ numbers:
     status: sourced
     site: src/pipeline_stages.py
     source: >-
-      src/pipeline_stages.py::_MOVED_NAME_OWNERS: 1.0 is the unambiguous case - literally
+      src/pipeline_stages.py::LEVELS_BLIND_RUN_EMPTY_SHARE: 1.0 is the unambiguous case - literally
       every symbol came back empty, which cannot be a legitimate market
       reading because the thing that varies per symbol produced the same null
       across 60-100 unrelated instruments. Read off the logic, not chosen.
@@ -3256,7 +3257,7 @@ numbers:
       rather than shrunk (src/portfolio_constructor/config.py::ConstructorConfig.min_risk_pct). One of three sites holding the
       same ratified number; the other two are src/risk/constants.py@`and it is the unique point on the scale that can` and src/config/__init__.py::RiskConfig.'
     prior_source: 'Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335). docs/OUTCOME.md@`| Min risk per trade | 0.5% — below this, do not`
-      states it as "Min risk per trade | 0.5% - below this, do not trade", and config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any`
+      states it as "Min risk per trade | 0.5% - below this, do not trade", and config/settings.yaml@`min_position_risk_pct: 0.5`
       carries the deployed key `risk.min_position_risk_pct: 0.5`. CORRECTION 2026-09-18: this ledger''s
       first version called this entry "THE CASE THIS CHECK WAS BUILT FOR" and said the number was
       absent from settings.yaml, absent from every document and absent from any ratification record.
@@ -3488,7 +3489,7 @@ numbers:
     status: sourced
     site: src/portfolio_constructor/config.py
     source: >-
-      src/portfolio_constructor/config.py::RiskPlan. 1.0 here is the declared absence
+      src/portfolio_constructor/config.py::ConstructorConfig.stop_atr_setup_scale. 1.0 here is the declared absence
       of a scaler, not a chosen magnitude - the sibling range rung 0.90
       carries the arbitrary entry.
     note: >-
@@ -3566,8 +3567,8 @@ numbers:
     source: >-
       docs/board_notes/:1198 (section "## item 218 — Arithmetically losing
       geometry is refused (owner ruling 2026-10-01)") records the ruling
-      verbatim, and src/portfolio_constructor/config.py@`STOP_REFUSAL_NO_STRUCTURAL_STOP_NO_VOLATILITY =` carries it beside the
-      constant that applies it. Owner ruling 2026-10-01, verbatim: "For now,
+      verbatim, and src/risk/constants.py::REWARD_RISK_PARITY defines it and
+      src/risk/constants.py@`return (ratio < REWARD_RISK_PARITY, ratio)` applies it. Owner ruling 2026-10-01, verbatim: "For now,
       let's refuse a bad risk
       reward ratio. See if that improves the desk purchases." He was shown
       the worked case (buy 100, stop 94, nearest structural level above 104
@@ -3630,7 +3631,7 @@ numbers:
     prior_source: >-
       Owner-ratified risk-envelope row, 2026-08-27 (commit 75c02335).
       docs/OUTCOME.md@`| Min risk per trade | 0.5% — below this, do not` states it as "Min risk per trade | 0.5% - below this,
-      do not trade", and config/settings.yaml@`# Spec §2.2 — the most of the total ceiling any` carries the deployed key
+      do not trade", and config/settings.yaml@`min_position_risk_pct: 0.5` carries the deployed key
       `risk.min_position_risk_pct: 0.5`. CORRECTION 2026-09-18: this ledger's
       first version called this entry "THE CASE THIS CHECK WAS BUILT FOR" and
       said the number was absent from settings.yaml, absent from every
@@ -4087,7 +4088,7 @@ numbers:
       Wilder's own ADX threshold for a strong trend, as published in J. Welles
       Wilder, New Concepts in Technical Trading Systems (1978), the standard
       convention (ADX above 25 = trend strong enough to trade with). Definition
-      and use: src/risk/exit_guard.py@`# A support/resistance break is confirmed by a d`.
+      and use: src/risk/exit_guard.py::ADX_STRONG_TREND_THRESHOLD.
     note: >-
       Trade-governing: at or above this ADX a with-trend structural break enters
       the patient strong-with-trend regime (two confirmed closes AND the prior
