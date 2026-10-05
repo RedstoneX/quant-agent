@@ -1,37 +1,28 @@
 """The live-capital pre-flight gate (board item 150).
 
-Until now the conditions that must hold before real money is switched on lived
-only in prose — `docs/FUTURE.md` ("Before any live work is authorized"),
-`docs/STATE.md` ("Not authorized"), `docs/OUTCOME.md` (MVP lifecycle) and the
-`[[qamc-live-capital-checklist]]` anchor referenced from
-`docs/QAMC_REMEDIATION_SPEC.md` and `src/config.py`. Nothing enforced them, so a
-live-capital switch taken with an unmet condition would neither be stopped nor
-even noticed.
-
-This module turns that prose into a mechanical gate. It enumerates each named
-pre-flight condition, reports each condition's current state, and BLOCKS
-(non-zero exit / ``passed is False``) unless *every* condition is satisfied.
+The conditions that must hold before real money is switched on once lived only
+in prose (`docs/FUTURE.md`, `docs/STATE.md`, `docs/OUTCOME.md`,
+`docs/QAMC_REMEDIATION_SPEC.md`); nothing enforced them. This module turns that
+prose into a mechanical gate: it enumerates each named condition, reports its
+state, and BLOCKS (non-zero exit / ``passed is False``) unless every one holds.
 
 Two kinds of condition:
 
 * **mechanical** — checkable in code here and now (is the paper-only guard still
   active, does the shipped config still declare paper). Any error checking a
   mechanical condition is treated as a FAIL: the gate fails closed.
-* **manual-attestation** — inherently a human judgment (has the owner approved,
-  has the strategy earned live capital, is the threat model designed, has the
-  2.0x paper margin been re-derived for live …). These cannot be proven in code,
-  so rather than silently pass them the gate requires a signed attestation in
-  ``config/live_capital_preflight_attestations.yaml``. An absent, false or
-  incomplete attestation BLOCKS.
+* **manual-attestation** — inherently a human judgment (owner approval, earned
+  live capital, threat model, margin re-derived …). Not provable in code, so the
+  gate requires a signed attestation in
+  ``config/live_capital_preflight_attestations.yaml``; absent, false or
+  incomplete BLOCKS.
 
-This module invents no trading thresholds. The condition list is sourced from
-the board item's DONE WHEN and the checklist prose named above; the mechanical
-checks only read state that already exists.
+This module invents no trading thresholds; the condition list is sourced from
+the board item's DONE WHEN and the prose named above.
 """
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -56,7 +47,8 @@ BLOCK = "BLOCK"  # manual condition not (yet) attested
 #
 # AUDIT — the standalone run (scripts/live_capital_preflight.py). Everything is
 #   in scope, including the two mechanical checks that confirm the desk is still
-#   paper-locked and has not drifted.
+#   paper-locked and has not drifted. The guard check's probe is INJECTED by the
+#   caller (`paper_guard_probe`): this module never imports the config it gates.
 # ACTIVATION — the evaluation performed by the paper-only guard itself at the
 #   moment live capital would be switched on. The two paper-state mechanical
 #   checks are deliberately NOT in this scope, and the reason is not
@@ -102,23 +94,21 @@ class GateResult:
 # --------------------------------------------------------------------------- #
 # Mechanical checks
 # --------------------------------------------------------------------------- #
-def _check_paper_only_guard() -> tuple[str, str]:
+def _check_paper_only_guard(probe: Callable[[], object] | None) -> tuple[str, str]:
     """The one-token-config-edit guard must reject a non-paper account.
 
     Source: src/config.py AlpacaConfig._enforce_paper_only — "going live must
-    never be a casual config toggle" (docs/FUTURE.md). We prove the guard is
-    still wired by constructing a non-paper config and requiring it to raise.
+    never be a casual config toggle" (docs/FUTURE.md). `probe` is injected by
+    the caller and must construct a non-paper AlpacaConfig; the guard is proven
+    wired when that raises. No probe is a FAIL, never a skip.
 
     AUDIT scope only. At ACTIVATION this check would be the guard interrogating
     itself, so it is excluded there rather than being made to answer trivially.
     """
+    if probe is None:
+        return FAIL, "no paper-guard probe injected — cannot prove the guard is wired"
     try:
-        from src.config import AlpacaConfig
-    except Exception as exc:  # pragma: no cover - import failure => fail closed
-        return FAIL, f"could not import AlpacaConfig ({exc!r})"
-
-    try:
-        AlpacaConfig(base_url=f"https://{_PAPER_HOST}", paper=False)
+        probe()
     except Exception:
         return PASS, "AlpacaConfig rejects paper=False (config-toggle guard active)"
     return FAIL, "AlpacaConfig accepted paper=False — the paper-only guard is GONE"
@@ -163,6 +153,7 @@ class MechanicalCondition:
     source: str
     checker: Callable[..., tuple[str, str]]
     needs_settings: bool = False
+    needs_probe: bool = False
     scopes: frozenset[str] = AUDIT_ONLY
 
 
@@ -181,6 +172,7 @@ MECHANICAL_CONDITIONS: tuple[MechanicalCondition, ...] = (
         title="The paper-only guard still rejects a non-paper config",
         source="src/config.py AlpacaConfig._enforce_paper_only; docs/FUTURE.md",
         checker=_check_paper_only_guard,
+        needs_probe=True,
         scopes=AUDIT_ONLY,
     ),
     MechanicalCondition(
@@ -303,6 +295,7 @@ def evaluate(
     settings_path: Path = DEFAULT_SETTINGS_PATH,
     attestations_path: Path = DEFAULT_ATTESTATIONS_PATH,
     scope: str = AUDIT,
+    paper_guard_probe: Callable[[], object] | None = None,
 ) -> GateResult:
     """Evaluate every pre-flight condition in `scope`. BLOCKs on any failure."""
     if scope not in ALL_SCOPES:
@@ -316,6 +309,8 @@ def evaluate(
         try:
             if mech.needs_settings:
                 status, detail = mech.checker(settings_path)
+            elif mech.needs_probe:
+                status, detail = mech.checker(paper_guard_probe)
             else:
                 status, detail = mech.checker()
         except Exception as exc:  # fail closed on any checker error
@@ -401,7 +396,10 @@ def format_report(gate: GateResult, scope: str = AUDIT) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    paper_guard_probe: Callable[[], object] | None = None,
+) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -423,10 +421,7 @@ def main(argv: list[str] | None = None) -> int:
         settings_path=args.settings,
         attestations_path=args.attestations,
         scope=args.scope,
+        paper_guard_probe=paper_guard_probe,
     )
     print(format_report(gate, scope=args.scope))
     return 0 if gate.passed else 1
-
-
-if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
