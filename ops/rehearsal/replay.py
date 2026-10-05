@@ -109,6 +109,10 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
+from ops.rehearsal.recorded_calls import (
+    _split_labelled_sections, _unmerge_chunked_call, expand_and_audit,
+)
+
 logger = logging.getLogger(__name__)
 
 # Below this Jaccard overlap the replayed answer is reported as answering a
@@ -380,109 +384,6 @@ def select_replay_run(
     )
 
 
-# The exact marker `analyze_batch` / `_merge_agent_results` join real calls
-# behind (src/agents/tech_analyst.py) — see the module docstring's "CHUNKED
-# AGENTS" section. Matched only at the start of a line so ordinary prompt or
-# response content (OHLCV numbers, JSON) can never be mistaken for one: none
-# of these three labels is a string tech_analyst's prompts or a JSON tech
-# rating would ever legitimately produce on its own line.
-_CHUNK_LABEL_RE = re.compile(
-    r"^--- (chunk \d+/\d+|missing-symbol recovery|retry) ---$", re.MULTILINE,
-)
-
-
-def _split_labelled_sections(text: str) -> list[tuple[str, str]] | None:
-    """Split merged text back into its `(label, content)` real-call parts.
-
-    Returns None when `text` carries no chunk markers — the normal case for
-    every non-chunked agent's row, and for a tech_analyst row small enough
-    that `analyze_batch` never needed to chunk it.
-    """
-    matches = list(_CHUNK_LABEL_RE.finditer(text))
-    if not matches:
-        return None
-    sections: list[tuple[str, str]] = []
-    for i, m in enumerate(matches):
-        start = m.end() + 1  # skip the single \n ending the marker line
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        content = text[start:end]
-        if content.endswith("\n\n"):
-            content = content[:-2]  # the "\n\n".join separator, not content
-        sections.append((m.group(1), content))
-    return sections
-
-
-def _unmerge_chunked_call(call: RecordedCall) -> list[RecordedCall]:
-    """Recover the real per-call recordings behind one merged agent_logs row.
-
-    Falls back to `[call]` unchanged whenever `input_message` and
-    `full_response` don't carry the identical label sequence — an admission
-    that this row can't be reliably un-merged, not a guess dressed up as one.
-    A row like that still replays as a single call exactly as it always has.
-    """
-    msg_sections = _split_labelled_sections(call.input_message)
-    resp_sections = _split_labelled_sections(call.full_response)
-    if msg_sections is None or resp_sections is None:
-        return [call]
-    if [label for label, _ in msg_sections] != [label for label, _ in resp_sections]:
-        logger.warning(
-            "Rehearsal: agent_logs row %d (%s) has mismatched chunk markers "
-            "between input_message and full_response (%s vs %s) — replaying "
-            "it as one merged call rather than guessing how to un-merge it",
-            call.row_id, call.agent_name,
-            [l for l, _ in msg_sections], [l for l, _ in resp_sections],
-        )
-        return [call]
-
-    n = len(msg_sections)
-    total_in_bytes = sum(len(msg.encode("utf-8")) for _, msg in msg_sections) or 1
-    total_out_bytes = sum(len(resp.encode("utf-8")) for _, resp in resp_sections) or 1
-    total_tokens = max(call.input_tokens + call.output_tokens, 1)
-
-    parts: list[RecordedCall] = []
-    input_left, output_left, cost_left = call.input_tokens, call.output_tokens, call.cost_usd
-    for i, ((label, msg), (_, resp)) in enumerate(zip(msg_sections, resp_sections)):
-        if i == n - 1:
-            # Last part takes whatever's left, not its own prorated share —
-            # guarantees the parts' tokens/cost sum to exactly the recorded
-            # total no matter how rounding fell on the earlier parts.
-            input_i, output_i, cost_i = input_left, output_left, cost_left
-        else:
-            in_share = len(msg.encode("utf-8")) / total_in_bytes
-            out_share = len(resp.encode("utf-8")) / total_out_bytes
-            input_i = round(call.input_tokens * in_share)
-            output_i = round(call.output_tokens * out_share)
-            input_left -= input_i
-            output_left -= output_i
-            if cost_left is None:
-                cost_i = None
-            else:
-                combined_share = (input_i + output_i) / total_tokens
-                cost_i = round(call.cost_usd * combined_share, 8)
-                cost_left = round(cost_left - cost_i, 8)
-        parts.append(RecordedCall(
-            row_id=call.row_id,
-            agent_name=call.agent_name,
-            run_id=call.run_id,
-            timestamp=call.timestamp,
-            model=call.model,
-            input_message=msg,
-            full_response=resp,
-            input_tokens=input_i,
-            output_tokens=output_i,
-            cost_usd=cost_i,
-            # `finish_reason` is only known for the row's LAST real call —
-            # it's the one `last_finish_reason` in analyze_batch's merge
-            # kept. Earlier parts get the non-truncating default rather than
-            # inventing a truncation signal that was never recorded for them.
-            finish_reason=(call.finish_reason if i == n - 1 else "stop"),
-            actual_provider=call.actual_provider,
-            provider_requests=1,
-            part_label=f"{label} ({i + 1}/{n})",
-        ))
-    return parts
-
-
 class ResponseLibrary:
     """Recorded model responses for one run, matched to live calls."""
 
@@ -492,30 +393,8 @@ class ResponseLibrary:
         # become N independently-matchable, independently-consumable
         # RecordedCalls (see `_unmerge_chunked_call`) for `.match()` to ever
         # see more than one candidate for it.
-        expanded: list[RecordedCall] = []
-        self.findings: list[dict] = []
+        expanded, self.findings = expand_and_audit(calls)
         self.matches: list[dict] = []
-        for call in calls:
-            parts = _unmerge_chunked_call(call)
-            represented = len(parts)
-            attempted = max(int(call.provider_requests or 0), represented)
-            if attempted > represented:
-                self.findings.append({
-                    "kind": "incomplete_provider_attempt_recording",
-                    "agent": call.agent_name,
-                    "row_id": call.row_id,
-                    "attempted": attempted,
-                    "represented": represented,
-                    "detail": (
-                        f"agent_logs row {call.row_id} says {attempted} provider "
-                        f"attempts occurred, but its retained input/response can "
-                        f"reconstruct only {represented}. The missing failed or "
-                        "retried transport attempts can change routing, cost and "
-                        "circuit state, so this recording cannot support a "
-                        "faithful session verdict"
-                    ),
-                })
-            expanded.extend(parts)
         self._by_agent: dict[str, list[RecordedCall]] = {}
         for call in sorted(expanded, key=lambda c: c.row_id):
             self._by_agent.setdefault(_normalise(call.agent_name), []).append(call)

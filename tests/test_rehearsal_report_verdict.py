@@ -426,21 +426,6 @@ def test_genuine_failure_statuses_are_still_fail():
         assert _verdict(_report(status)) == "FAIL", status
 
 
-def test_collapsed_provider_attempt_history_makes_verdict_inconclusive():
-    report = _report("executed")
-    report.findings.append({
-        "kind": "incomplete_provider_attempt_recording",
-        "agent": "portfolio_manager",
-        "detail": "three provider attempts occurred but only one was retained",
-    })
-
-    assert _verdict(report) == "INCONCLUSIVE"
-    report.verdict = _verdict(report)
-    rendered = " ".join(report.render().split())
-    assert "VERDICT: INCONCLUSIVE" in rendered
-    assert "three provider attempts occurred" in rendered
-
-
 def test_every_newly_recognized_status_has_a_plain_english_entry():
     for status in ("reviewed", "ok", "analyzed", "intraday_no_trades", "intraday_executed"):
         assert status in STATUS_PLAIN

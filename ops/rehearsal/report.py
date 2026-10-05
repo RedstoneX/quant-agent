@@ -25,6 +25,9 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 
+from ops.rehearsal.recorded_calls import (
+    CANNOT_JUDGE_FINDINGS, INCONCLUSIVE_FINDINGS,
+)
 from ops.rehearsal.replay import SESSION_RUN_PREFIX as REPLAY_PREFIX
 from src.status_plain_extra import EXTRA_PLAIN
 
@@ -441,22 +444,7 @@ def plain_agent(name: str) -> str:
 # not buried with the rest, because a reader who does not see them will read a
 # red gate as a defect and a green one as coverage — which is exactly the
 # hour-long argument of 2026-09-02.
-_CANNOT_JUDGE_FINDINGS = frozenset({
-    "replay_session_mismatch",
-    "missing_recorded_response",
-    "low_confidence_match",
-    "incomplete_provider_attempt_recording",
-})
-
-# Findings that mean "this rehearsal did not reproduce the session faithfully,
-# so its result says nothing about the code".  A cross-session transplant is
-# one form; a source row that collapsed failed/retried provider attempts is
-# another.  In both cases PASS or FAIL would overstate the evidence.
-_INCONCLUSIVE_FINDINGS = frozenset({
-    "replay_session_mismatch",
-    "incomplete_provider_attempt_recording",
-})
-_INCONCLUSIVE_FINDING = "replay_session_mismatch"  # compatibility at call sites
+_INCONCLUSIVE_FINDING = "replay_session_mismatch"
 
 
 @dataclass
@@ -709,7 +697,7 @@ class RehearsalReport:
                     float(finding.get("similarity") or 0.0),
                     str(finding.get("agent", "an agent")),
                 ))
-            elif kind in _CANNOT_JUDGE_FINDINGS:
+            elif kind in CANNOT_JUDGE_FINDINGS:
                 lines.append(f"!! {finding['detail']}")
         if low:
             low.sort()
@@ -1268,7 +1256,7 @@ def _verdict(report: RehearsalReport) -> str:
     provider attempts occurred that the retained recording cannot replay.
     Everything else in doubt stays FAIL.
     """
-    if any(f.get("kind") in _INCONCLUSIVE_FINDINGS for f in report.findings):
+    if any(f.get("kind") in INCONCLUSIVE_FINDINGS for f in report.findings):
         return "INCONCLUSIVE"
     if report.error and not report.status:
         return "FAIL"
