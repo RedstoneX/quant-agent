@@ -110,3 +110,24 @@ def test_a_note_pin_stays_ratcheted_not_absolute():
 
 def test_every_source_pin_in_the_real_ledger_carries_its_number():
     assert g.source_violations() == []
+
+
+_CITED = {"id": "a.b", "value": 1, "note": "see src/m.py::CEILING"}
+_BARE = {"id": "a.b", "value": 1, "note": "prose only"}
+
+
+def test_deleting_a_citation_from_a_cited_row_fails():
+    assert g.uncited_violations({"a.b": _BARE}, {"a.b": _CITED})
+
+
+def test_a_new_bare_row_fails_but_an_already_bare_row_is_not_blamed():
+    assert g.uncited_violations({"a.b": _BARE, "c.d": _BARE}, {"a.b": _BARE})
+    assert not g.uncited_violations({"a.b": _BARE}, {"a.b": _BARE})
+
+
+def test_adding_a_citation_is_green():
+    assert not g.uncited_violations({"a.b": _CITED}, {"a.b": _BARE})
+
+
+def test_real_ledger_uncited_set_does_not_grow_past_trunk():
+    assert g.uncited_violations() == []
