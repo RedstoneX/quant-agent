@@ -58,7 +58,7 @@ def _universe(monkeypatch, working: dict, trunk: dict, untouched=frozenset()):
     trunk = dict(_POPULATION, **trunk)
     monkeypatch.setattr(g, "working_texts", lambda: dict(working))
     monkeypatch.setattr(g, "working_sizes",
-                        lambda: {p: g._count(t) for p, t in working.items()})
+                        lambda: {p: g._code_count(t) for p, t in working.items()})
     monkeypatch.setattr(g, "trunk_blobs",
                         lambda paths: {p: trunk[p] for p in paths if p in trunk})
     monkeypatch.setattr(g, "trunk_paths", lambda suffix="": sorted(trunk))
@@ -310,3 +310,94 @@ def test_it_refuses_rather_than_invent_a_fence_from_nothing():
         file_size_guard.line_ceiling([])
     with pytest.raises(ReferenceUnavailable):
         file_size_guard.width_fence([])
+
+
+# --- an import is a dependency declaration, not code (2026-10-05) -----------
+#
+# The ratchet refuses more CODE. ``ast.Import``/``ast.ImportFrom`` hold only
+# module names and aliases, so no behaviour can be expressed in one and none
+# can be smuggled in by calling it an import. These tests pin both halves: the
+# exemption is real, and nothing that is not purely an import rides on it.
+
+_BIG = _file(500)  # 500 statements, well over the 400-line floor
+
+
+# The synthetic population is 500 copies of ``pass``, so its derived width
+# fence is 4 characters and ANY added line is "over-wide". This fixture, the
+# same in both trees, puts the fence out of the way so these tests measure the
+# line and statement rules and nothing else; the width fence has its own tests.
+_WIDE = "".join(["x = " + repr("a" * 190) + "\n"] * 50)
+
+
+def _grew(monkeypatch, added: str) -> list[str]:
+    """Add ``added`` ahead of a 500-line over-floor file and judge the tree."""
+    return [b for b in _universe(monkeypatch,
+                                 {"big.py": added + _BIG, "wide.py": _WIDE},
+                                 {"big.py": _BIG, "wide.py": _WIDE})
+            if b.startswith("big.py")]
+
+
+def test_one_added_import_is_not_growth(monkeypatch):
+    """The defect: extracting a helper adds one import to each call site, and
+    every call site over the floor went red for it (reproduced on four real
+    tracked files, 2026-10-05, in lines AND in statements)."""
+    assert _grew(monkeypatch, "from pkg.helper import parse\n") == []
+
+
+def test_many_added_imports_are_not_growth(monkeypatch):
+    assert _grew(monkeypatch, "".join(f"import mod{i}\n" for i in range(10))) == []
+
+
+def test_a_parenthesised_multi_line_import_is_not_growth(monkeypatch):
+    assert _grew(monkeypatch, "from pkg import (\n    a,\n    b,\n    c,\n)\n") == []
+
+
+def test_a_star_import_is_not_growth(monkeypatch):
+    assert _grew(monkeypatch, "from pkg import *\n") == []
+
+
+def test_a_conditional_import_still_costs_its_block(monkeypatch):
+    """The import line is free; the ``if``/``try`` it needs is ordinary code."""
+    bad = _grew(monkeypatch, "if True:\n    import mod\n")
+    assert any("lines (+1)" in b for b in bad), bad
+    assert any("statements (+1)" in b for b in bad), bad
+
+
+def test_an_import_sharing_its_line_with_a_statement_is_charged(monkeypatch):
+    """``import os; smuggled()`` -- the line holds a non-import statement, so
+    the whole line is charged and so is that statement."""
+    bad = _grew(monkeypatch, "import mod; mod.run()\n")
+    assert any("lines (+1)" in b for b in bad), bad
+    assert any("statements (+1)" in b for b in bad), bad
+
+
+def test_an_import_cannot_carry_a_call(monkeypatch):
+    """A function call spelled through an import alias is still a statement."""
+    bad = _grew(monkeypatch, "import mod\nmod.run()\n")
+    assert any("lines (+1)" in b for b in bad), bad
+    assert any("statements (+1)" in b for b in bad), bad
+
+
+def test_the_rule_still_bites_on_one_real_statement(monkeypatch):
+    """Delete the statement rule and this goes green: the file gains a
+    statement without gaining a physical line (the import it displaces is
+    free, the statement is not)."""
+    bad = _grew(monkeypatch, "SMUGGLED = 1\n")
+    assert any("statements (+1)" in b for b in bad), bad
+
+
+def test_import_exemption_is_by_ast_identity_not_by_spelling(monkeypatch):
+    """A string that merely looks like an import is code and is charged."""
+    bad = _grew(monkeypatch, "fake = 'import mod'\n")
+    assert any("statements (+1)" in b for b in bad), bad
+
+
+def test_import_only_lines_names_what_it_exempts():
+    f = file_size_guard.import_only_lines
+    assert f("import a\n") == {1}
+    assert f("from p import (\n a,\n)\n") == {1, 2, 3}
+    assert f("from p import *\n") == {1}
+    assert f("import a; a.run()\n") == set()
+    assert f("def g():\n    import a\n") == {2}
+    assert f("x = 1\n") == set()
+    assert f("this is not python\n") == set()
