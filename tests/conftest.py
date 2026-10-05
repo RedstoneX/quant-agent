@@ -298,6 +298,11 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
 
     heartbeat = alerting / "coverage_heartbeat.json"
     drift = alerting / "deploy_drift.json"
+    import src.alert_claims as _claims
+
+    # `load_state`/`save_state` live in `src.alert_claims` and resolve the
+    # default path from THAT module's globals; the watchdog only re-exports.
+    monkeypatch.setattr(_claims, "STATE_PATH", heartbeat)
     monkeypatch.setattr(_cw, "STATE_PATH", heartbeat)
     monkeypatch.setattr(_cw, "DEPLOY_DRIFT_STATE_PATH", drift)
 
@@ -313,3 +318,25 @@ def _isolate_alerting_state(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_db_reads, "SUPPRESSION_STATE_PATHS", (heartbeat, drift))
 
+
+
+@pytest.fixture(autouse=True)
+def _the_suite_is_not_the_production_desk(request, monkeypatch):
+    """Name the test process honestly for `src.session_identity`.
+
+    Tests routinely chdir into a temporary tree and then open the fill
+    socket, which is precisely the shape the identity check refuses for the
+    desk: a session writing its data outside its own checkout. Declaring the
+    suite's own identity states the truth rather than weakening the check —
+    the desk-identity refusal stays fully armed for anything that is the desk.
+    """
+    module = getattr(request.module, "__name__", "")
+    desk = module.endswith("test_credentials") or module.endswith("test_session_identity")
+    monkeypatch.setenv("QAMC_SESSION_IDENTITY", "desk" if desk else "pytest")
+    # CI exports dummy broker keys for the whole job. Test brokers carry their
+    # own fake keys, so the real REST-versus-socket comparison would read that
+    # job-level pair as "REST" and refuse every test socket. The suite is not
+    # a session with delivered credentials; tests that exercise the comparison
+    # set both sides themselves.
+    monkeypatch.delenv("ALPACA_API_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)

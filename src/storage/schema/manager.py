@@ -18,6 +18,9 @@ from src.storage.schema.owner_intent_tables import apply as _owner_intents
 from src.storage.schema.pending_stop_amend_tables import ensure_pending_stop_amend_table
 from src.storage.schema.prune_indexes import ensure_prune_indexes
 from src.storage.schema.sentinel_tables import ensure_sentinel_tables
+from src.storage.schema.soft_exit_restore_occurrences_migration import (
+    ensure_soft_exit_restore_occurrences,
+)
 from src.storage.schema.trade_refusal_tables import ensure_trade_refusal_table
 
 logger = logging.getLogger(__name__)
@@ -594,23 +597,11 @@ class DatabaseSchema:
             "alignment_exit_readings", "not_evaluated_reason",
             "not_evaluated_reason TEXT",
         )
-        # --- Item 78 evidence: what the MECHANICAL soft-exit heal actually
-        # did, one row per time it ran.
-        # RECORDING ONLY (2026-10-01). Nothing may read these rows back
-        # into a trading decision, and they may NEVER be swept for a
-        # threshold, a rate or a gate.
-        #
-        # The heal restores a `thesis_invalid_if` that a later null-wipe
-        # blanked, from the sentence the model itself already wrote. It
-        # never invents one. Two of item 78's three removal criteria are
-        # claims about this heal, and until now it wrote nothing down at
-        # all, so neither could be judged — not because the condition was
-        # unmet but because nobody could see it.
-        #
-        # Unknown stays NULL. A payload that carries no symbol records a
-        # NULL symbol; `source` is NULL unless something was really
-        # restored, because "healed from the model's own words" and
-        # "nothing to heal" are different facts and neither is a zero.
+        # Item 78 evidence, RECORDING ONLY: nothing may read these rows
+        # back into a trading decision and they may never be swept for a
+        # threshold. Unknown stays NULL throughout. Why the table exists,
+        # and why rows are deduplicated with a count, is documented in
+        # src/storage/schema/soft_exit_restore_occurrences_migration.py.
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS soft_exit_heal_restores (
@@ -622,7 +613,8 @@ class DatabaseSchema:
                 blank_found INTEGER,         -- 1/0: falsifier blank on entry
                 healed INTEGER,              -- 1/0: heal filled it
                 source TEXT,                 -- NULL unless healed
-                dropped_before INTEGER       -- observations lost to the cap
+                dropped_before INTEGER,      -- identities the cap refused
+                occurrences INTEGER          -- times this identity was seen
             )
             """
         )
@@ -630,6 +622,7 @@ class DatabaseSchema:
             "CREATE INDEX IF NOT EXISTS idx_soft_exit_heal_restores_date "
             "ON soft_exit_heal_restores (session_date, symbol)"
         )
+        ensure_soft_exit_restore_occurrences(self.conn)  # see that module
         # --- Item 224 evidence: the REALISED sector mix of the orders the
         # constructor actually built, one row per run.
         # RECORDING ONLY (2026-10-01).
