@@ -34,7 +34,6 @@ TRACKED_MODULES: tuple[str, ...] = (
     "src/protection/protected_sell.py",
     "src/protection/reprotect_records.py",
     "src/pipeline_risk_gate.py",
-    "src/pipeline_risk_gate_mixin.py",
     "src/pipeline_research_continuity.py",
     "src/pipeline_sizing.py",
     "src/pipeline_earnings_quality.py",

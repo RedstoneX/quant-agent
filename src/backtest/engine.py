@@ -13,7 +13,7 @@ honest way to "backtest" a Portfolio Manager or Tech Analyst call. What CAN
 be measured, and what nearly every recent engineering change has actually
 touched, is the DETERMINISTIC layer underneath them:
 
-  * entry timing        — `TradingPipeline._has_actionable_signal_fn`
+  * entry timing        — `RiskGate._has_actionable_signal_fn`
   * structural stops     — `src/data/levels.py::find_structural_levels`
   * stop discipline      — `PortfolioConstructor._resolve_stop` /
                             `._widen_stop_past_noise` (src/portfolio_constructor.py)
@@ -149,7 +149,7 @@ from src.backtest.structural_stops import (  # noqa: F401
 )
 from src.backtest.records import Trade, _OpenPosition, _fill_price  # noqa: F401
 from src.models import OHLCV
-from src.pipeline import TradingPipeline
+from src.pipeline_risk_gate import RiskGate
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 from src.risk.budget import RiskRequest, allocate_risk_budget
 from src.risk.trailing import compute_trailing_stop
@@ -450,7 +450,7 @@ def run_backtest(
                 continue
 
             indicators = compute_indicators(symbol, bars_through_today)
-            if not TradingPipeline._has_actionable_signal_fn(
+            if not RiskGate._has_actionable_signal_fn(
                 indicators, symbol, bars_through_today, [],
             ):
                 continue

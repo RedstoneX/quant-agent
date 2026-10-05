@@ -94,3 +94,33 @@ def test_unread_filing_refusal_without_a_pipeline():
         [_buy("AAA"), _buy("BBB")], [{"symbol": "aaa", "queued": True}],
     )
     assert [d.symbol for d in kept] == ["BBB"]
+
+
+def test_risk_gate_is_reachable_without_importing_the_pipeline():
+    """Step 7 is a real boundary, not a renamed shim.
+
+    `RiskGateMixin` was deleted on 2026-10-05; `build_risk_gate` takes its
+    collaborators by value, so a process that builds and drives the gate must
+    never load `src.pipeline`. Checked in a SUBPROCESS: an in-process check
+    would have to evict modules from `sys.modules`.
+    """
+    import os
+    import subprocess
+
+    program = (
+        "import sys\n"
+        "from src.risk_gate_build import build_risk_gate\n"
+        "gate = build_risk_gate(config=None)\n"
+        "updated, rejected = gate._apply_risk_modifications([], [])\n"
+        "assert (updated, rejected) == ([], [])\n"
+        "leaked = [m for m in sys.modules if m == 'src.pipeline']\n"
+        "assert not leaked, leaked\n"
+        "print('CLEAN')\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+        env={**os.environ, "PYTHONPATH": "."},
+    )
+    assert done.returncode == 0, done.stderr
+    assert "CLEAN" in done.stdout

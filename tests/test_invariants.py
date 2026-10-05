@@ -75,7 +75,7 @@ def test_invariant_hard_risk_stage_drops_breaching_buy():
         entry_price=180.0, stop_loss=170.0, take_profit=200.0,
         reasoning="fine",
     )
-    allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
+    allowed, _violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
         [bad, ok], positions=[], total_value=100_000.0,)
     allowed_symbols = {d.symbol for d in allowed}
     assert "NVDA" not in allowed_symbols
@@ -116,7 +116,7 @@ def test_invariant_hard_risk_gate_unaffected_by_garbage_llm_config():
         entry_price=180.0, stop_loss=170.0, take_profit=200.0,
         reasoning="fine",
     )
-    allowed, _violations, blocked = pipeline._filter_hard_risk_decisions(
+    allowed, _violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
         [bad, ok], positions=[], total_value=100_000.0,)
     allowed_symbols = {d.symbol for d in allowed}
     assert "NVDA" not in allowed_symbols

@@ -28,6 +28,7 @@ failure from a symbol that genuinely has no sector, and
 `trader_feed.py` already render as a plain "degraded" line in the session
 output (the owner's Telegram alert).
 """
+from src.pipeline_risk_gate import RiskGate
 from unittest.mock import patch
 
 import pytest
@@ -314,7 +315,7 @@ def test_normal_resolution_under_cap_produces_zero_violations():
 
 
 # ===========================================================================
-# Batch accumulation: TradingPipeline._filter_hard_risk_decisions must pool
+# Batch accumulation: RiskGate._filter_hard_risk_decisions must pool
 # "Unknown" across decisions in the same run via `accumulate_pending_sector`,
 # not just within one check().
 # ===========================================================================
@@ -331,7 +332,7 @@ def test_pending_sector_investment_pools_unknown_across_the_batch():
     with patch("src.pipeline_admission._get_sector", return_value="Unknown"), patch(
         "src.execution.broker._get_sector", return_value="Unknown"
     ):
-        allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
+        allowed, violations, blocked = pipeline.risk_gate._filter_hard_risk_decisions(
             decisions, positions=[], total_value=100_000,)
 
     # FIRST alone (8%, prior 0%) is under the 15% hard ceiling's allowance

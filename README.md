@@ -593,7 +593,7 @@ quant-agent/
 │   ├── pipeline_protection.py     # ProtectionMixin — stop coverage, repair, protected sells, WAL restore, reconcilers
 │   ├── pipeline_prompt_facts.py   # PromptFactsMixin — read-only DB/broker reads turned into LLM prompt context
 │   ├── pipeline_intraday.py       # IntradayMixin — intra-check session, scan locks, paid-scan slot, intraday opportunity scan
-│   ├── pipeline_risk_gate.py      # RiskGateMixin — risk-verdict application: hard-block filter, size/stop/target edits, budget reconcile
+│   ├── pipeline_risk_gate.py      # RiskGate — risk-verdict application: hard-block filter, size/stop/target edits, budget reconcile
 │   ├── pipeline_research_continuity.py  # ResearchContinuityMixin — change detectors, carry-forward, Form-4 backlog, seat healing
 │   ├── pipeline_stages.py         # shared stage helpers; re-exports the four stage classes below
 │   ├── pipeline_rotation_exec.py  # rotation EXECUTION — sell/buy legs, gates, projections (moved verbatim, item 210 step 12)

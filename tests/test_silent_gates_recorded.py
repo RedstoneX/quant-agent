@@ -12,6 +12,7 @@ size or a survivor list is what it was are there only to prove the record
 describes what actually happened.
 """
 from __future__ import annotations
+from src.pipeline_risk_gate import RiskGate
 
 import json
 from unittest.mock import MagicMock, patch
@@ -44,8 +45,8 @@ def _real_mods(pipeline):
     """Undo the harness stub: run the REAL modification applier."""
     from src.pipeline import TradingPipeline
 
-    pipeline._apply_risk_modifications = (
-        TradingPipeline._apply_risk_modifications.__get__(pipeline)
+    pipeline.risk_gate._apply_risk_modifications = (
+        RiskGate._apply_risk_modifications.__get__(pipeline.risk_gate)
     )
     return pipeline
 
@@ -211,7 +212,7 @@ def _earnings_pipeline(decisions):
     from src.pipeline import TradingPipeline
 
     pipeline = _stage_pipeline(verdict=_verdict([]), decisions=decisions)
-    pipeline._refuse_queued_earnings_buys = TradingPipeline._refuse_queued_earnings_buys
+    pipeline.risk_gate._refuse_queued_earnings_buys = RiskGate._refuse_queued_earnings_buys
     return pipeline
 
 

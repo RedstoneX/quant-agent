@@ -125,7 +125,7 @@ def test_filter_does_not_itself_credit_parked_value_as_cash():
     blocked."""
     p = _sweep_pipeline()
     # $100k book: $9.5k NVDA, $80.5k SGOV, $1k deployable cash. 10% BUY = $10k.
-    allowed, _, blocked = p._filter_hard_risk_decisions(
+    allowed, _, blocked = p.risk_gate._filter_hard_risk_decisions(
         [_buy(alloc=10.0)], [SGOV, NVDA], total_value=100_000.0, cash=1_000.0,)
     assert allowed == [], "SGOV's value must not fund a BUY the gate approves"
     assert any("cash" in r for r in blocked)
@@ -133,7 +133,7 @@ def test_filter_does_not_itself_credit_parked_value_as_cash():
 
 def test_filter_blocks_same_buy_when_sweep_disabled():
     p = _sweep_pipeline(enabled=False)
-    allowed, _, blocked = p._filter_hard_risk_decisions(
+    allowed, _, blocked = p.risk_gate._filter_hard_risk_decisions(
         [_buy(alloc=10.0)], [SGOV, NVDA], total_value=100_000.0, cash=1_000.0,)
     assert allowed == []
     assert any("cash" in r for r in blocked)
@@ -143,7 +143,7 @@ def test_filter_excludes_vehicle_from_net_exposure():
     """80% parked + 9.5% stock must not trip the 90% net-exposure cap for a
     new BUY — parked cash is not market exposure."""
     p = _sweep_pipeline()
-    allowed, _, blocked = p._filter_hard_risk_decisions(
+    allowed, _, blocked = p.risk_gate._filter_hard_risk_decisions(
         [_buy(alloc=15.0)], [SGOV, NVDA], total_value=100_000.0, cash=20_000.0,)
     assert [d.symbol for d in allowed] == ["AAPL"], blocked
 
@@ -413,8 +413,6 @@ def test_risk_stage_rm_view_excludes_vehicle():
     p.market = MagicMock()
     p.market.get_ohlcv.return_value = []
     p._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
-    p._refuse_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
-    p._filter_hard_risk_decisions = MagicMock(side_effect=lambda d, *a, **k: (d, [], []))
     p.risk_manager = MagicMock()
     p.risk_manager.review.return_value = (
         RiskVerdict(
@@ -428,6 +426,8 @@ def test_risk_stage_rm_view_excludes_vehicle():
                   input_tokens=1, output_tokens=1, cost_usd=0.0),
     )
     p.db = MagicMock()
+    p.risk_gate._refuse_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
+    p.risk_gate._filter_hard_risk_decisions = MagicMock(side_effect=lambda d, *a, **k: (d, [], []))
     p.config.llm = MagicMock()
     p.config.llm.risk_manager_model = "test-model"
     p.config.trading = MagicMock()
@@ -457,7 +457,7 @@ def test_risk_stage_rm_view_excludes_vehicle():
     assert [x.symbol for x in rm_seen] == ["NVDA"], "RM must not see SGOV"
     # but the HARD filter received the RAW list (it still needs to find the
     # vehicle to exclude it from net-exposure math)
-    filter_positions = p._filter_hard_risk_decisions.call_args_list[0].args[1]
+    filter_positions = p.risk_gate._filter_hard_risk_decisions.call_args_list[0].args[1]
     assert any(x.symbol == "SGOV" for x in filter_positions)
 
     # 2026-08-19 SGOV/deployable-liquidity forensic: RM must receive
@@ -469,7 +469,7 @@ def test_risk_stage_rm_view_excludes_vehicle():
     assert p.risk_manager.review.call_args.kwargs["reserve_balance"] == SGOV.market_value
     # and the hard gate (both pre- and post-RM calls) must be checked
     # against deployable_cash too, never ctx.cash + SGOV.
-    for call in p._filter_hard_risk_decisions.call_args_list:
+    for call in p.risk_gate._filter_hard_risk_decisions.call_args_list:
         assert call.kwargs["cash"] == 10_000.0
 
 
@@ -555,7 +555,7 @@ def test_approved_buys_are_not_designed_around_unusable_liquidity():
     # PM proposes a 20% BUY ($2,000) — comfortably covered by "cash" under
     # the old SGOV-crediting view ($145 + $9,855 = $10,000), not remotely
     # covered by what execution can actually spend.
-    allowed, _violations, blocked = p._filter_hard_risk_decisions(
+    allowed, _violations, blocked = p.risk_gate._filter_hard_risk_decisions(
         [_buy(symbol="AAPL", alloc=20.0)], [parked],
         total_value=total_value,
         cash=deployable_cash,)
@@ -570,7 +570,7 @@ def test_approved_buys_are_not_designed_around_unusable_liquidity():
 
     # And the complement: a BUY that DOES fit real deployable cash is
     # approved — the fix must not have simply blocked everything.
-    small_allowed, _v, small_blocked = p._filter_hard_risk_decisions(
+    small_allowed, _v, small_blocked = p.risk_gate._filter_hard_risk_decisions(
         [_buy(symbol="AAPL", alloc=1.0)], [parked],   # $100 of $10k book
         total_value=total_value,
         cash=deployable_cash,)

@@ -93,7 +93,7 @@ from src.pipeline_delever import (  # noqa: F401
     _risk_number,
 )
 from src.pipeline_risk_gate import RiskGate
-from src.pipeline_risk_gate_mixin import RiskGateMixin  # noqa: F401
+from src.risk_gate_build import RiskGateSlot
 # Step 7 of docs/PIPELINE_SPLIT_PLAN.md: the research-continuity cluster
 # (change detectors, carry-forward, Form-4 backlog, seat healing) moved to a
 # mixin module. `CarryForward` travelled with it because only those bodies
@@ -207,8 +207,9 @@ class _MissingCollaborator:
 
 class TradingPipeline(
     ProtectionMixin, PromptFactsMixin, DeleverMixin, ExitEngineMixin,
-    RiskGateMixin, AdmissionMixin, ResearchContinuityMixin, IntradayMixin,
+    AdmissionMixin, ResearchContinuityMixin, IntradayMixin,
 ):
+    risk_gate = RiskGateSlot()
     #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
     #: instance built without __init__ (tests do this) reads None rather than
     #: raising: an unconfigured switch is INERT, never armed. Real enforcement
@@ -710,7 +711,7 @@ class TradingPipeline(
             admit_screened_universe_fn=self._collab("_admit_screened_universe_symbols"),
             event_calendar=self._collab("event_calendar"),
             fomc_calendar=self._collab("fomc_calendar"),
-            has_actionable_signal_fn=self._collab("_has_actionable_signal_fn"),
+            has_actionable_signal_fn=RiskGate._has_actionable_signal_fn,
             live_session_context_fn=self._collab("_live_session_context"),
             run_news_update_fn=self._collab("_run_news_update"),
             load_earnings_analyses_fn=self._collab("_load_earnings_analyses"),
@@ -728,7 +729,6 @@ class TradingPipeline(
         # __init__) degrade to a disabled sweeper instead of AttributeError.
         from src.execution.cash_sweep import CashSweeper
         self.cash_sweeper = CashSweeper(pipeline=self)
-        self.risk_gate = RiskGate(risk_engine=self.risk_engine, db=self.db, sweeper=self._sweeper, config=self.config)
         # Exit orders still working at the broker — see the attribute's own
         # comment above `_register_exit_settlement`.
         self._unsettled_exit_orders = {}
