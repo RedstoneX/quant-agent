@@ -355,3 +355,39 @@ PR 844 → `pipeline_stages` 5001–5065 (MorningResearchStage). Steps 1, 3, 5�
   already imported by `pipeline.py` today.
 - I did not measure how many of the 125 pipeline-importing test files build the object via `__new__` versus the
   real constructor; the 327 count is call sites, not files.
+
+## 7. `src/data/smart_money.py` provider: sized plan (2026-10-05, measured on main after #1493)
+
+After the coverage lift the file is 1,796 lines; `SECForm4Provider` is lines 215-1,679 (about 1,465). No code change is proposed here; this is the dispatchable plan.
+
+### What the class is made of (line counts, `def`-to-`def`, measured)
+- Setup (`__init__`, 23 plain attributes): 92.
+- Local stores (`_load_json`, history load/record/merge): 22+37+27+7 = 93.
+- HTTP (`_get` with the shared rate limiter, `_remaining`, `_listed_map`, `_ciks_for_symbols`, `listed_map`): 41+6+40+17+4 = 108.
+- Discovery (`_discover` alone 294, `_submissions_form4` 39, `recent_filings` 34): 367.
+- Filing fetch and parse (`_archive_url`, `_submission`, `_roles`, `_parse_submission`): 6+13+18+131 = 168.
+- Manifest and cache reads (`known_accessions` 36, `watched_form4_index` 26, `read_through_date` 13, `read_through_by_cik` 11, `form4_coverage` 59, `form4_freshness` 111): 256.
+- Refresh orchestration (`refresh`, ONE method): 377.
+- Module-level helpers outside the class (`_text`, `_number`, `_bool`, `_symbol`, `_atomic_json`, retention): about 60.
+
+### What couples them (measured by grep of `self.X` after `__init__`)
+- NO attribute is rewritten after `__init__`: all 23 are config, paths or the session, set once. There is no shared mutable instance state to untangle.
+- The coupling is the FILES, read-modify-written by `refresh` and read by five other methods: `manifest_path` (refresh 1284/1555/1578; known_accessions 945; read_through 1089/1096; form4_coverage 1113), `observations_path` (refresh 1286/1577; known_accessions 950; merged_history 1682), `tickers_path` (listed_map, 5 reads), `history_path` (3), `raw_dir` (parse only, 1).
+- One true global: `_LAST_REQUEST_AT` / `_RATE_LOCK` (module-level, written only inside `_get`), shared by every instance by design.
+- The other coupling is LOCAL variables inside `_discover` (294) and `refresh` (377): hundreds of lines sharing locals, which is why neither can be lifted whole.
+
+### External surface (measured)
+- `SECForm4Provider`: 8 import sites; `SmartMoneySource` protocol: 6; `_RefreshDeadline`: 2; `_sale_census`: 3; the rest is `et_today` re-exported (10, belongs in `src.util.time`).
+- Public methods called from outside the module: `refresh` (5), `fetch` (4), `watched_form4_index` (2), `read_through_by_cik` (2), `recent_filings`, `read_through_date`, `listed_map`, `known_accessions` (1 each); the last three of those groups are called from `src/pipeline_admission.py` only.
+
+### Recommendation: do it, in this order, because the surface is small and there is no mutable instance state
+Each step takes collaborators BY VALUE, deletes the moved methods outright (no forwarding), moves the real callers, ships a test that builds the part from fakes without importing `smart_money`. The provider only shrinks, never grows. Every new file under 400.
+1. **Local stores** (history + manifest/observation read-write, `_atomic_json`, `_load_json`): about 150 lines new, 93 + helpers out. Test: round-trip through a tmp dir; the store is constructed from three paths.
+2. **HTTP client** (`_get`, rate limiter, `_remaining`, `listed_map`, `_ciks_for_symbols`): about 170 new, 108 out. Takes session, user agent, interval, timeout, tickers path. Test: fake session, assert the same client object is used and the interval is honoured. RISK within this step: the limiter is module-global and must stay ONE limiter across instances; the test must pin that.
+3. **Filing parser** (`_submission`, `_roles`, `_parse_submission`, `_archive_url`, with `_text/_number/_bool/_symbol`): about 230 new, 168 + 45 out. Takes the client and raw dir. Test: canned XML fixture already in the repo's tests, no network.
+4. **Cache reads** (`known_accessions`, `watched_form4_index`, `read_through_*`, `form4_coverage`, `form4_freshness`): about 280 new, 256 out; reads through the step-1 store. Callers: `pipeline_admission` plus the provider. Test: store seeded with a manifest, coverage asserted.
+5. **Discovery**: FIRST an in-place change inside the provider that turns `_discover`'s 294 lines into named steps with explicit inputs and outputs (adds no lines net; must be statement-neutral), THEN the lift: about 380 new in two files, 367 out.
+6. **Refresh orchestrator** (`refresh`, 377): same two-stage shape, about 390 new split in two. What remains of `SECForm4Provider` is a composer of about 120 lines, built by a `build_*` function; `fetch` and `_merged_history` (about 60) move with step 4 or stay.
+- RISKIEST: step 6, then 5. Their locals run through hundreds of lines, so a lift changes how data is passed, not just where code sits; the existing 167-test net (`test_form4_edgar_coverage`, `test_smart_money`, `test_form4_backlog_order`) is the only proof of unchanged behaviour. Steps 1-4 are mechanical.
+- Wrinkle on the ratchet: step 5 and 6 first stages must not add statements to a file over 400, so they can only be landed as the lift itself plus a before/after equivalence test over the same recorded fixtures; the planner should size them as ONE change each, not two.
+- Not measured: how many of the 167 tests would need re-pointing per step (monkeypatches of module names: 0 found by grep for `monkeypatch.*smart_money.`).
