@@ -12,6 +12,10 @@ from src.trading_calendar import et_today
 logger = logging.getLogger(__name__)
 
 
+#: `cut_bite` site name for this builder's two count cuts.
+CUT_SITE = "prompt_facts.review.blocked._build_blocked_proposals"
+
+
 class ReviewBlocked:
     """The blocked-proposal record; standalone, built from explicit collaborators."""
 
@@ -21,11 +25,43 @@ class ReviewBlocked:
     ) -> None:
         self.db = db
 
+    def _record_cut_bite(self, *, run_id, unfilled, repeats, max_lines) -> None:
+        """Record what the two count cuts here removed, for THIS session.
+
+        `min_proposals` cuts the never-filled symbols down to the repeat
+        offenders; `max_lines` cuts those down to the ones the prompt prints.
+        Both edges are counted here, where the cut happens. The seat's verdict
+        is NOT guessed here -- it is formed later in this same session and is
+        joined to this row by `run_id` when the observation is read back.
+        """
+        from datetime import date
+
+        from src.storage.analytics.cut_bite import record_cut_bite
+
+        shown = repeats[:max_lines]
+        oldest_age: float | None = None
+        stamps = [ts for _, rows in shown for ts, _ in rows if ts]
+        if stamps:
+            try:
+                oldest = date.fromisoformat(min(stamps)[:10])
+                oldest_age = float((et_today() - oldest).days)
+            except (TypeError, ValueError):
+                oldest_age = None
+        record_cut_bite(
+            db=self.db, run_id=run_id, site=CUT_SITE,
+            cuts={
+                "min_proposals": {"before": len(unfilled), "survived": len(repeats)},
+                "max_lines": {"before": len(repeats), "survived": len(shown)},
+            },
+            oldest_surviving_age_days=oldest_age,
+        )
+
     def _build_blocked_proposals(
         self,
         lookback_days: int = 21,
         min_proposals: int = 3,
         max_lines: int = 5,
+        run_id: str | None = None,
     ) -> str:
         """PM memory: names it keeps asking for and never gets, and why.
 
@@ -284,11 +320,23 @@ class ReviewBlocked:
                 + "."
             )
 
-        repeats = [
+        # The pool the `min_proposals` count-cut chooses FROM: every symbol
+        # this window saw proposed and never filled. A symbol with a fill was
+        # never a candidate for the repeat list at any count, so including it
+        # would overstate what the cut removed.
+        unfilled = [
             (sym, rows) for sym, rows in by_symbol.items()
-            if len(rows) >= min_proposals
-            and all(reason is not None for _, reason in rows)
+            if all(reason is not None for _, reason in rows)
         ]
+        repeats = [
+            (sym, rows) for sym, rows in unfilled if len(rows) >= min_proposals
+        ]
+        # Sorted before the record so the rows the record calls "surviving"
+        # are exactly the rows the prompt goes on to render.
+        repeats.sort(key=lambda item: (-len(item[1]), item[0]))
+        self._record_cut_bite(
+            run_id=run_id, unfilled=unfilled, repeats=repeats, max_lines=max_lines,
+        )
         if not repeats:
             lines.append(
                 f"Repeat blocked names: none — no symbol was proposed "
@@ -296,7 +344,6 @@ class ReviewBlocked:
             )
             return "\n".join(lines)
 
-        repeats.sort(key=lambda item: (-len(item[1]), item[0]))
         lines.append(
             f"Repeat blocked names ({min_proposals}+ proposals, 0 fills):"
         )

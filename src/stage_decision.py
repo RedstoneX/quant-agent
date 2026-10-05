@@ -160,7 +160,9 @@ class DecisionStage:
         # Names PM keeps proposing and never gets. Every other per-symbol
         # memory above is keyed on a position, so none of them can see a
         # symbol that never became one.
-        blocked_proposals = pipeline._build_blocked_proposals()
+        # `run_id` is passed so the bite of this block's two count cuts can be
+        # joined to the verdict this same session produces; it changes no text.
+        blocked_proposals = pipeline._build_blocked_proposals(run_id=run_id)
         # Audit §1.2 — build the correlation matrix HERE, before PM decides,
         # rather than in RiskStage after it already has. RiskStage reuses the
         # memoized matrix, so the deterministic cluster check still judges PM
