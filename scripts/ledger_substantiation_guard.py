@@ -277,10 +277,39 @@ def violations(now: list[Pin] | None = None, before: list[Pin] | None = None,
     return absolute + ratcheted
 
 
+def _has_citation(row: dict[str, Any]) -> bool:
+    return bool(_CITATION_RE.search(" ".join(_string_fields(row))))
+
+
+def uncited_ids(ledger: dict[str, dict[str, Any]]) -> set[str]:
+    """Rows that make no citation in any field: invisible to every pin check above."""
+    return {k for k, e in ledger.items() if not _has_citation(e)}
+
+
+def uncited_violations(now: dict[str, dict[str, Any]] | None = None,
+                       before: dict[str, dict[str, Any]] | None = None) -> list[str]:
+    """DOWN-ONLY ratchet: a row uncited now that trunk does not already hold uncited fails.
+
+    Catches both a citation deleted from a cited row and a new row added bare. A row
+    trunk already holds uncited is not blamed; fixing it only ever shrinks the set.
+    """
+    if now is None:
+        now = _entries((ROOT / working_ledger(ROOT)).read_text(encoding="utf-8"))
+    if before is None:
+        rel = trunk_ledger()
+        blob = trunk_blobs([rel]).get(rel)
+        if blob is None:
+            raise ReferenceUnavailable(f"{rel} is not readable on {TRUNK}")
+        before = _entries(blob)
+    return [f"{k}: carries no citation but trunk's row {'had one' if k in before else 'does not exist'}; "
+            f"deleting or omitting a citation is not substantiation"
+            for k in sorted(uncited_ids(now) - uncited_ids(before))]
+
+
 def main() -> int:
     try:
         now, before = working_pins(), trunk_pins()
-        bad = violations(now, before)
+        bad = violations(now, before) + uncited_violations()
     except ReferenceUnavailable as exc:
         print(f"REFUSED: {exc}")
         return 2
@@ -289,6 +318,8 @@ def main() -> int:
     print(f"source-field pins: dead+no_mention={ts['dead'] + ts['no_mention']} of {sum(ts.values())} (absolute)")
     print(f"pins={len(now)} " + " ".join(f"{k}={t[k]}" for k in ("unresolved", "dead", "no_mention", "mentions"))
           + f" | on trunk: dead+no_mention={sum(1 for p in before if p.verdict in BAD)}")
+    led = _entries((ROOT / working_ledger(ROOT)).read_text(encoding="utf-8"))
+    print(f"uncited rows: {len(uncited_ids(led))} of {len(led)} (down-only ratchet)")
     for line in bad:
         print("  " + line)
     return 1 if bad else 0

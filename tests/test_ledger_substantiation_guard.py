@@ -133,3 +133,24 @@ def test_a_gzipped_path_is_not_truncated_into_a_different_file():
     assert _CITATION_RE.search("see ops/rehearsal/recordings/market_bars.json.gz, 400") is None
     assert _CITATION_RE.search("see ops/a/b.json, 400").group(1) == "ops/a/b.json"
     assert _CITATION_RE.search("see src/x.py.").group(1) == "src/x.py"
+
+
+_CITED = {"id": "a.b", "value": 1, "note": "see src/m.py::CEILING"}
+_BARE = {"id": "a.b", "value": 1, "note": "prose only"}
+
+
+def test_deleting_a_citation_from_a_cited_row_fails():
+    assert g.uncited_violations({"a.b": _BARE}, {"a.b": _CITED})
+
+
+def test_a_new_bare_row_fails_but_an_already_bare_row_is_not_blamed():
+    assert g.uncited_violations({"a.b": _BARE, "c.d": _BARE}, {"a.b": _BARE})
+    assert not g.uncited_violations({"a.b": _BARE}, {"a.b": _BARE})
+
+
+def test_adding_a_citation_is_green():
+    assert not g.uncited_violations({"a.b": _CITED}, {"a.b": _BARE})
+
+
+def test_real_ledger_uncited_set_does_not_grow_past_trunk():
+    assert g.uncited_violations() == []
