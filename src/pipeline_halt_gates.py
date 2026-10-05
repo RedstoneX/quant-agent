@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 
 from src.pipeline_stages import _record_pipeline_event
+from src.sentinel.counted import record_swallowed
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -118,6 +119,7 @@ def _evidence_gate_skip(
     try:
         verdict = evidence_gate.evaluate(ctx.data_status)
     except Exception as exc:  # noqa: BLE001
+        record_swallowed("pipeline_halt_gates._evidence_gate_skip", exc, log=logger)
         # A gate that can stop the desk trading must not stop it by
         # crashing. `evaluate` is documented never to raise; if it
         # somehow does, proceed and say so loudly.

@@ -27,6 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ class CompanyProfileStore:
                 import yfinance as yf
                 return yf.Ticker(symbol).info or {}
             except Exception as e:  # noqa: BLE001
-                logger.warning("company profile fetch failed for %s: %s", symbol, e)
+                record_swallowed("data.company._work", e, log=logger)
                 return {}
 
         info: dict = {}
