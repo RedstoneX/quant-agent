@@ -754,31 +754,31 @@ def test_item_90_classification_partitions_the_whole_ledger() -> None:
     assert len(flat) == len(set(flat))
 
 
-def test_the_settlement_route_ratchet_equals_its_own_record() -> None:
-    """Same shape, and the same reason, as `MAX_ARBITRARY_ENTRIES`.
+def test_the_route_ratchet_refuses_a_rise_and_allows_a_fall(monkeypatch) -> None:
+    """It bites. The reference is the trunk's own ledger, nothing stored. A
+    trunk one row BETTER than this tree must refuse; one row WORSE must not.
+    The old shape summed deltas, so a refused change could raise its own limit."""
+    import src.number_sources as ns
 
-    A count kept as a hand-edited literal drifts from its own record, and a
-    count kept as a ceiling rewards deleting the row instead of answering it.
-    """
-    from src.number_sources import (
-        MAX_ROUTELESS_ARBITRARY,
-        ROUTE_RATCHET_HISTORY_PATH,
-        classification,
-        load_ledger,
-        load_ratchet_history,
-    )
+    live = len(ns.classification(ns.load_ledger())["unclassified"])
+    monkeypatch.setattr(ns, "trunk_routeless_count", lambda: live - 1)
+    assert [p for p in ns.audit() if p.kind == "route-ratchet"]
+    monkeypatch.setattr(ns, "trunk_routeless_count", lambda: live + 1)
+    assert not [p for p in ns.audit() if p.kind == "route-ratchet"]
 
-    history = load_ratchet_history(ROUTE_RATCHET_HISTORY_PATH)
-    assert history, "the route ratchet's history may never be emptied"
-    assert MAX_ROUTELESS_ARBITRARY == sum(int(c["delta"]) for c in history)
-    for change in history:
-        assert len(str(change.get("why", "")).split()) >= 12, (
-            "every delta states which row gained a route and what the "
-            "recording is; a bare number is how the old ceiling was gamed."
-        )
-    assert len(classification(load_ledger())["unclassified"]) == (
-        MAX_ROUTELESS_ARBITRARY
-    )
+
+def test_the_route_ratchet_stores_nothing() -> None:
+    root = Path(__file__).resolve().parent.parent
+    assert not (root / "config" / "number_ledger_route_history.yaml").exists()
+    text = (root / "src" / "number_sources.py").read_text(encoding="utf-8")
+    assert "MAX_ROUTELESS_ARBITRARY" not in text and "ROUTE_RATCHET_HISTORY" not in text
+
+
+def test_the_route_count_matches_a_direct_parse_of_trunk() -> None:
+    from src.number_sources import classification, count_routeless, load_ledger
+
+    text = (Path(__file__).resolve().parent.parent / "config" / "number_ledger.yaml").read_text(encoding="utf-8")
+    assert count_routeless(text) == len(classification(load_ledger())["unclassified"])
 
 
 def test_a_settlement_route_that_cannot_be_acted_on_is_refused() -> None:

@@ -354,20 +354,33 @@ SETTLEMENT_ROUTE_FIELDS: tuple[str, ...] = (
 #: same failure as the one-word `note` the arbitrary schema already bars.
 MIN_ROUTE_PROSE_CHARS = 40
 
-ROUTE_RATCHET_HISTORY_PATH = REPO_ROOT / "config" / "number_ledger_route_history.yaml"
-
-
-def routeless_ratchet(path: Path | None = None) -> int:
-    """`MAX_ROUTELESS_ARBITRARY`, computed. Never hand-maintained."""
+#: The route ratchet stores nothing: no history file, no constant. It was the
+#: sum of deltas in an append-only file, and a sum accepts a positive term, so
+#: the change it refused could raise it in the same commit (the arbitrary-count
+#: ratchet was moved 127 -> 131 that way on 2026-10-05). The reference is now
+#: the trunk's own ledger, read at check time; past grounds stay in git.
+def count_routeless(text: str) -> int:
+    """`arbitrary` rows with no `settles_by` in a raw ledger document."""
+    raw = yaml.safe_load(text) or {}
     return sum(
-        int(change["delta"])
-        for change in load_ratchet_history(path or ROUTE_RATCHET_HISTORY_PATH)
+        1
+        for entry in (raw.get("numbers") or [])
+        if entry.get("status") == "arbitrary" and entry.get("settles_by") is None
     )
 
 
-#: Ratchet, checked for EQUALITY, exactly like `MAX_ARBITRARY_ENTRIES`: the
-#: number of `arbitrary` rows that are in NONE of item 90's three states.
-MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
+def trunk_routeless_count() -> int:
+    """The routeless-`arbitrary` count on the trunk, read fresh at check time.
+
+    If the trunk cannot be read the guard REFUSES (``ReferenceUnavailable``).
+    """
+    from scripts.guard_reference import ReferenceUnavailable, trunk_blobs
+
+    rel = "config/number_ledger.yaml"
+    blobs = trunk_blobs([rel])
+    if rel not in blobs:
+        raise ReferenceUnavailable(f"{rel} is absent from the trunk")
+    return count_routeless(blobs[rel])
 
 
 #: Fields `src/storage/db.py` actually WRITES, as opposed to merely creating.
@@ -997,21 +1010,18 @@ def audit(
                 f"because the count stops showing the work as outstanding.",
             )
         )
-    if len(routeless) != MAX_ROUTELESS_ARBITRARY:
-        direction = (
-            "rises to" if len(routeless) > MAX_ROUTELESS_ARBITRARY else "falls to"
-        )
+    trunk_routeless = trunk_routeless_count()
+    if len(routeless) > trunk_routeless:
         problems.append(
             LedgerProblem(
                 "route-ratchet",
                 "<ledger>",
                 f"the count of `arbitrary` rows with no `settles_by` route "
-                f"{direction} {len(routeless)} but MAX_ROUTELESS_ARBITRARY is "
-                f"{MAX_ROUTELESS_ARBITRARY}. This is an equality, not a "
-                f"ceiling, and it is not editable by hand: APPEND one entry "
-                f"to config/number_ledger_route_history.yaml with the delta "
-                f"and a `why` saying which row gained a route and what that "
-                f"recording is. See board item 90.",
+                f"RISES to {len(routeless)}; the trunk holds {trunk_routeless}. "
+                f"This ratchet is down-only and stores nothing: the reference "
+                f"is the trunk's own config/number_ledger.yaml at check time, "
+                f"so there is no ceiling to raise. Give the new row a "
+                f"`settles_by` route, or source it. See board item 90.",
             )
         )
 

@@ -91,6 +91,12 @@ kept as history and marked DONE where they describe a stored file that is gone.
     the test already compares it with the live arbitrary-row count measured
     from the tree (121 and 0 at this date, both equal), failing on a rise AND
     a fall. A trunk-identity replacement would pass a fall, so it is looser.
+  - `config/number_ledger_route_history.yaml`: DELETED 2026-10-05, overturning
+    the KEEP above for the route file: a summed delta accepts a positive term,
+    so a refused change could raise its own limit. The settlement-route ratchet
+    now counts `arbitrary` rows with no `settles_by` in the trunk's own ledger
+    at check time and refuses only a RISE (trunk: 0 of 131 arbitrary of 548).
+    The per-change `why` text stays readable in git history.
   - `config/prompt_only_numbers.yaml`: RULED KEEP (2026-10-04). Test applied:
     the figures present in a sheet ARE derivable (the test's shape list finds
     them), but each row's status and open question is a human judgement that a
