@@ -16,7 +16,7 @@ from __future__ import annotations
 import copy
 import re
 import threading
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields as dataclass_fields, is_dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -135,21 +135,33 @@ class _IdentifierTokenizer:
     """Assign stable, opaque identifiers in first-observed order."""
 
     def __init__(self):
-        self._raw_to_token: dict[str, str] = {}
+        # Text alone is not an identifier's identity.  Alpaca uses both
+        # integer and string IDs, and the same representation can occur in
+        # unrelated namespaces (an order ``7`` is not asset ``7``).  Keep all
+        # three dimensions so token reuse means genuine identity reuse.
+        self._raw_to_token: dict[
+            tuple[str, str, str], tuple[str, str]
+        ] = {}
         self._counts: dict[str, int] = {}
+
+    @staticmethod
+    def _raw_key(raw: Any, category: str) -> tuple[str, str, str]:
+        raw_type = f"{type(raw).__module__}.{type(raw).__qualname__}"
+        return category, raw_type, repr(raw)
 
     def token(self, raw: Any, category: str) -> str:
         text = str(raw)
         if _TOKEN_RE.fullmatch(text):
             self.observe(text)
             return text
-        existing = self._raw_to_token.get(text)
+        key = self._raw_key(raw, category)
+        existing = self._raw_to_token.get(key)
         if existing is not None:
-            return existing
+            return existing[1]
         number = self._counts.get(category, 0) + 1
         self._counts[category] = number
         value = f"<QAMC:{category}:{number:04d}>"
-        self._raw_to_token[text] = value
+        self._raw_to_token[key] = (text, value)
         return value
 
     def observe(self, value: str) -> None:
@@ -162,15 +174,35 @@ class _IdentifierTokenizer:
 
     def sanitize_text(self, value: str, context: str) -> str:
         sanitized = value
+        context_category = _category_for(None, context) or "broker_id"
         # Replace identifiers already seen in structured values first.
-        for raw, token in sorted(
-            self._raw_to_token.items(), key=lambda item: len(item[0]), reverse=True
+        observed_by_text: dict[str, list[tuple[str, str]]] = {}
+        for (category, _raw_type, _raw_repr), (raw_text, token) in (
+            self._raw_to_token.items()
         ):
-            sanitized = sanitized.replace(raw, token)
+            observed_by_text.setdefault(raw_text, []).append((category, token))
+        for raw_text, candidates in sorted(
+            observed_by_text.items(), key=lambda item: len(item[0]), reverse=True
+        ):
+            matching = {
+                token for category, token in candidates
+                if category == context_category
+            }
+            all_tokens = {token for _category, token in candidates}
+            if len(matching) == 1:
+                replacement = next(iter(matching))
+            elif len(all_tokens) == 1:
+                replacement = next(iter(all_tokens))
+            else:
+                # Error text has lost the raw Python type/category.  When
+                # more than one observed identifier renders identically,
+                # assign a token in this error's own namespace rather than
+                # guessing or leaving stable linkage in the public bundle.
+                replacement = self.token(raw_text, context_category)
+            sanitized = sanitized.replace(raw_text, replacement)
 
-        category = _category_for(None, context) or "broker_id"
         sanitized = _UUID_RE.sub(
-            lambda match: self.token(match.group(0), category), sanitized
+            lambda match: self.token(match.group(0), context_category), sanitized
         )
         sanitized = _ACCOUNT_RE.sub(
             lambda match: self.token(match.group(0), "account"), sanitized
@@ -259,9 +291,28 @@ class _Codec:
             return {"__qamc_type__": "set", "items": sorted(encoded, key=repr)}
 
         if hasattr(value, "model_dump"):
-            fields = value.model_dump(mode="python")
+            dumped = value.model_dump(mode="python")
+            if not isinstance(dumped, Mapping):
+                raise TypeError(
+                    "broker cassette model_dump values must be mappings"
+                )
+            # Pydantic recursively converts nested Alpaca models to dicts.
+            # Read each top-level field back from the live object so nested
+            # Trade/Bar/Quote values pass through this codec independently
+            # and retain an object tag for attribute-compatible replay.
+            fields = {}
+            for name, flattened in dumped.items():
+                try:
+                    fields[name] = getattr(value, name)
+                except (AttributeError, TypeError):
+                    fields[name] = flattened
         elif is_dataclass(value) and not isinstance(value, type):
-            fields = asdict(value)
+            # ``asdict`` recursively flattens nested dataclasses just like
+            # Pydantic's dump; preserve their object boundaries too.
+            fields = {
+                item.name: getattr(value, item.name)
+                for item in dataclass_fields(value)
+            }
         elif hasattr(value, "__dict__"):
             fields = vars(value)
         else:
