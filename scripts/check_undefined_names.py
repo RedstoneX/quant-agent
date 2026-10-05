@@ -25,6 +25,11 @@ _BUILTINS = set(dir(builtins)) | {"__file__", "__name__", "__doc__", "__spec__",
                                   "__builtins__", "__debug__", "__class__"}
 
 
+# Frozen, never-imported verbatim copy of two log bodies (indented fragments, so
+# their free names are expected); excluded by exact path, nothing else is.
+_FIXTURE_FRAGMENTS = frozenset({"tests/fixtures/resolver_log_bodies_pre_move.py"})
+
+
 def _walk(table, module_names, out):
     for sym in table.get_symbols():
         n = sym.get_name()
@@ -56,7 +61,7 @@ def check_source(source: str, filename: str = "<src>"):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("roots", nargs="*", default=["src", "scripts", "main.py"])
+    ap.add_argument("roots", nargs="*", default=["src", "scripts", "tests", "main.py"])
     args = ap.parse_args(argv)
     files = []
     for r in args.roots:
@@ -65,6 +70,7 @@ def main(argv=None) -> int:
             print(f"{p}: root does not exist; refusing to read an unreadable tree as clean")
             return 1
         files += sorted(p.rglob("*.py")) if p.is_dir() else [p]
+    files = [f for f in files if f.as_posix() not in _FIXTURE_FRAGMENTS]
     if not files:
         print("scanned no modules; refusing to read an empty tree as clean")
         return 1

@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-SEARCH_ROOTS = (ROOT / "src", ROOT / "config" / "prompts")
+SEARCH_ROOTS = (ROOT / "src", ROOT / "config" / "prompts", ROOT / "scripts", ROOT / "ops")
 
 
 class DeletedMechanism:
@@ -116,6 +116,8 @@ def _files() -> list[Path]:
             continue
         out.extend(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
         out.extend(root.rglob("*.md"))
+    out.extend(ROOT.glob("*.py"))  # the root itself: main.py and friends
+    out.extend(ROOT.glob("*.md"))
     return sorted(set(out))
 
 
@@ -139,3 +141,24 @@ def test_a_deleted_mechanism_is_not_described_as_live(mech: DeletedMechanism) ->
         + "\n\nCorrect or delete each line. Do NOT add it to `allowed` "
         "unless the line is a tombstone recording the deletion."
     )
+
+
+@pytest.mark.parametrize("where", ["scripts", "ops/research", "root"])
+def test_residue_planted_outside_src_is_caught(where, monkeypatch, tmp_path) -> None:
+    """The scan must bite in scripts, ops and the repo root, not only src."""
+    import sys
+
+    mod = sys.modules[__name__]
+    for d in ("src", "config/prompts", "scripts", "ops"):
+        (tmp_path / d).mkdir(parents=True, exist_ok=True)
+    target = tmp_path / ("planted.py" if where == "root" else f"{where}/planted.py")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# STOP_SANITY_FLOOR_FRACTION still applies\n")
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+    monkeypatch.setattr(mod, "SEARCH_ROOTS", tuple(tmp_path / d for d in ("src", "config/prompts", "scripts", "ops")))
+    assert target in mod._files()
+    mech = _DELETED[1]
+    with pytest.raises(AssertionError):
+        mod.test_a_deleted_mechanism_is_not_described_as_live(mech)
+    target.unlink()
+    mod.test_a_deleted_mechanism_is_not_described_as_live(mech)
