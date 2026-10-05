@@ -32,7 +32,8 @@ def seen(monkeypatch):
     def _rec(where, exc, **kw):
         rows.append((where, exc))
 
-    for mod in ("src.execution.broker_parts.market_data", "src.data.macro", "src.alert_watchdog", "src.notifier.transport"):
+    for mod in ("src.execution.broker_parts.market_data", "src.data.macro",
+                "src.alert_watchdog", "src.notifier.transport"):
         monkeypatch.setattr(f"{mod}.record_swallowed", _rec)
     return rows
 
