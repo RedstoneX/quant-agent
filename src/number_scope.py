@@ -110,4 +110,5 @@ SCOPED_PATHS: tuple[str, ...] = (
     # whether a symbol may be traded at all lives here or in
     # `UniverseScreenConfig`.
     "src/universe_screen.py",
+    "src/cost_table.py",
 )
