@@ -20,6 +20,13 @@ Bringing a whole module into ``SCOPED_PATHS`` remains the way to make coverage
 of its FUTURE numbers an obligation; it is no longer the only way to register
 one of its present ones.
 
+The delta is per NUMBER, never a count. An earlier version excused any change
+whose total did not rise, so deleting one registered constant paid for adding
+an unregistered one (a net-sum waiver, which a swap always satisfies). Now a
+site new to the working tree is excused only when a site the trunk lost is the
+SAME number -- equal value and either the same name (it moved) or the same
+module (it was renamed) -- and each lost site can stand in for at most one.
+
 Run it directly: ``python -m scripts.unscoped_number_guard``.
 """
 from __future__ import annotations
@@ -44,9 +51,14 @@ from src.number_universe import is_production
 LEDGER_REL = "config/number_ledger.yaml"
 
 
+def working_number_sites() -> list[number_sources.NumberSite]:
+    """Every unscoped numeric constant in the working tree."""
+    return number_sources.collect_unscoped_sites(ROOT)
+
+
 def working_sites() -> list[str]:
     """Site ids of every unscoped numeric constant in the working tree."""
-    return [s.site_id for s in number_sources.collect_unscoped_sites(ROOT)]
+    return [s.site_id for s in working_number_sites()]
 
 
 def working_ledger_ids() -> set[str]:
@@ -68,7 +80,12 @@ def unregistered(sites: list[str], ledger_ids: set[str]) -> list[str]:
 
 
 def trunk_sites() -> list[str]:
-    """Site ids of every unscoped numeric constant on ``origin/main``.
+    """Site ids of every unscoped numeric constant on ``origin/main``."""
+    return [s.site_id for s in trunk_number_sites()]
+
+
+def trunk_number_sites() -> list[number_sources.NumberSite]:
+    """Every unscoped numeric constant on ``origin/main``.
 
     The trunk's ``src/`` is written to a temp dir that is deleted on exit; the
     working tree's scope rules are applied to it so both sides are measured by
@@ -92,7 +109,7 @@ def trunk_sites() -> list[str]:
                 else:
                     target.mkdir(parents=True, exist_ok=True)
         try:
-            return [s.site_id for s in number_sources.collect_unscoped_sites(root)]
+            return number_sources.collect_unscoped_sites(root)
         except (OSError, SyntaxError) as exc:
             raise ReferenceUnavailable(
                 f"cannot measure unscoped numbers on {TRUNK} ({exc}); it refuses "
@@ -118,6 +135,30 @@ def money_reach_gap() -> tuple[int, int]:
     return len(outside), len(unregistered(ids, ledger))
 
 
+def _split_id(site_id: str) -> tuple[str, str]:
+    """(module, name) of a site id such as ``pkg.mod.NAME`` or ``pkg.mod.Cls.field``."""
+    module, _, name = site_id.partition(".")
+    while "." in name and not name.split(".", 1)[0][:1].isupper():
+        head, name = name.split(".", 1)
+        module = f"{module}.{head}"
+    return module, name
+
+
+def same_number(lost: number_sources.NumberSite, new: number_sources.NumberSite) -> bool:
+    """A lost trunk site and a new working site are one constant that moved or was renamed.
+
+    Identity is the VALUE plus one of the two things a site id is made of: the
+    same name in another module is a move; another name in the same module is a
+    rename. Equal value alone is not identity -- two unrelated constants can share
+    a value -- and a different value is a different number whatever it is called.
+    """
+    if lost.value != new.value:
+        return False
+    lost_module, lost_name = _split_id(lost.site_id)
+    new_module, new_name = _split_id(new.site_id)
+    return lost_name == new_name or lost_module == new_module
+
+
 def added_sites() -> list[str]:
     """Unregistered site ids this tree has more of than ``origin/main`` (the delta).
 
@@ -129,15 +170,28 @@ def added_sites() -> list[str]:
     now_raw = working_sites()
     now = unregistered(now_raw, working_ledger_ids())
     remaining = list(before)
+    """Site ids new to this working tree that are not a trunk constant moved or renamed.
+
+    Each site is judged by its own identity. A trunk site that disappeared can
+    stand in for at most one new site, and only when ``same_number`` holds; a
+    deletion never pays for an unrelated addition, whatever the totals do.
+    """
+    now, before = working_number_sites(), trunk_number_sites()
+    before_ids = {s.site_id for s in before}
+    now_ids = {s.site_id for s in now}
+    lost = [s for s in before if s.site_id not in now_ids]
     added: list[str] = []
-    for site in sorted(now):
-        if site in remaining:
-            remaining.remove(site)
+    for site in sorted((s for s in now if s.site_id not in before_ids), key=lambda s: s.site_id):
+        match = next((old for old in lost if same_number(old, site)), None)
+        if match is None:
+            added.append(site.site_id)
         else:
             added.append(site)
     # Only a net rise in SITES fails: moving a constant elsewhere is not growth.
     # Of the risen sites, only the unregistered ones are named and refused.
     return added if len(now_raw) > len(before_raw) else []
+            lost.remove(match)
+    return added
 
 
 def violations() -> list[str]:
