@@ -116,6 +116,8 @@ SCOPED_PATHS: tuple[str, ...] = (
     # `UniverseScreenConfig`.
     "src/universe_screen.py",
     "src/cost_table.py",
+    # 2026-10-05: the free-space floor a session must clear before it may start.
+    "src/desk_disk_floor.py",
     # 2026-10-05: the trading-day lookup lifted out of the coverage watchdog (its scoped
     # home) so the read-only dashboard can share it; scoped so its number stays ledgered.
     "src/trading_day.py",

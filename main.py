@@ -105,6 +105,13 @@ def main():
     # guessing from a half-built config.
     watchdog_db_path: str | None = None
     try:
+        # Disk floor FIRST, before anything reads or writes: a session that
+        # cannot write is worse than one that does not start. On a breach this
+        # refuses with what it needs and what it found (src/desk_disk_floor.py).
+        from src.desk_disk_floor import require_desk_disk
+
+        require_desk_disk(PROJECT_ROOT / "data", log=logger)
+
         config_path = Path(args.config)
         if not config_path.is_absolute():
             config_path = PROJECT_ROOT / config_path
