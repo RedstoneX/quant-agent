@@ -1239,3 +1239,11 @@ changes:
       src/data/insider_signal.py was examined and deliberately NOT scoped:
       the scanner gives both non-zero rungs of its _WEIGHTS table one site
       id, which the ledger schema cannot represent.
+
+  - delta: 4
+    date: 2026-10-05
+    why: >-
+      The four English number-word rows of the FOMC duration decoder in the event-calendar data module are
+      held as arbitrary rather than sourced: the earlier citations pointed at the pattern that matches each
+      word, which names the word but never its number. Each now states the open question and the cost while
+      unanswered. No value changed.
