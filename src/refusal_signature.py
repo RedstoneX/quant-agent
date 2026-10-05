@@ -155,17 +155,15 @@ from typing import Any
 
 from src.coverage_watchdog_state import most_recent_trading_day
 from src.trading_calendar import ET
+from src.data_paths import alerting_dir, db_path
 
 logger = logging.getLogger(__name__)
 
 #: Same database every session writes its evidence to.
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
+DB_PATH = db_path()
 
 #: On-box record, gitignored like its siblings under data/alerting/.
-STATE_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "data" / "alerting" / "refusal_signature.json"
-)
+STATE_PATH = alerting_dir() / "refusal_signature.json"
 
 #: Actions that mean the session actually entered something. A SELL is an
 #: exit and does not make a day non-empty for this purpose — the item is

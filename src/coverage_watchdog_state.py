@@ -24,15 +24,14 @@ from pathlib import Path
 from typing import Any
 
 from src.coverage_watchdog_records import record_watchdog_pass
+from src.data_paths import alerting_dir
 from src.silence_watchdog import SLACK_MINUTES
 from src.trading_calendar import ET, SESSION_WINDOWS
 
 logger = logging.getLogger(__name__)
 
 #: On-box record, gitignored like its siblings under data/alerting/.
-STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "coverage_heartbeat.json"
-)
+STATE_PATH = alerting_dir() / "coverage_heartbeat.json"
 
 #: Deploy-drift snapshot, written by scripts/check_deploy_drift.py and read
 #: by the /health API so a checkout that is behind origin/main is VISIBLE on
@@ -41,9 +40,7 @@ STATE_PATH = (
 #: written with the same `load_state`/`save_state` helpers, so the per-day
 #: dedup that stops a repeating alert is the one already in use here rather
 #: than a fourth private implementation.
-DEPLOY_DRIFT_STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "deploy_drift.json"
-)
+DEPLOY_DRIFT_STATE_PATH = alerting_dir() / "deploy_drift.json"
 
 
 #: How many weekdays back to look for the most recent trading day. A long

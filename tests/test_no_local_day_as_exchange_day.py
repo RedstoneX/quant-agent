@@ -124,3 +124,19 @@ def test_the_scanner_sees_each_forbidden_shape():
     assert local_day_guard._reads_clock(ast.parse(stamped).body[1].value)
     assert ("import_time_stamp", 2) in local_day_guard.scan_text("tests/t.py", stamped)
     assert ("import_time_stamp", 2) not in local_day_guard.scan_text("src/t.py", stamped)
+
+
+def test_the_scan_set_is_every_tracked_module_not_a_directory_list():
+    paths = local_day_guard.scanned_paths()
+    assert "main.py" in paths, "the live entry point at the repository root must be scanned"
+    assert any(p.startswith("ops/") for p in paths) and any(p.startswith("scripts/") for p in paths)
+    assert paths == sorted(set(guard_reference.working_paths("*.py")))
+
+
+def test_a_root_level_offender_is_a_delta(monkeypatch):
+    planted = "from datetime import date\n_X = date.today()\n"
+    base = local_day_guard.working_offences()
+    base[("main.py", "local_today", "<module>", "date.today()")] = [2]
+    monkeypatch.setattr(local_day_guard, "working_offences", lambda: base)
+    assert local_day_guard.main() == 1
+    assert ("local_today", 2) in local_day_guard.scan_text("main.py", planted)

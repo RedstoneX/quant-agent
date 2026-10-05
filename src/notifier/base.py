@@ -10,6 +10,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from src.data_paths import db_path
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 _REHEARSAL_MODE = os.environ.get("QAMC_REHEARSAL") == "1"
 
 
-_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "quant_agent.db"
+_DB_PATH = db_path()
 
 
 @dataclass(frozen=True)

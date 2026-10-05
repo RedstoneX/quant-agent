@@ -145,11 +145,12 @@ from src.coverage_watchdog_text import (  # noqa: F401 -- re-exported, lifted ve
     sweep_summary,
     sweep_log_line,
 )
+from src.data_paths import alerting_dir, db_path
 
 logger = logging.getLogger(__name__)
 
 #: Same database every session and `src/alert_watchdog.py` write to.
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
+DB_PATH = db_path()
 
 
 TABLE = "alert_channel_checks"
