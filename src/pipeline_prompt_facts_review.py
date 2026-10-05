@@ -4,9 +4,9 @@ inheriting a mixin.
 The part is `PromptFactsReview` (src/prompt_facts/review/held.py); the fact bodies live on
 the five family parts under src/prompt_facts/review/. `hold_prompt_facts_review(host_cls)`
 installs one same-named instance-method delegate per review name, each forwarding to the
-part the host instance holds (`review_of(host)`: built on first use and kept on the
-instance, because tests build hosts without running `__init__`). Nothing is snapshotted:
-the part reads every collaborator off the host at each call. The module-level names below
+part built FOR that call (`review_of(host)`: the seat's current collaborators are read off the
+instance and handed to `PromptFactsReview(**collaborators)`, so the part never sees the seat and
+nothing goes stale between calls). Nothing is cached on the instance. The module-level names below
 are re-exported unchanged for importers and patchers of this module (the ONE mirror block
 for this module).
 """
@@ -21,8 +21,13 @@ from src.trading_calendar import et_today  # noqa: F401 -- re-exported
 
 logger = logging.getLogger(__name__)
 
-#: Where the host instance keeps its held part.
-HOLDER_ATTR = "_prompt_facts_review"
+#: Seat attribute -> part keyword: the ONLY place the seat's names meet the part's.
+HOST_COLLABORATORS = {
+    "db": "db", "broker": "broker", "market": "market", "_sweeper": "sweeper",
+    "_build_post_exit_reality": "build_post_exit_reality",
+    "_EXIT_AUDIT_ACTIONS": "exit_audit_actions",
+    "_log_conviction_outcome_for_operator": "log_conviction_outcome_for_operator",
+}
 
 #: Every review name the host exposes, delegated to the held part. `_build_post_exit_reality`
 #: is a COLLABORATOR of the grading part, so the part reads it off the host live; the host's
@@ -37,15 +42,10 @@ DELEGATED = (
 
 
 def review_of(host) -> PromptFactsReview:
-    """The part `host` holds: built on first use with the host handed in, then kept on it."""
-    held = getattr(host, HOLDER_ATTR, None)
-    if held is None:
-        held = PromptFactsReview(host=host)
-        try:
-            setattr(host, HOLDER_ATTR, held)
-        except AttributeError:  # a host that refuses attributes still gets a working part
-            pass
-    return held
+    """A fresh part built from the seat's collaborators AS THEY ARE NOW; the part is not handed the seat."""
+    return PromptFactsReview(
+        **{keyword: getattr(host, attr, None) for attr, keyword in HOST_COLLABORATORS.items()}
+    )
 
 
 def _delegate(name: str):
@@ -63,8 +63,7 @@ def _delegate(name: str):
 
 
 def hold_prompt_facts_review(host_cls):
-    """Make instances of `host_cls` hold one `PromptFactsReview` and delegate the review names to it."""
-    setattr(host_cls, HOLDER_ATTR, None)  # per-instance cache filled by `review_of`
+    """Delegate the review names on `host_cls` to a `PromptFactsReview` built per call from its collaborators."""
     for name in DELEGATED:
         setattr(host_cls, name, _delegate(name))
     return host_cls

@@ -1,10 +1,12 @@
 """The trade-review seat as ONE standalone part: `PromptFactsReview`.
 
-Built alone with its host handed in (`PromptFactsReview(host=...)`) and exercised with
-nothing behind it. Every collaborator -- `db`, `broker`, `market`, `_sweeper`,
-`_build_post_exit_reality`, `_EXIT_AUDIT_ACTIONS`, `_log_conviction_outcome_for_operator` --
-is read off the host at EVERY call through `_LiveRead`, never copied at construction, so a
-collaborator swapped on the host after the part was built is the one the bodies see.
+Built alone from its collaborators only -- `PromptFactsReview(db=..., broker=..., market=...,
+sweeper=..., build_post_exit_reality=..., exit_audit_actions=...,
+log_conviction_outcome_for_operator=...)` -- and exercised with nothing behind it. The part
+knows NO host: it never reaches back into the pipeline for anything. The holder
+(`src/pipeline_prompt_facts_review.py`) rebuilds one per call from the seat's current
+collaborators, so a collaborator swapped on the seat is the one the next call sees without the
+part holding a reference to the seat.
 
 The five `_review_*` builders and the eleven same-named shims are moved VERBATIM (AST-identical)
 from `PromptFactsReviewMixin` (src/pipeline_prompt_facts_review.py, retired 2026-10-04). The
@@ -18,67 +20,53 @@ from src.prompt_facts.review.exits import ReviewExits
 from src.prompt_facts.review.grading import ReviewGrading
 from src.prompt_facts.review.replay import ReviewReplay
 
-#: The host attributes the builders read; each is a live read, never a snapshot.
-HOST_COLLABORATORS = (
-    "db", "broker", "market", "_sweeper", "_build_post_exit_reality",
-    "_EXIT_AUDIT_ACTIONS", "_log_conviction_outcome_for_operator",
+#: The part's keyword collaborators, in constructor order. Every one defaults to None so the
+#: part builds bare; the family parts tolerate a missing collaborator exactly as before.
+COLLABORATORS = (
+    "db", "broker", "market", "sweeper", "build_post_exit_reality",
+    "exit_audit_actions", "log_conviction_outcome_for_operator",
 )
-
-
-class _LiveRead:
-    """Descriptor: `part.<name>` is `getattr(part._host, name, None)` taken at this call."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def __get__(self, part, owner=None):
-        if part is None:
-            return self
-        return getattr(part._host, self.name, None)
 
 
 class PromptFactsReview:
     """Trade-review prompt facts; every body lives on a part under src/prompt_facts/review/.
 
-    Each `_review_*` builder reads the host's collaborators at call time. The grading
-    part is handed the host's `_build_post_exit_reality` (a shim onto the exits part, or
-    whatever a test swapped in), never a body it owns, so no recursion guard is needed."""
+    Each `_review_*` builder hands the part's collaborators to one family part. The grading
+    part is handed `build_post_exit_reality` (the seat's shim onto the exits part, or whatever
+    a test passed in), never a body it owns, so no recursion guard is needed."""
 
-    db = _LiveRead("db")
-    broker = _LiveRead("broker")
-    market = _LiveRead("market")
-    _sweeper = _LiveRead("_sweeper")
-    # A collaborator of the grading part, so it is the HOST's (its delegate onto the exits
-    # part, or whatever a test swapped in), read live; exercised alone through `_review_exits()`.
-    _build_post_exit_reality = _LiveRead("_build_post_exit_reality")
-    _EXIT_AUDIT_ACTIONS = _LiveRead("_EXIT_AUDIT_ACTIONS")
-    _log_conviction_outcome_for_operator = _LiveRead("_log_conviction_outcome_for_operator")
-
-    def __init__(self, *, host) -> None:
-        self._host = host
+    def __init__(
+        self, *, db=None, broker=None, market=None, sweeper=None, build_post_exit_reality=None,
+        exit_audit_actions=None, log_conviction_outcome_for_operator=None,
+    ) -> None:
+        self.db = db
+        self.broker = broker
+        self.market = market
+        self.sweeper = sweeper
+        self.build_post_exit_reality = build_post_exit_reality
+        self.exit_audit_actions = exit_audit_actions
+        self.log_conviction_outcome_for_operator = log_conviction_outcome_for_operator
 
     def _review_grading(self) -> ReviewGrading:
         return ReviewGrading(
-            db=getattr(self, "db", None), broker=getattr(self, "broker", None),
-            market=getattr(self, "market", None), sweeper=getattr(self, "_sweeper", None),
-            build_post_exit_reality=getattr(self, "_build_post_exit_reality", None),
+            db=self.db, broker=self.broker, market=self.market, sweeper=self.sweeper,
+            build_post_exit_reality=self.build_post_exit_reality,
         )
 
     def _review_exits(self) -> ReviewExits:
         return ReviewExits(
-            db=getattr(self, "db", None), broker=getattr(self, "broker", None),
-            sweeper=getattr(self, "_sweeper", None),
-            exit_audit_actions=getattr(self, "_EXIT_AUDIT_ACTIONS", None),
+            db=self.db, broker=self.broker, sweeper=self.sweeper,
+            exit_audit_actions=self.exit_audit_actions,
         )
 
     def _review_calibration(self) -> ReviewCalibration:
         return ReviewCalibration(
-            db=getattr(self, "db", None),
-            log_conviction_outcome_for_operator=getattr(self, "_log_conviction_outcome_for_operator", None),
+            db=self.db,
+            log_conviction_outcome_for_operator=self.log_conviction_outcome_for_operator,
         )
 
     def _review_blocked(self) -> ReviewBlocked:
-        return ReviewBlocked(db=getattr(self, "db", None))
+        return ReviewBlocked(db=self.db)
 
     def _review_replay(self) -> ReviewReplay:
         return ReviewReplay()
