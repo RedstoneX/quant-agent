@@ -705,6 +705,23 @@ numbers:
         observations cannot distinguish the absolute floor from the ordinary one
     value: 1
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      ENGINE A/B RAN AND RETURNED A NULL RESULT; recorded as a null result ONLY,
+      and this row stays arbitrary. Method as for max_position_risk_pct above
+      (same recording, same 2026-06-01 to 2026-09-30 window, 69 control trades).
+      Sweeping config.risk.absolute_min_stop_atr_multiple over 0.5, 1.0 (live),
+      2.0 and 2.5 produced a BYTE-IDENTICAL trade list every time: same 69 trades,
+      same entry prices, same stop prices, same share counts, same exit dates
+      [measured]. The value was asserted on the config object before each run and
+      run_backtest wires it to ConstructorConfig.absolute_min_stop_atr_multiple on
+      one static line. DO NOT READ THIS AS A DEAD PARAMETER. The companion sweeps
+      in this same session proved that an identical result is far more often a
+      broken harness than an inert knob (see the levels and trailing rows below),
+      and the diagnostic that would distinguish 'the floor never binds on this
+      sample' from 'the engine's substituted-stop path never reaches the floor'
+      was not run. The named follow-up is to instrument
+      PortfolioConstructor._widen_stop_past_noise inside the engine and count how
+      many of the 69 entries had the absolute floor bind.
     route_audit_2026_10_04: >-
       The route is ADMISSIBLE and UNRUN. Unlike the single-name envelope above,
       neither bar applies: the whipsaw-rate-against-ATR-distance measurement
@@ -993,6 +1010,28 @@ numbers:
   - id: src.config.RiskConfig.max_position_risk_pct
     value: 5
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      NARROWED 2026-10-05 by a six-point engine sweep, NOT SETTLED, and this row
+      stays arbitrary. Method: src/backtest/engine.py run_backtest called directly
+      on the committed daily-bar recording
+      ops/rehearsal/recordings/market_bars.json.gz (33 symbols, 9108 bars,
+      captured 2026-09-30), window 2026-06-01 to 2026-09-30, 66 entry days, no
+      network. Only config.risk.max_position_risk_pct was changed; the value was
+      asserted on the config object before each run and the engine wires it
+      straight to ConstructorConfig.risk_budget_pct, which the probe read back as
+      5.0 on the control run. Realised P&L on 100k of starting equity [measured]:
+      1 pct gave -3853 over 205 trades, 2 pct -2328 over 119, 3 pct +19990 over
+      94, 5 pct (the live value) +39057 over 69, 7 pct +32805 over 62, 10 pct
+      +40441 over 54. So the number is emphatically LIVE and consequential - it
+      moves realised P&L by more than 44k across the legal range - and everything
+      at or below 3 pct lost money on this sample while 5, 7 and 10 were
+      indistinguishable from each other. That brackets the answer in [5, 10] but
+      does not pick a point inside it, so the open question is not answered. NOT
+      EVIDENCE FOR: a desk expectation of any kind. The portfolio risk budget
+      bound on 66 of 66 entry days, and this engine asks equal risk with no
+      ranking, so rationing was resolved alphabetically rather than by the live
+      rank_verdicts order; the sample is one 4-month window of 33 survivor-biased
+      names; the engine does not replay the LLM seats.
     backtest_ab_2026_10_04: >-
       AN UNCONSTRAINED-BUDGET BACKTEST FIGURE IS NEVER A DESK EXPECTATION. Run
       as the POSITIVE CONTROL for the horizon A/B recorded on
@@ -2382,6 +2421,22 @@ numbers:
   - id: src.data.levels.CLUSTER_TOLERANCE_PCT_FALLBACK
     value: 1
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      NOT ANSWERABLE BY THE BACKTEST ENGINE TODAY - measured 2026-10-05, and the
+      first attempt to answer it was WRONG. src/backtest/engine.py imports
+      find_structural_levels and structural_floor but has ZERO call sites for
+      either: the only occurrences in the file are its docstring and comments
+      [measured by grep for the call forms]. The engine substitutes its own
+      nearest-level rule in _resolve_structural_stop_and_target instead, so no
+      sweep of this constant can move its output. A sweep that monkeypatched this
+      module global and came back byte-identical across the full legal range was
+      therefore measuring nothing, twice over: find_structural_levels also binds
+      this constant as a DEFAULT ARGUMENT (pivot_window: int = PIVOT_WINDOW,
+      src/data/levels.py line 782), which is evaluated at import and cannot be
+      reached by reassigning the module global afterwards. NAMED ENGINE CHANGE
+      REQUIRED: route the engine's stop and target derivation through the real
+      find_structural_levels, and pass the tunables explicitly rather than relying
+      on their defaults.
     site: src/data/levels.py
     note: >-
       SUPERSEDED 2026-09-30, docs/WORK.md item 55. This used to BE the level
@@ -2460,6 +2515,22 @@ numbers:
   - id: src.data.levels.LEVEL_STRENGTH_DISTANCE_DIVISOR_PCT
     value: 10
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      NOT ANSWERABLE BY THE BACKTEST ENGINE TODAY - measured 2026-10-05, and the
+      first attempt to answer it was WRONG. src/backtest/engine.py imports
+      find_structural_levels and structural_floor but has ZERO call sites for
+      either: the only occurrences in the file are its docstring and comments
+      [measured by grep for the call forms]. The engine substitutes its own
+      nearest-level rule in _resolve_structural_stop_and_target instead, so no
+      sweep of this constant can move its output. A sweep that monkeypatched this
+      module global and came back byte-identical across the full legal range was
+      therefore measuring nothing, twice over: find_structural_levels also binds
+      this constant as a DEFAULT ARGUMENT (pivot_window: int = PIVOT_WINDOW,
+      src/data/levels.py line 782), which is evaluated at import and cannot be
+      reached by reassigning the module global afterwards. NAMED ENGINE CHANGE
+      REQUIRED: route the engine's stop and target derivation through the real
+      find_structural_levels, and pass the tunables explicitly rather than relying
+      on their defaults.
     site: src/data/levels.py
     note: >-
       Board item 148 (2026-09-25): named out of an inline `/ 10.0` in the
@@ -2559,6 +2630,22 @@ numbers:
   - id: src.data.levels.PIVOT_WINDOW
     value: 5
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      NOT ANSWERABLE BY THE BACKTEST ENGINE TODAY - measured 2026-10-05, and the
+      first attempt to answer it was WRONG. src/backtest/engine.py imports
+      find_structural_levels and structural_floor but has ZERO call sites for
+      either: the only occurrences in the file are its docstring and comments
+      [measured by grep for the call forms]. The engine substitutes its own
+      nearest-level rule in _resolve_structural_stop_and_target instead, so no
+      sweep of this constant can move its output. A sweep that monkeypatched this
+      module global and came back byte-identical across the full legal range was
+      therefore measuring nothing, twice over: find_structural_levels also binds
+      this constant as a DEFAULT ARGUMENT (pivot_window: int = PIVOT_WINDOW,
+      src/data/levels.py line 782), which is evaluated at import and cannot be
+      reached by reassigning the module global afterwards. NAMED ENGINE CHANGE
+      REQUIRED: route the engine's stop and target derivation through the real
+      find_structural_levels, and pass the tunables explicitly rather than relying
+      on their defaults.
     site: src/data/levels.py
     note: >-
       Bars either side of a candidate swing point for the LEVEL scan. Levels
@@ -4879,6 +4966,23 @@ numbers:
         deleted
     value: 1.25
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      NOT ANSWERABLE YET - measured 2026-10-05, and the first attempt to answer it
+      was WRONG. The engine does exercise the trailing path: a probe counted 504
+      compute_trailing_stop calls on the control run (committed recording
+      ops/rehearsal/recordings/market_bars.json.gz, 33 symbols, 9108 bars, window
+      2026-06-01 to 2026-09-30, 69 trades) [measured]. But sweeping this constant
+      by reassigning it on src/risk/trailing produced a BYTE-IDENTICAL trade list
+      every time, and the cause is the harness, not the number:
+      compute_trailing_stop is DEFINED IN src/risk/trail_evaluate.py and only
+      re-exported through src/risk/trailing, so the name the evaluator actually
+      reads is not the one that was reassigned. The probe confirms this directly -
+      it observed the patched value live on src.risk.trailing during the run while
+      the result did not move. DO NOT RECORD THIS CONSTANT AS INERT. NAMED
+      FOLLOW-UP: re-run the sweep against the binding site in
+      src/risk/trail_evaluate.py, and prove the wiring by counting how many of the
+      504 calls return a changed stop under each value before reading anything off
+      the P&L.
     site: src/risk/trailing.py
     note: >-
       The trailing-stop noise band. The settings comment called it MEASURED;
@@ -4908,6 +5012,23 @@ numbers:
         structure trail, not just its width, is what needs deciding
     value: 3
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      NOT ANSWERABLE YET - measured 2026-10-05, and the first attempt to answer it
+      was WRONG. The engine does exercise the trailing path: a probe counted 504
+      compute_trailing_stop calls on the control run (committed recording
+      ops/rehearsal/recordings/market_bars.json.gz, 33 symbols, 9108 bars, window
+      2026-06-01 to 2026-09-30, 69 trades) [measured]. But sweeping this constant
+      by reassigning it on src/risk/trailing produced a BYTE-IDENTICAL trade list
+      every time, and the cause is the harness, not the number:
+      compute_trailing_stop is DEFINED IN src/risk/trail_evaluate.py and only
+      re-exported through src/risk/trailing, so the name the evaluator actually
+      reads is not the one that was reassigned. The probe confirms this directly -
+      it observed the patched value live on src.risk.trailing during the run while
+      the result did not move. DO NOT RECORD THIS CONSTANT AS INERT. NAMED
+      FOLLOW-UP: re-run the sweep against the binding site in
+      src/risk/trail_evaluate.py, and prove the wiring by counting how many of the
+      504 calls return a changed stop under each value before reading anything off
+      the P&L.
     site: src/risk/trailing.py
     note: >-
       Bars either side that must be dominated for a swing pivot. Searched
@@ -4960,6 +5081,23 @@ numbers:
         risk, so the breakeven trigger is read off price behaviour rather than set at a round 1R
     value: 1
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      NOT ANSWERABLE YET - measured 2026-10-05, and the first attempt to answer it
+      was WRONG. The engine does exercise the trailing path: a probe counted 504
+      compute_trailing_stop calls on the control run (committed recording
+      ops/rehearsal/recordings/market_bars.json.gz, 33 symbols, 9108 bars, window
+      2026-06-01 to 2026-09-30, 69 trades) [measured]. But sweeping this constant
+      by reassigning it on src/risk/trailing produced a BYTE-IDENTICAL trade list
+      every time, and the cause is the harness, not the number:
+      compute_trailing_stop is DEFINED IN src/risk/trail_evaluate.py and only
+      re-exported through src/risk/trailing, so the name the evaluator actually
+      reads is not the one that was reassigned. The probe confirms this directly -
+      it observed the patched value live on src.risk.trailing during the run while
+      the result did not move. DO NOT RECORD THIS CONSTANT AS INERT. NAMED
+      FOLLOW-UP: re-run the sweep against the binding site in
+      src/risk/trail_evaluate.py, and prove the wiring by counting how many of the
+      504 calls return a changed stop under each value before reading anything off
+      the P&L.
     site: src/risk/trailing.py
     note: >-
       How many R of profit a range trade banks before its stop ratchets to
@@ -5004,6 +5142,23 @@ numbers:
         second rung never binds and is deleted
     value: 2
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      NOT ANSWERABLE YET - measured 2026-10-05, and the first attempt to answer it
+      was WRONG. The engine does exercise the trailing path: a probe counted 504
+      compute_trailing_stop calls on the control run (committed recording
+      ops/rehearsal/recordings/market_bars.json.gz, 33 symbols, 9108 bars, window
+      2026-06-01 to 2026-09-30, 69 trades) [measured]. But sweeping this constant
+      by reassigning it on src/risk/trailing produced a BYTE-IDENTICAL trade list
+      every time, and the cause is the harness, not the number:
+      compute_trailing_stop is DEFINED IN src/risk/trail_evaluate.py and only
+      re-exported through src/risk/trailing, so the name the evaluator actually
+      reads is not the one that was reassigned. The probe confirms this directly -
+      it observed the patched value live on src.risk.trailing during the run while
+      the result did not move. DO NOT RECORD THIS CONSTANT AS INERT. NAMED
+      FOLLOW-UP: re-run the sweep against the binding site in
+      src/risk/trail_evaluate.py, and prove the wiring by counting how many of the
+      504 calls return a changed stop under each value before reading anything off
+      the P&L.
     site: src/risk/trailing.py
     note: >-
       Item 142's SECOND range ratchet fires when a range / Type A trade reaches
@@ -5046,6 +5201,23 @@ numbers:
         re-picked
     value: 1
     status: arbitrary
+    engine_ab_2026_10_05: >-
+      NOT ANSWERABLE YET - measured 2026-10-05, and the first attempt to answer it
+      was WRONG. The engine does exercise the trailing path: a probe counted 504
+      compute_trailing_stop calls on the control run (committed recording
+      ops/rehearsal/recordings/market_bars.json.gz, 33 symbols, 9108 bars, window
+      2026-06-01 to 2026-09-30, 69 trades) [measured]. But sweeping this constant
+      by reassigning it on src/risk/trailing produced a BYTE-IDENTICAL trade list
+      every time, and the cause is the harness, not the number:
+      compute_trailing_stop is DEFINED IN src/risk/trail_evaluate.py and only
+      re-exported through src/risk/trailing, so the name the evaluator actually
+      reads is not the one that was reassigned. The probe confirms this directly -
+      it observed the patched value live on src.risk.trailing during the run while
+      the result did not move. DO NOT RECORD THIS CONSTANT AS INERT. NAMED
+      FOLLOW-UP: re-run the sweep against the binding site in
+      src/risk/trail_evaluate.py, and prove the wiring by counting how many of the
+      504 calls return a changed stop under each value before reading anything off
+      the P&L.
     site: src/risk/trailing.py
     note: >-
       Where item 142's second ratchet parks the stop once the +2R trigger
