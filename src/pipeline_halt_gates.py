@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from src.pipeline_stages import _record_pipeline_event
+from src.pipeline_stages import _record_pipeline_event, record_stage
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -121,10 +121,7 @@ def _evidence_gate_skip(
         # A gate that can stop the desk trading must not stop it by
         # crashing. `evaluate` is documented never to raise; if it
         # somehow does, proceed and say so loudly.
-        logger.error(
-            "evidence gate raised (%s) — PROCEEDING with the decision. "
-            "This is a bug in src/evidence_gate.py.", exc,
-        )
+        record_stage(self, "evidence_gate_raised", exc)  # PROCEEDING with the decision
         return None
 
     def _record(symbol, outcome, reason, **details):
