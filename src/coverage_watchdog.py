@@ -144,16 +144,15 @@ from src.coverage_watchdog_text import (  # noqa: F401 -- re-exported, lifted ve
     sweep_summary,
     sweep_log_line,
 )
+from src.data_paths import alerting_dir, db_path
 
 logger = logging.getLogger(__name__)
 
 #: Same database every session and `src/alert_watchdog.py` write to.
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
+DB_PATH = db_path()
 
 #: On-box record, gitignored like its siblings under data/alerting/.
-STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "coverage_heartbeat.json"
-)
+STATE_PATH = alerting_dir() / "coverage_heartbeat.json"
 
 TABLE = "alert_channel_checks"
 

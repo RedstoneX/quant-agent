@@ -16,9 +16,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-DEPLOY_DRIFT_STATE_PATH = (
-    Path(__file__).resolve().parent.parent / "data" / "alerting" / "deploy_drift.json"
-)
+from src.data_paths import alerting_dir
+
+DEPLOY_DRIFT_STATE_PATH = alerting_dir() / "deploy_drift.json"
 
 
 def load_drift_state(path: Path | None = None) -> dict[str, Any]:
