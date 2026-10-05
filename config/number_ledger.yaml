@@ -9677,3 +9677,78 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+  - id: src.sessions.evening_session.EveningSession.run:call[self._build_missed_opportunities_digest(lookback_days)]
+    value: 5
+    status: arbitrary
+    site: src/sessions/evening_session.py
+    note: >-
+      The LIVE value of the missed-opportunities digest argument `lookback_days`: how many past days of price moves the evening 'what did we miss' digest looks back over.
+      The registered default on the digest builder is dead because this call
+      passes it explicitly. Found by the call-site keyword-literal rule (f);
+      nothing derives it, so it is recorded as unsettled and no derivation is invented.
+    open_question: >-
+      What value of `lookback_days` makes the digest surface the misses that changed a later
+      decision, read off the recorded digests against what the seat then did?
+    cost_while_unanswered: >-
+      Too small and real misses are hidden from the seat; too large and the digest
+      is noise the seat learns to ignore. It shapes evidence, not an order size.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/prompt_facts/missed_ops_signals.py `_build_missed_opportunities_digest`, recorded per evening pass
+      records: >-
+        the digest rows shown to the seat each evening, with the later price path of every
+        name left out, so the cutoff can be scored against what it hid
+      closes_when: >-
+        a run of evenings shows the cutoff beyond which the hidden names stop moving
+        the seat's next-day verdict, and the value is set at that point
+  - id: src.sessions.evening_session.EveningSession.run:call[self._build_missed_opportunities_digest(move_threshold_pct)]
+    value: 8
+    status: arbitrary
+    site: src/sessions/evening_session.py
+    note: >-
+      The LIVE value of the missed-opportunities digest argument `move_threshold_pct`: how large a one-window move, in percent, counts as a miss worth showing the portfolio-manager seat.
+      The registered default on the digest builder is dead because this call
+      passes it explicitly. Found by the call-site keyword-literal rule (f);
+      nothing derives it, so it is recorded as unsettled and no derivation is invented.
+    open_question: >-
+      What value of `move_threshold_pct` makes the digest surface the misses that changed a later
+      decision, read off the recorded digests against what the seat then did?
+    cost_while_unanswered: >-
+      Too small and real misses are hidden from the seat; too large and the digest
+      is noise the seat learns to ignore. It shapes evidence, not an order size.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/prompt_facts/missed_ops_signals.py `_build_missed_opportunities_digest`, recorded per evening pass
+      records: >-
+        the digest rows shown to the seat each evening, with the later price path of every
+        name left out, so the cutoff can be scored against what it hid
+      closes_when: >-
+        a run of evenings shows the cutoff beyond which the hidden names stop moving
+        the seat's next-day verdict, and the value is set at that point
+  - id: src.sessions.evening_session.EveningSession.run:call[self._build_missed_opportunities_digest(top_n)]
+    value: 15
+    status: arbitrary
+    site: src/sessions/evening_session.py
+    note: >-
+      The LIVE value of the missed-opportunities digest argument `top_n`: how many of the largest misses the digest lists for the seat.
+      The registered default on the digest builder is dead because this call
+      passes it explicitly. Found by the call-site keyword-literal rule (f);
+      nothing derives it, so it is recorded as unsettled and no derivation is invented.
+    open_question: >-
+      What value of `top_n` makes the digest surface the misses that changed a later
+      decision, read off the recorded digests against what the seat then did?
+    cost_while_unanswered: >-
+      Too small and real misses are hidden from the seat; too large and the digest
+      is noise the seat learns to ignore. It shapes evidence, not an order size.
+    settles_by:
+      kind: measurement
+      state: specified
+      where: src/prompt_facts/missed_ops_signals.py `_build_missed_opportunities_digest`, recorded per evening pass
+      records: >-
+        the digest rows shown to the seat each evening, with the later price path of every
+        name left out, so the cutoff can be scored against what it hid
+      closes_when: >-
+        a run of evenings shows the cutoff beyond which the hidden names stop moving
+        the seat's next-day verdict, and the value is set at that point

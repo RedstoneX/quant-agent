@@ -27,7 +27,7 @@ from scripts.guard_reference import (
     trunk_blobs,
     trunk_paths,
 )
-from src import number_sources
+from src import number_callsite_scan, number_sources
 from src.number_universe import is_production
 
 
@@ -36,8 +36,10 @@ def working_sites() -> list[str]:
     return [s.site_id for s in number_sources.collect_unscoped_sites(ROOT)]
 
 
-def trunk_sites() -> list[str]:
+def trunk_sites(callsites: bool = False) -> list[str]:
     """Site ids of every unscoped numeric constant on ``origin/main``.
+
+    ``callsites=True`` measures rule (f) instead: keyword literals at call sites.
 
     The trunk's ``src/`` is written to a temp dir that is deleted on exit; the
     working tree's scope rules are applied to it so both sides are measured by
@@ -61,6 +63,8 @@ def trunk_sites() -> list[str]:
                 else:
                     target.mkdir(parents=True, exist_ok=True)
         try:
+            if callsites:
+                return [s.site_id for s in number_callsite_scan.collect_callsite_sites(root)]
             return [s.site_id for s in number_sources.collect_unscoped_sites(root)]
         except (OSError, SyntaxError) as exc:
             raise ReferenceUnavailable(
@@ -99,9 +103,37 @@ def added_sites() -> list[str]:
     return added if len(now) > len(before) else []
 
 
+def callsite_sites() -> list[str]:
+    """Site ids of every keyword-argument numeric literal at a call, anywhere in production."""
+    return [s.site_id for s in number_callsite_scan.collect_callsite_sites(ROOT)]
+
+
+def added_callsite_sites() -> list[str]:
+    """Call-site literals this tree has more of than trunk and no ledger row for.
+
+    DELTA ONLY: the absolute count is reported by ``main`` and not gated, because
+    gating it would red the trunk on literals nobody has reviewed yet. A row in
+    the ledger registers a site, so registering clears it.
+    """
+    now, before = callsite_sites(), trunk_sites(callsites=True)
+    remaining = list(before)
+    ledgered = set(number_sources.load_ledger())
+    added: list[str] = []
+    for site in sorted(now):
+        if site in remaining:
+            remaining.remove(site)
+        elif site not in ledgered:
+            added.append(site)
+    return added if len(now) > len(before) else []
+
+
 def violations() -> list[str]:
     added = added_sites()
-    return [f"+{len(added)} unscoped numeric constant(s) vs {TRUNK}: " + ", ".join(added)] if added else []
+    out = [f"+{len(added)} unscoped numeric constant(s) vs {TRUNK}: " + ", ".join(added)] if added else []
+    calls = added_callsite_sites()
+    if calls:
+        out.append(f"+{len(calls)} call-site keyword literal(s) vs {TRUNK}, none in the ledger: " + ", ".join(calls))
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -120,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     print(f"unscoped-number guard: this tree adds no unscoped numeric constant against {TRUNK}.")
+    sites = callsite_sites()
+    unregistered = [s for s in sites if s not in number_sources.load_ledger()]
+    print(f"measured, not gated: {len(sites)} call-site keyword literals, {len(unregistered)} with no ledger row.")
     modules, numbers = money_reach_gap()
     print(f"measured, not gated: {modules} money modules outside ledger scope hold {numbers} unledgered numbers.")
     return 0

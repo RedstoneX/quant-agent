@@ -219,6 +219,7 @@ SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 
 #: The modules on the path from a verdict to a broker order; see
 #: src/number_scope.py (data only, re-exported here for every reader).
+from src.number_callsite_scan import collect_callsite_sites  # noqa: E402
 from src.number_scope import SCOPED_PATHS, py_universe  # noqa: E402,F401
 
 
@@ -720,6 +721,7 @@ def audit(
     sites = collect_sites(root)
     ledger = load_ledger(ledger_path)
     by_id = {site.site_id: site for site in sites}
+    by_id.update({s.site_id: s for s in collect_callsite_sites(root)})  # rule (f) ids are known, not yet required
     problems: list[LedgerProblem] = []
 
     try:

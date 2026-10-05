@@ -22,9 +22,18 @@ def test_the_trunk_is_actually_measured():
 def test_a_new_number_is_caught_as_a_delta(monkeypatch):
     real = unscoped_number_guard.working_sites()
     monkeypatch.setattr(unscoped_number_guard, "working_sites", lambda: real)
-    monkeypatch.setattr(unscoped_number_guard, "trunk_sites", lambda: real[:-1])
+    monkeypatch.setattr(unscoped_number_guard, "trunk_sites", lambda callsites=False: real[:-1] if not callsites else [])
     bad = unscoped_number_guard.violations()
     assert bad and "+1" in bad[0] and real[-1] in bad[0], bad
+
+
+def test_a_new_call_site_literal_is_caught_as_a_delta(monkeypatch):
+    real = unscoped_number_guard.callsite_sites()
+    monkeypatch.setattr(unscoped_number_guard, "working_sites", lambda: [])
+    monkeypatch.setattr(unscoped_number_guard, "callsite_sites", lambda: real + ["m.f:call[g(top_n)]"])
+    monkeypatch.setattr(unscoped_number_guard, "trunk_sites", lambda callsites=False: real if callsites else [])
+    bad = unscoped_number_guard.violations()
+    assert bad and "call-site" in bad[0] and "m.f:call[g(top_n)]" in bad[0], bad
 
 
 def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):
