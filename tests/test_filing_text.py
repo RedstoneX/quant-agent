@@ -35,7 +35,8 @@ def test_extract_text_compresses_standard_10q(tmp_path):
     filler = "Lorem ipsum dolor sit amet consectetur. " * 50  # ~2000 chars
     html = f"""<html><body>
     <h1>Apple Inc. Q1 2026 Form 10-Q</h1>
-    <div>Table of Contents: Item 1. Financial Statements ... Item 2. Management's Discussion and Analysis ... Item 1A. Risk Factors ...</div>
+    <div>Table of Contents: Item 1. Financial Statements ...
+    Item 2. Management's Discussion and Analysis ... Item 1A. Risk Factors ...</div>
     {"Cover page filler filler filler. " * 400}
     <h2>CONDENSED CONSOLIDATED STATEMENTS OF OPERATIONS</h2>
     <p>Net sales: Products $113,743 Services $26,340. Total $140,083.
