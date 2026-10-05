@@ -8,7 +8,8 @@ that is not a builtin, would raise NameError the moment that line runs.
 Blind spots: attribute names (`mod.missing`), names created dynamically
 (`globals()[...]`, `setattr`), anything in a module with `from x import *`
 (skipped, reported), and names bound at module level only on a path that
-never runs. A module-level read of a name that is bound later in the file is not caught (a name nothing binds at all is).
+never runs. A module-level read of a name that is bound later in the file is
+not caught (a name nothing binds at all is).
 """
 from __future__ import annotations
 
