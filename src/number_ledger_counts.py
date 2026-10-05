@@ -14,24 +14,17 @@ LEDGER_RELATIVE = "config/number_ledger.yaml"
 
 
 def count_arbitrary(text: str) -> int:
-    """`status: arbitrary` rows in a raw ledger document."""
+    """`status: arbitrary` rows in a raw ledger document.
+
+    The ratchet no longer judges by this total -- it judges row by row, by
+    identity. The total survives because it is the number the standing order
+    drives to zero, and it is REPORTED, on the audit CLI's success line. An
+    unreported total is progress nobody can see.
+    """
     raw = yaml.safe_load(text) or {}
     return sum(
         1 for entry in (raw.get("numbers") or []) if entry.get("status") == "arbitrary"
     )
-
-
-def trunk_arbitrary_count() -> int:
-    """The `arbitrary` count on the trunk, read fresh at check time."""
-    from scripts.guard_reference import ReferenceUnavailable, trunk_blobs
-
-    blobs = trunk_blobs([LEDGER_RELATIVE])
-    if LEDGER_RELATIVE not in blobs:
-        raise ReferenceUnavailable(
-            f"{LEDGER_RELATIVE} is absent from the trunk, so the arbitrary "
-            "count has no reference to be judged against"
-        )
-    return count_arbitrary(blobs[LEDGER_RELATIVE])
 
 
 def statuses_by_id(text: str) -> dict[str, str]:
@@ -66,6 +59,51 @@ def trunk_statuses() -> dict[str, str]:
 ROUTE_FIELDS = ("settles_by", "open_question")
 
 
+def _leaf(site_id: str) -> str:
+    """The bare symbol name at the end of a dotted row id."""
+    return site_id.rsplit(".", 1)[-1]
+
+
+def dropped_statuses_by_leaf(ledger, trunk):
+    """Trunk rows this change no longer holds, grouped by LEAF SYMBOL NAME.
+
+    THE PROXY, named outright: a row id is a dotted symbol path, so splitting
+    a module rewrites the primary key of every number in it -- 93 such
+    rewrites in the four days to 2026-10-05, with the splits ongoing. True
+    identity is not statically available for a renamed symbol, so a MOVE is
+    recognised here by the leaf symbol name alone, and only against a trunk
+    row the change has DROPPED: a trunk row still present under its own id
+    cannot have moved anywhere.
+
+    WHICH WAY IT ERRS: STRICT, deliberately. When several dropped trunk rows
+    share one leaf, the arriving row inherits the STRONGEST status among them
+    (any non-arbitrary beats arbitrary), so an ambiguous leaf is REFUSED
+    rather than waved through. Two unrelated numbers sharing a leaf name
+    therefore cost a false refusal -- undone by naming one of them
+    differently -- and never a false pass. The failure this closes is the
+    opposite one: without it a `sourced` row could be laundered into
+    `arbitrary` by renaming its module, and nothing would notice.
+    """
+    out: dict[str, set[str]] = {}
+    for site_id, status in trunk.items():
+        if site_id in ledger:
+            continue
+        out.setdefault(_leaf(site_id), set()).add(status)
+    return out
+
+
+def _trunk_status_of(site_id, ledger, trunk, dropped):
+    """`(status_on_trunk, was_renamed)` for a row, moves reconciled."""
+    was = trunk.get(site_id)
+    if was is not None:
+        return was, False
+    candidates = dropped.get(_leaf(site_id))
+    if not candidates:
+        return None, False
+    stronger = sorted(s for s in candidates if s != "arbitrary")
+    return (stronger[0] if stronger else "arbitrary"), True
+
+
 def ratchet_violations(ledger, trunk):
     """The arbitrary ratchet, keyed on row IDENTITY rather than on a total.
 
@@ -80,20 +118,27 @@ def ratchet_violations(ledger, trunk):
     Returns `(site_id, detail)` for every row that must be refused.
     """
     out = []
+    dropped = dropped_statuses_by_leaf(ledger, trunk)
     for site_id, entry in sorted(ledger.items()):
         if entry.get("status") != "arbitrary":
             continue  # leaving `arbitrary` is always allowed
-        was = trunk.get(site_id)
+        was, renamed = _trunk_status_of(site_id, ledger, trunk, dropped)
         if was is not None and was != "arbitrary":
+            where = (
+                "under another module path (matched on its leaf symbol name) "
+                if renamed
+                else ""
+            )
             out.append((
                 site_id,
-                f"is `{was}` on the trunk and `arbitrary` here. Reclassifying "
-                "a row that already had a source is the dodge this ratchet "
-                "exists to refuse: restore the source or revert the row.",
+                f"is `{was}` on the trunk {where}and `arbitrary` here. "
+                "Reclassifying a row that already had a source is the dodge "
+                "this ratchet exists to refuse, and renaming its module does "
+                "not retire the source: restore it or revert the row.",
             ))
             continue
-        if site_id in trunk:
-            continue  # already arbitrary on the trunk; unchanged
+        if was is not None:
+            continue  # already arbitrary on the trunk, moved or not; unchanged
         missing = [f for f in ROUTE_FIELDS if not entry.get(f)]
         if missing:
             out.append((

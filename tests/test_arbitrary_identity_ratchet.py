@@ -108,3 +108,50 @@ def test_every_arbitrary_row_in_the_ledger_carries_a_route() -> None:
     assert arbitrary
     assert not [e for e in arbitrary if not (e.get("settles_by") and e.get("open_question"))]
     assert set(trunk_statuses()) and statuses_by_id("numbers: []") == {}
+
+
+# --- RENAME RECONCILIATION -------------------------------------------------
+# A row id is a dotted symbol path, so a module split rewrites the primary
+# key. Without reconciliation a `sourced` number could be laundered into
+# `arbitrary` by renaming its module. The proxy is the LEAF symbol name
+# against DROPPED trunk rows only, and it errs STRICT; these prove both.
+
+
+def test_a_renamed_row_that_stays_sourced_is_allowed() -> None:
+    """A pure move. Nothing is `arbitrary`, so nothing is refused."""
+    ledger = {"src.b.X": {"status": "sourced"}}
+    assert _refused(ledger, {"src.a.X": "sourced"}) == set()
+
+
+def test_a_rename_that_also_downgrades_is_refused() -> None:
+    """THE LAUNDERING CASE. Renaming the module does not retire the source,
+    and a settlement route does not buy the downgrade either.
+    """
+    ledger = {"src.b.X": _arb(**ROUTED)}
+    assert _refused(ledger, {"src.a.X": "sourced"}) == {"src.b.X"}
+
+
+def test_a_renamed_arbitrary_row_is_not_treated_as_a_new_discovery() -> None:
+    """Already `arbitrary` on the trunk under the old path: unchanged, so it
+    is not forced to carry route fields it never had.
+    """
+    ledger = {"src.b.X": _arb()}
+    assert _refused(ledger, {"src.a.X": "arbitrary"}) == set()
+
+
+def test_a_surviving_trunk_row_is_never_read_as_the_source_of_a_move() -> None:
+    """`src.a.X` is still in the change under its own id, so it did not move.
+    A genuinely new `src.b.X` is judged as new -- routed, so allowed.
+    """
+    ledger = {"src.a.X": {"status": "sourced"}, "src.b.X": _arb(**ROUTED)}
+    assert _refused(ledger, {"src.a.X": "sourced"}) == set()
+
+
+def test_an_ambiguous_leaf_inherits_the_strongest_status_and_is_refused() -> None:
+    """Two DROPPED trunk rows share the leaf `X`, one sourced and one
+    arbitrary. The arriving row inherits `sourced` -- the strict reading --
+    so an ambiguous leaf costs a false REFUSAL, never a false pass.
+    """
+    ledger = {"src.c.X": _arb(**ROUTED)}
+    trunk = {"src.a.X": "sourced", "src.b.X": "arbitrary"}
+    assert _refused(ledger, trunk) == {"src.c.X"}

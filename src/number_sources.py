@@ -135,14 +135,14 @@ SEVEN THINGS THE LEDGER IS CHECKED FOR:
      held when the derivation was written. If the base later moves, the two
      disagree and the build fails. This is the *sourced once, unsourced
      later* class.
-  5. RATCHET, DOWN-ONLY — the `arbitrary` count may fall and may stay level;
-     it may not RISE. The reference is the same count on `origin/main`,
-     computed from the trunk's own ledger every time the guard runs, so the
-     guard stores nothing and there is no ceiling anybody can raise. It was
-     an equality against a stored sum until 2026-10-05, and that sum was
-     moved UP by appending a positive delta to make a change green. Moving a
-     constant into an unscoped file to drop its row is rule 6's job, not
-     this one's.
+  5. RATCHET, KEYED ON ROW IDENTITY — a row the trunk already backs may not
+     turn `arbitrary` here; a row NEW to the ledger may, if it carries a
+     settlement route. A total refused honest discovery and was satisfied
+     by a net-zero swap, so it stopped being the gate on 2026-10-05. It is
+     still REPORTED, on this module's CLI success line, because it is the
+     number the standing order drives to zero. A row id is a symbol path,
+     so a MOVE is reconciled by leaf symbol name against DROPPED trunk rows
+     only, erring strict — `src/number_ledger_counts.py` states the proxy.
   6. UNSCOPED SENTINEL — `scripts/unscoped_number_guard.py`, above.
   7. CITATIONS RESOLVE — every `path:line` an entry cites must exist and
      the line must be inside the file. It cannot check that a citation
@@ -282,25 +282,19 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
     "cost_while_unanswered",
 )
 
-#: Ratchet, checked for EQUALITY. See rule 5 in the module docstring: as a
-#: ceiling this was gameable by deleting a row. It is no longer a literal
-#: anybody edits. It is the SUM of the per-change deltas recorded in
-#: config/number_ledger_history.yaml, one appended entry per change, each
-#: carrying the reason that change was made -- so the number cannot drift
-#: from its own record, and the record cannot be skipped.
-#:
-#: There is no stored count and no history file. Both were deleted: a summed
-#: append-only record is stored bookkeeping, and the sum could be moved UP by
-#: appending a positive delta, which is what open change 1430 did on
-#: 2026-10-05 when it hit 131 against 127 and appended +4. A ratchet that
+#: There is no stored arbitrary count and no history file; both were deleted.
+#: A summed append-only record is stored bookkeeping, and the sum could be
+#: moved UP by appending a positive delta, which is what open change 1430 did
+#: on 2026-10-05 when it hit 131 against 127 and appended +4. A ratchet that
 #: accepts a positive delta is not a ratchet. The grounds for every past move
 #: remain readable in git at the commit that deleted the file, and each row's
-#: own grounds live in its ledger entry.
-from src.number_ledger_counts import (  # noqa: E402,F401 -- lifted verbatim
+#: own grounds live in its ledger entry. The ratchet is rule 5 below, keyed on
+#: row IDENTITY with renames reconciled; the live total is no longer a gate but
+#: it IS reported, on this module's CLI success line.
+from src.number_ledger_counts import (  # noqa: E402 -- lifted verbatim
     LEDGER_RELATIVE,
     count_arbitrary,
     ratchet_violations,
-    trunk_arbitrary_count,
     trunk_statuses,
 )
 
@@ -991,6 +985,8 @@ def main() -> int:  # pragma: no cover - CLI convenience
         unscoped = collect_unscoped_sites()
         print(
             f"number ledger: {len(sites)} sites in scope, all accounted for; "
+            f"{count_arbitrary((REPO_ROOT / LEDGER_RELATIVE).read_text('utf-8'))}"
+            f" still `arbitrary` (standing order: drive to zero); "
             f"{len(unscoped)} unscoped constants watched"
         )
         return 0
