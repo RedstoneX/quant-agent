@@ -5,6 +5,8 @@ behaviour change hidden in a verbatim move is unreviewable. Each entry says
 what is wrong, where, and what would prove a fix. Work them after the
 structure is sound, hardest-wearing first.
 
+## Owner-alert senders that bypass the retry funnel — CLOSED 2026-10-05
+## Owner-alert senders that bypass the retry funnel
 ## TRIAGE 2026-10-05 (every entry re-checked against main, not against its heading)
 
 Pile A, ALREADY FIXED, proved in code: four.
@@ -26,11 +28,11 @@ Write-ups found WRONG or stale on 2026-10-05:
 
 ## Owner-alert senders that bypass the retry funnel
 
-`send_owner_alert` retries through `deliver_with_retry` and records an undelivered alert (fixed by #1104, witnessed by `tests/test_owner_alert_delivery.py`; replacing the funnel call with a bare send turns it red, re-measured 2026-10-04). What remains: code that builds its own `TelegramNotifier()` and sends escapes that retry entirely, and no guard forbids it.
+CORRECTED. This entry counted CONSTRUCTIONS of a `TelegramNotifier`, which is not the defect; the defect is SENDING around the funnel, and the two measurements differ. It also said "no guard forbids it", which was false: `scripts/owner_alert_funnel_guard.py` has existed and refuses three shapes of bypass — a file that builds the Bot API URL itself, a class outside `src/notifier/` exposing its own `send`, and a direct `notifier.send(...)` call the trunk does not already have.
 
-Measured 2026-10-04 on main: six construction sites in `src/` outside the funnel (`alert_watchdog.py` default, `pipeline.py`, `scheduler.py`, `cost_circuit/alert_ledger.py`, two in `cost_circuit/breaker.py`) across five modules, not six; whether the `scheduler.py` one sends owner alerts is not checked. About ten more sites in `scripts/` also construct one and are not counted in the earlier sizing.
+Re-measured 2026-10-05 against `origin/main` by reading each site, not by grepping mentions: every owner-facing ALERT in `src/` goes through `send_owner_alert` or `send_owner_alert_with_outcome`, so the retry and the counted `owner_alert_undelivered` row apply to all of them. Zero alert bypasses remain. Three direct `TelegramNotifier.send` calls do exist outside the funnel — the scheduler's end-of-session summary, and `main.py`'s startup ping and one-shot session summary — and all three are routine reports rather than alarms, carry `CATEGORY_OPERATIONAL` or a `kind`, and still write their own `notifier_sends` row inside `send`. They are left as they are; the alert funnel's P&L header and alert retry do not belong on a routine report. There is no `build_default_notifier` on the trunk.
 
-Fix: route each sender through the funnel (or justify and allow-list it), then add a guard that fails on any new direct construction. Sized at roughly 150-250 lines for the `src/` sites and the guard [estimate: earlier agent sizing, not re-derived]; the scripts would add to it.
+What was genuinely open, and is now fixed: the guard scanned `src/`, `ops/` and `scripts/` only, so the repository ROOT — where `main.py`, the live entry point, sends to the owner twice — was never measured at all, and a new bypass written there would have been reported clean. The guard now scans tracked top-level `.py`/`.sh` files as well, keyed on the funnel module's own path rather than on any count of permitted sites. Proved by planting a direct send in `main.py` (guard exits 1, naming it) and removing it (exits 0); `tests/test_owner_alert_funnel_guard.py` pins the root in the measurement itself.
 
 ## Real boundaries still owed (CLOSED 2026-10-05; the eight pipeline mixins are a separate, un-sized rebuild)
 
