@@ -41,6 +41,9 @@ from src.storage.analytics.calibration import (  # re-export mirror: defined the
     _is_filled_trail_stop,
 )
 from src.util.time import ET, UTC, et_today
+from src.storage.clock_stamp import (  # noqa: F401  (re-exported)
+    sqlite_utc_timestamp, utc_now_stamp, utc_stamp_ago,
+)
 
 logger = logging.getLogger(__name__)
 class Database:
@@ -284,15 +287,8 @@ class Database:
 
     @staticmethod
     def _sqlite_utc_timestamp(when: datetime) -> str:
-        """Format a datetime the same way SQLite stores `datetime('now')`.
-
-        Trades are stored as naive UTC strings. Converting ET day boundaries
-        into this format lets `today_only=True` mean "this ET trading day"
-        regardless of the host timezone.
-        """
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=UTC)
-        return when.astimezone(UTC).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+        """SQLite's stored format for `when`; the body lives in clock_stamp."""
+        return sqlite_utc_timestamp(when)
 
     @classmethod
     def _et_day_utc_bounds(cls, trading_day: date | None = None) -> tuple[str, str]:
@@ -373,7 +369,7 @@ class Database:
                     "  thesis_ma_kind, not_evaluated_reason"
                     ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
-                        self._sqlite_utc_timestamp(datetime.now(UTC)),
+                        utc_now_stamp(),
                         run_id or None,
                         session_date or str(et_today()),
                         sym,
@@ -425,7 +421,7 @@ class Database:
             healed = obs.get("healed")
             src = obs.get("source")
             rows.append((
-                self._sqlite_utc_timestamp(datetime.now(UTC)),
+                utc_now_stamp(),
                 run_id or None,
                 session_date or str(et_today()),
                 sym,
@@ -1528,8 +1524,7 @@ class Database:
             rows = self.conn.execute(
                 "SELECT * FROM intraday_evaluations WHERE symbol=? "
                 "AND timestamp >= ? ORDER BY timestamp DESC",
-                (symbol.upper(), self._sqlite_utc_timestamp(
-                    datetime.now(UTC) - timedelta(hours=float(cooldown_hours)))),
+                (symbol.upper(), utc_stamp_ago(hours=float(cooldown_hours))),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1613,7 +1608,7 @@ class Database:
                 "ON CONFLICT(symbol) DO UPDATE SET consecutive_misses=excluded.consecutive_misses"
                 + (", last_alert_at=?" if should_alert else ""),
                 (symbol, misses, last_alert_at)
-                + ((self._sqlite_utc_timestamp(datetime.now(UTC)),) if should_alert else ()),
+                + ((utc_now_stamp(),) if should_alert else ()),
             )
             self.conn.commit()
             result["consecutive_misses"] = misses
@@ -1706,7 +1701,7 @@ class Database:
         with self._lock:
             cursor = self.conn.execute(
                 "DELETE FROM agent_logs WHERE timestamp < ?",
-                (self._sqlite_utc_timestamp(datetime.now(UTC) - timedelta(days=keep_days)),),
+                (utc_stamp_ago(days=keep_days),),
             )
             self.conn.commit()
             return cursor.rowcount or 0
@@ -1728,7 +1723,7 @@ class Database:
         with self._lock:
             cursor = self.conn.execute(
                 "DELETE FROM specialist_evidence WHERE timestamp < ?",
-                (self._sqlite_utc_timestamp(datetime.now(UTC) - timedelta(days=keep_days)),),
+                (utc_stamp_ago(days=keep_days),),
             )
             self.conn.commit()
             return cursor.rowcount or 0
@@ -1756,7 +1751,7 @@ class Database:
         with self._lock:
             cursor = self.conn.execute(
                 "DELETE FROM notifier_sends WHERE timestamp < ?",
-                (self._sqlite_utc_timestamp(datetime.now(UTC) - timedelta(days=keep_days)),),
+                (utc_stamp_ago(days=keep_days),),
             )
             self.conn.commit()
             return cursor.rowcount or 0
@@ -1951,7 +1946,7 @@ class Database:
                      payload_json=excluded.payload_json,
                      positions_json=excluded.positions_json,
                      timestamp=?""",
-                (date, run_id, payload_json, positions_json, self._sqlite_utc_timestamp(datetime.now(UTC))),
+                (date, run_id, payload_json, positions_json, utc_now_stamp()),
             )
             self.conn.commit()
 
@@ -2229,7 +2224,7 @@ class Database:
                      payload_json=excluded.payload_json,
                      positions_json=excluded.positions_json,
                      timestamp=?""",
-                (date, mode, run_id, payload_json, positions_json, self._sqlite_utc_timestamp(datetime.now(UTC))),
+                (date, mode, run_id, payload_json, positions_json, utc_now_stamp()),
             )
             self.conn.commit()
 
@@ -2263,7 +2258,7 @@ class Database:
                      payload_json=excluded.payload_json,
                      positions_json=excluded.positions_json,
                      timestamp=?""",
-                (run_id, date, payload_json, positions_json, self._sqlite_utc_timestamp(datetime.now(UTC))),
+                (run_id, date, payload_json, positions_json, utc_now_stamp()),
             )
             self.conn.commit()
 
