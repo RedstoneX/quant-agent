@@ -94,9 +94,10 @@ kept as history and marked DONE where they describe a stored file that is gone.
     goal. The arbitrary-number ratchet now counts `status: arbitrary` rows in
     the trunk's own `config/number_ledger.yaml` at check time and refuses only
     a RISE. Deletion-gaming stays covered by `scripts/unscoped_number_guard.py`.
-  - `config/number_ledger_route_history.yaml`: KEEP (unchanged, 2026-10-04).
-    The settlement-route ratchet still sums deltas; it carries the same defect
-    in principle and has not yet been converted.
+  - `config/number_ledger_route_history.yaml`: DELETED. The settlement-route
+    ratchet is keyed on row identity against the trunk's ledger at check time:
+    a routeless `arbitrary` row must already be routeless on the trunk, and
+    an unreadable trunk refuses.
   - `config/prompt_only_numbers.yaml`: RULED KEEP (2026-10-04). Test applied:
     the figures present in a sheet ARE derivable (the test's shape list finds
     them), but each row's status and open question is a human judgement that a

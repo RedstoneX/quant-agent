@@ -104,3 +104,55 @@ def ratchet_violations(ledger, trunk):
                 "parked, not registered.",
             ))
     return out
+
+
+def routeless_by_id(text: str) -> dict[str, bool]:
+    """Per row id: is it `arbitrary` with no `settles_by` block at all?"""
+    raw = yaml.safe_load(text) or {}
+    return {
+        entry["id"]: entry.get("status") == "arbitrary"
+        and entry.get("settles_by") is None
+        for entry in (raw.get("numbers") or [])
+        if entry.get("id")
+    }
+
+
+def trunk_routeless() -> dict[str, bool]:
+    """The trunk's routeless-per-row-id, read fresh at check time.
+
+    REFUSES (``ReferenceUnavailable``) when the trunk cannot be read.
+    """
+    from scripts.guard_reference import ReferenceUnavailable, trunk_blobs
+
+    blobs = trunk_blobs([LEDGER_RELATIVE])
+    if LEDGER_RELATIVE not in blobs:
+        raise ReferenceUnavailable(
+            f"{LEDGER_RELATIVE} is absent from the trunk, so the routeless "
+            "rows have no reference to be judged against"
+        )
+    return routeless_by_id(blobs[LEDGER_RELATIVE])
+
+
+def route_ratchet_violations(ledger, trunk_route):
+    """The settlement-route ratchet, keyed on row IDENTITY against the trunk.
+
+    A row that is `arbitrary` with no `settles_by` here must also have been
+    exactly that on the trunk. A row the trunk sourced or routed, or a row new
+    to the ledger, may not arrive routeless. Gaining a route is always allowed.
+    """
+    out = []
+    for site_id, entry in sorted(ledger.items()):
+        if entry.get("status") != "arbitrary" or entry.get("settles_by") is not None:
+            continue
+        if trunk_route.get(site_id) is True:
+            continue  # routeless on the trunk too; unchanged
+        where = "new to the ledger" if site_id not in trunk_route else (
+            "sourced or routed on the trunk"
+        )
+        out.append((
+            site_id,
+            f"is `arbitrary` with no `settles_by` here but is {where}. "
+            "A routeless number may not be created or regressed: give it a "
+            "`settles_by` route, or restore its source.",
+        ))
+    return out

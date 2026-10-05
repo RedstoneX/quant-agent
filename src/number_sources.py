@@ -300,20 +300,11 @@ from src.number_ledger_counts import (  # noqa: E402,F401 -- lifted verbatim
     LEDGER_RELATIVE,
     count_arbitrary,
     ratchet_violations,
+    route_ratchet_violations,
     trunk_arbitrary_count,
+    trunk_routeless,
     trunk_statuses,
 )
-
-
-def load_ratchet_history(path: Path) -> list[dict[str, Any]]:
-    """The append-only record behind the SETTLEMENT-ROUTE ratchet.
-
-    Oldest first. The arbitrary-count ratchet no longer has one: it is
-    measured against the trunk at check time and stores nothing.
-    """
-    with open(path, encoding="utf-8") as handle:
-        loaded = yaml.safe_load(handle) or {}
-    return list(loaded.get("changes") or [])
 
 
 #: Item 90's three states. A trade-governing number must sit in exactly one
@@ -352,20 +343,7 @@ SETTLEMENT_ROUTE_FIELDS: tuple[str, ...] = (
 #: same failure as the one-word `note` the arbitrary schema already bars.
 MIN_ROUTE_PROSE_CHARS = 40
 
-ROUTE_RATCHET_HISTORY_PATH = REPO_ROOT / "config" / "number_ledger_route_history.yaml"
 
-
-def routeless_ratchet(path: Path | None = None) -> int:
-    """`MAX_ROUTELESS_ARBITRARY`, computed. Never hand-maintained."""
-    return sum(
-        int(change["delta"])
-        for change in load_ratchet_history(path or ROUTE_RATCHET_HISTORY_PATH)
-    )
-
-
-#: Ratchet, checked for EQUALITY: the
-#: number of `arbitrary` rows that are in NONE of item 90's three states.
-MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
 
 
 #: The `(table, column)` pairs real code WRITES, resolved from source at
@@ -948,23 +926,9 @@ def audit(
                 f"because the count stops showing the work as outstanding.",
             )
         )
-    if len(routeless) != MAX_ROUTELESS_ARBITRARY:
-        direction = (
-            "rises to" if len(routeless) > MAX_ROUTELESS_ARBITRARY else "falls to"
-        )
-        problems.append(
-            LedgerProblem(
-                "route-ratchet",
-                "<ledger>",
-                f"the count of `arbitrary` rows with no `settles_by` route "
-                f"{direction} {len(routeless)} but MAX_ROUTELESS_ARBITRARY is "
-                f"{MAX_ROUTELESS_ARBITRARY}. This is an equality, not a "
-                f"ceiling, and it is not editable by hand: APPEND one entry "
-                f"to config/number_ledger_route_history.yaml with the delta "
-                f"and a `why` saying which row gained a route and what that "
-                f"recording is. See board item 90.",
-            )
-        )
+    # Identity-keyed against the trunk at check time; stores nothing.
+    for site_id, detail in route_ratchet_violations(ledger, trunk_routeless()):
+        problems.append(LedgerProblem("route-ratchet", site_id, detail))
 
     # 7. CITATIONS RESOLVE. Cheap, and aimed squarely at the failure that
     #    made this gate's own flagship entry false in four places.
