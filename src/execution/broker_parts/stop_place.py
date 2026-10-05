@@ -210,6 +210,8 @@ class StopPlacer:
                 )
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                record_guarded_pass(self, "stop_place.submit_stop_leg_retrying", exc, log=logger,
+                                    context={"symbol": symbol, "leg": leg, "attempt": attempt})
                 logger.error(
                     "protective stop [%s] attempt %d/%d FAILED for %s "
                     "(qty=%.4f, stop $%.2f): %s", leg, attempt, attempts,
