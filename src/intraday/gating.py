@@ -12,7 +12,7 @@ import contextlib
 import logging
 from pathlib import Path
 
-from src.sentinel.guarded_site import record_site as _site
+from src.sentinel.guarded_site import record_site
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -69,7 +69,7 @@ class IntradayGating:
                 symbol, cooldown_hours=cooldown_hours,
             )
         except Exception as e:  # noqa: BLE001
-            _site(self, "cooldown_ledger", e, context={"symbol": symbol}, log=logger)
+            record_site(self, "cooldown_ledger", e, context={"symbol": symbol}, log=logger)
             return True
         if isinstance(rows, list):
             return bool(rows)
@@ -80,7 +80,7 @@ class IntradayGating:
         try:
             legacy_rows = self.db.get_trades(symbol=symbol, limit=10)
         except Exception as exc:  # noqa: BLE001
-            _site(self, "cooldown_legacy_trades", exc, context={"symbol": symbol})
+            record_site(self, "cooldown_legacy_trades", exc, context={"symbol": symbol})
             return True
         from datetime import datetime as _dt, timedelta, timezone
         cutoff = _dt.now(timezone.utc) - timedelta(hours=cooldown_hours)
@@ -271,7 +271,7 @@ class IntradayGating:
                     "lock — skipping this tick (no concurrent position sizing)",
                 )
         except Exception as e:  # noqa: BLE001 — unknowable lock state must not scan
-            _site(self, "scan_lock", e, log=logger)
+            record_site(self, "scan_lock", e, log=logger)
         try:
             # Keep the yield outside the acquisition exception handler.  An
             # exception raised by the protected scan body is injected here by
@@ -284,7 +284,7 @@ class IntradayGating:
                 try:
                     fh.close()   # releases the flock
                 except Exception as exc:  # noqa: BLE001
-                    _site(self, "scan_lock_release", exc)
+                    record_site(self, "scan_lock_release", exc)
 
     def _track_intraday_snapshot_ok(self, symbol: str) -> None:
         """Reset a symbol's consecutive-miss streak. Never raises — a
@@ -296,7 +296,7 @@ class IntradayGating:
                 "intraday snapshot health: failed to record OK for %s", symbol,
                 exc_info=True,
             )
-            _site(self, "snapshot_ok_record", exc, context={"symbol": symbol})
+            record_site(self, "snapshot_ok_record", exc, context={"symbol": symbol})
 
     def _track_intraday_snapshot_miss(self, symbol: str) -> None:
         """Record a missed snapshot for `symbol` and alert the owner once
@@ -310,7 +310,7 @@ class IntradayGating:
                 "intraday snapshot health: failed to record miss for %s", symbol,
                 exc_info=True,
             )
-            _site(self, "snapshot_miss_record", exc, context={"symbol": symbol})
+            record_site(self, "snapshot_miss_record", exc, context={"symbol": symbol})
             return
         if not result.get("should_alert"):
             return
@@ -331,4 +331,4 @@ class IntradayGating:
                 "intraday snapshot health: alert failed for %s", symbol,
                 exc_info=True,
             )
-            _site(self, "snapshot_miss_alert", exc, context={"symbol": symbol})
+            record_site(self, "snapshot_miss_alert", exc, context={"symbol": symbol})
