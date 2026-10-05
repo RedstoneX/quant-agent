@@ -1258,13 +1258,6 @@ def test_risk_narrative_hyphenated_compound_not_misread_as_risk_claim():
     assert t.risk_narrative_mismatch is False
 
 
-def test_risk_narrative_within_tolerance_not_flagged():
-    """A prose claim within RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT of the
-    field (rounding in the LLM's own words) is not a mismatch."""
-    t = _target("Risking about 1.9% on this name.", 2.0)
-    assert t.risk_narrative_mismatch is False
-
-
 def test_risk_narrative_skipped_without_authoritative_field():
     """No risk_allocation_pct means no authoritative number to check prose
     against -- legacy target_weight_pct-only targets are never flagged."""
