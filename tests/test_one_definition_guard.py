@@ -632,65 +632,63 @@ def test_the_dashboard_does_not_compute_its_own_percent_deployed():
 # Guards on the guard. These must pass on EVERY branch, including this one.
 # ---------------------------------------------------------------------------
 
-#: Code the 2026-09-01 survey examined and found SOUND. Reward-to-risk has
-#: several deliberately different implementations taking different inputs
-#: (planned entry/stop/target versus the constructed order), each documented as
-#: distinct. Sector concentration and gross exposure are genuinely
-#: single-sourced. `RiskRuleEngine.check` is included because it is the single
-#: largest concentration of equity arithmetic in the codebase and every one of
-#: its divisions is correctly leverage-aware — if a matcher is going to produce
-#: a false positive anywhere, it produces it here first.
-KNOWN_GOOD: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("src/models.py", "risk_reward"),
-        ("src/models.py", "reward_risk"),
-        ("src/risk/rules.py", "sector_side_weights"),
-        ("src/risk/rules.py", "accumulate_pending_sector"),
-        ("src/portfolio_constructor.py", "_current_sector_weights"),
-        ("src/risk/rules.py", "resolve_gross_ceiling"),
-        ("src/risk/rules.py", "apply_gross_ceiling"),
-        ("src/risk/rules.py", "check"),
-    }
-)
+def _equity_arithmetic_functions() -> set[tuple[str, str]]:
+    """Every function in src that divides by an equity-named quantity, DERIVED.
+
+    This replaces a hand-kept list of "code the survey found sound". The list
+    could go stale in two directions (a listed function deleted, a new sound
+    function never listed). The question it answered was "does a matcher fire
+    on correct equity arithmetic?", and the population of correct equity
+    arithmetic is computable: it is every function whose body divides by an
+    equity name. Those are exactly the sites a false positive would land on,
+    including the largest one (`RiskRuleEngine.check`).
+    """
+    out: set[tuple[str, str]] = set()
+    for path in _source_modules():
+        tree = _safe_parse(path)
+        if tree is None:
+            continue
+        rel = str(path.resolve().relative_to(REPO.resolve()))
+        for fn in _functions(tree):
+            if any(
+                isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div)
+                and _names(n.right) & _EQUITY
+                for n in ast.walk(fn)
+            ):
+                out.add((rel, fn.name))
+    return out
 
 
 def test_the_guard_stays_silent_on_code_that_is_already_sound():
-    """No matcher may flag anything the survey found correct.
+    """No matcher may flag a function that divides by equity unless the
+    registry sanctions it. Computed from the live source at check time.
 
-    This is the test that keeps the guard alive. A guard that flags correct
-    code is disabled within a week and then there is nothing, so the cost of a
-    false positive is the whole apparatus. Named sites, not a snippet grep —
-    a grep would pass whether or not the matchers ever looked at these
-    functions.
+    A guard that flags correct code is disabled within a week and then there
+    is nothing, so the cost of a false positive is the whole apparatus.
     """
+    sound = _equity_arithmetic_functions()
+    assert sound, "no equity-dividing function found: the population scan is broken"
+    sanctioned = set().union(*(_resolved_pairs(q.allow) for q in REGISTRY.values()))
     flagged = [
         f
         for matcher in MATCHERS.values()
         for f in _scan(matcher)
-        if (f.file, f.func) in _resolved_pairs(KNOWN_GOOD)
+        if (f.file, f.func) in sound and (f.file, f.func) not in sanctioned
     ]
     assert not flagged, (
-        "the guard flagged code the survey found SOUND — reward-to-risk is "
-        "legitimately\nmulti-valued, and sector concentration and gross "
-        "exposure are single-sourced:\n"
+        "the guard flagged a function that does ordinary equity arithmetic "
+        "and the registry does not sanction it:\n"
         + "\n".join(f"    {f}" for f in flagged)
     )
 
 
-def test_the_known_good_sites_still_exist():
-    """A false-positive check pointed at deleted functions proves nothing."""
-    missing = []
-    for file, func in sorted(_resolved_pairs(KNOWN_GOOD)):
-        path = REPO / file
-        if not path.exists():
-            missing.append(f"{file} does not exist")
-            continue
-        tree = ast.parse(path.read_text(), filename=str(path))
-        if func not in {f.name for f in _functions(tree)}:
-            missing.append(f"{file}::{func}() does not exist")
-    assert not missing, (
-        "the false-positive check names sites that are gone, so it is "
-        "passing vacuously:\n    " + "\n    ".join(missing)
+def test_the_equity_arithmetic_population_is_not_vacuous():
+    """The scan above must keep finding the big leverage-aware functions."""
+    sound = _equity_arithmetic_functions()
+    assert len(sound) >= 3, sorted(sound)
+    assert any(func == "check" for _, func in sound), (
+        "RiskRuleEngine.check no longer divides by equity: the scan lost the "
+        "largest false-positive target"
     )
 
 

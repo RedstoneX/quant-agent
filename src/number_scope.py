@@ -22,6 +22,11 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/evidence_gate.py",
     "src/verdicts.py",
     "src/data/correlation.py",
+    # 2026-10-05: the session-window table and the regular-session bounds gate
+    # WHEN an order may be placed and when a bar is treated as complete; a
+    # stop cannot cover a closed market, so these minutes are on the path
+    # from a verdict to an order exactly as a price threshold is.
+    "src/trading_calendar.py",
     # 2026-10-01: the sector cluster moved out of src/execution/broker.py
     # verbatim (sector resolution feeds the exposure ladder); same code, same scope.
     "src/sector_reference.py",

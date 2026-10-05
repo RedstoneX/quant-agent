@@ -16,6 +16,8 @@ from src.util.time import et_today
 from tests.pipeline_factory import build_pipeline
 
 
+from tests.sector_run_helper import prun, tech_buy_analyses as _tech_buy_analyses  # noqa: E402
+
 def _pos(symbol="NVDA"):
     return Position(
         symbol=symbol, qty=10, avg_entry=195, current_price=200,
@@ -884,36 +886,13 @@ def _projection_pipeline(target_pct: float | None = None):
     from types import SimpleNamespace
     from src.pipeline import TradingPipeline
 
-    pipeline = build_pipeline(_last_symbol_sectors={ "NVDA": "Technology", "AMD": "Technology", "AAPL": "Technology", })
+    pipeline = build_pipeline()
+    prun(pipeline).symbol_sectors = {"NVDA": "Technology", "AMD": "Technology", "AAPL": "Technology"}
     if target_pct is not None:
         pipeline.risk_engine = SimpleNamespace(
             config=SimpleNamespace(max_sector_pct=target_pct),
         )
     return pipeline
-
-
-def _tech_buy_analyses(stops: dict[str, float] | None = None):
-    """Three Tech BUYs. `stops` overrides a symbol's stop so a test can give
-    candidates DELIBERATELY UNEQUAL stop distances — the whole point of
-    board item 221 is that unequal stops must produce unequal preview
-    sizes."""
-    from src.models import TechAnalysisResult, TechReasoningChain
-    _trc = TechReasoningChain(
-        trend="x", momentum="x", volatility="x",
-        volume="x", support_resistance="x",
-    )
-    return [
-        TechAnalysisResult(
-            symbol=sym, rating="buy", conviction="high",
-            entry_price=100, stop_loss=(stops or {}).get(sym, 95),
-            reference_target=110,
-            support_levels=[(stops or {}).get(sym, 95)], resistance_levels=[110],
-            setup_type="range", expected_horizon_sessions=10,
-            reasoning="test", reasoning_chain=_trc,
-        thesis_invalid_if="closes below support",
-    )
-        for sym in ("NVDA", "AMD", "AAPL")
-    ]
 
 
 def test_projected_portfolio_flags_sector_overweight(tmp_path):
@@ -939,8 +918,7 @@ def test_projected_portfolio_flags_sector_overweight(tmp_path):
     ]
     with patch("src.execution.broker._get_sector") as mock_get_sector:
         out = pipeline._build_projected_portfolio(
-            positions, _tech_buy_analyses(), total_value=10000,
-        )
+            positions, _tech_buy_analyses(), total_value=10000, run=prun(pipeline))
     # `invested` is capital at work (unsigned, un-leveraged) and `net
     # direction` is the signed leverage-aware figure, both from the one
     # `book_exposure` call. Long-only book, so the two agree at 30%.
@@ -988,8 +966,7 @@ def test_projected_portfolio_does_not_warn_below_the_configured_target(tmp_path)
     wide = {"NVDA": 50.0, "AMD": 50.0, "AAPL": 50.0}
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            positions, _tech_buy_analyses(wide), total_value=10000,
-        )
+            positions, _tech_buy_analyses(wide), total_value=10000, run=prun(pipeline))
     assert "Technology long 30%" in out
     assert "concentration target" not in out
     # Wide stops imply small ceilings: 5% risk budget x 100/50 = 10%.
@@ -1017,8 +994,7 @@ def test_projected_portfolio_short_does_not_shrink_the_long_side(tmp_path):
     ]
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            positions, _tech_buy_analyses(), total_value=10000,
-        )
+            positions, _tech_buy_analyses(), total_value=10000, run=prun(pipeline))
     assert "Technology long 30%" in out, "the short must not net off the longs"
     assert "Technology short 20%" in out
     assert "Technology -" not in out
@@ -1060,8 +1036,7 @@ def test_preview_ceiling_is_the_constructors_own_stop_implied_cap():
     pipeline = _sizing_pipeline()
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            [], _tech_buy_analyses(stops), total_value=10000,
-        )
+            [], _tech_buy_analyses(stops), total_value=10000, run=prun(pipeline))
     shown = _preview_ceilings(out)
     assert set(shown) == {"NVDA", "AMD", "AAPL"}
     for sym, stop in stops.items():
@@ -1087,8 +1062,7 @@ def test_preview_ceiling_is_not_independent_of_the_stop():
             out = pipeline._build_projected_portfolio(
                 [], _tech_buy_analyses({"NVDA": stop, "AMD": stop,
                                         "AAPL": stop}),
-                total_value=10000,
-            )
+                total_value=10000, run=prun(pipeline))
         sizes.append(_preview_ceilings(out)["NVDA"])
     assert sizes[0] != sizes[1], (
         "the preview's number for a candidate is independent of its stop — "
@@ -1108,8 +1082,7 @@ def test_preview_ceiling_is_clamped_to_something_the_desk_could_reach():
     tight = {"NVDA": 98.0, "AMD": 97.0, "AAPL": 99.0}
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            [], _tech_buy_analyses(tight), total_value=10000,
-        )
+            [], _tech_buy_analyses(tight), total_value=10000, run=prun(pipeline))
     ceilings = _preview_ceilings(out)
     assert ceilings == {"NVDA": 65.0, "AMD": 65.0, "AAPL": 65.0}
     assert max(ceilings.values()) <= 65.0
@@ -1136,13 +1109,13 @@ def test_preview_dials_come_from_the_constructors_own_defaults():
         if isinstance(n, ast.Constant) and isinstance(n.value, (int, float))
         and not isinstance(n.value, bool) and n.value != 0
     ], "a flat sizing literal is back in the preview's dial reader"
-    pipeline = build_pipeline(_last_symbol_sectors={})
+    pipeline = build_pipeline()
+    prun(pipeline).symbol_sectors = {}
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
             [], _tech_buy_analyses({"NVDA": 50.0, "AMD": 50.0,
                                     "AAPL": 50.0}),
-            total_value=10000,
-        )
+            total_value=10000, run=prun(pipeline))
     # No constructor attached, so the fallback runs: it must reproduce
     # ConstructorConfig's OWN declared defaults.
     expected = ConstructorConfig().risk_budget_pct * 100 / 50
@@ -1157,13 +1130,12 @@ def test_preview_states_each_sectors_share_of_the_candidate_set():
     SET is one — true of what is on offer, no projection, no threshold."""
     pipeline = _sizing_pipeline()
     analyses = _tech_buy_analyses({"NVDA": 90.0, "AMD": 90.0, "AAPL": 90.0})
-    pipeline._last_symbol_sectors = {
+    prun(pipeline).symbol_sectors = {
         "NVDA": "Technology", "AMD": "Technology", "AAPL": "Energy",
     }
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
-            [], analyses, total_value=10000,
-        )
+            [], analyses, total_value=10000, run=prun(pipeline))
     assert "Technology 2 of 3 (67% of the candidate set: NVDA, AMD)" in out
     assert "Energy 1 of 3 (33% of the candidate set: AAPL)" in out
     # No threshold, no warning level on the candidate composition.
@@ -1180,8 +1152,7 @@ def test_preview_claims_no_projected_sector_weight():
     with patch("src.execution.broker._get_sector"):
         out = pipeline._build_projected_portfolio(
             [], _tech_buy_analyses({"NVDA": 90.0, "AMD": 85.0, "AAPL": 80.0}),
-            total_value=10000,
-        )
+            total_value=10000, run=prun(pipeline))
     assert "CANNOT tell you what these candidates would weigh" in out
     assert "If you allocate" not in out
     assert "→ " not in out.split("Per candidate")[0], (

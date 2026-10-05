@@ -13,6 +13,7 @@ from src.agents.base import (
 )
 from src.config.notifications import NotificationsConfig  # noqa: F401  (re-export)
 from src.config.macro import MacroConfig  # noqa: F401  (re-export; lives in its own module)
+from src.live_capital_preflight import LiveCapitalBlocked, assert_live_capital_authorized
 from src.trading_calendar import SESSION_WINDOWS
 from src.risk.constants import (
     STARTER_POSITION_RISK_PCT,
@@ -112,11 +113,6 @@ class AlpacaConfig(BaseModel):
                 )
             # Authorized in code — the gate still has the last word, and names
             # which condition failed rather than refusing anonymously.
-            from src.live_capital_preflight import (  # local: avoids import cycle
-                LiveCapitalBlocked,
-                assert_live_capital_authorized,
-            )
-
             try:
                 assert_live_capital_authorized()
             except LiveCapitalBlocked as exc:

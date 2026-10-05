@@ -18,7 +18,18 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.live_capital_preflight import main  # noqa: E402
+from src.config import AlpacaConfig  # noqa: E402
+from src.live_capital_preflight import _PAPER_HOST, main  # noqa: E402
+
+
+def _non_paper_config() -> object:
+    """Probe for the paper-guard audit check: must raise while the guard holds.
+
+    Injected from here because the gate module cannot import the config class
+    that calls it (that was an import cycle); this script sits above both.
+    """
+    return AlpacaConfig(base_url=f"https://{_PAPER_HOST}", paper=False)
+
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(paper_guard_probe=_non_paper_config))
