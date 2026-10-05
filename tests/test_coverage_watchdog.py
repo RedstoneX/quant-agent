@@ -441,13 +441,13 @@ def test_inside_the_session_it_re_places_the_missing_day_stop(db, state_path):
 def _hold_session_lock(monkeypatch, tmp_path, mode="midday"):
     """Simulate run_if_et_window.sh's acquire_session_lock having the
     named mode's lock currently held, the same directory
-    `src.execution.scale_in.trading_session_lock_held` reads."""
-    from src.execution import scale_in
+    `src.execution.held_qty.trading_session_lock_held` reads."""
+    from src.execution import held_qty
 
     lock_dir = tmp_path / "active-session.lock"
     lock_dir.mkdir()
     (lock_dir / "owner").write_text(f"{mode} 2026-09-17 1000 12345")
-    monkeypatch.setattr(scale_in, "_SESSION_LOCK_DIR", lock_dir)
+    monkeypatch.setattr(held_qty, "_SESSION_LOCK_DIR", lock_dir)
     return lock_dir
 
 
@@ -511,12 +511,12 @@ def test_repair_defer_does_not_apply_to_intra_check(
     see tests/test_systemd_units.py — since intra_check never takes this
     lock in the first place.)
     """
-    from src.execution import scale_in
+    from src.execution import held_qty
 
     lock_dir = tmp_path / "active-session.lock"
-    monkeypatch.setattr(scale_in, "_SESSION_LOCK_DIR", lock_dir)
+    monkeypatch.setattr(held_qty, "_SESSION_LOCK_DIR", lock_dir)
     assert not lock_dir.is_dir()
-    assert scale_in.trading_session_lock_held() is False
+    assert held_qty.trading_session_lock_held() is False
 
     _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
     broker = _repairable_broker()

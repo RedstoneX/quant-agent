@@ -106,3 +106,28 @@ def test_ratchet_refuses_without_the_trunk(monkeypatch):
     monkeypatch.setattr(g, "require_trunk", gone)
     with pytest.raises(ReferenceUnavailable):
         trunk_test_files_referencing_pipeline()
+
+
+def test_pipeline_holds_the_review_part_and_inherits_no_review_mixin():
+    """The last owed boundary (docs/SPLIT_DEFERRED_FINDINGS.md): `TradingPipeline`'s MRO carries no
+    `PromptFactsReviewMixin`; the seat builds one `PromptFactsReview` PER CALL from its own
+    collaborators (no host is handed to the part, nothing is cached on the seat), so a collaborator
+    swapped on the seat between calls is the one the next part is built from."""
+    import src.pipeline_prompt_facts_review as shim_module
+    from src.pipeline import TradingPipeline
+    from src.pipeline_prompt_facts_review import DELEGATED, HOST_COLLABORATORS, review_of
+    from src.prompt_facts.review.held import COLLABORATORS, PromptFactsReview
+    assert not hasattr(shim_module, "PromptFactsReviewMixin") and not hasattr(shim_module, "HOLDER_ATTR")
+    assert not any("Review" in c.__name__ for c in TradingPipeline.__mro__)
+    assert PromptFactsReview not in TradingPipeline.__mro__
+    assert tuple(HOST_COLLABORATORS.values()) == COLLABORATORS  # every seat name maps onto a part keyword
+    from src.pipeline_prompt_facts import PromptFactsMixin
+    pipe = object.__new__(PromptFactsMixin)  # the seat that holds the part; no pipeline is built
+    first, second = review_of(pipe), review_of(pipe)
+    assert isinstance(first, PromptFactsReview) and first is not second  # rebuilt per call, never cached
+    assert not hasattr(first, "_host") and "_prompt_facts_review" not in vars(pipe)
+    assert all(getattr(TradingPipeline, name)._held_delegate == name for name in DELEGATED)
+    pipe._build_post_exit_reality = lambda *a, **k: "SWAPPED ON THE SEAT"
+    assert pipe._review_grading()._build_post_exit_reality() == "SWAPPED ON THE SEAT"
+    pipe.db = object()
+    assert pipe._review_blocked().db is pipe.db  # the next call is built from the seat's current db
