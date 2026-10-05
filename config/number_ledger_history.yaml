@@ -1200,3 +1200,19 @@ changes:
       per-name risk is read off the name supersedes it, as the row's own
       ruling_check records; the 0.5% floor's standing under that same ruling
       is undetermined, so it is left as found rather than promoted.
+  - delta: 5
+    date: 2026-10-05
+    why: |
+      2026-10-05: src/trading_calendar.py brought into SCOPED_PATHS, the first
+      module scoped off the unscoped-number guard's grandfathered backlog. All
+      18 of its numeric sites are ledgered in the same change: 2 instrument
+      (the NYSE core-session bounds), 5 derived (the same two bounds restated
+      in the window table, plus the close window's start at one intraday tick
+      before the close), 6 not-trade-governing (the reporting-only evening
+      window and the four calendar-quarter months), and 5 arbitrary -- the
+      morning end, both midday bounds and both earnings-preprocess bounds, all
+      round clock times with no derivation. None of the 5 is settleable by the
+      backtest engine: it steps daily bars and models no intraday session
+      clock, so the value never reaches code the engine runs and a sweep would
+      be identical for the wrong reason. No value was changed.
+
