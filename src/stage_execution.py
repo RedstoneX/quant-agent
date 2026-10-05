@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.refusal_errors import SizingPriceUnavailable
 from src.entry_evidence import (
     record_scale_in_own_verdict as _record_scale_in_own_verdict,
     resolve_entry_pins as _resolve_entry_pins,
@@ -549,7 +550,16 @@ class ExecutionStage:
             # same TODAY PRINT the submit loop will, never the fill-reference
             # mid. No print -> the submit loop will refuse this name, so the
             # sweep must not sell SGOV to fund it.
-            sizing_print = _today_sizing_price(pipeline, decision.symbol)
+            try:
+                sizing_print = _today_sizing_price(pipeline, decision.symbol)
+            except SizingPriceUnavailable as exc:
+                _record_execution_skip(
+                    pipeline, ctx, decision.symbol, "sizing_price_unreadable",
+                    f"the sizing-price read itself failed ({exc}) — the desk "
+                    "does not know whether a today print exists, so the name "
+                    "is refused rather than funded on an unverified price",
+                )
+                continue
             if not isinstance(sizing_print, (int, float)) or sizing_print <= 0:
                 _record_execution_skip(
                     pipeline, ctx, decision.symbol, "no_sizing_print",
@@ -845,7 +855,18 @@ class ExecutionStage:
                 # print, bounded conservatively by the already-approved entry
                 # (which passed the 5% freshness check above); refuse the name
                 # when no print is available rather than size on a bad price.
-                sizing_print = _today_sizing_price(pipeline, decision.symbol)
+                try:
+                    sizing_print = _today_sizing_price(pipeline, decision.symbol)
+                except SizingPriceUnavailable as exc:
+                    _record_execution_skip(
+                        pipeline, ctx, decision.symbol,
+                        "sizing_price_unreadable",
+                        f"the sizing-price read itself failed ({exc}) — the "
+                        "desk does not know whether a today print exists, so "
+                        "the order is refused rather than sized on an "
+                        "unverified price",
+                    )
+                    continue
                 if sizing_print is None or sizing_print <= 0:
                     _record_execution_skip(
                         pipeline, ctx, decision.symbol, "no_sizing_print",

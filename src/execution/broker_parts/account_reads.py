@@ -383,6 +383,12 @@ class AccountReads(AssetEligibilityReads):
         return out
 
     def is_trading_day(self, on_date: date | None = None) -> bool:
+        """True/False only when the exchange calendar actually answered.
+
+        Raises `TradingCalendarUnavailable` when the lookup failed — the
+        unknown state is NOT reported as "not a trading day".
+        """
+        from src.refusal_errors import TradingCalendarUnavailable
         from src.util.time import et_today
         target_date = on_date or et_today()  # ET trading-day, not host-local
         # Per-date result cache. is_trading_day is hit on every session
@@ -408,12 +414,15 @@ class AccountReads(AssetEligibilityReads):
                 "account_reads.trading_calendar_confirm",
                 exc,
                 log=logger,
-                context={**{"date": str(target_date)}, "effect": "assumed market closed"},
+                context={**{"date": str(target_date)}, "effect": "refused: calendar state unknown"},
             )
-            # Do NOT cache a failed lookup — caller's session is already
-            # aborted (we returned False) but a transient API hiccup
-            # shouldn't poison the cache for the rest of the day.
-            return False
+            # Do NOT cache a failed lookup, and do NOT return False: a
+            # transient calendar error is not a holiday. Returning False
+            # here used to skip a whole trading day in silence. The caller
+            # catches this type and reaches a recorded, notified state.
+            raise TradingCalendarUnavailable(
+                f"exchange calendar lookup failed for {target_date}"
+            ) from exc
         self._trading_day_cache[target_date] = result
         return result
 

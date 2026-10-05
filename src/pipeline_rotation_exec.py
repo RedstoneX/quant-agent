@@ -9,6 +9,7 @@ patch target keeps working.
 
 from __future__ import annotations
 
+from src.refusal_errors import SizingPriceUnavailable
 from src.sentinel.guarded import record_guarded_pass
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     _IN_FLIGHT_FILL_STATUSES,
@@ -864,7 +865,17 @@ def _rotation_buy_leg_projected_refusal(pipeline, ctx, *, rotation,
     # or a prior-session trade. `market_price` above (the fill reference) may
     # be a quote mid by design; the sizing divisor may not. Folded into the
     # `no_price` gate so `REQUIRED_BUY_LEG_GATES` coverage is unchanged.
-    sizing_print = _today_sizing_price(pipeline, symbol)
+    try:
+        sizing_print = _today_sizing_price(pipeline, symbol)
+    except SizingPriceUnavailable as exc:
+        # Distinct from `no_price`: the read FAILED, so the desk never
+        # learned whether a sizing price exists. Still a refusal — it must
+        # never size on a fabricated absence — but recorded as unknown.
+        return None, "sizing_price_unreadable", (
+            f"the sizing-price read itself failed ({exc}) — the desk does "
+            "not know whether a today print exists, so the replacement buy "
+            "is refused rather than sized on an unverified price"
+        )
     if not isinstance(sizing_print, (int, float)) or isinstance(
         sizing_print, bool,
     ) or sizing_print <= 0:

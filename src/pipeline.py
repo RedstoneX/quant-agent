@@ -926,11 +926,30 @@ class TradingPipeline(
         ).run(symbols)
 
     def _is_trading_day(self) -> bool:
+        """True/False only when the calendar answered; raises otherwise.
+
+        This used to log and return False, so every session's pre-flight
+        guard read a transient broker error as a market holiday and skipped
+        the entire day with nobody aware. The six guards that call this all
+        sit at the TOP of their `run()`, before any order and before any
+        protective work, so raising here cannot abandon an open position
+        mid-trade; `TradingScheduler._run_safe` and `main.py`'s session
+        wrappers both catch it, record a FAILED session and notify the
+        owner — a state distinguishable from `market_holiday`.
+        """
+        from src.refusal_errors import TradingCalendarUnavailable
         try:
             return self.broker.is_trading_day()
+        except TradingCalendarUnavailable:
+            raise
         except Exception as exc:
-            logger.warning("Trading-day check failed; assuming market closed: %s", exc)
-            return False
+            logger.error(
+                "Trading-day check failed (%s) — REFUSING to assume the "
+                "market is shut; the calendar state is unknown.", exc,
+            )
+            raise TradingCalendarUnavailable(
+                "trading-day check failed; calendar state unknown"
+            ) from exc
 
 
     # Realized-exit actions whose post-exit trajectory is worth auditing.

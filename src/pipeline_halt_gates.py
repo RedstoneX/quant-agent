@@ -119,13 +119,52 @@ def _evidence_gate_skip(
         verdict = evidence_gate.evaluate(ctx.data_status)
     except Exception as exc:  # noqa: BLE001
         # A gate that can stop the desk trading must not stop it by
-        # crashing. `evaluate` is documented never to raise; if it
-        # somehow does, proceed and say so loudly.
+        # crashing — and must not let it trade by crashing either. This
+        # used to log and `return None`, i.e. PROCEED to decide with the
+        # gate simply absent: the one thing a gate exists to prevent.
+        # The desk now refuses, under a reason that says the gate could
+        # not be evaluated — distinct from a gate that ran and blocked.
         logger.error(
-            "evidence gate raised (%s) — PROCEEDING with the decision. "
-            "This is a bug in src/evidence_gate.py.", exc,
+            "EVIDENCE GATE UNAVAILABLE — evaluate() raised (%s). REFUSING "
+            "to decide. This is a bug in src/evidence_gate.py; it is NOT "
+            "the same state as a gate that ran and blocked the decision.",
+            exc,
         )
-        return None
+        for analysis in ctx.analyses or []:
+            unavailable_symbol = getattr(analysis, "symbol", None)
+            if not unavailable_symbol:
+                continue
+            try:
+                _record_pipeline_event(
+                    self, ctx, unavailable_symbol, "evidence_gate",
+                    "not_decided", "evidence_gate_unavailable",
+                    gate_error=repr(exc),
+                )
+            except Exception as write_exc:  # noqa: BLE001
+                logger.warning(
+                    "evidence gate: unavailable event write failed: %s",
+                    write_exc,
+                )
+        if session == "morning":
+            from src import decision_checkpoint as _dc
+
+            _dc.write_status("morning", "evidence_gate_skip")
+        return {
+            # The STATUS token stays in the vocabulary the notifier, the
+            # dead-man probe and `trader_feed` already treat as actionable,
+            # so the owner is told; `gate_unavailable` and `reason` are what
+            # make it distinguishable from a gate that ran and refused.
+            "status": "evidence_gate_skip", "orders": [], "run_id": run_id,
+            "data_status": dict(ctx.data_status or {}),
+            "lost_seats": [], "blocking_lost_seats": [],
+            "advisory_lost_seats": [],
+            "gate_unavailable": True,
+            "reason": (
+                "the evidence gate could not be evaluated "
+                f"({exc!r}) — the desk refused to decide without it; this "
+                "is NOT a finding that evidence was missing"
+            ),
+        }
 
     def _record(symbol, outcome, reason, **details):
         # Forensic persistence must never be able to break the trading
