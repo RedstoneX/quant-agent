@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 import yfinance as yf
 
 from src.models import _ALLOWED_SECTORS, _SECTOR_ALIASES
+from src.sentinel.counted import record_swallowed
 
 # Same logger name the code had inside broker.py, so log capture is unchanged.
 logger = logging.getLogger("src.execution.broker")
@@ -168,7 +169,7 @@ def _get_sector(symbol: str) -> str:
         try:
             return yf.Ticker(symbol).info or {}
         except Exception as e:
-            logger.warning("yfinance sector fetch raised for %s: %s", symbol, e)
+            record_swallowed("sector_reference._fetch", e, log=logger, symbol=symbol)
             fetch_error["raised"] = True
             return {}
 
