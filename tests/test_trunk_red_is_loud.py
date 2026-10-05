@@ -1,4 +1,4 @@
-"""Trunk red must raise an issue, and main pushes must never share a slot."""
+"""Trunk-red check runs on every main push; main pushes never share a slot."""
 import re
 import sys
 from pathlib import Path
@@ -43,11 +43,10 @@ def test_pull_requests_on_one_branch_still_share_and_cancel():
     assert a == b and ca
 
 
-def test_red_opens_one_issue_per_commit_and_green_closes():
-    t = cmr.ISSUE_PREFIX + " main is red at abcd1234"
-    assert cmr.plan_issue_actions([], "abcd1234ff") == {"create": True, "close": []}
-    same = [{"number": 7, "title": t}]
-    assert cmr.plan_issue_actions(same, "abcd1234ff") == {"create": False, "close": []}
-    assert cmr.plan_issue_actions(same, "ffff0000aa") == {"create": True, "close": [7]}
-    assert cmr.plan_issue_actions(same, None) == {"create": False, "close": [7]}
-    assert cmr.plan_issue_actions([{"number": 9, "title": "other"}], None)["close"] == []
+def test_trunk_check_runs_on_push_to_main_and_keeps_schedule():
+    wf = yaml.safe_load((ROOT / ".github/workflows/stale-ci.yml").read_text())
+    on = wf.get("on", wf.get(True))
+    assert on["push"]["branches"] == ["main"] and "schedule" in on
+    assert wf["jobs"]["sweep"]["if"] == "github.event_name != 'push'"
+    assert "if" not in wf["jobs"]["main-red"]
+    assert not hasattr(cmr, "sync_issue")

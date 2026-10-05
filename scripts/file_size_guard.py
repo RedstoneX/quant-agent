@@ -16,9 +16,28 @@ sites on the money paths, reported their files SHRANK, and between them added
 was satisfied by making lines wider. So the same ratchet is applied to two more
 measures of the same files, with the same rule and no stored record:
 
-* non-whitespace characters -- invariant under wrapping, joining and
-  re-indenting, so no re-layout can move it; a file over the floor may not
-  gain any against ``origin/main``;
+* AST statements -- invariant under renaming, line-joining, wrapping and
+  re-indenting, so no re-layout and no rename can move it; a file over the
+  floor may not gain one against ``origin/main``. This measure REPLACED a
+  non-whitespace character count on 2026-10-05: a character count is a proxy
+  for complexity, and it refused pure renames. Moving a method off the giant
+  pipeline class onto a real collaborator turns every call site from
+  ``self.foo(...)`` into ``self.admission.foo(...)`` -- ten more characters,
+  zero new behaviour -- so the ratchet reddened the exact refactor it exists
+  to encourage, and the only green route was to keep a delegating shim. That
+  is the mechanism by which the character rule was wrong, not merely awkward:
+  it measured spelling, and a boundary is drawn by renaming.
+
+  RESIDUAL HOLE, named here because true identity is unreachable: a statement
+  count errs PERMISSIVE on expression growth. Four statements of ``for``/``if``
+  /``append`` collapse into one comprehension (measured 4 -> 1), and chained
+  ternaries, ``lambda`` and the walrus launder the same way. Nothing in this
+  guard sees that. What binds instead is the width fence below -- a laundered
+  expression is long, and a new line past the fence fails -- and the line
+  ratchet, which forbids spending the saved statements on new lines. Semicolon
+  joining, the route that killed the line-only rule, is NOT a hole here:
+  ``a = 1; b = 2`` parses as two statements (measured), and the companion
+  statement-cram ratchet refuses the shape outright.
 * lines wider than the width fence -- a file may not gain one (by identity:
   path + the line's text) against ``origin/main``, so a line widened past the
   fence fails and passes once it is wrapped. Pre-existing wide lines pass.
@@ -43,6 +62,7 @@ Run it directly: ``python -m scripts.file_size_guard``.
 """
 from __future__ import annotations
 
+import ast
 import math
 import sys
 
@@ -76,9 +96,18 @@ def _count(text: str) -> int:
     return len(text.splitlines())
 
 
-def _ink(text: str) -> int:
-    """Non-whitespace characters: the one measure no re-layout can move."""
-    return sum(1 for ch in text if not ch.isspace())
+def _statements(text: str) -> int | None:
+    """AST statement nodes, or None when the text does not parse.
+
+    Invariant under renaming, line-joining, wrapping and re-indenting, and
+    blind to comments and docstring prose, because none of those are
+    behaviour. Genuine new behaviour is new statements.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    return sum(1 for node in ast.walk(tree) if isinstance(node, ast.stmt))
 
 
 def _wide(path: str, text: str, width: int) -> Counter:
@@ -201,12 +230,14 @@ def violations() -> list[str]:
         if old is None:
             continue
         wide_was.update(_wide(path, old, width))
-        ink, had = _ink(text), _ink(old)
-        if _count(text) > FLOOR and ink > had:
+        stmts, had = _statements(text), _statements(old)
+        if stmts is None:
+            bad.append(f"{path}: does not parse, so its statements cannot be counted.")
+        elif had is not None and _count(text) > FLOOR and stmts > had:
             bad.append(
-                f"{path}: grew from {had} to {ink} non-whitespace characters "
-                f"(+{ink - had}) against {TRUNK} while holding {_count(text)} lines. "
-                f"Wider lines are still growth; split it instead."
+                f"{path}: grew from {had} to {stmts} statements "
+                f"(+{stmts - had}) against {TRUNK} while holding {_count(text)} lines. "
+                f"Renaming and re-layout do not move this count; split it instead."
             )
     for (path, text), n, before_n in added_sites(wide_now, wide_was):
         bad.append(
@@ -227,8 +258,8 @@ def main(argv: list[str] | None = None) -> int:
         print("Files grew against %s:\n%s" % (TRUNK, "\n".join(bad)), file=sys.stderr)
         return 1
     print(
-        "file-size ratchet: no tracked .py file grew in lines, non-whitespace "
-        f"characters or over-wide lines against {TRUNK}; both fences derived "
+        "file-size ratchet: no tracked .py file grew in lines, AST "
+        f"statements or over-wide lines against {TRUNK}; both fences derived "
         "at check time from both trees, nothing stored."
     )
     return 0

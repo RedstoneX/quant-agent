@@ -71,13 +71,25 @@ def _leaf(site_id: str) -> str:
     return re.sub(r"\[.*$", "", site_id.split(":")[0]).rsplit(".", 1)[-1]
 
 
+#: A leading `-` is a SIGN only where it cannot be a subtraction operator:
+#: not directly after an identifier, a digit, or a closing bracket. So the
+#: `-0.3` in `(-0.3, -0.1)` is read as negative, while the `-1` in `x-1` and
+#: in `f(a)-1` is not. The proxy errs CLOSED on a space-padded subtraction
+#: (`x - 1` still yields 1, never -1), which can only ever cost a mention,
+#: never invent one.
 def _numbers(text: str) -> list[float]:
     out = []
-    for t in re.findall(r"(?<![\w.])(?:\d[\d_]*\.?\d*(?:[eE][+-]?\d+)?|\.\d+)", text):
+    for m in re.finditer(r"(?<![\w.])(?:\d[\d_]*\.?\d*(?:[eE][+-]?\d+)?|\.\d+)", text):
         try:
-            out.append(float(t.replace("_", "")))
+            value = float(m.group(0).replace("_", ""))
         except ValueError:
-            pass
+            continue
+        out.append(value)
+        before = text[: m.start()]
+        if before.rstrip() is before and before.endswith("-"):
+            stem = before[:-1]
+            if not stem or not (stem[-1].isalnum() or stem[-1] in "_.)]"):
+                out.append(-value)
     return out
 
 

@@ -46,8 +46,10 @@ def test_a_hanging_telegram_endpoint_cannot_stall_or_fail_a_session(
 
     assert calls, "the watchdog never even tried the channel"
     # Bounded work, not an unbounded retry loop against a dead endpoint.
-    # 4 before the funnel retry, plus the funnel's bounded extra attempts.
-    ceiling = 4 + (delivery.MAX_ATTEMPTS - 1)
+    # One probe, plus each of the session's two owner sends (the naked-position
+    # alert and the plain send) at the funnel's bounded MAX_ATTEMPTS: `send`
+    # itself is now the retry funnel, so the plain send retries too.
+    ceiling = 1 + 2 * delivery.MAX_ATTEMPTS
     assert len(calls) <= ceiling, f"{len(calls)} requests against a hanging endpoint"
     assert elapsed < 5, f"the session stalled for {elapsed:.1f}s on Telegram"
 
