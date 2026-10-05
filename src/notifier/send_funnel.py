@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import html
 import os
-import requests
 from typing import Any
 
 from src.notifier.base import (
@@ -206,12 +205,7 @@ def send_once(
     delivered_text = payload["text"]
 
     try:
-        response = requests.post(
-            self.API_URL.format(token=self.token),
-            json=payload,
-            timeout=self.HTTP_TIMEOUT_S,
-        )
-        response.raise_for_status()
+        self._post_payload(payload)
         self._safe_record_send(
             kind=kind, status="sent", text=delivered_text, run_id=run_id,
         )

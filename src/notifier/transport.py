@@ -153,6 +153,20 @@ class TelegramNotifier:
     send_once = _send_once
     send = _public_send
 
+    def _post_payload(self, payload: dict) -> None:
+        """The one sendMessage wire call; raises on any HTTP failure.
+
+        Lives here, not in `send_funnel`, because this module is the cleared
+        outbound-client site: the replay guard names it as the seam for
+        `requests`, and the funnel must not become a second one.
+        """
+        response = requests.post(
+            self.API_URL.format(token=self.token),
+            json=payload,
+            timeout=self.HTTP_TIMEOUT_S,
+        )
+        response.raise_for_status()
+
     def _api_url(self, method: str) -> str:
         """Bot API endpoint for `method` (sendMessage, deleteMessage, ...)."""
         return f"{self.API_BASE.format(token=self.token)}/{method}"
