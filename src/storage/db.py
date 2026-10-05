@@ -1977,16 +1977,9 @@ class Database:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
         return self._trades().insert_trade(symbol, action, qty, price, reasoning, run_id, stop_loss, take_profit, broker_order_id, fill_status, decision_id, expected_horizon_sessions, setup_type, conviction, requested_risk_pct, allocated_risk_pct, decision_model, thesis_invalid_if, structural_ceiling, entry_atr, stop_basis, stop_level_basis)
 
-    def insert_trade_refusal(
-        self, *, symbol: str, direction: str | None, refusal: str,
-        entry_price: float | None = None, stop_price: float | None = None,
-        level_used: float | None = None, reward_risk: float | None = None,
-        threshold: float | None = None, level_was_measured: bool | None = None,
-        stage: str | None = None, run_id: str | None = None,
-        requested_risk_pct: float | None = None,
-    ) -> int | None:
+    def insert_trade_refusal(self, **kwargs) -> int | None:
         """Thin shim: lifted into TradeLedger (db rebuild instalment 3); built per call."""
-        return self._trades().insert_trade_refusal(symbol=symbol, direction=direction, refusal=refusal, entry_price=entry_price, stop_price=stop_price, level_used=level_used, reward_risk=reward_risk, threshold=threshold, level_was_measured=level_was_measured, stage=stage, run_id=run_id, requested_risk_pct=requested_risk_pct)
+        return self._trades().insert_trade_refusal(**kwargs)
 
     def get_trade_refusals(
         self, *, refusal: str | None = None, limit: int = 500,
