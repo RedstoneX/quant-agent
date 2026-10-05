@@ -9778,3 +9778,11 @@ numbers:
       `.get_price_chart_events(` finds NONE that omit the lookback argument (every caller passes it, e.g.
       config.trading.lookback_days), so this default is never used. Dynamic calls through getattr or star-args
       were not searched. The one production caller, src/api/routes_live.py, serves the dashboard chart.
+  - id: src.data.tech_store.TechStore.get_history(days)
+    value: 7
+    site: src/data/tech_store.py
+    status: not-trade-governing
+    note: >-
+      Dead default (src/pipeline_prompt_facts.py::PromptHistory._build_position_history): an AST scan on 2026-10-05 of every .py under src, ops, scripts and main.py finds
+      every production call to `get_history` passing `days` explicitly (by keyword or position), so this default is
+      never used. Dynamic calls through getattr or star-args were not searched.
