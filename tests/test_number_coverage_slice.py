@@ -20,8 +20,8 @@ EXPECTED_STATUS = {
     "src.data.insider_signal._WEIGHTS[INDETERMINATE]": "arbitrary",
     "src.data.insider_signal._WEIGHTS[OPPORTUNISTIC]": "not-trade-governing",
     "src.data.insider_signal.InsiderSignalClass.weight": "not-trade-governing",
-    "src.data.insider_signal._BAND_LOW": "sourced",
-    "src.data.insider_signal._BAND_HIGH": "sourced",
+    "src.data.insider_signal._BAND_LOW": "arbitrary",
+    "src.data.insider_signal._BAND_HIGH": "arbitrary",
     "src.data.insider_signal.InsiderSignalThresholds.cadence_max_gap_dispersion": "derived",
     "src.data.insider_signal.InsiderSignalThresholds.cadence_max_mean_gap_days": "derived",
     "src.data.insider_signal.InsiderSignalThresholds.cadence_min_mean_gap_days": "derived",
@@ -57,7 +57,7 @@ def test_every_new_arbitrary_row_has_an_actionable_route_not_a_fourth_state() ->
         if status == "arbitrary"
     }
 
-    assert len(arbitrary) == 11
+    assert len(arbitrary) == 13
     for site_id, entry in arbitrary.items():
         assert "unsettled" not in entry, site_id
         assert settlement_route_problem(entry) is None, site_id

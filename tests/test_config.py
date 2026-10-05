@@ -264,11 +264,11 @@ def test_smart_money_insider_thresholds_default_to_pre_config_values():
 
     One field is deliberately gone rather than changed:
     `insider_min_material_sell_fraction` was deleted on 2026-09-13. It was a
-    cutoff no cited source measures, and it relabelled a band Scott & Xu (FAJ
-    2004) find significantly POSITIVE as routine noise at weight 0.0. The
-    point of this test is that a default never drifts unnoticed, not that an
-    unsourced knob has to be kept alive — see the 2026-09-13
-    `docs/INCIDENT_HISTORY.md` entry for WORK.md items 52 and 63."""
+    cutoff no cited source measures for one Form 4 row. Scott & Xu (FAJ 2004)
+    measure an aggregate stock-wide six-month unit, so their bands cannot
+    justify a per-filing cutoff. The point of this test is that a default never
+    drifts unnoticed, not that an unsourced knob has to be kept alive — see the
+    2026-09-13 `docs/INCIDENT_HISTORY.md` entry for WORK.md items 52 and 63."""
     from src.config import SmartMoneyConfig
 
     config = SmartMoneyConfig()

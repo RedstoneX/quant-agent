@@ -83,11 +83,12 @@ class SmartMoneyObservation(LLMOutputModel):
     # the Form 4 fields the desk already parses (`shares` and
     # `post_transaction_shares`) — see
     # `src/data/insider_signal.py::holdings_fraction`. Reported for buys and
-    # sells alike and never used as an admission cutoff; the bands are Scott &
-    # Xu's own (FAJ 2004). `None`/`""` when the filing does not carry enough
-    # to compute one, and `no_prior_holding` for a purchase by an insider who
-    # held nothing beforehand (no ratio exists — that is a distinct fact, not
-    # a missing one).
+    # sells alike and never used as an admission cutoff. The legacy bands are
+    # unsourced descriptive buckets for this per-filing unit; only the exact
+    # ratio comes from the row. `None`/`""` when the filing does not carry
+    # enough to compute one, and `no_prior_holding` for a purchase by an insider
+    # who held nothing beforehand (no ratio exists — that is a distinct fact,
+    # not a missing one).
     holdings_fraction: float | None = Field(default=None, ge=0.0)
     holdings_fraction_band: Literal[
         "", "under_10pct", "10_to_50pct", "over_50pct", "no_prior_holding"
@@ -165,13 +166,11 @@ class SmartMoneyObservation(LLMOutputModel):
         currently-admitted row keeps the exact ranking contribution it had.
 
         A SALE is NOT counted as bullish (that identity WAS the bug) but is
-        also NOT signed bearish here: Scott & Xu (FAJ 2004) find a small sale
-        (< ~50% of the holding) is mildly POSITIVE while a sale over ~50% is
-        negative, so a sell's sign is magnitude-dependent, and no published
-        SIGNED scoring scheme sets that -1-vs-0 boundary (board item 63
-        open_question, ruled out pending a source or enough own outcome data;
-        ``holdings_fraction_band``'s sourced 50% edge is the hook for it once
-        owner appetite decides to actually down-rank on large selling). The
+        also NOT signed bearish here: one Form 4 row does not establish a
+        directional view, and no published signed scoring scheme defines a
+        -1-vs-0 boundary for that per-filing quantity (board item 63). The
+        legacy ``holdings_fraction_band`` edges are explicitly unsourced for
+        this unit under item 90 and may not be fitted to desk outcomes. The
         desk is long-only on smart-money admission (a row is admission-eligible
         only when ``direction == "buy"``), so neutralising a sale to 0 -- rather
         than guessing a bearish magnitude -- is the safe minimal structure fix:

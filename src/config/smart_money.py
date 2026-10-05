@@ -154,12 +154,12 @@ class SmartMoneyConfig(BaseModel):
     # REMOVED 2026-09-13: `insider_min_material_sell_fraction`. It relabelled
     # a sale below some fraction of the insider's holding as ROUTINE, weight
     # 0.0 — dropping it out of the seat's ranking entirely. Its 0.05 default
-    # matched no published band, and the source behind the rule (Scott & Xu,
-    # FAJ 2004) marks only 50% as a significance boundary and measures the
-    # sub-10% band as significantly POSITIVE, so no edge of it is a "not a
-    # directional view" line. The ratio is now reported on every observation
-    # (`holdings_fraction`, `holdings_fraction_band`) and gates nothing. Do
-    # not reintroduce a cutoff here without a source that measures one; the
+    # matched no published boundary for a single Form 4 row. Scott & Xu (FAJ
+    # 2004) use aggregate stock-wide net trades and holdings over six months,
+    # so their bands cannot be transferred to this per-filing unit. The exact
+    # ratio is now reported on every observation and gates nothing; its legacy
+    # band is explicit unsourced debt under item 90. Do not reintroduce a
+    # cutoff here without a source for this exact unit; the
     # open question is WORK.md item 63. See `src/data/insider_signal.py`
     # departure #3 and the 2026-09-13 `docs/INCIDENT_HISTORY.md` entry.
     #

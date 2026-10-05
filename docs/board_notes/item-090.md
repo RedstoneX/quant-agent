@@ -424,10 +424,11 @@ behaviour — that is an owner decision, and this is the evidence for it.
 ## item 90 — 2026-10-05 context-and-ranking coverage repair
 
 This pass found twelve numbers that the earlier scanner could not see or had
-described too generously. No value and no trading behaviour changed. The
-settlement routes below deliberately do not ask which choice would have made
-the desk more money; that would fit the desk to its own record, which is
-barred.
+described too generously. No numeric value or deterministic gate changed. One
+unsupported study-return claim was removed from the analyst's per-filing
+context because the study measured a different unit. The settlement routes
+below deliberately do not ask which choice would have made the desk more
+money; that would fit the desk to its own record, which is barred.
 
 Five return horizons were written as one tuple and therefore invisible to the
 scanner. They approximate one week and one, three, six and twelve months with
@@ -452,11 +453,16 @@ value before any evidence cap. It closes only when the producing step can
 supply the required class, or when unknown remains an explicit category rather
 than an invented numeric interpolation. Past returns may not select a weight.
 
-The two published insider-holdings band edges were incorrectly called mere
-reporting. Their label and the study's evidence text enter the analyst's prompt
-and cache, so they can inform a verdict. They are now classified as sourced and
-point to the publisher's paper; the deterministic admission and sizing paths
-remain unchanged.
+The two insider-holdings band edges were copied from a published paper, but the
+paper computes net stock-wide trades and holdings across insiders over six
+months. This code applies the digits to one insider's one filing. Those are
+different quantities, so the paper is not a source for the live use. Both edges
+are now recorded as arbitrary. The paper's band-return claims have been removed
+from the per-filing analyst context; the exact row-level ratio remains visible
+as uncited descriptive context, and the deterministic admission and sizing
+paths remain unchanged. The route records that exact ratio and every prompt
+consumer, then removes the buckets while retaining the exact ratio. Forward
+returns and this desk's trade outcomes may not choose an edge.
 
 The minimum duration for a price base happened to reuse the volatility
 estimator's fourteen-session period. Those are different market quantities,
