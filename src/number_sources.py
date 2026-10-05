@@ -220,6 +220,11 @@ SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
 #: The modules on the path from a verdict to a broker order; see
 #: src/number_scope.py (data only, re-exported here for every reader).
 from src.number_scope import SCOPED_PATHS, py_universe  # noqa: E402,F401
+from src.number_unsettled import (  # noqa: E402  (rule 9, the fourth state)
+    is_unsettled,
+    unsettled_count,
+    unsettled_problems,
+)
 
 
 #: `src/config/__init__.py` holds every seat's settings in one file, most of them
@@ -354,20 +359,9 @@ SETTLEMENT_ROUTE_FIELDS: tuple[str, ...] = (
 #: same failure as the one-word `note` the arbitrary schema already bars.
 MIN_ROUTE_PROSE_CHARS = 40
 
-ROUTE_RATCHET_HISTORY_PATH = REPO_ROOT / "config" / "number_ledger_route_history.yaml"
-
-
-def routeless_ratchet(path: Path | None = None) -> int:
-    """`MAX_ROUTELESS_ARBITRARY`, computed. Never hand-maintained."""
-    return sum(
-        int(change["delta"])
-        for change in load_ratchet_history(path or ROUTE_RATCHET_HISTORY_PATH)
-    )
-
-
-#: Ratchet, checked for EQUALITY, exactly like `MAX_ARBITRARY_ENTRIES`: the
-#: number of `arbitrary` rows that are in NONE of item 90's three states.
-MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
+#: The route-less count is derived against `origin/main` by rule 9 (see
+#: `src/number_unsettled.py`), never stored: the equality it replaces made
+#: a genuinely unsettled number impossible to register at all.
 
 
 #: Fields `src/storage/db.py` actually WRITES, as opposed to merely creating.
@@ -482,13 +476,16 @@ def classification(
     """Item 90's classification, produced FROM the ledger, never by hand.
 
     Keys: `sourced_or_measured`, `ratified_bound`, `recording_named`,
-    `unclassified` and `not_trade_governing`. `unclassified` is the remaining
-    work: live numbers in none of the three states.
+    `unsettled`, `unclassified` and `not_trade_governing`. `unsettled` is a
+    live number with no route that SAYS SO in writing (rule 9);
+    `unclassified` is the remaining work: live numbers in none of the three
+    states and silent about it.
     """
     out: dict[str, list[str]] = {
         "sourced_or_measured": [],
         "ratified_bound": [],
         "recording_named": [],
+        "unsettled": [],
         "unclassified": [],
         "not_trade_governing": [],
     }
@@ -505,11 +502,12 @@ def classification(
             key = "ratified_bound" if "ratif" in text else "sourced_or_measured"
             out[key].append(site_id)
         elif status == "arbitrary":
-            key = (
-                "unclassified"
-                if settlement_route_problem(entry)
-                else "recording_named"
-            )
+            if not settlement_route_problem(entry):
+                key = "recording_named"
+            elif is_unsettled(entry):
+                key = "unsettled"
+            else:
+                key = "unclassified"
             out[key].append(site_id)
     return out
 
@@ -986,6 +984,12 @@ def audit(
         if why is None:
             continue
         if entry.get("settles_by") is None:
+            if is_unsettled(entry):
+                #  Rule 9's state: no route, and the row SAYS SO in writing.
+                #  It leaves this residue because it is recorded rather than
+                #  blank, and it is held down by its own trunk ratchet in
+                #  `src/number_unsettled.py` -- not excused by either.
+                continue
             routeless.append(site_id)
             continue
         problems.append(
@@ -997,23 +1001,11 @@ def audit(
                 f"because the count stops showing the work as outstanding.",
             )
         )
-    if len(routeless) != MAX_ROUTELESS_ARBITRARY:
-        direction = (
-            "rises to" if len(routeless) > MAX_ROUTELESS_ARBITRARY else "falls to"
-        )
-        problems.append(
-            LedgerProblem(
-                "route-ratchet",
-                "<ledger>",
-                f"the count of `arbitrary` rows with no `settles_by` route "
-                f"{direction} {len(routeless)} but MAX_ROUTELESS_ARBITRARY is "
-                f"{MAX_ROUTELESS_ARBITRARY}. This is an equality, not a "
-                f"ceiling, and it is not editable by hand: APPEND one entry "
-                f"to config/number_ledger_route_history.yaml with the delta "
-                f"and a `why` saying which row gained a route and what that "
-                f"recording is. See board item 90.",
-            )
-        )
+    del routeless  # rule 9 derives this population against trunk
+
+    # 9. UNSETTLED, NO ROUTE YET. See `src/number_unsettled.py`.
+    for trouble in unsettled_problems(ledger, root, MIN_ROUTE_PROSE_CHARS):
+        problems.append(LedgerProblem(trouble.kind, trouble.site_id, trouble.why))
 
     # 7. CITATIONS RESOLVE. Cheap, and aimed squarely at the failure that
     #    made this gate's own flagship entry false in four places.
@@ -1040,6 +1032,7 @@ def main() -> int:  # pragma: no cover - CLI convenience
         unscoped = collect_unscoped_sites()
         print(
             f"number ledger: {len(sites)} sites in scope, all accounted for; "
+            f"{unsettled_count(load_ledger())} recorded unsettled with no route yet; "
             f"{len(unscoped)} unscoped constants watched"
         )
         return 0

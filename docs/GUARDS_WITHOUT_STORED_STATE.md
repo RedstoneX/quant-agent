@@ -83,7 +83,7 @@ kept as history and marked DONE where they describe a stored file that is gone.
     numbers and their provenance; real content, stays.
   - `config/live_capital_preflight_attestations.yaml`: KEPT RECORD. A named
     person's attestation of conditions a machine cannot verify; cannot be computed.
-  - `config/number_ledger_history.yaml` and `config/number_ledger_route_history.yaml`:
+  - `config/number_ledger_history.yaml` (the route-history file beside it was deleted on 2026-10-05; its count is now derived against `origin/main` by `src/number_unsettled.py`):
     RULED 2026-10-04, KEEP BOTH. The `why` is a kept decision record. Each
     `delta` is the recorded effect of one change, appended whole under
     `merge=union`; nothing edits a shared line, so the collision and staleness

@@ -9778,3 +9778,172 @@ numbers:
       `.get_price_chart_events(` finds NONE that omit the lookback argument (every caller passes it, e.g.
       config.trading.lookback_days), so this default is never used. Dynamic calls through getattr or star-args
       were not searched. The one production caller, src/api/routes_live.py, serves the dashboard chart.
+  - id: src.models.analysis.RATING_MAGNITUDE['buy']
+    value: 0.5
+    status: arbitrary
+    site: src/models/analysis.py
+    note: >-
+      Equal-spacing ordinal rung of the Technical rating (see the comment at the definition). It REACHES a decision: `score_verdict` and `rank_verdicts` in src/verdicts.py add it, unscaled, to `CONVICTION_SCORE` (0.0/0.5/1.0), so the candidate ORDER the PM reads depends on its size against that scale, not on a cancelling common factor. Only the ratio of the rungs to each other and to the conviction scale matters; the absolute size does not matter alone. Searched src, ops, scripts and main.py for the name (git grep, no dynamic import found): only analysis.py builds a verdict from it. NOT answerable by `src/backtest/engine.py`, which has no verdicts and does not rank.
+    open_question: >-
+      Measure, per rung of rating, the forward return of recorded Technical verdicts against the conviction band they carried, then read the rung spacing off the fitted ratio; needs recorded verdicts joined to outcomes, which do not yet exist in volume.
+    cost_while_unanswered: >-
+      Mixed candidates (strong_buy at low conviction against buy at high conviction) tie or reorder on an unmeasured spacing, so the order the PM reads may be wrong; ties then fall to reward-to-risk.
+    unsettled:
+      why_no_route: >-
+        No recording exists or is specified that could settle this rung. The rating weight is added UNSCALED into the
+        conviction score, so the ratio between rungs genuinely changes which candidate is bought and does not cancel;
+        but nothing in this desk writes down a Technical verdict's rating beside the outcome that followed it, and the
+        backtest engine cannot stand in -- it has no verdicts and does no ranking. Building that recording is a
+        decision nobody has taken, so this row says so rather than naming a route nobody intends to build.
+  - id: src.models.analysis.RATING_MAGNITUDE['strong_buy']
+    value: 1.0
+    status: arbitrary
+    site: src/models/analysis.py
+    note: >-
+      Equal-spacing ordinal rung of the Technical rating (see the comment at the definition). It REACHES a decision: `score_verdict` and `rank_verdicts` in src/verdicts.py add it, unscaled, to `CONVICTION_SCORE` (0.0/0.5/1.0), so the candidate ORDER the PM reads depends on its size against that scale, not on a cancelling common factor. Only the ratio of the rungs to each other and to the conviction scale matters; the absolute size does not matter alone. Searched src, ops, scripts and main.py for the name (git grep, no dynamic import found): only analysis.py builds a verdict from it. NOT answerable by `src/backtest/engine.py`, which has no verdicts and does not rank.
+    open_question: >-
+      Same measurement as the buy rung: the forward return of strong_buy verdicts against buy verdicts at equal conviction.
+    cost_while_unanswered: >-
+      Same cost as the buy rung: an unmeasured gap between strong and plain ratings sets the candidate order.
+    unsettled:
+      why_no_route: >-
+        Same position as the buy rung and settled by the same missing recording: the spacing between the two rungs is
+        load-bearing because the weight enters the conviction score unscaled, and no recording anywhere pairs a
+        Technical rating with what the desk then did and what followed. The backtest engine produces no verdicts and
+        performs no ranking, so it cannot answer it either. No route is named because none is built or specified.
+  - id: src.models.analysis.RATING_MAGNITUDE['sell']
+    value: 0.5
+    status: derived
+    site: src/models/analysis.py
+    derived_from: src.models.analysis.RATING_MAGNITUDE['buy']
+    base_value: 0.5
+    note: >-
+      The bearish mirror of the buy rung; a short is treated exactly like a long (owner ruling 2026-10-04), so one number with two definition sites.
+  - id: src.models.analysis.RATING_MAGNITUDE['strong_sell']
+    value: 1.0
+    status: derived
+    site: src/models/analysis.py
+    derived_from: src.models.analysis.RATING_MAGNITUDE['strong_buy']
+    base_value: 1.0
+    note: >-
+      The bearish mirror of the strong_buy rung; same single number, two definition sites.
+  - id: src.data.insider_signal._WEIGHTS['indeterminate']
+    value: 0.5
+    status: arbitrary
+    site: src/data/insider_signal.py
+    note: >-
+      Attention weight of an INDETERMINATE insider trade, the midpoint between opportunistic (1.0) and routine (0.0). Midpoint by construction, nothing measured. It multiplies transaction value inside a SORT key in `src/agents/smart_money_analyst.py` (after role, class and freshness ranks), so it changes which observations are shown first and picked as representative; it does not size or gate an order. Only the ratio to the 1.0 rung matters. Searched src, ops, scripts, main.py by name and by the `signal_weight` field; no string-keyed or dynamic consumer found.
+    open_question: >-
+      Measure forward return of indeterminate-class insider buys against opportunistic ones in the recorded Form 4 history and set the weight to that ratio.
+    cost_while_unanswered: >-
+      An indeterminate buy may be over- or under-ranked against an opportunistic one when they sit in the same symbol's value sum.
+    unsettled:
+      why_no_route: >-
+        The 1.0 opportunistic rung is the unit of this scale and cancels; this 0.5 is the only member that changes
+        anything, and what it changes is sort order among insider candidates. Nothing records the class an insider
+        candidate was given beside the rank it received and what the position then did, and no such recording is
+        specified. Rather than invent a settlement route, this row records that none exists today.
+  - id: src.data.insider_signal._WEIGHTS['opportunistic']
+    value: 1.0
+    status: not-trade-governing
+    site: src/data/insider_signal.py
+    note: >-
+      The unit of the weight scale (opportunistic). It is the reference the 0.5 rung is a ratio of, and it feeds only a sort key where a common factor cancels; no value of it alone changes an ordering. The routine rung (0.0) is the cited finding that routine trades carry no signal.
+  - id: src.data.insider_signal.InsiderSignalClass.weight
+    value: 1.0
+    status: not-trade-governing
+    site: src/data/insider_signal.py
+    note: >-
+      Dataclass default never read in production: `InsiderSignalClass.of` always passes `_WEIGHTS[label]`. Searched src, ops, scripts and main.py; the only constructor is `of`.
+  - id: src.data.insider_signal._BAND_LOW
+    value: 0.1
+    status: not-trade-governing
+    site: src/data/insider_signal.py
+    note: >-
+      Column boundary of the Scott and Xu three-band holdings table; it labels a row and never admits or rejects one (`BANDS_ARE_REPORTING_ONLY`). Consumers by name across src, ops, scripts, main.py: only the label strings in insider_signal.py and the offline `src/insider_sale_measure.py`, which reads the stored band string. The band text can reach the PM prompt as evidence, so a different value changes wording, not any threshold.
+  - id: src.data.insider_signal._BAND_HIGH
+    value: 0.5
+    status: not-trade-governing
+    site: src/data/insider_signal.py
+    note: >-
+      Column boundary of the Scott and Xu three-band holdings table; it labels a row and never admits or rejects one (`BANDS_ARE_REPORTING_ONLY`). Consumers by name across src, ops, scripts, main.py: only the label strings in insider_signal.py and the offline `src/insider_sale_measure.py`, which reads the stored band string. The band text can reach the PM prompt as evidence, so a different value changes wording, not any threshold.
+  - id: src.data.insider_signal.InsiderSignalThresholds.cadence_max_gap_dispersion
+    value: 0.25
+    status: derived
+    site: src/data/insider_signal.py
+    derived_from: src.config.SmartMoneyConfig.insider_cadence_max_gap_dispersion
+    base_value: 0.25
+    note: >-
+      A second copy of the config default. Production never uses it: `SECForm4Provider` builds the thresholds from config, so it only applies to a caller that passes none. Drift is caught because the ledger value must equal each live literal and the base moving fails the build; the source row is itself `arbitrary`.
+  - id: src.data.insider_signal.InsiderSignalThresholds.cadence_max_mean_gap_days
+    value: 120
+    status: derived
+    site: src/data/insider_signal.py
+    derived_from: src.config.SmartMoneyConfig.insider_cadence_max_mean_gap_days
+    base_value: 120
+    note: >-
+      A second copy of the config default. Production never uses it: `SECForm4Provider` builds the thresholds from config, so it only applies to a caller that passes none. Drift is caught because the ledger value must equal each live literal and the base moving fails the build; the source row is itself `arbitrary`.
+  - id: src.data.insider_signal.InsiderSignalThresholds.cadence_min_mean_gap_days
+    value: 20
+    status: derived
+    site: src/data/insider_signal.py
+    derived_from: src.config.SmartMoneyConfig.insider_cadence_min_mean_gap_days
+    base_value: 20
+    note: >-
+      A second copy of the config default. Production never uses it: `SECForm4Provider` builds the thresholds from config, so it only applies to a caller that passes none. Drift is caught because the ledger value must equal each live literal and the base moving fails the build; the source row is itself `arbitrary`.
+  - id: src.data.insider_signal.InsiderSignalThresholds.calendar_routine_years
+    value: 3
+    status: derived
+    site: src/data/insider_signal.py
+    derived_from: src.config.SmartMoneyConfig.insider_calendar_routine_years
+    base_value: 3
+    note: >-
+      A second copy of the config default. Production never uses it: `SECForm4Provider` builds the thresholds from config, so it only applies to a caller that passes none. Drift is caught because the ledger value must equal each live literal and the base moving fails the build; the source row is itself `arbitrary`.
+  - id: src.data.insider_signal.InsiderSignalThresholds.min_cadence_trades
+    value: 3
+    status: derived
+    site: src/data/insider_signal.py
+    derived_from: src.config.SmartMoneyConfig.insider_min_cadence_trades
+    base_value: 3
+    note: >-
+      A second copy of the config default. Production never uses it: `SECForm4Provider` builds the thresholds from config, so it only applies to a caller that passes none. Drift is caught because the ledger value must equal each live literal and the base moving fails the build; the source row is itself `arbitrary`.
+  - id: src.data.context._SLOPE_LOOKBACK
+    value: 10
+    status: arbitrary
+    site: src/data/context.py
+    note: >-
+      Sessions over which a moving average is called rising or falling. It reaches a decision only as text in the technical analyst prompt (`format_context_block`) and as a minimum-history length in `src/universe_screen.py`, which imports it by name. No rule reads the slope. Searched src, ops, scripts, main.py by name and by the `ma*_slope_pct` fields; the backtest engine does not read it.
+    open_question: >-
+      Measure, over the recorded bars, the lookback at which slope sign best separates forward returns for each of the 20, 50 and 200 session averages, with the backtest data loader.
+    cost_while_unanswered: >-
+      The analyst sees a trend arrow computed on an unmeasured window, and the screen demands that many extra sessions of history.
+    unsettled:
+      why_no_route: >-
+        The lookback decides whether a moving average is rendered to the analyst as rising or falling, and no
+        recording keeps the arrow, the window it was computed over, or whether the reading moved a verdict. Settling
+        it needs a recording of slope sign against forward return per regime that nobody has specified or built, so
+        this row states the absence instead of naming a measurement nobody is going to take.
+  - id: src.data.context._CONSOLIDATION_WINDOW
+    value: 14
+    status: derived
+    site: src/data/context.py
+    derived_from: src.data.technical.ATR_PERIOD
+    base_value: 14
+    note: >-
+      Bound to the ATR period by name in the source; the shortest base that has a volatility reading of its own.
+  - id: src.data.context._MAX_GAPS_REPORTED
+    value: 3
+    status: arbitrary
+    site: src/data/context.py
+    note: >-
+      How many unfilled gaps the context block lists, nearest first. A rendering budget, but it decides which gaps the analyst prompt shows at all, so it is prompt content, not a trade rule. Searched src, ops, scripts, main.py by name and by the `unfilled_gaps` field.
+    open_question: >-
+      Measure how many gaps beyond the nearest changed any recorded analyst call, or take the count from the prompt line budget in tokens.
+    cost_while_unanswered: >-
+      A third gap that mattered is hidden from the analyst; cost is small and unmeasured.
+    unsettled:
+      why_no_route: >-
+        The cap decides which unfilled gaps an analyst is shown, and the only evidence that would settle it is the
+        pre-truncation gap list -- what was dropped -- which nothing records and no specification asks for. The cost
+        is small and itself unmeasured, so it has never been worth a build; recording that honestly is more visible
+        than a route to a recording nobody has scheduled.

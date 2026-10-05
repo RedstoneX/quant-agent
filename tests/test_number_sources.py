@@ -754,30 +754,18 @@ def test_item_90_classification_partitions_the_whole_ledger() -> None:
     assert len(flat) == len(set(flat))
 
 
-def test_the_settlement_route_ratchet_equals_its_own_record() -> None:
-    """Same shape, and the same reason, as `MAX_ARBITRARY_ENTRIES`.
+def test_the_settlement_route_ratchet_stores_nothing() -> None:
+    """The stored route-ratchet file is gone; rule 9 derives it instead."""
+    import src.number_sources as mod
+    from src.number_sources import REPO_ROOT, classification, load_ledger
 
-    A count kept as a hand-edited literal drifts from its own record, and a
-    count kept as a ceiling rewards deleting the row instead of answering it.
-    """
-    from src.number_sources import (
-        MAX_ROUTELESS_ARBITRARY,
-        ROUTE_RATCHET_HISTORY_PATH,
-        classification,
-        load_ledger,
-        load_ratchet_history,
-    )
-
-    history = load_ratchet_history(ROUTE_RATCHET_HISTORY_PATH)
-    assert history, "the route ratchet's history may never be emptied"
-    assert MAX_ROUTELESS_ARBITRARY == sum(int(c["delta"]) for c in history)
-    for change in history:
-        assert len(str(change.get("why", "")).split()) >= 12, (
-            "every delta states which row gained a route and what the "
-            "recording is; a bare number is how the old ceiling was gamed."
-        )
-    assert len(classification(load_ledger())["unclassified"]) == (
-        MAX_ROUTELESS_ARBITRARY
+    assert not (REPO_ROOT / "config" / "number_ledger_route_history.yaml").exists()
+    assert not hasattr(mod, "MAX_ROUTELESS_ARBITRARY")
+    assert not hasattr(mod, "ROUTE_RATCHET_HISTORY_PATH")
+    buckets = classification(load_ledger())
+    assert buckets["unsettled"], (
+        "the fourth state exists so that a number with no route can be "
+        "written down; an empty bucket means it is being dodged again."
     )
 
 

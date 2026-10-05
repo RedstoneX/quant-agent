@@ -100,11 +100,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 
-OPPORTUNISTIC = "opportunistic"
-ROUTINE = "routine"
-INDETERMINATE = "indeterminate"
 
-_WEIGHTS = {OPPORTUNISTIC: 1.0, INDETERMINATE: 0.5, ROUTINE: 0.0}
+_WEIGHTS = {"opportunistic": 1.0, "indeterminate": 0.5, "routine": 0.0}
+OPPORTUNISTIC, INDETERMINATE, ROUTINE = _WEIGHTS
 
 # Roles that carry published signal. CFO purchases beat CEO purchases; a
 # reporting owner with no officer/director/10% standing is a weaker source.

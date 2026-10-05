@@ -1215,4 +1215,17 @@ changes:
       backtest engine: it steps daily bars and models no intraday session
       clock, so the value never reaches code the engine runs and a sweep would
       be identical for the wrong reason. No value was changed.
-
+  - delta: 5
+    date: "2026-10-05"
+    why: |
+      Five numbers that were ALREADY LIVE and governing trades arrive on the
+      register for the first time: the Technical rating weight's `buy` and
+      `strong_buy` rungs, the insider `indeterminate` attention weight, the
+      market-context slope lookback and the unfilled-gap render cap. No value
+      moved and nothing changed in the trading path; the count rises because
+      the register is now telling the truth about five sites it was silent on.
+      All five are `arbitrary` with NO settlement route, recorded in the new
+      `unsettled:` state (src/number_unsettled.py) rather than carrying an
+      invented route: the rating rungs enter the conviction score unscaled so
+      their ratio decides outcomes, and the backtest engine cannot settle them
+      because it has no verdicts and does no ranking.
