@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import src.coverage_watchdog as _cw
+import src.drift_state as _ds
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +36,7 @@ def _drift_state_is_never_the_real_one(tmp_path, monkeypatch):
     queue on 2026-10-01.
     """
     monkeypatch.setattr(
-        _cw, "DEPLOY_DRIFT_STATE_PATH", tmp_path / "deploy_drift.json"
+        _ds, "DEPLOY_DRIFT_STATE_PATH", tmp_path / "deploy_drift.json"
     )
 
 
@@ -289,8 +289,8 @@ def test_no_test_leaves_a_drift_snapshot_in_the_repository():
     the whole board. This is the mechanical guard: the file must not exist
     once this module has run.
     """
-    assert not _cw.DEPLOY_DRIFT_STATE_PATH.exists(), (
-        f"{_cw.DEPLOY_DRIFT_STATE_PATH} was written by a test; point the "
+    assert not _ds.DEPLOY_DRIFT_STATE_PATH.exists(), (
+        f"{_ds.DEPLOY_DRIFT_STATE_PATH} was written by a test; point the "
         "writer at a temporary path instead"
     )
 

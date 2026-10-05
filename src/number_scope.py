@@ -116,6 +116,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     # `UniverseScreenConfig`.
     "src/universe_screen.py",
     "src/cost_table.py",
+    # 2026-10-05: the trading-day lookup lifted out of the coverage watchdog (its scoped
+    # home) so the read-only dashboard can share it; scoped so its number stays ledgered.
+    "src/trading_day.py",
     # 2026-10-05: the event-risk DATA module -- the FOMC schedule fetch/parse
     # and the earnings-proximity window every seat's prompt is built from.
     # The event-risk GATES already sit in scope via `EventRiskConfig`; this
