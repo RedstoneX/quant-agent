@@ -86,7 +86,7 @@ DONE WHEN:
   - [ ] until one of those exists a sale stays NEUTRALISED at 0 and no agent picks the boundary number — the standing no-arbitrary-numbers and no-fitting rules settle that, this is not an appetite dial
 detail: docs/board_notes/item-063.md
 
-**70. One underived `1.0` does two exit jobs — OPEN, filed 2026-09-14. [4 of 14 ticked; 92, 93 buildable; 103 blocked (desk OFF).]** The noise-band ATR multiple sets when an adverse move stops being noise and is reused as the margin in the structural-protection check; a separate absolute minimum stop multiple, also 1.0, sets how tight a stop may be.
+**70. One underived `1.0` does two exit jobs — OPEN, filed 2026-09-14. [7 of 15 ticked; the two SOURCE boxes below are the only ones left that are not desk-OFF-blocked, and neither may be closed by inventing a value; 103 blocked (desk OFF).]** The noise-band ATR multiple sets when an adverse move stops being noise and is reused as the margin in the structural-protection check; a separate absolute minimum stop multiple, also 1.0, sets how tight a stop may be.
 
 DONE WHEN:
   - [ ] the noise-band ATR multiple carries a published measurement of the quantity it actually bounds — the adverse move at which a move stops being ordinary daily wobble — or a named derivation, recorded in `config/number_ledger.yaml` with that source
@@ -104,6 +104,7 @@ DONE WHEN:
 (prose moved: docs/board_notes/item-070.md)
   - [x] 2026-10-04, THE NOISE BAND'S SETTLEMENT RECORDING WAS CENSORED BY CONSTRUCTION, AND IS NOT ANY MORE (`src/pipeline_exits.py`, `src/risk/exit_guard.py`; …(rest: docs/board_notes/item-070.md)
 (prose moved: docs/board_notes/item-070.md)
+  - [x] 2026-10-05, THE SEPARATION IS NOW GUARDED AT ALL FOUR NAMES, INCLUDING THE NEWEST (`tests/test_atr_multiple_separation.py`): `FALLBACK_PROTECTION_ATR_MULTIPLE`, split out of the noise band on 2026-10-04, was pinned only by its own call-site test and by NOTHING in the four-way separation guard, so its ledger row could have been re-tied to the noise band or re-marked sourced without any test noticing — the one layer at which a re-collapse has actually happened here before. The guard now covers all four 1.0 multiples (noise band, break margin, fallback protection margin, absolute minimum stop) for value, export, own-ledger-row and `status: arbitrary`, and a new case fails if any exit-guard row declares `derived_from` another exit-guard row, which is the collapse one layer up: deriving one would silently move the other while every value assertion still passed. Proven red by adding that `derived_from` to the fallback row and green after restoring it; 12 tests pass across the two separation files. RECORD-TRUTH ONLY — no constant moved, no ledger row changed, and nothing about when the desk sells moved.
   - [ ] STILL OPEN and NOT this item's to close: the absolute minimum stop multiple named in the second criterion above is the same number item 90 owns (min-stop ATR re-derivation), which is in flight elsewhere; it was deliberately not touched here to avoid two agents moving one live-money constant.
 detail: docs/board_notes/item-070.md
 
@@ -358,8 +359,5 @@ detail: docs/board_notes/item-232.md
 
 - news-narrative factual drift; `actual_provider` attribution oddity.
 
-**231. Every owner-facing timestamp shows a time but no date — DONE, filed 2026-10-02 by the owner.** He reads the alerts on a phone hours after they fire, and a bare time cannot be placed once he scrolls back. [measured 2026-10-02, grep of `src/`] 24 call sites format a bare 12-hour time; exactly one — the notifier session header — prepends the date. Fix at the source: one shared formatter emitting date + time, used by every site that currently emits time alone, so a newly written alert cannot omit the date. Keep the existing 12-hour, no-leading-zero behaviour and the glibc caveat already documented in the sections module. This changes message TEXT only; Telegram stays muted and no new alerts are added.
-DONE WHEN:
-- [x] one shared date+time formatter exists and every previously time-only owner-facing site calls it. (`fmt_time_12h` serves trader_feed, notifier and now the health report window, which used to say "5:00am to 9:00am today"; `inflight.py` already shows the full date; the log_health state-file stamp is machine-read, not owner-facing.)
-- [x] a test fails if any owner-facing timestamp is emitted without a date. (`tests/test_owner_timestamps_carry_date.py` now actually scans `log_health.py` and `inflight.py`; before, it looked for directories of those names, found none, and silently covered nothing.)
 - retired queue: 188
+- retired queue: 231

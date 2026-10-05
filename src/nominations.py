@@ -61,6 +61,37 @@ def _cap_per_seat(nominations: list[Nomination], cap: int) -> list[Nomination]:
     return ranked[:cap]
 
 
+def _merge_across_seats(
+    nominations_by_seat: dict[str, list[Nomination]],
+    *,
+    max_per_seat: int,
+) -> dict[str, NominationCandidate]:
+    """Per-seat cap, then cross-seat merge, in a fixed seat order.
+
+    Sorted seat names so merge order never depends on the caller's dict
+    construction order — seats collected as {"macro_analyst": [...],
+    "news_analyst": [...]} must merge exactly as the reverse order does.
+    """
+    merged: dict[str, NominationCandidate] = {}
+    for seat in sorted(nominations_by_seat):
+        capped = _cap_per_seat(nominations_by_seat[seat] or [], max_per_seat)
+        for nomination in capped:
+            symbol = nomination.symbol.strip().upper()
+            if not symbol:
+                continue
+            candidate = merged.get(symbol)
+            if candidate is None:
+                candidate = NominationCandidate(symbol=symbol, conviction=nomination.conviction)
+                merged[symbol] = candidate
+            if seat not in candidate.seats:
+                candidate.seats.append(seat)
+            candidate.observations[seat] = nomination.observation
+            if _conviction_rank(nomination.conviction) > _conviction_rank(candidate.conviction):
+                candidate.conviction = nomination.conviction
+
+    return merged
+
+
 def select_nominations(
     nominations_by_seat: dict[str, list[Nomination]],
     *,
@@ -80,29 +111,70 @@ def select_nominations(
     of independent nominating seats (more agreement outranks one seat's
     say-so), then alphabetically by symbol. No randomness anywhere.
     """
-    merged: dict[str, NominationCandidate] = {}
-    # Sort seat names so merge order never depends on the caller's dict
-    # construction order — e.g. seats collected as
-    # {"macro_analyst": [...], "news_analyst": [...]} must select exactly
-    # the same candidates as {"news_analyst": [...], "macro_analyst": [...]}.
-    for seat in sorted(nominations_by_seat):
-        capped = _cap_per_seat(nominations_by_seat[seat] or [], max_per_seat)
-        for nomination in capped:
-            symbol = nomination.symbol.strip().upper()
-            if not symbol:
-                continue
-            candidate = merged.get(symbol)
-            if candidate is None:
-                candidate = NominationCandidate(symbol=symbol, conviction=nomination.conviction)
-                merged[symbol] = candidate
-            if seat not in candidate.seats:
-                candidate.seats.append(seat)
-            candidate.observations[seat] = nomination.observation
-            if _conviction_rank(nomination.conviction) > _conviction_rank(candidate.conviction):
-                candidate.conviction = nomination.conviction
-
+    merged = _merge_across_seats(nominations_by_seat, max_per_seat=max_per_seat)
     ranked = sorted(
         merged.values(),
         key=lambda c: (-_conviction_rank(c.conviction), -len(c.seats), c.symbol),
     )
     return ranked[:max_total]
+
+
+def measure_cap_demand(
+    nominations_by_seat: dict[str, list[Nomination]],
+    *,
+    max_per_seat: int,
+    max_total: int,
+) -> dict:
+    """What the two nomination caps actually cost on this run.
+
+    The ledger rows for `nominations.max_per_seat_per_run` (3) and
+    `nominations.max_total_per_run` (6) are both unsourced round numbers,
+    and neither can be settled by argument: the open question is whether
+    offered demand ever REACHES the cap, and what gets discarded when it
+    does. The evidence already persisted (`raw_by_seat`, plus the symbols
+    that survived) cannot answer that, because the surviving set is taken
+    after the external-admission gate too — a name missing from it may
+    have been refused by the gate rather than cut by a cap.
+
+    So this records the cut itself, at the only place it happens: per
+    seat, how many were offered, how many the per-seat cap kept and which
+    symbols it dropped with the conviction each carried; then, after the
+    cross-seat merge, how many distinct names stood and which the global
+    cap dropped. Pure measurement — nothing here changes what is selected.
+    A run of sessions where neither `per_seat_bound` nor `total_bound` is
+    ever true retires both caps; a run where they bind constantly makes
+    them named affordability limits with an observed demand beside them.
+    """
+    per_seat: dict[str, dict] = {}
+    for seat in sorted(nominations_by_seat):
+        offered = list(nominations_by_seat[seat] or [])
+        kept = _cap_per_seat(offered, max_per_seat)
+        kept_symbols = {n.symbol.strip().upper() for n in kept}
+        dropped = [n for n in offered if n.symbol.strip().upper() not in kept_symbols]
+        per_seat[seat] = {
+            "offered": len(offered),
+            "kept": len(kept),
+            "dropped": [
+                {"symbol": n.symbol.strip().upper(), "conviction": n.conviction}
+                for n in sorted(dropped, key=lambda n: n.symbol)
+            ],
+            "bound": len(offered) > max_per_seat,
+        }
+
+    merged = _merge_across_seats(nominations_by_seat, max_per_seat=max_per_seat)
+    ranked = sorted(
+        merged.values(),
+        key=lambda c: (-_conviction_rank(c.conviction), -len(c.seats), c.symbol),
+    )
+    cut = ranked[max_total:]
+    return {
+        "caps": {"max_per_seat": max_per_seat, "max_total": max_total},
+        "per_seat": per_seat,
+        "per_seat_bound": sorted(s for s, d in per_seat.items() if d["bound"]),
+        "distinct_after_merge": len(ranked),
+        "total_bound": len(ranked) > max_total,
+        "total_dropped": [
+            {"symbol": c.symbol, "conviction": c.conviction, "seats": sorted(c.seats)}
+            for c in cut
+        ],
+    }
