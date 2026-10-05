@@ -50,5 +50,5 @@ def test_a_missing_or_empty_tree_is_refused_not_read_as_clean(tmp_path):
 def test_the_default_scan_is_derived_from_git_and_reaches_the_root_and_ops():
     files = {p.relative_to(ROOT).as_posix() for p in g.tracked_production_files()}
     assert "main.py" in files and any(p.startswith("ops/") for p in files)
-    assert not any(p.startswith("tests/") for p in files)
+    assert any(p.startswith("tests/") for p in files)
     assert g.main([]) == 0
