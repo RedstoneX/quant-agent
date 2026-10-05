@@ -19,14 +19,26 @@ measures of the same files, with the same rule and no stored record:
 * non-whitespace characters -- invariant under wrapping, joining and
   re-indenting, so no re-layout can move it; a file over the floor may not
   gain any against ``origin/main``;
-* lines wider than ``WIDTH`` -- a file may not gain one (by identity: path +
-  the line's text) against ``origin/main``, so a line widened past the limit
-  fails and passes once it is wrapped. Pre-existing wide lines pass.
+* lines wider than the width fence -- a file may not gain one (by identity:
+  path + the line's text) against ``origin/main``, so a line widened past the
+  fence fails and passes once it is wrapped. Pre-existing wide lines pass.
+
+NEITHER FENCE IS WRITTEN DOWN. The line ceiling and the width fence were once
+two integers measured on one day (2561 and 120) and committed -- stored
+bookkeeping, and made-up numbers, the same defect twice: they rot as the tree
+moves and an author can edit them to pass. They are now DERIVED at check time
+from the population itself, twice: once over the working tree's tracked ``.py``
+files and once over ``origin/main``'s, and the TIGHTER of the two is used. That
+clamp is what closes the obvious attack on a derived fence -- deleting many
+small files raises Q3, and padding lines to just under the fence raises the
+width percentile, but neither can move the fence because the trunk's own value
+still binds. A branch may only make the fence stricter, never looser.
 
 Run it directly: ``python -m scripts.file_size_guard``.
 """
 from __future__ import annotations
 
+import math
 import sys
 
 from collections import Counter
@@ -37,23 +49,21 @@ from scripts.guard_reference import (
     TRUNK,
     added_sites,
     trunk_blobs,
+    trunk_paths,
     working_paths,
 )
 
 # Files at or under this many lines are not individually ratcheted: small files
 # may grow until they reach it.
 FLOOR = 400
-# Hard ceiling for any file not already above it on the trunk.
-# 2561 = Q3 + 3*IQR of all 541 tracked .py files (Q1 197.5, Q3 788.5): the
-# statistical "extreme outlier" fence, measured 2026-10-01 on origin/main.
-CEILING = 2561
-# Widest a line may be before it counts as "wide". 120 is the 99.9th percentile
-# of the 410,999 lines in the 1,022 tracked .py files on origin/main (p99 = 90,
-# p99.9 = 121; 416 lines exceed it), measured 2026-10-04. It is a RATCHET, not
-# a ceiling: the trunk's existing wide lines pass, a new one never does.
-WIDTH = 120
+# The line ceiling is the "extreme outlier" fence of the file-size
+# distribution, Q3 + 3*IQR; the width fence is the 99.9th percentile of line
+# widths. Both are recomputed on every run from both trees -- see the clamp in
+# ``fences``. Neither is stored.
+CEILING_IQR_MULTIPLE = 3.0
+WIDTH_PERCENTILE = 0.999
 
-Wide = tuple[str, str]  # (path, stripped text of a line wider than WIDTH)
+Wide = tuple[str, str]  # (path, stripped text of a line wider than the fence)
 
 
 def _count(text: str) -> int:
@@ -65,8 +75,54 @@ def _ink(text: str) -> int:
     return sum(1 for ch in text if not ch.isspace())
 
 
-def _wide(path: str, text: str) -> Counter:
-    return Counter((path, ln.strip()) for ln in text.splitlines() if len(ln) > WIDTH)
+def _wide(path: str, text: str, width: int) -> Counter:
+    return Counter((path, ln.strip()) for ln in text.splitlines() if len(ln) > width)
+
+
+def _quantile(values: list[int], q: float) -> float:
+    """Linear-interpolated quantile of an already-sorted list."""
+    pos = q * (len(values) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(values) - 1)
+    return values[lo] + (values[hi] - values[lo]) * (pos - lo)
+
+
+def line_ceiling(texts: list[str]) -> int:
+    """Q3 + 3*IQR of one population's file lengths; never below the floor."""
+    sizes = sorted(_count(t) for t in texts)
+    if not sizes:
+        raise ReferenceUnavailable(
+            "no tracked .py files to derive the line ceiling from; this guard "
+            "derives its fences and REFUSES rather than invent one."
+        )
+    q1, q3 = _quantile(sizes, 0.25), _quantile(sizes, 0.75)
+    return max(FLOOR, int(q3 + CEILING_IQR_MULTIPLE * (q3 - q1)))
+
+
+def width_fence(texts: list[str]) -> int:
+    """The 99.9th percentile line width of one population, by nearest rank."""
+    widths = sorted(len(ln) for t in texts for ln in t.splitlines())
+    if not widths:
+        raise ReferenceUnavailable(
+            "no tracked .py lines to derive the width fence from; this guard "
+            "derives its fences and REFUSES rather than invent one."
+        )
+    return widths[math.ceil(WIDTH_PERCENTILE * len(widths)) - 1]
+
+
+def fences(now: list[str], was: list[str]) -> tuple[int, int]:
+    """(line ceiling, width fence): the TIGHTER of the two populations.
+
+    Taking the minimum is the whole defence. A derived fence that read only the
+    working tree could be dragged outwards -- delete enough small files and Q3
+    rises, pad enough lines to one under the fence and the percentile rises.
+    The trunk's own value is computed in the same run and binds, so a branch
+    can only tighten.
+    """
+    return (
+        min(line_ceiling(now), line_ceiling(was)),
+        min(width_fence(now), width_fence(was)),
+    )
 
 
 def working_texts() -> dict[str, str]:
@@ -92,8 +148,14 @@ def trunk_sizes(paths: list[str]) -> dict[str, int]:
 
 def violations() -> list[str]:
     """Every file this working tree made worse than ``origin/main``, as deltas."""
-    now = working_sizes()
-    before = trunk_sizes(sorted(now))
+    now_text = working_texts()
+    # The trunk-side population is the WHOLE trunk, not just the paths present
+    # here: a branch that deleted half the small files must not thereby change
+    # the reference distribution it is judged against.
+    was_text = trunk_blobs(sorted(set(now_text) | set(trunk_paths(".py"))))
+    ceiling, width = fences(list(now_text.values()), list(was_text.values()))
+    now = {p: _count(t) for p, t in now_text.items()}
+    before = {p: _count(t) for p, t in was_text.items()}
     bad: list[str] = []
     for path, size in sorted(now.items()):
         was = before.get(path)
@@ -109,21 +171,19 @@ def violations() -> list[str]:
                 f"{path}: grew from {was} to {size} lines (+{size - was}) "
                 f"against {TRUNK}. Split it instead of growing it."
             )
-        elif size > CEILING >= was:
+        elif size > ceiling >= was:
             bad.append(
-                f"{path}: crossed the {CEILING}-line hard ceiling, {was} -> {size} "
-                f"on {TRUNK}'s reckoning."
+                f"{path}: crossed the {ceiling}-line hard ceiling derived from "
+                f"this run's two trees, {was} -> {size} on {TRUNK}'s reckoning."
             )
-    now_text = working_texts()
-    was_text = trunk_blobs(sorted(now_text))
     wide_now: Counter = Counter()
     wide_was: Counter = Counter()
     for path, text in sorted(now_text.items()):
-        wide_now.update(_wide(path, text))
+        wide_now.update(_wide(path, text, width))
         old = was_text.get(path)
         if old is None:
             continue
-        wide_was.update(_wide(path, old))
+        wide_was.update(_wide(path, old, width))
         ink, had = _ink(text), _ink(old)
         if _count(text) > FLOOR and ink > had:
             bad.append(
@@ -133,8 +193,8 @@ def violations() -> list[str]:
             )
     for (path, text), n, before_n in added_sites(wide_now, wide_was):
         bad.append(
-            f"{path}: new line wider than {WIDTH} characters ({n} now, "
-            f"{before_n} on {TRUNK}): {text[:60]!r}... Wrap it."
+            f"{path}: new line wider than the derived {width}-character fence "
+            f"({n} now, {before_n} on {TRUNK}): {text[:60]!r}... Wrap it."
         )
     return bad
 
@@ -149,8 +209,9 @@ def main(argv: list[str] | None = None) -> int:
         print("Files grew against %s:\n%s" % (TRUNK, "\n".join(bad)), file=sys.stderr)
         return 1
     print(
-        f"file-size ratchet: no tracked .py file grew in lines, non-whitespace "
-        f"characters or lines wider than {WIDTH} against {TRUNK}."
+        "file-size ratchet: no tracked .py file grew in lines, non-whitespace "
+        f"characters or over-wide lines against {TRUNK}; both fences derived "
+        "at check time from both trees, nothing stored."
     )
     return 0
 
