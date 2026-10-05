@@ -9430,157 +9430,157 @@ numbers:
     value: 0.6
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary of the sweep; a research design choice with no derivation, and it changes only which rows are called out-of-sample."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary of the sweep; a research design choice with no derivation, and it changes only which rows are called out-of-sample. Value defined at ops/research/item55_level_sweep.py::SPLIT."
   - id: ops.research.item55_level_sweep.TOLERANCES[0]
     value: 0.5
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.TOLERANCES[1]
     value: 1.0
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.TOLERANCES[2]
     value: 2.0
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.TOLERANCES[3]
     value: 3.0
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.TOLERANCES[4]
     value: 5.0
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the level-clustering tolerance swept (0.5, 1, 2, 3, 5); a sweep grid is the set of values being measured, not a chosen operating value. Value defined at ops/research/item55_level_sweep.py::TOLERANCES."
   - id: ops.research.item55_level_sweep.WINDOWS[0]
     value: 3
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value. Value defined at ops/research/item55_level_sweep.py::WINDOWS."
   - id: ops.research.item55_level_sweep.WINDOWS[1]
     value: 5
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value. Value defined at ops/research/item55_level_sweep.py::WINDOWS."
   - id: ops.research.item55_level_sweep.WINDOWS[2]
     value: 10
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value. Value defined at ops/research/item55_level_sweep.py::WINDOWS."
   - id: ops.research.item55_level_sweep.WINDOWS[3]
     value: 25
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One grid point of the pivot window swept (3, 5, 10, 25 bars); a sweep grid, not an operating value. Value defined at ops/research/item55_level_sweep.py::WINDOWS."
   - id: ops.research.item55_level_sweep.rate_ci:factor[0]
     value: 1.96
     status: not-trade-governing
     site: ops/research/item55_level_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. The 95 percent two-sided normal quantile in a hit-rate confidence half-width; a standard statistical constant, used only to print an interval."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. The 95 percent two-sided normal quantile in a hit-rate confidence half-width; a standard statistical constant, used only to print an interval. Value defined at ops/research/item55_level_sweep.py::rate_ci."
   - id: ops.research.item55_volclustered_control.REPLICATIONS
     value: 20
     status: not-trade-governing
     site: ops/research/item55_volclustered_control.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Count of control draws; the comment says a sample size, not a threshold. Too few draws widen the control's noise but cannot move any live number."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Count of control draws; the comment says a sample size, not a threshold. Too few draws widen the control's noise but cannot move any live number. Value defined at ops/research/item55_volclustered_control.py::REPLICATIONS."
   - id: ops.research.min_stop_atr_sweep.CONTROL_SEED
     value: 20261004
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. A random seed for the shuffled control; reproducibility only, it carries no magnitude."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. A random seed for the shuffled control; reproducibility only, it carries no magnitude. Value defined at ops/research/min_stop_atr_sweep.py::CONTROL_SEED."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[0]
     value: 5
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[1]
     value: 10
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[2]
     value: 20
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[3]
     value: 40
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.min_stop_atr_sweep.HORIZONS[4]
     value: 60
     status: not-trade-governing
     site: ops/research/min_stop_atr_sweep.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward horizon in sessions of the minimum-stop sweep; a measurement grid. The stop multiple itself was ruled separately and is not read from here. Value defined at ops/research/min_stop_atr_sweep.py::HORIZONS."
   - id: ops.research.noise_band_holding_scaling.SPLIT
     value: 0.6
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary for the holding-length scan; a research design choice with no derivation."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Discovery versus out-of-sample boundary for the holding-length scan; a research design choice with no derivation. Value defined at ops/research/noise_band_holding_scaling.py::SPLIT."
   - id: ops.research.noise_band_holding_scaling.ATR_WINDOW
     value: 14
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. ATR averaging window; the comment says it follows the desk's own ATR convention. Not verified here against src/data/technical.py ATR_PERIOD by this script, so treat the equality as claimed, not proven."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. ATR averaging window; the comment says it follows the desk's own ATR convention. Not verified here against src/data/technical.py ATR_PERIOD by this script, so treat the equality as claimed, not proven. Value defined at ops/research/noise_band_holding_scaling.py::ATR_WINDOW."
   - id: ops.research.noise_band_holding_scaling.HOLDS[0]
     value: 1
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[1]
     value: 2
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[2]
     value: 5
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[3]
     value: 10
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[4]
     value: 20
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[5]
     value: 40
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.HOLDS[6]
     value: 60
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One holding length in sessions scanned; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::HOLDS."
   - id: ops.research.noise_band_holding_scaling.FORWARDS[0]
     value: 10
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::FORWARDS."
   - id: ops.research.noise_band_holding_scaling.FORWARDS[1]
     value: 20
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::FORWARDS."
   - id: ops.research.noise_band_holding_scaling.FORWARDS[2]
     value: 60
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. One forward-return horizon in sessions; a measurement grid. Value defined at ops/research/noise_band_holding_scaling.py::FORWARDS."
   - id: ops.research.noise_band_holding_scaling.DECILES
     value: 10
     status: not-trade-governing
     site: ops/research/noise_band_holding_scaling.py
-    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Number of equal-count buckets the scan sorts by; a reporting granularity, not a threshold."
+    note: "Offline research script; no module under src/, scripts/ or main.py imports it (grep for the module name finds only other ops/research files and tests), so no order, size, stop or exit reads it. Number of equal-count buckets the scan sorts by; a reporting granularity, not a threshold. Value defined at ops/research/noise_band_holding_scaling.py::DECILES."
 
   # 2026-10-05 numbers sweep 2: offline model-benchmark fixtures, the benchmark's sizing mirror and the CI shard weights.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['high'][0]
@@ -9592,6 +9592,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['high'][1]
     value: 4.0
     site: ops/model_policy/deterministic_selection.py
@@ -9601,6 +9602,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['low'][0]
     value: 0.5
     site: ops/model_policy/deterministic_selection.py
@@ -9610,6 +9612,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['low'][1]
     value: 1.0
     site: ops/model_policy/deterministic_selection.py
@@ -9619,6 +9622,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['medium'][0]
     value: 1.0
     site: ops/model_policy/deterministic_selection.py
@@ -9628,6 +9632,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.CONVICTION_BANDS['medium'][1]
     value: 2.5
     site: ops/model_policy/deterministic_selection.py
@@ -9637,6 +9642,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::CONVICTION_BANDS.
   - id: ops.model_policy.deterministic_selection.MAX_POSITION_RISK_PCT
     value: 5.0
     site: ops/model_policy/deterministic_selection.py
@@ -9646,6 +9652,7 @@ numbers:
       a live value that is ledgered at its own live site and pinned equal to config/settings.yaml or the
       live prompt by tests/test_deterministic_selection.py. No src/, main.py or scripts/ module imports
       this file (grep 2026-10-05), so it sizes no order.
+      Value defined at ops/model_policy/deterministic_selection.py::MAX_POSITION_RISK_PCT.
   - id: ops.model_policy.deterministic_selection.RR_FLOOR
     value: 1.5
     site: ops/model_policy/deterministic_selection.py
@@ -9677,6 +9684,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_POSITION_HISTORY.
   - id: ops.model_policy.scenarios._DRAWDOWN_POSITION_HISTORY['NVDA']['days_held']
     value: 30.0
     site: ops/model_policy/scenarios.py
@@ -9687,6 +9695,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_POSITION_HISTORY.
   - id: ops.model_policy.scenarios._DRAWDOWN_RECENT_PERFORMANCE['rolling_20d_pct']
     value: -2.1
     site: ops/model_policy/scenarios.py
@@ -9697,6 +9706,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._DRAWDOWN_RECENT_PERFORMANCE['rolling_5d_pct']
     value: -4.6
     site: ops/model_policy/scenarios.py
@@ -9707,6 +9717,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._DRAWDOWN_RECENT_PERFORMANCE['trailing_days']
     value: 24.0
     site: ops/model_policy/scenarios.py
@@ -9717,6 +9728,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_DRAWDOWN_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['consumer_sentiment']['current']
     value: 58.2
     site: ops/model_policy/scenarios.py
@@ -9727,6 +9739,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['credit_spread']['change_bps']
     value: 63.0
     site: ops/model_policy/scenarios.py
@@ -9737,6 +9750,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['credit_spread']['current_bps']
     value: 412.0
     site: ops/model_policy/scenarios.py
@@ -9747,6 +9761,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['fed_funds_rate']['current']
     value: 4.25
     site: ops/model_policy/scenarios.py
@@ -9757,6 +9772,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['inflation']['core_cpi_yoy']
     value: 3.4
     site: ops/model_policy/scenarios.py
@@ -9767,6 +9783,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['inflation']['headline_cpi_yoy']
     value: 3.1
     site: ops/model_policy/scenarios.py
@@ -9777,6 +9794,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['treasury']['spread']
     value: 0.21
     site: ops/model_policy/scenarios.py
@@ -9787,6 +9805,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['treasury']['ten_year']
     value: 4.62
     site: ops/model_policy/scenarios.py
@@ -9797,6 +9816,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['treasury']['two_year']
     value: 4.41
     site: ops/model_policy/scenarios.py
@@ -9807,6 +9827,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['unemployment']['current']
     value: 4.4
     site: ops/model_policy/scenarios.py
@@ -9817,6 +9838,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['vix']['change_pct']
     value: 18.2
     site: ops/model_policy/scenarios.py
@@ -9827,6 +9849,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['vix']['current']
     value: 27.4
     site: ops/model_policy/scenarios.py
@@ -9837,6 +9860,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._MACRO_SUMMARY['vix']['percentile_1y']
     value: 88.0
     site: ops/model_policy/scenarios.py
@@ -9847,6 +9871,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios._PM_CASH
     value: 2400.0
     site: ops/model_policy/scenarios.py
@@ -9857,6 +9882,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_PM_CASH.
   - id: ops.model_policy.scenarios._PM_TOTAL_VALUE
     value: 42000.0
     site: ops/model_policy/scenarios.py
@@ -9867,6 +9893,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_PM_TOTAL_VALUE.
   - id: ops.model_policy.scenarios._RISK_POSITION_HISTORY['NVDA']['days_held']
     value: 30.0
     site: ops/model_policy/scenarios.py
@@ -9877,6 +9904,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_POSITION_HISTORY.
   - id: ops.model_policy.scenarios._RISK_POSITION_HISTORY['XLE']['days_held']
     value: 46.0
     site: ops/model_policy/scenarios.py
@@ -9887,6 +9915,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_POSITION_HISTORY.
   - id: ops.model_policy.scenarios._RISK_RECENT_PERFORMANCE['rolling_20d_pct']
     value: 1.4
     site: ops/model_policy/scenarios.py
@@ -9897,6 +9926,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._RISK_RECENT_PERFORMANCE['rolling_5d_pct']
     value: -0.8
     site: ops/model_policy/scenarios.py
@@ -9907,6 +9937,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._RISK_RECENT_PERFORMANCE['trailing_days']
     value: 24.0
     site: ops/model_policy/scenarios.py
@@ -9917,6 +9948,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_RISK_RECENT_PERFORMANCE.
   - id: ops.model_policy.scenarios._SELECTION_SHAPE_EXPECTED['actionable']
     value: 34.0
     site: ops/model_policy/scenarios.py
@@ -10037,6 +10069,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['credit_spread']['current_bps']
     value: 263.0
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10047,6 +10080,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['fed_funds_rate']['current']
     value: 3.63
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10057,6 +10091,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['inflation']['core_cpi_yoy']
     value: 2.79
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10067,6 +10102,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['inflation']['headline_cpi_yoy']
     value: 3.54
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10077,6 +10113,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['treasury']['spread']
     value: 0.41
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10087,6 +10124,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['treasury']['ten_year']
     value: 4.75
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10097,6 +10135,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['treasury']['two_year']
     value: 4.34
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10107,6 +10146,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['unemployment']['current']
     value: 4.1
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10117,6 +10157,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['vix']['change_pct']
     value: -0.1
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10127,6 +10168,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['vix']['current']
     value: 14.92
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10137,6 +10179,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: ops.model_policy.scenarios_midday_exit._REVIEW_MACRO_SUMMARY['vix']['percentile_1y']
     value: 12.0
     site: ops/model_policy/scenarios_midday_exit.py
@@ -10147,6 +10190,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios_midday_exit.py::_REVIEW_MACRO_SUMMARY.
   - id: scripts.ci_shard.SECONDS_PER_TEST
     value: 0.034
     site: scripts/ci_shard.py
@@ -10373,6 +10417,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_bars.
   - id: ops.model_policy.scenarios._bars(noise)[1]
     value: 0.4
     site: ops/model_policy/scenarios.py
@@ -10383,6 +10428,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_bars.
   - id: ops.model_policy.scenarios._bars(noise)[2]
     value: -0.3
     site: ops/model_policy/scenarios.py
@@ -10403,6 +10449,7 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+      Value defined at ops/model_policy/scenarios.py::_bars.
   - id: ops.model_policy.scenarios._bars(noise)[4]
     value: -0.1
     site: ops/model_policy/scenarios.py
