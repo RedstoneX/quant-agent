@@ -1,7 +1,6 @@
 """A module may not derive a day in Python and also date rows with SQL 'now'.
 
-Rule and rationale: scripts/one_clock_guard.py. Stores no baseline; compares
-against origin/main at check time.
+Rule and rationale: scripts/one_clock_guard.py. Absolute: no baseline, no trunk delta.
 """
 from __future__ import annotations
 
@@ -19,12 +18,9 @@ def test_tree_adds_no_mixed_clock_site():
     assert g.violations() == []
 
 
-def test_trunk_is_measured_and_mixed_modules_exist():
-    assert g.trunk_sites(g.scanned_paths()), "reference read is dead or nothing measured"
-
-
 def test_planted_mixed_module_is_caught(monkeypatch):
     now = g.working_sites()
+    assert g.violations() == []
     for kind, line, scope, src in g.scan_sites("src/planted.py", MIXED):
         now[("src/planted.py", kind, scope, src)] = [line]
     monkeypatch.setattr(g, "working_sites", lambda: now)
@@ -45,3 +41,12 @@ def test_one_clock_alone_is_not_flagged():
 def test_docstring_mentions_are_ignored():
     src = 'def f():\n    """uses datetime(\'now\')"""\n    return et_today()\n'
     assert g.scan_sites("src/a.py", src) == []
+
+
+def test_exemption_is_by_path_not_count(monkeypatch):
+    assert set(g.EXEMPT) == {"src/cost_circuit/clock.py"}
+    now = {}
+    for kind, line, scope, src in g.scan_sites("src/other.py", MIXED):
+        now[("src/other.py", kind, scope, src)] = [line]
+    monkeypatch.setattr(g, "working_sites", lambda: now)
+    assert g.violations()

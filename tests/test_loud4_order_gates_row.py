@@ -12,7 +12,7 @@ import pytest
 from src.execution.order_gates import quantity_refusal_live
 from src.storage.db import Database
 
-KIND = "guarded:broker.order_gates.positions_read"
+KIND = "guarded:execution.order_gates.positions_read"
 
 
 @pytest.fixture
