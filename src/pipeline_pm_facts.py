@@ -5,7 +5,12 @@ ceiling. Re-exported from there, so every existing import still works.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+
+from src.risk.metrics import DRIFT_PNL_PCT, DRIFT_WEIGHT_PCT
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -163,12 +168,15 @@ class PMFacts:
             )
 
         return f"""### Calibration (last 30d closed trades)
-- n={self.closed_trades_30d} · win_rate={_pct(self.win_rate_30d_pct)} · avg_return={_pct(self.avg_return_30d_pct)} · avg_hold={_num(self.avg_hold_days_30d)}d
+- n={self.closed_trades_30d} · win_rate={_pct(self.win_rate_30d_pct)} · avg_return={_pct(self.avg_return_30d_pct)} \
+· avg_hold={_num(self.avg_hold_days_30d)}d
 
 {rm_block}
 
 ### Book State (current)
-- invested={self.invested_pct:.1f}% (capital at work, unsigned) · net direction={self.net_exposure_pct:+.1f}% (leverage-aware; negative = net short) · cash={self.cash_pct:.1f}% · positions={self.position_count}
+- invested={self.invested_pct:.1f}% (capital at work, unsigned) \
+· net direction={self.net_exposure_pct:+.1f}% (leverage-aware; negative = net short) \
+· cash={self.cash_pct:.1f}% · positions={self.position_count}
 - age buckets: <5d={self.positions_under_5d} · 5-15d={self.positions_5_to_15d} · >15d={self.positions_over_15d}
 - drift-flagged (weight>{DRIFT_WEIGHT_PCT:g}% + P&L>{DRIFT_PNL_PCT:g}%): {self.positions_drift_flagged}
 - sector weights — LONG side (top 8, gross % of equity):
@@ -180,7 +188,8 @@ class PMFacts:
   hedge — it is two opportunities that share a label.
 
 ### Signal Freshness (TA output this session)
-- signals={self.tech_signals_count} · median_age={_num(self.tech_signals_median_age_days)}d · stale(≥8d)={self.tech_signals_stale_count}
+- signals={self.tech_signals_count} · median_age={_num(self.tech_signals_median_age_days)}d \
+· stale(≥8d)={self.tech_signals_stale_count}
 
 ### System Performance
 - rolling 5d={_pct(self.rolling_5d_pct)} · 20d={_pct(self.rolling_20d_pct)}
