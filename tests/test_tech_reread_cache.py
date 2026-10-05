@@ -9,7 +9,7 @@ every path that must fall back to asking the seat.
 import pytest
 
 from src.data.tech_store import TechStore
-from src.evidence_gate import READ_CARRIED
+from src.evidence_freshness import READ_CARRIED
 from src.models import TechAnalysisResult
 from src.research_throttle import (
     carry_unchanged_tech_reads,

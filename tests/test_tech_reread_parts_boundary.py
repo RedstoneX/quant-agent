@@ -14,7 +14,7 @@ import pytest
 
 import src.research_throttle as throttle
 from src.agents.tech_reread import TechReread
-from src.evidence_gate import READ_CARRIED
+from src.evidence_freshness import READ_CARRIED
 from src.models import TechAnalysisResult
 from tests.boundary_harness import check_boundary
 
