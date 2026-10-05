@@ -6,26 +6,26 @@ stop, so every rehearsal ever run failed to move a stop and reported success.
 Only the real API can catch that class of hole. This script exercises every
 SDK call the desk makes (`grep self.client. src/execution/`) against BOTH:
 
-  * the disposable SANDBOX paper account, reached ONLY through the OneCLI
-    `rehearsal` agent grant (never a raw key) — `--live`;
+  * the disposable SANDBOX paper account, using the same systemd credential-file
+    boundary as production and connecting directly to Alpaca — `--live`;
   * the offline stand-in — always.
 
 and prints one row per call: real answer shape vs stand-in shape vs verdict.
 
 Safety (non-negotiable, enforced in code, not in prose):
-  * the sandbox account number is read from `QAMC_SANDBOX_ACCOUNT_NUMBER`;
-    it is never written into this repository;
+  * the key, secret and pinned account number must all arrive through systemd's
+    private credential directory; none is accepted from the environment;
   * the real account is fetched FIRST and the run aborts unless its
     `account_number` equals that value — a mismatch means an account that
     matters, and nothing else runs;
-  * the OneCLI agent token is read from the local dashboard API at run time
-    and never printed;
+  * proxy and custom-CA environment variables are removed before the Alpaca
+    clients are built, so this check cannot silently fall back to OneCLI;
   * every order this script places is cancelled before it exits.
 
 The offline rehearsal stays offline: nothing here is imported by `run.py`.
 
 Usage:
-    QAMC_SANDBOX_ACCOUNT_NUMBER=<id> .venv/bin/python -m ops.rehearsal.conformance --live
+    scripts/run_rehearsal_conformance.sh
     .venv/bin/python -m ops.rehearsal.conformance            # stand-in only
 """
 from __future__ import annotations
@@ -34,18 +34,20 @@ import argparse
 import json
 import os
 import sys
-import tempfile
 import traceback
-import urllib.request
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from types import SimpleNamespace
 
 from ops.rehearsal.conformance_sequence import SYMBOL, _exercise, _fields, _plain, _status_of, run_sequence  # noqa: F401
-
-ONECLI_DASHBOARD = "http://127.0.0.1:10254"
-ONECLI_GATEWAY = "127.0.0.1:10255"
+from ops.rehearsal.direct_credentials import (
+    RehearsalCredentialError,
+    assert_expected_paper_account,
+    bind_systemd_directory_to_rehearsal_identity,
+    force_direct_alpaca_transport,
+    load_rehearsal_credentials,
+)
 
 # Fields the desk actually reads off each answer (grep getattr/attr access in
 # src/execution/). A stand-in that lacks one of these lies to the desk.
@@ -98,41 +100,23 @@ def build_stand_in(now: datetime, with_position: bool):
 
 # ------------------------------------------------------------- live
 
-def _onecli_rehearsal_env() -> dict:
-    """Proxy + CA env for the `rehearsal` grant. The token is never printed."""
-    with urllib.request.urlopen(f"{ONECLI_DASHBOARD}/api/agents", timeout=5) as r:
-        agents = json.load(r)
-    grant = next((a for a in agents if a.get("identifier") == "rehearsal"), None)
-    if grant is None:
-        raise SystemExit("STOP: OneCLI has no agent with identifier=rehearsal")
-    with urllib.request.urlopen(f"{ONECLI_DASHBOARD}/api/container-config",
-                                timeout=5) as r:
-        ca = json.load(r)["caCertificate"]
-    ca_path = os.path.join(tempfile.mkdtemp(prefix="qamc-conf-"), "ca.pem")
-    with open(ca_path, "w") as fh:
-        fh.write(ca)
-    proxy = f"http://x:{grant['accessToken']}@{ONECLI_GATEWAY}"
-    return {"HTTPS_PROXY": proxy, "https_proxy": proxy,
-            "SSL_CERT_FILE": ca_path, "REQUESTS_CA_BUNDLE": ca_path}
-
-
 def build_live():
-    expected = os.environ.get("QAMC_SANDBOX_ACCOUNT_NUMBER", "").strip()
-    if not expected:
-        raise SystemExit("STOP: QAMC_SANDBOX_ACCOUNT_NUMBER is not set; refusing "
-                         "to touch any broker account without the expected id")
-    os.environ.update(_onecli_rehearsal_env())
+    try:
+        bind_systemd_directory_to_rehearsal_identity()
+        credentials = load_rehearsal_credentials()
+    except RehearsalCredentialError as exc:
+        raise SystemExit(f"STOP: {exc}") from exc
+    force_direct_alpaca_transport()
     os.environ["QAMC_REHEARSAL"] = "1"
     from alpaca.data.historical.stock import StockHistoricalDataClient
     from alpaca.trading.client import TradingClient
-    trading = TradingClient("placeholder", "placeholder", paper=True)
-    data = StockHistoricalDataClient("placeholder", "placeholder")
+    trading = TradingClient(credentials.api_key, credentials.secret_key, paper=True)
+    data = StockHistoricalDataClient(credentials.api_key, credentials.secret_key)
     acct = trading.get_account()
-    got = str(acct.account_number)
-    if got != expected:
-        raise SystemExit(
-            f"STOP: account mismatch — expected <redacted>, got a different id; "
-            f"NOTHING was placed")
+    try:
+        assert_expected_paper_account(acct, credentials.expected_account_number)
+    except RehearsalCredentialError as exc:
+        raise SystemExit(f"STOP: {exc}") from exc
     print(f"account assertion PASSED: account_number == <redacted>, "
           f"status={acct.status}, equity={acct.equity}")
     return trading, data
