@@ -86,7 +86,7 @@ from src.pipeline_exits import (  # noqa: F401
     _reason_claims_alignment_exit,
     _reason_cites_hard_trigger,
 )
-from src.admission_build import build_admission_service
+from src.admission_build import AdmissionSlot
 from src.pipeline_delever import (  # noqa: F401
     DeleverMixin,
     _optional_risk_number,
@@ -209,6 +209,7 @@ class TradingPipeline(
     ProtectionMixin, PromptFactsMixin, DeleverMixin, ExitEngineMixin,
     ResearchContinuityMixin, IntradayMixin,
 ):
+    admission = AdmissionSlot()
     risk_gate = RiskGateSlot()
     #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
     #: instance built without __init__ (tests do this) reads None rather than
@@ -1108,20 +1109,6 @@ class TradingPipeline(
         """
         from src.data.technical import atr_for_symbol
         return atr_for_symbol(getattr(self, "market", None), symbol)
-
-    @property
-    def admission(self):
-        """Universe admission, rebuilt from this pipeline's CURRENT values on
-        every read; assignable, and the ONLY route to the eleven names."""
-        return self.__dict__.get("_admission") or build_admission_service(
-            config=getattr(self, "config", None), broker=getattr(self, "broker", None),
-            market=getattr(self, "market", None), db=getattr(self, "db", None),
-            sec_form4_provider=getattr(self, "sec_form4_provider", None),
-            portfolio_constructor=getattr(self, "portfolio_constructor", None))
-
-    @admission.setter
-    def admission(self, service) -> None:
-        self.__dict__["_admission"] = service
 
     def _sweep_symbol(self) -> str | None:
         """The configured cash-park vehicle, or None when sweeping is off.

@@ -541,7 +541,7 @@ gate 165, delever 222, exits 300), which is why it was cut next.
 sec_form4_provider, portfolio_constructor | constructor_cfg_fn)` in
 `src/admission_build.py` -- collaborators BY VALUE, no pipeline.
 *Shell:* `src/pipeline_admission_shell.py` DELETED; no forwarding method
-survives on `TradingPipeline`, which exposes only the `admission` property.
+survives on `TradingPipeline`, which exposes only the `admission` descriptor.
 `_constructor_cfg_or_none` went with it (the shell was its only caller).
 *Proof:* `tests/test_admission_service.py` builds and drives the service in a
 SUBPROCESS and asserts `src.pipeline` never enters `sys.modules`.

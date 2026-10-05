@@ -43,3 +43,32 @@ def build_admission_service(
         sec_form4_provider=sec_form4_provider,
         constructor_cfg_fn=constructor_cfg_fn,
     )
+
+
+class AdmissionSlot:
+    """Expose admission without adding methods to ``TradingPipeline``.
+
+    Until a caller explicitly assigns a service, every read is built from the
+    holder's current collaborators. That preserves the deleted shell's late
+    binding for tests that replace collaborators after construction.
+    """
+
+    def __set_name__(self, owner, name) -> None:
+        self._key = "_" + name
+
+    def __get__(self, obj, owner=None):
+        if obj is None:
+            return self
+        if self._key in obj.__dict__:
+            return obj.__dict__[self._key]
+        return build_admission_service(
+            config=getattr(obj, "config", None),
+            broker=getattr(obj, "broker", None),
+            market=getattr(obj, "market", None),
+            db=getattr(obj, "db", None),
+            sec_form4_provider=getattr(obj, "sec_form4_provider", None),
+            portfolio_constructor=getattr(obj, "portfolio_constructor", None),
+        )
+
+    def __set__(self, obj, service) -> None:
+        obj.__dict__[self._key] = service

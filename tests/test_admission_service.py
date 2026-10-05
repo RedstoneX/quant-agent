@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 from src.config import UniverseScreenConfig
 from src.models import OHLCV, TradeDecision
+from src.admission_build import AdmissionSlot
 from src.pipeline_admission import AdmissionService
 from tests.fake_event_journal import InMemoryEventJournal
 
@@ -147,3 +148,24 @@ def test_admission_is_reachable_without_importing_the_pipeline():
     )
     assert done.returncode == 0, done.stderr
     assert "CLEAN" in done.stdout
+
+
+def test_admission_slot_rebuilds_from_current_values_until_assigned():
+    class Holder:
+        admission = AdmissionSlot()
+
+    holder = Holder()
+    holder.config = SimpleNamespace(trading=SimpleNamespace(universe=[]))
+    first_broker = holder.broker = object()
+    first = holder.admission
+    assert first.broker is first_broker
+
+    second_broker = holder.broker = object()
+    second = holder.admission
+    assert second is not first
+    assert second.broker is second_broker
+
+    assigned = MagicMock()
+    holder.admission = assigned
+    holder.broker = object()
+    assert holder.admission is assigned
