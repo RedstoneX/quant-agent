@@ -2482,7 +2482,7 @@ def test_incomplete_delever_unmeasurable_neither_pages_nor_records_state(
     pipeline._alert_owner_delever_incomplete(ctx)
 
     assert sent == []
-    assert pipeline.db.get_last_delever_over_ceiling() is None
+    assert pipeline.db.breaks.get_last_delever_over_ceiling() is None
 
 
 

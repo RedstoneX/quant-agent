@@ -222,8 +222,11 @@ def _home(last_buy=None):
     from src.exits.structural_protection import StructuralProtection
     db = _types.SimpleNamespace(
         get_symbol_last_buy=lambda s: (last_buy or {}),
-        get_recent_holding_protection_breaks=lambda *a, **k: [],
         record_holding_protection_break=lambda *a, **k: None,
+        breaks=_types.SimpleNamespace(
+            get_recent_holding_protection_breaks=lambda *a, **k: [],
+            save_holding_protection_break=lambda *a, **k: None,
+        ),
     )
     return StructuralProtection(
         voice_structural_protection_break=lambda *a, **k: None,

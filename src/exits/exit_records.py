@@ -124,7 +124,7 @@ class ExitRecords:
 
         evidence_id = None
         try:
-            evidence_id = self.db.record_target_revision(
+            evidence_id = self.db.target_revisions.record_target_revision(
                 run_id=run_id, symbol=symbol, code=code, seat=seat,
                 evidence=evidence, detail=detail, trigger=trigger,
                 prior_price=prior_price, new_price=new_price, basis=basis,

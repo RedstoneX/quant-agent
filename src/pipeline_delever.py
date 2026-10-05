@@ -233,13 +233,13 @@ class DeleverMixin:
         run_id = getattr(ctx, "run_id", None)
         was_over: bool | None
         try:
-            was_over = self.db.get_last_delever_over_ceiling(exclude_run_id=run_id)
+            was_over = self.db.breaks.get_last_delever_over_ceiling(exclude_run_id=run_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("delever ceiling-state read failed: %s", exc)
             record_guarded_pass(self.db, "delever.ceiling_state_read", exc, log=logger)
             was_over = None
         try:
-            self.db.save_delever_ceiling_state(
+            self.db.breaks.save_delever_ceiling_state(
                 run_id=run_id or "", over_ceiling=still_over,
             )
         except Exception as exc:  # noqa: BLE001

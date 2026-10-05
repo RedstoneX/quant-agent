@@ -157,7 +157,7 @@ class TargetRevision:
         # no-pinned-horizon refusal daily is storage of recomputable state.
         prior_codes: dict[str, str] = {}
         try:
-            for _sym, _rows in (self.db.get_target_revisions(
+            for _sym, _rows in (self.db.target_revisions.get_target_revisions(
                     [sym for sym, _, _ in work]) or {}).items():
                 if _rows:
                     prior_codes[str(_sym).upper()] = str(
@@ -303,7 +303,7 @@ class TargetRevision:
                         ("raw_reach", "reach_seen_prior_close"),
                         ("raw_wall", "wall_seen_prior_close"),
                     ):
-                        _prior = self.db.get_prior_target_level_break(
+                        _prior = self.db.breaks.get_prior_target_level_break(
                             [sym], today_bar_date=effective_bar_date,
                             exclude_run_id=run_id, flag=_flag,
                         )
@@ -391,7 +391,7 @@ class TargetRevision:
                 raw_broken = raw_flags["raw_broken"]
                 if bar_date and any(v is not None for v in raw_flags.values()):
                     try:
-                        self.db.save_target_level_break(
+                        self.db.breaks.save_target_level_break(
                             run_id=run_id, symbol=sym, bar_date=bar_date,
                             raw_broken=raw_broken,
                             raw_reach=raw_flags["raw_reach"],

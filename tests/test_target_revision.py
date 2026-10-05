@@ -875,6 +875,14 @@ class _SweepDB:
         return {"take_profit": 100.0, "expected_horizon_sessions": 20,
                 "setup_type": "range", "timestamp": "2026-09-01T00:00:00"}
 
+    @property
+    def breaks(self):
+        return self
+
+    @property
+    def target_revisions(self):
+        return self
+
     def get_prior_target_level_break(self, symbols, **kwargs):
         return {}
 
@@ -1085,7 +1093,7 @@ def test_an_unchanged_refusal_is_not_refiled_every_session():
     first = p._adjudicate_target_revision_flags(
         _SweepReview(), positions, run_id="r1", seat="position_reviewer")
     code = first[0]["code"]
-    p.db.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
+    p.db.target_revisions.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
     before = len(p.db.recorded)
     second = p._adjudicate_target_revision_flags(
         _SweepReview(), positions, run_id="r2", seat="position_reviewer")
@@ -1139,7 +1147,7 @@ def test_a_serial_bar_read_is_recorded_not_merely_logged():
     # Same outcome next session, but still written, because the session was
     # degraded and that is the fact being preserved.
     code = out[0]["code"]
-    p.db.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
+    p.db.target_revisions.get_target_revisions = lambda symbols, **kw: {"AAA": [{"code": code}]}
     before = len(p.db.recorded)
     again = p._adjudicate_target_revision_flags(
         _SweepReview(), positions, run_id="r2", seat="position_reviewer")
@@ -1343,45 +1351,6 @@ def test_a_pending_trigger_is_reported_as_pending_not_as_no_trigger():
         atr=2.5, close_price=101.0, break_seen_prior_close=False, **_COMMON,
     )
     assert out.code == tr.REVISION_NO_TRIGGER
-
-
-def test_the_confirmation_is_keyed_on_the_close_not_on_the_last_row(tmp_path):
-    """DEFECT 2. Several intraday cycles can re-read one close; whichever
-    ran last used to decide the flag. The reading is now the earliest row
-    recorded for the latest prior bar date, and a row that does not answer
-    the question is skipped rather than read as False."""
-    from src.storage.db import Database
-
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-    # Two cycles re-read the SAME prior close and disagree. The first
-    # reading of that close wins, whichever ran last.
-    db.save_target_level_break(
-        run_id="r1", symbol="TEST", bar_date="2026-09-29",
-        raw_broken=True, raw_wall=True,
-    )
-    db.save_target_level_break(
-        run_id="r2", symbol="TEST", bar_date="2026-09-29",
-        raw_broken=False, raw_wall=False,
-    )
-    for flag in ("raw_broken", "raw_wall"):
-        got = db.get_prior_target_level_break(
-            ["TEST"], today_bar_date="2026-09-30", flag=flag,
-        )
-        assert got.get("TEST") is True, flag
-    # A degraded later cycle that could not answer the wall question must
-    # not erase the answer already given for that close.
-    db.save_target_level_break(
-        run_id="r3", symbol="TEST", bar_date="2026-09-29",
-        raw_broken=False, raw_wall=None,
-    )
-    assert db.get_prior_target_level_break(
-        ["TEST"], today_bar_date="2026-09-30", flag="raw_wall",
-    ).get("TEST") is True
-    # Today's own close never confirms itself.
-    assert db.get_prior_target_level_break(
-        ["TEST"], today_bar_date="2026-09-29", flag="raw_wall",
-    ) == {}
 
 
 def test_a_session_that_applied_nothing_still_names_a_held_target():

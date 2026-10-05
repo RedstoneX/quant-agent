@@ -241,7 +241,7 @@ class StructuralProtection:
         # close from double-counting it.
         prior_break_records: list = []
         try:
-            prior_break_records = self.db.get_recent_holding_protection_breaks(
+            prior_break_records = self.db.breaks.get_recent_holding_protection_breaks(
                 symbol, before_bar_date=effective_bar_date, exclude_run_id=run_id,
             )
         except Exception as e:  # noqa: BLE001
@@ -287,7 +287,7 @@ class StructuralProtection:
 
         try:
             if persist:
-                self.db.save_holding_protection_break(
+                self.db.breaks.save_holding_protection_break(
                     run_id=run_id, symbol=symbol, raw_broken=check.raw_broken,
                     bar_date=effective_bar_date, close=close_price,
                     basis=check.basis, detail=check.detail,
