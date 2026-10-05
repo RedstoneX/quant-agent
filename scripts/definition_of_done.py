@@ -135,7 +135,7 @@ from scripts.board_item_blocks import (  # noqa: F401
     criteria,
     item_blocks,
 )
-from scripts.board_locator import working_board_path
+from scripts.board_locator import board_path_in
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -385,10 +385,10 @@ class Change:
         base = base_ref(repo)
         if not base:
             return None
-        work_md_path = working_board_path()
+        work_md_path = board_path_in(repo)
         if work_md_path is None:
             return None
-        after = Path(work_md_path)
+        after = repo / work_md_path
         return cls(
             base=base,
             paths=changed_paths(base, repo),

@@ -8,6 +8,8 @@ pass.
 from __future__ import annotations
 
 import re
+import subprocess
+from pathlib import Path
 from typing import Callable
 
 from scripts.guard_reference import ROOT, ReferenceUnavailable, trunk_blobs, trunk_paths, working_paths
@@ -41,9 +43,33 @@ def trunk_board() -> tuple[str, str]:
     return locate(trunk_paths(".md"), trunk_blobs, "the trunk")
 
 
-def working_board_path() -> str | None:
-    """The working tree's board path, or None when it cannot be located."""
+def tree_board(tree: Path) -> tuple[str, str]:
+    """``working_board`` for any checkout, not only this one.
+
+    Reads ``git ls-files`` in ``tree`` so a guard handed a throwaway
+    repository locates that repository's board, never this one's. A plain
+    directory with no git history is walked instead.
+    """
+    out = subprocess.run(["git", "-C", str(tree), "ls-files", "*.md"],
+                         capture_output=True, text=True)
+    if out.returncode == 0:
+        paths = sorted(p for p in out.stdout.splitlines() if (tree / p).is_file())
+    else:
+        paths = sorted(str(p.relative_to(tree)) for p in tree.rglob("*.md")
+                       if ".git" not in p.parts and p.is_file())
+
+    def read(cands):
+        return {p: (tree / p).read_text(encoding="utf-8", errors="replace") for p in cands}
+    return locate(paths, read, f"the tree at {tree}")
+
+
+def board_path_in(tree: Path = ROOT) -> str | None:
+    """``tree``'s board path relative to it, or None when it cannot be located.
+
+    The seam every reader of the board goes through instead of a written-down
+    path: tests hand it their throwaway repository, the live gate its own.
+    """
     try:
-        return working_board()[0]
+        return (working_board() if tree == ROOT else tree_board(tree))[0]
     except ReferenceUnavailable:
         return None

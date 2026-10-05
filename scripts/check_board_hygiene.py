@@ -46,7 +46,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.board_locator import working_board
+from scripts.board_locator import tree_board
 from scripts.guard_reference import ReferenceUnavailable
 
 DEFAULT_REPO_PATH = "/home/qamc/quant-agent"
@@ -59,12 +59,8 @@ CAP_TEST_FUNCTION = "test_work_md_stays_under_a_hundred_thousand_bytes"
 
 
 def _find_work_md_path(repo_dir: Path) -> str:
-    """Find the board file via board_locator, or raise ReferenceUnavailable."""
-    try:
-        work_md_path, _ = working_board()
-        return work_md_path
-    except ReferenceUnavailable:
-        raise
+    """The board inside ``repo_dir`` via board_locator, or raise ReferenceUnavailable."""
+    return str(repo_dir / tree_board(repo_dir)[0])
 _CAP_ASSERT_RE = re.compile(r"assert\s+size\s*<=\s*([\d_]+)")
 
 #: PROVISIONAL — not sourced from any owner ruling or repo doctrine, because
