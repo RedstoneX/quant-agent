@@ -102,6 +102,8 @@ def test_quiet_when_handler_records_durably():
         "conn.execute('insert into failures values (?)', (s,))",
     ):
         src = (
+            "from src.alerts import send_owner_alert\n"
+            "from src.storage.heal import record_stop_repair_refusal\n\n"
             "def f(b, s):\n    try:\n        return b.stop(s)\n"
             f"    except Exception as exc:\n        {rec}\n        return None\n"
         )
@@ -247,3 +249,43 @@ def test_alias_that_resolves_to_a_non_recorder_still_fails():
 
 def test_recorder_lookalike_name_bound_to_stdlib_does_not_satisfy_the_guard():
     assert _alias_hits("logging", "warning", "record_failure") == 1
+
+
+# -- identity, not spelling: the three evasions a name match lets through ----
+
+_HANDLER = (
+    "def f(x):\n    try:\n        return x.get()\n"
+    "    except Exception as exc:\n        {call}\n        return None\n"
+)
+
+
+def _evasion_hits(prelude: str, call: str) -> int:
+    return len(g.scan_text("src/x.py", prelude + "\n" + _HANDLER.format(call=call)))
+
+
+def test_module_alias_to_a_foreign_module_is_not_a_recorder():
+    # ``import os as rec`` then ``rec.write(...)``: the attribute is spelled
+    # like a durable write but binds to the stdlib, which records nothing.
+    assert _evasion_hits("import os as rec", "rec.write(1, b'')") == 1
+    assert _evasion_hits("import logging as record_site", "record_site.warning('x')") == 1
+    # The same shape bound to a repo module is the real thing.
+    assert _evasion_hits("import src.storage.events as ev", "ev.record_site('s', exc)") == 0
+    assert _evasion_hits("import src.storage.events", "src.storage.events.record_site('s', exc)") == 0
+
+
+def test_local_def_of_a_recorder_name_is_judged_by_its_body_not_its_name():
+    shadow = "def record_site(site, exc):\n    return None\n"
+    assert _evasion_hits(shadow, "record_site('s', exc)") == 1
+    wrapper = (
+        "from src.storage.events import record_site as _rs\n\n"
+        "def record_site(site, exc):\n    _rs(site, exc)\n"
+    )
+    assert _evasion_hits(wrapper, "record_site('s', exc)") == 0
+    # A local wrapper that only logs is a shadow however it is spelled.
+    logs = "import logging\n\ndef record_site(site, exc):\n    logging.warning('x')\n"
+    assert _evasion_hits(logs, "record_site('s', exc)") == 1
+
+
+def test_star_imported_recorder_name_has_unknown_origin_and_does_not_count():
+    assert _evasion_hits("from src.storage.events import *", "record_site('s', exc)") == 1
+    assert _evasion_hits("", "record_site('s', exc)") == 1  # undefined: no origin at all
