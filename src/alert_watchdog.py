@@ -74,6 +74,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from src.data_paths import db_path
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ logger = logging.getLogger(__name__)
 #: snapshot, resolved from the project root rather than the working
 #: directory — sessions are started both by systemd (which sets
 #: WorkingDirectory) and by hand from anywhere.
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
+DB_PATH = db_path()
 
 TABLE = "alert_channel_checks"
 
@@ -336,14 +337,7 @@ def read_health(
     )
 
 
-def _age_hours(stamp: str, now: datetime) -> float | None:
-    try:
-        when = datetime.fromisoformat(stamp)
-    except (TypeError, ValueError):
-        return None
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    return max((now - when).total_seconds() / 3600.0, 0.0)
+from src.alert_watchdog_age import _age_hours  # noqa: E402,F401 -- lifted verbatim
 
 
 # ---------------------------------------------------------------------------

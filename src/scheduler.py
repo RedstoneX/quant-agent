@@ -224,6 +224,7 @@ class TradingScheduler:
                         send_naked_position_alert(
                             self.notifier,
                             result if isinstance(result, dict) else None,
+                            owner=self.pipeline,
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(

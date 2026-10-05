@@ -10,8 +10,9 @@ from __future__ import annotations
 import argparse
 import re
 from pathlib import Path
+from src.data_paths import diary_dir
 
-DIARY_DIR = Path(__file__).resolve().parents[2] / "data" / "diary"
+DIARY_DIR = diary_dir()
 
 # Filenames the listing treats as a day page: 2026-09-15.html.
 _DAY_PAGE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.html$")
