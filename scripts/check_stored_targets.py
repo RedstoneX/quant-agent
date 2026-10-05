@@ -386,9 +386,10 @@ def main(argv=None) -> int:
     message = format_message(results)
     if message and not args.no_telegram:
         print(message)
-        from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
+        from src.notifier import TelegramNotifier
+        from src.notifier.owner_alert_funnel import send_script_alert
 
-        send_owner_alert_with_outcome(message, kind="stored_targets", pnl_header=False)
+        send_script_alert(message, kind="stored_targets", script="check_stored_targets", factory=TelegramNotifier)
 
     return 1 if bad else 0
 

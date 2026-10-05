@@ -137,3 +137,14 @@ def send_owner_alert_with_outcome(
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery failed")
         return False, False
+
+
+def send_script_alert(message: str, *, kind: str, script: str, factory=None) -> tuple[bool, bool]:
+    """Funnel send for a CLI script; when Telegram is off say so on stderr, never fall silent."""
+    import sys
+
+    notifier = build_default_notifier(factory=factory)
+    if not notifier.enabled:
+        print(f"{script}: Telegram not configured; alert printed above only", file=sys.stderr)
+        return False, False
+    return send_owner_alert_with_outcome(message, notifier=notifier, kind=kind, pnl_header=False)

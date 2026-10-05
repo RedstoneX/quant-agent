@@ -376,9 +376,12 @@ def main(argv: list[str] | None = None) -> int:
     sent = False
     repeat = already_alerted(report)
     if not args.no_telegram and not repeat:
-        from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
+        from src.notifier import TelegramNotifier
+        from src.notifier.owner_alert_funnel import send_script_alert
 
-        sent, _ = send_owner_alert_with_outcome(message, kind="deploy_drift", pnl_header=False)
+        sent, _ = send_script_alert(
+            message, kind="deploy_drift", script="check_deploy_drift", factory=TelegramNotifier
+        )
     elif repeat:
         print(
             "check_deploy_drift: same drift already alerted today — not "
