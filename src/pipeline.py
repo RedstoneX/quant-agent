@@ -124,6 +124,7 @@ from src.pipeline_stages import (
 # `self._x(...)` caller and `patch.object(TradingPipeline, "_x")` is untouched.
 from src import pipeline_cost_gate as _cost_gate
 from src import pipeline_halt_gates as _halt_gates
+from src.portfolio_constructor.refusal_recorder import TradeRefusalRecorder
 from src.portfolio_constructor import PortfolioConstructor
 from src.cash_park_retired import release_retired_cash_park, retired_cash_park_symbol
 from src.sessions.evening_session import EveningSession
@@ -688,9 +689,7 @@ class TradingPipeline(
         # ceiling is the one `verify_commissioning.py` can see.
         self.portfolio_constructor = PortfolioConstructor(
             build_constructor_config(config, self.risk_engine.config),
-            # Board item 218: the parity refusal is a TRIAL and must leave a
-            # durable, numeric, per-symbol record or it cannot be judged.
-            db=self._collab("db"),
+            recorder=TradeRefusalRecorder(self._collab("db")),
         )
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.

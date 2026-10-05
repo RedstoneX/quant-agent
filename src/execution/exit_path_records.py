@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from src.sentinel.guarded import record_guarded_pass
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +82,10 @@ def _insert(db: Any, *, run_id: str | None, kind: str, symbol: str,
             kind=kind, scope="symbol", symbol=symbol_u,
             evidence_json=json.dumps(payload, sort_keys=True, default=str),
         )
+        record_guarded_pass(db, "exit_path_records.insert", context={"kind": kind})
         return True
     except Exception as exc:  # noqa: BLE001 — a record is never trading authority
-        logger.warning(
-            "exit-path record %s for %s could not be written: %s",
-            kind, symbol_u, exc,
-        )
+        record_guarded_pass(db, "exit_path_records.insert", exc, log=logger, context={"kind": kind})
         return False
 
 
@@ -110,8 +109,9 @@ def last_trail_states(db: Any, symbols) -> dict[str, str]:
         return {}
     try:
         rows = db.get_latest_symbol_evidence(TRAIL_STATE_KIND, symbols)
+        record_guarded_pass(db, "exit_path_records.last_trail_states")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("trail-state read failed: %s", exc)
+        record_guarded_pass(db, "exit_path_records.last_trail_states", exc, log=logger)
         return {}
     out: dict[str, str] = {}
     for symbol, row in (rows or {}).items():

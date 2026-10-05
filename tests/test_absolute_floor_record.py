@@ -10,10 +10,10 @@ there is no reset and no test can inherit another test's tallies.
 from __future__ import annotations
 
 import ast
+import hashlib
+import pathlib
 
 import pytest
-
-from scripts import guard_reference
 
 from src.portfolio_constructor import absolute_floor_record as rec
 from src.portfolio_constructor.config import (
@@ -128,16 +128,35 @@ def _logger_info_calls(src):
     return found
 
 
-def test_both_moved_log_bodies_are_ast_identical_to_the_trunk():
-    """Faithful is proven, not asserted: 2 of 2 bodies must match origin/main."""
-    path = "src/portfolio_constructor/entry_stop/resolver.py"
-    trunk = guard_reference.trunk_blobs([path])[path]
-    before = _logger_info_calls(trunk)
+FIXTURE = (
+    pathlib.Path(__file__).parent / "fixtures" / "resolver_log_bodies_pre_move.py"
+)
+# The pre-move text is a FACT OF HISTORY, so its digest is pinned here: editing
+# the fixture to make a drifted body pass fails this line first.
+FIXTURE_SHA256 = "c3b1ff36a73da7596bb7df01d2eb2c133af6f709b853f5fa2354a0151e8c3e48"
+
+
+def test_the_pinned_pre_move_fixture_has_not_been_edited():
+    """Two files would have to be forged, and both are guard files."""
+    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() == FIXTURE_SHA256
+
+
+def test_both_moved_log_bodies_are_ast_identical_to_the_pre_move_original():
+    """Faithful is proven, not asserted: 2 of 2 bodies must match the original.
+
+    The reference is commit 8858100a's resolver, frozen into the fixture --
+    NOT ``origin/main``. Comparing against trunk could only ever be green
+    while the move was unmerged: once merged, trunk IS the moved version and
+    the originals are gone from it, so that form red on a clean main and
+    blocked every open change. A commit that is already in history cannot
+    change, so this form cannot go red on a clean trunk tomorrow.
+    """
+    before = _logger_info_calls(FIXTURE.read_text(encoding="utf-8"))
     after = _logger_info_calls(
         open(rec.__file__, encoding="utf-8").read()
     )
     moved = [k for k in after if k.startswith("Constructor:")]
     assert len(moved) == 2, moved
+    assert sorted(before) == sorted(moved), (sorted(before), sorted(moved))
     for key in moved:
-        assert key in before, key
         assert ast.dump(before[key]) == ast.dump(after[key]), key
