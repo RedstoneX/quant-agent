@@ -6,6 +6,26 @@ what is wrong, where, and what would prove a fix. Work them after the
 structure is sound, hardest-wearing first.
 
 ## Owner-alert senders that bypass the retry funnel — CLOSED 2026-10-05
+## Owner-alert senders that bypass the retry funnel
+## TRIAGE 2026-10-05 (every entry re-checked against main, not against its heading)
+
+Pile A, ALREADY FIXED, proved in code: four.
+- Undefined names: `scripts/check_undefined_names.py` re-run, 545 files, 0 findings; wired in `.github/workflows/test.yml`.
+- Cost-circuit mixins: `src/cost_circuit/` holds no mixin; the circuit class inherits nothing; the boundary test file exists.
+- Midnight clock: no local-day or UTC-day-as-exchange-day use left in `src/` (the only `utcnow` sites subtract two timestamps); the single clock and the test guard exist. The note's single-clock guard test file still does not exist, as already recorded below.
+- Broker read error as "no stop": FIXED only by this change, see WRONG below.
+
+Pile B, STILL LIVE: two.
+- Owner-alert senders: root cause is that ops scripts build their own `TelegramNotifier()` and send once with no retry; the funnel guard looks for private messengers and `src/` bare sends, not this (about 13 sites, 2026-10-05 count; the guard's reach over `scripts/` was not traced). About 4-6 hours [estimate: one funnel call per site plus a scripts-scope guard]. Not money.
+- `PromptFactsReviewMixin`: root cause is that the pipeline still inherits per-call shims instead of holding the five constructed review parts. About 8-12 hours [estimate: the three finished PM-seat conversions each took one change]. Not money.
+
+Pile C, NEEDS A LIVE RUN: zero. Nothing here is unmeasurable offline.
+
+Write-ups found WRONG or stale on 2026-10-05:
+- "Broker read error ... ALREADY FIXED / no caller reads the broker stop outside `read_stop`" was FALSE. `src/execution/pending_stop_drain.py` called the raw read, and an unreadable answer became "nothing resting, placing protection is safe", so the drain applied an owed level over a possibly TIGHTER live stop, moving a protective stop the way that loses more. Its docstring claimed it used the escalating read; the existing test pinned the defect as "behaviour unchanged". Fixed at the cause in this change: the drain now uses `read_stop`, and an unreadable stop keeps the owed row and applies nothing. Witness `tests/test_pending_stop_drain_unreadable.py`; the unreadable case fails on the old code.
+- "Owner-alert senders": "no guard forbids it" was stale. `tests/test_owner_alert_funnel_guard.py` and `tests/test_no_side_door_owner_alert_send.py` forbid a new bare send or messenger in `src/`. The six `src/` constructions are a probe default, default arguments, a document upload and the scheduler's routine report, not alert bypasses. The live remainder is the scripts.
+
+## Owner-alert senders that bypass the retry funnel
 
 CORRECTED. This entry counted CONSTRUCTIONS of a `TelegramNotifier`, which is not the defect; the defect is SENDING around the funnel, and the two measurements differ. It also said "no guard forbids it", which was false: `scripts/owner_alert_funnel_guard.py` has existed and refuses three shapes of bypass — a file that builds the Bot API URL itself, a class outside `src/notifier/` exposing its own `send`, and a direct `notifier.send(...)` call the trunk does not already have.
 
