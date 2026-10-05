@@ -9,6 +9,13 @@ import pytest
 import yaml
 
 from src import live_capital_preflight as lcp
+from src.config import AlpacaConfig
+
+
+def _PROBE() -> object:
+    """What scripts/live_capital_preflight.py injects: a non-paper config."""
+    return AlpacaConfig(base_url=f"https://{lcp._PAPER_HOST}", paper=False)
+
 
 PAPER_SETTINGS = textwrap.dedent(
     """
@@ -49,13 +56,19 @@ def test_gate_passes_when_all_conditions_hold(tmp_path):
     settings = _paper_settings(tmp_path)
     att = _write(tmp_path / "att.yaml", yaml.safe_dump(_all_attested()))
 
-    gate = lcp.evaluate(settings_path=settings, attestations_path=att)
+    gate = lcp.evaluate(
+        settings_path=settings, attestations_path=att, paper_guard_probe=_PROBE
+    )
 
     assert gate.passed is True
     assert gate.blocking == []
     assert all(r.status == lcp.PASS for r in gate.results)
     # main() returns 0 (allow) only in this fully-satisfied state.
-    assert lcp.main(["--settings", str(settings), "--attestations", str(att)]) == 0
+    rc = lcp.main(
+        ["--settings", str(settings), "--attestations", str(att)],
+        paper_guard_probe=_PROBE,
+    )
+    assert rc == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -153,8 +166,43 @@ def test_missing_settings_file_fails(tmp_path):
 
 def test_paper_only_guard_condition_passes(tmp_path):
     """The mechanical guard check passes because the code guard is active."""
-    status, _ = lcp._check_paper_only_guard()
+    status, _ = lcp._check_paper_only_guard(_PROBE)
     assert status == lcp.PASS
+
+
+def test_paper_only_guard_check_fails_closed_without_a_probe(tmp_path):
+    """No injected probe is a FAIL, not a skip: the audit cannot vouch for a
+    guard it was never handed. Also pins that the gate module does not reach
+    for src.config itself (that was the import cycle)."""
+    status, detail = lcp._check_paper_only_guard(None)
+    assert status == lcp.FAIL
+    assert "probe" in detail
+    gate = lcp.evaluate(
+        settings_path=_paper_settings(tmp_path),
+        attestations_path=_write(
+            tmp_path / "att.yaml", yaml.safe_dump(_all_attested())
+        ),
+    )
+    assert gate.passed is False
+    assert [r.condition_id for r in gate.blocking] == ["paper_only_guard_active"]
+
+
+def test_guard_probe_detects_a_missing_guard(tmp_path):
+    """A probe that does NOT raise means the paper-only guard is gone: FAIL."""
+    status, _ = lcp._check_paper_only_guard(lambda: object())
+    assert status == lcp.FAIL
+
+
+def test_gate_module_never_imports_config():
+    """The cycle config -> preflight -> config was broken by injection; the gate
+    must not grow the reverse edge back (function-level imports included)."""
+    import ast
+    tree = ast.parse(Path(lcp.__file__).read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("src.config"):
+            raise AssertionError("src.live_capital_preflight imports src.config")
+        if isinstance(node, ast.Import):
+            assert not any(a.name.startswith("src.config") for a in node.names)
 
 
 def test_main_blocks_with_nonzero_exit(tmp_path):
@@ -336,7 +384,7 @@ def test_config_allows_live_only_when_code_authorized_and_gate_passes(
         return real(settings_path=settings, attestations_path=att)
 
     monkeypatch.setattr(cfg, "LIVE_TRADING_AUTHORIZED", True)
-    monkeypatch.setattr(lcp, "assert_live_capital_authorized", _passing)
+    monkeypatch.setattr(cfg, "assert_live_capital_authorized", _passing)
 
     conf = cfg.AlpacaConfig(base_url="https://api.alpaca.markets", paper=False)
     assert conf.paper is False
