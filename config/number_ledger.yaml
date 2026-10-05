@@ -5528,16 +5528,17 @@ numbers:
       produces identical behaviour — a precision guard, not a policy
       choice. It decides nothing about whether or how much to trade: a real
       nonzero delta of any size, however small, is now attempted.
-  - id: src.coverage_watchdog.MAX_WEEKDAYS_BACK
+  - id: src.trading_day.MAX_WEEKDAYS_BACK
     value: 5
     status: not-trade-governing
-    site: src/coverage_watchdog.py
+    site: src/trading_day.py
     note: >-
       Network deadline, timeout, poll interval or fetch batch cap.
-      Bounds how many weekdays the watchdog's diagnostic sweep searches
-      backward for the most recent trading day
-      (src/coverage_watchdog.py@`logger = logging.getLogger(__name__)`); it decides how far the sweep
-      looks, never whether or how much to trade.
+      Bounds how many weekdays the most-recent-trading-day lookup searches
+      backward (src/trading_day.py@`MAX_WEEKDAYS_BACK = 5`), moved here from
+      the coverage watchdog so the dashboard can read it without reaching
+      the repair code; it decides how far the lookup looks, never whether
+      or how much to trade.
   - id: src.coverage_watchdog._QTY_EPSILON
     value: 1.0e-6
     status: not-trade-governing

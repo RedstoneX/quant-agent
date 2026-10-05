@@ -33,5 +33,5 @@ def test_package_init_names_no_write_capable_name():
 
 
 def test_importing_a_leaf_from_the_package_reaches_no_write_name():
-    new = _closure_hits("from src.portfolio_constructor import config") - guard.ALLOWLIST
+    new = _closure_hits("from src.portfolio_constructor import config")
     assert new == set()
