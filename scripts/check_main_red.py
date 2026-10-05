@@ -176,78 +176,11 @@ def _write_summary(lines: list[str]) -> None:
               file=sys.stderr)
 
 
-ISSUE_PREFIX = "[trunk-red]"
-
-
-def _gh(args: list[str]) -> str:
-    proc = subprocess.run(["gh", *args], capture_output=True, text=True,
-                          timeout=GH_TIMEOUT_S)
-    if proc.returncode != 0:
-        raise GhError(proc.stderr.strip() or str(proc.returncode))
-    return proc.stdout
-
-
-def plan_issue_actions(open_issues: list[dict], red_sha: str | None) -> dict:
-    """What to do with the tracking issues. red_sha None means main is green.
-
-    ONE issue for the whole red streak, however many pushes it spans: reuse
-    the open tracking issue, and when a newer commit is also red, add a
-    comment to it instead of opening another. Close only when main is green.
-    """
-    ours = sorted(
-        (i for i in open_issues
-         if str(i.get("title", "")).startswith(ISSUE_PREFIX)),
-        key=lambda i: i["number"])
-    if not red_sha:
-        return {"create": False, "close": [i["number"] for i in ours],
-                "comment": None}
-    if not ours:
-        return {"create": True, "close": [], "comment": None}
-    keep, extra = ours[0], ours[1:]
-    named = red_sha[:8] in keep["title"]
-    return {"create": False, "close": [i["number"] for i in extra],
-            "comment": None if named else keep["number"]}
-
-
-def sync_issue(repo: str | None, red: list[str] | None,
-               red_sha: str | None) -> bool:
-    """Open one issue per red streak; close it once main is green.
-
-    Returns False when the issue could not be synced (for example issues are
-    disabled on the repository, which GitHub reports as an error). The caller
-    turns that into a visible ::warning:: and a run-summary line, so a dead
-    issue path is never silent.
-    """
-    base = ["--repo", repo] if repo else []
-    try:
-        listed = json.loads(_gh(["issue", "list", *base, "--state", "open",
-                                 "--limit", "50", "--json", "number,title"]))
-        todo = plan_issue_actions(listed, red_sha)
-        if todo["create"]:
-            _gh(["issue", "create", *base, "--title",
-                 f"{ISSUE_PREFIX} main is red at {red_sha[:8]}",
-                 "--body", "\n".join(red or [])])
-        if todo["comment"]:
-            _gh(["issue", "comment", str(todo["comment"]), *base, "--body",
-                 f"Still red at {red_sha[:8]}.\n\n" + "\n".join(red or [])])
-        for number in todo["close"]:
-            _gh(["issue", "close", str(number), *base, "--comment",
-                 "main is green again." if not red_sha
-                 else "Duplicate tracking issue; one covers the streak."])
-    except (GhError, ValueError, subprocess.TimeoutExpired) as exc:
-        print(f"::warning::check_main_red could not sync the tracking issue "
-              f"-- {exc}", file=sys.stderr)
-        return False
-    return True
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=None, help="owner/name")
     parser.add_argument("--branch", default="main",
                         help="the protected branch to watch")
-    parser.add_argument("--issue", action="store_true",
-                        help="open/close the tracking issue (needs issues: write)")
     args = parser.parse_args(argv)
 
     try:
@@ -269,16 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     if state == "green":
         print(f"check_main_red: {args.branch}'s newest completed push run "
               f"passed.")
-        if args.issue:
-            sync_issue(args.repo, None, None)
         return 0
 
     streak = red_streak(runs)
     lines = record_lines(args.branch, streak)
-    if args.issue and not sync_issue(args.repo, lines,
-                                     str(streak[0].get("headSha"))):
-        lines.append("  tracking issue: COULD NOT BE OPENED (see the "
-                     "warning); this run's red status is the only alarm.")
     for line in lines:
         print(line)
     _write_summary(lines)

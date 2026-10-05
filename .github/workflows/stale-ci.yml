@@ -62,13 +62,18 @@ jobs:
   # when the answer is no, and writes the failing commit, its subject and how
   # long the branch has been red into the run summary, so the record is
   # legible on its own without a Telegram message nobody will receive.
+  # THE RED RUN IS THE ALARM. There is deliberately no tracking issue: the
+  # repository is PUBLIC with Issues disabled, and enabling them would publish
+  # internal trunk-failure detail to anyone. The owner has ruled the dashboard
+  # the only owner-facing channel, so no backup channel is added. An earlier
+  # issue path never once worked (Issues were off; the error was swallowed) and
+  # was removed rather than "fixed". Do not re-add it.
   main-red:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       actions: read
-      issues: write     # one tracking issue per red main commit
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -80,5 +85,4 @@ jobs:
         run: |
           python scripts/check_main_red.py \
             --repo "$GITHUB_REPOSITORY" \
-            --branch "${{ github.event.repository.default_branch }}" \
-            --issue
+            --branch "${{ github.event.repository.default_branch }}"
