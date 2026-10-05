@@ -8449,3 +8449,320 @@ numbers:
     status: not-trade-governing
     site: src/infra_retry_policy.py
     note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls; no trade quantity, price or gate reads it."
+  - id: src.trading_calendar.REGULAR_SESSION_OPEN_MIN
+    value: 570
+    status: instrument
+    site: src/trading_calendar.py
+    source: >-
+      https://www.nyse.com/markets/hours-calendars -- the NYSE core trading session opens 09:30 ET, which is minute
+      570 of the ET day (9*60+30). Not the desk's choice: it is the exchange's
+      published hour, and the desk only converts it to minutes. Scoped
+      2026-10-05 because a bar is treated as incomplete, and an order held,
+      against this bound.
+  - id: src.trading_calendar.REGULAR_SESSION_CLOSE_MIN
+    value: 960
+    status: instrument
+    site: src/trading_calendar.py
+    source: >-
+      https://www.nyse.com/markets/hours-calendars -- the NYSE core trading session closes 16:00 ET, minute 960 of
+      the ET day (16*60). The exchange's published hour, converted to minutes.
+      Early-close days (13:00 ET) are NOT modelled; the module docstring at
+      src/trading_calendar.py says so and that exposure is unchanged here.
+  - id: src.trading_calendar.SESSION_WINDOWS['intra_check'][0]
+    value: 570
+    status: derived
+    site: src/trading_calendar.py
+    derived_from: src.trading_calendar.REGULAR_SESSION_OPEN_MIN
+    base_value: 570
+    note: >-
+      The same exchange bound (09:30 ET) as the regular-session constant below
+      it in the same file, written out a second time in the window table. One
+      number, two definition sites: if the exchange bound moves this must move
+      with it, and the build fails if the base moves and this does not.
+  - id: src.trading_calendar.SESSION_WINDOWS['intra_check'][1]
+    value: 960
+    status: derived
+    site: src/trading_calendar.py
+    derived_from: src.trading_calendar.REGULAR_SESSION_CLOSE_MIN
+    base_value: 960
+    note: >-
+      The same exchange bound (16:00 ET) as the regular-session constant below
+      it in the same file, written out a second time in the window table. One
+      number, two definition sites: if the exchange bound moves this must move
+      with it, and the build fails if the base moves and this does not.
+  - id: src.trading_calendar.SESSION_WINDOWS['morning'][0]
+    value: 570
+    status: derived
+    site: src/trading_calendar.py
+    derived_from: src.trading_calendar.REGULAR_SESSION_OPEN_MIN
+    base_value: 570
+    note: >-
+      The same exchange bound (09:30 ET) as the regular-session constant below
+      it in the same file, written out a second time in the window table. One
+      number, two definition sites: if the exchange bound moves this must move
+      with it, and the build fails if the base moves and this does not.
+  - id: src.trading_calendar.SESSION_WINDOWS['close'][1]
+    value: 960
+    status: derived
+    site: src/trading_calendar.py
+    derived_from: src.trading_calendar.REGULAR_SESSION_CLOSE_MIN
+    base_value: 960
+    note: >-
+      The same exchange bound (16:00 ET) as the regular-session constant below
+      it in the same file, written out a second time in the window table. One
+      number, two definition sites: if the exchange bound moves this must move
+      with it, and the build fails if the base moves and this does not.
+  - id: src.trading_calendar.SESSION_WINDOWS['close'][0]
+    value: 930
+    status: derived
+    derived_from: src.config.INTRA_CHECK_TICK_MINUTES
+    base_value: 30
+    site: src/trading_calendar.py
+    note: >-
+      15:30 ET = the 16:00 close minus one intraday tick. The width is not a
+      taste: a 30-minute launchd tick lands inside a 30-minute window whatever
+      its phase, so a narrower window could miss the close run entirely. The
+      derivation is written at the definition site. If the tick interval
+      changes, this window must widen with it or the close run becomes
+      skippable.
+  - id: src.trading_calendar.SESSION_WINDOWS['morning'][1]
+    value: 720
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 12:00 ET (720 minutes of the ET day) is the end of the morning research window; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Measure, over the recorded session log, the distribution of the minute at which the morning stage actually finishes, and set the bound from the observed tail rather than from a round noon.
+    cost_while_unanswered: >-
+      A morning run that overruns noon is cut off or silently spills into the midday seat; nobody knows how often, because the finishing minute is not recorded per run.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['midday'][0]
+    value: 780
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 13:00 ET (780 minutes of the ET day) is the start of the midday position review; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Measure whether a position review at this hour sees information a 12:00 or 14:00 review would not, from recorded intraday snapshots on the same days.
+    cost_while_unanswered: >-
+      The patient reviewer may be looking at the quietest hour of the session or the busiest; the desk cannot say which, so it cannot say what the review is worth.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['midday'][1]
+    value: 870
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 14:30 ET (870 minutes of the ET day) is the end of the midday position review; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Same measurement as the window's start: the bound should fall out of when the review's inputs stop changing, not from a round 90 minutes.
+    cost_while_unanswered: >-
+      Same as the start bound: a review window chosen for roundness, with no recorded evidence that 90 minutes is enough or too much.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['earnings_preprocess'][0]
+    value: 480
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 08:00 ET (480 minutes of the ET day) is the start of the pre-open earnings preprocessing window; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Measure the publication-time distribution of the pre-market earnings releases the desk actually consumes, and start the window at the tail of that distribution.
+    cost_while_unanswered: >-
+      A release published before 08:00 ET is missed for that session; the desk does not count those misses, so the exposure is unmeasured rather than known-small.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['earnings_preprocess'][1]
+    value: 555
+    status: arbitrary
+    site: src/trading_calendar.py
+    note: >-
+      UNSOURCED. 09:15 ET (555 minutes of the ET day) is the end of the pre-open earnings preprocessing window; it is a round
+      clock time with no derivation at the definition site and no measurement
+      behind it. Brought into scope 2026-10-05 with the rest of the module. NOT
+      settled by the backtest engine: that engine steps daily bars and models
+      no intraday session clock at all, so a sweep of this value would return
+      identical results for the WRONG reason -- the value never reaches any
+      code the engine runs. No settlement is recorded here.
+    open_question: >-
+      Measure how long the preprocessing stage actually takes against how much of the 15-minute pre-open cushion it leaves, from the recorded stage durations.
+    cost_while_unanswered: >-
+      If preprocessing overruns 09:15 the morning stage starts without its earnings inputs; the overrun is not counted, so the frequency is unknown.
+    settles_by:
+      kind: recording
+      state: specified
+      where: >-
+        NOT BUILT. It would record, for every scheduled session the desk runs,
+        the wall-clock ET minute at which the stage started and finished, and
+        for the pre-open window the publication minute of every earnings
+        release the desk consumed that morning.
+      records: >-
+        the start and finish minute of every scheduled stage run, and the
+        publication minute of each consumed pre-market earnings release, so a
+        window bound can be read off the observed tail of those distributions
+        instead of chosen as a round clock time, and so an overrun or a missed
+        release is counted rather than assumed rare.
+      closes_when: >-
+        the recording has covered enough sessions to show the distribution of
+        stage finish minutes and release publication minutes, at which point
+        each bound is re-derived from its own tail and this row is replaced by
+        a measured value or by a read-at-run-time rule. The backtest engine
+        cannot close it: that engine steps daily bars and models no intraday
+        session clock, so these minutes never reach code it runs.
+  - id: src.trading_calendar.SESSION_WINDOWS['evening'][0]
+    value: 1200
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      20:00 ET, a bound of the evening window. The evening session is reporting
+      only -- the comment at the definition site says so and no order, size,
+      price or exit is produced in it; the market is shut for the whole window
+      in any case. Moving this bound changes when a report is written and
+      nothing a broker sees.
+  - id: src.trading_calendar.SESSION_WINDOWS['evening'][1]
+    value: 1320
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      22:00 ET, a bound of the evening window. The evening session is reporting
+      only -- the comment at the definition site says so and no order, size,
+      price or exit is produced in it; the market is shut for the whole window
+      in any case. Moving this bound changes when a report is written and
+      nothing a broker sees.
+  - id: src.trading_calendar._QUARTER_END_MONTHS[0]
+    value: 3
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      March is a calendar-quarter end by definition, not a desk choice. Its two
+      readers are the quarterly meta-reflector's last-trading-day-of-quarter
+      test (src/execution/broker_parts/account_reads.py) and the quarterly
+      digest's period label; neither sizes, prices, places or exits anything.
+  - id: src.trading_calendar._QUARTER_END_MONTHS[1]
+    value: 6
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      June is a calendar-quarter end by definition, not a desk choice. Its two
+      readers are the quarterly meta-reflector's last-trading-day-of-quarter
+      test (src/execution/broker_parts/account_reads.py) and the quarterly
+      digest's period label; neither sizes, prices, places or exits anything.
+  - id: src.trading_calendar._QUARTER_END_MONTHS[2]
+    value: 9
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      September is a calendar-quarter end by definition, not a desk choice. Its two
+      readers are the quarterly meta-reflector's last-trading-day-of-quarter
+      test (src/execution/broker_parts/account_reads.py) and the quarterly
+      digest's period label; neither sizes, prices, places or exits anything.
+  - id: src.trading_calendar._QUARTER_END_MONTHS[3]
+    value: 12
+    status: not-trade-governing
+    site: src/trading_calendar.py
+    note: >-
+      December is a calendar-quarter end by definition, not a desk choice. Its two
+      readers are the quarterly meta-reflector's last-trading-day-of-quarter
+      test (src/execution/broker_parts/account_reads.py) and the quarterly
+      digest's period label; neither sizes, prices, places or exits anything.
