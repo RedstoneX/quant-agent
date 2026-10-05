@@ -1,0 +1,264 @@
+"""Filing text extraction, constructed and exercised with no provider anywhere.
+
+`src.data.filing_text` takes a file path and returns text.  Nothing here
+imports `src.data.earnings`; the module must stand alone.
+"""
+
+import subprocess
+import sys
+
+import pytest
+from pathlib import Path
+
+
+def _statement_rows(n: int = 60) -> str:
+    """A statements section's worth of line items.
+
+    Real condensed financial statements carry hundreds of figures across the
+    operations, balance-sheet and cash-flow tables. The fixture needs that
+    density to represent what it claims to be: `extract_text` now requires
+    genuine financial content before it will accept a structured extraction,
+    precisely because a few thousand words of prose containing the phrase
+    "financial statements" is what the auditor's opinion letter looks like.
+    """
+    return " ".join(
+        f"Line item {i}: ${1000 + i * 137:,} versus ${900 + i * 131:,} "
+        f"({100 + i:,}) change {i * 3:,}."
+        for i in range(n)
+    )
+
+
+def test_extract_text_compresses_standard_10q(tmp_path):
+    """Full 10-Q with TOC + all standard sections → structured extraction path."""
+    from src.data.filing_text import extract_text, find_financial_dense_region
+
+    filler = "Lorem ipsum dolor sit amet consectetur. " * 50  # ~2000 chars
+    html = f"""<html><body>
+    <h1>Apple Inc. Q1 2026 Form 10-Q</h1>
+    <div>Table of Contents: Item 1. Financial Statements ...
+    Item 2. Management's Discussion and Analysis ... Item 1A. Risk Factors ...</div>
+    {"Cover page filler filler filler. " * 400}
+    <h2>CONDENSED CONSOLIDATED STATEMENTS OF OPERATIONS</h2>
+    <p>Net sales: Products $113,743 Services $26,340. Total $140,083.
+    Operating income $42,832. Diluted EPS $2.40. {_statement_rows()} {filler}</p>
+    <h2>Item 2. Management's Discussion and Analysis of Financial Condition</h2>
+    <p>Products revenue grew 8% YoY driven by iPhone. Services grew 14%.
+    Gross margin expanded 120bps to 46.9%. Guidance implies mid-single-digit
+    revenue growth in Q2. {filler}</p>
+    <h2>Item 1A. Risk Factors</h2>
+    <p>There have been no material changes to the risk factors disclosed in
+    our 2025 Form 10-K. {filler}</p>
+    </body></html>"""
+    html_path = tmp_path / "test.html"
+    html_path.write_bytes(html.encode())
+
+    out = extract_text(str(html_path), max_chars=30000)
+    assert "=== FINANCIAL STATEMENTS ===" in out
+    assert "=== MDNA ===" in out
+    assert "=== RISK FACTORS ===" in out
+    assert "113,743" in out
+    assert "iPhone" in out
+    assert len(out) < len(html) / 2
+
+
+def test_extract_text_handles_smart_apostrophe(tmp_path):
+    """SEC filings commonly use the curly apostrophe U+2019 — regex must match it."""
+    from src.data.filing_text import extract_text, find_financial_dense_region
+
+    html = (
+        "<html><body>"
+        + ("x " * 8000)  # push past TOC threshold
+        + "\nItem 2.\nManagement\u2019s Discussion and Analysis\n"
+        + "<p>Revenue up 10%. " + ("Lorem ipsum. " * 200) + "</p>"
+        + "\nItem 3. Quantitative disclosures\n"
+        + "</body></html>"
+    )
+    html_path = tmp_path / "curly.html"
+    html_path.write_bytes(html.encode())
+
+    out = extract_text(str(html_path))
+    # Whether structured or fallback path fires, the key content must be there.
+    assert "Revenue up 10%" in out
+
+
+def test_extract_text_falls_back_to_truncated_when_sections_sparse(tmp_path):
+    """A filing with no recognizable section headers → fallback truncated text."""
+    from src.data.filing_text import extract_text, find_financial_dense_region
+
+    raw = "This is a filing without standard section markers. " * 4000
+    html_path = tmp_path / "nohdr.html"
+    html_path.write_bytes(f"<html><body>{raw}</body></html>".encode())
+
+    out = extract_text(str(html_path), max_chars=5000)
+    # No section markers, fallback path
+    assert "===" not in out
+    assert len(out) <= 5100  # 5000 + small tail marker
+    assert "[... truncated ...]" in out
+
+
+def test_extract_text_skips_toc_for_financial_statements(tmp_path):
+    """R6 audit (May 2026): logs showed 58 filings where the regex for
+    'Consolidated Statements of Operations' matched the internal TOC /
+    Index to Financial Statements before reaching the actual table.
+    Result was ~553 chars of TOC entries vs 10,000+ chars of real data.
+
+    Pin: when a TOC entry occurs BEFORE the real section, skip_toc
+    strategy picks the later (real) one. Affected real-world filings:
+    PG / SBUX / V / ABT / AMZN / CAT / COP / LLY 10-Qs."""
+    from src.data.filing_text import extract_text, find_financial_dense_region
+
+    # TOC entry (within first 15K chars) then later real section past 15K.
+    # The early "Consolidated Statements of Operations" is a TOC pointer
+    # with only ~200 chars of body before the next "Item" stop marker —
+    # short enough to be dropped by the >=150 char threshold normally, but
+    # NOT short enough if any "Item X" stop is found just after.
+    early_toc = (
+        "<html><body>"
+        "<h1>Procter & Gamble 10-Q</h1>\n"
+        "INDEX TO CONSOLIDATED FINANCIAL STATEMENTS\n"
+        "Consolidated Statements of Operations\n"
+        "(page 3)\n"
+        # Filler to push the real section past 15K
+        + ("Lorem cover-page boilerplate text padding the front. " * 350)
+        # Real financial statement past the 15K threshold
+        + "\nCONSOLIDATED STATEMENTS OF OPERATIONS\n"
+        + ("Net sales $21,737 Cost of products sold $10,392 "
+           "Operating income $5,148 Net earnings $4,103 Diluted EPS $1.66. " * 30)
+        + "\nItem 2. Management's Discussion and Analysis\n"
+        + ("Sales growth was driven by Beauty +6% and Health +8%. " * 30)
+        + "\nItem 3. Quantitative disclosures\n"
+        "</body></html>"
+    )
+    html_path = tmp_path / "pg.html"
+    html_path.write_bytes(early_toc.encode())
+
+    out = extract_text(str(html_path), max_chars=30000)
+    # The body of the financial_statements section must include the real
+    # numerics, not just the TOC pointer.
+    assert "Net sales $21,737" in out
+    assert "Diluted EPS $1.66" in out
+    assert "=== FINANCIAL STATEMENTS ===" in out
+
+
+def test_extract_text_finds_financial_dense_region_on_fallback(tmp_path):
+    """When structured extraction completely fails (filing layout that
+    doesn't match any regex), fall back to the financial-data-rich
+    region of the text rather than the front (which is typically
+    cover page + XBRL boilerplate for iXBRL 10-Qs)."""
+    from src.data.filing_text import extract_text, find_financial_dense_region
+
+    # Front-loaded XBRL/cover boilerplate (no $-amount density), then a
+    # rich financial table in the middle. No section headers anywhere
+    # to defeat structured extraction entirely.
+    boilerplate_front = (
+        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax "
+        "contextRef=ctx_2026_q1 dimension=member dei:DocumentType "
+        "ifrs-full:Assets fair-value-hierarchy Level1 Level2 Level3 "
+    ) * 200
+    rich_middle = (
+        "Net sales $45,123 Operating income $12,456 Net income $9,876 "
+        "Total assets $250,000 Cash $30,000 Diluted EPS $4.32 "
+        "Free cash flow $11,234 Capital expenditures $(1,500) "
+    ) * 100
+    quiet_tail = "Signatures. Exhibit list. Other boilerplate. " * 200
+
+    body = boilerplate_front + rich_middle + quiet_tail
+    html_path = tmp_path / "ixbrl.html"
+    html_path.write_bytes(f"<html><body>{body}</body></html>".encode())
+
+    out = extract_text(str(html_path), max_chars=10000)
+    # Output must contain the rich-middle financial numbers, NOT the
+    # XBRL boilerplate that dominated the front.
+    assert "Net sales $45,123" in out
+    assert "Diluted EPS $4.32" in out
+
+
+def test_find_financial_dense_region_preserves_head_when_no_obvious_winner(tmp_path):
+    """Tuning guard: if every chunk has similar low financial density
+    (e.g., filing is genuinely all narrative — possibly a stub or an
+    amendment with no statements), don't relocate. Returning 0 keeps
+    backward compat behavior."""
+    from src.data.filing_text import extract_text, find_financial_dense_region
+
+    flat = "narrative text with no dollar figures or financial tables. " * 2000
+    idx = find_financial_dense_region(flat, window=5000)
+    assert idx == 0
+
+
+def test_auditors_letter_is_not_mistaken_for_financial_statements(tmp_path):
+    """The bug this guards, measured on production data 2026-08-28.
+
+    `_extract_key_sections` matches the phrase "financial statements", which
+    also appears inside the auditor's opinion letter — "...the related notes
+    (collectively referred to as the financial statements)". That letter is
+    prose thousands of characters long, so it cleared the old length-only
+    acceptance test, and clearing it SUPPRESSED the density-seeking fallback
+    that would have found the real tables.
+
+    17 of the 68 filings cached on the production box were affected. Twelve of
+    them — MSFT, AAPL, GOOGL, BAC, CVX, NFLX among them — reached the earnings
+    analyst with ZERO financial figures. It failed silently: the analyst got a
+    plausible document and reported on it.
+    """
+    from src.data.filing_text import extract_text, find_financial_dense_region
+
+    auditors_letter = (
+        "We have audited the accompanying consolidated balance sheets, and "
+        "the related consolidated statements of income, comprehensive income, "
+        "cash flows, and stockholders' equity, for each of the three years in "
+        "the period ended June 30, 2026, and the related notes (collectively "
+        "referred to as the financial statements). In our opinion, the "
+        "financial statements present fairly, in all material respects, the "
+        "financial position of the Company. " * 30
+    )
+    real_tables = _statement_rows(120)
+    html = f"""<html><body>
+    <h1>Form 10-K</h1>
+    <h2>Item 8. Financial Statements and Supplementary Data</h2>
+    <p>{auditors_letter}</p>
+    <h2>CONSOLIDATED STATEMENTS OF OPERATIONS</h2>
+    <p>Revenue $245,122 versus $211,915. Net income $88,136. {real_tables}</p>
+    </body></html>"""
+    html_path = tmp_path / "10k.html"
+    html_path.write_bytes(html.encode())
+
+    out = extract_text(str(html_path), max_chars=30000)
+
+    # Whatever path it takes, the analyst must end up holding actual numbers.
+    import re
+    from src.data.filing_text import FINANCIAL_FIGURE_RE as _FINANCIAL_FIGURE_RE
+    assert len(_FINANCIAL_FIGURE_RE.findall(out)) >= 40, (
+        "extraction returned narrative with no financial figures"
+    )
+    assert "245,122" in out or "88,136" in out
+
+
+def test_a_genuinely_sparse_filing_still_returns_something(tmp_path):
+    """Degrade, never blank. A shell filing has no tables to find, and the
+    analyst is better served by the prose than by an empty string."""
+    from src.data.filing_text import extract_text, find_financial_dense_region
+
+    html = (
+        "<html><body><h2>Item 1. Financial Statements</h2>"
+        "<p>" + ("No material operations during the period. " * 200) + "</p>"
+        "</body></html>"
+    )
+    html_path = tmp_path / "shell.html"
+    html_path.write_bytes(html.encode())
+
+    out = extract_text(str(html_path), max_chars=30000)
+    assert out.strip()
+    assert "material operations" in out
+
+
+def test_filing_text_stands_alone_without_the_provider(tmp_path):
+    """A fresh interpreter importing the extractor must not load the provider."""
+    f = tmp_path / "f.html"
+    f.write_bytes(b"<html><body><p>hello world</p></body></html>")
+    code = (
+        "import sys; from src.data.filing_text import extract_text; "
+        f"out = extract_text({str(f)!r}); "
+        "assert 'hello world' in out; "
+        "assert 'src.data.earnings' not in sys.modules"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True, cwd=Path(__file__).resolve().parents[1])
