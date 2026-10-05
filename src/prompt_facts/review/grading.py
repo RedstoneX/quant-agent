@@ -9,6 +9,8 @@ import logging
 
 from src.trading_calendar import et_today
 
+from src.prompt_facts.review.loud import record_swallowed_review
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +46,7 @@ class ReviewGrading:
             all_rows = self.db.get_trades(limit=200, executed_only=True)
         except Exception as e:
             logger.warning("recent_sells: db fetch failed: %s", e)
+            record_swallowed_review(self, "recent_sells.db_fetch", e)
             return []
         if not all_rows:
             return []
@@ -123,6 +126,7 @@ class ReviewGrading:
             all_rows = self.db.get_trades(limit=200, executed_only=True)
         except Exception as e:
             logger.warning("recent_buys: db fetch failed: %s", e)
+            record_swallowed_review(self, "recent_buys.db_fetch", e)
             return []
         if not all_rows:
             return []

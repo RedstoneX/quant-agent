@@ -9,6 +9,8 @@ import logging
 
 from src.risk.rules import peak_to_trough_pct
 
+from src.prompt_facts.review.loud import record_swallowed_review
+
 logger = logging.getLogger(__name__)
 
 
@@ -176,6 +178,7 @@ class ReviewCalibration:
             stats = self.db.compute_trade_calibration(lookback_days=lookback_days)
         except Exception as e:
             logger.warning("calibration_note: stats failed: %s", e)
+            record_swallowed_review(self, "calibration_note.stats", e)
             return ""
         if not isinstance(stats, dict) or not stats:
             return ""
@@ -257,6 +260,7 @@ class ReviewCalibration:
             rows = self.db.get_daily_pnl(limit=25)
         except Exception as e:
             logger.warning("Failed to read daily_pnl for drawdown context: %s", e)
+            record_swallowed_review(self, "recent_performance.daily_pnl", e)
             return {}
         if not rows:
             return {

@@ -15,6 +15,7 @@ from src.pipeline_prompt_facts_pure import (
     _missed_ops_quality_metrics,
     _valuation_signal_from,
 )
+from src.prompt_facts.review.loud import record_swallowed_review
 from src.risk.metrics import unrealized_pnl_pct
 from src.trading_calendar import et_today
 
@@ -99,6 +100,7 @@ class MissedOpsSignals:
             )
         except Exception as exc:
             logger.warning("missed_ops: tech_analyst logs fetch failed: %s", exc)
+            record_swallowed_review(self, "missed_ops.tech_logs", exc)
             return {}
         cutoff_str = (et_today() - timedelta(days=lookback_days * 2 + 2)).isoformat()
         latest: dict[str, tuple[str, str]] = {}
@@ -224,7 +226,9 @@ class MissedOpsSignals:
         """
         try:
             manifest = getattr(self.earnings_provider, "manifest", {}) or {}
-        except Exception:
+        except Exception as exc:
+            logger.warning("missed_ops: earnings manifest read failed: %s", exc)
+            record_swallowed_review(self, "missed_ops.earnings_manifest", exc)
             return {}
         from datetime import date as _date
         from pathlib import Path
@@ -291,6 +295,7 @@ class MissedOpsSignals:
             state = self.macro_store.load_last_state() or {}
         except Exception as exc:
             logger.warning("missed_ops: macro_store load failed: %s", exc)
+            record_swallowed_review(self, "missed_ops.macro_store", exc)
             return {}
         guidance = state.get("sector_guidance") or {}
         if not isinstance(guidance, dict):
@@ -319,6 +324,7 @@ class MissedOpsSignals:
             )
         except Exception as exc:
             logger.warning("thesis_tech_trajectory: logs fetch failed: %s", exc)
+            record_swallowed_review(self, "thesis_trajectory.logs", exc)
             return {}
         by_sym: dict[str, list[str]] = {}
         for row in rows:
