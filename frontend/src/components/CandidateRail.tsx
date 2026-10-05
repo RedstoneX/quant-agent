@@ -29,7 +29,7 @@ import { flexRender, type SortingState, type ExpandedState } from "@tanstack/rea
 import { CandidateFunnelItem, RunFunnelResponse } from "../api/client";
 import { Panel, StateMessage } from "./ui/Panel";
 import { useModalActions } from "../context/ModalContext";
-import { fmtNum } from "../lib/format";
+import { fmtClock, fmtNum } from "../lib/format";
 import { Stage, STAGE_META, candidateStage } from "./funnelShared";
 
 const STAGE_COLOR: Record<Stage, Color> = {
@@ -194,7 +194,7 @@ export function CandidateRail({
         <div className="flex min-h-0 flex-col gap-3">
           {error && (
             <Callout title="Last known candidate set" color="amber" className="!bg-panel-alt">
-              As of {updatedAt ? updatedAt.toLocaleTimeString() : "an earlier fetch"}; fresh fetch failed ({error}).
+              As of {updatedAt ? fmtClock(updatedAt) : "an earlier fetch"}; fresh fetch failed ({error}).
             </Callout>
           )}
 

@@ -25,6 +25,18 @@ export function fmtNum(v: number | null | undefined, digits = 2): string {
   return Number(v).toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
+// The ONE clock stamp for any "as of / updated / last" label: date AND time,
+// so a reader cannot mistake this morning for three days ago. Never call
+// the browser time-only formatter (tests/test_owner_timestamps_carry_date.py).
+export function fmtClock(d: Date): string {
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function fmtTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");

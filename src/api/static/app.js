@@ -149,7 +149,7 @@ function updateHealthIndicator(health) {
 
 function stampUpdated() {
   document.getElementById("last-updated").textContent =
-    `updated ${new Date().toLocaleTimeString()}`;
+    `updated ${new Date().toLocaleString()}`;
 }
 
 /* ---------------------------------------------------------------------- */

@@ -28,6 +28,7 @@ import logging
 from datetime import datetime
 from typing import Any, Callable
 
+from src.notifier.sections import fmt_time_12h
 from src.trading_calendar import ET, in_regular_session
 
 logger = logging.getLogger("src.market_session")
@@ -80,9 +81,9 @@ def _read_calendar(broker: Any, now: datetime) -> tuple[bool, str]:
     # half day are precisely the case where the window says open and the
     # calendar says shut; the calendar is right.
     if opens is not None and now < opens:
-        return False, f"the session has not opened yet (opens {opens:%H:%M %Z})"
+        return False, f"the session has not opened yet (opens {_stamp(opens)})"
     if closes is not None and now >= closes:
-        return False, f"the session has closed (closed {closes:%H:%M %Z})"
+        return False, f"the session has closed (closed {_stamp(closes)})"
     if opens is None or closes is None:
         # Inside no bound we can prove. Not an "open" answer: an unbounded
         # read must not assert a session, so hand the question on.
@@ -93,7 +94,12 @@ def _read_calendar(broker: Any, now: datetime) -> tuple[bool, str]:
             "the broker's calendar did not give both session edges"
             + (f" ({'; '.join(problems)})" if problems else "")
         )
-    return True, f"the session is open until {closes:%H:%M %Z}"
+    return True, f"the session is open until {_stamp(closes)}"
+
+
+def _stamp(moment: datetime) -> str:
+    """Date + clock for an owner-visible session edge, in exchange time."""
+    return fmt_time_12h(moment.astimezone(ET))
 
 
 def market_open_verdict(broker: Any, now: datetime) -> tuple[bool, str]:
