@@ -1350,7 +1350,7 @@ def test_rearm_alert_records_durably_and_pages_once_per_day(monkeypatch, tmp_pat
     )
     real_claim = cw.claim_typed_alert
     monkeypatch.setattr(
-        cw, "claim_typed_alert",
+        si, "claim_typed_alert",
         lambda kind, syms, **k: real_claim(kind, syms, path=state),
     )
     sent = []

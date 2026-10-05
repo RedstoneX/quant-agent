@@ -16,6 +16,8 @@ __all__ = ["SCOPED_PATHS", "py_universe"]
 #: `scripts/unscoped_number_guard.py` is what stops it from silently lagging.
 #: A directory entry covers every `.py` under it.
 SCOPED_PATHS: tuple[str, ...] = (
+    # 2026-10-05: the position-history reader behind the prompt facts; its one limit is a dead default.
+    "src/data/tech_store.py",
     "src/risk",
     "src/portfolio_constructor",
     "src/rotation.py",
@@ -71,7 +73,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # future one arriving unseen.
     "src/execution/broker.py", "src/execution/broker_parts",
     "src/execution/stop_repair.py", "src/execution/order_gates.py", "src/execution/order_idempotency.py",
-    "src/coverage_watchdog.py",
+    "src/coverage_watchdog.py", "src/alert_claims.py",  # the alert-claim half, lifted 2026-10-05
     # The pipeline's own decision/execution glue. The de-lever and midday
     # order-price buffers are inline multipliers and rule (e) has seen them
     # since 2026-09-19; rule (c) (function-parameter defaults) was added the
@@ -118,6 +120,10 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/data/news_dedup.py",
     "src/token_budget.py",
     "src/backtest/engine.py",
+    # 2026-10-05: four offline research scripts (the level sweep, its volatility-clustered control, the
+    # minimum-stop sweep and the noise-band holding scan); each site is ledgered so none hides unseen.
+    "ops/research/item55_level_sweep.py", "ops/research/item55_volclustered_control.py",
+    "ops/research/min_stop_atr_sweep.py", "ops/research/noise_band_holding_scaling.py",
     # 2026-10-05 numbers sweep 2: the offline model benchmark's fixtures and
     # sizing mirror, and the CI shard weights. Scoped so each number is
     # ledgered with the proof that it reaches no order.
