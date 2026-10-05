@@ -18205,4 +18205,6 @@ Root disk was 89% full; a daily sweep (`~/.claude/disk-sweep.sh`, outside the re
 
 **Proof.** `src/notifier/sections.py` with `tests/test_owner_timestamps_carry_date.py`, which now really scans the health and in-flight modules it previously missed.
 
+**Follow-up 2026-10-05.** The dashboard (nine labels plus the legacy page) and the session-open/close reasons still showed a bare time; all now carry the date, and the test also scans the dashboard source so a bare clock cannot return.
+
 **Still open.** Nothing.
