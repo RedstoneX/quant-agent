@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from src.sentinel.guarded_site import record_site
+from src.storage.event_journal import DatabaseEventJournal
+
+if TYPE_CHECKING:
+    from src.storage.db import Database
 
 logger = logging.getLogger("src.pipeline_stages")
 
@@ -41,3 +46,20 @@ def _live_stops_from_heat(ctx) -> dict[str, float] | None:
     except Exception as e:  # noqa: BLE001 — never fail the session on this
         record_stage(ctx, "live_stop_map", e)
         return None
+
+
+def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str,
+                       scope: str, evidence_json: str, symbol: str | None = None,
+                       decision_id: str | None = None) -> None:
+    """Best-effort Stage 4 structured-evidence write — NEVER raises.
+
+    Conversion step 6: a compatibility shim over the `EventJournal` port
+    (`src.ports.event_journal`); the body lives in
+    `src.storage.event_journal.DatabaseEventJournal.persist_evidence`. Kept
+    so the existing call sites work unchanged until each service takes a
+    `journal: EventJournal` in its constructor.
+    """
+    DatabaseEventJournal(db).persist_evidence(
+        run_id=run_id, agent_name=agent_name, kind=kind, scope=scope,
+        evidence_json=evidence_json, symbol=symbol, decision_id=decision_id,
+    )

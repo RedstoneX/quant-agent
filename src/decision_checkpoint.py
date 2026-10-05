@@ -23,9 +23,31 @@ Safety contract (from the adversarial design review):
     (at-most-once: a kill during execution must not re-execute; the BUY
     write-ahead orphan sweep owns partial submits) and also on any
     RiskStage early-exit (an RM-rejected plan must never be retried).
-  - Stale protection: same-ET-date only, max age 90 minutes, plus the
-    existing ExecutionStage guard (5% entry-price staleness skip) runs
-    against FRESH market state. A pre-BUY daily-loss recheck was named
+  - Stale protection: same-ET-date only, max age `MAX_AGE_MINUTES`, plus
+    the existing ExecutionStage guard (5% entry-price staleness skip) runs
+    against FRESH market state.
+    MEASURED 2026-10-05, because nobody had checked that the age bound sits
+    inside what the entry gates tolerate. The entry-slippage belt is NOT the
+    gate it has to sit inside: that belt's reference is captured live at
+    submission, so plan age cannot move it (all 6 production slippage_gated
+    rows, 2026-09-15 to 2026-09-24, quote a fresh reference). The gate that
+    does bound plan age is the 5% entry-price staleness skip. Against that
+    5%: ESTIMATE, scaling each day's absolute open-to-close return by the
+    square root of 90/390 of a session, over 9,108 symbol-days (33 symbols,
+    2025-08-26 to 2026-09-30, from the recorded daily bars under
+    ops/rehearsal/recordings) -- median 0.38%, 95th pct 2.09%, 99th 3.81%.
+    A 90-minute-old plan exceeds the 5% skip in 0.48% of those symbol-days,
+    so the bound sits inside the tolerance for ~99.5% of them and the rest
+    is refused, not traded. An estimate, not a measurement: no intraday bars
+    are committed, so the within-session path is modelled, not observed.
+    The bound is NOT in the number ledger's scope, and the scope guard
+    refuses a row for it; it is recorded here instead.
+  - Resume RE-SIZES; it does not carry the original size. The checkpoint
+    holds the plan, never a share count: share counts are computed at
+    execution from a live print against a fresh account snapshot, and the
+    risk seat always re-runs. The stale-sizing defect measured elsewhere on
+    this desk -- risk sized off the analysis price and filled away from it
+    -- does not arise on this path. A pre-BUY daily-loss recheck was named
     here too until 2026-09-20, when the whole account-level loss alarm was
     removed (docs/INCIDENT_HISTORY.md, retired item 32).
   - Every function is best-effort: any error degrades to "no checkpoint"

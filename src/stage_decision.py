@@ -148,7 +148,7 @@ class DecisionStage:
         rm_recent_verdicts = pipeline._build_rm_recent_verdicts()
         pm_recent_decisions = pipeline._build_pm_recent_decisions()
         projected_portfolio = pipeline._build_projected_portfolio(
-            positions, analyses, total_value,
+            positions, analyses, total_value, run=ctx,
         )
         calibration_note = pipeline._build_calibration_note()
         macro_tech_alignment = pipeline._build_macro_tech_alignment(macro_analysis, analyses)
@@ -293,7 +293,7 @@ class DecisionStage:
             min_order_usd=_min_order_usd(pipeline),
             margin_ladder_multiple=margin_ladder_multiple,
             margin_ladder_rung=margin_ladder_rung,
-            symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
+            symbol_sectors=dict(ctx.symbol_sectors or {}),
             session_type=ctx.session,
             allowed_buy_symbols={
                 str(symbol).strip().upper()
@@ -485,18 +485,15 @@ class DecisionStage:
         # the evidence stream and NEVER changes a target, size, price or exit;
         # `risk_allocation_pct` stays authoritative. Wrapped so a bookkeeping
         # check can never take a live PM session down, matching the posture of
-        # `_account_for_pm_candidates` below.
+        # `_account_for_pm_candidates` below. The audit helper records one
+        # `checked` row per session as well as any mismatch, so an empty
+        # stream distinguishes agreement from a path that never ran.
         try:
-            from src.risk_narrative_check import check_sizing_narrative
+            from src.sizing_narrative_audit import audit_sizing_narrative
 
-            for mismatch in check_sizing_narrative(portfolio_decision):
-                _record_pipeline_event(
-                    pipeline, ctx, mismatch.symbol,
-                    "sizing_narrative_check", "mismatch", mismatch.detail,
-                    prose_pct=mismatch.prose_pct, field_pct=mismatch.field_pct,
-                )
+            audit_sizing_narrative(pipeline, ctx, portfolio_decision)
         except Exception:
-            logger.debug("sizing_narrative_check skipped", exc_info=True)
+            logger.exception("sizing_narrative_check audit failed")
         _account_for_pm_candidates(
             pipeline, ctx, run_id=run_id, analyses=analyses,
             positions=positions, decision=portfolio_decision,
@@ -581,7 +578,7 @@ class DecisionStage:
             earnings_analyses=earnings_results,
             macro_analysis=_macro_analysis_as_dict(macro_analysis),
             smart_money_findings=ctx.smart_money_findings,
-            symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
+            symbol_sectors=dict(ctx.symbol_sectors or {}),
         )
         # Item 112 — keep THIS session's fresh per-seat read on the context so
         # the post-decision gross de-lever can rank held names by live
@@ -603,7 +600,7 @@ class DecisionStage:
                 macro_analysis=_macro_analysis_as_dict(macro_analysis),
                 earnings_analyses=earnings_results,
                 smart_money_findings=ctx.smart_money_findings,
-                symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
+                symbol_sectors=dict(ctx.symbol_sectors or {}),
             )
         except Exception as exc:  # noqa: BLE001
             # Best-effort like the collector itself: no verdicts means the cut
@@ -638,7 +635,7 @@ class DecisionStage:
             registry=evidence_registry,
             positions=positions,
             macro_analysis=_macro_analysis_as_dict(macro_analysis),
-            symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
+            symbol_sectors=dict(ctx.symbol_sectors or {}),
         )
         # Items 109 + 112 together — the conviction cut order must honour the
         # SAME one-sided removal. A broadcast macro stance may not be the

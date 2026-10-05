@@ -115,6 +115,7 @@ from src.portfolio_constructor.config import (
     widest_reachable_stop_atr_multiple,
 )
 from src.portfolio_constructor.assembly import hold_parts, install_delegates
+from src.portfolio_constructor.divergence_counter import log_divergence
 
 
 @install_delegates
@@ -1362,31 +1363,14 @@ class PortfolioConstructor:
     def _log_target_divergence(
         self, symbol: str, derivation: TargetDerivation,
     ) -> None:
-        """Record where the model's guess and the computed level disagree.
-
-        The model's target is no longer arithmetic, but it is still the only
-        read available on whether the model's chart-reading is worth
-        anything. A large, one-directional gap across many symbols is a
-        finding about the seat; a large gap on one symbol is a finding about
-        that symbol.
-        """
-        if derivation.price is None or derivation.model_target is None:
-            return
-        gap = derivation.divergence_pct
-        if gap is None:
-            return
-        message = (
-            "Constructor: %s target — computed $%.2f (%s) vs analyst's "
-            "reference_target $%.2f: %+.1f%%"
+        """Delegate to `divergence_counter.log_divergence`, which logs the
+        comparison and, when a recorder is wired, writes one durable row for
+        it. Nothing is accumulated in memory."""
+        log_divergence(
+            symbol=symbol, derivation=derivation,
+            threshold_pct=self.cfg.target_divergence_warn_pct,
+            recorder=self.refusal_recorder,
         )
-        args = (
-            symbol, derivation.price, derivation.basis,
-            derivation.model_target, gap,
-        )
-        if abs(gap) >= self.cfg.target_divergence_warn_pct:
-            logger.warning(message + " — the model and the chart disagree sharply", *args)
-        else:
-            logger.info(message, *args)
 
     @staticmethod
     def _target_note(derivation: TargetDerivation) -> str:
