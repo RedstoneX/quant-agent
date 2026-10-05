@@ -1229,3 +1229,11 @@ changes:
       invented route: the rating rungs enter the conviction score unscaled so
       their ratio decides outcomes, and the backtest engine cannot settle them
       because it has no verdicts and does no ranking.
+
+  - delta: 4
+    date: 2026-10-05
+    why: >-
+      The four English number-word rows of the FOMC duration decoder in the event-calendar data module are
+      held as arbitrary rather than sourced: the earlier citations pointed at the pattern that matches each
+      word, which names the word but never its number. Each now states the open question and the cost while
+      unanswered. No value changed.

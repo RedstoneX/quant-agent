@@ -176,11 +176,63 @@ def _write_summary(lines: list[str]) -> None:
               file=sys.stderr)
 
 
+ISSUE_PREFIX = "[trunk-red]"
+
+
+def _gh(args: list[str]) -> str:
+    proc = subprocess.run(["gh", *args], capture_output=True, text=True,
+                          timeout=GH_TIMEOUT_S)
+    if proc.returncode != 0:
+        raise GhError(proc.stderr.strip() or str(proc.returncode))
+    return proc.stdout
+
+
+def plan_issue_actions(open_issues: list[dict], red_sha: str | None) -> dict:
+    """What to do with the tracking issues. red_sha None means main is green.
+
+    One issue per red commit: reuse an open issue already naming this commit,
+    close every other open tracking issue (stale commit, or main now green).
+    """
+    ours = [i for i in open_issues
+            if str(i.get("title", "")).startswith(ISSUE_PREFIX)]
+    keep = [i for i in ours if red_sha and red_sha[:8] in i["title"]]
+    close = [i["number"] for i in ours if i not in keep]
+    return {"create": bool(red_sha) and not keep, "close": close}
+
+
+def sync_issue(repo: str | None, red: list[str] | None,
+               red_sha: str | None) -> None:
+    """Open one issue per red trunk commit; close it once main is green.
+
+    A failing scheduled run is invisible in practice (main sat red for three
+    hours with the sweep red every time). An issue notifies the owner through
+    GitHub itself and does not touch the muted Telegram channel.
+    """
+    base = ["--repo", repo] if repo else []
+    try:
+        listed = json.loads(_gh(["issue", "list", *base, "--state", "open",
+                                 "--limit", "50", "--json", "number,title"]))
+        todo = plan_issue_actions(listed, red_sha)
+        if todo["create"]:
+            _gh(["issue", "create", *base, "--title",
+                 f"{ISSUE_PREFIX} main is red at {red_sha[:8]}",
+                 "--body", "\n".join(red or [])])
+        for number in todo["close"]:
+            _gh(["issue", "close", str(number), *base, "--comment",
+                 "main is green again, or a newer commit superseded this."
+                 if not red_sha else "Superseded by a newer red commit."])
+    except (GhError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"check_main_red: could not sync the tracking issue — {exc}",
+              file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=None, help="owner/name")
     parser.add_argument("--branch", default="main",
                         help="the protected branch to watch")
+    parser.add_argument("--issue", action="store_true",
+                        help="open/close the tracking issue (needs issues: write)")
     args = parser.parse_args(argv)
 
     try:
@@ -202,9 +254,14 @@ def main(argv: list[str] | None = None) -> int:
     if state == "green":
         print(f"check_main_red: {args.branch}'s newest completed push run "
               f"passed.")
+        if args.issue:
+            sync_issue(args.repo, None, None)
         return 0
 
-    lines = record_lines(args.branch, red_streak(runs))
+    streak = red_streak(runs)
+    lines = record_lines(args.branch, streak)
+    if args.issue:
+        sync_issue(args.repo, lines, str(streak[0].get("headSha")))
     for line in lines:
         print(line)
     _write_summary(lines)

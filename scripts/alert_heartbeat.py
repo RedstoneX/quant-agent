@@ -96,6 +96,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.ops_alert import build_notifier, push_ops_alert  # noqa: E402
+
 #: Absolute, not relative to the working directory. `data/` is gitignored,
 #: so this record can never dirty the checkout and become deploy drift —
 #: the same reasoning the status-board and pricing-refresh units give.
@@ -219,19 +221,6 @@ def failure_text(stage: str, detail: str) -> str:
     )
 
 
-def build_notifier():
-    """The same `TelegramNotifier` every alarm on this desk uses.
-
-    Constructed with no arguments on purpose: it reads the environment
-    exactly as `check_deploy_drift.py`, `refresh_pricing.py` and the
-    shutdown/hold alerts do, so a probe failure here is a real alarm
-    failure and not an artifact of a differently-built notifier.
-    """
-    from src.notifier import TelegramNotifier
-
-    return TelegramNotifier()
-
-
 def run_probe(now: datetime | None = None) -> tuple[int, str]:
     """Exercise the channel, record the verdict. Returns (exit_code, line)."""
     from src.notifier import ProbeResult
@@ -268,7 +257,7 @@ def run_probe(now: datetime | None = None) -> tuple[int, str]:
 
     message = failure_text(result.stage, result.detail)
     print(message, file=sys.stderr)
-    delivered = bool(notifier.send(message))
+    delivered = push_ops_alert(message, kind="alert_heartbeat", notifier=notifier)
     return 1, (
         f"alert_heartbeat: {result.summary()}; "
         f"failure alert {'delivered' if delivered else 'could NOT be delivered'}"

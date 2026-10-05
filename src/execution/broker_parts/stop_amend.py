@@ -12,6 +12,7 @@ from alpaca.trading.requests import ReplaceOrderRequest
 
 from src.execution.broker_parts.stop_clock import deferred_payload, market_is_closed
 from src.execution.broker_parts.stop_dead_replacement import classify_after_dead_replacement
+from src.sentinel.guarded import record_guarded_pass
 # re-export mirror: defined there, still importable from here
 from src.execution.broker_parts.stop_amend_pure import _is_terminal_broker_rejection, _quantize_price
 
@@ -103,6 +104,8 @@ class StopAmender:
                 leg["id"], ReplaceOrderRequest(**request_fields),
             )
         except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(self, "stop_amend.amend_one_stop_price", exc, log=logger,
+                                context={"leg": str(leg.get("id"))})
             if _is_terminal_broker_rejection(exc):
                 leg["outcome"] = "refused"
                 leg["detail"] = f"broker refused the amend: {exc}"
