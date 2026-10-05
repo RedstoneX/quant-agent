@@ -235,11 +235,11 @@ def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
     Written on EVERY run so the board can tell "checked and clean" from
     "never checked". Reuses `save_state` from `src.coverage_watchdog`.
     """
-    from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state, save_state
+    from src import coverage_watchdog as cw, drift_state as ds
 
-    target = state_path or DEPLOY_DRIFT_STATE_PATH
+    target = state_path or ds.DEPLOY_DRIFT_STATE_PATH
     day = (today or datetime.now(timezone.utc).date()).isoformat()
-    state = load_state(target)
+    state = cw.load_state(target)
     if report.head_sha is None or report.remote_sha is None:
         status = "unknown"
     elif report.check_error is not None:
@@ -277,7 +277,7 @@ def record_state(report: "DriftReport", remote_ref: str, *, alerted: bool,
             state, "deploy_drift", day, [report.remote_sha],
         )
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
-    return save_state(state, target)
+    return cw.save_state(state, target)
 
 
 def already_alerted(report: "DriftReport", *, state_path=None,
@@ -286,11 +286,11 @@ def already_alerted(report: "DriftReport", *, state_path=None,
     pushed. Five identical "QAMC deploy drift" messages went out in one day and
     changed nothing; a message that repeats unchanged is noise, and the board
     carries the state for as long as it lasts."""
-    from src.coverage_watchdog import DEPLOY_DRIFT_STATE_PATH, load_state
+    from src import coverage_watchdog as cw, drift_state as ds
 
-    target = state_path or DEPLOY_DRIFT_STATE_PATH
+    target = state_path or ds.DEPLOY_DRIFT_STATE_PATH
     day = (today or datetime.now(timezone.utc).date()).isoformat()
-    prior = load_state(target).get("drift_alerted_for") or {}
+    prior = cw.load_state(target).get("drift_alerted_for") or {}
     return bool(
         isinstance(prior, dict)
         and prior.get("day") == day
