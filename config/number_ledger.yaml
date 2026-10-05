@@ -8640,6 +8640,12 @@ numbers:
         first and last published date, so the word's value is read off the Fed's own schedule
       closes_when: the published spans agree with 1 for every meeting using that wording; it is DELETED if the
         Fed stops using the wording
+    open_question: >-
+      Does the Fed's own published meeting schedule agree with this word's value (1) for every meeting whose page
+      wording uses it, read as the calendar days between the meeting's first and last published date?
+    cost_while_unanswered: >-
+      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
+      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
     note: >-
       UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
       citation pointed at the pattern that matches the word, which names the word but never the number 1, so it
@@ -8661,6 +8667,12 @@ numbers:
         first and last published date, so the word's value is read off the Fed's own schedule
       closes_when: the published spans agree with 2 for every meeting using that wording; it is DELETED if the
         Fed stops using the wording
+    open_question: >-
+      Does the Fed's own published meeting schedule agree with this word's value (2) for every meeting whose page
+      wording uses it, read as the calendar days between the meeting's first and last published date?
+    cost_while_unanswered: >-
+      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
+      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
     note: >-
       UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
       citation pointed at the pattern that matches the word, which names the word but never the number 2, so it
@@ -8682,6 +8694,12 @@ numbers:
         first and last published date, so the word's value is read off the Fed's own schedule
       closes_when: the published spans agree with 3 for every meeting using that wording; it is DELETED if the
         Fed stops using the wording
+    open_question: >-
+      Does the Fed's own published meeting schedule agree with this word's value (3) for every meeting whose page
+      wording uses it, read as the calendar days between the meeting's first and last published date?
+    cost_while_unanswered: >-
+      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
+      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
     note: >-
       UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
       citation pointed at the pattern that matches the word, which names the word but never the number 3, so it
@@ -8703,6 +8721,12 @@ numbers:
         first and last published date, so the word's value is read off the Fed's own schedule
       closes_when: the published spans agree with 4 for every meeting using that wording; it is DELETED if the
         Fed stops using the wording
+    open_question: >-
+      Does the Fed's own published meeting schedule agree with this word's value (4) for every meeting whose page
+      wording uses it, read as the calendar days between the meeting's first and last published date?
+    cost_while_unanswered: >-
+      A misread span would move the FOMC window the seats' prompts show by a day; it feeds prompt context and
+      an advisory event flag only, so the desk pays a possibly off-by-one window label and nothing in order sizing.
     note: >-
       UNSETTLED. English number-word decoding for the Fed's phrasing on the calendar page. The earlier
       citation pointed at the pattern that matches the word, which names the word but never the number 4, so it
