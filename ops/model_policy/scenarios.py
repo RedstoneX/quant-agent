@@ -1551,7 +1551,7 @@ def earnings_exam_report(scratch: Path | None = None):
     """
     import tempfile
 
-    from src.data.earnings import EarningsDataProvider, EarningsReport
+    from src.data.earnings import EarningsDataProvider, EarningsReport, extract_text
 
     manifest = _manifest(_EARNINGS_FIXTURE)
     filing = manifest["filing"]
@@ -1562,7 +1562,7 @@ def earnings_exam_report(scratch: Path | None = None):
     provider._sec_get = lambda url, **_kw: facts  # pinned bytes, no network
     html_path = root / f"{filing['form_type']}_{filing['filing_date']}.html"
     html_path.write_bytes(html)
-    text = provider._extract_text(str(html_path))
+    text = extract_text(str(html_path))
     xbrl_raw = provider._fetch_xbrl_raw(filing["cik"], filing["symbol"], filing["filing_date"])
     block = provider._format_xbrl_text(xbrl_raw)
     if block:

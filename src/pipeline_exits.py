@@ -492,7 +492,7 @@ class ExitEngineMixin:
             try:
                 from src.execution.stop_records import accepted_stop_order
                 order = replace_stop_and_record(
-                    self.broker, self.db, symbol, proposal.new_stop,
+                    self.broker, self.db, symbol, proposal.new_stop, run_id=run_id, caller="deterministic_trail",
                 )
                 record_exit_guard(self, "trail.replace_stop")
             except Exception as e:  # noqa: BLE001
@@ -1968,7 +1968,7 @@ class ExitEngineMixin:
                         accepted_stop_order, replace_stop_and_record,
                     )
                     order = replace_stop_and_record(
-                        self.broker, self.db, symbol, new_stop,
+                        self.broker, self.db, symbol, new_stop, run_id=run_id, caller="midday_trail_stop",
                     )
                     if order and not (
                         isinstance(order, dict) and not accepted_stop_order(order)

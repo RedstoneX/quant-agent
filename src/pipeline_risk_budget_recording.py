@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from src.recording_accessors import pinned_evidence
 from src.pipeline_sector_weights import _record_realised_sector_weights
 from src.storage.risk_budget_record import record_realised_risk_budget
 
@@ -36,7 +37,7 @@ def _record_realised_risk_budget(pipeline, ctx, total_value) -> None:
             allocation=getattr(constructor, "last_risk_allocation", None),
             equity=total_value,
             cluster_share_pct=getattr(cfg, "max_cluster_risk_share_pct", None),
-            run_id=getattr(ctx, "run_id", None),
+            run_id=pinned_evidence(ctx, "run_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("realised risk-budget recording failed: %s", exc)

@@ -38,6 +38,22 @@ measures of the same files, with the same rule and no stored record:
   joining, the route that killed the line-only rule, is NOT a hole here:
   ``a = 1; b = 2`` parses as two statements (measured), and the companion
   statement-cram ratchet refuses the shape outright.
+An IMPORT IS NOT GROWTH, in the line rule and the statement rule alike
+(2026-10-05). The ratchet exists to stop a file accumulating more CODE, and
+``ast.Import``/``ast.ImportFrom`` hold only module names and aliases -- the
+grammar admits no expression, call or assignment inside one, so no behaviour
+can be expressed there and none can be smuggled past by being spelled as a
+dependency. Charging for an import made the guard refuse the exact work it
+exists to encourage: lifting a helper out of a widely-used module adds one
+``import`` line to each call site, and when those sites are themselves over
+the floor (279 of 1213 tracked .py files, measured) the extraction turns them
+all red, so the only green route is to leave a forwarding shim on the module
+being emptied -- the cosmetic split the owner rejected. The exemption is by
+AST identity, never by what the author calls the change, and the proxy errs
+STRICT; ``import_only_lines`` names every case and which way each falls. The
+width fence below is NOT relaxed for imports: a new over-wide line still
+fails and is wrapped.
+
 * lines wider than the width fence -- a file may not gain one (by identity:
   path + the line's text) against ``origin/main``, so a line widened past the
   fence fails and passes once it is wrapped. Pre-existing wide lines pass.
@@ -93,7 +109,76 @@ Wide = tuple[str, str]  # (path, stripped text of a line wider than the fence)
 
 
 def _count(text: str) -> int:
+    """Physical lines. Used for the fence POPULATIONS and for reporting only."""
     return len(text.splitlines())
+
+
+def _block(node: ast.stmt) -> bool:
+    """A compound statement -- one that owns a suite of other statements."""
+    return any(
+        isinstance(getattr(node, field, None), list)
+        and field in ("body", "orelse", "finalbody")
+        for field in ("body", "orelse", "finalbody")
+    )
+
+
+def import_only_lines(text: str) -> set[int]:
+    """Line numbers occupied by an import and by nothing else.
+
+    AN IMPORT IS NOT CODE. ``ast.Import``/``ast.ImportFrom`` carry only module
+    names and aliases: the grammar admits no expression, no call and no
+    assignment inside them, so no behaviour whatsoever can be expressed in one
+    and nothing can be smuggled past this ratchet by spelling it as a
+    dependency. Declaring that a file now depends on a module it already used
+    through a longer path is not growth, and charging for it is what forced
+    delegating shims onto the files an extraction was meant to empty.
+
+    WHAT COUNTS AS AN IMPORT HERE, named because this is a proxy and the house
+    rule is to say which way a proxy errs -- this one errs STRICT, charging for
+    anything it cannot prove is an import and nothing else:
+
+    * a multi-line parenthesised import -- every line of its span is exempt,
+      because the whole span is one node holding only names;
+    * ``from x import *`` -- an ``ImportFrom`` with one star alias, exempt; it
+      binds unknown names but still expresses no behaviour;
+    * an import inside a function, ``if`` or ``try`` body -- the import line
+      itself is exempt, but the ``def``/``if``/``try`` header it needs is an
+      ordinary statement and is charged in full, in lines and in statements,
+      so a conditional import still costs;
+    * ``import os; run()`` -- NOT exempt: the line is also occupied by a
+      non-import statement, so the whole line is charged, and so is that
+      statement.
+
+    A compound statement contributes only its header line here, never its
+    whole suite; it cannot be otherwise, since an import can only ever sit on
+    a suite line, never on a block header.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return set()
+    imports: set[int] = set()
+    other: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.stmt):
+            continue
+        span = range(node.lineno, (node.end_lineno or node.lineno) + 1)
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            imports.update(span)
+        elif _block(node):
+            other.add(node.lineno)
+        else:
+            other.update(span)
+    return imports - other
+
+
+def _code_count(text: str) -> int:
+    """Physical lines MINUS the lines that hold an import and nothing else.
+
+    This is the quantity the ratchet compares across trees: a file that gains
+    ten imports and no statements has not grown.
+    """
+    return _count(text) - len(import_only_lines(text))
 
 
 def _statements(text: str) -> int | None:
@@ -101,13 +186,20 @@ def _statements(text: str) -> int | None:
 
     Invariant under renaming, line-joining, wrapping and re-indenting, and
     blind to comments and docstring prose, because none of those are
-    behaviour. Genuine new behaviour is new statements.
+    behaviour. Genuine new behaviour is new statements. Import statements are
+    EXCLUDED for the reason given on ``import_only_lines``: the grammar admits
+    no expression inside one, so no behaviour can hide there.
     """
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return None
-    return sum(1 for node in ast.walk(tree) if isinstance(node, ast.stmt))
+    return sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, ast.stmt)
+        and not isinstance(node, (ast.Import, ast.ImportFrom))
+    )
 
 
 def _wide(path: str, text: str, width: int) -> Counter:
@@ -123,8 +215,12 @@ def _quantile(values: list[int], q: float) -> float:
 
 
 def line_ceiling(texts: list[str]) -> int:
-    """Q3 + 3*IQR of one population's file lengths; never below the floor."""
-    sizes = sorted(_count(t) for t in texts)
+    """Q3 + 3*IQR of one population's CODE lengths; never below the floor.
+
+    Code lines, not physical lines, so the ceiling is measured in the same
+    unit it is compared against; dropping imports can only lower it.
+    """
+    sizes = sorted(_code_count(t) for t in texts)
     if not sizes:
         raise ReferenceUnavailable(
             "no tracked .py files to derive the line ceiling from; this guard "
@@ -169,16 +265,16 @@ def working_texts() -> dict[str, str]:
 
 
 def working_sizes() -> dict[str, int]:
-    """Line count of every tracked .py file as it stands in the working tree."""
+    """Code-line count of every tracked .py file in the working tree."""
     return {
-        p: _count((ROOT / p).read_text(encoding="utf-8", errors="replace"))
+        p: _code_count((ROOT / p).read_text(encoding="utf-8", errors="replace"))
         for p in working_paths("*.py")
     }
 
 
 def trunk_sizes(paths: list[str]) -> dict[str, int]:
-    """Line count of each given path on ``origin/main``; absent paths are omitted."""
-    return {p: _count(t) for p, t in trunk_blobs(paths).items()}
+    """Code-line count of each path on ``origin/main``; absent paths omitted."""
+    return {p: _code_count(t) for p, t in trunk_blobs(paths).items()}
 
 
 def violations() -> list[str]:
@@ -233,10 +329,10 @@ def violations() -> list[str]:
         stmts, had = _statements(text), _statements(old)
         if stmts is None:
             bad.append(f"{path}: does not parse, so its statements cannot be counted.")
-        elif had is not None and _count(text) > FLOOR and stmts > had:
+        elif had is not None and _code_count(text) > FLOOR and stmts > had:
             bad.append(
                 f"{path}: grew from {had} to {stmts} statements "
-                f"(+{stmts - had}) against {TRUNK} while holding {_count(text)} lines. "
+                f"(+{stmts - had}) against {TRUNK} while holding {_code_count(text)} code lines. "
                 f"Renaming and re-layout do not move this count; split it instead."
             )
     for (path, text), n, before_n in added_sites(wide_now, wide_was):

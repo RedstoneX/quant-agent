@@ -1,5 +1,4 @@
 import logging
-import random
 import socket
 import time
 from dataclasses import dataclass, field
@@ -9,6 +8,7 @@ import pandas as pd
 from fredapi import Fred
 
 from src.data.fred_publication_days import roll_to_publication_day
+from src.data.macro_fetch_budget import build_macro_fetch_budget
 from src.data.macro_series_cache import MacroSeriesCache
 from src.trading_calendar import et_now, et_today
 from src.data.macro_coverage_views import STALE_PREFIX, split_failed, stale_prompt_text, stamp_note
@@ -450,21 +450,21 @@ class MacroDataProvider:
         # get_macro_summary() calls (existing behavior, unchanged) — a
         # success anywhere resets it.
         self._consecutive_failed_series = 0
-        # Wall-clock deadline for the CURRENT get_macro_summary() call, in
-        # time.monotonic() units. None outside of that call (e.g. a direct
-        # get_vix() call has no shared-budget concept to enforce).
-        self._deadline: float | None = None
-        # The SPAN (seconds) of the deadline currently in force — 90 s on the
-        # trading path, `prefetch_deadline_s` inside the prefetch. Stored
-        # alongside `_deadline` because the fair-share reservation below is a
-        # function of the span, and the span differs between the two modes.
-        self._deadline_span_s: float | None = None
-        # Series ids already RESOLVED on the current get_macro_summary() call
-        # — served from cache, attempted on the wire, or recorded as not
-        # attempted. This is the denominator of the fair-share reservation
-        # (board items 119/187): it is how a series that has not had its turn
-        # yet keeps a claim on the shared budget.
-        self._run_resolved: set[str] = set()
+        # The run's wall-clock accounting — the deadline, the span in force,
+        # which series have had their turn, and the fair-share arithmetic
+        # over all three (board items 119/187). Built BY VALUE from the
+        # settings clamped above and owned outright by
+        # `src/data/macro_fetch_budget.py`; this provider holds no deadline
+        # state of its own.
+        self.budget = build_macro_fetch_budget(
+            series_ids=CONFIGURED_SERIES,
+            request_timeout_s=self.request_timeout_s,
+            max_retries=self.max_retries,
+            retry_backoff_base_s=self.retry_backoff_base_s,
+            retry_backoff_max_s=self.retry_backoff_max_s,
+            retry_backoff_jitter_s=self.retry_backoff_jitter_s,
+            total_fetch_deadline_s=self.total_fetch_deadline_s,
+        )
         # Per-get_macro_summary()-call coverage accounting, reset at the
         # top of that method and consumed into `self.last_coverage` at the
         # end of it.
@@ -508,159 +508,6 @@ class MacroDataProvider:
         # operator-facing line at the end of get_macro_summary().
         self._run_cache_served: list[str] = []
 
-    @property
-    def prefetch_deadline_s(self) -> float:
-        """Wall-clock ceiling for one `prefetch_series_cache()` run.
-
-        Computed from the settings already in force, never stored:
-
-            observations  15 series x (max_retries + 1) attempts x request_timeout_s
-            backoff       15 series x the capped backoff curve
-            metadata      15 series x 1 attempt x request_timeout_s
-
-        At the shipped defaults (15 s timeout, 2 retries, 2 s/8 s/1 s backoff)
-        that is 675 + 120 + 225 = 1,020 s, and it is a gross upper bound:
-        `breaker_after_failed_series` drops every series after the first total
-        failure to a single attempt, so a real outage finishes far sooner.
-
-        1,020 s is what makes the schedule work. The prefetch fires at 08:45 ET
-        — after the 08:30 BLS release slot, so it cannot hold a pre-CPI
-        snapshot — and the morning session reads macro at the measured
-        09:30:49 ET. Even the gross bound lands at 09:02 ET, 28 minutes clear.
-
-        THERE IS NO PACING SLEEP, deliberately. An earlier draft spaced each
-        request by `request_timeout_s` to stay under FRED's rate limit. Two
-        findings killed it: FRED publishes no rate limit on its own API
-        documentation (checked 2026-09-23 — the 120/min figure circulates only
-        in third-party clients), and `fredapi` is a bare `urlopen` with no
-        internal retry or sleep of its own (verified against the installed
-        package: zero occurrences of retry/sleep/backoff in `fredapi/fred.py`).
-        So a strictly serial walk already has exactly one request in flight and
-        is paced by round-trip latency itself — a structural guarantee. A sleep
-        on top of that would be an unsourced constant defending against nothing
-        anyone can name, which is precisely what this desk's no-arbitrary-
-        numbers rule exists to stop. What PR #565 tripped was CONCURRENCY, not
-        serial throughput.
-        """
-        attempts = self.max_retries + 1
-        backoff_per_series = sum(
-            min(self.retry_backoff_base_s * (2 ** attempt), self.retry_backoff_max_s)
-            + self.retry_backoff_jitter_s
-            for attempt in range(self.max_retries)
-        )
-        wire = len(CONFIGURED_SERIES) * self.request_timeout_s * (attempts + 1)
-        backoff = len(CONFIGURED_SERIES) * backoff_per_series
-        return wire + backoff
-
-    # --- board items 119 / 187: the shared budget is SHARED, not first-come -
-    #
-    # Measured shape of the defect (retained journald, 2026-09-01..09-26,
-    # `_UID=1001`). Across that window the macro fetch logged 91 "deadline
-    # already exceeded — skipping <series> without an attempt" lines against
-    # only 12 observation errors and 9 metadata timeouts. So the dominant
-    # failure was never provider flakiness: it was series that were never
-    # asked.
-    #
-    # WHICH series were never asked is the proof. The skip count is monotonic
-    # in a series' position in `CONFIGURED_SERIES`: ICSA and BAMLC0A0CM (last
-    # two) 13 times each, DTWEXBGS 12, T10YIE 10, DFII10 9, UNRATE and
-    # BAMLH0A0HYM2 7, PCEPI 5, CPILFESL 3, CPIAUCSL 1 — and the first five
-    # (VIXCLS, DGS10, DGS2, DGS3MO, DFF) never once. A provider outage does
-    # not sort itself by list index. A single first-come-first-served
-    # wall-clock budget does exactly that: whoever runs first spends whatever
-    # it likes, and the tail of the list pays.
-    #
-    # The ceiling is NOT too short. The pre-open prefetch does the same
-    # fifteen observations plus fifteen metadata calls — thirty serial HTTPS
-    # round trips — under no budget pressure, and systemd timed it at 11 s,
-    # 13 s and 16 s on three midday runs and 56 s, 57 s and 91 s on three
-    # evening runs [measured, `quant-agent-macro-prefetch.service`
-    # Starting→Finished, 2026-09-23..09-25]. That is roughly 0.4-1.9 s per
-    # call. Ninety seconds is ample for the whole job; what consumes it is a
-    # single hung socket held open for the full 15 s `request_timeout_s`,
-    # which alone costs as much as an entire healthy run, and which
-    # `max_retries=2` can multiply to 45 s plus backoff on ONE series.
-    #
-    # So the fix is not a longer deadline and not a different retry count.
-    # It is that no series may spend another series' turn. Each series is
-    # reserved an equal share of the ceiling — `deadline span / number of
-    # configured series`, 90/15 = 6 s on the trading path — and a series in
-    # progress may only spend whatever is left ABOVE the reserves of the
-    # series still waiting. That is not a new number: it is arithmetic over
-    # `total_fetch_deadline_s` and the length of `CONFIGURED_SERIES`, both of
-    # which already exist. It is sufficient by the measurement above (6 s is
-    # more than three times the slowest observed per-call average), and it is
-    # tight by construction: fifteen series each spending their full share is
-    # exactly the ceiling, so every required series is ATTEMPTED even in the
-    # worst case the budget allows.
-    #
-    # Retries and metadata are explicitly second-class. A retry, its backoff
-    # sleep, and a `/fred/series` metadata lookup may only draw on the
-    # SURPLUS above the waiting series' reserves. A metadata miss degrades to
-    # `freshness: unknown` (honest, and already the behaviour); an
-    # observation that is never asked for is a hole in the economics seat.
-    # The first must never buy itself the second.
-
-    @property
-    def per_series_reserve_s(self) -> float:
-        """The share of the active wall-clock ceiling reserved for each
-        configured series' first attempt.
-
-        Derived, never stored: the deadline span in force divided by the
-        number of series that span has to cover. On the trading path that is
-        90 s / 15 = 6 s; inside the prefetch the span is
-        `prefetch_deadline_s`, so the reserve is large enough that
-        `request_timeout_s` binds first and the prefetch is unaffected.
-        """
-        span = (
-            self._deadline_span_s if self._deadline_span_s is not None
-            else self.total_fetch_deadline_s
-        )
-        return span / len(CONFIGURED_SERIES)
-
-    def _remaining_s(self) -> float | None:
-        """Seconds left on the current call's ceiling, or None when no
-        get_macro_summary() ceiling is in force (a direct get_vix() call)."""
-        if self._deadline is None:
-            return None
-        return self._deadline - time.monotonic()
-
-    def _reserved_for_waiting_s(self, series_id: str) -> float:
-        """Budget that belongs to configured series which have not had their
-        turn yet, and which `series_id` must therefore not spend."""
-        waiting = {
-            s for s in CONFIGURED_SERIES
-            if s not in self._run_resolved and s != series_id
-        }
-        return len(waiting) * self.per_series_reserve_s
-
-    def _observation_allowance_s(self, series_id: str) -> float | None:
-        """Wall clock this series' FIRST attempt may consume, or None when no
-        ceiling is in force.
-
-        Never less than this series' own reserve (so its turn cannot be
-        confiscated by an earlier series), never more than what is actually
-        left, and never more than `request_timeout_s`.
-        """
-        remaining = self._remaining_s()
-        if remaining is None:
-            return None
-        allowance = max(
-            self.per_series_reserve_s,
-            remaining - self._reserved_for_waiting_s(series_id),
-        )
-        return min(self.request_timeout_s, remaining, allowance)
-
-    def _surplus_s(self, series_id: str) -> float | None:
-        """Wall clock available for SECOND-CLASS work on this series — a
-        retry, its backoff sleep, or a metadata lookup. This is strictly the
-        budget above every still-waiting series' reserve, so second-class
-        work can never cost another series its attempt."""
-        remaining = self._remaining_s()
-        if remaining is None:
-            return None
-        return remaining - self._reserved_for_waiting_s(series_id)
-
     def _note_not_attempted(self, series_id: str) -> None:
         """Record a required series that never reached the wire.
 
@@ -701,35 +548,6 @@ class MacroDataProvider:
             f"{STALE_PREFIX}{age_days}d_after:{failure_reason}"))
         self._record_freshness(series_id, series)
         return series
-
-    def _next_backoff(self, attempt: int, series_id: str | None = None) -> float:
-        """Exponential backoff with jitter, clipped to whatever remains of
-        the fetch deadline so a retry sleep can never itself blow the
-        wall-clock ceiling get_macro_summary() promises callers.
-
-        When a series is named, the clip is tighter still: the sleep is
-        second-class work like the retry it precedes, so it may only draw on
-        the SURPLUS above the reserves of series that have not been asked yet
-        (board items 119/187). A run that sleeps a series' turn away is the
-        same starvation as a run that spends it on the wire.
-
-        attempt is 0-indexed (the attempt that just failed). Backoff
-        doubles each attempt from retry_backoff_base_s, capped at
-        retry_backoff_max_s, then gets uniform(0, retry_backoff_jitter_s)
-        added — jitter keeps a many-series outage from retrying every
-        series in lockstep against FRED.
-        """
-        base = min(
-            self.retry_backoff_base_s * (2 ** attempt),
-            self.retry_backoff_max_s,
-        )
-        backoff = base + random.uniform(0, self.retry_backoff_jitter_s)
-        if self._deadline is not None:
-            remaining = self._deadline - time.monotonic()
-            if series_id is not None:
-                remaining = min(remaining, self._surplus_s(series_id) or 0.0)
-            backoff = max(0.0, min(backoff, remaining))
-        return backoff
 
     def _note_coverage(self, series_id: str, *, ok: bool, reason: str) -> None:
         self._run_configured += 1
@@ -790,7 +608,7 @@ class MacroDataProvider:
         # spending the observations the economics seat is actually made of.
         # A metadata miss reports `freshness: unknown`, which is honest; a
         # missing observation is a hole. The first must never buy the second.
-        surplus = self._surplus_s(series_id)
+        surplus = self.budget.surplus_s(series_id)
         if surplus is not None and surplus <= 0:
             logger.debug(
                 "Skipping FRED metadata for %s — what is left of the fetch "
@@ -1014,7 +832,7 @@ class MacroDataProvider:
         # attempt" outcome has nothing left to consume.
         cached = self._serve_from_cache(series_id, kwargs)
         if cached is not None:
-            self._run_resolved.add(series_id)
+            self.budget.mark_resolved(series_id)
             self._run_cache_served.append(series_id)
             self._note_coverage(series_id, ok=True, reason="")
             self._record_freshness(series_id, cached)
@@ -1023,16 +841,16 @@ class MacroDataProvider:
         # This series has now had its turn: it stops holding a reserve and
         # starts spending. Marked BEFORE the attempt so the allowance
         # arithmetic below reserves for the series still waiting, not for
-        # this one (its own share is the floor of `_observation_allowance_s`).
-        self._run_resolved.add(series_id)
+        # this one (its own share is the floor of `budget.observation_allowance_s`).
+        self.budget.mark_resolved(series_id)
 
-        # Fair-share reservation (see the block above `per_series_reserve_s`).
+        # Fair-share reservation (see `src/data/macro_fetch_budget.py`).
         # A series only fails to reach the wire when there is not even a
         # whole second left, which the reservation makes unreachable while
         # the ceiling and the series count are in their normal relation — but
         # the path is kept, and it is kept DISTINCT, because a required
         # series that was never asked must say so rather than look calm.
-        allowance = self._observation_allowance_s(series_id)
+        allowance = self.budget.observation_allowance_s(series_id)
         if allowance is not None and allowance <= 0:
             self._note_not_attempted(series_id)
             return pd.Series(dtype=float)
@@ -1055,7 +873,7 @@ class MacroDataProvider:
                     # surplus above the waiting series' reserves, so riding
                     # out one series' trouble can never cost another series
                     # its single attempt.
-                    surplus = self._surplus_s(series_id)
+                    surplus = self.budget.surplus_s(series_id)
                     budget = (
                         None if surplus is None
                         else min(self.request_timeout_s, surplus)
@@ -1084,9 +902,9 @@ class MacroDataProvider:
                     break
                 except Exception as e:
                     failure_reason = str(e) or type(e).__name__
-                    surplus = self._surplus_s(series_id)
+                    surplus = self.budget.surplus_s(series_id)
                     if attempt < retries and (surplus is None or surplus > 0):
-                        backoff = self._next_backoff(attempt, series_id)
+                        backoff = self.budget.next_backoff(attempt, series_id)
                         logger.warning(
                             "FRED API error for %s (attempt %d/%d): %s — "
                             "retrying in %.1fs",
@@ -1575,12 +1393,10 @@ class MacroDataProvider:
         than a change to this method's own (widely-consumed) return shape.
         """
         deadline_s = (
-            self.prefetch_deadline_s if self._prefetch_mode
+            self.budget.prefetch_deadline_s if self._prefetch_mode
             else self.total_fetch_deadline_s
         )
-        self._deadline = time.monotonic() + deadline_s
-        self._deadline_span_s = deadline_s
-        self._run_resolved = set()
+        self.budget.arm(deadline_s)
         self._run_configured = 0
         self._run_succeeded = 0
         self._run_failed = []
@@ -1631,8 +1447,7 @@ class MacroDataProvider:
             # Scoped to this one call — a later direct get_vix()/etc. call
             # (outside get_macro_summary()) must not inherit a stale,
             # already-expired deadline from a previous run.
-            self._deadline = None
-            self._deadline_span_s = None
+            self.budget.disarm()
 
     def prefetch_series_cache(self) -> MacroCoverage | None:
         """Fill the on-disk series cache ahead of the open. Board item 119.
@@ -1661,7 +1476,7 @@ class MacroDataProvider:
         logger.info(
             "FRED pre-open prefetch starting: %d series, strictly serial "
             "(one request in flight), ceiling %.0fs",
-            len(CONFIGURED_SERIES), self.prefetch_deadline_s,
+            len(CONFIGURED_SERIES), self.budget.prefetch_deadline_s,
         )
         try:
             self.get_macro_summary()

@@ -1,4 +1,5 @@
 import { Badge, type Color } from "@tremor/react";
+import { fmtClock } from "../lib/format";
 import { AccountResponse, HealthResponse } from "../api/client";
 
 function healthColor(health: HealthResponse | null): { dot: string; label: string } {
@@ -127,7 +128,7 @@ export function TopStrip({
       )}
 
       <div className="ml-auto flex flex-wrap items-center gap-3 text-[0.8125rem] text-dim">
-        {updatedAt && <span>updated {updatedAt.toLocaleTimeString()}</span>}
+        {updatedAt && <span>updated {fmtClock(updatedAt)}</span>}
         <a
           href="/diary/"
           className="px-2.5 py-1 rounded border border-border text-ink hover:text-accent hover:border-accent font-semibold no-underline"
