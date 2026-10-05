@@ -652,7 +652,7 @@ def test_mechanical_restore_outcome_is_recorded_durably():
         restore_stated_soft_exits,
     )
 
-    drain_restore_observations()  # start from a clean buffer
+    ctx = RunContext.start("morning")  # opens this run's buffer
 
     # 1. a real heal: the canonical field was blanked, the raw still has it
     healed, restored = restore_stated_soft_exits(
@@ -695,7 +695,7 @@ def test_mechanical_restore_outcome_is_recorded_durably():
     pipeline = SimpleNamespace(
         db=SimpleNamespace(record_soft_exit_heal_restores=_writer),
     )
-    _record_mechanical_soft_exit_restores(pipeline, RunContext.start("morning"))
+    _record_mechanical_soft_exit_restores(pipeline, ctx)
     assert written["n"] == 2
 
     rows = conn.execute(
