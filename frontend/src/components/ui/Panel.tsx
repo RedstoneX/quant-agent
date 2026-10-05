@@ -1,3 +1,4 @@
+import { fmtClock } from "../../lib/format";
 import { ReactNode } from "react";
 import { Badge, Card, type Color } from "@tremor/react";
 
@@ -56,9 +57,9 @@ export function Panel({
     status === "loading"
       ? "…"
       : status === "stale"
-      ? `stale${staleSince ? ` · ${staleSince.toLocaleTimeString()}` : ""}`
+      ? `stale${staleSince ? ` · ${fmtClock(staleSince)}` : ""}`
       : status
-      ? `${status}${staleSince ? ` · ${staleSince.toLocaleTimeString()}` : ""}`
+      ? `${status}${staleSince ? ` · ${fmtClock(staleSince)}` : ""}`
       : "";
   return (
     <Card

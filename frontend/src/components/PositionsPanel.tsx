@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Badge, Callout } from "@tremor/react";
 import { legacyCreateColumnHelper as createColumnHelper, type LegacyColumnDef } from "@tanstack/react-table/legacy";
 import { PositionItem } from "../api/client";
-import { fmtMoney, fmtNum, pnlClass } from "../lib/format";
+import { fmtClock, fmtMoney, fmtNum, pnlClass } from "../lib/format";
 import { Panel, StateMessage } from "./ui/Panel";
 import { DataTable } from "./ui/DataTable";
 
@@ -166,7 +166,7 @@ export function PositionsPanel({
       {!error && positions.length === 0 && <StateMessage text="No open positions." />}
       {error && everLoaded && (
         <Callout title="Last known positions" color="amber" className="mb-3 !bg-panel-alt">
-          As of {updatedAt?.toLocaleTimeString() || "an earlier fetch"}; fresh fetch failed ({error}).
+          As of {(updatedAt ? fmtClock(updatedAt) : undefined) || "an earlier fetch"}; fresh fetch failed ({error}).
         </Callout>
       )}
       {positions.length > 0 && (
