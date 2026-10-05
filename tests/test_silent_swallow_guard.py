@@ -12,6 +12,7 @@ import ast
 
 import pytest
 
+from scripts import money_modules as mm
 from scripts import silent_swallow_guard as g
 from scripts.guard_reference import ReferenceUnavailable
 
@@ -123,6 +124,75 @@ def test_keys_are_stable_across_line_shifts():
     assert _hits(body) == _hits("# moved\n\n\n" + body) == ["x.py::f"]
 
 
-def test_scoped_modules_are_all_tracked_paths():
-    missing = sorted(m for m in g.MONEY_MODULES if not (g.ROOT / m).exists())
-    assert not missing, "MONEY_MODULES names paths that do not exist: " + ", ".join(missing)
+def test_scope_is_derived_not_stored():
+    """The money-module set is computed from source at check time; nothing is pinned."""
+    assert not hasattr(g, "MONEY_MODULES")
+    mods = g.money_modules()
+    assert "src/execution/broker.py" in mods
+    for hand_list_never_named in (
+        "src/protection/protected_sell.py",   # calls the SDK's close_position
+        "src/stage_execution.py",             # submits orders
+        "src/execution/order_idempotency.py", # submits orders
+    ):
+        assert hand_list_never_named in mods, hand_list_never_named
+    assert all((g.ROOT / m).exists() for m in mods)
+
+
+def test_guard_bites_in_a_module_the_hand_list_never_named(monkeypatch):
+    """Plant a swallow in a derived-only module: the guard fails; take it out: green."""
+    rel = "src/protection/protected_sell.py"
+    assert rel in g.money_modules()
+    before = (g.ROOT / rel).read_text()
+    planted = before + (
+        "\n\ndef _planted(b):\n    try:\n        return b.stop()\n"
+        "    except Exception:\n        return None\n"
+    )
+    monkeypatch.setattr(g, "trunk_blobs", lambda paths: {rel: before})
+    monkeypatch.setattr(g, "scan", lambda r: g.scan_text(r, planted))
+    assert [(site[1], n, was) for site, _, n, was in g.added((rel,))] == [("_planted", 1, 0)]
+    monkeypatch.setattr(g, "scan", lambda r: g.scan_text(r, before))
+    assert g.added((rel,)) == []
+
+
+def test_guard_refuses_when_the_sdk_cannot_be_read(monkeypatch):
+    def _no_sdk():
+        raise ReferenceUnavailable("exchange SDK missing in this test")
+    monkeypatch.setattr(mm, "sdk_write_methods", _no_sdk)
+    assert g.main() == 2
+
+
+def _tree(tmp_path, files: dict[str, str]):
+    for rel, body in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body)
+    return mm.derive(tmp_path, frozenset({"submit_order"}), "src")
+
+
+WRITER = "def place(client, qty):\n    return client.submit_order(qty)\n"
+CALLER = "from src.exec.{w} import place\n\ndef sell(c):\n    q = size(c)\n    return place(c, q)\n"
+SIZER = "def size(c):\n    return 1\n"
+BYSTANDER = "def run():\n    return 1\n"
+
+
+def test_moving_renaming_or_adding_a_money_module_keeps_it_covered(tmp_path):
+    base = {"src/exec/desk.py": WRITER, "src/sell.py": CALLER.format(w="desk"),
+            "src/sizing.py": SIZER, "src/news.py": BYSTANDER}
+    assert _tree(tmp_path, base) == ("src/exec/desk.py", "src/sell.py", "src/sizing.py")
+    renamed = {"src/exec/orders.py": WRITER, "src/sell.py": CALLER.format(w="orders"),
+               "src/sizing.py": SIZER, "src/news.py": BYSTANDER}
+    assert "src/exec/orders.py" in _tree(tmp_path / "r", renamed)
+    moved = dict(base)
+    moved["src/deep/new/sell2.py"] = moved.pop("src/sell.py")
+    assert "src/deep/new/sell2.py" in _tree(tmp_path / "m", moved)
+    added = dict(base)
+    added["src/brand_new.py"] = "import src.exec.desk as d\n\ndef go(c):\n    return d.place(c, 1)\n"
+    assert "src/brand_new.py" in _tree(tmp_path / "a", added)
+
+
+def test_generic_names_do_not_leak_money_status(tmp_path):
+    """`run` defined by a writer and by a bystander: a call to `.run()` is ambiguous, not money."""
+    files = {"src/exec/desk.py": "def run(client):\n    return client.submit_order(1)\n",
+             "src/other.py": "def run():\n    return 1\n",
+             "src/driver.py": "def go(x):\n    return x.run()\n"}
+    assert _tree(tmp_path, files) == ("src/exec/desk.py",)

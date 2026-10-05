@@ -9,6 +9,7 @@ and calls it, so every existing caller and patch target is unchanged.
 
 import logging
 from datetime import timedelta
+from src.sentinel.guarded import record_guarded_pass
 
 #: Logs under `src.pipeline`, as the bodies did before the move;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -56,6 +57,7 @@ class ExitRecords:
         try:
             rows = self.db.get_trades(today_only=True, limit=200)
         except Exception as exc:
+            record_guarded_pass(self.db, "exit_records.symbols_already_trimmed_today", exc)
             logger.warning(
                 "_symbols_already_trimmed_today: query failed: %s", exc,
             )
@@ -155,6 +157,7 @@ class ExitRecords:
         try:
             rows = self.db.get_trades(symbol=symbol, limit=10)
         except Exception as e:  # noqa: BLE001
+            record_guarded_pass(self.db, "exit_records.trail_tightened_recently", e)
             logger.warning("trail cooldown query failed for %s: %s", symbol, e)
             return False
         from datetime import datetime as _dt, timedelta, timezone
