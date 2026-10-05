@@ -1,11 +1,12 @@
 # Broker conformance: rehearsal stand-in vs the real Alpaca API
 
 Produced by `ops/rehearsal/conformance.py --live` on 2026-10-02 (after the
-close, 20:10 UTC) against the disposable sandbox paper account, reached only
-through the OneCLI `rehearsal` grant. The account id is read from the
-environment and never written here. Re-run:
+close, 20:10 UTC) against the disposable sandbox paper account, reached at
+that time through the OneCLI `rehearsal` grant. That is historical evidence,
+not the current credential path. Live reruns now use the same systemd
+credential-file boundary as production and connect directly to Alpaca. Re-run:
 
-    QAMC_SANDBOX_ACCOUNT_NUMBER=<id> .venv/bin/python -m ops.rehearsal.conformance --live
+    scripts/run_rehearsal_conformance.sh
 
 Account assertion output (id redacted by the script itself):
 

@@ -1,71 +1,65 @@
-# Credential Delivery — Accepted Architecture (OneCLI)
+# Credential Delivery — Accepted Architecture
 
 > **THE source-of-truth document for credentials.** Start with the next section.
 
-Status: **accepted, commissioned, and verified — 2026-08-12.** This is the durable architecture reference for how QAMC obtains real credentials. See `docs/STATE.md` for current authorization and why the custom proxy from commit `2207b0b74287101ea65ce79782081e51a27420ba` is rejected architecture and must not be revived.
+Status: **accepted and commissioned; last verified 2026-10-05.** This is the durable architecture reference for how QAMC obtains real credentials. See `docs/STATE.md` for current authorization and why the custom proxy from commit `2207b0b74287101ea65ce79782081e51a27420ba` is rejected architecture and must not be revived.
 
 ## Where credentials live — read this first
 
-- **OneCLI is the source of truth for every credential this project uses.** Both broker accounts are in it: the desk's own paper account and the separate disposable paper account. Operator runbook: `ops/onecli/README.md`.
+- **OneCLI is the source of truth for provider credentials routed through its gateway:** OpenRouter, Google direct and FRED. Operator runbook: `ops/onecli/README.md`.
+- **The two Alpaca Paper key pairs are the narrow exception.** Production and the separate disposable account each have qamc-owned, mode-0400 source files under `/home/qamc/credentials/`. Their processes need the real value for Alpaca's in-band websocket authentication, which a header-injecting gateway cannot perform.
 - **The repo's `.env` is NOT the source of truth.** It is stale leftovers. Its two broker keys were tested against the broker's account endpoint and do not authenticate at all. Finding a key in `.env` proves nothing about what is real; do not copy from it and do not "fix" it by pasting real values in.
-- **How an operator reads or changes a credential:** through OneCLI's own dashboard, bound to `127.0.0.1` port `10254` on the VPS and administered by `ubuntu` (reach it with an SSH tunnel). This repo documents no command-line retrieval; do not guess one.
+- **How an operator changes a gateway credential:** through OneCLI's own dashboard, bound to `127.0.0.1` port `10254` on the VPS and administered by `ubuntu` (reach it with an SSH tunnel). Alpaca file rotation follows the restricted file procedure under "For the owner" below.
 - **Agents never read the vault.** Real values never go in the repo, a prompt, a log or a doc: names and provenance only.
 - Do not confuse OneCLI with any other credential tool on this shared VPS (another tenant runs its own). Nothing in that tool is part of QAMC.
 
 Two separate questions, deliberately not conflated:
 
-- **Storage (where the truth is kept):** OneCLI.
-- **Delivery (how the running desk receives a value):** systemd materialises each credential as a read-only file on a tmpfs and points the process at it with `CREDENTIALS_DIRECTORY`, so the value never enters the process environment. `src/credentials.py` implements this and documents why. The OneCLI gateway fronts outbound REST but cannot reach the broker's websocket, which authenticates with an in-band message, so the desk process must hold that one real key itself (see "How it is delivered" below).
+- **Storage (where the truth is kept):** OneCLI for gateway providers; restricted qamc-owned files for the two Alpaca Paper key pairs.
+- **Delivery (how a process receives a value):** the OneCLI gateway injects provider credentials into outbound HTTP. For Alpaca, systemd materialises the selected account's key pair as read-only files on a private tmpfs and points the process at them with `CREDENTIALS_DIRECTORY`, so the value never enters the process environment. `src/credentials.py` implements the reader (see "How it is delivered" below).
 
 ## OneCLI Credential Gateway
 
-- OneCLI is the credential delivery layer for QAMC. It runs under Docker on the VPS, administered by `ubuntu` (see `ops/onecli/README.md`); `qamc` and `dev` are never added to the `docker` group and cannot reach the Docker socket.
+- OneCLI is the gateway credential-delivery layer for QAMC's LLM and FRED providers, and still fronts the production desk's REST environment. It runs under Docker on the VPS, administered by `ubuntu` (see `ops/onecli/README.md`); `qamc` and `dev` are never added to the `docker` group and cannot reach the Docker socket.
 - Secrets are stored only in OneCLI, never duplicated in QAMC's own configuration. QAMC's `.env` and `config/settings.yaml` are not authoritative: the REST placeholders are inert, and any real-looking broker key left in `.env` is stale and does not authenticate. The desk's websocket key arrives by systemd credential files (below), not from `.env`.
 - Agent access uses explicit secret grants (`secretMode: "selective"` on the Default Agent). Creating a secret does not automatically make it available to an agent — granting it is a separate step.
 - The gateway (port `10255`) matches outbound requests to a secret by destination host/path and injects the real credential (header or query parameter) before forwarding; it binds `127.0.0.1` only. The management dashboard (port `10254`) listens on loopback and this VPS's private Tailscale addresses, never a public interface, so the operator can reach it only locally or through the private tailnet.
 - QAMC's consuming code needs no awareness of OneCLI itself: `src/agents/base.py`'s OpenRouter and Google-direct branches, `src/execution/broker.py`'s `AlpacaBroker`, and `src/data/macro.py`'s `MacroDataProvider` use their normal SDK/HTTP transports (`openai`/`httpx`, `alpaca-py`/`requests`, `fredapi`/`urllib`), so each inherits environment-driven proxy/CA trust. The current Google-direct route deliberately uses Google's OpenAI-compatible endpoint so OneCLI can inject its bearer credential through the same gateway mechanism; see `.env.example` and `config/settings.yaml`.
 - Client-side wiring is three environment variables in `/home/qamc/quant-agent/.env` (operator-only — `dev` cannot write into `/home/qamc`): `HTTPS_PROXY` (`http://x:<agent-token>@127.0.0.1:10255` — note `127.0.0.1`, not the `host.docker.internal` OneCLI's own `GET /api/container-config` returns by default, which only resolves inside a Docker container and not for QAMC's bare `qamc`-account processes), `SSL_CERT_FILE`, and `REQUESTS_CA_BUNDLE` (both pointed at OneCLI's gateway CA cert — `requests`, Alpaca's transport, does not honor `SSL_CERT_FILE` alone).
 
-## Two Alpaca accounts share the same OneCLI setup — verified 2026-08-28
+## Historical secondary-account routing through OneCLI — retired 2026-10-05
 
-In plain terms: there is not one Alpaca paper account behind OneCLI, there are
-two, and the only thing that tells them apart is which agent is asking — not
-which key file is on disk. Looking at the filesystem alone (one `.env`, one set
-of placeholder values, one pair of header names) makes it look like a single
-account is configured; that appearance is wrong.
+The first rehearsal broker-conformance run selected the disposable $10,000
+Paper account through a separate OneCLI agent token. That proved REST behavior,
+but it did not reproduce production's credential-file boundary, could not
+authenticate the Alpaca fill websocket, and its grant did not cover the market
+data host. The evidence from that run remains in `ops/rehearsal/CONFORMANCE.md`;
+the delivery mechanism is now retired.
 
-The production desk and a separate rehearsal harness both authenticate with the
-identical header pair (`APCA-API-KEY-ID` / `APCA-API-SECRET-KEY`), and
-production's secret matches the wildcard host pattern `*.alpaca.markets`, which
-also covers the paper-trading host — so the request headers and the host alone
-cannot distinguish which account is being reached. What actually decides it is
-the **agent access token** carried in the outbound proxy URL
-(`HTTPS_PROXY=http://x:<agent-token>@127.0.0.1:10255`): OneCLI maps that token
-to an agent identity, and each agent identity has its own credential grants in
-the `agent_secrets` table.
+The disposable account now has its own qamc-owned, mode-0400 source files under
+`/home/qamc/credentials/rehearsal/`. A bounded transient user unit loads those
+files under the same logical systemd credential names production uses. The
+Python process reads them only from `CREDENTIALS_DIRECTORY`; neither key is put
+in argv, the environment, the repository, or output. The expected account
+number is delivered as a third file and checked against Alpaca's read-only
+`get_account()` response before the first write-capable call.
 
-- `Default Agent` (`identifier=default`) → production, Alpaca paper account
-  `<redacted-main-account-id>` (the same account already named elsewhere in this repo's
-  incident history).
-- `Rehearsal Harness` (`identifier=rehearsal`) → a separate paper account,
-  `<redacted-rehearsal-account-id>`, funded at $10,000, with its secrets
-  pinned specifically to `paper-api.alpaca.markets`.
+The runner removes proxy and custom-CA variables before constructing either
+Alpaca client, so both trading and market-data requests go directly to Alpaca.
+This is deliberately narrow: OpenRouter and FRED continue to use OneCLI in the
+desk. No permanent service or timer was added; `scripts/run_rehearsal_conformance.sh`
+creates one transient, bounded unit and systemd removes its private credential
+directory when the command exits.
 
-Verified directly: the same URL called through each of the two tokens returns
-data for a different account. When OneCLI cannot resolve a token to a grant
-unambiguously, it fails closed (`access_restricted`) rather than guessing —
-also confirmed empirically, not assumed from the gateway's documentation.
+Commissioning on 2026-10-05 made only read-only broker calls: direct Paper
+authentication succeeded, the secondary account was active, and its identity
+was different from the production Paper account. No order was placed.
 
-Two gaps this leaves open, low urgency only because the rehearsal harness is
-currently offline: the rehearsal agent can still reach Telegram using the
-production bot token, so a live rehearsal run would alert the owner's real
-phone with fake trades unless a separate bot or a forced prefix is added; and
-an LLM call made from a rehearsal run spends real OpenRouter money on the same
-account as production, but is tracked in the rehearsal's own separate
-cost-circuit database, so production's own cost accounting would under-count
-the true bill if both ran at once. Neither is a reason to avoid rehearsal
-today; both are conditions to close before rehearsal and production ever run
-concurrently.
+The conformance runner sets `QAMC_REHEARSAL=1` before Python starts, so every
+notification transport is suppressed. It makes no LLM calls. A future bounded
+live capture that does call an LLM must still account for shared provider spend
+and must not run concurrently with the production desk; the hermetic replay
+itself remains credentialless and network-sealed.
 
 ## Configured Providers
 
