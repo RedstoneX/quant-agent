@@ -21,7 +21,7 @@ def test_stop_write_back_failure_is_a_counted_row():
     real = Database(":memory:")
     real.initialize()
     assert write_back_stop_loss(_Boom(real.conn), "AAA", 10.0) is False
-    assert "guarded:broker.stop_records.write_back_stop_loss" in _kinds(real)
+    assert "guarded:execution.stop_records.write_back_stop_loss" in _kinds(real)
 
 
 def test_trail_query_failure_is_a_counted_row():
@@ -37,4 +37,4 @@ def test_trail_query_failure_is_a_counted_row():
     er = ExitRecords.__new__(ExitRecords)
     er.db = Db()
     assert er._trail_tightened_recently("AAA", 2) is False
-    assert "guarded:broker.exit_records.trail_tightened_recently" in _kinds(real)
+    assert "guarded:exits.exit_records.trail_tightened_recently" in _kinds(real)
