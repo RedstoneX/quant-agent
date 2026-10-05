@@ -186,19 +186,19 @@ def test_dedup_does_not_persist_into_the_next_day(tmp_path):
 # --------------------------------------------------------------------------
 
 def _drift_file(monkeypatch, tmp_path, payload):
-    import src.coverage_watchdog as cw
+    import src.drift_state as ds
 
     path = tmp_path / "deploy_drift.json"
     path.write_text(json.dumps({"deploy_drift": payload}))
-    monkeypatch.setattr(cw, "DEPLOY_DRIFT_STATE_PATH", path)
+    monkeypatch.setattr(ds, "DEPLOY_DRIFT_STATE_PATH", path)
     return path
 
 
 def test_health_reports_unknown_when_never_checked(monkeypatch, tmp_path):
     import src.api.routes_live as live
-    import src.coverage_watchdog as cw
+    import src.drift_state as ds
 
-    monkeypatch.setattr(cw, "DEPLOY_DRIFT_STATE_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(ds, "DEPLOY_DRIFT_STATE_PATH", tmp_path / "missing.json")
     assert live._deploy_drift_state()["status"] == "unknown"
 
 
