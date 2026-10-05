@@ -387,10 +387,11 @@ def main(argv=None) -> int:
     if message and not args.no_telegram:
         print(message)
         from src.notifier import TelegramNotifier
+        from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
 
         notifier = TelegramNotifier()
         if notifier.enabled:
-            notifier.send(message)
+            send_owner_alert_with_outcome(message, notifier=notifier, kind="stored_targets", pnl_header=False)
         else:
             print(
                 "check_stored_targets: Telegram not configured; message "

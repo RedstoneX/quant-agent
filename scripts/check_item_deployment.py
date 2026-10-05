@@ -175,8 +175,8 @@ def main(argv: list[str] | None = None) -> int:
     print(message)
     if not args.no_telegram:
         try:
-            from src.notifier import TelegramNotifier
-            TelegramNotifier().send(message)
+            from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
+            send_owner_alert_with_outcome(message, kind="item_deployment", pnl_header=False)
         except Exception as exc:  # noqa: BLE001 - a push failure is not a verdict
             print(f"could not send Telegram alert: {exc}", file=sys.stderr)
     return 1

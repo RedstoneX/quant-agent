@@ -80,6 +80,7 @@ def send_owner_alert_with_outcome(
     run_id: str | None = None,
     max_attempts: int = MAX_ATTEMPTS,
     pnl_header: bool = True,
+    preserve_structural_markup: bool = False,
 ) -> tuple[bool, bool]:
     """Push an owner alert NOW and report BOTH halves of what happened.
 
@@ -106,6 +107,7 @@ def send_owner_alert_with_outcome(
             from src.notifier.transport import TelegramNotifier
 
             notifier = TelegramNotifier()
+        extra = {"preserve_structural_markup": True} if preserve_structural_markup else {}
         return deliver_with_outcome(
             notifier,
             text,
@@ -114,6 +116,7 @@ def send_owner_alert_with_outcome(
             kind=kind,
             run_id=run_id,
             category=category,
+            **extra,
         )
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery failed")

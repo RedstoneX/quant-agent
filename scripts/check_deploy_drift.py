@@ -377,10 +377,11 @@ def main(argv: list[str] | None = None) -> int:
     repeat = already_alerted(report)
     if not args.no_telegram and not repeat:
         from src.notifier import TelegramNotifier
+        from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
 
         notifier = TelegramNotifier()
         if notifier.enabled:
-            notifier.send(message)
+            send_owner_alert_with_outcome(message, notifier=notifier, kind="deploy_drift", pnl_header=False)
             sent = True
         else:
             print(

@@ -179,33 +179,37 @@ def test_a_delivered_owner_alert_is_not_recorded_as_undelivered(tmp_path, monkey
     assert statuses == ["sent"]
 
 
-def test_guard_refuses_a_new_direct_notifier_send(monkeypatch):
-    """Rule 3 is a trunk delta: a send this branch added is refused."""
+def _quiet(monkeypatch, sites):
     monkeypatch.setattr(g, "scanned_paths", lambda: [])
     monkeypatch.setattr(g, "url_sites", lambda paths: set(g.EXEMPT_URL_SITES))
     monkeypatch.setattr(g, "sender_classes", lambda paths: set(g.EXEMPT_SENDER_CLASSES))
-    monkeypatch.setattr(
-        g, "direct_send_sites",
-        lambda paths: {"src/newthing.py": ["notifier.send(msg)"]},
-    )
-    monkeypatch.setattr(g, "trunk_direct_send_sites", lambda paths: {})
+    monkeypatch.setattr(g, "direct_send_sites", lambda paths: sites)
+
+
+def test_guard_refuses_a_new_direct_notifier_send(monkeypatch):
+    """Rule 3 is absolute: a bare send in any non-exempt file is refused."""
+    sites = {p: ["x"] for p in g.EXEMPT_DIRECT_SEND_SITES}
+    sites["scripts/newthing.py"] = ["notifier.send(msg)"]
+    _quiet(monkeypatch, sites)
     assert any("newthing.py" in b for b in g.violations())
 
 
-def test_rule_three_refuses_when_the_trunk_cannot_be_read(monkeypatch):
-    monkeypatch.setattr(g, "url_sites", lambda paths: set(g.EXEMPT_URL_SITES))
-    monkeypatch.setattr(g, "sender_classes", lambda paths: set(g.EXEMPT_SENDER_CLASSES))
-    monkeypatch.setattr(g, "TRUNK", "origin/no-such-ref-for-this-test")
-    with pytest.raises(g.TreeUnreadable):
-        g.violations()
+def test_a_dead_direct_send_exemption_is_a_failure(monkeypatch):
+    _quiet(monkeypatch, {})
+    assert any("exempted here but no longer" in b for b in g.violations())
 
 
-def test_an_unchanged_existing_direct_send_is_not_a_violation(monkeypatch):
-    """Removals and pre-existing sites never fail; only an added one does."""
-    same = {"src/trader_feed/naked.py": ["notifier.send(x)"]}
-    monkeypatch.setattr(g, "scanned_paths", lambda: [])
-    monkeypatch.setattr(g, "url_sites", lambda paths: set(g.EXEMPT_URL_SITES))
-    monkeypatch.setattr(g, "sender_classes", lambda paths: set(g.EXEMPT_SENDER_CLASSES))
-    monkeypatch.setattr(g, "direct_send_sites", lambda paths: same)
-    monkeypatch.setattr(g, "trunk_direct_send_sites", lambda paths: same)
+def test_direct_send_is_read_from_code_not_prose():
+    code = "def f(notifier):\n    \"\"\"notifier.send(x) in prose\"\"\"\n    # notifier.send(y)\n    ws.send(1)\n"
+    assert g._direct_send_lines(code) == []
+    assert g._direct_send_lines("TelegramNotifier().send(m)\nself.notifier.send(m)\n") != []
+
+
+def test_guard_bites_a_hand_built_sender_planted_in_a_script(monkeypatch):
+    planted = "from src.notifier import TelegramNotifier\nTelegramNotifier().send('x')\n"
+    sites = {p: ["x"] for p in g.EXEMPT_DIRECT_SEND_SITES}
+    sites["scripts/planted.py"] = g._direct_send_lines(planted)
+    _quiet(monkeypatch, sites)
+    assert any("scripts/planted.py" in b for b in g.violations())
+    sites.pop("scripts/planted.py")
     assert not g.violations()
