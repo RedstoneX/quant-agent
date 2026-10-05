@@ -40,9 +40,10 @@ def test_suppression_state_paths_track_the_watchdog(monkeypatch):
     that truthfully reports "nothing suppressed" about the wrong file.
     """
     from src import coverage_watchdog as cw
+    from src import drift_state as ds
 
     assert db_reads.SUPPRESSION_STATE_PATHS == (
-        cw.STATE_PATH, cw.DEPLOY_DRIFT_STATE_PATH,
+        cw.STATE_PATH, ds.DEPLOY_DRIFT_STATE_PATH,
     )
 
 
