@@ -196,19 +196,6 @@ DONE WHEN:
 
 detail: docs/board_notes/item-201.md
 
-**202. The rehearsal harness is not hermetic — a replay of a RECORDED session still reaches live providers — filed 2026-09-30. CLOSED 2026-10-04: eight boxes were ticked and the ninth was withdrawn by the owner ruling that froze the rehearsal rig. No code fix remains and no build work should be dispatched.** Closed so far: the curl_cffi hole, recorded daily bars, the market-provider rebind on morning research, the fourth transport (`_openai_wire_call`, the failover and tertiary route), and the live sector lookup. 2026-10-01: FRED and the ~20 news/reference feeds are recorded and replayed too. 2026-10-02: the wall itself was sealed against six more routes (UDP, async/raw libcurl, curl subprocess, DNS). Still unrecorded: the pinned recording's zero sectors and the Alpaca asset directory; the settling run has not been repeated. detail: docs/board_notes/item-202.md
-
-DONE WHEN:
-  - [x] 2026-10-01 the run reaches the Portfolio Manager OFFLINE.
-  - [x] 2026-10-01 no component builds its own live market-data client.
-  - [x] 2026-10-01 every blocked outbound attempt is journalled and the breach voids the run, mechanically.
-  - [x] 2026-10-01 a missing recorded input stops the replay instead of being filled in or quietly degraded.
-  - [x] 2026-10-01 the rot guard exercises every installed HTTP transport against TEST-NET-1.
-  - [x] 2026-10-01 every other test that reaches the network is NAMED: the conftest guard journals each blocked attempt to `QAMC_NETWORK_JOURNAL` (1139 attempts from 247 tests, none failing; detail in the note, update 5).
-  - [x] 2026-10-01 FRED and the news/reference feeds replay from a recording by the same patch-where-the-client-is-built pattern; recorded failures replay as failures, a gap raises (note, update 6).
-  - [x] 2026-10-01 the TEST SUITE is closed at the socket, not just at `requests`: 17 tests reached FRED/the Fed/news feeds through `urlopen`, 2 more reached openrouter.ai on a shell key, all green only because the code degrades a failed fetch; each stubbed at its seam, and the guard now fails any test that reaches off-box, naming test and host, with no allow-list (note, update 7).
-  - [x] WITHDRAWN 2026-10-04 by owner ruling: the rehearsal rig is frozen as too expensive to maintain a second machine, so a real rehearsal against the production snapshot will not be performed and this box can never be ticked on its own terms. Hand-written hermetic end-to-end tests replace it. The hermeticity work this item exists for is done and stands; what is withdrawn is only the settling run.
-
 **208. Item 18's three residuals — filed 2026-09-30. Detail: `docs/board_notes/` (item 208). OPEN. [3 of 5 ticked; both open boxes owner-blocked.]** One changes what the ranking seat decides, one is an account setting outside this repo, and one cannot be closed by building at all.
 
 DONE WHEN:
@@ -311,6 +298,7 @@ detail: docs/board_notes/item-232.md
 - retired gate: 1, 2, 3, 4, 5, 6, 7, 8
 - retired queue: 64
 - retired queue: 191
+- retired queue: 202
 - retired queue: 163
 - retired queue: 86, 173
 - retired queue: 198
