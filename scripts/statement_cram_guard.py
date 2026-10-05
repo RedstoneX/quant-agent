@@ -21,7 +21,10 @@ Scope is exactly what the size ratchet guards -- every tracked ``.py`` file
 (``guard_reference.working_paths("*.py")``). No second list exists.
 
 Stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md). If ``origin/main`` cannot
-be read it REFUSES; it never passes by default.
+be read it REFUSES; it never passes by default. Only files the branch itself
+changed are judged (byte identity with the merge base decides, see
+``guard_reference.untouched_paths``): a stale copy of a file the trunk has since
+uncrammed is the trunk's work, not the branch's (2026-10-05).
 
 Run it directly: ``python -m scripts.statement_cram_guard``.
 """
@@ -39,6 +42,7 @@ from scripts.guard_reference import (
     added_sites,
     enclosing_scopes,
     trunk_blobs,
+    untouched_paths,
     working_paths,
 )
 
@@ -117,10 +121,18 @@ def sites(path: str, text: str) -> Counter:
     return out
 
 
+def working_texts() -> dict[str, str]:
+    """Every tracked .py file as it stands in the working tree."""
+    return {
+        p: (ROOT / p).read_text(encoding="utf-8", errors="replace")
+        for p in working_paths("*.py")
+    }
+
+
 def working_sites() -> Counter:
     out: Counter = Counter()
-    for p in working_paths("*.py"):
-        out.update(sites(p, (ROOT / p).read_text(encoding="utf-8", errors="replace")))
+    for p, text in working_texts().items():
+        out.update(sites(p, text))
     return out
 
 
@@ -135,7 +147,12 @@ def trunk_sites(paths: list[str]) -> Counter:
 
 
 def violations() -> list[str]:
-    now = working_sites()
+    """Only files the branch wrote to are judged: a file byte-identical to the
+    merge base is the trunk's own copy, and a crammed line the trunk has since
+    removed from it is not the branch's (``guard_reference.untouched_paths``).
+    Every file that differs is judged in full against the current trunk."""
+    skip = untouched_paths(working_texts())
+    now = Counter({k: n for k, n in working_sites().items() if k[0] not in skip})
     before = trunk_sites(sorted({path for path, _, _ in now}))
     return [
         f"{path} [{scope}]: {n} crammed line(s) where {TRUNK} has {had}: `{line}` "

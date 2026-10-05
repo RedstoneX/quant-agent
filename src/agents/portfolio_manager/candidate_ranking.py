@@ -237,7 +237,7 @@ class CandidateRanking:
         two answers, in one prompt.
 
         `symbol_sectors` (the same mapping `build_evidence_registry` takes,
-        from the same `pipeline._last_symbol_sectors` cache) is now passed
+        from the same run-scoped `ctx.symbol_sectors` map) is now passed
         per symbol into `MacroAnalysis.to_verdict`, which resolves the sector
         stance through the identical `collapse_stances` reduction the
         registry uses and falls back to `equity_outlook` when the read stated
