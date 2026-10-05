@@ -11263,3 +11263,46 @@ numbers:
       Dead default (src/pipeline_prompt_facts.py::PromptHistory._build_position_history): an AST scan on 2026-10-05 of every .py under src, ops, scripts and main.py finds
       every production call to `get_history` passing `days` explicitly (by keyword or position), so this default is
       never used. Dynamic calls through getattr or star-args were not searched.
+  - id: src.desk_disk_floor.DESK_WORST_DAY_BYTES
+    value: 182631819
+    site: src/desk_disk_floor.py
+    status: sourced
+    source: >-
+      src/desk_disk_floor.py@`DESK_WORST_DAY_BYTES = 182_631_819`
+    note: >-
+      MEASURED 2026-10-05, read-only, on the live desk data directory (UTC mtime day, summed file sizes):
+      worst day 182,631,819 B on 2026-08-14 (a one-off bulk fetch of 60 earnings filings); worst rewrite
+      day 126,384,781 B on 2026-10-01 (79 MB database + 29 MB observations file). A rewritten file counts at
+      full size because an in-place rewrite, journal or VACUUM can transiently need its size again, and the
+      observations file is written temp-then-rename. Excludes .git, .venv, frontend node_modules (a one-off
+      227 MB install on 2026-09-10), code and docs outside data/, and the log (counted once, by its ceiling).
+      Governs no trade; it only decides whether a session starts.
+  - id: src.desk_disk_floor.DESK_LOG_CEILING_BYTES
+    value: 62914560
+    site: src/desk_disk_floor.py
+    status: sourced
+    source: >-
+      main.py@`maxBytes=10 * 1024 * 1024,`
+    note: >-
+      Fixed by code, not observed: RotatingFileHandler maxBytes 10 MiB x (1 current + 5 backups) at main.py,
+      so the log tree cannot exceed 6 x 10 MiB. Governs no trade.
+  - id: src.desk_disk_floor.DESK_DAY_BUDGETS_REQUIRED
+    value: 2
+    site: src/desk_disk_floor.py
+    status: sourced
+    source: >-
+      src/desk_disk_floor.py@`DESK_DAY_BUDGETS_REQUIRED = 2`
+    note: >-
+      One worst-day budget for the session about to run plus one for the day after: the check runs once at
+      session start and the desk runs unattended on consecutive days with nothing reclaiming space between
+      them. Counts days, not a tuned margin. Governs no trade.
+  - id: src.desk_disk_floor.DESK_FLOOR_BYTES
+    value: 491092758
+    site: src/desk_disk_floor.py
+    status: sourced
+    source: >-
+      src/desk_disk_floor.py@`DESK_FLOOR_BYTES = DESK_DAY_BUDGETS_REQUIRED * (DESK_WORST_DAY_BYTES + DESK_LOG_CEILING_BYTES)`
+    note: >-
+      DERIVED, not chosen: 2 x (182,631,819 + 62,914,560) = 491,092,758 B = 468 MiB. The minimum free space a
+      session must find before it may start; below it main.py refuses loudly. Guards against another tenant
+      filling the shared disk mid-session. Governs no trade.
