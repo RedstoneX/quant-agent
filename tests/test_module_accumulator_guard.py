@@ -15,13 +15,18 @@ Covers: `src/` (every *.py). Out of scope: tests/, scripts/, ops/, frontend/.
 Nothing is stored. At check time each src module is compared with the SAME
 module on `origin/main` (via scripts.guard_reference, as the cram and size
 ratchets do): only an accumulator name the working copy has MORE of than the
-trunk copy is refused. A file absent from the trunk is entirely new. If the
+trunk copy is refused. A file absent from the trunk is entirely new, EXCEPT
+that an accumulator is identified by its name and not by where it lives: a
+name the change removes from one trunk module and binds in another is the
+same accumulator moved and passes; a copy that leaves the trunk one in place,
+or a second copy of a moved one, is still refused. If the
 trunk cannot be read the guard raises ReferenceUnavailable -- it never reads
 a missing reference as "no offenders on trunk".
 
 Not caught (gameable): mutation from ANOTHER module via import; mutable
 state hidden in a class attribute, a function default arg, a closure or an
-`lru_cache`; a new accumulator that replaces a same-named trunk one in the same module; mutation
+`lru_cache`; a new accumulator that replaces a same-named trunk one in the same module,
+or that takes the name of one removed elsewhere in the same change; mutation
 through an alias (`d = _REG; d[k] = v`); `globals()[...]`; sqlite/file state.
 """
 from __future__ import annotations
@@ -173,13 +178,33 @@ def working_sources() -> dict[str, str]:
 
 
 def new_accumulators(work: dict[str, str] | None = None) -> list[str]:
-    """Accumulators the working tree has beyond the same module's trunk copy."""
-    work = working_sources() if work is None else work
-    trunk = guard_reference.trunk_blobs(sorted(work))  # raises if unreadable
+    """Accumulators the working tree has that the trunk did not have.
+
+    An accumulator is identified by its NAME, not by the file it sits in:
+    one the change REMOVES from a trunk module and binds again under a new
+    path is the same accumulator relocated, not a new one. A copy that
+    leaves the trunk one in place is still new, and so is a second copy of a
+    moved one. A trunk module the change deleted outright is read too, so a
+    lift out of a deleted file counts as a move as well.
+    """
+    real = work is None
+    work = working_sources() if real else work
+    wanted = sorted(work)
+    if real:
+        gone = [p for p in guard_reference.trunk_paths(".py")
+                if p.split("/", 1)[0] in SCANNED and p not in work]
+        wanted = sorted(set(wanted) | set(gone))
+    trunk = guard_reference.trunk_blobs(wanted)  # raises if unreadable
     now, before = _scan(work), _scan(trunk)
+    freed: Counter = Counter()
+    for path, names in before.items():
+        freed.update(names - now.get(path, Counter()))
     bad = []
     for path, names in sorted(now.items()):
         for name in sorted(names - before.get(path, Counter())):
+            if freed[name] > 0:
+                freed[name] -= 1
+                continue
             bad.append(f"{path}: {name}")
     return bad
 
@@ -210,6 +235,20 @@ def test_new_file_is_wholly_new_and_preexisting_passes(monkeypatch):
                         lambda paths: {"src/a.py": old})
     assert new_accumulators({"src/a.py": old}) == []
     assert new_accumulators({"src/a.py": old, "src/b.py": old}) == ["src/b.py: _A"]
+
+
+def test_moved_accumulator_is_the_same_one_not_a_new_one(monkeypatch):
+    old = "_A = {}\ndef f():\n    _A['k'] = 1\n"
+    monkeypatch.setattr(guard_reference, "trunk_blobs",
+                        lambda paths: {"src/a.py": old})
+    stripped = "def f():\n    return 1\n"
+    assert new_accumulators({"src/a.py": stripped, "src/b.py": old}) == []
+    # a second copy of the moved one, or a new name in the new home, is new
+    assert new_accumulators({"src/a.py": stripped, "src/b.py": old,
+                             "src/c.py": old}) == ["src/c.py: _A"]
+    also_b = old + "_B = []\ndef g():\n    _B.append(1)\n"
+    assert new_accumulators({"src/a.py": stripped, "src/b.py": also_b}) == [
+        "src/b.py: _B"]
 
 
 def test_it_refuses_when_the_trunk_cannot_be_read(tmp_path, monkeypatch):

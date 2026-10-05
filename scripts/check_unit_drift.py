@@ -396,17 +396,9 @@ def main(argv: list[str] | None = None) -> int:
     print(message)
 
     if not args.no_telegram:
-        from src.notifier import TelegramNotifier
+        from scripts.ops_alert import push_ops_alert
 
-        notifier = TelegramNotifier()
-        if notifier.enabled:
-            notifier.send(message)
-        else:
-            print(
-                "check_unit_drift: Telegram not configured; alert printed "
-                "above only",
-                file=sys.stderr,
-            )
+        push_ops_alert(message, kind="check_unit_drift")
 
     return 1
 
