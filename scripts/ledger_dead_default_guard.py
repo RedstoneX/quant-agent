@@ -7,7 +7,9 @@ claim was false. This guard checks the claim itself, by AST, over the working tr
 
   no citation      the note says "Dead default" but cites no `path.py::Symbol`
   unresolved       the cited file or symbol is not there
-  self-citation    the cited symbol is the definition the default belongs to
+  self-citation    the cited symbol IS the definition the default belongs to -- the
+                   same node in the row's own `site` file, by position, never by name:
+                   a caller that happens to share the method's name is a caller
   no call          the cited symbol never calls the method named in the row's id
   not passed       it calls it but never passes the argument named in the row's id
                    (by keyword, or positionally at a position that reaches it)
@@ -50,14 +52,31 @@ def _calls(node: ast.AST, method: str) -> list[ast.Call]:
     return out
 
 
-def _param_index(tree: ast.Module, method: str, param: str) -> int | None:
-    """Position of `param` among the callee's arguments, `self`/`cls` excluded."""
-    for n in ast.walk(tree):
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == method:
-            names = [a.arg for a in n.args.posonlyargs + n.args.args if a.arg not in ("self", "cls")]
-            if param in names:
-                return names.index(param)
-    return None
+def _definition(tree: ast.Module, site_id: str, site: str) -> ast.AST | None:
+    """The def the row's id names, located in its own `site` file by qualified name.
+
+    `src/m.py` + `src.m.S.build(top_n)` resolves `S.build` inside `src/m.py`. Only
+    a FunctionDef is a definition a default can belong to.
+    """
+    module = site[: -len(".py")].replace("/", ".")
+    if module.endswith(".__init__"):
+        module = module[: -len(".__init__")]
+    qual = _ID.sub(lambda m: m.group("method"), site_id)
+    if not qual.startswith(module + "."):
+        return None
+    node = _find_symbol(tree, qual[len(module) + 1:])
+    return node if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else None
+
+
+def _same_node(a: ast.AST, b: ast.AST) -> bool:
+    """Identity across two parses of one file: same kind at the same position."""
+    return type(a) is type(b) and (a.lineno, a.col_offset) == (b.lineno, b.col_offset)
+
+
+def _param_index(definition: ast.AST, param: str) -> int | None:
+    """Position of `param` among the definition's arguments, `self`/`cls` excluded."""
+    names = [a.arg for a in definition.args.posonlyargs + definition.args.args if a.arg not in ("self", "cls")]
+    return names.index(param) if param in names else None
 
 
 def _passes(call: ast.Call, param: str, index: int | None) -> bool:
@@ -90,19 +109,22 @@ def check_row(entry: dict[str, Any], read: Reader) -> str | None:
     node = _find_symbol(tree, sym)
     if node is None:
         return f"cited caller {rel}::{sym} is not defined"
-    if getattr(node, "name", None) == method:
+    site = entry.get("site")
+    site_body = read(site) if isinstance(site, str) else None
+    if site_body is None:
+        return f"its site {site!r} cannot be read, so the cited caller cannot be told from the definition"
+    try:
+        definition = _definition(ast.parse(site_body), site_id, str(site))
+    except SyntaxError:
+        definition = None
+    if definition is None:
+        return f"the definition {site_id} is not found in {site}, so the cited caller cannot be told from it"
+    if rel == site and _same_node(node, definition):
         return f"cited caller {rel}::{sym} is the definition itself, not a caller"
     calls = _calls(node, method)
     if not calls:
         return f"cited caller {rel}::{sym} never calls {method}"
-    site = entry.get("site")
-    site_body = read(site) if isinstance(site, str) else None
-    index = None
-    if site_body is not None:
-        try:
-            index = _param_index(ast.parse(site_body), method, param)
-        except SyntaxError:
-            index = None
+    index = _param_index(definition, param)
     if not any(_passes(c, param, index) for c in calls):
         return f"cited caller {rel}::{sym} calls {method} but never passes {param}"
     return None

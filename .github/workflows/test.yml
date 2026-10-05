@@ -13,8 +13,15 @@ on:
 # requests; never on main, where each commit's result stands on its own.
 # Branch protection only ever reads the head commit's checks, so cancelling an
 # older commit's run cannot unblock a merge.
+#
+# The group must ALSO be unique per commit off pull requests. With
+# cancel-in-progress false a group still holds only ONE pending run, so a
+# third push to main while one run is going and another is waiting silently
+# cancels the waiting one (measured 2026-10-05: 82d0d89d and 54d3da42 on main
+# were cancelled this way). A per-commit group on push gives each main commit
+# its own slot.
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
