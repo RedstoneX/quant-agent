@@ -32,6 +32,7 @@ except ImportError:  # pragma: no cover - optional dependency surface
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
+from src.session_identity import _credential_fingerprint  # noqa: F401 re-export
 logger = logging.getLogger("src.execution.broker")
 
 # Alpaca allows one `trade_updates` websocket per account. Each fill wait
@@ -324,10 +325,10 @@ class _TradeUpdatesHub:
             self._gate.notify_all()
 
     def start(self) -> None:
-        stream = TradingStream(
-            self._broker.api_key, self._broker.secret_key,
-            paper=self._broker._paper,
-        )
+        from src.session_identity import checked_socket_identity
+        logger.info("trade_updates identity: %s", checked_socket_identity(self._broker))
+        stream = TradingStream(self._broker.api_key, self._broker.secret_key,
+                               paper=self._broker._paper)
         stream._qamc_authed = self._authed
         stream._qamc_connected = self._connected
         _orig_authed_set = self._authed.set
@@ -588,21 +589,6 @@ class TradeStreamAuthRejected(Exception):
             f"api key {self.credential_fingerprint})"
         )
         self.__cause__ = cause
-
-
-def _credential_fingerprint(credential: str | None) -> str:
-    """Length + first two characters of a key. NEVER the value, never a secret.
-
-    Enough to tell a real Alpaca key (26 chars, `PK`/`AK` prefix) from the
-    29-character literal containing the word `placeholder` that the process
-    actually held until 2026-09-18 — which is the single fact that would
-    have ended this investigation on day one. Two characters cannot
-    identify an account and cannot be replayed.
-    """
-    if not credential:
-        return "absent (empty)"
-    text = str(credential)
-    return f"length {len(text)}, starts '{text[:2]}'"
 
 
 def _parse_stream_auth_reply(raw: object) -> tuple[str | None, str | None]:
