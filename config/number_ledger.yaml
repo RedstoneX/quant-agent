@@ -787,6 +787,8 @@ numbers:
       (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
       distribution remain unread, not absent.
     value: 40
+    engine_ab_2026_10_05: >-
+      ENGINE A/B ATTEMPTED 2026-10-05, NO SETTLEMENT, for the same structural reason as max_portfolio_risk_pct: a cluster share can only bind on a day the risk budget binds, and src/backtest/engine.py calls any run with a contested budget day a NON-RESULT (measured 2026-10-05, scripts/backtest.py, eight names over calendar 2025 on public daily bars: 128 contested days of 212 entry days). A run small enough to avoid contention is too small for the cluster cap to bind. No value changed; the built realised-risk-budget recording stays the route.
     status: arbitrary
     site: src/config/__init__.py
     note: >-
@@ -889,6 +891,8 @@ numbers:
       (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
       distribution remain unread, not absent.
     value: 25
+    engine_ab_2026_10_05: >-
+      ENGINE A/B ATTEMPTED 2026-10-05, NO SETTLEMENT, and the reason is structural rather than a null result. This ceiling can only change an outcome on a day the risk budget binds, and src/backtest/engine.py declares any run with a contested budget day a NON-RESULT because equal-size requests are then served by alphabetical ticker spelling rather than by a ranking. Measured 2026-10-05 with scripts/backtest.py over 2025-01-01..2025-12-31 on public daily bars: an eight-name run had 166 binding-budget days and 128 contested days out of 212 entry days, so it fails the engine's own settleability test; the three-name run that reports zero contested days cannot bind a 25 percent ceiling at all, because at most three concurrent positions at the five percent per-name risk cap commit fifteen percent [measured run output; arithmetic]. The engine cannot settle any portfolio-level risk ceiling until it ranks candidates the way production does, and recording a settlement from it would be wrong. The built realised-risk-budget recording below stays the only route. No value changed.
     status: arbitrary
     site: src/config/__init__.py
     note: >-
@@ -1486,6 +1490,8 @@ numbers:
         the threshold is set where a warning is followed by a change; the warning is DELETED, and
         the gap is simply reported with every target, if no firing has ever been followed by a change
     value: 25
+    engine_ab_2026_10_05: >-
+      INSTRUMENTED 2026-10-05, NOT SETTLED, and this row stays arbitrary. The routed recording was specified and never built, and nothing in the repo counted how often the computed target and the analyst target disagree, so twenty-five could only be argued about rather than read off anything. src/portfolio_constructor/divergence_counter.py now counts every comparison at the site that consumes this number (PortfolioConstructor._log_target_divergence), buckets the absolute gap either side of twenty-five, counts the sign of the gap separately so a one-directional bias in the analyst's targets is visible, and logs the cumulative line on every warn and every tenth comparison. After one live session the log carries the gap distribution and the threshold can be set at a stated percentile of it. The backtest engine cannot supply this: measured 2026-10-05, an A/B of this field at 5.0 against 50.0 over AAPL/MSFT/KO for calendar 2025 returned identical trade counts and win rates, which is the signature of the unreached _derive_target path the engine's own wiring comment describes, not of an inert number. A counter is not a settlement.
     status: arbitrary
     site: src/config/__init__.py
     note: >-
@@ -8415,3 +8421,59 @@ numbers:
     status: not-trade-governing
     site: src/infra_retry_policy.py
     note: "Ceiling on the doubling backoff, in seconds. Same number as `MacroConfig.retry_backoff_max_s` in src/config/macro.py, applied by `MacroDataProvider._next_backoff` in src/data/macro.py, and mirrored by `LLMCostCircuitConfig` in src/config/llm_cost.py. It caps a wait between repeated calls; no trade quantity, price or gate reads it."
+  - id: src.portfolio_constructor.divergence_counter.BUCKET_EDGES[0]
+    value: 5.0
+    status: not-trade-governing
+    site: src/portfolio_constructor/divergence_counter.py
+    note: >-
+      Upper edge of a REPORTING bucket in the target-divergence counter. It places no order, sizes nothing and gates nothing: the counter only tallies how far the computed target and the analyst target disagreed, so the `target_divergence_warn_pct` threshold can later be read off the observed distribution instead of argued about. The edges bracket the current 25 threshold on both sides so the shape either side of it is readable; moving one changes how the histogram is printed and nothing else.
+  - id: src.portfolio_constructor.divergence_counter.BUCKET_EDGES[1]
+    value: 10.0
+    status: not-trade-governing
+    site: src/portfolio_constructor/divergence_counter.py
+    note: >-
+      Upper edge of a REPORTING bucket in the target-divergence counter. It places no order, sizes nothing and gates nothing: the counter only tallies how far the computed target and the analyst target disagreed, so the `target_divergence_warn_pct` threshold can later be read off the observed distribution instead of argued about. The edges bracket the current 25 threshold on both sides so the shape either side of it is readable; moving one changes how the histogram is printed and nothing else.
+  - id: src.portfolio_constructor.divergence_counter.BUCKET_EDGES[2]
+    value: 15.0
+    status: not-trade-governing
+    site: src/portfolio_constructor/divergence_counter.py
+    note: >-
+      Upper edge of a REPORTING bucket in the target-divergence counter. It places no order, sizes nothing and gates nothing: the counter only tallies how far the computed target and the analyst target disagreed, so the `target_divergence_warn_pct` threshold can later be read off the observed distribution instead of argued about. The edges bracket the current 25 threshold on both sides so the shape either side of it is readable; moving one changes how the histogram is printed and nothing else.
+  - id: src.portfolio_constructor.divergence_counter.BUCKET_EDGES[3]
+    value: 20.0
+    status: not-trade-governing
+    site: src/portfolio_constructor/divergence_counter.py
+    note: >-
+      Upper edge of a REPORTING bucket in the target-divergence counter. It places no order, sizes nothing and gates nothing: the counter only tallies how far the computed target and the analyst target disagreed, so the `target_divergence_warn_pct` threshold can later be read off the observed distribution instead of argued about. The edges bracket the current 25 threshold on both sides so the shape either side of it is readable; moving one changes how the histogram is printed and nothing else.
+  - id: src.portfolio_constructor.divergence_counter.BUCKET_EDGES[4]
+    value: 25.0
+    status: not-trade-governing
+    site: src/portfolio_constructor/divergence_counter.py
+    note: >-
+      Upper edge of a REPORTING bucket in the target-divergence counter. It places no order, sizes nothing and gates nothing: the counter only tallies how far the computed target and the analyst target disagreed, so the `target_divergence_warn_pct` threshold can later be read off the observed distribution instead of argued about. The edges bracket the current 25 threshold on both sides so the shape either side of it is readable; moving one changes how the histogram is printed and nothing else.
+  - id: src.portfolio_constructor.divergence_counter.BUCKET_EDGES[5]
+    value: 35.0
+    status: not-trade-governing
+    site: src/portfolio_constructor/divergence_counter.py
+    note: >-
+      Upper edge of a REPORTING bucket in the target-divergence counter. It places no order, sizes nothing and gates nothing: the counter only tallies how far the computed target and the analyst target disagreed, so the `target_divergence_warn_pct` threshold can later be read off the observed distribution instead of argued about. The edges bracket the current 25 threshold on both sides so the shape either side of it is readable; moving one changes how the histogram is printed and nothing else.
+  - id: src.portfolio_constructor.divergence_counter.BUCKET_EDGES[6]
+    value: 50.0
+    status: not-trade-governing
+    site: src/portfolio_constructor/divergence_counter.py
+    note: >-
+      Upper edge of a REPORTING bucket in the target-divergence counter. It places no order, sizes nothing and gates nothing: the counter only tallies how far the computed target and the analyst target disagreed, so the `target_divergence_warn_pct` threshold can later be read off the observed distribution instead of argued about. The edges bracket the current 25 threshold on both sides so the shape either side of it is readable; moving one changes how the histogram is printed and nothing else.
+  - id: src.portfolio_constructor.divergence_counter.BUCKET_EDGES[7]
+    value: 100.0
+    status: not-trade-governing
+    site: src/portfolio_constructor/divergence_counter.py
+    note: >-
+      Upper edge of a REPORTING bucket in the target-divergence counter. It places no order, sizes nothing and gates nothing: the counter only tallies how far the computed target and the analyst target disagreed, so the `target_divergence_warn_pct` threshold can later be read off the observed distribution instead of argued about. The edges bracket the current 25 threshold on both sides so the shape either side of it is readable; moving one changes how the histogram is printed and nothing else.
+  - id: src.portfolio_constructor.divergence_counter.SUMMARY_EVERY
+    value: 10
+    status: not-trade-governing
+    site: src/portfolio_constructor/divergence_counter.py
+    note: >-
+      How often the target-divergence counter re-emits its cumulative line to the log, in comparisons. It affects log
+      volume only: every comparison is counted regardless, and the line is also emitted on every warn, so no count is
+      lost at any value. Nothing reads it, nothing is sized or placed by it.
