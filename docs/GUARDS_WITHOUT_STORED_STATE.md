@@ -54,7 +54,7 @@ kept as history and marked DONE where they describe a stored file that is gone.
     own value is computed in the same run and still binds, so a branch may
     only tighten a fence, never loosen one. Re-measured on `origin/main`
     2026-10-05 [measured: 1,133 tracked `.py` files, Q1 91, Q3 401, IQR 310,
-    Q3+3*IQR = 1,331; 418,326 lines, p99 90, p99.9 120, 411 lines wider]: the
+    Q3+3*IQR = 1,331; 418,428 lines, p99 90, p99.9 120, 411 lines wider]: the
     width fence is unchanged at 120 and the line ceiling TIGHTENS from 2,561 to
     1,331. The ceiling only bites a file CROSSING it (`size > ceiling >= was`),
     so the 56 files already above it are governed by the growth rule as before.
@@ -245,6 +245,32 @@ stored either way — not even in memory: the reference is resolved afresh on
 every call, because a cached tip read earlier in the process let the refusal
 test pass with an unreadable trunk (CI, 2026-10-04). The refinement only ever
 applies to a trunk that WAS read; it never stands in for one that could not be.
+
+**Only the branch's own files are judged (2026-10-05).** The merge ref fixed a
+stale TREE; a second phantom remained with a fresh one. While a split lands,
+the trunk shrinks minute by minute, and a branch that never opened the split
+file still carries the trunk's older, larger copy; measured against today's
+trunk it reads as growth the branch never wrote. Measured on two branches the
+same night: the pipeline, the rotation executor and the backtest engine went
+red within the minutes between an agent merging trunk and running the tests,
+and one branch carried a phantom and a real growth in the same run. The size
+ratchet now skips any file whose working text is byte-identical to the merge
+base's copy (`guard_reference.untouched_paths`): a merge takes the trunk's side
+of an unchanged file, so the branch contributes nothing to it, and measuring it
+is measuring trunk against trunk. This is the merge base's one legitimate use —
+deciding whether the branch wrote to a file at all, never what to compare
+against. Any difference, one deleted line included, makes the file the branch's
+own and it is judged in full against the CURRENT trunk exactly as before, so
+touching a file to own it buys nothing and the real component of a mixed run
+still fails. No totals cross files; with no merge base nothing is excluded.
+Tests: `test_trunk_shrinking_a_file_the_branch_never_opened_is_not_growth`,
+`test_touching_a_file_puts_it_back_under_the_full_rule`. The width ratchet
+lives in the same function and is covered by the same skip (the live case
+showed two "new" wide lines the trunk had removed). The statement-cram ratchet
+shares the shape — a stale copy of a file the trunk has since uncrammed — and
+applies the same skip in `statement_cram_guard.violations`; tests
+`test_trunk_uncramming_a_file_the_branch_never_opened_is_not_a_violation`,
+`test_touching_a_file_puts_it_back_under_the_full_cram_rule`.
 
 ## Acceptance — proven, not asserted
 

@@ -32,23 +32,78 @@ def test_trunk_measurement_is_actually_read():
     assert sizes and all(n >= 0 for n in sizes.values())
 
 
-def test_growth_is_caught_and_reported_as_a_delta(monkeypatch):
-    """Pretend the trunk copy is 50 lines shorter: the guard must say so."""
+def _grown(now: dict, path: str, extra: int) -> dict:
+    """``now`` with ``path`` holding ``extra`` more lines, so it reads as touched."""
+    grown = dict(now)
+    grown[path] = now[path] + "\n".join(["pass"] * extra) + "\n"
+    return grown
+
+
+def _biggest():
     now = file_size_guard.working_texts()
-    biggest = max(now, key=lambda p: len(now[p].splitlines()))
-    real = file_size_guard.trunk_blobs
+    return now, max(now, key=lambda p: file_size_guard._count(now[p]))
 
-    def shrunk(paths):
-        blobs = real(paths)
-        # Relative to the working copy, so a change that itself shrinks the
-        # biggest file cannot hide the simulated growth.
-        lines = now[biggest].splitlines()[:-50]
-        blobs[biggest] = "\n".join(lines) + "\n"
-        return blobs
 
-    monkeypatch.setattr(file_size_guard, "trunk_blobs", shrunk)
+def test_growth_is_caught_and_reported_as_a_delta(monkeypatch):
+    """Grow the biggest file by 50 lines in the working copy: the guard must say so."""
+    now, biggest = _biggest()
+    grown = _grown(now, biggest, 50)
+    monkeypatch.setattr(file_size_guard, "working_texts", lambda: grown)
+    monkeypatch.setattr(file_size_guard, "working_sizes",
+                        lambda: {p: file_size_guard._count(t) for p, t in grown.items()})
     bad = file_size_guard.violations()
     assert any(biggest in line and "grew from" in line and "+50" in line for line in bad), bad
+
+
+def test_trunk_shrinking_a_file_the_branch_never_opened_is_not_growth(monkeypatch):
+    """The 2026-10-05 phantom: trunk split a file this tree still holds unchanged."""
+    now, biggest = _biggest()
+    real = file_size_guard.trunk_sizes
+
+    def shrunk(paths):
+        sizes = real(paths)
+        if biggest in sizes:
+            sizes[biggest] = file_size_guard._count(now[biggest]) - 50
+        return sizes
+
+    monkeypatch.setattr(file_size_guard, "trunk_sizes", shrunk)
+    assert biggest in guard_reference.untouched_paths({biggest: now[biggest]})
+    assert not [b for b in file_size_guard.violations() if biggest in b]
+
+
+def test_touching_a_file_puts_it_back_under_the_full_rule(monkeypatch):
+    """The gaming route: delete a line so the file counts as 'touched', then grow
+    it. A touched file is judged in full against the CURRENT trunk, so the net
+    growth against trunk fails exactly as it did before the untouched rule."""
+    now, biggest = _biggest()
+    lines = now[biggest].splitlines()
+    edited = "\n".join(lines[:-1] + ["pass"] * 3) + "\n"  # -1 line, +3 lines
+    grown = dict(now, **{biggest: edited})
+    sizes = {p: file_size_guard._count(t) for p, t in grown.items()}
+    monkeypatch.setattr(file_size_guard, "working_texts", lambda: grown)
+    monkeypatch.setattr(file_size_guard, "working_sizes", lambda: sizes)
+    assert biggest not in guard_reference.untouched_paths(grown)
+    bad = [b for b in file_size_guard.violations() if biggest in b and "+2" in b]
+    assert bad, file_size_guard.violations()
+
+
+def test_a_shrink_in_one_file_never_excuses_growth_in_another(monkeypatch):
+    now, biggest = _biggest()
+    others = sorted(p for p in now if p != biggest and file_size_guard._count(now[p]) > 50)
+    other = others[0]
+    grown = _grown(now, biggest, 1)
+    grown[other] = "\n".join(now[other].splitlines()[:-20]) + "\n"
+    monkeypatch.setattr(file_size_guard, "working_texts", lambda: grown)
+    monkeypatch.setattr(file_size_guard, "working_sizes",
+                        lambda: {p: file_size_guard._count(t) for p, t in grown.items()})
+    bad = file_size_guard.violations()
+    assert any(biggest in b and "+1" in b for b in bad), bad
+
+
+def test_no_merge_base_excludes_nothing(monkeypatch):
+    monkeypatch.setattr(guard_reference, "merge_base_rev", lambda: "")
+    now, biggest = _biggest()
+    assert guard_reference.untouched_paths({biggest: now[biggest]}) == set()
 
 
 def _with_trunk_copy(monkeypatch, path: str, trunk_text: str):
@@ -136,40 +191,35 @@ def test_added_sites_compares_identities_never_totals():
     assert guard_reference.added_sites([("g.py", "x")], []) == [(("g.py", "x"), 1, 0)]
 
 
-def test_the_file_size_guard_is_already_per_file_identity(monkeypatch):
+def test_the_file_size_guard_is_already_per_file_identity():
     """Lines per file is numeric by nature; its identity is the path, and a shrink
     in one file never offsets growth in another."""
-    trunk = {"a.py": "x\n" * 500, "b.py": "x\n" * 500}
-    now = {"a.py": "x\n" * 400, "b.py": "x\n" * 501}
-    monkeypatch.setattr(file_size_guard, "working_texts", lambda: now)
-    monkeypatch.setattr(file_size_guard, "trunk_blobs", lambda paths: trunk)
-    monkeypatch.setattr(file_size_guard, "trunk_paths", lambda suffix: list(trunk))
-    bad = file_size_guard.violations()
-    assert not any(b.startswith("a.py") for b in bad), bad  # its shrink offsets nothing
-    lines_bad = [b for b in bad if "lines (+" in b]
-    assert lines_bad == [
-        "b.py: grew from 500 to 501 lines (+1) against origin/main. "
-        "Split it instead of growing it."
-    ], bad
+    sizes = {"a.py": 500, "b.py": 500}
+    monkeypatch_now = {"a.py": 400, "b.py": 501}
+    import scripts.file_size_guard as g
+    orig_w, orig_t = g.working_sizes, g.trunk_sizes
+    g.working_sizes, g.trunk_sizes = (lambda: monkeypatch_now), (lambda paths: sizes)
+    try:
+        bad = g.violations()
+    finally:
+        g.working_sizes, g.trunk_sizes = orig_w, orig_t
+    assert len(bad) == 1 and bad[0].startswith("b.py: grew from 500 to 501"), bad
 
 
 # --- the two fences are DERIVED, never stored -------------------------------
 
 
 def test_neither_fence_is_a_stored_number():
-    """The defect being removed: a once-measured integer committed to the file.
+    """The defect removed: two once-measured integers committed to the guard.
 
-    Both fences were literals (2561 and 120) until this change. A stored fence
-    rots as the tree moves and an author can edit it to pass; these must be
-    computed from the populations on every run."""
+    A stored fence rots as the tree moves and an author can edit it to pass."""
     src = (file_size_guard.ROOT / "scripts" / "file_size_guard.py").read_text()
-    assert "CEILING = " not in src and "WIDTH = " not in src, src[:200]
+    assert "CEILING = " not in src and "WIDTH = " not in src
     assert not hasattr(file_size_guard, "CEILING")
     assert not hasattr(file_size_guard, "WIDTH")
 
 
 def test_the_derived_fences_match_the_trunk_population():
-    """Re-derive both numbers here and demand the guard agrees."""
     trunk = guard_reference.trunk_blobs(guard_reference.trunk_paths(".py"))
     assert len(trunk) > 100, len(trunk)
     texts = list(trunk.values())
@@ -179,13 +229,11 @@ def test_the_derived_fences_match_the_trunk_population():
 
 def test_padding_lines_cannot_drag_the_width_fence_out():
     """The gaming case for a derived percentile: fill the tree with near-fence
-    lines and the percentile rises. The trunk side is computed in the same run
-    and the tighter one binds, so it cannot."""
+    lines and it rises. The trunk side is computed in the same run and binds."""
     trunk = ["short\n" * 50]
     padded = ["x" * 400 + "\n"] * 50
     _, width = file_size_guard.fences(padded, trunk)
     assert width == file_size_guard.width_fence(trunk), width
-    # ... and the same clamp in the other direction is allowed: tighter binds.
     _, tighter = file_size_guard.fences(trunk, padded)
     assert tighter == file_size_guard.width_fence(trunk), tighter
 

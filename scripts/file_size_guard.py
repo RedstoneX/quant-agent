@@ -34,6 +34,11 @@ small files raises Q3, and padding lines to just under the fence raises the
 width percentile, but neither can move the fence because the trunk's own value
 still binds. A branch may only make the fence stricter, never looser.
 
+Only files the branch itself changed are judged (byte identity with the merge
+base decides; see ``guard_reference.untouched_paths``): on 2026-10-05 the trunk
+was shrinking minute by minute as a split landed, and branches that never opened
+the split files were billed for the trunk's older copy they still carried.
+
 Run it directly: ``python -m scripts.file_size_guard``.
 """
 from __future__ import annotations
@@ -50,6 +55,7 @@ from scripts.guard_reference import (
     added_sites,
     trunk_blobs,
     trunk_paths,
+    untouched_paths,
     working_paths,
 )
 
@@ -147,15 +153,24 @@ def trunk_sizes(paths: list[str]) -> dict[str, int]:
 
 
 def violations() -> list[str]:
-    """Every file this working tree made worse than ``origin/main``, as deltas."""
-    now_text = working_texts()
-    # The trunk-side population is the WHOLE trunk, not just the paths present
-    # here: a branch that deleted half the small files must not thereby change
-    # the reference distribution it is judged against.
-    was_text = trunk_blobs(sorted(set(now_text) | set(trunk_paths(".py"))))
-    ceiling, width = fences(list(now_text.values()), list(was_text.values()))
-    now = {p: _count(t) for p, t in now_text.items()}
-    before = {p: _count(t) for p, t in was_text.items()}
+    """Every file this working tree made worse than ``origin/main``, as deltas.
+
+    Only files the branch wrote to are judged: a file byte-identical to the
+    merge base is the trunk's own copy, and the trunk shrinking it since is not
+    growth here (``guard_reference.untouched_paths`` carries the argument).
+    Every file that differs is judged in full against the current trunk.
+    """
+    all_working = working_texts()  # fence population: the WHOLE tree
+    now_text = all_working
+    skip = untouched_paths(now_text)
+    now = {p: n for p, n in working_sizes().items() if p not in skip}
+    now_text = {p: t for p, t in now_text.items() if p not in skip}
+    before = trunk_sizes(sorted(now))
+    trunk_pop = trunk_paths(".py")
+    all_trunk = trunk_blobs(sorted(set(now_text) | set(trunk_pop)))
+    ceiling, width = fences(
+        list(all_working.values()), [all_trunk[p] for p in trunk_pop if p in all_trunk]
+    )
     bad: list[str] = []
     for path, size in sorted(now.items()):
         was = before.get(path)
@@ -173,9 +188,11 @@ def violations() -> list[str]:
             )
         elif size > ceiling >= was:
             bad.append(
-                f"{path}: crossed the {ceiling}-line hard ceiling derived from "
-                f"this run's two trees, {was} -> {size} on {TRUNK}'s reckoning."
+                f"{path}: crossed the {ceiling}-line hard ceiling derived from this "
+                f"run's two trees, {was} -> {size} "
+                f"on {TRUNK}'s reckoning."
             )
+    was_text = all_trunk
     wide_now: Counter = Counter()
     wide_was: Counter = Counter()
     for path, text in sorted(now_text.items()):
@@ -194,7 +211,8 @@ def violations() -> list[str]:
     for (path, text), n, before_n in added_sites(wide_now, wide_was):
         bad.append(
             f"{path}: new line wider than the derived {width}-character fence "
-            f"({n} now, {before_n} on {TRUNK}): {text[:60]!r}... Wrap it."
+            f"({n} now, "
+            f"{before_n} on {TRUNK}): {text[:60]!r}... Wrap it."
         )
     return bad
 
