@@ -27,3 +27,7 @@ build/
 
 # Runtime log directory -- documented in the README layout block, never committed.
 /logs/
+
+# Raw secondary-account rehearsal capture is staged here before the public-
+# safety gate approves an atomic move into a reviewed fixture path.
+/ops/rehearsal/captures.local/
