@@ -10,6 +10,15 @@ WHICH FILES ARE GUARDS (derived, never listed -- a list rots)
     tests/test_*ratchet*.py     any test whose name says ratchet
 A new guard that follows the naming rule is covered the day it is added.
 
+WHAT A GUARD IS, BY IDENTITY (measured, 2026-10-05, scripts/*.py on trunk)
+    A script that REFUSES (raises SystemExit / calls sys.exit) AND INSPECTS the
+    repository or trunk (a git call, origin/main, a tree walk, an AST parse).
+    Of 78 scripts, 39 behave that way; the name rule covered only 17 of them.
+    That identity set is REPORTED on every run, and with ENFORCE_BEHAVIOURAL
+    switched on it is also demanded. It is OFF today on purpose: open changes
+    edit 8 of the 22 uncovered scripts, and demanding a trailer of them would
+    turn every one red at once. Tests are not widened (see coverage()).
+
 WHAT IS CAUGHT
     Any edit or deletion of an existing guard file whose behaviour could have
     changed. Tightening cannot be told from loosening reliably (a threshold's
@@ -44,6 +53,9 @@ except ImportError:  # run as a bare script
 
 GUARD_PATTERNS = ("scripts/*guard*.py", "tests/test_*guard*.py",
                   "tests/test_*ratchet*.py")
+ENFORCE_BEHAVIOURAL = False  # report-only until the open changes that edit them land
+_INSPECTS = {"rglob", "glob", "walk", "iterdir", "parse", "_git", "base_ref",
+             "file_at", "check_output", "run"}
 MIN_WORDS = 25
 LINE = re.compile(r"^[ \t]*Guard-rule-change[ \t]*:[ \t]*(.+?)[ \t]*$", re.M)
 
@@ -57,6 +69,47 @@ REQUIREMENT = (
 def is_guard(path: str) -> bool:
     return any(fnmatch.fnmatchcase(path, p) and path.count("/") == p.count("/")
                for p in GUARD_PATTERNS)
+
+
+def behaves_as_guard(source: str) -> bool:
+    """Identity test: the code can refuse (non-zero exit) and reads the repo."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    refuses = inspects = False
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Raise) and n.exc is not None:
+            refuses = refuses or "SystemExit" in ast.dump(n.exc)
+        if isinstance(n, ast.Call):
+            f = n.func
+            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+            refuses = refuses or (name == "exit" and getattr(
+                getattr(f, "value", None), "id", "") == "sys")
+            inspects = inspects or name in _INSPECTS
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            inspects = inspects or "origin/main" in n.value
+    return refuses and inspects
+
+
+def _is_script(path: str) -> bool:
+    return path.startswith("scripts/") and path.endswith(".py")
+
+
+def _covered(path: str, source: str | None, enforce_behaviour: bool) -> bool:
+    if is_guard(path):
+        return True
+    return bool(enforce_behaviour and _is_script(path) and source is not None
+                and behaves_as_guard(source))
+
+
+def coverage(repo: Path | None = None) -> tuple[int, int, int]:
+    """(scripts searched, behave as guards, of those caught by name)."""
+    repo = repo or dod.REPO_ROOT
+    found = [p for p in sorted((repo / "scripts").glob("*.py"))
+             if behaves_as_guard(p.read_text())]
+    named = sum(is_guard(f"scripts/{p.name}") for p in found)
+    return len(list((repo / "scripts").glob("*.py"))), len(found), named
 
 
 def _strip_docstrings(tree: ast.AST) -> ast.AST:
@@ -81,8 +134,22 @@ def behaviour_unchanged(before: str, after: str) -> bool:
     return a == b
 
 
+def unenforced_touched(base: str, repo: Path) -> list[str]:
+    """Identity-guards this change edits that the name rule does not cover."""
+    r = dod._git("diff", "--name-only", "--no-renames", f"{base}...HEAD", repo=repo)
+    out = []
+    for path in sorted(p for p in r.stdout.split("\n") if _is_script(p)):
+        f = repo / path
+        if not is_guard(path) and f.exists() and behaves_as_guard(f.read_text()):
+            out.append(path)
+    return out
+
+
 def problems(base: str | None, repo: Path | None = None,
-             messages: str | None = None) -> list[str]:
+             messages: str | None = None,
+             enforce_behaviour: bool | None = None) -> list[str]:
+    if enforce_behaviour is None:
+        enforce_behaviour = ENFORCE_BEHAVIOURAL
     if not base:
         return ["cannot read origin/main to compare against; refusing rather "
                 "than passing (inability to compare is never a pass)"]
@@ -92,12 +159,17 @@ def problems(base: str | None, repo: Path | None = None,
     if r.returncode != 0:
         return ["git diff against the base failed; refusing: " + r.stderr.strip()]
     touched = []
-    for path in sorted(p for p in r.stdout.split("\n") if p and is_guard(p)):
+    for path in sorted(p for p in r.stdout.split("\n") if p):
         before = dod.file_at(base, path, repo)
-        if before is None:
-            continue  # brand-new guard: only adds refusals
         f = repo / path
         after = f.read_text() if f.exists() else None
+        # judged on the BASE text: rewriting a guard so it stops looking like
+        # one cannot take it out of scope
+        source = before if before is not None else after
+        if not _covered(path, source, enforce_behaviour):
+            continue
+        if before is None:
+            continue  # brand-new guard: only adds refusals
         if after is not None and behaviour_unchanged(before, after):
             continue
         touched.append(path + (" (deleted)" if after is None else ""))
@@ -115,7 +187,14 @@ def problems(base: str | None, repo: Path | None = None,
 
 
 def main() -> int:
-    out = problems(dod.base_ref())
+    base = dod.base_ref()
+    scripts, real, named = coverage()
+    print(f"guard coverage: {real} of {scripts} scripts behave as guards; "
+          f"the name rule covers {named}; enforcing identity: {ENFORCE_BEHAVIOURAL}")
+    if base and not ENFORCE_BEHAVIOURAL:
+        for path in unenforced_touched(base, dod.REPO_ROOT):
+            print(f"NOTE (not enforced yet): {path} behaves as a guard")
+    out = problems(base)
     for p in out:
         print(f"- {p}")
     return 1 if out else 0

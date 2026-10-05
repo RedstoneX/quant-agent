@@ -35,3 +35,20 @@ def test_locals_builtins_and_closures_are_not_flagged():
 
 def test_star_import_module_is_skipped_not_guessed():
     assert g.check_source("from os import *\ndef f():\n    return nope\n") == ([], True)
+
+
+def test_module_level_read_of_a_name_nothing_binds_is_caught():
+    assert [n for _, n in g.check_source("x = _missing + 1\n")[0]] == ["_missing"]
+    assert g.check_source("_missing = 1\nx = _missing + 1\n")[0] == []
+
+
+def test_a_missing_or_empty_tree_is_refused_not_read_as_clean(tmp_path):
+    assert g.main([str(tmp_path / "nope")]) == 1
+    assert g.main([str(tmp_path)]) == 1
+
+
+def test_the_default_scan_is_derived_from_git_and_reaches_the_root_and_ops():
+    files = {p.relative_to(ROOT).as_posix() for p in g.tracked_production_files()}
+    assert "main.py" in files and any(p.startswith("ops/") for p in files)
+    assert not any(p.startswith("tests/") for p in files)
+    assert g.main([]) == 0
