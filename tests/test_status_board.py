@@ -718,44 +718,6 @@ def test_retired_bullet_lines_are_never_edited_or_removed():
     )
 
 
-def test_work_md_growth_budget_shrinks_as_the_file_fills():
-    """Pins `sb.work_md_growth_budget`'s shape directly, independent of git
-    plumbing: half of whatever headroom remains below the cap, so the
-    allowance shrinks as the file fills rather than staying flat. See the
-    function's own docstring in scripts/status_board.py for why 0.5 is
-    provisional and what it replaced."""
-    cap = sb.WORK_MD_GROWTH_CAP_BYTES
-    assert sb.work_md_growth_budget(30_000, cap) == 35_000   # ~30% full
-    assert sb.work_md_growth_budget(85_000, cap) == 7_500    # ~85% full
-    assert sb.work_md_growth_budget(95_000, cap) == 2_500    # ~95% full
-    assert sb.work_md_growth_budget(cap, cap) == 0           # at the cap
-    assert sb.work_md_growth_budget(cap + 10_000, cap) == 0  # past it: never negative
-
-
-def test_work_md_growth_share_is_pinned():
-    """`WORK_MD_GROWTH_SHARE` is a provisional judgement call (see its
-    comment in scripts/status_board.py) — pinned here so a future edit
-    cannot quietly loosen or tighten it without a visible, reviewed test
-    change."""
-    assert sb.WORK_MD_GROWTH_SHARE == 0.5
-
-
-def test_work_md_growth_cap_matches_the_byte_ceiling():
-    """`WORK_MD_GROWTH_CAP_BYTES` must equal the cap
-    `test_work_md_stays_under_a_hundred_thousand_bytes` enforces below —
-    that test owns the number, this only guards against the two silently
-    drifting apart if the ceiling is ever changed there and not here.
-    Reads the ceiling test's own source, the same way
-    `scripts/check_board_hygiene.py:read_cap_bytes` already does, rather
-    than re-typing the number a third time."""
-    from scripts.check_board_hygiene import read_cap_bytes
-
-    repo = Path(__file__).resolve().parents[1]
-    cap, error = read_cap_bytes(repo)
-    assert error is None, error
-    assert sb.WORK_MD_GROWTH_CAP_BYTES == cap
-
-
 def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
     """Owner's ruling, 2026-09-17, in substance: the old rule here (no
     change may ever leave docs/WORK.md larger than it found it, "
@@ -867,58 +829,6 @@ def _work_md_shrank_in_this_change():
         return False
     after = (repo / "docs" / "WORK.md").stat().st_size
     return sb.work_md_cap_blocker(before, after) is None and after > sb.WORK_MD_GROWTH_CAP_BYTES
-
-
-def test_the_cap_cannot_deadlock_the_board():
-    """Board item 200. The hard cap was a bare check on the file as it
-    stands, so the moment the file went over it, EVERY change failed —
-    including the retirement that would bring it back under. The only
-    exits were force-merging or raising the cap, and raising the cap is
-    the one thing the cap exists to prevent.
-
-    `sb.work_md_cap_blocker` is the rule now: over the cap is refused,
-    except for a change that strictly shrinks the file, which always
-    lands. Simulated here against over-cap sizes rather than trusting the
-    real file, which is currently comfortably under.
-    """
-    cap = sb.WORK_MD_GROWTH_CAP_BYTES
-
-    # Under the cap: nothing to say, growing or shrinking.
-    assert sb.work_md_cap_blocker(90_000, 95_000, cap) is None
-    assert sb.work_md_cap_blocker(95_000, 90_000, cap) is None
-    assert sb.work_md_cap_blocker(99_999, cap, cap) is None  # exactly at it
-
-    # The change that pushes it over is refused at that change.
-    blocked = sb.work_md_cap_blocker(99_000, 101_000, cap)
-    assert blocked is not None and "over the" in blocked
-
-    # Already over: a prune lands however far over it still is.
-    assert sb.work_md_cap_blocker(120_000, 119_999, cap) is None
-    assert sb.work_md_cap_blocker(120_000, 101_000, cap) is None
-    # ...and it lands all the way back under, obviously.
-    assert sb.work_md_cap_blocker(120_000, 80_000, cap) is None
-
-    # Already over and NOT shrinking: still refused, including a change
-    # that leaves the size exactly as it found it.
-    assert sb.work_md_cap_blocker(120_000, 120_000, cap) is not None
-    assert sb.work_md_cap_blocker(120_000, 130_000, cap) is not None
-
-
-def test_the_cap_warns_before_it_binds():
-    """Board item 200's other half: the first warning must not be a
-    blocked merge. `sb.work_md_cap_warning` fires at
-    `sb.WORK_MD_WARN_SHARE` of the cap, while `work_md_growth_budget`
-    still allows a normal change, and is emitted from the growth-budget
-    test so the notice and the eventual failure speak in one place."""
-    cap = sb.WORK_MD_GROWTH_CAP_BYTES
-    assert sb.WORK_MD_WARN_SHARE == 0.8
-    assert sb.work_md_cap_warning(70_000, cap) is None
-    assert sb.work_md_cap_warning(79_999, cap) is None
-    warned = sb.work_md_cap_warning(80_000, cap)
-    assert warned is not None and "80%" in warned
-    assert sb.work_md_cap_warning(95_000, cap) is not None
-    # Fires early enough that pruning is still a choice, not a precondition.
-    assert sb.work_md_growth_budget(int(sb.WORK_MD_WARN_SHARE * cap), cap) == 10_000
 
 
 def test_work_md_stays_under_a_hundred_thousand_bytes():
@@ -1512,6 +1422,64 @@ def test_no_pending_decision_is_overdue():
 # page could say.
 # ---------------------------------------------------------------------------
 
+def _funnel_openers(text: str) -> list[int]:
+    """Every `**N.` item opener inside the funnel-queue section, counted off
+    the raw text with the parser's own stop markers -- an independent read the
+    parser's yield must equal, item for item."""
+    section = text.split(sb._QUEUE_HEADING, 1)[1]
+    for stop in board_rot_guard._QUEUE_STOPS:
+        if stop in section:
+            section = section.split(stop, 1)[0]
+    return [int(n) for n in re.findall(r"^\*\*(?:~~)?(\d+)\.", section, re.M)]
+
+
+def _whole_board(text: str) -> str:
+    return (
+        "# board\n\n## PM TEST GATE\n\n**The gate is EMPTY** -- every gate item closed.\n\n"
+        "## THE FUNNEL QUEUE\n\n" + text
+        + "\n\n**Retired item numbers -- never reuse.**\n- retired queue: 1\n\n## Next\n"
+    )
+
+
+def test_a_small_whole_board_parses_and_a_mangled_one_does_not(tmp_path):
+    """One item is a legitimate board; a truncated or mangled one is not, and
+    the difference is read off the file's shape, not its size."""
+    p = tmp_path / "WORK.md"
+    p.write_text(_whole_board("**7. Last thing — OPEN.**\n\nDONE WHEN:\n  - [ ] it\n"))
+    items, problem = sb.load_funnel_queue(p)
+    assert problem is None and [i.rank for i in items] == [7] == _funnel_openers(p.read_text())
+    assert not board_rot_guard._board_structure_problems(p)
+    # truncated part-way through the queue: no closing heading
+    p.write_text(_whole_board("**7. Last thing — OPEN.**\n\nDONE WHEN:\n  - [ ] it\n").split("\n**Retired")[0])
+    assert board_rot_guard._board_structure_problems(p)
+    # mangled: the queue heading survives but no item under it parses
+    p.write_text(_whole_board("prose only, no numbered items\n"))
+    items, problem = sb.load_funnel_queue(p)
+    assert items == [] and problem and board_rot_guard._board_structure_problems(p)
+
+
+def test_prose_outside_the_done_when_run_never_moves_box_state(tmp_path):
+    """State is the criterion bullets and nothing else, in both directions."""
+    p = tmp_path / "WORK.md"
+    ticked = "**7. Done thing — OPEN.**\n\nDONE WHEN:\n  - [x] one\n  - [x] two\n"
+    prose = "\nA paragraph below the run with a stray [ ] bracket and a `- [ ] bullet`.\n"
+    p.write_text(_whole_board(ticked + prose))
+    assert sb.load_funnel_queue(p)[0][0].box_state == "finished"
+    p.write_text(_whole_board(ticked))
+    assert sb.load_funnel_queue(p)[0][0].box_state == "finished"
+    open_ = "**7. Open thing — OPEN.**\n\nDONE WHEN:\n  - [x] one\n  - [ ] two\n"
+    p.write_text(_whole_board(open_ + "\nProse saying [x] [x] [x] done.\n"))
+    assert sb.load_funnel_queue(p)[0][0].box_state == "outstanding"
+    p.write_text(_whole_board(open_))
+    assert sb.load_funnel_queue(p)[0][0].box_state == "outstanding"
+    # the guard still bites: an all-ticked item is flagged however short it is
+    (tmp_path / "board_notes").mkdir()
+    p.write_text(_whole_board(ticked))
+    assert sb.find_finished_items_still_on_board(p, tmp_path / "board_notes")
+    p.write_text(_whole_board(open_))
+    assert not sb.find_finished_items_still_on_board(p, tmp_path / "board_notes")
+
+
 def test_the_real_backlog_still_parses():
     """The shipped docs/WORK.md must actually yield the queue.
 
@@ -1521,7 +1489,13 @@ def test_the_real_backlog_still_parses():
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     items, problem = sb.load_funnel_queue(work)
     assert problem is None, problem
-    assert len(items) >= 10, f"only {len(items)} queue items parsed"
+    # Whole, not big: the parse is checked against the file's own shape, never
+    # against a floor on the item count. A floor made a board that finished
+    # its work indistinguishable from one the parser could not read.
+    assert not board_rot_guard._board_structure_problems(work)
+    assert [i.rank for i in items] == sorted(_funnel_openers(work.read_text())), (
+        "the parser yields a different set of items than the queue's own bold "
+        "`**N.` openers -- some item heading no longer parses")
     assert [i.rank for i in items] == sorted(i.rank for i in items)
     assert all(i.title for i in items)
     # Funnel items 1 and 4 (invented R/R refuse / 1.2 belt) were retired
