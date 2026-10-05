@@ -19,24 +19,34 @@ def gib(b):
 # --- desk-side floor ------------------------------------------------------
 # scripts/disk_guard.py sizes a DEVELOPMENT box (40 worktrees).
 # A trading session needs a different quantity, and it is MEASURED, not
-# chosen. Measured 2026-10-05, read-only, against the live desk checkout:
-#   * Largest single day of writes under the desk data directory:
-#     126,384,781 B (2026-10-01), summing every file whose mtime falls on that
-#     day at its FULL size. Full size is the right quantity: the desk rewrites
-#     whole files (its 79 MB SQLite database, a 28 MB smart-money observations
-#     file) via write-temp-then-rename, so the bytes must fit on disk whole.
-#     24 further active days were measured and all are smaller.
+# chosen. Measured 2026-10-05, read-only, on the live desk data directory
+# (file mtime day in UTC, summing file sizes):
+#   * Largest single day of writes under the data directory: 182,631,819 B
+#     (2026-08-14, a one-off bulk fetch of 60 earnings filings: genuinely new
+#     bytes). The worst day of REWRITE-type writes is 2026-10-01 at 126,384,781
+#     B (79,187,968 database + 28,680,785 observations file + the rest).
+#     The maximum is used so the floor covers either shape of day.
+#   * Why a rewritten file counts at its FULL size, stated honestly: the
+#     database is rewritten in place, so its size is not new space on most days.
+#     It counts because an in-place rewrite, a journal or a VACUUM can
+#     transiently need roughly the file's size again, and the observations
+#     file is written temp-then-rename, which holds both copies at once.
+#   * EXCLUDED on purpose, do not "fix" back: .git, .venv and the frontend's
+#     node_modules (2026-09-10, 227,229,218 B, a one-off package install, not
+#     session writes); code, docs and built assets outside data/ (deploys, not
+#     sessions: they add 28,977,075 B to 2026-10-01 if included); and the log,
+#     which is counted once by the ceiling below, not twice.
 #   * The session log cannot run away: main.py installs a RotatingFileHandler
 #     with maxBytes=10 MiB and backupCount=5, so the whole log tree is capped
 #     at 6 x 10 MiB (observed on the desk: 5 rotations plus the current file).
 #   * Bar data adds nothing separate: the desk stores bars in the database and
 #     writes no bar cache files.
-# FLOOR = 2 x (worst measured day + log ceiling) = 378,598,682 B = 361 MiB.
+# FLOOR = 2 x (worst measured day + log ceiling) = 491,092,758 B = 468 MiB.
 # The 2 is one further worst-day budget, not a round number: this check runs
 # ONCE at session start, and the desk runs unattended on consecutive days with
 # nothing reclaiming between them, so a session may not start unless the day
 # after it could also run. Recorded in config/number_ledger.yaml.
-DESK_WORST_DAY_BYTES = 126_384_781
+DESK_WORST_DAY_BYTES = 182_631_819
 DESK_LOG_CEILING_BYTES = 6 * 10 * 1024 * 1024
 DESK_DAY_BUDGETS_REQUIRED = 2
 DESK_FLOOR_BYTES = DESK_DAY_BUDGETS_REQUIRED * (DESK_WORST_DAY_BYTES + DESK_LOG_CEILING_BYTES)

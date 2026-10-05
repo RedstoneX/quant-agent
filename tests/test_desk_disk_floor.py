@@ -22,7 +22,7 @@ def test_still_breached_after_reclaim_refuses_with_the_numbers(monkeypatch, tmp_
         dg.require_desk_disk(tmp_path)
     except SystemExit as exc:
         assert "REFUSING TO START" in str(exc)
-        assert "378,598,682" in str(exc)  # what it needs
+        assert "491,092,758" in str(exc)  # what it needs
         assert "0.0 GiB free" in str(exc)  # what it found
     else:
         raise AssertionError("a breached floor must refuse the session")

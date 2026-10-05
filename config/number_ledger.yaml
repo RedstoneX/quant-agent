@@ -11264,15 +11264,18 @@ numbers:
       every production call to `get_history` passing `days` explicitly (by keyword or position), so this default is
       never used. Dynamic calls through getattr or star-args were not searched.
   - id: src.desk_disk_floor.DESK_WORST_DAY_BYTES
-    value: 126384781
+    value: 182631819
     site: src/desk_disk_floor.py
     status: sourced
     source: >-
-      src/desk_disk_floor.py@`DESK_WORST_DAY_BYTES = 126_384_781`
+      src/desk_disk_floor.py@`DESK_WORST_DAY_BYTES = 182_631_819`
     note: >-
-      MEASURED 2026-10-05, read-only, on the live desk data directory: the worst single day of writes,
-      summing every file whose mtime falls on that day at its FULL size (the desk rewrites whole files
-      write-temp-then-rename, so the bytes must fit whole). 24 other active days were smaller.
+      MEASURED 2026-10-05, read-only, on the live desk data directory (UTC mtime day, summed file sizes):
+      worst day 182,631,819 B on 2026-08-14 (a one-off bulk fetch of 60 earnings filings); worst rewrite
+      day 126,384,781 B on 2026-10-01 (79 MB database + 29 MB observations file). A rewritten file counts at
+      full size because an in-place rewrite, journal or VACUUM can transiently need its size again, and the
+      observations file is written temp-then-rename. Excludes .git, .venv, frontend node_modules (a one-off
+      227 MB install on 2026-09-10), code and docs outside data/, and the log (counted once, by its ceiling).
       Governs no trade; it only decides whether a session starts.
   - id: src.desk_disk_floor.DESK_LOG_CEILING_BYTES
     value: 62914560
@@ -11294,12 +11297,12 @@ numbers:
       session start and the desk runs unattended on consecutive days with nothing reclaiming space between
       them. Counts days, not a tuned margin. Governs no trade.
   - id: src.desk_disk_floor.DESK_FLOOR_BYTES
-    value: 378598682
+    value: 491092758
     site: src/desk_disk_floor.py
     status: sourced
     source: >-
       src/desk_disk_floor.py@`DESK_FLOOR_BYTES = DESK_DAY_BUDGETS_REQUIRED * (DESK_WORST_DAY_BYTES + DESK_LOG_CEILING_BYTES)`
     note: >-
-      DERIVED, not chosen: 2 x (126,384,781 + 62,914,560) = 378,598,682 B = 361 MiB. The minimum free space a
+      DERIVED, not chosen: 2 x (182,631,819 + 62,914,560) = 491,092,758 B = 468 MiB. The minimum free space a
       session must find before it may start; below it main.py refuses loudly. Guards against another tenant
       filling the shared disk mid-session. Governs no trade.
