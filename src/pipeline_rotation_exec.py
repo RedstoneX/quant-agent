@@ -9,6 +9,7 @@ patch target keeps working.
 
 from __future__ import annotations
 
+from src.sentinel.guarded import record_guarded_pass
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     _IN_FLIGHT_FILL_STATUSES,
     _entry_deployment_budget,
@@ -302,7 +303,9 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
                 r for r in pipeline.db.get_pending_repegs()
                 if str(r.get("symbol") or "").upper() == cand_symbol
             ]
+            record_guarded_pass(pipeline, "rotation_exec.in_flight_check")
         except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(pipeline, "rotation_exec.in_flight_check", exc, log=logger)
             _rotation_skip(
                 pipeline, ctx, cand_opp, "in_flight_check_failed",
                 detail=str(exc),
@@ -352,7 +355,9 @@ def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
                 is_short=False,
                 run_id=ctx.run_id,
             )
+            record_guarded_pass(pipeline, "rotation_exec.protection_check")
         except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(pipeline, "rotation_exec.protection_check", exc, log=logger)
             _rotation_skip(
                 pipeline, ctx, cand_opp, "protection_check_failed",
                 detail=str(exc),
@@ -1079,35 +1084,7 @@ def _pending_cover_symbols(cover_decisions, positions) -> tuple[str, ...]:
         symbols.append(symbol)
     return tuple(symbols)
 
-def _rotation_sell_last(sell_decisions: list, ctx) -> list:
-    """This session's SELLs with a RANKED-MARGIN rotation's close moved to
-    the END, and every other order preserved.
-
-    Board item 39. The rotation's close is the only exit whose paired BUY
-    can be refused for lack of the room the close frees, so it is the only
-    one that must not be submitted until that question is answered — and
-    the question is easiest to answer once every OTHER exit has a terminal
-    status and the account has been re-read. Going last is what turns the
-    other exits from something to project into something to measure.
-
-    A no-op on every session without a ranked-margin rotation, which is
-    every session while `execution.rotation_ranked_margin_enabled` is off.
-    """
-    rotation = getattr(ctx, "rotation", None)
-    if not isinstance(rotation, dict) or rotation.get("tier") != "ranked_margin":
-        return sell_decisions
-    held = str(rotation.get("held_symbol") or "").strip().upper()
-    if not held:
-        return sell_decisions
-    others = [
-        d for d in sell_decisions
-        if str(getattr(d, "symbol", "") or "").strip().upper() != held
-    ]
-    rotation_legs = [
-        d for d in sell_decisions
-        if str(getattr(d, "symbol", "") or "").strip().upper() == held
-    ]
-    return others + rotation_legs
+from src.rotation_sell_order import _rotation_sell_last  # noqa: E402,F401
 
 def _rotation_sell_gate(pipeline, ctx, decision, buy_decisions, positions,
                         total_value: float, cash: float,

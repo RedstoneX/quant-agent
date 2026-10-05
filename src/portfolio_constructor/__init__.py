@@ -121,17 +121,18 @@ from src.portfolio_constructor.assembly import hold_parts, install_delegates
 class PortfolioConstructor:
     """Stateless translator: target state → concrete orders."""
 
-    def __init__(self, config: ConstructorConfig | None = None, db=None):
+    def __init__(self, config: ConstructorConfig | None = None, recorder=None):
         self.cfg = config or ConstructorConfig()
         hold_parts(self, delegate_owner=PortfolioConstructor)  # parts HELD, not inherited; wiring in assembly.py
         # Owner ruling 2026-10-01 (board item 218) made the parity refusal a
         # TRIAL — "see if that improves the desk purchases" — and a trial
         # judged by grepping English prose out of an in-memory dict cannot
-        # be judged at all. `db` is optional so every existing caller and
-        # every test still constructs this class with no arguments; when it
-        # is supplied, each refusal is written to the `trade_refusals` table
+        # be judged at all. `recorder` is optional so every existing
+        # caller and every test still constructs this class with no
+        # arguments; when the composition root supplies one (built around
+        # the db), each refusal is written to the `trade_refusals` table
         # with the numbers in their OWN columns, never as a sentence.
-        self.db = db
+        self.refusal_recorder = recorder
         self.last_parity_standdowns: dict[str, dict] = {}
         # Populated fresh by every `construct_orders` call — see
         # `_DropReasonCapture`. {symbol: "Constructor: ... rejected/refused
@@ -321,23 +322,12 @@ class PortfolioConstructor:
         that happen to reach `constructor_dropped`, cannot be judged — so
         every number goes in its OWN column here.
         """
-        db = getattr(self, "db", None)
-        if db is None:
+        recorder = self.refusal_recorder
+        if recorder is None:
             return
-        try:
-            db.insert_trade_refusal(
-                symbol=symbol, direction=direction,
-                refusal=STOP_REFUSAL_REWARD_BELOW_RISK,
-                entry_price=float(entry), stop_price=float(stop),
-                level_used=float(level), reward_risk=float(ratio),
-                threshold=float(REWARD_RISK_PARITY),
-                level_was_measured=True, stage=stage,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Constructor: parity refusal row write failed for %s: %s",
-                symbol, e,
-            )
+        recorder.record_parity_refusal(
+            symbol, direction, entry, stop, level, ratio, stage=stage,
+        )
 
     def _record_subfloor_risk_target(
         self, symbol: str, direction: str | None, requested_pct: float,
@@ -354,22 +344,12 @@ class PortfolioConstructor:
         allocation), and an instruction with no evidence trail cannot tell
         us whether it is ever broken.
         """
-        db = getattr(self, "db", None)
-        if db is None:
+        recorder = self.refusal_recorder
+        if recorder is None:
             return
-        try:
-            db.insert_trade_refusal(
-                symbol=symbol, direction=direction,
-                refusal=SUBFLOOR_RISK_OBSERVED,
-                stage=_SUBFLOOR_RISK_STAGE,
-                requested_risk_pct=float(requested_pct),
-                threshold=float(self.cfg.min_risk_pct),
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Constructor: sub-floor risk observation write failed "
-                "for %s: %s", symbol, e,
-            )
+        recorder.record_subfloor_risk_target(
+            symbol, direction, requested_pct, self.cfg.min_risk_pct,
+        )
 
     def _note_refusal(
         self, symbol: str, direction: str, refusal: str, detail: str,
