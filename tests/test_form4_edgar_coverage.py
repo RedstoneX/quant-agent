@@ -461,7 +461,7 @@ def test_a_manifest_written_before_this_shipped_reads_as_unverified(tmp_path):
     import json
 
     provider = _provider(tmp_path, lookback_days=0)
-    provider.manifest_path.write_text(json.dumps({
+    provider.stores.manifest_path.write_text(json.dumps({
         "coverage_as_of": et_today().isoformat(),
         "watched_names": 4, "watched_names_read_through": 4,
         "watched_names_unread": [],
@@ -734,7 +734,7 @@ def test_yesterdays_coverage_is_not_todays(tmp_path):
 
     provider = _provider(tmp_path, lookback_days=0)
     yesterday = (et_today() - timedelta(days=1)).isoformat()
-    provider.manifest_path.write_text(json.dumps({
+    provider.stores.manifest_path.write_text(json.dumps({
         "coverage_as_of": yesterday,
         "watched_names": 4, "watched_names_read_through": 4,
         "watched_names_unread": [],

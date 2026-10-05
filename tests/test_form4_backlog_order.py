@@ -162,7 +162,7 @@ def test_refresh_reports_the_unread_backlog_and_records_it(tmp_path, monkeypatch
     assert result["pending_filings"] == 2
     assert result["watched_pending_filings"] == 1
     assert result["discovery_cap_reached"] is True
-    manifest = json.loads(provider.manifest_path.read_text())
+    manifest = json.loads(provider.stores.manifest_path.read_text())
     assert manifest["pending_filings"] == 2
     assert manifest["watched_pending_filings"] == 1
     assert manifest["discovery_cap_reached"] is True
@@ -914,7 +914,7 @@ def test_a_market_wide_pass_that_reads_nothing_reports_itself_blind(
     assert result["market_wide_read"] == 0
     assert result["pending_filings"] > 0
     assert result["market_wide_blind"] is True
-    manifest = json.loads(provider.manifest_path.read_text())
+    manifest = json.loads(provider.stores.manifest_path.read_text())
     assert manifest["market_wide_blind"] is True
     assert provider.form4_coverage()["market_wide_blind"] is True
 
@@ -956,8 +956,8 @@ def test_blindness_from_an_earlier_pass_is_not_reported_as_todays(
     by an earlier one must not page again — the same ageing rule the EDGAR
     coverage record already follows."""
     provider, _result = _blind_refresh(tmp_path, monkeypatch, submissions_fail=True)
-    manifest = json.loads(provider.manifest_path.read_text())
+    manifest = json.loads(provider.stores.manifest_path.read_text())
     manifest["coverage_as_of"] = "2026-01-02"
-    provider.manifest_path.write_text(json.dumps(manifest))
+    provider.stores.manifest_path.write_text(json.dumps(manifest))
 
     assert provider.form4_coverage()["market_wide_blind"] is False

@@ -378,7 +378,7 @@ def test_history_only_counts_trades_strictly_before_the_transaction():
 # --- provider wiring -------------------------------------------------------
 
 def _cached(provider, rows):
-    provider.observations_path.write_text(
+    provider.stores.observations_path.write_text(
         json.dumps([row.model_dump(mode="json") for row in rows])
     )
 
@@ -395,7 +395,7 @@ def test_routine_purchase_never_becomes_admission_eligible(tmp_path):
         is_10b5_1=True,
     )
     _cached(provider, [routine])
-    provider.history_path.write_text(json.dumps({
+    provider.stores.history_path.write_text(json.dumps({
         "1|ABCD": [
             f"{today.replace(year=today.year - offset).isoformat()}|buy"
             for offset in (1, 2, 3)
@@ -496,7 +496,7 @@ def test_history_index_prunes_beyond_retention(tmp_path):
          "transaction_date": ancient.isoformat()},
     ])
 
-    assert json.loads(provider.history_path.read_text()) == {}
+    assert json.loads(provider.stores.history_path.read_text()) == {}
 
 
 def test_history_index_is_append_only_across_refreshes(tmp_path):
@@ -507,7 +507,7 @@ def test_history_index_is_append_only_across_refreshes(tmp_path):
             "transaction_date": day.isoformat(),
         }])
 
-    assert json.loads(provider.history_path.read_text()) == {
+    assert json.loads(provider.stores.history_path.read_text()) == {
         "1|NVDA": ["2024-08-03|buy", "2025-08-14|buy"],
     }
 
