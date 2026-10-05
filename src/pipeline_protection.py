@@ -1208,7 +1208,7 @@ class ExDividends:
                 logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
                 continue
             finally:
-                record_unprotected_windows(self.broker, self.db, p.symbol)  # Item 201: even when the shift raised
+                record_unprotected_windows(self.broker, self.db, p.symbol, run_id=run_id, caller="exdiv_shift")
             from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
             if isinstance(order, dict):
                 record_shift_outcome(

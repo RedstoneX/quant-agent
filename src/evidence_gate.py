@@ -111,6 +111,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, replace
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
 
@@ -1041,7 +1042,7 @@ def names_missing_blocking_seat(coverage: dict) -> dict:
             if getattr(cov, "blocking_missing", None)
         }
     except Exception as exc:  # noqa: BLE001 — a record must never break a run
-        logger.warning("evidence gate: blocking-gap read failed: %s", exc)
+        record_swallowed("evidence_gate.blocking_gap_read", exc, log=logger)
         return {}
 
 
@@ -1114,5 +1115,5 @@ def name_coverage(
             )
         return out
     except Exception as exc:  # noqa: BLE001 — a record must never break a run
-        logger.warning("evidence gate: name coverage record failed: %s", exc)
+        record_swallowed("evidence_gate.name_coverage", exc, log=logger)
         return {}

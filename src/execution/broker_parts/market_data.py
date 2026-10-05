@@ -12,6 +12,7 @@ from src.execution.broker_parts.stop_place import _internal_symbol
 import logging
 
 from src.execution.broker_parts.trade_stream import _OnState
+from src.sentinel.counted import record_swallowed
 
 # Same log channel as before the move: operators and tests filter on the
 # broker's logger name, and the move must not change what they see.
@@ -137,7 +138,7 @@ class MarketData:
                 )
                 _install_http_timeout(self._screener_client)
             except Exception as exc:
-                logger.warning("get_top_movers: ScreenerClient init failed: %s", exc)
+                record_swallowed("broker.screener_client_init", exc, log=logger)
                 self._screener_client = None
                 return []
 
@@ -146,7 +147,7 @@ class MarketData:
                 MarketMoversRequest(top=n)
             )
         except Exception as exc:
-            logger.warning("get_top_movers: screener API call failed: %s", exc)
+            record_swallowed("broker.get_top_movers", exc, log=logger)
             return []
 
         gainers = getattr(movers, "gainers", None) or []
@@ -269,7 +270,7 @@ class MarketData:
             out.sort(key=lambda b: b.date)
             return out
         except Exception as e:
-            logger.warning("broker.get_bars failed for %s: %s", symbol, e)
+            record_swallowed("broker.get_bars", e, log=logger, symbol=symbol)
             return []
 
     def get_intraday_chart_bars(
@@ -556,7 +557,7 @@ class MarketData:
                 self._data_client = StockHistoricalDataClient(self.api_key, self.secret_key)
                 _install_http_timeout(self._data_client)
             except Exception as exc:
-                logger.warning("get_intraday_snapshots: data client init failed: %s", exc)
+                record_swallowed("broker.intraday_snapshots_client_init", exc, log=logger)
                 return {}
 
         from alpaca.data.requests import StockSnapshotRequest
