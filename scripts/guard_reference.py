@@ -161,15 +161,19 @@ def trunk_blobs(paths: list[str]) -> dict[str, str]:
     recognised, not an error.
     """
     require_trunk()
+    return blobs_at(trunk_rev(), paths)
+
+
+def blobs_at(rev: str, paths: list[str]) -> dict[str, str]:
+    """Contents of each path at commit ``rev``; paths absent there are omitted."""
     if not paths:
         return {}
-    rev = trunk_rev()
     request = "".join(f"{rev}:{p}\n" for p in paths).encode()
     proc = subprocess.run(
         ["git", "cat-file", "--batch"], cwd=ROOT, input=request, capture_output=True
     )
     if proc.returncode != 0:
-        raise ReferenceUnavailable(f"git cat-file on {TRUNK} failed: {proc.stderr.decode()}")
+        raise ReferenceUnavailable(f"git cat-file at {rev} failed: {proc.stderr.decode()}")
 
     blobs: dict[str, str] = {}
     data, pos = proc.stdout, 0
@@ -185,6 +189,53 @@ def trunk_blobs(paths: list[str]) -> dict[str, str]:
         blobs[path] = data[pos:pos + size].decode("utf-8", errors="replace")
         pos += size + 1  # trailing newline git appends after the payload
     return blobs
+
+
+def merge_base_rev() -> str:
+    """The commit where this tree's history and the judging trunk last agreed.
+
+    ``""`` when there is none (shallow clone, unrelated history), and when a
+    ``pull_request`` run's merge ref could not be verified: callers then
+    treat EVERY file as the branch's own, the strict direction.
+
+    AUTHORSHIP ONLY, AND ONLY WHEN THE REF IS KNOWN. An unverified merge ref
+    means this run cannot tell which commits are the branch's, so the skip
+    has no honest basis and is withheld -- the harsher side, so no branch
+    wins by breaking the detection. The comparison target is never the merge
+    base; that stays ``trunk_rev()``.
+    """
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        if not _merge_ref_main_parent():
+            return ""
+    out = _git("merge-base", "HEAD", trunk_rev())
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def untouched_paths(texts: Mapping[str, str]) -> set[str]:
+    """Paths whose working text is byte-identical to the merge base's copy.
+
+    WHY A RATCHET MUST SKIP THEM. The trunk shrinks while a split lands; a
+    branch that never opened a file still holds the trunk's OLDER, larger
+    copy. Measured against today's trunk that copy looks like growth the
+    branch never wrote (2026-10-05: the pipeline, the rotation executor and the
+    backtest engine, on two branches, within minutes of merging trunk). When
+    such a branch merges, the three-way merge takes the trunk's side of an
+    unchanged file, so the branch contributes zero characters to it; a ratchet
+    that bills it those characters is measuring trunk against trunk.
+
+    WHY IT CANNOT BE GAMED. "Untouched" is byte identity with a commit on the
+    trunk's own history, so an untouched file holds only text the trunk once
+    held and the branch chose none of it. Any difference at all -- one deleted
+    line, one changed character -- makes the file the branch's own and it is
+    judged in full against the CURRENT trunk, exactly as before; touching a
+    file to "own" it buys nothing, because ownership is the strict case. No
+    totals cross files. With no merge base nothing is excluded.
+    """
+    base = merge_base_rev()
+    if not base:
+        return set()
+    at_base = blobs_at(base, sorted(texts))
+    return {p for p, text in texts.items() if at_base.get(p) == text}
 
 
 def added_sites(

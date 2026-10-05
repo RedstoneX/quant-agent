@@ -278,9 +278,10 @@ def test_script_pulls_in_no_trading_or_broker_code(tmp_path):
     """
     import subprocess
 
+    # "src.data." keeps the dot: src.data_paths is a pathlib-only path resolver, not market data.
     forbidden = (
         "src.pipeline", "src.execution", "src.agents", "src.risk",
-        "src.data", "src.storage", "src.portfolio_constructor", "alpaca",
+        "src.data.", "src.storage", "src.portfolio_constructor", "alpaca",
     )
     code = _IMPORT_PROBE.format(
         script=str(SCRIPT), sandbox=str(tmp_path), forbidden=forbidden,

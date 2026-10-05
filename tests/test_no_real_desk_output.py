@@ -19,21 +19,22 @@ from __future__ import annotations
 
 import pytest
 
+from tests import desk_output_audit as audit_mod
 from tests import desk_output_guard as guard
 
 PROJECT_ROOT = guard.PROJECT_ROOT
 
 
 @pytest.fixture(scope="module")
-def audit() -> guard.Audit:
-    return guard.audit_repo()
+def audit() -> audit_mod.Audit:
+    return audit_mod.audit_repo()
 
 
 # ---------------------------------------------------------------------------
 # The guard itself
 # ---------------------------------------------------------------------------
 
-def test_no_new_real_desk_output(audit: guard.Audit) -> None:
+def test_no_new_real_desk_output(audit: audit_mod.Audit) -> None:
     """No committed file carries real desk output unless it is allow-listed."""
     if not audit.new_files:
         return
@@ -61,37 +62,38 @@ def test_no_new_real_desk_output(audit: guard.Audit) -> None:
         "whole dollars so a reader can see at a glance that nothing is live.",
         "",
         "Only if the file genuinely cannot work without real data, add it to",
-        "ALLOWED in tests/desk_output_guard.py with a one-line reason and its",
-        "current finding count. That is a reviewed decision, not a shortcut.",
+        "ALLOWED in tests/desk_output_guard.py with a one-line reason. That",
+        "is a reviewed decision, not a shortcut.",
     ]
     pytest.fail("\n".join(report), pytrace=False)
 
 
-def test_allow_listed_files_have_not_grown_new_desk_output(audit: guard.Audit) -> None:
+def test_allow_listed_files_have_not_grown_new_desk_output(audit: audit_mod.Audit) -> None:
     """An allow-listed file may keep what it has; it may not accumulate more.
 
     Without this, the allow-list would be a licence: appending tomorrow's
     resting stop to an already-listed fixture would be invisible.
     """
-    if not audit.over_ceiling:
+    if not audit.grown:
         return
-    lines = ["", "These files are allow-listed, but they now carry MORE real desk", "output than when they were allow-listed:", ""]
-    for path, (ceiling, now) in sorted(audit.over_ceiling.items()):
-        lines.append(f"  {path}: was {ceiling} finding(s), now {now}")
+    lines = ["", "These files are allow-listed, but they now carry real desk output",
+             "their copy on origin/main does not:", ""]
+    for path, (then, now) in sorted(audit.grown.items()):
+        lines.append(f"  {path}: {then} finding(s) on origin/main, now {now}")
     lines.append("")
-    for f in audit.over_ceiling_findings[:12]:
+    for f in audit.grown_findings[:12]:
         lines.append(f.render())
     lines += [
         "",
         "WHAT TO DO: remove the newly added real values. Being on the",
         "allow-list excuses what was already published; it does not permit",
-        "publishing more. If the growth is genuinely unavoidable, raise that",
-        "file's count in ALLOWED and say why in the commit message.",
+        "publishing more, and nothing in this repository can be edited to",
+        "excuse it: what the file already carried is read off origin/main.",
     ]
     pytest.fail("\n".join(lines), pytrace=False)
 
 
-def test_every_allow_list_entry_still_earns_its_place(audit: guard.Audit) -> None:
+def test_every_allow_list_entry_still_earns_its_place(audit: audit_mod.Audit) -> None:
     """An allow-list entry cannot outlive the problem it excuses.
 
     When a file is redacted or deleted, its entry must go too — otherwise the
@@ -106,7 +108,7 @@ def test_every_allow_list_entry_still_earns_its_place(audit: guard.Audit) -> Non
     pytest.fail("\n".join(lines), pytrace=False)
 
 
-def test_oversize_files_are_accounted_for(audit: guard.Audit) -> None:
+def test_oversize_files_are_accounted_for(audit: audit_mod.Audit) -> None:
     """Only the first SCAN_BYTE_CAP characters of a file are scanned.
 
     That cap is a performance decision (one committed SEC corpus decompresses
@@ -117,11 +119,11 @@ def test_oversize_files_are_accounted_for(audit: guard.Audit) -> None:
         return
     pytest.fail(
         "\nThese tracked files are larger than the "
-        f"{guard.SCAN_BYTE_CAP:,}-character scan cap, so only their opening "
+        f"{audit_mod.SCAN_BYTE_CAP:,}-character scan cap, so only their opening "
         "section is checked for real desk output:\n\n"
         + "".join(f"  {p}\n" for p in audit.oversize_unlisted)
         + "\nWHAT TO DO: if the file is bulk third-party data (SEC filings, "
-        "market bars), add it to LARGE_BLOBS in tests/desk_output_guard.py "
+        "market bars), add it to LARGE_BLOBS in tests/desk_output_audit.py "
         "with a one-line reason. If it is desk output, it does not belong "
         "in a public repository at all.",
         pytrace=False,
@@ -129,60 +131,15 @@ def test_oversize_files_are_accounted_for(audit: guard.Audit) -> None:
 
 
 def test_allow_list_entries_all_carry_a_reason() -> None:
-    for path, (reason, ceiling) in guard.allow_list().items():
+    for path, reason in guard.allow_list().items():
         assert len(reason.split()) >= 6, f"{path}: reason is too thin to review"
-        assert ceiling > 0, f"{path}: a ceiling of 0 means the entry is not needed"
 
 
 # ---------------------------------------------------------------------------
 # Proof the guard is load-bearing: it fires on the REAL offenders
 # ---------------------------------------------------------------------------
 
-#: One per signal, so a regression in any single detector shows up here.
-KNOWN_OFFENDERS = [
-    ("tests/fixtures/holding_why_rsg_20260917.json", "broker-order-id"),
-    ("tests/fixtures/log_health_production_excerpt.txt", "production-log"),
-    ("tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_first.txt", "desk-decision"),
-    ("tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_retry.txt", "desk-decision"),
-    ("tests/fixtures/constructor_drop_paths_archive.json", "desk-decision"),
-    ("tests/fixtures/pm_response_11_targets_20260817.txt", "desk-prose"),
-    ("tests/fixtures/pm_response_17_targets_20260820.txt", "desk-prose"),
-    ("tests/test_stop_out_reconciliation.py", "broker-order-id"),
-    # No real broker-account-id specimen is kept on disk on purpose — both
-    # real account numbers that ever appeared here (rehearsal and main) are
-    # now redacted rather than preserved as allow-listed proof. The
-    # broker-account-id detector's regression coverage instead comes from
-    # test_detector_fires_on_a_freshly_invented_offender below, which fires
-    # it on an invented value shaped exactly like a real one.
-]
-
-
-@pytest.mark.parametrize("relpath,signal", KNOWN_OFFENDERS)
-def test_detector_fires_on_the_real_offenders(relpath: str, signal: str) -> None:
-    """Each known-real file must still trip, by the signal it is known for.
-
-    This is what stops the guard quietly rotting into a no-op. If someone
-    loosens a threshold until nothing fires, these fail first.
-    """
-    text = guard.read_text(PROJECT_ROOT / relpath)
-    assert text is not None, f"{relpath} is missing"
-    signals = {f.signal for f in guard.scan_text(text[:guard.SCAN_BYTE_CAP], relpath)}
-    assert signal in signals, (
-        f"{relpath} no longer trips the {signal} detector (saw: {sorted(signals)}). "
-        "Either the file was redacted — remove its allow-list entry — or the "
-        "detector has been weakened."
-    )
-
-
-def test_detector_fires_on_a_freshly_invented_offender() -> None:
-    """A brand-new fixture in the offending style, written for this test.
-
-    The values below are invented, but they are shaped exactly like the real
-    thing: a real ticker, cent-precision levels, the desk's own field names, a
-    broker order id, a broker account number and a production log line. Every
-    signal must fire.
-    """
-    new_fixture = '''{
+_INVENTED_OFFENDER = '''{
   "symbol": "NVDA",
   "rating": "buy",
   "conviction": "high",
@@ -196,6 +153,59 @@ def test_detector_fires_on_a_freshly_invented_offender() -> None:
   "log": "2026-09-22 14:31:55,689 [ERROR] src.execution.broker: stop rejected for NVDA at 176.12",
   "pm_note": "Trimming NVDA and AAPL into strength while adding MSFT and AVGO on the pullback, and holding XOM as the energy hedge because the macro read still calls crude bid. The book is 62% invested and the cash drag is acceptable here, so no further deployment is warranted before the close."
 }'''
+
+
+def _live_signals_by_allowed_file() -> dict[str, set[str]]:
+    """For every allow-listed file the guard itself names, the signals the
+    detector trips on it NOW. Derived from the guard's own allow-list, so no
+    second list of "known real offenders" exists to drift from it."""
+    out: dict[str, set[str]] = {}
+    for relpath in guard.allow_list():
+        text = guard.read_text(PROJECT_ROOT / relpath)
+        if text is None:
+            continue
+        found = guard.scan_text(text[:audit_mod.SCAN_BYTE_CAP], relpath)
+        out[relpath] = {f.signal for f in found}
+    return out
+
+
+def test_detector_fires_on_the_real_offenders() -> None:
+    """Every allow-listed real file must still trip at least one detector, and
+    the real files together must exercise every signal that has a real
+    specimen on disk.
+
+    This is what stops the guard quietly rotting into a no-op. If someone
+    loosens a threshold until nothing fires, this fails first. Which files
+    count as real offenders is read from the guard's allow-list at check time.
+    """
+    live = _live_signals_by_allowed_file()
+    assert live, "no allow-listed file could be read: the real-offender proof is vacuous"
+    silent = sorted(path for path, sigs in live.items() if not sigs)
+    assert not silent, (
+        f"allow-listed files no longer trip any detector: {silent}. Either the "
+        "file was redacted — remove its allow-list entry — or the detector "
+        "has been weakened."
+    )
+    invented = {f.signal for f in guard.scan_text(_INVENTED_OFFENDER, "tests/fixtures/new.json")}
+    # No real broker-account-id specimen is kept on disk on purpose (both real
+    # numbers were redacted); that signal is proven by the invented fixture.
+    must_have_real = invented - {"broker-account-id"}
+    seen = set().union(*live.values())
+    assert must_have_real <= seen, (
+        f"signals with no real specimen tripping any allow-listed file: "
+        f"{sorted(must_have_real - seen)}"
+    )
+
+
+def test_detector_fires_on_a_freshly_invented_offender() -> None:
+    """A brand-new fixture in the offending style, written for this test.
+
+    The values below are invented, but they are shaped exactly like the real
+    thing: a real ticker, cent-precision levels, the desk's own field names, a
+    broker order id, a broker account number and a production log line. Every
+    signal must fire.
+    """
+    new_fixture = _INVENTED_OFFENDER
     signals = {f.signal for f in guard.scan_text(new_fixture, "tests/fixtures/new.json")}
     assert signals == {
         "broker-order-id", "broker-account-id", "production-log", "desk-decision", "desk-prose",
@@ -371,4 +381,4 @@ def test_the_specimen_exclusion_is_exactly_this_one_file() -> None:
     ever excluded from the scan. If a second path is ever added here, it needs
     the same scrutiny this one got — not a rubber stamp.
     """
-    assert guard.SPECIMEN_FILES == frozenset({"tests/test_no_real_desk_output.py"})
+    assert audit_mod.SPECIMEN_FILES == frozenset({"tests/test_no_real_desk_output.py"})
