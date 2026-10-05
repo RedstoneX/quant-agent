@@ -421,7 +421,7 @@ def test_pipeline_symbol_guard_blocks_off_universe_and_unanalyzed_buys():
     )
     ]
 
-    allowed, blocked = pipeline._filter_supported_symbols(decisions, analyses, positions=[])
+    allowed, blocked = pipeline.admission._filter_supported_symbols(decisions, analyses, positions=[])
 
     assert [d.symbol for d in allowed] == ["SPY"]
     assert any("TSLA is neither in the configured universe" in reason for reason in blocked)
@@ -446,7 +446,7 @@ def test_pipeline_symbol_guard_allows_only_run_admitted_analyzed_buy():
         reasoning="SEC-admitted and technically evaluated",
     )
 
-    allowed, blocked = pipeline._filter_supported_symbols(
+    allowed, blocked = pipeline.admission._filter_supported_symbols(
         [decision], [analysis], positions=[], admitted_symbols={"VST"},
     )
     assert allowed == [decision]
@@ -486,7 +486,8 @@ def test_transient_admission_requires_sec_purchase_broker_and_market_quality(mon
         actor="Example Director", known_at="2026-08-25T12:00:00Z",
     )]
 
-    admitted, details = pipeline._admit_transient_smart_money_symbols(observations)
+    adm = pipeline.admission
+    admitted, details = adm._admit_transient_smart_money_symbols(observations)
     assert admitted == {"VST"}
     assert details["VST"]["temporary"] is True
     assert details["VST"]["transaction_value_usd"] == 500_000
@@ -494,10 +495,10 @@ def test_transient_admission_requires_sec_purchase_broker_and_market_quality(mon
     assert pipeline.config.trading.universe == ["SPY"]
 
     observations[0].transaction_code = "S"
-    assert pipeline._admit_transient_smart_money_symbols(observations)[0] == set()
+    assert adm._admit_transient_smart_money_symbols(observations)[0] == set()
     observations[0].transaction_code = "P"
     pipeline.market.get_ohlcv.return_value = pipeline.market.get_ohlcv.return_value[:10]
-    assert pipeline._admit_transient_smart_money_symbols(observations)[0] == set()
+    assert adm._admit_transient_smart_money_symbols(observations)[0] == set()
 
 
 def test_transient_admission_rejects_unresolved_sector(monkeypatch):
@@ -531,7 +532,7 @@ def test_transient_admission_rejects_unresolved_sector(monkeypatch):
         actor="Example Director", known_at="2026-08-25T12:00:00Z",
     )]
 
-    assert pipeline._admit_transient_smart_money_symbols(observations)[0] == set()
+    assert pipeline.admission._admit_transient_smart_money_symbols(observations)[0] == set()
 
 
 def test_morning_prefilter_requires_real_macd_histogram_crossover(monkeypatch):

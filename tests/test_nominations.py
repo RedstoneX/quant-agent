@@ -331,7 +331,7 @@ def _gate_pipeline(monkeypatch, *, sector="Utilities", broker_eligible=True,
 
 def test_gate_rejects_broker_ineligible(monkeypatch):
     pipeline = _gate_pipeline(monkeypatch, broker_eligible=False)
-    eligible, reason, details = pipeline._evaluate_external_admission_gates("VST")
+    eligible, reason, details = pipeline.admission._evaluate_external_admission_gates("VST")
     assert eligible is False
     assert reason == "not_shortable_or_tradable"
     assert details == {}
@@ -339,7 +339,7 @@ def test_gate_rejects_broker_ineligible(monkeypatch):
 
 def test_gate_rejects_insufficient_history(monkeypatch):
     pipeline = _gate_pipeline(monkeypatch, bars=_bars(10))
-    eligible, reason, details = pipeline._evaluate_external_admission_gates("VST")
+    eligible, reason, details = pipeline.admission._evaluate_external_admission_gates("VST")
     assert eligible is False
     assert reason == "insufficient_history"
 
@@ -351,7 +351,7 @@ def test_gate_rejects_price_below_minimum(monkeypatch):
         for i in range(30)
     ]
     pipeline = _gate_pipeline(monkeypatch, bars=bars, min_price=5.0)
-    eligible, reason, details = pipeline._evaluate_external_admission_gates("VST")
+    eligible, reason, details = pipeline.admission._evaluate_external_admission_gates("VST")
     assert eligible is False
     assert reason == "price_below_minimum"
 
@@ -363,21 +363,21 @@ def test_gate_rejects_dollar_volume_below_minimum(monkeypatch):
         for i in range(30)
     ]
     pipeline = _gate_pipeline(monkeypatch, bars=bars, min_dv=10_000_000)
-    eligible, reason, details = pipeline._evaluate_external_admission_gates("VST")
+    eligible, reason, details = pipeline.admission._evaluate_external_admission_gates("VST")
     assert eligible is False
     assert reason == "dollar_volume_below_minimum"
 
 
 def test_gate_rejects_unresolved_sector(monkeypatch):
     pipeline = _gate_pipeline(monkeypatch, sector="Unknown")
-    eligible, reason, details = pipeline._evaluate_external_admission_gates("VST")
+    eligible, reason, details = pipeline.admission._evaluate_external_admission_gates("VST")
     assert eligible is False
     assert reason == "unresolved_sector"
 
 
 def test_gate_admits_when_every_check_passes(monkeypatch):
     pipeline = _gate_pipeline(monkeypatch)
-    eligible, reason, details = pipeline._evaluate_external_admission_gates("VST")
+    eligible, reason, details = pipeline.admission._evaluate_external_admission_gates("VST")
     assert eligible is True
     assert reason is None
     assert details["sector"] == "Utilities"
@@ -386,7 +386,7 @@ def test_gate_admits_when_every_check_passes(monkeypatch):
 
 def test_admit_nominated_external_symbols_uses_shared_gate(monkeypatch):
     pipeline = _gate_pipeline(monkeypatch)
-    admitted, details = pipeline._admit_nominated_external_symbols(["vst"])
+    admitted, details = pipeline.admission._admit_nominated_external_symbols(["vst"])
     assert admitted == {"VST"}
     assert details["VST"]["reason"] == "nomination_external_admission"
     assert details["VST"]["sector"] == "Utilities"
@@ -423,7 +423,8 @@ def test_smart_money_admission_lane_behaves_identically_after_refactor(monkeypat
         actor="Example Director", known_at="2026-08-25T12:00:00Z",
     )]
 
-    admitted, details = pipeline._admit_transient_smart_money_symbols(observations)
+    adm = pipeline.admission
+    admitted, details = adm._admit_transient_smart_money_symbols(observations)
     assert admitted == {"VST"}
     assert details["VST"]["temporary"] is True
     assert details["VST"]["reason"] == "material_sec_form4_purchase"
@@ -433,11 +434,11 @@ def test_smart_money_admission_lane_behaves_identically_after_refactor(monkeypat
 
     # Non-purchase code still rejected.
     observations[0].transaction_code = "S"
-    assert pipeline._admit_transient_smart_money_symbols(observations)[0] == set()
+    assert adm._admit_transient_smart_money_symbols(observations)[0] == set()
     # Insufficient history still rejected.
     observations[0].transaction_code = "P"
     pipeline.market.get_ohlcv.return_value = _bars(10)
-    assert pipeline._admit_transient_smart_money_symbols(observations)[0] == set()
+    assert adm._admit_transient_smart_money_symbols(observations)[0] == set()
 
 
 # ============================================================================

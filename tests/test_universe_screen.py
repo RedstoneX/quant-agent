@@ -620,7 +620,7 @@ def test_side_door_runs_the_screen_when_on(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path)
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     pipeline.sec_form4_provider.recent_filings.return_value = [("DEFM14A", "2026-09-01", "")]
-    ok, reason, details = pipeline._evaluate_external_admission_gates("ACME")
+    ok, reason, details = pipeline.admission._evaluate_external_admission_gates("ACME")
     assert (ok, reason) == (False, "pending_takeover")
     pipeline.broker.get_transient_equity_eligibility.assert_not_called()
 
@@ -629,7 +629,7 @@ def test_side_door_keeps_its_old_gate_when_off(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path, enabled=False)
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     pipeline.market.get_ohlcv.return_value = _bars(30, price=50, rng=0.0005)
-    ok, reason, _ = pipeline._evaluate_external_admission_gates("ACME")
+    ok, reason, _ = pipeline.admission._evaluate_external_admission_gates("ACME")
     assert ok is True  # 30 bars would fail the screen's one-year history
     pipeline.broker.get_transient_equity_eligibility.assert_called_once()
     pipeline.sec_form4_provider.recent_filings.assert_not_called()
@@ -639,10 +639,11 @@ def test_nomination_door_uses_the_screen(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path)
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     pipeline.broker.get_asset_record.return_value = {**GOOD_ASSET, "shortable": False}
-    admitted, details = pipeline._admit_nominated_external_symbols(["acme"])
+    adm = pipeline.admission
+    admitted, details = adm._admit_nominated_external_symbols(["acme"])
     assert admitted == set()
     pipeline.broker.get_asset_record.return_value = GOOD_ASSET
-    admitted, details = pipeline._admit_nominated_external_symbols(["acme"])
+    admitted, details = adm._admit_nominated_external_symbols(["acme"])
     assert admitted == {"ACME"}
     assert details["ACME"]["screen"] == "universe_screen"
 
@@ -660,18 +661,19 @@ def _purchase(days_ago):
 def test_form4_door_runs_the_screen_and_its_age_gate(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path)
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
-    admitted, details = pipeline._admit_transient_smart_money_symbols([_purchase(10)])
+    adm = pipeline.admission
+    admitted, details = adm._admit_transient_smart_money_symbols([_purchase(10)])
     assert admitted == {"ACME"}
     assert details["ACME"]["screen"] == "universe_screen"
     # A purchase disclosed ~a year ago (the RSG case) no longer admits.
-    assert pipeline._admit_transient_smart_money_symbols([_purchase(364)])[0] == set()
+    assert adm._admit_transient_smart_money_symbols([_purchase(364)])[0] == set()
 
 
 def test_form4_age_gate_is_off_with_the_screen(tmp_path, monkeypatch):
     pipeline = _pipeline(tmp_path, enabled=False)
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
     pipeline.market.get_ohlcv.return_value = _bars(30, price=50, rng=0.0005)
-    assert pipeline._admit_transient_smart_money_symbols([_purchase(364)])[0] == {"ACME"}
+    assert pipeline.admission._admit_transient_smart_money_symbols([_purchase(364)])[0] == {"ACME"}
 
 
 def test_screened_universe_reaches_the_session_capped(tmp_path):
@@ -681,7 +683,7 @@ def test_screened_universe_reaches_the_session_capped(tmp_path):
     for sym in ("AAA", "BBB", "CCC", "DDD", "EEE"):
         us.apply_result(state, _pass(sym), today=TODAY, held=set())
     store.save(state)
-    symbols, details = pipeline._admit_screened_universe_symbols(
+    symbols, details = pipeline.admission._admit_screened_universe_symbols(
         [SimpleNamespace(symbol="EEE")],
     )
     assert "EEE" in symbols
@@ -694,7 +696,7 @@ def test_screened_universe_is_empty_when_off(tmp_path):
     state = us.empty_state()
     us.apply_result(state, _pass("AAA"), today=TODAY, held=set())
     us.UniverseStore(tmp_path).save(state)
-    assert pipeline._admit_screened_universe_symbols([]) == (set(), {})
+    assert pipeline.admission._admit_screened_universe_symbols([]) == (set(), {})
 
 
 def test_evening_pass_records_changes_and_morning_shows_them_once(tmp_path, monkeypatch):
@@ -706,16 +708,17 @@ def test_evening_pass_records_changes_and_morning_shows_them_once(tmp_path, monk
         s: _good_bars() for s in chunk}
     pipeline.sec_form4_provider.listed_map.return_value = {}
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Industrials")
-    summary = pipeline._run_universe_screen("evening-x")
+    adm = pipeline.admission
+    summary = adm._run_universe_screen("evening-x")
     assert summary["passed"] == 1
     kinds = [c.kwargs["kind"] for c in pipeline.db.insert_specialist_evidence.call_args_list]
     assert kinds.count("universe_change") == 1 and "universe_screen_run" in kinds
 
     result = {}
-    pipeline._attach_universe_changes(result)
+    adm._attach_universe_changes(result)
     assert [e["action"] for e in result["universe_changes"]["events"]] == ["added"]
     again = {}
-    pipeline._attach_universe_changes(again)
+    adm._attach_universe_changes(again)
     assert again["universe_changes"]["events"] == []
 
 

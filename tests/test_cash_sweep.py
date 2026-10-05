@@ -412,7 +412,6 @@ def test_risk_stage_rm_view_excludes_vehicle():
     p = _sweep_pipeline()
     p.market = MagicMock()
     p.market.get_ohlcv.return_value = []
-    p._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
     p._refuse_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
     p._filter_hard_risk_decisions = MagicMock(side_effect=lambda d, *a, **k: (d, [], []))
     p.risk_manager = MagicMock()
@@ -432,6 +431,8 @@ def test_risk_stage_rm_view_excludes_vehicle():
     p.config.llm.risk_manager_model = "test-model"
     p.config.trading = MagicMock()
     p.config.trading.lookback_days = 120
+    # Last: a replaced collaborator rebuilds the service.
+    p.admission._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
 
     from src.pipeline_context import RunContext
     ctx = RunContext.start("morning")

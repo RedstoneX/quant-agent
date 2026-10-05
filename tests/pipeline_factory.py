@@ -53,6 +53,18 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SETTINGS = PROJECT_ROOT / "config" / "settings.yaml"
 
+#: Names that are no longer the pipeline's: they belong to the admission
+#: service the pipeline builds (`pipeline.admission`), so a stand-in for one
+#: goes THERE. Kept as keywords here so a test reads the same either way.
+ADMISSION_NAMES = frozenset({
+    "_filter_supported_symbols", "_evaluate_external_admission_gates",
+    "_universe_screen_enabled", "_universe_screen_sources",
+    "_evaluate_screened_admission", "_form4_admission_is_current",
+    "_admit_screened_universe_symbols", "_run_universe_screen",
+    "_attach_universe_changes", "_admit_nominated_external_symbols",
+    "_admit_transient_smart_money_symbols",
+})
+
 #: pipeline attribute -> the name in src.pipeline whose call builds it.
 CONSTRUCTOR_SITES = {
     "broker": "AlpacaBroker",
@@ -156,6 +168,8 @@ def build_pipeline(config=None, **stand_ins):
                 f"{attr!r} was not wired through the constructor site "
                 f"{CONSTRUCTOR_SITES[attr]!r}; fix CONSTRUCTOR_SITES"
             )
+        elif attr in ADMISSION_NAMES:
+            setattr(pipeline.admission, attr, value)
         else:
             setattr(pipeline, attr, value)
     return pipeline

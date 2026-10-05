@@ -112,3 +112,48 @@ def test_a_failing_journal_never_interrupts_the_screen(tmp_path, monkeypatch):
     svc, journal = _service(tmp_path, enabled=True, journal=InMemoryEventJournal(fail=True))
     summary = svc._run_universe_screen("evening-x")
     assert summary["passed"] == 1 and journal.rows == [] and len(journal.failures) == 2
+
+
+class TestBuiltWithoutAPipeline:
+    """Step 8b: the builder takes values, so the service can reach nothing else.
+
+    `TradingPipeline` is never imported in this file; these build the very
+    object the pipeline builds, from fakes, and exercise it.
+    """
+
+    def test_the_builder_makes_a_working_service_from_plain_collaborators(self, tmp_path):
+        from src.pipeline_admission_build import build_admission_service
+
+        broker, market = MagicMock(), MagicMock()
+        broker.get_asset_record.return_value = ASSET
+        service = build_admission_service(
+            config=_config(tmp_path, enabled=False), broker=broker, market=market, db=None,
+        )
+        buys = [TradeDecision(symbol=s, action="BUY", allocation_pct=5.0, entry_price=10.0,
+                              stop_loss=9.0, take_profit=12.0, reasoning="r")
+                for s in ("SPY", "ZZZZ")]
+        allowed, blocked = service._filter_supported_symbols(
+            buys, [SimpleNamespace(symbol=s) for s in ("SPY", "ZZZZ")], [],
+        )
+        assert [d.symbol for d in allowed] == ["SPY"] and len(blocked) == 1
+
+    def test_the_service_holds_no_object_that_can_reach_a_pipeline(self, tmp_path):
+        from src.pipeline_admission_build import build_admission_service
+
+        constructor = SimpleNamespace(cfg=SimpleNamespace(min_stop_atr_multiple=4.0))
+        config, broker, market = _config(tmp_path, enabled=False), MagicMock(), MagicMock()
+        service = build_admission_service(
+            config=config, broker=broker, market=market, db=None,
+            portfolio_constructor=constructor,
+        )
+        # The live constructor was read by VALUE at build time, not through a host.
+        assert service._constructor_cfg_or_none() is constructor.cfg
+        # Every collaborator is the object handed in -- nothing was wrapped in a
+        # shell that could reach back somewhere else.
+        assert (service.config, service.broker, service.market) == (config, broker, market)
+        assert service.sec_form4_provider is None and service.journal.db is None
+        import inspect
+
+        taken = set(inspect.signature(build_admission_service).parameters)
+        assert taken == {"config", "broker", "market", "db", "sec_form4_provider",
+                         "portfolio_constructor"}

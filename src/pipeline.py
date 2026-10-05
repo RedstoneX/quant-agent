@@ -86,7 +86,7 @@ from src.pipeline_exits import (  # noqa: F401
     _reason_claims_alignment_exit,
     _reason_cites_hard_trigger,
 )
-from src.pipeline_admission_shell import AdmissionMixin
+from src.pipeline_admission_build import build_admission_service, carry_over_stand_ins
 from src.pipeline_delever import (  # noqa: F401
     DeleverMixin,
     _optional_risk_number,
@@ -207,7 +207,7 @@ class _MissingCollaborator:
 
 class TradingPipeline(
     ProtectionMixin, PromptFactsMixin, DeleverMixin, ExitEngineMixin,
-    RiskGateMixin, AdmissionMixin, ResearchContinuityMixin, IntradayMixin,
+    RiskGateMixin, ResearchContinuityMixin, IntradayMixin,
 ):
     #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
     #: instance built without __init__ (tests do this) reads None rather than
@@ -705,9 +705,9 @@ class TradingPipeline(
             earnings_analyst=self._collab("earnings_analyst"),
             smart_money_provider=self._collab("smart_money_provider"),
             smart_money_analyst=self._collab("smart_money_analyst"),
-            admit_smart_money_candidates_fn=self._collab("_admit_transient_smart_money_symbols"),
-            admit_nominated_candidates_fn=self._collab("_admit_nominated_external_symbols"),
-            admit_screened_universe_fn=self._collab("_admit_screened_universe_symbols"),
+            admit_smart_money_candidates_fn=self.admission._admit_transient_smart_money_symbols,
+            admit_nominated_candidates_fn=self.admission._admit_nominated_external_symbols,
+            admit_screened_universe_fn=self.admission._admit_screened_universe_symbols,
             event_calendar=self._collab("event_calendar"),
             fomc_calendar=self._collab("fomc_calendar"),
             has_actionable_signal_fn=self._collab("_has_actionable_signal_fn"),
@@ -1109,19 +1109,32 @@ class TradingPipeline(
         from src.data.technical import atr_for_symbol
         return atr_for_symbol(getattr(self, "market", None), symbol)
 
-    def _constructor_cfg_or_none(self):
-        """The LIVE `ConstructorConfig`, for rules that must agree with the
-        stops the desk actually places (board item 185: the universe
-        screen's volatility ceiling is 1 / the widest stop this object can
-        produce). `None` when no constructor has been built -- some tests
-        drive a bare pipeline -- and the caller then falls back to
-        `config.risk` plus the class defaults. The body lives in
-        `src.risk.constants.live_constructor_cfg_or_none`.
+    @property
+    def admission(self):
+        """The admission service for the collaborators this pipeline holds NOW.
+
+        Built LATE and rebuilt whenever one of them is replaced: tests build a
+        pipeline with `__new__` and assign `config`/`broker`/`market`/`db` one
+        at a time, and a service frozen before that would read stale ones.
+        Anything a caller put on the service is carried across the rebuild.
+        The service is handed values, never this pipeline.
         """
-        from src.risk.constants import live_constructor_cfg_or_none
-        return live_constructor_cfg_or_none(
-            getattr(self, "portfolio_constructor", None),
+        held = (getattr(self, "config", None), getattr(self, "broker", None),
+                getattr(self, "market", None), getattr(self, "db", None),
+                getattr(self, "sec_form4_provider", None),
+                getattr(self, "portfolio_constructor", None))
+        service = self.__dict__.get("_admission")
+        if service is not None and self.__dict__.get("_admission_of") == held:
+            return service
+        fresh = build_admission_service(
+            config=held[0], broker=held[1], market=held[2], db=held[3],
+            sec_form4_provider=held[4], portfolio_constructor=held[5],
         )
+        if service is not None:
+            carry_over_stand_ins(service, fresh)
+        self.__dict__["_admission"] = fresh
+        self.__dict__["_admission_of"] = held
+        return fresh
 
     def _sweep_symbol(self) -> str | None:
         """The configured cash-park vehicle, or None when sweeping is off.
@@ -1236,7 +1249,7 @@ class TradingPipeline(
         result = self._run_morning_body()
         self._attach_pnl(result)
         self._attach_evidence_freshness(result)
-        self._attach_universe_changes(result)
+        self.admission._attach_universe_changes(result)
         self._persist_session_report("morning", result)
         return result
 
@@ -1586,7 +1599,7 @@ class TradingPipeline(
         """
         result = self._run_evening_body()
         if isinstance(result, dict) and result.get("status") != "market_holiday":
-            screen = self._run_universe_screen(result.get("run_id") or "evening")
+            screen = self.admission._run_universe_screen(result.get("run_id") or "evening")
             if screen is not None:
                 result["universe_screen"] = screen
         self._persist_evening_report(result)

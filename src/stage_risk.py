@@ -499,13 +499,13 @@ class RiskStage:
         if isinstance(sweeper, CashSweeper):
             rm_positions, _parked = sweeper.split_positions(positions)
 
-        # Symbol guard
         before_symbol_guard = list(portfolio_decision.decisions)
         guard_kwargs = (
             {"admitted_symbols": ctx.admitted_symbols}
             if ctx.admitted_symbols else {}
         )
-        portfolio_decision.decisions, symbol_blocked_reasons = pipeline._filter_supported_symbols(
+        guard = pipeline.admission._filter_supported_symbols
+        portfolio_decision.decisions, symbol_blocked_reasons = guard(
             portfolio_decision.decisions, analyses, positions, **guard_kwargs,
         )
         if symbol_blocked_reasons:
