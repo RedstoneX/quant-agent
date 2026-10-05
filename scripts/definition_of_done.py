@@ -128,8 +128,10 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from scripts.board_locator import working_board
+from scripts.guard_reference import ReferenceUnavailable
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-WORK_MD = "docs/WORK.md"
 
 # ---------------------------------------------------------------------------
 # git reads
@@ -196,6 +198,12 @@ def base_ref(repo: Path | None = None) -> str | None:
     _git("fetch", "-q", "origin", "main", repo=repo)
     r = _git("merge-base", "HEAD", "origin/main", repo=repo)
     return r.stdout.strip() or None
+
+
+def get_work_md_path(repo: Path | None = None) -> str:
+    """The board path via board_locator, or raise ReferenceUnavailable."""
+    work_md_path, _ = working_board()
+    return work_md_path
 
 
 def is_shallow(repo: Path | None = None) -> bool:
@@ -377,12 +385,16 @@ class Change:
         base = base_ref(repo)
         if not base:
             return None
-        after = (repo / WORK_MD)
+        try:
+            work_md_path = get_work_md_path(repo)
+        except ReferenceUnavailable:
+            return None
+        after = Path(work_md_path)
         return cls(
             base=base,
             paths=changed_paths(base, repo),
             messages=commit_messages(base, repo),
-            work_md_before=file_at(base, WORK_MD, repo),
+            work_md_before=file_at(base, work_md_path, repo),
             work_md_after=after.read_text() if after.exists() else None,
             tree=repo,
         )
@@ -545,7 +557,7 @@ def declared_criteria_problems(change: Change) -> list[str]:
             problems.append(
                 f"board item {number} is filed by this change with no "
                 f"completion criteria. Add a `DONE WHEN:` line to its block "
-                f"in {WORK_MD} followed by one `- [ ] ...` bullet per half "
+                f"in the board file followed by one `- [ ] ...` bullet per half "
                 f"of the work, so closing it later has something to verify "
                 f"against. If the item is a question only the owner can "
                 f"answer, say so with a `NO CRITERIA: <reason>` line instead."
@@ -571,7 +583,7 @@ def declared_criteria_problems(change: Change) -> list[str]:
                     problems.append(
                         f"board item {number} criterion {ordinal} "
                         f"({text[:60]!r}) is deferred onto item {target}, "
-                        f"which does not exist in {WORK_MD} after this "
+                        f"which does not exist in the board file after this "
                         f"change. File the item, or account for the "
                         f"criterion as met."
                     )

@@ -75,6 +75,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.board_locator import working_board
 from scripts.board_numbers import (  # noqa: E402
     OpenPrClaims,
     read_open_pr_claims,
@@ -82,15 +83,25 @@ from scripts.board_numbers import (  # noqa: E402
     retired_item_numbers,
     next_free_number,
 )
+from scripts.guard_reference import ReferenceUnavailable
 
-DEFAULT_WORK_MD = "docs/WORK.md"
 DEFAULT_BOARD_REF = "origin/main"
+
+
+def _get_default_work_md() -> str:
+    """Get the board path using board_locator, or return a default."""
+    try:
+        work_md_path, _ = working_board()
+        return work_md_path
+    except ReferenceUnavailable:
+        # Fallback to docs/WORK.md if board cannot be located
+        return "docs/WORK.md"
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--work-md", default=DEFAULT_WORK_MD)
+    parser.add_argument("--work-md", default=_get_default_work_md())
     parser.add_argument(
         "--board-ref", default=DEFAULT_BOARD_REF,
         help="The shared ref holding the authoritative board (default: "
