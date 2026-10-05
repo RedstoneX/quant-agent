@@ -13,7 +13,6 @@ from src.data.macro_series_cache import MacroSeriesCache
 from src.trading_calendar import et_now, et_today
 from src.data.macro_coverage_views import STALE_PREFIX, split_failed, stale_prompt_text, stamp_note
 from src.data.macro_cache_serve import serve_from_cache, serve_last_good
-from src.sentinel.counted import record_swallowed, record_swallowed_here
 
 logger = logging.getLogger(__name__)
 
@@ -760,14 +759,12 @@ class MacroDataProvider:
         try:
             parsed = pd.Timestamp(value)
         except Exception:
-            record_swallowed_here("macro._as_date.timestamp", log=logger, value=repr(value))
             return None
         if parsed is None or pd.isna(parsed):
             return None
         try:
             return parsed.date()
         except Exception:
-            record_swallowed_here("macro._as_date.date", log=logger, value=repr(value))
             return None
 
     def _series_info(self, series_id: str) -> dict[str, str] | None:
@@ -1160,7 +1157,9 @@ class MacroDataProvider:
                     (day, None if pd.isna(value) else float(value))
                 )
         except Exception as e:  # noqa: BLE001
-            record_swallowed("macro._write_cache.serialise", e, log=logger, series_id=series_id)
+            logger.warning(
+                "Could not serialise %s for the FRED series cache: %s", series_id, e,
+            )
             return
         self.series_cache.save(
             series_id=series_id,
@@ -1216,7 +1215,6 @@ class MacroDataProvider:
                 latest.date(), today.date(),
             )))
         except Exception:
-            record_swallowed_here("macro._staleness_days.busday_count", log=logger)
             return None
 
     def get_vix(self, lookback_days: int = 30) -> dict:
