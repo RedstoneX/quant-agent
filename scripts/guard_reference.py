@@ -194,9 +194,19 @@ def blobs_at(rev: str, paths: list[str]) -> dict[str, str]:
 def merge_base_rev() -> str:
     """The commit where this tree's history and the judging trunk last agreed.
 
-    ``""`` when there is none (shallow clone, unrelated history): callers then
+    ``""`` when there is none (shallow clone, unrelated history), and when a
+    ``pull_request`` run's merge ref could not be verified: callers then
     treat EVERY file as the branch's own, the strict direction.
+
+    AUTHORSHIP ONLY, AND ONLY WHEN THE REF IS KNOWN. An unverified merge ref
+    means this run cannot tell which commits are the branch's, so the skip
+    has no honest basis and is withheld -- the harsher side, so no branch
+    wins by breaking the detection. The comparison target is never the merge
+    base; that stays ``trunk_rev()``.
     """
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+        if not _merge_ref_main_parent():
+            return ""
     out = _git("merge-base", "HEAD", trunk_rev())
     return out.stdout.strip() if out.returncode == 0 else ""
 
