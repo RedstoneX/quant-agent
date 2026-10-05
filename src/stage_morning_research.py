@@ -648,7 +648,7 @@ class MorningResearchStage:
         # residue is already reported through `unread` below, and treating
         # them as failure would make the seat degraded every day — the harm
         # board item 126 names in its own text. See
-        # `UNVERIFIED_EDGAR_REASONS` in src/data/smart_money.py.
+        # `UNVERIFIED_EDGAR_REASONS` in src/data/smart_money_edgar_coverage.py.
         sm_edgar = sm_coverage.get("edgar") if isinstance(sm_coverage, dict) else None
         sm_edgar_unverified = isinstance(sm_coverage, dict) and not (
             isinstance(sm_edgar, dict) and sm_edgar.get("verified")

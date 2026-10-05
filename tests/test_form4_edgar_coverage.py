@@ -46,11 +46,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.data.smart_money import (
+from src.data.smart_money import SECForm4Provider, et_today
+from src.data.smart_money_edgar_coverage import (
     UNVERIFIED_EDGAR_REASONS,
-    SECForm4Provider,
+    blank_edgar_coverage,
     edgar_coverage,
-    et_today,
 )
 
 NVDA_CIK = "1045810"
@@ -888,7 +888,6 @@ def test_a_blank_coverage_record_reads_as_unknown_not_as_nothing_to_report(
     to read as the opposite — the same trap `ratio` avoids by answering None
     to nought-of-nought rather than 1.0."""
     import src.notifier as notifier
-    from src.data.smart_money import blank_edgar_coverage
     from src.pipeline import TradingPipeline
 
     sent: list[str] = []
