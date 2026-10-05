@@ -35,7 +35,9 @@ def test_cap_is_read_from_the_real_test_file_not_invented():
 
 def _write_fixture_repo(repo: Path) -> None:
     (repo / "docs").mkdir()
-    (repo / "docs" / "WORK.md").write_text("# Backlog\n\nsmall and tidy\n")
+    (repo / "docs" / "WORK.md").write_text("# QAMC Current Work\n\nsmall and tidy\n")
+    (repo / "docs" / "board_notes").mkdir()
+    (repo / "docs" / "board_notes" / "item-1.md").write_text("note\n")
     (repo / "tests").mkdir()
     (repo / "tests" / "test_status_board.py").write_text(
         "def test_work_md_stays_under_a_hundred_thousand_bytes():\n"
