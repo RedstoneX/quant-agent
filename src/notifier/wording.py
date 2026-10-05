@@ -238,7 +238,7 @@ def describe_evidence_freshness(freshness: Any) -> list[str]:
     one. No minimum number of fresh seats exists in this desk and none may
     be invented here — that number is the owner's (docs/WORK.md item 20).
 
-    Takes the dict produced by `evidence_gate.EvidenceFreshness.to_evidence`
+    Takes the dict produced by `evidence_freshness.EvidenceFreshness.to_evidence`
     and returns [] for anything it cannot read, so a missing or malformed
     record costs the disclosure line and never the message.
     """
