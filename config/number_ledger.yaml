@@ -821,6 +821,8 @@ numbers:
       (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
       distribution remain unread, not absent.
     value: 40
+    engine_ab_2026_10_05: >-
+      ENGINE A/B ATTEMPTED 2026-10-05, NO SETTLEMENT, for the same structural reason as max_portfolio_risk_pct: a cluster share can only bind on a day the risk budget binds, and src/backtest/engine.py calls any run with a contested budget day a NON-RESULT (measured 2026-10-05, scripts/backtest.py, eight names over calendar 2025 on public daily bars: 128 contested days of 212 entry days). A run small enough to avoid contention is too small for the cluster cap to bind. No value changed; the built realised-risk-budget recording stays the route.
     status: arbitrary
     site: src/config/__init__.py
     note: >-
@@ -923,6 +925,8 @@ numbers:
       (permission denied on the path recorded elsewhere in this ledger), so the accumulation count and the
       distribution remain unread, not absent.
     value: 25
+    engine_ab_2026_10_05: >-
+      ENGINE A/B ATTEMPTED 2026-10-05, NO SETTLEMENT, and the reason is structural rather than a null result. This ceiling can only change an outcome on a day the risk budget binds, and src/backtest/engine.py declares any run with a contested budget day a NON-RESULT because equal-size requests are then served by alphabetical ticker spelling rather than by a ranking. Measured 2026-10-05 with scripts/backtest.py over 2025-01-01..2025-12-31 on public daily bars: an eight-name run had 166 binding-budget days and 128 contested days out of 212 entry days, so it fails the engine's own settleability test; the three-name run that reports zero contested days cannot bind a 25 percent ceiling at all, because at most three concurrent positions at the five percent per-name risk cap commit fifteen percent [measured run output; arithmetic]. The engine cannot settle any portfolio-level risk ceiling until it ranks candidates the way production does, and recording a settlement from it would be wrong. The built realised-risk-budget recording below stays the only route. No value changed.
     status: arbitrary
     site: src/config/__init__.py
     note: >-
@@ -1520,6 +1524,8 @@ numbers:
         the threshold is set where a warning is followed by a change; the warning is DELETED, and
         the gap is simply reported with every target, if no firing has ever been followed by a change
     value: 25
+    engine_ab_2026_10_05: >-
+      RECORDED 2026-10-05, NOT SETTLED, and this row stays arbitrary. The routed recording was specified and never built, so twenty-five could only be argued about rather than read off anything. Every computed-target vs analyst-target comparison made at the site that consumes this number (PortfolioConstructor._log_target_divergence, body in src/portfolio_constructor/divergence_counter.py) now writes ONE durable row to the trade_refusals table through the constructor's refusal recorder (TradeRefusalRecorder.record_target_divergence): refusal code target_divergence_observed, stage observed_not_refused, the symbol, the signed observed gap in percent in the observed_gap_pct column, and the threshold it was compared against in the threshold column. Nothing is accumulated in memory: the distribution of gaps, the share past the threshold and the sign bias are queries over those rows at read time, so the threshold can be set at a stated percentile of observed gaps. With no recorder wired the comparison is logged only and nothing is counted. The backtest engine cannot supply this: measured 2026-10-05, an A/B of this field at 5.0 against 50.0 over AAPL/MSFT/KO for calendar 2025 returned identical trade counts and win rates, which is the signature of the unreached _derive_target path the engine's own wiring comment describes, not of an inert number. A recording is not a settlement.
     status: arbitrary
     site: src/config/__init__.py
     note: >-
@@ -3289,23 +3295,36 @@ numbers:
     settles_by:
       kind: recording
       state: specified
-      where: docs/board_notes/item-090.md (item 90, the 2026-10-01 portfolio-constructor tranche)
+      where: >-
+        src/portfolio_constructor/no_atr_stop_record.py emits one row per branch
+        entry on the portfolio-constructor package logger, prefixed NO_ATR_STOP_ROW
+        and read back by its own rows_from/summarise. The state stays `specified`
+        and NOT `built` on purpose -- `built` in this ledger means the evidence
+        lands in a named storage field, and this recording's evidence lands in a
+        log row, so claiming `built` would mean naming a field nothing writes.
+        docs/board_notes/item-090.md (item 90)
       records: >-
-        every no-ATR structural stop placement, carrying the level the stop was read
-        from, the half-width of the price cluster that formed that level (the
-        dispersion of the touches the level detector already groups), the distance
-        this flat 0.5% put the stop at, and whether the subsequent low pierced the
-        buffer without invalidating the level. The cluster half-width is a reading
-        off the instrument that is already computed at placement time; nothing here
-        consults the trade's profit or loss
+        every entry into the no-ATR structural stop branch, ONE ROW PER DECISION and
+        no running total of any kind -- every count is computed from the rows at read
+        time. Each row carries the rule it took (nearest verified computed level, else
+        the signal/prior bar, else nothing usable), the level and its touch count, the
+        distance this flat 0.5% put the stop at, the stop's distance from entry, and
+        the half-width of the MEASURED cluster span that formed the level TOGETHER
+        WITH a flag saying whether that half-width was readable at all rather than
+        absent. A branch entry that finds no usable structure writes its own row, so
+        "never reached" (no row), "ran and placed" and "ran and found nothing" stay
+        three distinguishable facts. Nothing here consults the trade's profit or loss
+        and nothing here moves a stop
       closes_when: >-
-        the recording shows the cluster half-width is present and non-degenerate at
-        placement on a stated run of placements, at which point the buffer becomes
-        that measured half-width per name and the flat percentage is DELETED. If the
-        half-width is routinely unavailable, the flat percentage stays and the
-        recording states how often it was too tight -- pierced without the level
-        breaking -- so the cost is at least a measured number instead of an
-        assumption
+        enough rows exist to show how often this branch runs at all and how often a
+        measured cluster half-width is present at placement. BUILDING THE RECORDING
+        SETTLES NOTHING: this row stays `arbitrary` until real entries accumulate --
+        the instrumentation exists, the evidence does not. If the half-width is
+        routinely present the buffer becomes that measured half-width per name and the
+        flat percentage is DELETED; if it is routinely unavailable the flat percentage
+        stays and the recording states how often the branch ran, so the cost is at
+        least a measured number instead of an assumption; if the branch effectively
+        never runs the number stops mattering and the ledger says so instead of guessing
   - id: src.portfolio_constructor.config.ConstructorConfig.min_level_touches_for_stop_honor
     value: 5
     status: derived
@@ -8778,3 +8797,63 @@ numbers:
       readers are the quarterly meta-reflector's last-trading-day-of-quarter
       test (src/execution/broker_parts/account_reads.py) and the quarterly
       digest's period label; neither sizes, prices, places or exits anything.
+  - id: src.backtest.engine.MIN_BARS_FOR_SIGNAL
+    value: 210
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "Derived, not chosen: 200 bars for the 200-day moving average plus 10 for the slope lookback the market-context step needs (the comment at the definition). Only the offline backtest harness imports this module; no live module imports it (grep over src/ finds only src/backtest/* and comments naming it), so it sizes, prices, places and refuses nothing live. It does decide which historic days an A/B run may use, so a sweep inherits it."
+  - id: src.backtest.engine.DEFAULT_MAX_HOLD_DAYS
+    value: 20
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "A time-stop for the OFFLINE backtest harness only; no live module imports the engine. UNSETTLED as a modelling assumption: 20 sessions is a round number with no derivation, and every backtest result inherits it. It would be settled by the desk's own recorded holding periods once enough closed trades exist; until then read any A/B result as conditional on it."
+  - id: src.backtest.engine.DEFAULT_INITIAL_EQUITY
+    value: 100000.0
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "Starting equity of the offline backtest. Sizing is a ratio of equity, so the figure scales dollars and not the percentages the harness reports. No live module imports the engine."
+  - id: src.backtest.engine.DEFAULT_SLIPPAGE_BPS
+    value: 5.0
+    status: not-trade-governing
+    site: src/backtest/engine.py
+    note: "Assumed fill slippage in the OFFLINE backtest; no live order reads it. UNSETTLED as an assumption: 5 bps is unmeasured. It would be settled by comparing recorded fills with the decision-time quote once the desk has traded again; every backtest cost figure inherits it until then."
+  - id: src.data.news_dedup.SIMILARITY_THRESHOLD
+    value: 0.47
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Headline-merge bar when summaries exist. Consumer: src/data/news.py clusters articles, and src/agents/news_analyst.py prints the survivor plus a text note of how many outlets carried it. It changes the text one seat reads and gates no order, size, stop or refusal. The source comment claims calibration on cached headlines (worst false pair 0.429); that claim was NOT reproduced here, so it is unverified. A wrong value mis-merges or fails to merge headlines."
+  - id: src.data.news_dedup.TITLE_ONLY_THRESHOLD
+    value: 0.55
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Stricter merge bar when neither article has a summary. Same single consumer as SIMILARITY_THRESHOLD: news text for the news seat, no order path. The cited worst false pair (0.503) is a source-comment claim, not reproduced here."
+  - id: src.data.news_dedup._TITLE_WEIGHT
+    value: 0.7
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Weight of title similarity in the merged score; text-only consumer as for SIMILARITY_THRESHOLD. A round split with no derivation, harmless to money only because it reaches no gate; if anything downstream ever reads the cluster count as a number, revisit."
+  - id: src.data.news_dedup._BODY_WEIGHT
+    value: 0.30000000000000004
+    status: not-trade-governing
+    site: src/data/news_dedup.py
+    note: "Derived as 1 - _TITLE_WEIGHT (the float rounding is why the value reads 0.3000...04). Same text-only consumer."
+  - id: src.token_budget.DEFAULT_TOKENS_PER_BYTE
+    value: 1.0
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "Fallback bytes-to-tokens ratio when logged history cannot answer; deliberately pessimistic (denser than real content) so an unmeasured agent gets smaller requests. Sole live consumer src/agents/tech_analyst.py via pack_to_budget, which splits symbols into LLM calls and is checked to lose or duplicate none (the ValueError 'packing lost or duplicated symbols'). It changes request count, not what the seat sees."
+  - id: src.token_budget.DEFAULT_FIXED_TOKENS
+    value: 6000
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "Fallback fixed prompt overhead used only before enough history exists; request packing only, same consumer and lossless-packing check as DEFAULT_TOKENS_PER_BYTE. A wrong value changes how many calls are made, not which symbols are analysed."
+  - id: src.token_budget.MIN_SAMPLES
+    value: 8
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "Fewest logged calls before a least-squares size fit is trusted over the fallback; request packing only. A statistical-hygiene minimum with no derivation; below it the pessimistic fallback applies, so the wrong-way error is more calls, not a wrong trade."
+  - id: src.token_budget._CACHE_TTL_S
+    value: 900.0
+    status: not-trade-governing
+    site: src/token_budget.py
+    note: "How long a fitted size model is reused before re-reading agent_logs. Pure performance cache; the fit changes across releases, not minutes, per the comment at the definition. Reaches no trade decision."

@@ -7,7 +7,9 @@ of repository-relative paths, constructible with nothing else imported.
 
 from __future__ import annotations
 
-__all__ = ["SCOPED_PATHS"]
+from src.number_universe import py_universe
+
+__all__ = ["SCOPED_PATHS", "py_universe"]
 
 #: The modules on the path from a verdict to a broker order. See the SCOPE
 #: rule in the module docstring; this list is the rule applied, and
@@ -111,4 +113,9 @@ SCOPED_PATHS: tuple[str, ...] = (
     # whether a symbol may be traded at all lives here or in
     # `UniverseScreenConfig`.
     "src/universe_screen.py",
+    # 2026-10-05: three modules whose numbers were never classified; each is
+    # scoped so every site must be ledgered, including the ones it hides.
+    "src/data/news_dedup.py",
+    "src/token_budget.py",
+    "src/backtest/engine.py",
 )
