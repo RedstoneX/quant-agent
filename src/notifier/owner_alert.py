@@ -9,7 +9,8 @@ from src.notifier.base import (
     logger,
 )
 from src.notifier.owner_alert_funnel import (  # noqa: F401  (re-exported)
-    _ALERT_NO_PNL_LINE, _with_pnl_header, send_owner_alert_with_outcome,
+    _ALERT_NO_PNL_LINE, _with_pnl_header, build_default_notifier,
+    send_owner_alert_with_outcome,
 )
 from src.notifier.transport import (  # noqa: F401
     TelegramNotifier,  # the funnel's default notifier; patched by tests HERE
@@ -42,7 +43,7 @@ def send_owner_alert(
     """
     notifier = None
     try:
-        notifier = TelegramNotifier()
+        notifier = build_default_notifier(factory=TelegramNotifier)
     except Exception:  # noqa: BLE001
         logger.exception("owner alert could not build its notifier")
         return False

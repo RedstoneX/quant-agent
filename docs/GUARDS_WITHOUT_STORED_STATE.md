@@ -66,17 +66,17 @@ kept as history and marked DONE where they describe a stored file that is gone.
     `test_deleting_small_files_cannot_raise_the_line_ceiling`,
     `test_the_ceiling_never_falls_below_the_new_module_floor`,
     `test_it_refuses_rather_than_invent_a_fence_from_nothing`.
-  - OPEN, sized not changed: `MONEY_MODULES` in `scripts/silent_swallow_guard.py`
-    is a hand-maintained list of 23 paths that must be edited every time a body is
-    lifted (its own comments record six such edits). Deriving "money-touching"
-    from source (modules under `src/execution/` and `src/protection/`, plus any
-    module that imports the broker adapter) is a scope change of the guard
-    itself, about half a day with the identity tests; not started.
-  - Hardcoded paths in guards on other in-flight work's ground, not touched:
-    `docs/WORK.md` / `docs/board_notes` in `board_item_guard` and `board_rot_guard`;
-    `config/number_ledger.yaml` in `ledger_prose_guard`, `ledger_substantiation_guard`
-    and `settlement_fill_guard`. Each refuses (does not silently pass) if the
-    file moves, so they are brittle, not blind.
+  - DONE: the money-module list in `scripts/silent_swallow_guard.py` is no longer a hand-kept
+    23-path list. `scripts/money_modules.py` derives it at check time from the installed SDK's
+    exchange-writing methods and the call graph under `src/`; the derived surface is far larger
+    (it caught modules the old list never named) and it refuses if the SDK cannot be read.
+  - DONE: the board is found by shape (`scripts/board_locator.py`) in `board_item_guard` and
+    `board_rot_guard`; the ledger is found by shape (`scripts/ledger_locator.py`: the one YAML
+    with a top-level `numbers:` whose rows carry `site:`) in `ledger_prose_guard`,
+    `ledger_substantiation_guard` and `settlement_fill_guard`. Zero or several matches REFUSE.
+  - NOT converted, still named by path (open): `src/number_sources.load_ledger` (runtime config loader, not
+    a guard), and the board path in `definition_of_done`, `check_board_hygiene`, `board_numbers`
+    and `next_board_number`.
 - Config files checked against the three-way test (kept record of a decision /
   stored baseline-allow-list a guard could compute / neither). Read 2026-10-04:
   - `config/number_ledger.yaml`: KEPT RECORD. The register of money-governing
@@ -176,7 +176,7 @@ refuses.
 | ~~`tests/import_cycle_baseline.json`~~ | DONE — deleted with `--shrink-baseline`/`--seed-baseline` and `test_baseline_only_shrinks`; `scripts/import_graph.py --check` now builds the graph from the working tree and again from `origin/main` via `scripts/guard_reference.py` and fails on any cycle edge (importer, imported) that is new — an edge identity, never a count |
 | ~~`tests/import_layers.json`~~ | DONE — deleted; the `broker-seam` rule now lives in code (`LAYER_RULES` in `scripts/import_graph.py`) and the guard fails any importer of `src.execution` that `origin/main` does not already have, by (importer, imported) identity |
 | ~~`tests/pipeline_new_baseline.json`~~ | DONE — deleted; `scripts/pipeline_new_guard.py` now names each `TradingPipeline.__new__` site in the working tree and on `origin/main` at check time and fails on any new site identity |
-| ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now names each silent-swallow site in the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on any new site identity (never on a total, so a swap of one offender for another still fails) |
+| ~~`tests/silent_swallow_baseline.json`~~ | DONE — deleted; `scripts/silent_swallow_guard.py` now names each silent-swallow site in the money modules in the working tree and on `origin/main` via `scripts/guard_reference.py` and fails on any new site identity (never on a total, so a swap of one offender for another still fails); a handler's durable record is recognised by the IDENTITY the call binds to (`scripts/swallow_resolver.py`: import aliases followed, foreign modules never count, a local def judged by its body, star-imported or undefined names unknown), never by the call's spelling |
 
 `tests/test_baseline_merge_driver.py`, `scripts/resolve_baseline_conflict.py`
 and `scripts/git_merge_driver_baselines.sh` existed ONLY to manage collisions
