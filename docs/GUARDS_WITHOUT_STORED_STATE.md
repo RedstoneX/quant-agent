@@ -202,7 +202,7 @@ Measured 2026-10-04 on `origin/main`: every entry above is struck through. No ch
   scans `src/` in the working tree and on `origin/main` at check time and
   reports the delta. The policy half — the list of module names that mean
   "this can leave the box" — stays in code, where it is reviewed.
-- ~~the unscoped-number ceiling in the number-sources guard~~ DONE — `MAX_UNSCOPED_NUMERIC_SITES` and its pinning test are deleted; `scripts/unscoped_number_guard.py` runs the unscoped scan on the working tree and on `origin/main` at check time and reports the delta
+- ~~the unscoped-number ceiling in the number-sources guard~~ DONE — `MAX_UNSCOPED_NUMERIC_SITES` and its pinning test are deleted; `scripts/unscoped_number_guard.py` runs the unscoped scan on the working tree and on `origin/main` at check time and reports the delta per NUMBER (a site new to the tree is excused only by a lost trunk site with the same value and the same name or module — a move or rename; a delete never pays for an unrelated add)
 
 Not in this class: `config/number_ledger.yaml`. That is real content — the
 desk's justification for numbers that govern money — not a cached measurement.
