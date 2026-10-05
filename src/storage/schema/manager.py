@@ -21,6 +21,7 @@ from src.storage.schema.sentinel_tables import ensure_sentinel_tables
 from src.storage.schema.soft_exit_restore_occurrences_migration import (
     ensure_soft_exit_restore_occurrences,
 )
+from src.storage.schema.trade_refusal_tables import ensure_trade_refusal_table
 
 logger = logging.getLogger(__name__)
 
@@ -521,38 +522,7 @@ class DatabaseSchema:
         # column existed. See `TradeDecision.structural_ceiling` in models.py
         # and `src.risk.constants.is_trend_trade`.
         _ensure_column("trades", "structural_ceiling", "structural_ceiling INTEGER")
-        # Board item 218 (owner ruling 2026-10-01). The parity refusal is
-        # an explicitly PROVISIONAL trial — "for now ... see if that
-        # improves the desk purchases" — so the thing it refused has to be
-        # recoverable as NUMBERS, not as prose. One row per refused name per
-        # run, every quantity in its own column, so "did refusing these
-        # improve the desk's purchases" is a query and not a grep. Nothing
-        # reads this table yet by design: it is the evidence the owner's own
-        # question will be answered from.
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS trade_refusals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                run_id TEXT,
-                symbol TEXT NOT NULL,
-                direction TEXT,
-                refusal TEXT NOT NULL,
-                stage TEXT,
-                entry_price REAL,
-                stop_price REAL,
-                level_used REAL,
-                reward_risk REAL,
-                threshold REAL,
-                level_was_measured INTEGER,
-                requested_risk_pct REAL
-            )
-            """
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_trade_refusals_symbol_ts "
-            "ON trade_refusals (symbol, timestamp)"
-        )
+        ensure_trade_refusal_table(conn=self.conn)
         # --- Item 75 evidence: the alignment-exit reading for EVERY open
         # position EVERY session, INCLUDING the sessions it does not fire.
         # RECORDING ONLY (2026-10-01).
@@ -872,12 +842,6 @@ class DatabaseSchema:
         # says the floor WAS violated is trustworthy while one that says it
         # was not is only "not observed". Any reader must carry that caveat.
         _ensure_column("trades", "max_adverse_excursion", "max_adverse_excursion REAL")
-        # Board item 223 (2026-10-01): the risk the seat ASKED for, so a
-        # sub-floor observation records the request itself and not only the
-        # floor it sat under. Existing databases get the column here.
-        _ensure_column(
-            "trade_refusals", "requested_risk_pct", "requested_risk_pct REAL"
-        )
         # `max_favourable_excursion` — the best price the position reached IN
         # ITS FAVOUR against its entry while open, in price units, the exact
         # mirror of `max_adverse_excursion` and accumulated by the same
