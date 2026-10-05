@@ -33,8 +33,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.residue_scan import residue_files
+
 ROOT = Path(__file__).resolve().parent.parent
-SEARCH_ROOTS = (ROOT / "src", ROOT / "config" / "prompts")
+SEARCH_ROOTS = (ROOT / "src", ROOT / "config" / "prompts", ROOT / "scripts", ROOT / "ops")
 
 
 class DeletedMechanism:
@@ -110,13 +112,7 @@ _DELETED = (
 
 
 def _files() -> list[Path]:
-    out: list[Path] = []
-    for root in SEARCH_ROOTS:
-        if not root.exists():
-            continue
-        out.extend(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
-        out.extend(root.rglob("*.md"))
-    return sorted(set(out))
+    return residue_files(ROOT, SEARCH_ROOTS)
 
 
 @pytest.mark.parametrize("mech", _DELETED, ids=lambda m: m.label)
@@ -139,3 +135,4 @@ def test_a_deleted_mechanism_is_not_described_as_live(mech: DeletedMechanism) ->
         + "\n\nCorrect or delete each line. Do NOT add it to `allowed` "
         "unless the line is a tombstone recording the deletion."
     )
+

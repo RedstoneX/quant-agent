@@ -55,6 +55,10 @@ jobs:
   main-red:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write     # one tracking issue per red main commit
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -66,4 +70,5 @@ jobs:
         run: |
           python scripts/check_main_red.py \
             --repo "$GITHUB_REPOSITORY" \
-            --branch "${{ github.event.repository.default_branch }}"
+            --branch "${{ github.event.repository.default_branch }}" \
+            --issue
