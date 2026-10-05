@@ -225,6 +225,8 @@ def replace_stop_and_record(
     db: Any,
     symbol: str,
     new_stop_price: float,
+    run_id: str | None = None,
+    caller: str = "replace_stop_and_record",
     **kwargs: Any,
 ) -> dict | None:
     """The replacement funnel: broker replace, then archive write-back.
@@ -233,7 +235,9 @@ def replace_stop_and_record(
     `trades.stop_loss` on the entry level. A failed replace writes no level.
     """
     order = broker.replace_stop_loss(symbol, new_stop_price, **kwargs)
-    record_unprotected_windows(broker, db, symbol)  # even a failed replace
+    # Item 1512: the window row carries the calling session, so a naked
+    # position can be joined to the run that produced it.
+    record_unprotected_windows(broker, db, symbol, run_id=run_id, caller=caller)
     if isinstance(order, dict) and order.get("amend_status") == "market_closed":
         return record_deferred_amend(
             db, symbol, new_stop_price, order,

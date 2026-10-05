@@ -200,6 +200,7 @@ def send_alert(message: str) -> bool:
     `scripts/check_deploy_drift.py` — no new sender, no new channel.
     """
     from src.notifier import TelegramNotifier
+    from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
 
     notifier = TelegramNotifier()
     if not notifier.enabled:
@@ -209,9 +210,9 @@ def send_alert(message: str) -> bool:
             file=sys.stderr,
         )
         return False
-    from src.notifier.owner_alert_delivery import deliver_with_retry
-
-    return bool(deliver_with_retry(notifier, message, kind="refresh_pricing"))
+    return send_owner_alert_with_outcome(
+        message, notifier=notifier, kind="refresh_pricing", pnl_header=False,
+    )[0]
 
 
 def main(argv: list[str] | None = None) -> int:

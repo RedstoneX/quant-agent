@@ -133,3 +133,50 @@ def test_an_amended_shift_opens_no_window_at_all(tc):
     from src.execution.broker_parts.stop_window import record_unprotected_windows
     record_unprotected_windows(b, db, "ZZZ")
     db.insert_specialist_evidence.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_a_recorded_window_carries_the_session_that_produced_it(tc):
+    """Item 1512: a window row with no joinable session id is useless for the
+    one question it exists to answer — which run left the position naked."""
+    b, _client = _broker(tc)
+    b._list_open_stop_orders_by_side = MagicMock(return_value=([_stop("s1", 100.0, qty=10)], []))
+    b._list_open_protective_stop_orders = MagicMock(return_value=[])
+    b.get_positions = MagicMock(return_value=[_pos(10.5)])
+    b._submit_stop_legs = MagicMock(return_value=[{"id": "n1", "status": "accepted"}])
+    db = MagicMock()
+    replace_stop_and_record(b, db, "ZZZ", 101.0, run_id="run-synthetic-0001",
+                            caller="unit_test")
+    kw = db.insert_specialist_evidence.call_args.kwargs
+    assert kw["run_id"] == "run-synthetic-0001", "window cannot be joined to its session"
+    pay = json.loads(kw["evidence_json"])
+    assert pay["run_id_source"] == "session" and pay["caller"] == "unit_test"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_a_site_without_a_session_id_says_so_instead_of_recording_a_silent_null(tc):
+    b, _client = _broker(tc)
+    b._list_open_stop_orders_by_side = MagicMock(return_value=([_stop("s1", 100.0, qty=10)], []))
+    b._list_open_protective_stop_orders = MagicMock(return_value=[])
+    b.get_positions = MagicMock(return_value=[_pos(10.5)])
+    b._submit_stop_legs = MagicMock(return_value=[{"id": "n1", "status": "accepted"}])
+    db = MagicMock()
+    replace_stop_and_record(b, db, "ZZZ", 101.0, caller="pending_stop_drain")
+    pay = json.loads(db.insert_specialist_evidence.call_args.kwargs["evidence_json"])
+    assert pay["run_id_source"] == "unattributed"
+    assert pay["caller"] == "pending_stop_drain"
+
+
+@patch("src.execution.broker.TradingClient")
+def test_the_recorder_still_cannot_raise_when_the_insert_fails(tc):
+    """A failed replace is when the window matters most, so a throwing insert
+    must never escape the recorder."""
+    from src.execution.broker_parts.stop_window import record_unprotected_windows
+    b, _client = _broker(tc)
+    b._unprotected_windows = [{"symbol": "ZZZ", "reason": "unamendable_shape",
+                               "cancelled_ids": ["s1"], "outcome": "not_restored",
+                               "window_seconds": 0.5, "path": "replace_stop_loss"}]
+    db = MagicMock()
+    db.insert_specialist_evidence.side_effect = RuntimeError("db is gone")
+    record_unprotected_windows(b, db, "ZZZ", run_id="run-synthetic-0002")
+    assert b._unprotected_windows == []

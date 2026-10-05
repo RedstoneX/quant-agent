@@ -173,14 +173,15 @@ def _deliver(message: str, config, *, dry_run: bool) -> int:
         return 0
 
     from src.notifier import TelegramNotifier
-    from src.notifier.owner_alert_delivery import deliver_with_retry
+    from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
 
     notifier = TelegramNotifier()
     notifier.mission_control_url = config.notifications.mission_control_url
     # preserve_structural_markup=True: the shared trader-feed formatters
     # embed literal <b>/<blockquote expandable> tags on purpose.
-    sent = deliver_with_retry(
-        notifier, message, preserve_structural_markup=True, kind="desk_status",
+    sent, _ = send_owner_alert_with_outcome(
+        message, notifier=notifier, kind="desk_status", pnl_header=False,
+        preserve_structural_markup=True,
     )
     if not sent:
         print(

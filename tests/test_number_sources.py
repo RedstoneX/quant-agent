@@ -753,7 +753,7 @@ def test_a_settlement_route_that_cannot_be_acted_on_is_refused() -> None:
         assert field in str(settlement_route_problem({"settles_by": broken}))
     dead = dict(good)
     dead["writes"] = ["trades.nothing_in_the_code_ever_writes_this"]
-    assert "nothing in" in str(settlement_route_problem({"settles_by": dead}))
+    assert "no INSERT or UPDATE" in str(settlement_route_problem({"settles_by": dead}))
     assert settlement_route_problem({}) == "no `settles_by` block"
     assert "not a mapping" in str(settlement_route_problem({"settles_by": "soon"}))
     for field in ("kind", "state", "where", "records", "closes_when"):

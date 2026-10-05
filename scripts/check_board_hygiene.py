@@ -257,9 +257,18 @@ def main(argv: list[str] | None = None) -> int:
     print(message)
 
     if not args.no_telegram:
-        from scripts.ops_alert import push_ops_alert
+        from src.notifier import TelegramNotifier
+        from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
 
-        push_ops_alert(message, kind="check_board_hygiene", note="message printed above only")
+        notifier = TelegramNotifier()
+        if notifier.enabled:
+            send_owner_alert_with_outcome(message, notifier=notifier, kind="board_hygiene", pnl_header=False)
+        else:
+            print(
+                "check_board_hygiene: Telegram not configured; message "
+                "printed above only",
+                file=sys.stderr,
+            )
 
     return 0
 

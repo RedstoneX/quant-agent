@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import log_health  # noqa: E402
 from src.notifier import TelegramNotifier  # noqa: E402
-from src.notifier.owner_alert_delivery import deliver_with_retry  # noqa: E402
+from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome  # noqa: E402
 
 logger = logging.getLogger("log_health_report")
 
@@ -85,9 +85,11 @@ def main() -> int:
         # `preserve_structural_markup=True` keeps the bold title line; the
         # message is built from fixed sentences and integers, so there is no
         # model or broker text in it that could carry stray markup.
-        delivered = deliver_with_retry(
-            notifier, message, preserve_structural_markup=True, kind="log_health_report",
-        ) and delivered
+        ok, _ = send_owner_alert_with_outcome(
+            message, notifier=notifier, kind="log_health", pnl_header=False,
+            preserve_structural_markup=True,
+        )
+        delivered = ok and delivered
 
     if not delivered:
         # The watermark is NOT advanced on a failed send. A report the owner

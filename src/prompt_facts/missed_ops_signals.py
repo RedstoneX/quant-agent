@@ -17,6 +17,7 @@ from src.pipeline_prompt_facts_pure import (
 )
 from src.risk.metrics import unrealized_pnl_pct
 from src.trading_calendar import et_today
+from src.sentinel.counted import record_swallowed
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -98,7 +99,7 @@ class MissedOpsSignals:
                 before_date=None,
             )
         except Exception as exc:
-            logger.warning("missed_ops: tech_analyst logs fetch failed: %s", exc)
+            record_swallowed("missed_ops.tech_signal", exc, log=logger)
             return {}
         cutoff_str = (et_today() - timedelta(days=lookback_days * 2 + 2)).isoformat()
         latest: dict[str, tuple[str, str]] = {}
@@ -290,7 +291,7 @@ class MissedOpsSignals:
         try:
             state = self.macro_store.load_last_state() or {}
         except Exception as exc:
-            logger.warning("missed_ops: macro_store load failed: %s", exc)
+            record_swallowed("missed_ops.macro_sector_map", exc, log=logger)
             return {}
         guidance = state.get("sector_guidance") or {}
         if not isinstance(guidance, dict):
@@ -318,7 +319,7 @@ class MissedOpsSignals:
                 before_date=None,
             )
         except Exception as exc:
-            logger.warning("thesis_tech_trajectory: logs fetch failed: %s", exc)
+            record_swallowed("missed_ops.thesis_tech_trajectory", exc, log=logger)
             return {}
         by_sym: dict[str, list[str]] = {}
         for row in rows:

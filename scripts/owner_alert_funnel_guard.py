@@ -27,11 +27,11 @@ Two kinds of "own messenger", both computed from the source tree at check time:
    counted ``owner_alert_undelivered`` row the dashboard reads. A bare ``send``
    writes only a plain ``failed`` row, so the alert is lost quietly.
 
-   Rule 3 alone is a DELTA against ``origin/main`` rather than an absolute, and
-   deliberately so: three such calls exist today and converting them is a
-   separate, reviewed change. An allow-list naming them would be a record of
-   the current state that goes stale; comparing to the trunk stores nothing and
-   still refuses a fourth. When the trunk cannot be read, rule 3 REFUSES.
+   Rule 3 is ABSOLUTE and computed from the parsed source: any call whose
+   receiver names a notifier and whose method is ``send`` is refused unless its
+   file is in ``EXEMPT_DIRECT_SEND_SITES``, each with its reason. It matches
+   code (the AST), never comments or docstrings, so prose cannot trip it and a
+   rename or reformat cannot hide a call. No trunk read, no stored count.
 
 WHAT IT COVERS, AND WHAT IT DOES NOT
 ------------------------------------
@@ -96,10 +96,18 @@ GUARD_FILE = "scripts/owner_alert_funnel_guard.py"
 
 TELEGRAM_URL_MARKER = "api.telegram.org/bot"
 
-TRUNK = "origin/main"
-
-#: Attribute-call shapes that mean "send through a notifier object".
-DIRECT_SEND_RE = re.compile(r"\b(?:self\.)?[A-Za-z_][A-Za-z0-9_]*(?:\(\))?\.send\s*\(")
+#: Files allowed a bare notifier send, by exact path, each with its reason.
+#: An entry that stops matching a call is itself a failure.
+EXEMPT_DIRECT_SEND_SITES = {
+    "scripts/telegram_test.py": (
+        "DELIBERATE: the operator's manual raw-path check; it must report the "
+        "unretried truth of one send."
+    ),
+    "src/scheduler.py": (
+        "A routine session report, not an alert: it has its own record and "
+        "is not an owner warning."
+    ),
+}
 
 #: Files allowed to build the Bot API URL themselves. Keep this at two.
 EXEMPT_URL_SITES = {
@@ -194,13 +202,25 @@ def sender_classes(paths: list[str]) -> set[tuple[str, str]]:
     return found
 
 
-def _direct_send_lines(text: str) -> list[str]:
-    """Source lines that call ``.send(`` on a notifier-shaped object."""
-    return sorted(
-        line.strip()
-        for line in text.splitlines()
-        if DIRECT_SEND_RE.search(line) and "send_document" not in line
-    )
+def _direct_send_lines(text: str, path: str = "<source>") -> list[str]:
+    """Source of every ``<notifier-ish>.send(...)`` call, from the parsed tree."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        raise TreeUnreadable(
+            f"cannot parse tracked file {path}, so this guard measured nothing "
+            f"there and REFUSES rather than report a clean tree: {exc}"
+        ) from exc
+    hits = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "send"
+            and "notifier" in ast.unparse(node.func.value).lower()
+        ):
+            hits.append(ast.unparse(node))
+    return sorted(hits)
 
 
 def direct_send_sites(paths: list[str]) -> dict[str, list[str]]:
@@ -209,34 +229,10 @@ def direct_send_sites(paths: list[str]) -> dict[str, list[str]]:
     for path in paths:
         if not path.endswith(".py") or path.startswith(FUNNEL_PACKAGE):
             continue
-        hits = _direct_send_lines(read(path))
-        if hits:
-            out[path] = hits
-    return out
-
-
-def trunk_direct_send_sites(paths: list[str]) -> dict[str, list[str]]:
-    """The same measurement taken on the trunk, read fresh at check time."""
-    sha = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"{TRUNK}^{{commit}}"],
-        cwd=ROOT, capture_output=True, text=True,
-    )
-    if sha.returncode != 0 or not sha.stdout.strip():
-        raise TreeUnreadable(
-            f"cannot read {TRUNK}: rule 3 compares the working tree against the "
-            "trunk and stores nothing, so without it this guard REFUSES rather "
-            "than pass. Fix: `git fetch origin main`; in CI use fetch-depth: 0."
-        )
-    out: dict[str, list[str]] = {}
-    for path in paths:
-        if not path.endswith(".py") or path.startswith(FUNNEL_PACKAGE):
+        text = read(path)
+        if ".send" not in text:
             continue
-        blob = subprocess.run(
-            ["git", "show", f"{TRUNK}:{path}"], cwd=ROOT, capture_output=True, text=True,
-        )
-        if blob.returncode != 0:
-            continue  # a file new on this branch has no trunk version
-        hits = _direct_send_lines(blob.stdout)
+        hits = _direct_send_lines(text, path)
         if hits:
             out[path] = hits
     return out
@@ -269,16 +265,20 @@ def violations() -> list[str]:
             "exemption here with the reason it cannot."
         )
     now = direct_send_sites(paths)
-    before = trunk_direct_send_sites(sorted(now))
-    for path in sorted(now):
-        added = [ln for ln in now[path] if now[path].count(ln) > before.get(path, []).count(ln)]
-        for line in added:
+    for path in sorted(set(now) - set(EXEMPT_DIRECT_SEND_SITES)):
+        for line in now[path]:
             bad.append(
-                f"{path}: NEW direct notifier send `{line}` outside the funnel. "
-                "send_owner_alert retries on the desk's backoff policy and records "
-                "one counted owner_alert_undelivered row when every attempt fails; "
-                "a bare send does neither, so a lost alert reads as a delivered one."
+                f"{path}: direct notifier send `{line}` outside the funnel. "
+                "send_owner_alert_with_outcome retries on the desk's backoff policy "
+                "and records one counted owner_alert_undelivered row when every "
+                "attempt fails; a bare send does neither, so a lost alert reads "
+                "as a delivered one."
             )
+    for path in sorted(set(EXEMPT_DIRECT_SEND_SITES) - set(now)):
+        bad.append(
+            f"{path}: exempted here but no longer makes a direct send. A dead "
+            "exemption silently widens the hole -- delete the entry."
+        )
 
     for site in sorted(set(EXEMPT_SENDER_CLASSES) - classes):
         bad.append(

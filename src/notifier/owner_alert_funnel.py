@@ -98,6 +98,7 @@ def send_owner_alert_with_outcome(
     run_id: str | None = None,
     max_attempts: int = MAX_ATTEMPTS,
     pnl_header: bool = True,
+    preserve_structural_markup: bool = False,
 ) -> tuple[bool, bool]:
     """Push an owner alert NOW and report BOTH halves of what happened.
 
@@ -122,6 +123,7 @@ def send_owner_alert_with_outcome(
     try:
         if notifier is None:
             notifier = TelegramNotifier()
+        extra = {"preserve_structural_markup": True} if preserve_structural_markup else {}
         return deliver_with_outcome(
             notifier,
             text,
@@ -130,7 +132,19 @@ def send_owner_alert_with_outcome(
             kind=kind,
             run_id=run_id,
             category=category,
+            **extra,
         )
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery failed")
         return False, False
+
+
+def send_script_alert(message: str, *, kind: str, script: str, factory=None) -> tuple[bool, bool]:
+    """Funnel send for a CLI script; when Telegram is off say so on stderr, never fall silent."""
+    import sys
+
+    notifier = build_default_notifier(factory=factory)
+    if not notifier.enabled:
+        print(f"{script}: Telegram not configured; alert printed above only", file=sys.stderr)
+        return False, False
+    return send_owner_alert_with_outcome(message, notifier=notifier, kind=kind, pnl_header=False)
