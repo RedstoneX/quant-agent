@@ -131,6 +131,7 @@ from src.notifier.transport import (
 from src.notifier.owner_alert import (
     _ALERT_NO_PNL_LINE,
     _with_pnl_header,
+    build_default_notifier,
     send_owner_alert,
 )
 from src.notifier.gaps import (

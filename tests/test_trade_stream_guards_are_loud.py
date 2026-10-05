@@ -48,7 +48,7 @@ def _install_handler(hub, captured):
 
 
 def _status(db):
-    return ReconciliationLog(conn=db.conn).status(kind=f"guarded:broker.{WHERE}")
+    return ReconciliationLog(conn=db.conn).status(kind=f"guarded:execution.broker_parts.{WHERE}")
 
 
 def test_hub_handler_clean_and_swallowed_are_distinct_and_loud(tmp_path, caplog):

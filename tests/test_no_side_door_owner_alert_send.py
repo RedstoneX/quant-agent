@@ -65,6 +65,51 @@ def _delivery_layer_calls() -> dict[str, int]:
 
 
 DELIVERY_LAYER = {"deliver_with_retry", "deliver_with_outcome"}
+# The funnel's own module, by path. The ONLY place a notifier may be built.
+FUNNEL_MODULE = Path("notifier") / "owner_alert_funnel.py"
+
+
+def _direct_constructions() -> list[str]:
+    """Every `TelegramNotifier(...)` call in src/ outside the funnel module."""
+    found: list[str] = []
+    for path in SRC.rglob("*.py"):
+        rel = path.relative_to(SRC)
+        if rel == FUNNEL_MODULE:
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
+            if name == "TelegramNotifier":
+                found.append(f"{rel}:{node.lineno}")
+    return found
+
+
+def test_only_the_funnel_module_constructs_a_notifier():
+    assert _direct_constructions() == []
+
+
+def test_a_direct_construction_is_refused():
+    """Failing case: plant a direct construction and watch it be caught."""
+    probe = SRC / "_guard_probe_construct.py"
+    probe.write_text(
+        "from src.notifier import TelegramNotifier\n"
+        "def f():\n    return TelegramNotifier()\n"
+    )
+    try:
+        assert _direct_constructions() == ["_guard_probe_construct.py:3"]
+    finally:
+        probe.unlink()
+    assert _direct_constructions() == []
+
+
+def test_the_factory_builds_through_the_patched_class(monkeypatch):
+    import src.notifier.owner_alert_funnel as funnel
+    from src.notifier.owner_alert_funnel import build_default_notifier
+
+    monkeypatch.setattr(funnel, "TelegramNotifier", lambda **kw: ("built", kw))
+    assert build_default_notifier(a=1) == ("built", {"a": 1})
 
 
 def test_no_new_bare_notifier_send_in_src():

@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from src.execution.pending_stop_amends import intent_is_protective
+from src.execution.stop_read import UNREADABLE, StopRead, read_stop
 from src.execution.stop_records import accepted_stop_order, replace_stop_and_record
 from src.sentinel.guarded import record_guarded_pass
 from src.storage.trades import pending_stop_amends_store as _store
@@ -20,18 +21,20 @@ from src.storage.trades import pending_stop_amends_store as _store
 logger = logging.getLogger("src.execution.broker")
 
 
-def _resting_stop_level(broker: Any, symbol: str) -> float | None:
-    """The level currently resting on `symbol`, or None when none is readable.
+def _resting_stop_level(broker: Any, symbol: str, db: Any) -> StopRead:
+    """What rests on `symbol`: found, none, or UNREADABLE -- never a guess.
 
-    Uses the desk's one escalating stop read rather than a raw order list, so
-    an unreadable broker answers None (treat the intent as still owed) instead
-    of a fabricated zero.
+    Uses the desk's one escalating stop read (retry, bulk read, durable row,
+    owner alert). It is a reporting read: it places nothing, because this
+    drain is itself what places the owed level. An unreadable answer is NOT
+    "no stop": reading it as none would apply a looser level over a tighter
+    resting one.
     """
     try:
-        level = broker.get_current_stop_price(symbol)
+        level = read_stop(broker, symbol, db=db, context="pending stop drain")
     except Exception as exc:  # noqa: BLE001
         record_guarded_pass(broker, "pending_stop_drain.resting_stop", exc, log=logger, context={"symbol": symbol})
-        return None
+        return StopRead(UNREADABLE, None, str(exc) or type(exc).__name__)
     record_guarded_pass(broker, "pending_stop_drain.resting_stop", context={"symbol": symbol})
     return level
 
@@ -63,7 +66,12 @@ def drain_pending_stop_amends(broker: Any, db: Any) -> int:
             logger.error("pending stop drain: unreadable level for %s; row kept", symbol)
             continue
         is_short = bool(row.get("is_short"))
-        current = _resting_stop_level(broker, symbol)
+        resting = _resting_stop_level(broker, symbol, db)
+        if resting.unreadable:
+            logger.error("pending stop drain: %s's resting stop is unreadable; owed level $%.4f KEPT, not applied",
+                         symbol, intended)
+            continue
+        current = resting.price if resting.found else None
         if not intent_is_protective(intended, current, is_short=is_short):
             logger.info(
                 "pending stop drain: %s's owed level $%.4f is no longer more "

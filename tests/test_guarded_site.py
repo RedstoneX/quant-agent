@@ -41,3 +41,19 @@ def test_no_handle_still_logs_traceback_and_does_not_raise(caplog):
         with caplog.at_level(logging.ERROR):
             record_site(SimpleNamespace(db=None), "bar_fetch", exc)
     assert any(r.exc_info for r in caplog.records)
+
+
+def test_snapshot_health_failure_writes_disagreed_row_end_to_end(tmp_path):
+    from src.intraday.gating import IntradayGating
+    owner = _owner(tmp_path)
+    real = owner.db
+
+    class _Boom:
+        conn = real.conn
+
+        def record_intraday_symbol_snapshot_result(self, symbol, ok):
+            raise RuntimeError("db locked")
+
+    IntradayGating(db=_Boom())._track_intraday_snapshot_ok("XYZ")
+    log = ReconciliationLog(conn=real.conn)
+    assert log.status(kind="guarded:intraday.snapshot_ok_record") == "disagreed"
