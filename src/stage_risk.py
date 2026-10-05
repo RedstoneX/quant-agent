@@ -505,7 +505,7 @@ class RiskStage:
             {"admitted_symbols": ctx.admitted_symbols}
             if ctx.admitted_symbols else {}
         )
-        portfolio_decision.decisions, symbol_blocked_reasons = pipeline._filter_supported_symbols(
+        portfolio_decision.decisions, symbol_blocked_reasons = pipeline.admission._filter_supported_symbols(
             portfolio_decision.decisions, analyses, positions, **guard_kwargs,
         )
         if symbol_blocked_reasons:

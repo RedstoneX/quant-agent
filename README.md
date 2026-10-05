@@ -589,7 +589,7 @@ quant-agent/
 │   └── prompts/                   # System prompts for each agent
 ├── src/
 │   ├── pipeline.py                # Orchestrator (morning/midday/close/evening/earnings_preprocess/intra_check/meta)
-│   ├── pipeline_admission.py      # AdmissionMixin — who gets into the research universe (screen, nominations, Form-4 currency)
+│   ├── pipeline_admission.py      # AdmissionService — who gets into the research universe (screen, nominations, Form-4 currency)
 │   ├── pipeline_protection.py     # ProtectionMixin — stop coverage, repair, protected sells, WAL restore, reconcilers
 │   ├── pipeline_prompt_facts.py   # PromptFactsMixin — read-only DB/broker reads turned into LLM prompt context
 │   ├── pipeline_intraday.py       # IntradayMixin — intra-check session, scan locks, paid-scan slot, intraday opportunity scan

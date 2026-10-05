@@ -4,6 +4,8 @@ Clause 5 of `docs/ARCHITECTURE.md` section 3: the service is built with explicit
 stand-ins and the in-memory journal, and this file never imports
 `TradingPipeline`.
 """
+import os
+from pathlib import Path
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -112,3 +114,36 @@ def test_a_failing_journal_never_interrupts_the_screen(tmp_path, monkeypatch):
     svc, journal = _service(tmp_path, enabled=True, journal=InMemoryEventJournal(fail=True))
     summary = svc._run_universe_screen("evening-x")
     assert summary["passed"] == 1 and journal.rows == [] and len(journal.failures) == 2
+
+
+def test_admission_is_reachable_without_importing_the_pipeline():
+    """The proof that step 8 is a real boundary, not a renamed shim.
+
+    `AdmissionMixin` was deleted on 2026-10-05; `build_admission_service` takes
+    its collaborators by value, so a process that builds and drives the service
+    must never load `src.pipeline`. Checked in a SUBPROCESS: an in-process
+    check would have to evict modules from `sys.modules`, which has already
+    broken an unrelated recording test once.
+    """
+    import subprocess
+    import sys
+
+    program = (
+        "import sys\n"
+        "from types import SimpleNamespace\n"
+        "from src.admission_build import build_admission_service\n"
+        "cfg = SimpleNamespace(trading=SimpleNamespace(universe=['SPY']))\n"
+        "svc = build_admission_service(config=cfg)\n"
+        "allowed, blocked = svc._filter_supported_symbols([], [], [])\n"
+        "assert (allowed, blocked) == ([], [])\n"
+        "leaked = [m for m in sys.modules if m == 'src.pipeline']\n"
+        "assert not leaked, leaked\n"
+        "print('CLEAN')\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+        env={**os.environ, "PYTHONPATH": "."},
+    )
+    assert done.returncode == 0, done.stderr
+    assert "CLEAN" in done.stdout

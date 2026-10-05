@@ -1103,9 +1103,9 @@ def _parse_loss_violations(drops, decisions=None, positions=None):
 
     decisions = decisions if decisions is not None else [_buy("MRVL", 5)]
     pipeline = _risk_stage_pipeline(decisions)
-    pipeline._filter_supported_symbols = MagicMock(
+    pipeline.admission = MagicMock(_filter_supported_symbols=MagicMock(
         side_effect=lambda d, *a, **kw: (list(d), []),
-    )
+    ))
     pipeline._refuse_queued_earnings_buys = MagicMock(
         side_effect=lambda d, *a, **kw: list(d),
     )
@@ -4029,7 +4029,7 @@ def test_item134_riskstage_records_scale_concern_and_keeps_sizes(monkeypatch):
 
     p = build_pipeline(market=MagicMock(), risk_manager=MagicMock(), db=MagicMock())
     p.market.get_ohlcv.return_value = []
-    p._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
+    p.admission = MagicMock(_filter_supported_symbols=MagicMock(side_effect=lambda d, a, pos: (d, [])))
     p._refuse_queued_earnings_buys = MagicMock(side_effect=lambda d, e, **kw: d)
     # Hard filter is a pass-through HERE so we can isolate the scale behaviour;
     # a separate test proves the real hard filter still binds.
