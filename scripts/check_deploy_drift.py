@@ -376,19 +376,9 @@ def main(argv: list[str] | None = None) -> int:
     sent = False
     repeat = already_alerted(report)
     if not args.no_telegram and not repeat:
-        from src.notifier import TelegramNotifier
         from src.notifier.owner_alert_funnel import send_owner_alert_with_outcome
 
-        notifier = TelegramNotifier()
-        if notifier.enabled:
-            send_owner_alert_with_outcome(message, notifier=notifier, kind="deploy_drift", pnl_header=False)
-            sent = True
-        else:
-            print(
-                "check_deploy_drift: Telegram not configured; alert printed "
-                "above only",
-                file=sys.stderr,
-            )
+        sent, _ = send_owner_alert_with_outcome(message, kind="deploy_drift", pnl_header=False)
     elif repeat:
         print(
             "check_deploy_drift: same drift already alerted today — not "
