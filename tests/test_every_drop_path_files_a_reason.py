@@ -234,7 +234,7 @@ _CANNOT_END_A_CANDIDATE = {
     "_build_cover": "same, short side",
     "_entry_stop_resolver": "thin shim factory: builds the resolver whose methods are scanned above",
     "_derive_target": "returns a derivation; every fault it finds it files itself",
-    "_log_target_divergence": "logging only",
+    "_log_target_divergence": "log + one row",
     "_target_note": "string formatting",
     "_resolve_stop": "None means 'read it from the instrument', not 'no trade'",
     "_stop_atr_multiple": "returns a multiple",

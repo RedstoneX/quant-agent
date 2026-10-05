@@ -19,6 +19,7 @@ from src.sandbox_preflight import (
     check_account_key_is_the_pinned_sandbox_one,
     check_data_dir_is_local,
     check_database_is_the_sandbox_one,
+    check_home_is_not_production,
     check_not_production_checkout,
     check_owner_channel_is_incapable,
     check_paper_lock_still_holds,
@@ -175,3 +176,39 @@ def test_the_wrapper_strips_the_owner_channel_before_sourcing() -> None:
     assert script.count("unset TELEGRAM_CHAT_ID") == 2
     assert "export TELEGRAM_DISABLED=1" in script
     assert "-m src.sandbox_preflight" in script
+
+
+def test_refuses_a_home_directory_inside_production(tmp_path: Path) -> None:
+    production = tmp_path / "qamc"
+    production.mkdir()
+    refused = SandboxEnvironment(
+        checkout=tmp_path,
+        env=_clean_env(QAMC_PRODUCTION_CHECKOUT=str(production), HOME=str(production)),
+    )
+    with pytest.raises(SandboxRefusal, match="home directory"):
+        check_home_is_not_production(refused)
+    allowed = SandboxEnvironment(
+        checkout=tmp_path,
+        env=_clean_env(QAMC_PRODUCTION_CHECKOUT=str(production), HOME=str(tmp_path / "other")),
+    )
+    check_home_is_not_production(allowed)
+
+
+def test_refuses_a_model_provider_key_the_run_never_routes_to(tmp_path: Path) -> None:
+    from src.sandbox_credential_scope import credential_scope_violations
+
+    held = credential_scope_violations({"ANTHROPIC_API_KEY": "x", "OPENAI_API_KEY": "y", "GOOGLE_API_KEY": "z"})
+    assert len(held) == 2
+    assert all("GOOGLE" not in item for item in held)
+
+
+def test_the_allow_list_and_the_forbidden_list_never_overlap() -> None:
+    from src.sandbox_credential_scope import SANDBOX_FORBIDDEN, SANDBOX_NEEDS
+
+    assert not SANDBOX_NEEDS & set(SANDBOX_FORBIDDEN)
+
+
+def test_the_scope_check_never_echoes_a_value() -> None:
+    from src.sandbox_credential_scope import credential_scope_violations
+
+    assert "SECRETVALUE" not in "".join(credential_scope_violations({"OPENAI_API_KEY": "SECRETVALUE"}))

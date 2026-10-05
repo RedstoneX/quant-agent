@@ -856,10 +856,8 @@ def test_gate_pm_facts_and_projection_report_the_same_sector_exposure():
     assert facts.sector_weights_short == {"Technology": 20.0}
 
     # (d) The projected-portfolio preview, before any candidate is added.
-    pipeline._last_symbol_sectors = {}
     preview = pipeline._build_projected_portfolio(
-        positions, [], total_value=EQUITY,
-    )
+        positions, [], EQUITY, run=SimpleNamespace(symbol_sectors={}))
     assert "Technology long 30%" in preview
     assert "Technology short 20%" in preview
     assert "Energy long 10%" in preview

@@ -33,6 +33,7 @@ settled ONCE in ``guarded_reach.py``: pass whatever is already in scope and
 from __future__ import annotations
 
 import logging
+import sys
 
 from src.sentinel.guarded_reach import (  # noqa: F401 (re-export)
     NO_LEDGER, RECON_DB_ATTR, _LazyLedger, ledger_in_reach,
@@ -40,6 +41,22 @@ from src.sentinel.guarded_reach import (  # noqa: F401 (re-export)
 from src.sentinel.reconciliation import record_guarded_outcome
 
 logger = logging.getLogger(__name__)
+
+
+def origin_area(module_name: str) -> str:
+    """Where a row came from, read off the module that recorded it.
+
+    ``src.execution.broker_parts.order_desk`` -> ``execution.broker_parts``;
+    a top-level ``src.pipeline_sizing`` -> ``pipeline_sizing``. Derived from
+    the caller at record time, so a new site is labelled correctly without
+    anyone writing a label. Rows written before this carry the legacy shared
+    ``broker.`` prefix whatever their origin; they are left as written (a
+    migration would have to guess origins and production is read-only here).
+    """
+    parts = module_name.split(".")
+    if parts and parts[0] == "src":
+        parts = parts[1:]
+    return ".".join(parts[:-1]) or ".".join(parts) or "unknown"
 
 
 def attach_reconciliation_db(broker, conn_getter) -> None:
@@ -67,9 +84,12 @@ def record_guarded_pass(owner, where: str, exc: BaseException | None = None, *,
     fault in the observer cannot take the money path down with it.
     """
     try:
+        area = origin_area(sys._getframe(1).f_globals.get("__name__", ""))
+        if where.split(".")[0] == area.split(".")[-1]:
+            area = ".".join(area.split(".")[:-1])  # the site already names its package
         record_guarded_outcome(
             db=ledger_in_reach(*(owner if isinstance(owner, tuple) else (owner,))),
-            where=f"broker.{where}",
+            where=f"{area}.{where}" if area else where,
             exc=exc,
             log=log or logger,
             context=context,

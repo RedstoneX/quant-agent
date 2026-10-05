@@ -5,8 +5,6 @@ same-named thin shims built per call. Every collaborator is an explicit keyword-
 constructor argument, so this builds and runs with no pipeline behind it.
 """
 
-from types import SimpleNamespace
-
 from src.models import TechAnalysisResult
 
 
@@ -15,28 +13,21 @@ class PromptProjected:
 
     def __init__(
         self, *,
-        sector_cache_owner=None,
         portfolio_constructor=None,
         risk_engine=None,
     ) -> None:
-        # The host owns `_last_symbol_sectors` across calls; reads and writes go through to it live.
-        self._sector_cache_owner = sector_cache_owner if sector_cache_owner is not None else SimpleNamespace()
+        # No sector cache is held here or on the host: the resolved map
+        # belongs to ONE run and is written onto that run's context.
         self.portfolio_constructor = portfolio_constructor
         self.risk_engine = risk_engine
-
-    @property
-    def _last_symbol_sectors(self):
-        return self._sector_cache_owner._last_symbol_sectors  # AttributeError -> the body's getattr default
-
-    @_last_symbol_sectors.setter
-    def _last_symbol_sectors(self, value) -> None:
-        self._sector_cache_owner._last_symbol_sectors = value
 
     def _build_projected_portfolio(
         self,
         positions,
         analyses: list[TechAnalysisResult],
         total_value: float,
+        *,
+        run,
     ) -> str:
         """Preview of the book if PM rubber-stamped every BUY-rated TA candidate.
 
@@ -97,7 +88,10 @@ class PromptProjected:
         if not positions and not buy_candidates:
             return ""
 
-        cached_sectors = dict(getattr(self, "_last_symbol_sectors", {}))
+        # Seeded from THIS run only. `run.symbol_sectors is None` means the
+        # run has not recorded any sectors yet; it is never the previous
+        # run's map, because `run` is a fresh per-run context.
+        cached_sectors = dict(getattr(run, "symbol_sectors", None) or {})
 
         def _resolve_sector(symbol: str, fallback: str | None = None) -> str:
             sector = (fallback or "").strip() if fallback else ""
@@ -200,7 +194,7 @@ class PromptProjected:
                 f"{a.symbol} stop -{stop_distance_pct:.1f}% "
                 f"→ ≤{reachable_pct:.0f}%"
             )
-        self._last_symbol_sectors = cached_sectors
+        run.symbol_sectors = cached_sectors
 
         def _sector_line(sector_dict: dict[tuple[str, str], float]) -> str:
             if not sector_dict:

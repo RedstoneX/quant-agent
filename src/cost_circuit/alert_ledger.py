@@ -198,8 +198,8 @@ class UnavailableLLMCostCircuit:
     ):
         self.error = error
         if notifier is None:
-            from src.notifier import TelegramNotifier
-            notifier = TelegramNotifier()
+            from src.notifier.owner_alert_funnel import build_default_notifier
+            notifier = build_default_notifier()
         self.notifier = notifier
         self.agent_name = agent_name
         self.trigger_run_id = run_id
