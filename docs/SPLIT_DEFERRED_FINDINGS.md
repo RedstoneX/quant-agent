@@ -5,15 +5,15 @@ behaviour change hidden in a verbatim move is unreviewable. Each entry says
 what is wrong, where, and what would prove a fix. Work them after the
 structure is sound, hardest-wearing first.
 
-## Owner-alert senders that bypass the retry funnel — CLOSED 2026-10-05
-## Owner-alert senders that bypass the retry funnel
 ## TRIAGE 2026-10-05 (every entry re-checked against main, not against its heading)
 
 Pile A, ALREADY FIXED, proved in code: four.
-- Undefined names: `scripts/check_undefined_names.py` re-run, 545 files, 0 findings; wired in `.github/workflows/test.yml`.
+- Undefined names: `scripts/check_undefined_names.py` re-run, 601 files, 0 findings (re-run 2026-10-05 on 3a08c4d1); wired in `.github/workflows/test.yml`.
 - Cost-circuit mixins: `src/cost_circuit/` holds no mixin; the circuit class inherits nothing; the boundary test file exists.
 - Midnight clock: no local-day or UTC-day-as-exchange-day use left in `src/` (the only `utcnow` sites subtract two timestamps); the single clock and the test guard exist. The note's single-clock guard test file still does not exist, as already recorded below.
 - Broker read error as "no stop": FIXED only by this change, see WRONG below.
+
+Re-triage 2026-10-05 (each claim checked against 3a08c4d1): owner-alert senders LIVE (scripts only, not money, see its section); "Real boundaries" STALE; undefined names FIXED; cost-circuit mixins FIXED; midnight clock FIXED (its guard-test claim FALSE, see below); stop read FIXED. One genuinely live entry.
 
 Pile B, STILL LIVE: one (the `PromptFactsReviewMixin` line below was re-checked 2026-10-05 against main and is STALE, see WRONG).
 - Owner-alert senders: root cause is that ops scripts build their own `TelegramNotifier()` and send once with no retry; the funnel guard looks for private messengers and `src/` bare sends, not this (about 13 sites, 2026-10-05 count; the guard's reach over `scripts/` was not traced). About 4-6 hours [estimate: one funnel call per site plus a scripts-scope guard]. Not money.
@@ -26,7 +26,11 @@ Write-ups found WRONG or stale on 2026-10-05:
 - "Real boundaries still owed" / Pile B's `PromptFactsReviewMixin` line (written the same night) was STALE: all three named pieces are held parts on main with identity guards (`PortfolioConstructor.__bases__ == (object,)`; `PortfolioManagerAgent` MRO is seat, `LiveLimitPrompt`, `BaseAgent`; no `Review` class in `TradingPipeline.__mro__`). The ONE live hole was `tests/test_boundary_harness.py` keying the composed-pipeline-mixin set on a COUNT (`len(MIXINS) == 8`), which let a one-for-one swap compose a NEW mixin onto `TradingPipeline` unnoticed. Closed 2026-10-05: the set is now named by identity and compared against `origin/main` at check time (shrink-only, REFUSES when the trunk is unreadable); `test_swapping_one_mixin_for_another_is_caught` proves the swap is refused.
 - "Owner-alert senders": "no guard forbids it" was stale. `tests/test_owner_alert_funnel_guard.py` and `tests/test_no_side_door_owner_alert_send.py` forbid a new bare send or messenger in `src/`. The six `src/` constructions are a probe default, default arguments, a document upload and the scheduler's routine report, not alert bypasses. The live remainder is the scripts.
 
-## Owner-alert senders that bypass the retry funnel
+## Owner-alert senders that bypass the retry funnel -- LIVE in `scripts/` only (verdict 2026-10-05, counted by SEND)
+
+COUNT BY SEND, NEVER BY CONSTRUCTION, AND NEVER FROM A GREP OF MENTIONS: earlier counts (6, 16, 3, 5) were mentions. Read on 3a08c4d1: `src/` has zero alert bypasses (below, true). `scripts/` has 8 real `notifier.send(...)` calls on alert or report text with no retry (`TelegramNotifier.send` has no retry; the funnel `send_owner_alert` does): `check_stored_targets`, `check_unit_drift`, `check_board_hygiene`, `check_deploy_drift`, `refresh_pricing`, `desk_status`, `log_health_report`, and the failure alert in `alert_heartbeat` (the same file's other sends do use the funnel). `telegram_test.py` is a manual probe, not counted. The funnel guard passes because its direct-send rule is a delta against trunk, so these are grandfathered. Not money or live risk (ops monitors; a lost send is silent, not a trade effect). Size 4-6 hours [estimate: one funnel call per site, plus a scripts-scope absolute rule]; left, not fixed here.
+
+Earlier text, kept for history:
 
 CORRECTED. This entry counted CONSTRUCTIONS of a `TelegramNotifier`, which is not the defect; the defect is SENDING around the funnel, and the two measurements differ. It also said "no guard forbids it", which was false: `scripts/owner_alert_funnel_guard.py` has existed and refuses three shapes of bypass — a file that builds the Bot API URL itself, a class outside `src/notifier/` exposing its own `send`, and a direct `notifier.send(...)` call the trunk does not already have.
 
@@ -36,7 +40,7 @@ What was genuinely open, and is now fixed: the guard scanned `src/`, `ops/` and 
 
 ## Real boundaries still owed (CLOSED 2026-10-05; the eight pipeline mixins are a separate, un-sized rebuild)
 
-RE-CHECKED 2026-10-05 against main: nothing in this entry is owed. What IS still a mixin is the eight composed onto `TradingPipeline` (risk gate, delever, intraday, prompt facts, research continuity, protection, exits, admission). That is the pipeline rebuild itself, never part of this entry, and is not sized here; the identity guard above means the set can only shrink.
+VERDICT 2026-10-05: STALE (re-grepped on 3a08c4d1: no `PromptFactsReviewMixin`; PM seat holds parts). Nothing in this entry is owed. What IS still a mixin is the eight composed onto `TradingPipeline` (risk gate, delever, intraday, prompt facts, research continuity, protection, exits, admission). That is the pipeline rebuild itself, never part of this entry, and is not sized here; the identity guard above means the set can only shrink.
 
 The position builder, the portfolio-manager seat and the prompt-facts review
 chunk are under the ceiling but are not separable pieces. Same treatment.
@@ -107,7 +111,7 @@ fails on `date.today()`, a naive `datetime.now()`, a UTC calendar day used as
 a day, and an import-time clock stamp in a test, with a shrink-only baseline
 of the offenders that already existed.
 
-CLOSED 2026-10-04: the cost-circuit half. Its cause (Python ET day vs SQLite's own `'now'`) was already removed by the single clock in `src/cost_circuit/clock.py`; re-measured with the clock pinned to 00:01, 00:05 and 00:15 ET and with the real UTC day differing from the ET day: 0 failures in 180 tests. NOTE: The text claims `tests/test_cost_circuit_single_clock.py` as a guard against re-adding a second clock, but this test file does not exist on main (verified 2026-10-04). The measured result (0 failures in 180 tests) stands, but the guard implementation differs from what is documented. Earlier text kept below for history: the cost-circuit half. The original entry named thirteen failing tests but provides no test names. Reproduction attempts on 2026-10-02 failed by three methods: clock simulation with Python and SQLite moved together showed zero failures; CI runs covering 00:00-00:16 ET showed no cost-circuit test failures; and direct inspection identified no named failure. This entry must not be treated as a known defect until a specific failing test is named and reproduced.
+CLOSED 2026-10-04: the cost-circuit half. Its cause (Python ET day vs SQLite's own `'now'`) was already removed by the single clock in `src/cost_circuit/clock.py`; re-measured with the clock pinned to 00:01, 00:05 and 00:15 ET and with the real UTC day differing from the ET day: 0 failures in 180 tests. NOTE: `tests/test_cost_circuit_single_clock.py` is cited as a guard against re-adding a second clock; it does NOT exist on main (re-verified 2026-10-05), so no test stops a second clock being added. The measured result (0 failures in 180 tests) stands, but the guard implementation differs from what is documented. Earlier text kept below for history: the cost-circuit half. The original entry named thirteen failing tests but provides no test names. Reproduction attempts on 2026-10-02 failed by three methods: clock simulation with Python and SQLite moved together showed zero failures; CI runs covering 00:00-00:16 ET showed no cost-circuit test failures; and direct inspection identified no named failure. This entry must not be treated as a known defect until a specific failing test is named and reproduced.
 
 FIXED 2026-10-04 -- cost-circuit half. The circuit already derives its ET day from one clock and the test helpers pin it; driven at 23:58 ET and 00:05 ET with BOTH the circuit clock and SQLite's own `'now'` moved together, all 139 cost-circuit tests pass, so no failing cost-circuit test exists to fix. The same sweep found the class still alive in production at two sites: the stream-handshake attempt budget keyed its day on the runner's local day (`date.today()`, four methods) and the credential-placeholder once-a-day marker keyed on the UTC day, so both rolled at the wrong hour. Both now ask `src.trading_calendar` (`session_date_key` / `et_today`), the same answer the first half used. Proof: `tests/test_exchange_day_in_stream_budget_and_credentials.py` (3 tests) drives 23:58 ET and 00:05 ET and fails on the old code (3 failed) and passes now. Test-file offenders of the same shape remain tracked by the shrink-only guard, not fixed here.
 
