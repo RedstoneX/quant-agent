@@ -333,7 +333,7 @@ def test_all_three_call_sites_measure_the_same_dollar_volume(monkeypatch):
     p.market = MagicMock()
     p.market.get_ohlcv = MagicMock(return_value=bars)
     monkeypatch.setattr("src.pipeline_admission._get_sector", lambda s: "Technology")
-    ok, reason, facts = p._evaluate_external_admission_gates("FAKE")
+    ok, reason, facts = p.admission._evaluate_external_admission_gates("FAKE")
     assert ok, reason
     assert facts["avg_dollar_volume_20d_usd"] == pytest.approx(expected_usd)
 

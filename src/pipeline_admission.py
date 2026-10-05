@@ -1,6 +1,6 @@
 """Universe admission (step 8): `AdmissionService`, built from explicit collaborators.
 
-Never sees a `TradingPipeline` (it reaches this via `pipeline_admission_shell`).
+Never sees a `TradingPipeline`; build it with `src.admission_build.build_admission_service`.
 Patch `_get_sector` HERE, not on `src.pipeline`. Must not import `src.pipeline`.
 """
 

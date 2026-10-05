@@ -131,7 +131,7 @@ class MorningResearchStage:
         # Phase 9 — same shape as admit_smart_money_candidates_fn:
         # (list[str] symbols) -> (admitted: set[str], details: dict[str,dict]).
         # Shares the same deterministic gate under the hood
-        # (TradingPipeline._evaluate_external_admission_gates); this is a
+        # (AdmissionService._evaluate_external_admission_gates); this is a
         # SEPARATE injected callable (not reused directly) because the two
         # callers decide WHICH symbols are worth gating differently — one
         # groups/ranks SEC Form 4 rows, the other consumes an

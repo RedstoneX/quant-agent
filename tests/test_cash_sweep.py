@@ -412,7 +412,7 @@ def test_risk_stage_rm_view_excludes_vehicle():
     p = _sweep_pipeline()
     p.market = MagicMock()
     p.market.get_ohlcv.return_value = []
-    p._filter_supported_symbols = MagicMock(side_effect=lambda d, a, pos: (d, []))
+    p.admission = MagicMock(_filter_supported_symbols=MagicMock(side_effect=lambda d, a, pos: (d, [])))
     p.risk_manager = MagicMock()
     p.risk_manager.review.return_value = (
         RiskVerdict(
