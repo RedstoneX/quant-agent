@@ -67,10 +67,11 @@ def normalize_sector_stance(value) -> str | None:
 # Reverse of SECTOR_STANCE_TO_DIRECTION for restoring the live model shape
 # from MacroStore's {sector: bullish|neutral|bearish} snapshot. Not an
 # invented stance — it is the same map, run backwards.
+# Built in one expression and never mutated: the reverse map fills the gaps
+# (first stance wins, as setdefault would), the explicit entries override.
 _DIRECTION_TO_STANCE: dict[str, str] = {
+    **{_d: _s for _s, _d in reversed(SECTOR_STANCE_TO_DIRECTION.items())},
     "bullish": "overweight",
     "bearish": "underweight",
     "neutral": "neutral",
 }
-for _stance, _direction in SECTOR_STANCE_TO_DIRECTION.items():
-    _DIRECTION_TO_STANCE.setdefault(_direction, _stance)
