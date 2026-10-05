@@ -18,10 +18,13 @@ def test_the_trunk_board_is_actually_parsed():
     board_rot_guard.trunk_flagged()  # refuses if the trunk board parses to nothing
 
 
+_LOC = ("docs/WORK.md", "docs/board_notes")
+
+
 def test_a_vacuous_reference_board_is_refused_not_passed(monkeypatch):
     """A board the parser could not read must refuse, never report clean."""
     monkeypatch.setattr(board_rot_guard, "_measure",
-                        lambda root: (set(), ["the queue could not be read."]))
+                        lambda root, located: (set(), ["the queue could not be read."]))
     with pytest.raises(ReferenceUnavailable) as exc:
         board_rot_guard.trunk_flagged()
     assert "vacuous" in str(exc.value)
@@ -57,7 +60,7 @@ def _board_root(tmp_path: Path, text: str) -> Path:
 def test_a_small_but_whole_board_is_measured_not_refused(tmp_path):
     """Finishing work is not a parse failure: one open item, or none, passes."""
     flagged, problems = board_rot_guard._measure(
-        _board_root(tmp_path, _SMALL_VALID_BOARD))
+        _board_root(tmp_path, _SMALL_VALID_BOARD), _LOC)
     assert problems == []
     assert flagged == set()
 
@@ -65,7 +68,7 @@ def test_a_small_but_whole_board_is_measured_not_refused(tmp_path):
         "OPEN: still being built.**", "DONE 2026-10-04: built.**"
     ).replace("- [ ] the thing", "- [x] the thing")
     flagged, problems = board_rot_guard._measure(
-        _board_root(tmp_path / "zero_open", all_done))
+        _board_root(tmp_path / "zero_open", all_done), _LOC)
     assert problems == []
     assert flagged == {"item 1"}  # zero open items is a readable state
 
@@ -88,7 +91,7 @@ def test_an_unreadable_or_truncated_board_is_refused(tmp_path, damage):
     root = _board_root(tmp_path, broken if broken is not None else "")
     if broken is None:
         (root / "docs" / "WORK.md").unlink()
-    flagged, problems = board_rot_guard._measure(root)
+    flagged, problems = board_rot_guard._measure(root, _LOC)
     assert problems, "a damaged board measured as whole"
     assert flagged == set()
 
