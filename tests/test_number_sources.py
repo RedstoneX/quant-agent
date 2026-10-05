@@ -36,7 +36,6 @@ from src.number_sources import (
     deployed_values,
     load_ledger,
     load_ratchet_history,
-    trunk_arbitrary_count,
 )
 
 # --------------------------------------------------------------------------
@@ -90,56 +89,28 @@ def test_an_in_file_alias_is_not_a_second_site() -> None:
     assert not [i for i in ids if "_EARNINGS_XBRL_COMPARABLE_FIELDS" in i]
 
 
-def test_the_arbitrary_count_may_not_rise_above_the_trunks() -> None:
-    """Rule 5, against the live tree. The count of `status: arbitrary` rows
-    may fall and may stay level; it may not rise above the same count on
-    `origin/main`.
+def test_no_row_dodges_into_arbitrary_against_the_trunk() -> None:
+    """Rule 5, against the live tree, keyed on row IDENTITY.
 
-    It used to be an EQUALITY against a stored sum: the deltas in
-    `config/number_ledger_history.yaml`, added up. That shape had two
-    defects, and on 2026-10-05 both fired at once. The sum accepted a
-    POSITIVE delta, so a change that hit the ratchet at 131 against 127
-    appended `+4` and went green — the ceiling raised to fit the change, in
-    the opposite direction to the standing order to drive the count to zero.
-    And the reference was a committed file, so it could be edited at all.
-    Both are gone: the reference is the trunk's own ledger, read at check
-    time, and there is nothing to append to.
+    It was a COUNT: the number of `arbitrary` rows could not rise above the
+    trunk's. A count is a proxy and conflates two different acts. Downgrading
+    a row the trunk already sources, to avoid the work, is the dodge the rule
+    exists to refuse. A sweep registering a number the ledger never held, and
+    saying honestly that nothing backs it, is the only way the standing order
+    to drive every made-up number to zero can begin on a number nobody had
+    scoped -- and the count refused that too, rewarding leaving numbers
+    unscoped and invisible. A count is also satisfied by a net-zero swap.
+
+    So each row is judged by its own id against the trunk: a non-arbitrary
+    row turning `arbitrary` is refused; a row new to the ledger may enter
+    `arbitrary` only carrying both `settles_by` and `open_question`.
     """
-    live = len([e for e in load_ledger().values() if e.get("status") == "arbitrary"])
-    trunk = trunk_arbitrary_count()
-    assert live <= trunk, (
-        f"the arbitrary count rises from {trunk} on the trunk to {live} here. "
-        "Source, measure or reformulate the number away, or revert the "
-        "reclassification. There is no ceiling to raise."
-    )
-
-
-def test_the_ratchet_refuses_a_rise_and_allows_a_fall(monkeypatch) -> None:
-    """It bites. Two synthetic references against the real ledger: a trunk
-    one row LOWER than this tree (the tree added an arbitrary number) must
-    produce a `ratchet` problem, and a trunk one row HIGHER (the tree retired
-    one) must not. The old shape passed the first case the moment somebody
-    appended a positive delta, which is the whole reason it is gone.
-    """
-    import src.number_sources as ns
-
-    live = len([e for e in load_ledger().values() if e.get("status") == "arbitrary"])
-
-    monkeypatch.setattr(ns, "trunk_arbitrary_count", lambda: live - 1)
-    added = [p for p in ns.audit() if p.kind == "ratchet"]
-    assert added, "a change that ADDS an arbitrary number must be refused"
-    assert "RISES" in added[0].detail
-
-    monkeypatch.setattr(ns, "trunk_arbitrary_count", lambda: live + 1)
-    assert not [p for p in ns.audit() if p.kind == "ratchet"], (
-        "retiring an arbitrary number must pass; the standing order is to "
-        "drive the count to zero"
-    )
+    assert not [p for p in audit() if p.kind == "ratchet"]
 
 
 def test_the_ratchet_stores_nothing_and_has_no_ceiling() -> None:
     """The regression guard for the shape, not for the number. A stored
-    count — a literal, or a file of deltas that are summed — can be edited
+    count -- a literal, or a file of deltas that are summed -- can be edited
     upward by the change it is supposed to refuse. Neither may come back.
     """
     root = Path(__file__).resolve().parent.parent
@@ -151,10 +122,11 @@ def test_the_ratchet_stores_nothing_and_has_no_ceiling() -> None:
     assert not re.search(r"MAX_ARBITRARY_ENTRIES", text), (
         "a stored ceiling is what open change 1430 raised by +4 to go green"
     )
-    assert "def trunk_arbitrary_count" in (root / "src" / "number_ledger_counts.py").read_text(encoding="utf-8")
+    counts = (root / "src" / "number_ledger_counts.py").read_text(encoding="utf-8")
+    assert "def trunk_statuses" in counts and "def ratchet_violations" in counts
 
 
-def test_the_arbitrary_count_counts_numbers_not_rows() -> None:
+def test_a_mirrored_constant_is_one_number_not_two() -> None:
     """A mirrored constant is ONE number with two definition sites. Recording
     both as `arbitrary` would inflate the count and let the headline metric be
     improved by consolidating files rather than by sourcing anything, so a
@@ -172,9 +144,6 @@ def test_the_arbitrary_count_counts_numbers_not_rows() -> None:
     for site_id, base in mirrors.items():
         assert ledger[site_id]["status"] == "derived", site_id
         assert ledger[site_id]["derived_from"] == base, site_id
-
-    values = [e["value"] for e in ledger.values() if e.get("status") == "arbitrary"]
-    assert len(values) <= trunk_arbitrary_count()
 
 
 def test_item_138_order_price_buffers_have_one_source_each() -> None:

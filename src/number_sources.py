@@ -298,7 +298,9 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 from src.number_ledger_counts import (  # noqa: E402,F401 -- lifted verbatim
     LEDGER_RELATIVE,
     count_arbitrary,
+    ratchet_violations,
     trunk_arbitrary_count,
+    trunk_statuses,
 )
 
 
@@ -935,30 +937,16 @@ def audit(
     if ledger_path is not None and ledger_path != LEDGER_PATH:
         return sorted(problems, key=lambda p: (p.kind, p.site_id))
 
-    # 5. RATCHET, DOWN-ONLY, measured against the trunk at check time. The
-    #    count may fall and may stay level; it may not rise. Deletion-gaming
-    #    (move a constant into an unscoped file, drop its row) is rule 6's
-    #    job -- scripts/unscoped_number_guard.py ratchets the unscoped side --
-    #    so this rule no longer needs an equality to cover it, and an
-    #    equality is what made the ceiling movable upward by hand.
-    arbitrary = [i for i, e in ledger.items() if e.get("status") == "arbitrary"]
-    trunk_count = trunk_arbitrary_count()
-    if len(arbitrary) > trunk_count:
-        problems.append(
-            LedgerProblem(
-                "ratchet",
-                "<ledger>",
-                f"the `arbitrary` count RISES to {len(arbitrary)}; the trunk "
-                f"holds {trunk_count}. This ratchet is down-only and there is "
-                f"no ceiling to raise: the reference is the trunk's own "
-                f"config/number_ledger.yaml, read at check time, so there is "
-                f"nothing to append to and nothing to edit. Source, measure "
-                f"or reformulate the number away, or revert whatever "
-                f"reclassified an existing row to `arbitrary`. Adding an "
-                f"unsourced trade-governing number is an owner decision "
-                f"(docs/OUTCOME.md).",
-            )
-        )
+    # 5. RATCHET, KEYED ON ROW IDENTITY, measured against the trunk at check
+    #    time. A count is a proxy and cannot tell DODGING (a row the trunk
+    #    sources, downgraded here to `arbitrary` to avoid the work) from
+    #    DISCOVERY (a sweep registering a number the ledger never held). The
+    #    first is refused absolutely; the second is admitted only with a
+    #    route to settlement. Leaving `arbitrary` is always allowed, and a
+    #    net-zero swap -- one row dodging down while another is sourced up --
+    #    no longer passes, because the dodging row is named.
+    for site_id, detail in ratchet_violations(ledger, trunk_statuses()):
+        problems.append(LedgerProblem("ratchet", site_id, detail))
 
     # 8. SETTLEMENT ROUTE, board item 90's half two. An `arbitrary` row is
     #    only tolerable as item 90's state 3 -- unsourceable today, with a
