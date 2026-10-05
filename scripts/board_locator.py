@@ -39,3 +39,11 @@ def working_board() -> tuple[str, str]:
 
 def trunk_board() -> tuple[str, str]:
     return locate(trunk_paths(".md"), trunk_blobs, "the trunk")
+
+
+def working_board_path() -> str | None:
+    """The working tree's board path, or None when it cannot be located."""
+    try:
+        return working_board()[0]
+    except ReferenceUnavailable:
+        return None

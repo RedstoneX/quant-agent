@@ -128,8 +128,14 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from scripts.board_locator import working_board
-from scripts.guard_reference import ReferenceUnavailable
+from scripts.board_item_blocks import (  # noqa: F401
+    CRITERION,
+    DONE_WHEN,
+    ITEM_HEADING,
+    criteria,
+    item_blocks,
+)
+from scripts.board_locator import working_board_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -198,12 +204,6 @@ def base_ref(repo: Path | None = None) -> str | None:
     _git("fetch", "-q", "origin", "main", repo=repo)
     r = _git("merge-base", "HEAD", "origin/main", repo=repo)
     return r.stdout.strip() or None
-
-
-def get_work_md_path(repo: Path | None = None) -> str:
-    """The board path via board_locator, or raise ReferenceUnavailable."""
-    work_md_path, _ = working_board()
-    return work_md_path
 
 
 def is_shallow(repo: Path | None = None) -> bool:
@@ -385,9 +385,8 @@ class Change:
         base = base_ref(repo)
         if not base:
             return None
-        try:
-            work_md_path = get_work_md_path(repo)
-        except ReferenceUnavailable:
+        work_md_path = working_board_path()
+        if work_md_path is None:
             return None
         after = Path(work_md_path)
         return cls(
@@ -406,7 +405,6 @@ class Change:
 
 #: `**39(a). Title — status.**` — the heading form every item in
 #: `docs/WORK.md` already uses. Verified against the file, not its prose.
-ITEM_HEADING = re.compile(r"^\*\*(\d+)\.\s", re.M)
 
 #: The line that retires an item. Editing it IS a closure whatever the
 #: description says — the same signal `scripts/work_queue.py` uses.
@@ -430,12 +428,6 @@ RETIRED_LINE_PREFIX = "**Retired item numbers"
 _LEGACY_RETIRED_RUN = re.compile(
     r"^\*\*Retired item numbers[^*]*\*\*\s*((?:\d+\s*,\s*)*\d+)\b")
 
-#: A filed item's own completion criteria. One label, then one bullet per
-#: criterion, checkbox-style so "met" is a one-character edit and a diff
-#: shows it. The identifier is the bullet's ordinal within its item.
-DONE_WHEN = re.compile(r"^\s*DONE WHEN:\s*$", re.M)
-CRITERION = re.compile(r"^\s*[-*]\s*\[( |x|X)\]\s*(.+?)\s*$", re.M)
-
 TRAILER = r"^[ \t]*{key}[ \t]*:[ \t]*(.+?)[ \t]*$"
 
 
@@ -443,41 +435,6 @@ def trailer(messages: str, key: str) -> list[str]:
     """Every value given for a trailer key across this change's commits."""
     pattern = re.compile(TRAILER.format(key=re.escape(key)), re.I | re.M)
     return [m.group(1) for m in pattern.finditer(messages or "")]
-
-
-def item_blocks(work_md: str | None) -> dict[str, str]:
-    """Item number -> the text from its heading to the next item's heading."""
-    if not work_md:
-        return {}
-    marks = [(m.group(1), m.start()) for m in ITEM_HEADING.finditer(work_md)]
-    out: dict[str, str] = {}
-    for i, (number, start) in enumerate(marks):
-        end = marks[i + 1][1] if i + 1 < len(marks) else len(work_md)
-        out[number] = work_md[start:end]
-    return out
-
-
-def criteria(block: str) -> list[tuple[int, bool, str]]:
-    """`(ordinal, met, text)` for each criterion under this item's DONE WHEN.
-
-    Reads the bullets that follow the label and stops at the first line that
-    is neither a criterion bullet nor blank, so ordinary item prose below the
-    criteria is not swept in.
-    """
-    match = DONE_WHEN.search(block)
-    if not match:
-        return []
-    out: list[tuple[int, bool, str]] = []
-    ordinal = 0
-    for line in block[match.end():].splitlines():
-        if not line.strip():
-            continue
-        bullet = CRITERION.match(line)
-        if not bullet:
-            break
-        ordinal += 1
-        out.append((ordinal, bullet.group(1).lower() == "x", bullet.group(2)))
-    return out
 
 
 def retired_numbers(work_md: str | None) -> set[str]:
