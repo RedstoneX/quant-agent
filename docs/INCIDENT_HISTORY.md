@@ -18187,6 +18187,16 @@ Root disk was 89% full; a daily sweep (`~/.claude/disk-sweep.sh`, outside the re
 
 **Still open.** The substitute was never measured, because the trade seat's model choice is closed on 148 trials and benchmarking it would reopen that ruling. The production rows for the acceptance recording were still empty when this was closed, and nothing reads `llm_route_events` back yet.
 
+## The rehearsal replay was not hermetic (item 202, closed 2026-10-04)
+
+**What was wrong.** A replay of a RECORDED session still reached live providers: market data, FRED, the news and reference feeds, a fourth LLM transport, the sector lookup, and six more raw routes (UDP, async and raw libcurl, a curl subprocess, DNS).
+
+**What changed.** Every one of those routes is recorded and replayed, a missing recorded input stops the replay instead of degrading, every blocked outbound attempt is journalled and voids the run, and the test suite is closed at the socket with no allow-list. Eight of nine boxes were ticked by 2026-10-01.
+
+**Proof.** `docs/board_notes/item-202.md` carries the per-box evidence; the conftest network guard and `QAMC_NETWORK_JOURNAL` name any test that still reaches off-box.
+
+**Still open.** Nothing buildable. The ninth box (a real rehearsal against the production snapshot) was withdrawn on 2026-10-04 by the owner ruling that froze the rehearsal rig as too expensive to keep a second machine; hand-written hermetic end-to-end tests replace it, filed as item 233.
+
 ## Owner alerts showed a time with no date (item 231, 2026-10-04)
 
 **What was wrong.** The owner reads alerts on a phone hours after they fire, and 24 places showed a bare time that could not be placed once he scrolled back.
