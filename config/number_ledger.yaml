@@ -7416,7 +7416,7 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/intraday/session.py::IntradaySession._run_intra_check_body). The LIVE number is the keyword literal at
+      (src/prompt_facts/missed_ops_signals.py::MissedOpsSignals._build_missed_opportunities_digest). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.prompt_facts.missed_ops_signals.MissedOpsSignals._build_missed_opportunities_digest(min_top_mover_dollar_volume_m)
@@ -7456,7 +7456,7 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/intraday/session.py::IntradaySession._run_intra_check_body). The LIVE number is the keyword literal at
+      (src/prompt_facts/missed_ops_signals.py::MissedOpsSignals._build_missed_opportunities_digest). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
       Tracked by docs/WORK.md item 177, the intraday-tick cluster: this
@@ -7498,7 +7498,7 @@ numbers:
     site: src/prompt_facts/missed_ops_signals.py
     note: >-
       Dead default: the only caller passes this argument explicitly
-      (src/intraday/session.py::IntradaySession._run_intra_check_body). The LIVE number is the keyword literal at
+      (src/prompt_facts/missed_ops_signals.py::MissedOpsSignals._build_missed_opportunities_digest). The LIVE number is the keyword literal at
       that call site, which no scanner rule sees -- reported as a gap, not
       ledgered here.
   - id: src.prompt_facts.decisions.PromptDecisions._build_own_recent_decisions(limit)
