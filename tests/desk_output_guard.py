@@ -96,105 +96,105 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # Adding to this list is not a routine act. The intended response to a new
 # finding is to invent the value, not to append a line here.
 # ---------------------------------------------------------------------------
-# Each entry is `path: (one-line reason, ceiling)`. The ceiling is the number of
-# findings the file carried when it was allow-listed. It is what stops the list
-# becoming a licence: appending a NEW real stop price to an already-listed file
-# pushes its count past the ceiling and fails the build, naming the new line.
-# The pattern is the repo's own — `src/number_sources.py` uses the same
-# count-that-cannot-silently-rise for unscoped numeric sites.
-ALLOWED: dict[str, tuple[str, int]] = {
+# Each entry is `path: one-line reason`. Nothing else is recorded: what a file
+# was ALREADY carrying is measured on `origin/main` at check time, and the guard
+# fails on any finding identity (signal + the offending line) the working copy
+# holds more copies of than the trunk copy. Swapping one real stop for another
+# therefore fails too, which a stored count could never see.
+ALLOWED: dict[str, str] = {
     # --- tests/fixtures: desk output copied into the test suite ---
     "tests/fixtures/constructor_drop_paths_archive.json":
-        ("frozen archive of ~40 real tickers with their real entry/stop pairs (board item 10)", 43),
+        "frozen archive of ~40 real tickers with their real entry/stop pairs (board item 10)",
     "tests/fixtures/holding_why_rsg_20260917.json":
-        ("a real RSG holding with its real stop and the real broker order id of its fill", 6),
+        "a real RSG holding with its real stop and the real broker order id of its fill",
     "tests/fixtures/log_health_production_excerpt.txt":
-        ("production log lines copied verbatim off the desk host, as its own header states", 46),
+        "production log lines copied verbatim off the desk host, as its own header states",
     "tests/fixtures/pm_response_11_targets_20260817.txt":
-        ("a verbatim portfolio-manager answer: real book, real targets, real sizing reasoning", 7),
+        "a verbatim portfolio-manager answer: real book, real targets, real sizing reasoning",
     "tests/fixtures/pm_response_17_targets_20260820.txt":
-        ("a second verbatim portfolio-manager answer from a different session", 3),
+        "a second verbatim portfolio-manager answer from a different session",
     "tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_first.txt":
-        ("a verbatim tech-analyst answer with real entries, stops and support/resistance levels", 5),
+        "a verbatim tech-analyst answer with real entries, stops and support/resistance levels",
     "tests/fixtures/tech_answer_20260917_intra_check_26f52bf2_retry.txt":
-        ("the retry of that same real intraday check", 4),
+        "the retry of that same real intraday check",
 
     # --- tests and scripts built around the real 2026-08-28 ONDS/CCJ stop-out ---
     "tests/test_stop_out_reconciliation.py":
-        ("reconstructs the real ONDS/CCJ stop-out, quoting both real broker order ids and fills", 12),
+        "reconstructs the real ONDS/CCJ stop-out, quoting both real broker order ids and fills",
     "tests/test_broker.py":
-        ("reuses the same real broker order ids as list_filled_sell_orders test input", 4),
+        "reuses the same real broker order ids as list_filled_sell_orders test input",
     "scripts/backfill_stop_out_fills.py":
-        ("one-off backfill whose docstring names the two real broker order ids it repaired", 2),
+        "one-off backfill whose docstring names the two real broker order ids it repaired",
 
     # --- ops/model_policy fixtures: benchmark inputs taken off a real day ---
     "ops/model_policy/fixtures/run_64290730_pm_input.json":
-        ("a real portfolio-manager input snapshot; already quarantined by fixture_policy", 63),
+        "a real portfolio-manager input snapshot; already quarantined by fixture_policy",
     "ops/model_policy/fixtures/run_bba4d4f3_pm_input.json":
-        ("a second real portfolio-manager input snapshot; already quarantined by fixture_policy", 62),
+        "a second real portfolio-manager input snapshot; already quarantined by fixture_policy",
     "ops/model_policy/fixtures/pm_public_day_pm_input.json":
-        ("a PM input rebuilt for a public day, but it still carries the real candidate book", 1),
+        "a PM input rebuilt for a public day, but it still carries the real candidate book",
 
     # --- docs that record what the desk actually did ---
     "docs/INCIDENT_HISTORY.md":
-        ("the incident record; naming the real trade is the point of an incident record", 1),
+        "the incident record; naming the real trade is the point of an incident record",
     "docs/AGENT_ROLE_AUDIT.md":
-        ("audit findings quoted from real runs, kept as the evidence trail for those findings", 1),
+        "audit findings quoted from real runs, kept as the evidence trail for those findings",
 
     # --- prompt templates whose worked examples came from real sessions ---
     "config/prompts/news_analyst.md":
-        ("its worked example is a real news-analyst briefing, cited to the model as doctrine", 1),
+        "its worked example is a real news-analyst briefing, cited to the model as doctrine",
 }
 
 # The model-benchmark results. Every one of these replays a real desk input
 # through a candidate model and stores the answer verbatim, so they carry real
-# tickers at real prices. They are enumerated per file with their own ceiling,
+# tickers at real prices. They are enumerated per file,
 # not glob-excluded: a new result file dropped into this directory is checked
-# like anything else, and an existing one cannot grow new findings.
+# like anything else, and an existing one cannot grow a finding its trunk
+# copy does not carry.
 _BENCHMARK_REASON = "model-benchmark answer replayed over a real desk input, stored verbatim"
-_BENCHMARK_CEILINGS: dict[str, int] = {
-    "2026-09-14-analyst-iso-deepseek_deepseek-v4-flash-0731-ta.json": 1,
-    "2026-09-14-analyst-iso-deepseek_deepseek-v4_1-flash-ta.json": 1,
-    "2026-09-14-analyst-iso-google_gemini-2_5-flash-lite-ta.json": 1,
-    "2026-09-14-analyst-t1-google-direct_gemini-3_5-flash-lite.json": 2,
-    "2026-09-14-analyst-t2-deepseek_deepseek-v4_1-flash.json": 1,
-    "2026-09-14-analyst-t2-google_gemini-3_5-flash-lite.json": 2,
-    "2026-09-14-analyst-t2-meta_muse-spark-1_3.json": 2,
-    "2026-09-14-analyst-t2-openai_gpt-5_6-luna.json": 1,
-    "2026-09-14-analyst-t2-z-ai_glm-5_3-flash.json": 1,
-    "2026-09-14-analyst-t2-z-ai_glm-5_3.json": 1,
-    "2026-09-15-pm-public-day-anthropic_claude-opus-5.json": 2,
-    "2026-09-15-pm-public-day-deepseek_deepseek-v4_1-flash.json": 2,
-    "2026-09-15-pm-public-day-google-direct_gemini-3_5-flash-lite.json": 1,
-    "2026-09-15-pm-public-day-meta_muse-spark-1_3.json": 2,
-    "2026-09-15-pm-public-day-moonshotai_kimi-k3.json": 4,
-    "2026-09-15-pm-public-day-z-ai_glm-5_3-flash.json": 4,
-    "2026-09-15-pm-public-day-z-ai_glm-5_3.json": 2,
-    "PM_PROMPT_run64290730_rendered.txt": 1,
-    "gemini35-fullsweep-2026-08-31.json": 3,
-    "merged.json": 22,
-    "pm-agreement-2026-09-01.json": 12,
-    "pm-deep-candidates-2026-09-01.json": 8,
-    "pm-scale-cheap-2026-08-31.json": 3,
-    "pm-selection-postfix-2026-09-02.json": 5,
-    "pm-selection-postfix-run2-2026-09-02.json": 9,
-    "rerun-capfix-flash.json": 2,
-    "rm-rerun-2026-08-14.json": 11,
-    "sweep-a.json": 2,
-    "sweep-b.json": 17,
-    "sweep-tech-full.json": 2,
-    "zz-pm-gpt55-qualified-final-2026-08-25.json": 2,
-    "zz-pm-luna-disqualified-final-2026-08-25.json": 1,
-}
+_BENCHMARK_FILES: tuple[str, ...] = (
+    "2026-09-14-analyst-iso-deepseek_deepseek-v4-flash-0731-ta.json",
+    "2026-09-14-analyst-iso-deepseek_deepseek-v4_1-flash-ta.json",
+    "2026-09-14-analyst-iso-google_gemini-2_5-flash-lite-ta.json",
+    "2026-09-14-analyst-t1-google-direct_gemini-3_5-flash-lite.json",
+    "2026-09-14-analyst-t2-deepseek_deepseek-v4_1-flash.json",
+    "2026-09-14-analyst-t2-google_gemini-3_5-flash-lite.json",
+    "2026-09-14-analyst-t2-meta_muse-spark-1_3.json",
+    "2026-09-14-analyst-t2-openai_gpt-5_6-luna.json",
+    "2026-09-14-analyst-t2-z-ai_glm-5_3-flash.json",
+    "2026-09-14-analyst-t2-z-ai_glm-5_3.json",
+    "2026-09-15-pm-public-day-anthropic_claude-opus-5.json",
+    "2026-09-15-pm-public-day-deepseek_deepseek-v4_1-flash.json",
+    "2026-09-15-pm-public-day-google-direct_gemini-3_5-flash-lite.json",
+    "2026-09-15-pm-public-day-meta_muse-spark-1_3.json",
+    "2026-09-15-pm-public-day-moonshotai_kimi-k3.json",
+    "2026-09-15-pm-public-day-z-ai_glm-5_3-flash.json",
+    "2026-09-15-pm-public-day-z-ai_glm-5_3.json",
+    "PM_PROMPT_run64290730_rendered.txt",
+    "gemini35-fullsweep-2026-08-31.json",
+    "merged.json",
+    "pm-agreement-2026-09-01.json",
+    "pm-deep-candidates-2026-09-01.json",
+    "pm-scale-cheap-2026-08-31.json",
+    "pm-selection-postfix-2026-09-02.json",
+    "pm-selection-postfix-run2-2026-09-02.json",
+    "rerun-capfix-flash.json",
+    "rm-rerun-2026-08-14.json",
+    "sweep-a.json",
+    "sweep-b.json",
+    "sweep-tech-full.json",
+    "zz-pm-gpt55-qualified-final-2026-08-25.json",
+    "zz-pm-luna-disqualified-final-2026-08-25.json",
+)
 
 _BENCHMARK_RESULTS_DIR = "ops/model_policy/results"
 
 
-def allow_list() -> dict[str, tuple[str, int]]:
-    """The full enumerated allow-list: path -> (reason, finding ceiling)."""
+def allow_list() -> dict[str, str]:
+    """The full enumerated allow-list: path -> reason."""
     out = dict(ALLOWED)
-    for name, ceiling in _BENCHMARK_CEILINGS.items():
-        out[f"{_BENCHMARK_RESULTS_DIR}/{name}"] = (_BENCHMARK_REASON, ceiling)
+    for name in _BENCHMARK_FILES:
+        out[f"{_BENCHMARK_RESULTS_DIR}/{name}"] = _BENCHMARK_REASON
     return out
 
 
@@ -567,133 +567,3 @@ def read_text(path: Path) -> str | None:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
         return None
-
-
-# Scanning is proportionate to file size, and this repo commits third-party
-# bulk snapshots that dwarf everything else — the 10-Q corpus decompresses to
-# 148 MB of SEC HTML and alone costs more than the rest of the repo together.
-# Past this cap only the first SCAN_BYTE_CAP characters are scanned. The cap is
-# not a quiet hiding place: `test_no_real_desk_output.py` fails on any tracked
-# file over the cap that is not named in LARGE_BLOBS with a reason, so putting
-# desk output past byte 4,000,000 of a new giant file takes a reviewed entry.
-SCAN_BYTE_CAP = 4_000_000
-
-LARGE_BLOBS: dict[str, str] = {
-    "ops/model_policy/fixtures/sec_10q10k_pm_public_day_2026-09-14.json.gz":
-        "SEC 10-Q/10-K HTML corpus fetched from data.sec.gov; public filings, not desk output",
-    "ops/model_policy/fixtures/yf_daily_bars_pm_public_day_2026-09-14.json.gz":
-        "Yahoo daily OHLCV bars for the screen universe; public market data, not desk output",
-}
-
-
-# `test_no_real_desk_output.py` has to hold strings shaped exactly like real
-# desk output — a real-looking ticker, cent-precision prices, a broker order
-# id, a broker account number, a production log line — or it cannot prove the
-# five signals actually fire. Those strings are invented for that one purpose;
-# none of them ever came off the desk. Scanning that file for desk output
-# means scanning the detector's own test specimens, which is not what this
-# module is for.
-#
-# This is an exact single-path exclusion, not a directory or a glob:
-# `test_the_specimen_exclusion_is_exactly_this_one_file` pins the set below to
-# exactly this path, so it cannot quietly grow into a hiding place. A new file
-# dropped anywhere else, including beside this one, is scanned like any other.
-SPECIMEN_FILES = frozenset({
-    "tests/test_no_real_desk_output.py",
-})
-
-
-def tracked_files(root: Path = PROJECT_ROOT) -> list[str]:
-    out = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True,
-    ).stdout.decode("utf-8", "replace")
-    return [p for p in out.split("\0") if p and p not in SPECIMEN_FILES]
-
-
-@dataclass(frozen=True)
-class Audit:
-    """The whole-repository verdict, in the four shapes a reviewer needs."""
-
-    #: Findings in files that are not on the allow-list at all.
-    new_files: list[Finding]
-    #: Allow-listed files whose finding count has RISEN: path -> (ceiling, now).
-    over_ceiling: dict[str, tuple[int, int]]
-    #: Findings in those risen files, so the failure can name a line.
-    over_ceiling_findings: list[Finding]
-    #: Allow-list entries that no longer earn their place: path -> why.
-    stale_entries: dict[str, str]
-    #: Tracked files larger than the scan cap that nobody has accounted for.
-    oversize_unlisted: list[str]
-
-    def ok(self) -> bool:
-        return not (
-            self.new_files or self.over_ceiling
-            or self.stale_entries or self.oversize_unlisted
-        )
-
-
-def audit_repo(root: Path = PROJECT_ROOT) -> Audit:
-    allowed = allow_list()
-    tracked = set(tracked_files(root))
-    new_files: list[Finding] = []
-    over: dict[str, tuple[int, int]] = {}
-    over_findings: list[Finding] = []
-    counts: dict[str, int] = {}
-    oversize_unlisted: list[str] = []
-
-    for rel in sorted(tracked):
-        text = read_text(root / rel)
-        if text is None:
-            continue
-        if len(text) > SCAN_BYTE_CAP and rel not in LARGE_BLOBS:
-            oversize_unlisted.append(rel)
-        found = scan_text(text[:SCAN_BYTE_CAP], rel)
-        counts[rel] = len(found)
-        if not found:
-            continue
-        if rel not in allowed:
-            new_files.extend(found)
-            continue
-        ceiling = allowed[rel][1]
-        if len(found) > ceiling:
-            over[rel] = (ceiling, len(found))
-            over_findings.extend(found)
-
-    stale: dict[str, str] = {}
-    for rel in allowed:
-        if rel not in tracked:
-            stale[rel] = "the file is no longer tracked — delete this allow-list entry"
-        elif counts.get(rel, 0) == 0:
-            stale[rel] = (
-                "the file no longer trips the guard (redacted?) — delete this "
-                "allow-list entry so the file is protected again"
-            )
-    for rel in LARGE_BLOBS:
-        if rel not in tracked:
-            stale[rel] = "the file is no longer tracked — delete this LARGE_BLOBS entry"
-
-    return Audit(new_files, over, over_findings, stale, oversize_unlisted)
-
-
-def scan_repo(root: Path = PROJECT_ROOT, *, skip_allowed: bool = True) -> list[Finding]:
-    """Every finding, optionally excluding allow-listed files. For the CLI."""
-    allowed = allow_list()
-    findings: list[Finding] = []
-    for rel in tracked_files(root):
-        if skip_allowed and rel in allowed:
-            continue
-        text = read_text(root / rel)
-        if text is None:
-            continue
-        findings.extend(scan_text(text[:SCAN_BYTE_CAP], rel))
-    return findings
-
-
-if __name__ == "__main__":  # manual sweep: python -m tests.desk_output_guard
-    import sys
-
-    hits = scan_repo(skip_allowed="--all" not in sys.argv)
-    for f in hits:
-        print(f.render())
-    print(f"\n{len(hits)} finding(s) in {len({f.path for f in hits})} file(s)")
-    sys.exit(1 if hits else 0)

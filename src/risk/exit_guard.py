@@ -43,6 +43,9 @@ from datetime import date
 from collections.abc import Mapping
 from typing import Literal
 from src.risk.noise_band_record import fallback_outcome as noise_band_fallback_outcome
+from src.risk.exit_guard_structural import (  # noqa: F401 -- lifted verbatim, re-exported
+    _consecutive_prior_break_count, _structural_level_backing_stop,
+)
 from src.risk.noise_band_anchor import (  # noqa: F401 -- noise_band_anchor re-exported
     anchored_adverse_move, band_width_atr, noise_band_anchor,
 )
@@ -73,6 +76,7 @@ __all__ = [
     "adverse_move_is_noise",
     "noise_band_anchor",
     "noise_band_atr",
+    "FALLBACK_PROTECTION_ATR_MULTIPLE",
     "NOISE_BAND_ATR_MULTIPLE",
     "BREAK_CONFIRMATION_ATR_MULTIPLE",
     "ThesisInvalidationCheck",
@@ -495,6 +499,50 @@ def veto_contradicted_exit(
 #: one session get a wider band than before.
 NOISE_BAND_ATR_MULTIPLE = 1.0
 
+#: BOARD ITEM 70, THE SECOND SPLIT (2026-10-04). The constant above was
+#: still doing TWO jobs, which the settlement recording added earlier the
+#: same day made visible for the first time: the two homes of the "noise
+#: band" do not compute the same quantity, and sharing one name hid that.
+#:
+#:   HOME 1, the midday gate in `src/pipeline_exits.py`, in front of every
+#:   non-external SELL/REDUCE/COVER: band = NOISE_BAND_ATR_MULTIPLE * ATR *
+#:   sqrt(trading sessions held), anchored on AVERAGE ENTRY. It asks how far
+#:   a holding must travel against the price the desk PAID before the move
+#:   stops being ordinary dispersion, and it grows with elapsed trading time
+#:   on the random-walk basis documented above.
+#:
+#:   HOME 2, the `check_structural_protection` fallback below, reached only
+#:   when a holding has neither a checkable `thesis_invalid_if` nor a
+#:   qualifying structural level under its stop: band = this constant * ATR,
+#:   FLAT, with no hold length passed at all, anchored on the RUNNING
+#:   EXTREME SINCE ENTRY rather than on entry. It asks a different question
+#:   -- how far a holding the structure test cannot read must move against
+#:   its own high-water mark before last-resort protection is lifted.
+#:
+#: Two anchors, one time-scaled and one not, so for the SAME holding on the
+#: SAME day the one named constant yielded two different widths. That is the
+#: defect board item 70 exists to end, and the fix is the same one applied to
+#: the break margin on 2026-09-26: give each job its own name at the SAME
+#: value, so nothing the desk does changes, and so that deriving one can
+#: never silently move the other.
+#:
+#: UNDERIVED, and this split does not pretend otherwise. `status: arbitrary`
+#: in `config/number_ledger.yaml`. Nothing published measures the distance a
+#: holding with no readable structure must fall below its own extreme before
+#: protection should lift; the volatility-stop literature (~3 ATR, Wilder /
+#: Chandelier / Kaufman) measures a STOP's distance from a running extreme,
+#: which is the nearest analogue but is a stop width, not a
+#: protection-lifting threshold, and adopting it would be a large loosening
+#: of when this desk gives up on a position. The settlement recording this
+#: home now emits (`src/risk/noise_band_record.py`) is what would locate it;
+#: it has accrued nothing, because the desk is off.
+#:
+#: DELIBERATELY EQUAL TO `NOISE_BAND_ATR_MULTIPLE` TODAY. Equal value, not
+#: shared value: the two names may diverge the moment either is derived, and
+#: neither was retuned in this pass. See the no-behaviour-change proof in
+#: `tests/test_fallback_protection_multiple_separation.py`.
+FALLBACK_PROTECTION_ATR_MULTIPLE = 1.0
+
 #: BOARD ITEM 70, THE SPLIT (2026-09-26). Until this date ONE literal `1.0`
 #: did TWO different jobs in the exit path: the noise band above (how far an
 #: adverse move must travel from ENTRY before it stops being ordinary daily
@@ -787,53 +835,6 @@ def render_owner_break_message(
     return f"{sym}: hold-protection kept — it {reason}"
 
 
-def _consecutive_prior_break_count(
-    prior_break_records: list | None,
-    prior_session_dates: list | None,
-    *,
-    clears,
-) -> int:
-    """Count how many CONSECUTIVE prior trading-day closes confirm a break,
-    walking back from the most recent completed session.
-
-    Fixes two cross-day confirmation defects in the raw-streak approach:
-
-      - ADJACENCY (#3). `prior_session_dates` is the exact sequence of
-        completed trading sessions strictly before today's close, most-recent
-        first, taken from the position's own daily bars (the authoritative
-        trading calendar — it already skips weekends and holidays). A prior
-        broken close counts toward the streak ONLY if it sits on the session
-        immediately preceding the last-counted one. A session with no stored
-        read, or a stored read that is not broken, ENDS the streak — so a gap
-        (Friday's break then the following Friday's, with the week between
-        never confirming) can never chain into a false confirmation.
-
-      - MARGIN CONFLATION (#4). `clears(record)` decides whether that day's
-        stored close cleared the margin IN FORCE UNDER TODAY's classification
-        — not merely whether it was flagged broken at the time under whatever
-        (possibly looser) margin then applied. A close that only cleared a
-        looser margin does not count.
-
-    Pure: it reads the records the caller supplies and returns a count. Returns
-    0 when the caller supplies no records/sessions (the caller then falls back
-    to the legacy boolean shorthand).
-    """
-    if not prior_break_records or not prior_session_dates:
-        return 0
-    by_date: dict[str, dict] = {}
-    for r in prior_break_records:
-        d = str(r.get("bar_date") or "").strip()
-        # First-seen wins; the caller supplies at most one row per session, but
-        # if duplicates arrive keep the earliest in iteration order.
-        if d and d not in by_date:
-            by_date[d] = r
-    count = 0
-    for d in prior_session_dates:
-        r = by_date.get(str(d))
-        if r is None or not r.get("raw_broken") or not clears(r):
-            break
-        count += 1
-    return count
 
 
 #: Triggers that come from OUTSIDE the price series. These bypass the noise
@@ -1501,108 +1502,6 @@ class StructuralProtectionCheck:
     owner_reason: str = ""
 
 
-def _structural_level_backing_stop(
-    *,
-    entry_price: float,
-    stop_loss: float,
-    is_short: bool,
-    computed_levels: list | None,
-    computed_level_touches: dict | None,
-    computed_level_zones: dict | None = None,
-    computed_level_bars: dict | None = None,
-    min_level_touches: int,
-    level_cluster_tolerance_pct: float,
-) -> float | None:
-    """The verified structural level nearest `stop_loss`, or None.
-
-    Exact same matching rule as
-    `PortfolioConstructor._level_backing_stop` (side-correctness relative
-    to entry, `min_level_touches` prior touches, closest level whose own
-    ZONE contains the stop) — reimplemented here as a free function, over
-    the same plain data, because that method lives on a class this module
-    must not import (it would be a risk module depending on the
-    constructor, backwards from every other dependency in this codebase)
-    and because the bars it reads off `self.cfg` are passed in here
-    directly by the caller instead. Any behavioural drift between the two
-    would be a bug; there is deliberately only one set of numbers (the
-    caller's), never a second one invented here.
-
-    `level_cluster_tolerance_pct` is NOT a knob. It is
-    `src.data.levels.CLUSTER_TOLERANCE_PCT`, the constant
-    `find_structural_levels` used to build these zones, passed in rather
-    than imported only because this module is deliberately stdlib-only.
-    Every caller must pass exactly that; `tests/test_level_match_zone.py`
-    checks that they all do. Until 2026-09-13 this was an ATR multiple
-    (`level_match_atr_tolerance`, 0.25) claiming to be "at least as wide"
-    as the 1% zone — a claim in a different unit that only held above 4%
-    ATR — see docs/WORK.md item 46 / docs/INCIDENT_HISTORY.md.
-    """
-    touches_by_price = computed_level_touches or {}
-    bars_by_price = computed_level_bars or {}
-    best: float | None = None
-    best_gap = float("inf")
-    for raw in computed_levels or []:
-        try:
-            price = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(price) or price <= 0:
-            continue
-        if is_short and price < entry_price:
-            continue
-        if not is_short and price > entry_price:
-            continue
-        touches = touches_by_price.get(price)
-        if touches is None or touches < min_level_touches:
-            continue
-        # "AT this level", not "inside its band" — docs/WORK.md item 215.
-        # The stop must lie inside the high-low range of at least one BAR
-        # that drew the level. `level_cluster_tolerance_pct` bounds the whole
-        # merged zone, which can span a fifth of the price, so a stop at one
-        # end of it could be taken out with the level never broken and the
-        # desk still reporting the position structurally protected. Missing
-        # bar ranges fail closed to not-backed, same as an unmatched stop.
-        # Mirrors `src.data.levels.stop_rests_on_level`, restated here in
-        # full only because this module imports nothing.
-        if price * level_cluster_tolerance_pct / 100.0 <= 0:
-            continue
-        # OUTWARD BOUND, mirroring `src.data.levels.stop_rests_on_level`: the
-        # level's measured zone must be STRICTLY NARROWER than the trade's own
-        # risk. Membership in a forming bar alone has no ceiling — the zone
-        # edges ARE bar extremes — so without this a stop could be reported
-        # level-backed a fifth of the price away from the level the break
-        # check then evaluates. Fail closed when the risk is unusable.
-        stop_distance = abs(entry_price - stop_loss)
-        if not math.isfinite(stop_distance) or stop_distance <= 0:
-            continue
-        ranges = []
-        for rng in (bars_by_price.get(price) or ()):
-            try:
-                low, high = float(rng[0]), float(rng[1])
-            except (TypeError, ValueError, IndexError):
-                continue
-            if not (math.isfinite(low) and math.isfinite(high)) or low > high:
-                continue
-            ranges.append((low, high))
-        if not ranges:
-            continue
-        if (max(h for _, h in ranges) - min(l for l, _ in ranges)) >= stop_distance:
-            continue
-        rests = False
-        for rng in ranges:
-            try:
-                low, high = float(rng[0]), float(rng[1])
-            except (TypeError, ValueError, IndexError):
-                continue
-            if not (math.isfinite(low) and math.isfinite(high)) or low > high:
-                continue
-            if low <= stop_loss <= high:
-                rests = True
-                break
-        gap = abs(stop_loss - price)
-        if rests and gap < best_gap:
-            best, best_gap = price, gap
-    return best
 
 
 def check_structural_protection(
@@ -1999,9 +1898,10 @@ def check_structural_protection(
     # default to zero protection — that would systematically strip
     # protection from breakout/momentum trades that don't have classic
     # multi-touch support/resistance by design. Fall back instead to the
-    # noise band already used elsewhere in this module
-    # (`adverse_move_is_noise` / `NOISE_BAND_ATR_MULTIPLE`) — no second
-    # noise-band constant. A position with nothing concrete backing its
+    # noise-band MECHANISM already used elsewhere in this module
+    # (`adverse_move_is_noise`), with this home's own named multiple
+    # `FALLBACK_PROTECTION_ATR_MULTIPLE` (board item 70, 2026-10-04 — the
+    # two homes ask different questions and no longer share one name). A position with nothing concrete backing its
     # thesis stays protected unless the adverse move against it exceeds
     # that already-ratified band. This fallback lifts protection
     # immediately — it is not gated by the confirmation rule above, which
@@ -2026,8 +1926,15 @@ def check_structural_protection(
                 ),
                 raw_broken=False,
             )
+        # BOARD ITEM 70 (2026-10-04, the second split): this home uses its
+        # OWN named multiple, `FALLBACK_PROTECTION_ATR_MULTIPLE`, not the
+        # midday gate's `NOISE_BAND_ATR_MULTIPLE`. Same value today, so no
+        # decision moves; different jobs, so deriving one can never silently
+        # move the other. No `days_held` is passed here and that is
+        # deliberate and unchanged -- this home's band is FLAT.
         is_noise = adverse_move_is_noise(
             ent, cur, atr_f, side=("buy" if is_short else "sell"),
+            multiple=FALLBACK_PROTECTION_ATR_MULTIPLE,
             extreme_since_entry=extreme_since_entry,
         )
         # BOARD ITEM 70 (2026-10-04): this home's outcome text, on BOTH
@@ -2036,7 +1943,8 @@ def check_structural_protection(
         # above is the unchanged decision.
         _protected, _basis, _detail = noise_band_fallback_outcome(
             ent=ent, cur=cur, atr_f=atr_f, is_short=is_short,
-            is_noise=bool(is_noise), band_multiple=NOISE_BAND_ATR_MULTIPLE,
+            is_noise=bool(is_noise),
+            band_multiple=FALLBACK_PROTECTION_ATR_MULTIPLE,
             anchor=_anchor, anchor_kind=_anchor_kind,
         )
         return StructuralProtectionCheck(

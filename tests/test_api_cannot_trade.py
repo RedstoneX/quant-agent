@@ -58,6 +58,9 @@ HTTP_WRITE = {"post", "put", "patch", "delete", "api_route", "route", "websocket
 # `ensure_diary_dir`-style local helpers are not broker/db methods, so only
 # broker/db names ever enter the derived set.
 
+# Each door is "api file -> first tainted module"; the reason is the one-line why it stays.
+DOORS: dict[str, str] = {}  # every door is cut; may only shrink, so it stays empty
+
 
 def _parse(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -226,3 +229,31 @@ def test_drift_reader_closure_is_read_only():
         bad = sorted(_rel(f) for f in seen if f.is_relative_to(SRC / "execution")
                      or f.name == "coverage_watchdog.py")
         assert not bad, f"{mod.__name__} reaches the money path:\n" + "\n".join(bad)
+
+
+def tainted_doors() -> set[str]:
+    """Edges api -> non-api module from which some allow-listed write-capable file is reachable."""
+    reach = reachable_files()
+    edges = {f: {m for m in (_module_file(i) for i in _imports(_parse(f))) if m in reach} for f in reach}
+    hit_names = {h.split("::")[0] for h in _write_hits()}
+    hit_files = {f for f in reach if _rel(f) in hit_names}
+    tainted = set(hit_files)
+    grew = True
+    while grew:
+        grew = False
+        for f, outs in edges.items():
+            if f not in tainted and outs & tainted:
+                tainted.add(f)
+                grew = True
+    return {f"{_rel(f)} -> {_rel(n)}" for f in edges if f.is_relative_to(API)
+            for n in edges[f] if n in tainted and not n.is_relative_to(API)}
+
+
+def test_api_has_no_new_door_into_the_money_path():
+    new = sorted(tainted_doors() - set(DOORS))
+    assert not new, "src/api gained a NEW import route toward write-capable code:\n" + "\n".join(new)
+
+
+def test_doors_only_shrink():
+    stale = sorted(set(DOORS) - tainted_doors())
+    assert not stale, "remove these cut doors from DOORS (it may only shrink):\n" + "\n".join(stale)

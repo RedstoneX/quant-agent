@@ -9,6 +9,7 @@ Host attributes a body reads with a defaulted getattr or ASSIGNS go through `sta
 """
 
 import logging
+from src.sentinel.guarded import record_guarded_pass
 
 #: The moved code logged under `src.pipeline` before the move and still does;
 #: binding the name rather than `__name__` keeps log records byte-identical.
@@ -112,7 +113,10 @@ class ProtectedSell:
         if label in ("SELL", "EMERGENCY_SELL", "EMERGENCY_COVER", "FORCE_DELEVER"):
             try:
                 self.broker.cancel_open_entry_orders(symbol=symbol)
+                record_guarded_pass((self.broker, self.db), "protected_sell.entry_cancel", context={"symbol": symbol})
             except Exception as exc:  # noqa: BLE001
+                record_guarded_pass((self.broker, self.db), "protected_sell.entry_cancel", exc,
+                                    context={"symbol": symbol})
                 logger.warning("%s: entry-order cancel failed for %s: %s",
                                label, symbol, exc)
         stop_side_kwargs = {} if side == "sell" else {"side": side}
@@ -174,7 +178,9 @@ class ProtectedSell:
                 symbol=symbol, qty=qty, side=side,
                 limit_price=limit_price, reference_price=reference_price,
             )
+            record_guarded_pass((self.broker, self.db), "protected_sell.submit", context={"symbol": symbol})
         except Exception as exc:  # noqa: BLE001
+            record_guarded_pass((self.broker, self.db), "protected_sell.submit", exc, context={"symbol": symbol})
             # Submit raised → the position is intact but its stops are
             # cancelled. Restore them in-session rather than waiting for the
             # next drain (this used to vary by site — only the since-deleted
@@ -216,7 +222,11 @@ class ProtectedSell:
                         symbol=symbol, qty=qty, side=side,
                         limit_price=None, reference_price=reference_price,
                     )
+                    record_guarded_pass((self.broker, self.db), "protected_sell.market_escalation",
+                                        context={"symbol": symbol})
                 except Exception as exc:  # noqa: BLE001
+                    record_guarded_pass((self.broker, self.db), "protected_sell.market_escalation", exc,
+                                        context={"symbol": symbol})
                     logger.error(
                         "%s: MARKET escalation submit failed for %s: %s",
                         label, symbol, exc,
@@ -308,7 +318,11 @@ class ProtectedSell:
             if wal_row_id is not None:
                 try:
                     self.db.delete_pending_protection_restore(wal_row_id)
+                    record_guarded_pass((self.broker, self.db), "protected_sell.wal_discharge",
+                                        context={"symbol": symbol})
                 except Exception as exc:  # noqa: BLE001
+                    record_guarded_pass((self.broker, self.db), "protected_sell.wal_discharge", exc,
+                                        context={"symbol": symbol})
                     logger.warning(
                         "WAL: failed to discharge row %d after cancel "
                         "rollback for %s: %s (drain will idempotently "
