@@ -9665,3 +9665,100 @@ numbers:
       2026-10-05 finds no importer, so no live trade decision reads it. It is a scenario the candidate
       models are scored on, not a desk threshold; the model seat choice is a closed owner ruling, so a
       different value changes a benchmark score and nothing the desk places.
+  - id: src.models.news._NEWS_CONVICTION_RANK['medium']
+    value: 1
+    site: src/models/news.py
+    status: not-trade-governing
+    note: >-
+      Ordering key only: `max(agreeing, key=_NEWS_CONVICTION_RANK.get)` at src/models/news.py picks the highest-ranked
+      conviction label, so any strictly increasing values give the identical winner and the magnitudes themselves
+      are never added, compared to a threshold or sized. A grep of src, ops, scripts and main.py on 2026-10-05
+      finds the name only in src/models/news.py and a re-export in src/models/__init__.py; dynamic and string
+      imports were not searched separately.
+  - id: src.models.news._NEWS_CONVICTION_RANK['high']
+    value: 2
+    site: src/models/news.py
+    status: not-trade-governing
+    note: >-
+      Ordering key only, same row logic as the 'medium' entry: only the order low < medium < high is read, so
+      1 and 2 could be any increasing pair. Same grep, same date, same dynamic-import caveat.
+  - id: src.models.news._MAX_NEWS_EVIDENCE_ITEMS
+    value: 5
+    site: src/models/news.py
+    status: not-trade-governing
+    note: >-
+      Caps how many quoted headlines are attached to a news verdict as evidence (`items[:_MAX_NEWS_EVIDENCE_ITEMS]`
+      in src/models/news.py). Direction and conviction are computed from ALL items before the slice, so the cap
+      changes how much quoted text a reader sees and not which way the verdict leans.
+  - id: src.data.company._CACHE_TTL_DAYS
+    value: 30
+    site: src/data/company.py
+    status: not-trade-governing
+    note: >-
+      Re-fetch age for a cached company business description, which the source comment calls near-static.
+      Consumers found by grep on 2026-10-05: src/pipeline_pm_facts.py, src/prompt_facts/pm_facts.py,
+      src/api/routes_live.py and src/notifier/parts.py, all of which render the profile as text; no code gate
+      compares it to a threshold. The text is shown to the PM seat, so a different length changes what the model
+      reads, not a coded decision.
+  - id: src.data.company._FETCH_TIMEOUT_S
+    value: 10
+    site: src/data/company.py
+    status: not-trade-governing
+    note: >-
+      Ceiling on one yfinance profile fetch so a hang cannot eat the morning session; same role and same value as
+      the ledgered request-timeout rows. A timeout yields no profile text, not a changed threshold. Consumers
+      found by grep on 2026-10-05: src/pipeline_pm_facts.py, src/prompt_facts/pm_facts.py, src/api/routes_live.py
+      and src/notifier/parts.py, all of which render the profile as text; no code gate compares it to a threshold.
+      The text is shown to the PM seat, so a different length changes what the model reads, not a coded decision.
+  - id: src.data.company._SUMMARY_MAX_CHARS
+    value: 320
+    site: src/data/company.py
+    status: not-trade-governing
+    note: >-
+      Length cut for the business description shown in prompts and the dashboard. Consumers found by grep on
+      2026-10-05: src/pipeline_pm_facts.py, src/prompt_facts/pm_facts.py, src/api/routes_live.py and
+      src/notifier/parts.py, all of which render the profile as text; no code gate compares it to a threshold. The
+      text is shown to the PM seat, so a different length changes what the model reads, not a coded decision.
+  - id: src.data.company._truncate:factor[0]
+    value: 0.5
+    site: src/data/company.py
+    status: not-trade-governing
+    note: >-
+      The 0.5 in `idx > _SUMMARY_MAX_CHARS * 0.5` only chooses whether a sentence boundary is far enough in to cut
+      on, otherwise the cut falls on a word. It shapes display text only. Consumers found by grep on 2026-10-05:
+      src/pipeline_pm_facts.py, src/prompt_facts/pm_facts.py, src/api/routes_live.py and src/notifier/parts.py,
+      all of which render the profile as text; no code gate compares it to a threshold. The text is shown to the
+      PM seat, so a different length changes what the model reads, not a coded decision.
+  - id: src.data.market._VALUATION_TIMEOUT_S
+    value: 10
+    site: src/data/market.py
+    status: not-trade-governing
+    note: >-
+      Per-symbol ceiling on a yfinance .info call. A timeout returns no valuation for that name, so the name is
+      analysed without it; the number sets how long to wait, not any decision threshold. Same role and value as
+      the ledgered timeout rows.
+  - id: src.data.market._DOWNLOAD_TIMEOUT_S
+    value: 30
+    site: src/data/market.py
+    status: not-trade-governing
+    note: >-
+      Ceiling on one yfinance download (and four times that for the batch call). A timeout sends the call to the
+      fallback bar source or returns empty; it bounds waiting and is not a decision threshold. Same role as the
+      ledgered timeout rows.
+  - id: src.data.market.MarketDataProvider.get_ohlcv(lookback_days)
+    value: 120
+    site: src/data/market.py
+    status: not-trade-governing
+    note: >-
+      Dead default: an AST scan on 2026-10-05 of every .py under src, ops and scripts for calls to `.get_ohlcv(`
+      finds NONE that omit the lookback argument (every caller passes it, e.g. config.trading.lookback_days), so
+      this default is never used. Dynamic calls through getattr or star-args were not searched.
+  - id: src.data.market.MarketDataProvider.get_price_chart_events(lookback_days)
+    value: 400
+    site: src/data/market.py
+    status: not-trade-governing
+    note: >-
+      Dead default: an AST scan on 2026-10-05 of every .py under src, ops and scripts for calls to
+      `.get_price_chart_events(` finds NONE that omit the lookback argument (every caller passes it, e.g.
+      config.trading.lookback_days), so this default is never used. Dynamic calls through getattr or star-args
+      were not searched. The one production caller, src/api/routes_live.py, serves the dashboard chart.
