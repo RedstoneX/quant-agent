@@ -8,6 +8,7 @@ import yfinance as yf
 from src.models import OHLCV
 from src.trading_calendar import last_completed_bar_date
 from src.util.time import et_today
+from src.sentinel.counted import record_swallowed
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ class MarketDataProvider:
                                           reason="yfinance all-NaN")
             return bars
         except Exception as e:  # noqa: BLE001
-            logger.warning("fallback_bars failed for %s: %s", symbol, e)
+            record_swallowed("data.market.fallback_bars", e, log=logger, symbol=symbol)
             return []
 
     def get_ohlcv(self, symbol: str, lookback_days: int = 120) -> list[OHLCV]:
@@ -221,7 +222,7 @@ class MarketDataProvider:
             with ThreadPoolExecutor(max_workers=1) as ex:
                 info = ex.submit(_fetch).result(timeout=_VALUATION_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — timeout or fetch error
-            logger.warning("company profile fetch failed for %s: %s", symbol, exc)
+            record_swallowed("data.market.company_profile", exc, log=logger, symbol=symbol)
             return None
         if not isinstance(info, dict) or not info:
             return None
@@ -249,7 +250,7 @@ class MarketDataProvider:
             try:
                 return yf.Ticker(symbol).info or {}
             except Exception as e:
-                logger.warning("ex-div fetch failed for %s: %s", symbol, e)
+                record_swallowed("data.market.ex_dividend", e, log=logger, symbol=symbol)
                 return {}
 
         try:
@@ -343,7 +344,7 @@ class MarketDataProvider:
             # Calendar days -> trading sessions, floored at same-day.
             return max(0, int(min(upcoming) * 5 / 7))
         except Exception as exc:  # noqa: BLE001
-            logger.debug("earnings date unavailable for %s: %s", symbol, exc)
+            record_swallowed("data.market.next_earnings_date", exc, log=logger, symbol=symbol)
             return None
 
     def get_price_chart_events(self, symbol: str, lookback_days: int = 400) -> dict:
@@ -484,7 +485,7 @@ class MarketDataProvider:
             try:
                 info = yf.Ticker(symbol).info or {}
             except Exception as e:
-                logger.warning("valuation fetch failed for %s: %s", symbol, e)
+                record_swallowed("data.market.valuation", e, log=logger, symbol=symbol)
                 return {}
             return info
 
@@ -522,7 +523,7 @@ class MarketDataProvider:
             logger.warning("yfinance sector_performance timed out after %ds", _DOWNLOAD_TIMEOUT_S)
             return {}
         except Exception as e:
-            logger.warning("yfinance sector_performance crashed: %s", e)
+            record_swallowed("data.market.sector_performance", e, log=logger)
             return {}
         if df is None or df.empty:
             return {}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Badge, Button, Tab, TabGroup, TabList, Text, type Color } from "@tremor/react";
 import { RunFunnelResponse, RunSummary, TradeItem } from "../api/client";
-import { fmtMoney, fmtNum, fmtTime, isExecutedTrade } from "../lib/format";
+import { fmtClock, fmtMoney, fmtNum, fmtTime, isExecutedTrade } from "../lib/format";
 import { STATE_LABELS, isSweepOnlyExecution } from "./funnelShared";
 
 // Item 12 (cockpit trader rework): green/red is reserved exclusively for
@@ -27,7 +27,7 @@ function shortTime(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : `${iso}Z`);
   if (isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return fmtClock(d);
 }
 
 function SessionBadge({ funnel, runTrades }: { funnel: RunFunnelResponse; runTrades: TradeItem[] }) {

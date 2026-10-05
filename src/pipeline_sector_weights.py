@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 
+from src.recording_accessors import pinned_evidence
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,7 +47,7 @@ def _record_realised_sector_weights(
             decisions=list(getattr(portfolio_decision, "decisions", None) or []),
             sectors=sectors,
             total_value=total_value,
-            run_id=getattr(ctx, "run_id", None),
+            run_id=pinned_evidence(ctx, "run_id"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("realised sector-weight recording failed: %s", exc)
