@@ -445,11 +445,18 @@ _CANNOT_JUDGE_FINDINGS = frozenset({
     "replay_session_mismatch",
     "missing_recorded_response",
     "low_confidence_match",
+    "incomplete_provider_attempt_recording",
 })
 
-# The one finding that means "this rehearsal did not reproduce the session at
-# all, so its failure says nothing about the code". See `_replay_fidelity`.
-_INCONCLUSIVE_FINDING = "replay_session_mismatch"
+# Findings that mean "this rehearsal did not reproduce the session faithfully,
+# so its result says nothing about the code".  A cross-session transplant is
+# one form; a source row that collapsed failed/retried provider attempts is
+# another.  In both cases PASS or FAIL would overstate the evidence.
+_INCONCLUSIVE_FINDINGS = frozenset({
+    "replay_session_mismatch",
+    "incomplete_provider_attempt_recording",
+})
+_INCONCLUSIVE_FINDING = "replay_session_mismatch"  # compatibility at call sites
 
 
 @dataclass
@@ -555,8 +562,8 @@ class RehearsalReport:
                 "This is NOT a judgement on the code. The rehearsal could not "
                 "reproduce the session faithfully enough to judge it, so "
                 "neither a pass nor a failure can be claimed. The reason is "
-                "under COULD THIS REHEARSAL JUDGE THE CODE? below. Re-run "
-                "with an explicit --replay-run before drawing any conclusion."
+                "under COULD THIS REHEARSAL JUDGE THE CODE? below. Fix the "
+                "named recording gap before drawing any conclusion."
             ):
                 add("  " + line)
         add("")
@@ -1256,13 +1263,12 @@ def _verdict(report: RehearsalReport) -> str:
     is cut off by the spending circuit, loses an agent, or cannot read its own
     plan is not — those are the mornings that arrive broken.
 
-    INCONCLUSIVE is reserved for the case where the harness failed, not the
-    code: the rehearsal did not reproduce a single real session, so its
-    failure is not evidence about anything. `_replay_fidelity` above is the
-    only thing that can raise it, and it demands two independent proofs
-    first. Everything else in doubt stays FAIL.
+    INCONCLUSIVE is reserved for cases where the harness failed, not the code:
+    either it stitched together different sessions, or its source row says
+    provider attempts occurred that the retained recording cannot replay.
+    Everything else in doubt stays FAIL.
     """
-    if any(f.get("kind") == _INCONCLUSIVE_FINDING for f in report.findings):
+    if any(f.get("kind") in _INCONCLUSIVE_FINDINGS for f in report.findings):
         return "INCONCLUSIVE"
     if report.error and not report.status:
         return "FAIL"

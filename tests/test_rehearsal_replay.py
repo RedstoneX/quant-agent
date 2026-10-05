@@ -24,6 +24,8 @@ acceptance test against the real incident.
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from ops.rehearsal.replay import (
@@ -189,6 +191,76 @@ def test_response_library_matches_each_chunk_independently():
     assert "tech_analyst" in str(excinfo.value)
     assert library.findings[-1]["kind"] == "missing_recorded_response"
     assert library.findings[-1]["agent"] == "tech_analyst"
+
+
+def test_library_names_collapsed_provider_attempts_as_a_fidelity_gap():
+    """A final successful answer cannot stand in for earlier failed attempts.
+
+    Those attempts consume route/cost budgets and can trip circuit state.  The
+    historical row tells us they happened via `provider_requests`, but carries
+    no request/response or failure kind with which to replay them.
+    """
+    call = RecordedCall(
+        row_id=718, agent_name="portfolio_manager", run_id="run-14170a8e",
+        timestamp="2026-10-01 14:00:00", model="m",
+        input_message="one retained prompt", full_response='{"targets": []}',
+        input_tokens=10, output_tokens=5, cost_usd=0.001,
+        finish_reason="stop", actual_provider="openrouter",
+        provider_requests=3,
+    )
+    library = ResponseLibrary([call], source_run_id=call.run_id)
+
+    gaps = [
+        f for f in library.findings
+        if f["kind"] == "incomplete_provider_attempt_recording"
+    ]
+    assert len(gaps) == 1
+    assert gaps[0]["attempted"] == 3
+    assert gaps[0]["represented"] == 1
+    assert "routing, cost and circuit state" in gaps[0]["detail"]
+
+
+def test_chunk_markers_account_for_each_provider_attempt_without_a_gap():
+    call = _merged_call(
+        parts=[
+            ("chunk 1/2", "first prompt", '{"symbol": "AAPL"}'),
+            ("chunk 2/2", "second prompt", '{"symbol": "MSFT"}'),
+        ],
+        input_tokens=100, output_tokens=20, cost_usd=0.001,
+    )
+    call.provider_requests = 2
+    library = ResponseLibrary([call], source_run_id=call.run_id)
+
+    assert not [
+        f for f in library.findings
+        if f["kind"] == "incomplete_provider_attempt_recording"
+    ]
+
+
+def test_database_loader_carries_provider_attempt_count_into_fidelity_check(tmp_path):
+    path = tmp_path / "history.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE agent_logs ("
+        "id INTEGER PRIMARY KEY, agent_name TEXT, run_id TEXT, timestamp TEXT, "
+        "model TEXT, input_message TEXT, full_response TEXT, input_tokens INTEGER, "
+        "output_tokens INTEGER, cost_usd REAL, finish_reason TEXT, "
+        "actual_provider TEXT, provider_requests INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO agent_logs VALUES "
+        "(1, 'risk_manager', 'run-x', '2026-10-01', 'm', 'prompt', '{}', "
+        "10, 2, 0.001, 'stop', 'openrouter', 3)"
+    )
+    conn.commit()
+    conn.close()
+
+    library = ResponseLibrary.from_database(str(path), run_id="run-x")
+
+    assert library.available() == {"risk_manager": 1}
+    assert [(f["attempted"], f["represented"]) for f in library.findings] == [
+        (3, 1),
+    ]
 
 
 def test_response_library_reports_expanded_count_not_row_count():

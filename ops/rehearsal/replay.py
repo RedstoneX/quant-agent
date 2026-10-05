@@ -185,6 +185,11 @@ class RecordedCall:
     cost_usd: float | None
     finish_reason: str | None
     actual_provider: str | None
+    # Number of real transport attempts represented by the source
+    # `agent_logs` row.  A value greater than the number of recoverable
+    # chunk/retry sections means the row retained only the final answer and
+    # cannot faithfully replay the failures that preceded it.
+    provider_requests: int = 1
     consumed: bool = False
     # Set only when this call was recovered from a chunked agent's merged
     # row (see `_unmerge_chunked_call`) — names which real call this is
@@ -472,6 +477,7 @@ def _unmerge_chunked_call(call: RecordedCall) -> list[RecordedCall]:
             # inventing a truncation signal that was never recorded for them.
             finish_reason=(call.finish_reason if i == n - 1 else "stop"),
             actual_provider=call.actual_provider,
+            provider_requests=1,
             part_label=f"{label} ({i + 1}/{n})",
         ))
     return parts
@@ -487,13 +493,32 @@ class ResponseLibrary:
         # RecordedCalls (see `_unmerge_chunked_call`) for `.match()` to ever
         # see more than one candidate for it.
         expanded: list[RecordedCall] = []
+        self.findings: list[dict] = []
+        self.matches: list[dict] = []
         for call in calls:
-            expanded.extend(_unmerge_chunked_call(call))
+            parts = _unmerge_chunked_call(call)
+            represented = len(parts)
+            attempted = max(int(call.provider_requests or 0), represented)
+            if attempted > represented:
+                self.findings.append({
+                    "kind": "incomplete_provider_attempt_recording",
+                    "agent": call.agent_name,
+                    "row_id": call.row_id,
+                    "attempted": attempted,
+                    "represented": represented,
+                    "detail": (
+                        f"agent_logs row {call.row_id} says {attempted} provider "
+                        f"attempts occurred, but its retained input/response can "
+                        f"reconstruct only {represented}. The missing failed or "
+                        "retried transport attempts can change routing, cost and "
+                        "circuit state, so this recording cannot support a "
+                        "faithful session verdict"
+                    ),
+                })
+            expanded.extend(parts)
         self._by_agent: dict[str, list[RecordedCall]] = {}
         for call in sorted(expanded, key=lambda c: c.row_id):
             self._by_agent.setdefault(_normalise(call.agent_name), []).append(call)
-        self.findings: list[dict] = []
-        self.matches: list[dict] = []
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------- loading
@@ -510,7 +535,7 @@ class ResponseLibrary:
         query = (
             "SELECT id, agent_name, run_id, timestamp, model, input_message, "
             "full_response, input_tokens, output_tokens, cost_usd, "
-            "finish_reason, actual_provider FROM agent_logs "
+            "finish_reason, actual_provider, provider_requests FROM agent_logs "
             "WHERE input_message IS NOT NULL AND input_message != '' "
             "AND full_response IS NOT NULL"
         )
@@ -545,6 +570,7 @@ class ResponseLibrary:
                 cost_usd=(None if row["cost_usd"] is None else float(row["cost_usd"])),
                 finish_reason=(row["finish_reason"] or None),
                 actual_provider=(row["actual_provider"] or None),
+                provider_requests=int(row["provider_requests"] or 1),
             )
             for row in rows
         ]
