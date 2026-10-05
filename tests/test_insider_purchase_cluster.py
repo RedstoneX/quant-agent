@@ -167,7 +167,7 @@ def test_fetch_stamps_the_cluster_on_universe_rows_and_leaves_others_alone(tmp_p
         _provider_row(symbol="XYZ", owner="3", value=300_000, accession="0000000003-26-000001"),
         _provider_row(symbol="XYZ", owner="4", value=300_000, accession="0000000004-26-000001"),
     ]
-    provider.observations_path.write_text(json.dumps(
+    provider.stores.observations_path.write_text(json.dumps(
         [row.model_dump(mode="json") for row in rows]
     ))
     got, error = provider.fetch(["NVDA"])
@@ -325,7 +325,7 @@ def test_a_cluster_rescued_by_the_retention_rule_can_still_be_truncated_before_t
         accession="0000000200-26-000002",
         transaction_date=today - timedelta(days=1), disclosure_date=today,
     ))
-    provider.observations_path.write_text(json.dumps(
+    provider.stores.observations_path.write_text(json.dumps(
         [row.model_dump(mode="json") for row in rows]
     ))
     got, error = provider.fetch(["CORE"])
@@ -486,7 +486,7 @@ def test_a_cluster_survives_cross_symbol_crowd_out_by_unrelated_higher_dollar_bu
         accession="0000000400-26-000002",
         transaction_date=today - timedelta(days=1), disclosure_date=today,
     ))
-    provider.observations_path.write_text(json.dumps(
+    provider.stores.observations_path.write_text(json.dumps(
         [row.model_dump(mode="json") for row in rows]
     ))
     symbols = ["CLUSTERED"] + [f"CROWD{i}" for i in range(45)]

@@ -7,9 +7,7 @@ materiality/cluster reduction before any LLM can see the evidence.
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
 import re
 import threading
 import time
@@ -36,6 +34,7 @@ from src.data.smart_money_cluster import (
     observation_key,
     reserve_cluster_symbols,
 )
+from src.data.smart_money_stores import build_smart_money_stores
 from src.models import SmartMoneyObservation
 from src.util.time import et_today
 
@@ -123,13 +122,6 @@ class SmartMoneySource(Protocol):
 
 class _RefreshDeadline(TimeoutError):
     pass
-
-
-def _atomic_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    os.replace(tmp, path)
 
 
 def _text(node: ET.Element, path: str) -> str:
@@ -441,17 +433,11 @@ class SECForm4Provider:
         insider_history_retention_days: int = _DEFAULT_HISTORY_RETENTION_DAYS,
     ):
         self.data_dir = Path(data_dir)
-        self.raw_dir = self.data_dir / "filings"
-        self.observations_path = self.data_dir / "observations.json"
-        self.manifest_path = self.data_dir / "manifest.json"
+        self.stores = build_smart_money_stores(self.data_dir)
         # Long-horizon (insider, issuer) trade dates. ``observations.json`` is
         # pruned to the lookback window, which is far too short for the
         # three-year calendar-month routine test; this file is the only place
         # that history survives. It stores dates and direction only.
-        self.history_path = self.data_dir / "insider_history.json"
-        self.tickers_path = self.data_dir / "company_tickers_exchange.json"
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.search_url = search_url.rstrip("/")
         self.archives_url = archives_url.rstrip("/")
         self.submissions_url = submissions_url.rstrip("/")
@@ -489,16 +475,9 @@ class SECForm4Provider:
             cadence_max_gap_dispersion=max(0.0, float(insider_cadence_max_gap_dispersion)),
         )
 
-    def _load_json(self, path: Path, fallback):
-        try:
-            return json.loads(path.read_text()) if path.exists() else fallback
-        except (OSError, json.JSONDecodeError, TypeError) as exc:
-            logger.warning("Smart-money cache unreadable at %s: %s", path, exc)
-            return fallback
-
     def _load_history(self) -> InsiderHistory:
         """Read the accumulated (insider, issuer) trade index, fail-soft."""
-        raw = self._load_json(self.history_path, {})
+        raw = self.stores.load_history()
         trades: dict[tuple[str, str], list[InsiderPriorTrade]] = {}
         for key, entries in (raw if isinstance(raw, dict) else {}).items():
             actor_cik, _, symbol = str(key).partition("|")
@@ -524,7 +503,7 @@ class SECForm4Provider:
         Append-only apart from a hard age prune. Entries are ``date|direction``
         strings so the file stays a fraction of the observation cache.
         """
-        raw = self._load_json(self.history_path, {})
+        raw = self.stores.load_history()
         merged: dict[str, set[str]] = {
             str(key): {str(value) for value in values}
             for key, values in (raw if isinstance(raw, dict) else {}).items()
@@ -552,7 +531,7 @@ class SECForm4Provider:
             )
             if kept:
                 pruned[key] = kept
-        _atomic_json(self.history_path, pruned)
+        self.stores.save_history(pruned)
 
     @staticmethod
     def _remaining(deadline: float) -> float:
@@ -603,25 +582,17 @@ class SECForm4Provider:
         raise RuntimeError(f"SEC GET failed without exception: {url}")
 
     def _listed_map(self, deadline: float) -> dict[str, dict[str, str]]:
-        stale = True
-        try:
-            stale = (
-                not self.tickers_path.exists()
-                or time.time() - self.tickers_path.stat().st_mtime > 24 * 3600
-            )
-        except OSError:
-            pass
-        if stale:
+        if self.stores.tickers_stale():
             try:
                 payload = self._get(
                     SEC_TICKERS_EXCHANGE, params=None, deadline=deadline,
                 ).json()
-                _atomic_json(self.tickers_path, payload)
+                self.stores.save_tickers(payload)
             except Exception as exc:
-                if not self.tickers_path.exists():
+                if not self.stores.tickers_cached():
                     raise
                 logger.warning("Using stale SEC ticker/exchange cache: %s", exc)
-        payload = self._load_json(self.tickers_path, {})
+        payload = self.stores.load_tickers()
         fields = payload.get("fields", []) if isinstance(payload, dict) else []
         rows = payload.get("data", []) if isinstance(payload, dict) else []
         try:
@@ -961,14 +932,12 @@ class SECForm4Provider:
 
     def _submission(self, filing: dict, deadline: float) -> tuple[str, str]:
         accession = filing["accession"]
-        path = self.raw_dir / f"{accession}.txt"
         url = self._archive_url(filing["cik"], accession)
-        if path.exists():
-            return path.read_text(errors="replace"), url
+        cached = self.stores.cached_filing(accession)
+        if cached is not None:
+            return cached, url
         response = self._get(url, params=None, deadline=deadline)
-        tmp = path.with_suffix(".txt.tmp")
-        tmp.write_bytes(response.content)
-        os.replace(tmp, path)
+        self.stores.save_filing(accession, response.content)
         return response.content.decode("utf-8", "replace"), url
 
     @staticmethod
@@ -1124,12 +1093,12 @@ class SECForm4Provider:
     def known_accessions(self) -> set[str]:
         """Form 4 accessions already processed or cached. No network."""
         out: set[str] = set()
-        manifest = self._load_json(self.manifest_path, {})
+        manifest = self.stores.load_manifest()
         for raw in (manifest.get("processed_accessions") or []) if isinstance(manifest, dict) else []:
             text = str(raw or "").strip()
             if text:
                 out.add(text)
-        cached = self._load_json(self.observations_path, [])
+        cached = self.stores.load_observations()
         for row in cached if isinstance(cached, list) else []:
             if not isinstance(row, dict):
                 continue
@@ -1268,14 +1237,14 @@ class SECForm4Provider:
         date could only say "all or nothing", and the per-issuer map below
         is what freshness accepts as coverage.
         """
-        manifest = self._load_json(self.manifest_path, {})
+        manifest = self.stores.load_manifest()
         if not isinstance(manifest, dict):
             return ""
         return str(manifest.get("watched_read_through") or "").strip()[:10]
 
     def read_through_by_cik(self) -> dict[str, str]:
         """CIK -> ET date of the last pass that left that issuer fully read."""
-        manifest = self._load_json(self.manifest_path, {})
+        manifest = self.stores.load_manifest()
         raw = manifest.get("watched_read_through_by_cik") if isinstance(manifest, dict) else None
         out: dict[str, str] = {}
         for cik, day in (raw.items() if isinstance(raw, dict) else []):
@@ -1292,7 +1261,7 @@ class SECForm4Provider:
         coverage at all — which the caller must treat as incomplete, never
         as complete.
         """
-        manifest = self._load_json(self.manifest_path, {})
+        manifest = self.stores.load_manifest()
         blank_edgar = blank_edgar_coverage()
         if not isinstance(manifest, dict) or not manifest.get("coverage_as_of"):
             return {"known": False, "as_of": "", "watched": 0,
@@ -1463,9 +1432,9 @@ class SECForm4Provider:
         watched names alone exhaust the cap.
         """
         deadline = time.monotonic() + self.refresh_deadline_s
-        manifest = self._load_json(self.manifest_path, {})
+        manifest = self.stores.load_manifest()
         processed = set(manifest.get("processed_accessions", []))
-        cached_rows = self._load_json(self.observations_path, [])
+        cached_rows = self.stores.load_observations()
         observations: dict[str, dict] = {}
         for raw in cached_rows if isinstance(cached_rows, list) else []:
             key = f"{raw.get('accession_number', '')}:{raw.get('transaction_row', '')}"
@@ -1734,7 +1703,7 @@ class SECForm4Provider:
         # read through, so it only advances when that is true; freshness no
         # longer reads it — it reads the per-issuer map.
         watermark = str(
-            (self._load_json(self.manifest_path, {}) or {}).get(
+            (self.stores.load_manifest() or {}).get(
                 "watched_read_through", "",
             ) or "",
         ).strip()[:10]
@@ -1756,8 +1725,8 @@ class SECForm4Provider:
                 self._record_history(list(observations.values()))
             except OSError as exc:
                 logger.warning("Insider history index write failed: %s", exc)
-            _atomic_json(self.observations_path, kept)
-            _atomic_json(self.manifest_path, {
+            self.stores.save_observations(kept)
+            self.stores.save_manifest({
                 "processed_accessions": sorted(processed),
                 "last_refresh_at": datetime.now(tz=_ET).isoformat(),
                 # Durable record of the backlog, so successive mornings can
@@ -1861,7 +1830,7 @@ class SECForm4Provider:
     def fetch(self, symbols: list[str]) -> tuple[list[SmartMoneyObservation], str | None]:
         """Cache-only broad fetch; ``symbols`` marks core but does not filter."""
         core = {_symbol(s) for s in symbols if str(s).strip()}
-        raw_rows = self._load_json(self.observations_path, [])
+        raw_rows = self.stores.load_observations()
         # The long-horizon index carries the three-year calendar history; the
         # current cache window contributes this refresh's own trades so a
         # cadence inside the window is still visible on the first ever run.

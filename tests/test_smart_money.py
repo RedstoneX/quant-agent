@@ -96,7 +96,7 @@ def _submission(*, code="P", acquired="A", form="4", symbol="NVDA"):
 
 
 def _write_rows(provider: SECForm4Provider, rows):
-    provider.observations_path.write_text(json.dumps([
+    provider.stores.observations_path.write_text(json.dumps([
         row.model_dump(mode="json") for row in rows
     ]))
 
@@ -816,8 +816,8 @@ def test_fetch_stashes_the_sale_census_even_when_truncation_drops_sales(tmp_path
         ).model_dump(mode="json"),
     ]
     (tmp_path / "smart_money").mkdir(parents=True, exist_ok=True)
-    provider.observations_path.parent.mkdir(parents=True, exist_ok=True)
-    provider.observations_path.write_text(json.dumps(rows))
+    provider.stores.observations_path.parent.mkdir(parents=True, exist_ok=True)
+    provider.stores.observations_path.write_text(json.dumps(rows))
 
     observations, _error = provider.fetch(["NVDA"])
 
