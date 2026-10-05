@@ -201,6 +201,7 @@ def write_back_stop_loss(
         try:
             return bool(updater(symbol, price))
         except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(db, "stop_records.write_back_stop_loss", exc)
             logger.error(
                 "stop write-back FAILED for %s @ $%.4f: %s — broker holds "
                 "the live level; the archive is stale until the next "
@@ -209,6 +210,7 @@ def write_back_stop_loss(
             )
             return False
     except Exception as exc:  # noqa: BLE001
+        record_guarded_pass(db, "stop_records.write_back_stop_loss", exc)
         logger.error(
             "stop write-back FAILED for %s @ $%.4f: %s — broker holds the "
             "live level; the archive is stale until the next successful "
