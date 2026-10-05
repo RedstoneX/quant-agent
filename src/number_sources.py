@@ -187,6 +187,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from src.storage_write_index import written_columns
 from src.feature_flags import config_modules  # where the config lives
 from src.number_site_scan import (  # noqa: F401 -- re-exported, lifted verbatim
     CONFIG_CLASS_SUFFIX,
@@ -298,7 +299,9 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 from src.number_ledger_counts import (  # noqa: E402,F401 -- lifted verbatim
     LEDGER_RELATIVE,
     count_arbitrary,
+    ratchet_violations,
     trunk_arbitrary_count,
+    trunk_statuses,
 )
 
 
@@ -365,57 +368,14 @@ def routeless_ratchet(path: Path | None = None) -> int:
 MAX_ROUTELESS_ARBITRARY = routeless_ratchet()
 
 
-#: Fields `src/storage/db.py` actually WRITES, as opposed to merely creating.
-#: A settlement route whose state is `built` has to name where its evidence
-#: lands, and this is what makes that claim falsifiable: the named field must
-#: be used by executable code in the storage layer, NOT merely declared by the
-#: `_ensure_column` migration. The three dead recordings found on 2026-10-01
-#: all passed "the column exists" and failed "something writes it" -- the
-#: break-confirmation-margin payload, for one, is built into a prose `detail`
-#: string that the only persisting call throws away.
-_DB_SOURCE_PATHS = ("src/storage/db.py", "src/storage/trades/ledger.py", "src/storage/risk_budget_record.py")  # the trades write path lifted out (db rebuild instalment 3); schema/analytics never write a row
-
-
-def written_fields(source: str | None = None) -> frozenset[str]:
-    """Every field name the storage layer writes, read out of its own AST.
-
-    A name counts when it appears as a string constant in EXECUTABLE code --
-    an SQL column list, a `(column, value)` update pair, a persisted payload
-    key. It does NOT count when its only appearance is the `_ensure_column`
-    migration that creates it (a column nothing writes is exactly the defect)
-    or a docstring/comment mentioning it.
-    """
-    import ast as _ast
-
-    if source is None:
-        source = "\n".join((REPO_ROOT / p).read_text(encoding="utf-8") for p in _DB_SOURCE_PATHS)
-    tree = _ast.parse(source)
-    migration_only: set[int] = set()
-    docstrings: set[int] = set()
-    for node in _ast.walk(tree):
-        if isinstance(node, _ast.Call):
-            fname = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-            if fname == "_ensure_column":
-                for arg in node.args[1:]:
-                    if isinstance(arg, _ast.Constant) and isinstance(arg.value, str):
-                        migration_only.add(id(arg))
-        if isinstance(node, _ast.Expr) and isinstance(node.value, _ast.Constant):
-            if isinstance(node.value.value, str):
-                docstrings.add(id(node.value))
-    found: set[str] = set()
-    ident = re.compile(r"^[a-z_][a-z0-9_]*$")
-    for node in _ast.walk(tree):
-        if not isinstance(node, _ast.Constant) or not isinstance(node.value, str):
-            continue
-        if id(node) in migration_only or id(node) in docstrings:
-            continue
-        text = node.value
-        for token in re.split(r"[\s,()=?]+", text):
-            token = token.strip().strip("'\"")
-            if ident.match(token):
-                found.add(token)
-    return frozenset(found)
-
+#: The `(table, column)` pairs real code WRITES, resolved from source at
+#: check time by `src.storage_write_index`. A settlement route in state
+#: `built` has to name where its evidence lands, and this is what makes the
+#: claim falsifiable. The earlier version matched the bare column name as a
+#: WORD inside three hardcoded storage files, which passed a column no write
+#: ever names, refused a genuine write living elsewhere, and never compared
+#: the table at all. See that module for the identity it resolves and for the
+#: one dynamic shape it accepts as a deliberate, strict proxy.
 
 def settlement_route_problem(entry: dict[str, Any]) -> str | None:
     """Why this entry's `settles_by` is not a route, or None if it is one."""
@@ -452,22 +412,29 @@ def settlement_route_problem(entry: dict[str, Any]) -> str | None:
                 "carry its evidence, or nobody can tell a recording that is "
                 "collecting from one that is silently collecting nothing"
             )
-        written = written_fields()
+        written = written_columns()
         for target in writes:
             if not isinstance(target, str) or "." not in target:
                 return (
                     f"`settles_by.writes` entry {target!r} is not a "
-                    f"`<table-or-kind>.<field>` name"
+                    f"`<table>.<column>` name"
                 )
-            field = target.rsplit(".", 1)[1].strip()
-            if field not in written:
-                return (
-                    f"`settles_by.writes` names {target!r} but nothing in "
-                    f"{' + '.join(_DB_SOURCE_PATHS)} writes {field!r} -- it appears only "
-                    f"in the migration that creates it, in prose, or not at "
-                    f"all. A settlement route pointing at a field nothing "
-                    f"writes can never close"
-                )
+            table, field = (part.strip() for part in target.rsplit(".", 1))
+            if (table.lower(), field) in written:
+                continue
+            elsewhere = sorted({t for t, c in written if c == field})
+            hint = (
+                f" The column name is written, but to {', '.join(elsewhere)}"
+                f" -- not to {table!r}."
+                if elsewhere
+                else " No INSERT or UPDATE anywhere names that column."
+            )
+            return (
+                f"`settles_by.writes` names {target!r} but no INSERT or "
+                f"UPDATE in the tree writes column {field!r} of table "
+                f"{table!r}.{hint} A settlement route pointing at a field "
+                f"nothing writes can never close"
+            )
     return None
 
 
@@ -935,30 +902,16 @@ def audit(
     if ledger_path is not None and ledger_path != LEDGER_PATH:
         return sorted(problems, key=lambda p: (p.kind, p.site_id))
 
-    # 5. RATCHET, DOWN-ONLY, measured against the trunk at check time. The
-    #    count may fall and may stay level; it may not rise. Deletion-gaming
-    #    (move a constant into an unscoped file, drop its row) is rule 6's
-    #    job -- scripts/unscoped_number_guard.py ratchets the unscoped side --
-    #    so this rule no longer needs an equality to cover it, and an
-    #    equality is what made the ceiling movable upward by hand.
-    arbitrary = [i for i, e in ledger.items() if e.get("status") == "arbitrary"]
-    trunk_count = trunk_arbitrary_count()
-    if len(arbitrary) > trunk_count:
-        problems.append(
-            LedgerProblem(
-                "ratchet",
-                "<ledger>",
-                f"the `arbitrary` count RISES to {len(arbitrary)}; the trunk "
-                f"holds {trunk_count}. This ratchet is down-only and there is "
-                f"no ceiling to raise: the reference is the trunk's own "
-                f"config/number_ledger.yaml, read at check time, so there is "
-                f"nothing to append to and nothing to edit. Source, measure "
-                f"or reformulate the number away, or revert whatever "
-                f"reclassified an existing row to `arbitrary`. Adding an "
-                f"unsourced trade-governing number is an owner decision "
-                f"(docs/OUTCOME.md).",
-            )
-        )
+    # 5. RATCHET, KEYED ON ROW IDENTITY, measured against the trunk at check
+    #    time. A count is a proxy and cannot tell DODGING (a row the trunk
+    #    sources, downgraded here to `arbitrary` to avoid the work) from
+    #    DISCOVERY (a sweep registering a number the ledger never held). The
+    #    first is refused absolutely; the second is admitted only with a
+    #    route to settlement. Leaving `arbitrary` is always allowed, and a
+    #    net-zero swap -- one row dodging down while another is sourced up --
+    #    no longer passes, because the dodging row is named.
+    for site_id, detail in ratchet_violations(ledger, trunk_statuses()):
+        problems.append(LedgerProblem("ratchet", site_id, detail))
 
     # 8. SETTLEMENT ROUTE, board item 90's half two. An `arbitrary` row is
     #    only tolerable as item 90's state 3 -- unsourceable today, with a

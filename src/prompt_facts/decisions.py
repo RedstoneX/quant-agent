@@ -5,9 +5,13 @@ same-named thin shims built per call. Every collaborator is an explicit keyword-
 constructor argument, so this builds and runs with no pipeline behind it.
 """
 
+import json
 import logging
 
+from src.sentinel.counted import record_swallowed_here
+from src.sentinel.reconciliation import ReconciliationLog
 from src.sentinel.guarded import record_guarded_pass
+from src.storage.analytics.agent_log_reads import count_recent_agent_outputs
 from src.trading_calendar import session_date_key
 
 #: The moved code logged under `src.pipeline` before the move and still does;
@@ -26,6 +30,41 @@ class PromptDecisions:
         self.db = db
         self._parse_logged_agent_response = parse_logged_agent_response  # the host's parser, handed in
 
+    def _cut_candidates(self, *, agent_name: str, limit: int,
+                        before_date: str | None, where: str) -> list[dict]:
+        """The limited read, plus one row recording what the LIMIT hid.
+
+        The cut used to happen inside the query, so the number of candidates
+        it chose from never existed anywhere a caller could see it. The read
+        below is unchanged -- same SQL, same ORDER BY, same surviving rows --
+        and the count is a separate query over the same predicate, so nothing
+        here can move which rows survive.
+
+        The row carries the candidates offered, how many survived, and the
+        oldest survivor's date. It does NOT carry the seat's verdict: that is
+        formed later in the session and is not observable at this site.
+        """
+        rows = self.db.get_recent_agent_outputs(
+            agent_name=agent_name, limit=limit, before_date=before_date,
+        )
+        try:
+            before = count_recent_agent_outputs(
+                conn=self.db.conn, lock=self.db._lock,
+                agent_name=agent_name, before_date=before_date,
+            )
+        except Exception:  # noqa: BLE001 - an observer never breaks the prompt
+            record_swallowed_here(where, log=logger)
+            return rows
+        ReconciliationLog(conn=self.db.conn).record(
+            kind=where, agreed=True, detail=json.dumps({
+                "candidates_before_cut": before, "survived": len(rows),
+                "cut_limit": limit,
+                "oldest_surviving": min(
+                    (r.get("timestamp") or "") for r in rows)[:10] if rows else None,
+            }),
+        )
+        return rows
+
     def _build_rm_recent_verdicts(self, limit: int = 5) -> str:
         """How RM has been judging PM's output over the last N sessions.
 
@@ -34,9 +73,10 @@ class PromptDecisions:
         allocations down before RM has to do it again.
         """
         try:
-            rows = self.db.get_recent_agent_outputs(
+            rows = self._cut_candidates(
                 agent_name="risk_manager", limit=limit,
                 before_date=session_date_key(),
+                where="prompt_facts.rm_recent_verdicts.cut",
             )
         except Exception as e:
             record_guarded_pass(self.db, "prompt_facts.rm_recent_verdicts", e, log=logger)
@@ -96,9 +136,10 @@ class PromptDecisions:
     def _build_pm_recent_decisions(self, limit: int = 3) -> str:
         """PM's own last N decision sets — used to spot flip-flopping against itself."""
         try:
-            rows = self.db.get_recent_agent_outputs(
+            rows = self._cut_candidates(
                 agent_name="portfolio_manager", limit=limit,
                 before_date=session_date_key(),
+                where="prompt_facts.pm_recent_decisions.cut",
             )
         except Exception as e:
             record_guarded_pass(self.db, "prompt_facts.pm_recent_decisions", e, log=logger)
@@ -223,8 +264,9 @@ class PromptDecisions:
             # "don't reverse yourself WITHIN HOURS", and the ET-midnight
             # cutoff excluded exactly those rows. The current session's own
             # row is inserted AFTER this builder runs, so no self-read.
-            rows = self.db.get_recent_agent_outputs(
-                agent_name="position_reviewer", limit=limit,
+            rows = self._cut_candidates(
+                agent_name="position_reviewer", limit=limit, before_date=None,
+                where="prompt_facts.own_recent_decisions.cut",
             )
         except Exception as e:
             record_guarded_pass(self.db, "prompt_facts.own_recent_decisions", e, log=logger)

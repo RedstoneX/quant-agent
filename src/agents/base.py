@@ -11,6 +11,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from src.recording_accessors import pinned_evidence
 from src.cost_table import estimate_cost, fmt_cost
 from src.token_rate import TokenRateGovernor
 from src.llm_balance_runway import balance_line as _balance_line
@@ -1046,7 +1047,7 @@ class BaseAgent(ABC):
                 try:
                     return marker(
                         exc,
-                        run_id=getattr(reservation, "run_id", None),
+                        run_id=pinned_evidence(reservation, "run_id"),
                         mode=getattr(reservation, "mode", None),
                         agent_name=self.name,
                         attempts=provider_requests,
@@ -1211,7 +1212,7 @@ class BaseAgent(ABC):
             in_price, out_price = _route_price(self.model)
             llm_route_journal.record(
                 "probe_primary", agent_name=self.name,
-                run_id=getattr(reservation, "run_id", None),
+                run_id=pinned_evidence(reservation, "run_id"),
                 route=f"{self._provider}/{self.model}", tier=1,
                 input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
                 detail="cooldown elapsed; probing whether the primary recovered",
@@ -1267,7 +1268,7 @@ class BaseAgent(ABC):
                     )
                     llm_route_journal.record(
                         "route_restored", agent_name=self.name,
-                        run_id=getattr(reservation, "run_id", None),
+                        run_id=pinned_evidence(reservation, "run_id"),
                         route=f"{self._provider}/{self.model}", tier=1,
                         input_usd_per_mtok=in_price,
                         output_usd_per_mtok=out_price,
@@ -1393,7 +1394,7 @@ class BaseAgent(ABC):
                     )
                     llm_route_journal.record(
                         "retry_after", agent_name=self.name,
-                        run_id=getattr(reservation, "run_id", None),
+                        run_id=pinned_evidence(reservation, "run_id"),
                         route=f"{self._provider}/{self.model}", tier=1,
                         wait_s=wait, error=e,
                         detail="honoured the server's own Retry-After",
@@ -1422,7 +1423,7 @@ class BaseAgent(ABC):
             in_price, out_price = _route_price(self.model)
             llm_route_journal.record(
                 "route_demoted", agent_name=self.name,
-                run_id=getattr(reservation, "run_id", None),
+                run_id=pinned_evidence(reservation, "run_id"),
                 route=f"{self._provider}/{self.model}", tier=1,
                 input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
                 wait_s=cooldown, error=primary_error,
@@ -1498,7 +1499,7 @@ class BaseAgent(ABC):
                 in_price, out_price = _route_price(self._fallback_model)
                 llm_route_journal.record(
                     "route_switch", agent_name=self.name,
-                    run_id=getattr(reservation, "run_id", None),
+                    run_id=pinned_evidence(reservation, "run_id"),
                     route=f"{self._fallback_provider}/{self._fallback_model}",
                     from_route=f"{self._provider}/{self.model}", tier=2,
                     input_usd_per_mtok=in_price, output_usd_per_mtok=out_price,
@@ -1517,7 +1518,7 @@ class BaseAgent(ABC):
                     seat_name=self.name, on_alt_road=self._tertiary_on_alt_road,
                     tertiary=(self._tertiary_provider, self._tertiary_model),
                     primary=(self._provider, self.model),
-                    run_id=getattr(reservation, "run_id", None),
+                    run_id=pinned_evidence(reservation, "run_id"),
                     primary_error=primary_error,
                 )
                 # Route 3 is the last rung; it is NOT skipped on its own
@@ -1554,7 +1555,7 @@ class BaseAgent(ABC):
                     in_price, out_price = _route_price(self._tertiary_model)
                     llm_route_journal.record(
                         "route_switch", agent_name=self.name,
-                        run_id=getattr(reservation, "run_id", None),
+                        run_id=pinned_evidence(reservation, "run_id"),
                         route=f"{self._tertiary_provider}/{self._tertiary_model}",
                         from_route=f"{self._fallback_provider}/{self._fallback_model}",
                         tier=3,

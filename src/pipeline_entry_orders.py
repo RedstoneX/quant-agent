@@ -9,6 +9,7 @@ patch target keeps working.
 
 from __future__ import annotations
 
+from src.recording_accessors import pinned_evidence
 from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level names
     CONSTRUCTOR_REFUSED_EVENT_REASON,
     MAX_ENTRY_SLIPPAGE_BPS,
@@ -816,7 +817,7 @@ def _apply_repeg(
         wal_row_id = pipeline.db.insert_pending_repeg(
             trade_row_id=trade_row_id, symbol=symbol, old_order_id=order_id,
             new_order_id=_WAL_REPEG_SENTINEL,
-            run_id=getattr(ctx, "run_id", None),
+            run_id=pinned_evidence(ctx, "run_id"),
         )
     except Exception as exc:  # noqa: BLE001
         record_swallowed(pipeline, "repeg.wal_insert", exc, symbol=symbol)
