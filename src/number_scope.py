@@ -73,7 +73,7 @@ SCOPED_PATHS: tuple[str, ...] = (
     # future one arriving unseen.
     "src/execution/broker.py", "src/execution/broker_parts",
     "src/execution/stop_repair.py", "src/execution/order_gates.py", "src/execution/order_idempotency.py",
-    "src/coverage_watchdog.py",
+    "src/coverage_watchdog.py", "src/alert_claims.py",  # the alert-claim half, lifted 2026-10-05
     # The pipeline's own decision/execution glue. The de-lever and midday
     # order-price buffers are inline multipliers and rule (e) has seen them
     # since 2026-09-19; rule (c) (function-parameter defaults) was added the
@@ -115,6 +115,12 @@ SCOPED_PATHS: tuple[str, ...] = (
     # whether a symbol may be traded at all lives here or in
     # `UniverseScreenConfig`.
     "src/universe_screen.py",
+    # 2026-10-05: the event-risk DATA module -- the FOMC schedule fetch/parse
+    # and the earnings-proximity window every seat's prompt is built from.
+    # The event-risk GATES already sit in scope via `EventRiskConfig`; this
+    # brings the fetch windows, parse sanity bounds and the 3-session
+    # earnings window under the same ledger instead of beside it.
+    "src/data/event_calendar.py",
     # 2026-10-05: three modules whose numbers were never classified; each is
     # scoped so every site must be ledgered, including the ones it hides.
     "src/data/news_dedup.py",
