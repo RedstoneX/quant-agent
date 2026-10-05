@@ -7,13 +7,17 @@ of repository-relative paths, constructible with nothing else imported.
 
 from __future__ import annotations
 
-__all__ = ["SCOPED_PATHS"]
+from src.number_universe import py_universe
+
+__all__ = ["SCOPED_PATHS", "py_universe"]
 
 #: The modules on the path from a verdict to a broker order. See the SCOPE
 #: rule in the module docstring; this list is the rule applied, and
 #: `scripts/unscoped_number_guard.py` is what stops it from silently lagging.
 #: A directory entry covers every `.py` under it.
 SCOPED_PATHS: tuple[str, ...] = (
+    # 2026-10-05: the position-history reader behind the prompt facts; its one limit is a dead default.
+    "src/data/tech_store.py",
     "src/risk",
     "src/portfolio_constructor",
     "src/rotation.py",
@@ -22,6 +26,11 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/evidence_gate.py",
     "src/verdicts.py",
     "src/data/correlation.py",
+    # 2026-10-05: the session-window table and the regular-session bounds gate
+    # WHEN an order may be placed and when a bar is treated as complete; a
+    # stop cannot cover a closed market, so these minutes are on the path
+    # from a verdict to an order exactly as a price threshold is.
+    "src/trading_calendar.py",
     # 2026-10-01: the sector cluster moved out of src/execution/broker.py
     # verbatim (sector resolution feeds the exposure ladder); same code, same scope.
     "src/sector_reference.py",
@@ -80,7 +89,8 @@ SCOPED_PATHS: tuple[str, ...] = (
     "src/pipeline_exits.py", "src/exits/exit_records.py",  # the trail cooldown lifted verbatim 2026-10-04
     # The intra-check session and the intraday opportunity scan -- moved here
     # out of `src/pipeline.py` by step 8 of docs/PIPELINE_SPLIT_PLAN.md.
-    "src/pipeline_intraday.py",
+    # 2026-10-04: the intraday bodies are parts under src/intraday/; the directory entry covers them all.
+    "src/pipeline_intraday.py", "src/intraday",
     # 2026-10-01, board item 210 step 6: the universe-admission cluster --
     # the external-nomination gates, the screen and its admission -- moved
     # here out of `src/pipeline.py`. Its dollar-volume and price floors stay
@@ -111,4 +121,26 @@ SCOPED_PATHS: tuple[str, ...] = (
     # brings the fetch windows, parse sanity bounds and the 3-session
     # earnings window under the same ledger instead of beside it.
     "src/data/event_calendar.py",
+    # 2026-10-05: three modules whose numbers were never classified; each is
+    # scoped so every site must be ledgered, including the ones it hides.
+    "src/data/news_dedup.py",
+    "src/token_budget.py",
+    "src/backtest/engine.py",
+    # 2026-10-05: four offline research scripts (the level sweep, its volatility-clustered control, the
+    # minimum-stop sweep and the noise-band holding scan); each site is ledgered so none hides unseen.
+    "ops/research/item55_level_sweep.py", "ops/research/item55_volclustered_control.py",
+    "ops/research/min_stop_atr_sweep.py", "ops/research/noise_band_holding_scaling.py",
+    # 2026-10-05 numbers sweep 2: the offline model benchmark's fixtures and
+    # sizing mirror, and the CI shard weights. Scoped so each number is
+    # ledgered with the proof that it reaches no order.
+    "ops/model_policy/scenarios.py",
+    "ops/model_policy/scenarios_midday_exit.py",
+    "ops/model_policy/deterministic_selection.py",
+    "scripts/ci_shard.py",
+    # 2026-10-05 numbers sweep 3: the news-verdict model and the company-profile
+    # and market-data fetch modules. Scoped so each number is ledgered with the evidence
+    # of whether it reaches a trade decision.
+    "src/models/news.py",
+    "src/data/company.py",
+    "src/data/market.py",
 )

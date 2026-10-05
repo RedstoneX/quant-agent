@@ -36,6 +36,7 @@ from src.pipeline_stages import (  # noqa: F401  shared helpers and module-level
     seat_acceptance_kwargs,
     select_nominations,
 )
+from src.nomination_evidence import persist_nomination_summary
 from src.stage_risk import _persist_dropped_reasons  # noqa: F401  moved with RiskStage
 from src.sentinel.morning_guarded import record_morning_fault
 if TYPE_CHECKING:
@@ -1476,8 +1477,8 @@ class MorningResearchStage:
                 }
 
         nom_cfg = getattr(self.config, "nominations", None)
-        max_per_seat = getattr(nom_cfg, "max_per_seat_per_run", 3) if nom_cfg else 3
-        max_total = getattr(nom_cfg, "max_total_per_run", 6) if nom_cfg else 6
+        max_per_seat = int(getattr(nom_cfg, "max_per_seat_per_run", 3)) if nom_cfg else 3
+        max_total = int(getattr(nom_cfg, "max_total_per_run", 6)) if nom_cfg else 6
         candidates = select_nominations(
             nominations_by_seat, max_per_seat=max_per_seat, max_total=max_total,
         )
@@ -1487,15 +1488,11 @@ class MorningResearchStage:
                 "Nomination responder: %d raw nomination(s), 0 candidates "
                 "after caps — no second Technical call.", total_raw,
             )
-            _persist_evidence(
-                self.db, run_id=ctx.run_id, agent_name="pipeline",
-                kind="nomination_summary", scope="run",
-                evidence_json=_json.dumps({
-                    "raw_nominations": total_raw,
-                    "raw_by_seat": {k: len(v) for k, v in nominations_by_seat.items()},
-                    "candidates_selected": 0,
-                    "responder_call_made": False,
-                }, sort_keys=True),
+            persist_nomination_summary(
+                self.db, run_id=ctx.run_id, total_raw=total_raw,
+                nominations_by_seat=nominations_by_seat,
+                max_per_seat=max_per_seat, max_total=max_total,
+                candidates_selected=0, responder_call_made=False,
             )
             return
 
@@ -1568,15 +1565,12 @@ class MorningResearchStage:
                 "selected, all already covered by the first Technical batch — "
                 "no second call.", total_raw, len(eligible_candidates),
             )
-            _persist_evidence(
-                self.db, run_id=ctx.run_id, agent_name="pipeline",
-                kind="nomination_summary", scope="run",
-                evidence_json=_json.dumps({
-                    "raw_nominations": total_raw,
-                    "raw_by_seat": {k: len(v) for k, v in nominations_by_seat.items()},
-                    "candidates_selected": sorted(c.symbol for c in eligible_candidates),
-                    "responder_call_made": False,
-                }, sort_keys=True),
+            persist_nomination_summary(
+                self.db, run_id=ctx.run_id, total_raw=total_raw,
+                nominations_by_seat=nominations_by_seat,
+                max_per_seat=max_per_seat, max_total=max_total,
+                candidates_selected=sorted(c.symbol for c in eligible_candidates),
+                responder_call_made=False,
             )
             return
 
@@ -1683,16 +1677,13 @@ class MorningResearchStage:
             len(eligible_candidates), len(symbols_data), len(resolved),
             f"${responder_cost:.4f}" if responder_cost is not None else "unknown",
         )
-        _persist_evidence(
-            self.db, run_id=ctx.run_id, agent_name="pipeline",
-            kind="nomination_summary", scope="run",
-            evidence_json=_json.dumps({
-                "raw_nominations": total_raw,
-                "raw_by_seat": {k: len(v) for k, v in nominations_by_seat.items()},
-                "candidates_selected": sorted(c.symbol for c in eligible_candidates),
-                "responder_symbols": sorted(s["symbol"] for s in symbols_data),
-                "responder_call_made": True,
-                "responder_resolved": sorted(a.symbol for a in resolved),
-                "responder_cost_usd": responder_cost,
-            }, sort_keys=True),
+        persist_nomination_summary(
+            self.db, run_id=ctx.run_id, total_raw=total_raw,
+            nominations_by_seat=nominations_by_seat,
+                max_per_seat=max_per_seat, max_total=max_total,
+            candidates_selected=sorted(c.symbol for c in eligible_candidates),
+            responder_symbols=sorted(s["symbol"] for s in symbols_data),
+            responder_call_made=True,
+            responder_resolved=sorted(a.symbol for a in resolved),
+            responder_cost_usd=responder_cost,
         )
