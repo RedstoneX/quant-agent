@@ -15,6 +15,11 @@ This guard classifies every pin the ledger makes, by AST, into:
 Only `mentions` is a candidate for substantiating, and it is NOT a verdict:
 mentioning a value is not justifying it. Telling those apart needs a reader.
 
+A pin made by a row's `source` field is held to an ABSOLUTE rule with no trunk
+baseline: `dead` or `no_mention` there fails outright, because `source` is the
+row's own claim of where its number is settled and a pin that never carries the
+number cannot be that. `note` pins are ratcheted:
+
 Stores nothing (docs/GUARDS_WITHOUT_STORED_STATE.md): the same classification
 runs over the working tree and over `origin/main`'s ledger and cited files,
 and only a (row, citation, verdict) the trunk does not already hold fails.
@@ -202,6 +207,22 @@ def _cited_paths(ledger: dict[str, dict[str, Any]]) -> list[str]:
     return sorted({m.group(1) for e in ledger.values() for m in _CITATION_RE.finditer(" ".join(_string_fields(e)))})
 
 
+def _source_only(ledger: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The rows' `source` fields alone: the ledger's own claim of where the number is settled."""
+    return {k: {"id": k, "value": e.get("value"), "source": e["source"]} for k, e in ledger.items() if e.get("source")}
+
+
+def _read_under(root: Path, rel: str) -> str | None:
+    p = root / rel
+    return p.read_text(encoding="utf-8") if p.is_file() else None
+
+
+def source_pins(root: Path = ROOT) -> list[Pin]:
+    """Pins made by `source` fields only, over the working tree."""
+    ledger = _entries((root / LEDGER_REL).read_text(encoding="utf-8"))
+    return classify(_source_only(ledger), lambda rel: _read_under(root, rel))
+
+
 def working_pins(root: Path = ROOT) -> list[Pin]:
     ledger = _entries((root / LEDGER_REL).read_text(encoding="utf-8"))
 
@@ -229,14 +250,30 @@ def tally(pins: list[Pin]) -> Counter:
     return Counter(p.verdict for p in pins)
 
 
-def violations(now: list[Pin] | None = None, before: list[Pin] | None = None) -> list[str]:
-    """Bad pins the working tree holds that `origin/main` does not."""
+def source_violations(pins: list[Pin] | None = None) -> list[str]:
+    """ABSOLUTE, no trunk baseline: a `source` pin that is dead or never mentions the row is false.
+
+    A `source` field is the row's own statement of where its number is settled, so a
+    pin there that lands on a comment, an import or a symbol naming neither the row nor
+    its value cannot be what the field says it is; `note` pins stay ratcheted below.
+    """
+    pins = source_pins() if pins is None else pins
+    return [f"{p.site_id}: source citation {p.cite} is {p.verdict} ({p.why}); a source must carry the number"
+            for p in pins if p.verdict in BAD]
+
+
+def violations(now: list[Pin] | None = None, before: list[Pin] | None = None,
+               sources: list[Pin] | None = None) -> list[str]:
+    """Bad `note` pins the working tree holds that `origin/main` does not, plus every bad `source` pin."""
     now = working_pins() if now is None else now
     before = trunk_pins() if before is None else before
+    absolute = source_violations(sources)
     key = lambda p: (p.site_id, p.cite, p.verdict)  # noqa: E731
     why = {key(p): p.why for p in now}
     new = added_sites([key(p) for p in now if p.verdict in BAD], [key(p) for p in before if p.verdict in BAD])
-    return [f"{k[0]}: {k[2]} citation {k[1]} ({why[k]}); it resolves but cannot substantiate" for k, _, _ in new]
+    ratcheted = [f"{k[0]}: {k[2]} citation {k[1]} ({why[k]}); it resolves but cannot substantiate"
+                 for k, _, _ in new]
+    return absolute + ratcheted
 
 
 def main() -> int:
@@ -247,6 +284,8 @@ def main() -> int:
         print(f"REFUSED: {exc}")
         return 2
     t = tally(now)
+    ts = tally(source_pins())
+    print(f"source-field pins: dead+no_mention={ts['dead'] + ts['no_mention']} of {sum(ts.values())} (absolute)")
     print(f"pins={len(now)} " + " ".join(f"{k}={t[k]}" for k in ("unresolved", "dead", "no_mention", "mentions"))
           + f" | on trunk: dead+no_mention={sum(1 for p in before if p.verdict in BAD)}")
     for line in bad:

@@ -236,3 +236,73 @@ Warn-only flag, deadline, fetch/text caps, ordinal sort-key ranks, JSON-candidat
 - `pipeline_prompt_facts.PromptFactsMixin._build_recent_missed_lessons(lookback_days)` = 14
 - `pipeline_prompt_facts.PromptFactsMixin._build_rm_recent_verdicts(limit)` = 5
 - `pipeline_prompt_facts.PromptFactsMixin._build_thesis_health_context(lookback_weeks)` = 8
+
+## The 158 sites the unscoped-number guard grandfathers (measured 2026-10-05)
+
+The guard (`scripts/unscoped_number_guard.py`) reports a DELTA against `origin/main`, so it refuses only a NEW
+unscoped constant. Running its own scanner (`src.number_sources.collect_unscoped_sites`) with the trunk subtraction
+removed returns **158 sites** [measured 2026-10-05 on `origin/main` @8a097ad3].
+
+**Zero of the 158 have a ledger row, and that is structural, not neglect.** The ledger covers only the 61 entries in
+`SCOPED_PATHS`; these 158 are by definition outside them, so the two sets cannot overlap. The campaign's ~122
+`arbitrary` ledger rows and these 158 sites are DISJOINT backlogs over different modules. Nobody had compared them
+before; this is the comparison.
+
+Every one of the 158 is ALREADY A NAMED CONSTANT -- the scanner flags module-level numeric definitions outside scope,
+not bare literals. So "give it a name" is a no-op remedy here; the only real remedies are bringing the module into
+`SCOPED_PATHS` (which then demands a ledger row for EVERY site in it) or leaving it out with a written reason.
+
+| Bucket | Sites | What it is |
+|---|---|---|
+| Not a magic number | 82 | Published vendor prices, exchange clock minutes, month/word->number maps, fund leverage facts, schema versions, the scanner's own band. |
+| Governs money or risk | 38 | Thresholds, weights, windows and limits that shape a signal, a backtest result or a risk display. |
+| Neither | 38 | Timeouts, retry delays, cache TTLs, character caps, row limits, display widths, token budgets. |
+
+### Governs money or risk -- the real backlog, none of it ledgered
+
+- `src.api.drift_state._DRIFT_SNAPSHOT_MAX_AGE_H`
+- `src.api.routes_scorecard.RISK_DOLLARS_PER_CALL`
+- `src.backtest.engine.DEFAULT_INITIAL_EQUITY`
+- `src.backtest.engine.DEFAULT_MAX_HOLD_DAYS`
+- `src.backtest.engine.DEFAULT_SLIPPAGE_BPS`
+- `src.backtest.engine.MIN_BARS_FOR_SIGNAL`
+- `src.data.congressional_trading._MAX_PLAUSIBLE_AGE_YEARS`
+- `src.data.context._CONSOLIDATION_WINDOW`
+- `src.data.context._MAX_GAPS_REPORTED`
+- `src.data.context._SLOPE_LOOKBACK`
+- `src.data.event_calendar.EARNINGS_EVENT_WINDOW_SESSIONS`
+- `src.data.event_calendar.RELEASE_SCHEDULE_LOOKAHEAD_DAYS`
+- `src.data.insider_signal._BAND_HIGH`
+- `src.data.insider_signal._BAND_LOW`
+- `src.data.insider_signal._WEIGHTS[?]`
+- `src.data.insider_signal._WEIGHTS[?]`
+- `src.data.news_dedup.SIMILARITY_THRESHOLD`
+- `src.data.news_dedup.TITLE_ONLY_THRESHOLD`
+- `src.data.news_dedup._BODY_WEIGHT`
+- `src.data.news_dedup._TITLE_WEIGHT`
+- `src.data.news_store.ACTIVE_STATE_CHANGE_WINDOW_DAYS`
+- `src.data.smart_money._DEFAULT_HISTORY_RETENTION_DAYS`
+- `src.decision_checkpoint.MAX_AGE_MINUTES`
+- `src.margin_interest.MAX_CALENDAR_LOOKAHEAD_DAYS`
+- `src.margin_interest.MAX_LOOKBACK_MONTHS`
+- `src.models.analysis.RATING_MAGNITUDE['buy']`
+- `src.models.analysis.RATING_MAGNITUDE['sell']`
+- `src.models.analysis.RATING_MAGNITUDE['strong_buy']`
+- `src.models.analysis.RATING_MAGNITUDE['strong_sell']`
+- `src.models.news._MAX_NEWS_EVIDENCE_ITEMS`
+- `src.models.news._NEWS_CONVICTION_RANK['high']`
+- `src.models.news._NEWS_CONVICTION_RANK['medium']`
+- `src.models.portfolio.RISK_NARRATIVE_MISMATCH_TOLERANCE_PCT`
+- `src.quantities.AVG_DOLLAR_VOLUME_WINDOW`
+- `src.retired_mechanisms.MIN_NEEDLE`
+- `src.silence_watchdog.DEFAULT_SILENT_WINDOW_THRESHOLD`
+- `src.silence_watchdog.LOOKBACK_DAYS`
+- `src.storage.analytics.calibration._CONVICTION_OUTCOME_MIN_N`
+
+No ledger rows were added for these. An id outside `SCOPED_PATHS` cannot be ledgered on its own: the module must enter
+scope first, and that makes the gate demand a justified row for every other site in the same module at the same time.
+That is a per-module change, not a per-number one, and it is the next pass's unit of work.
+
+Nothing in the other two buckets was exempted either: adding an exemption is loosening the guard, and the guard has not
+been tightened, so no exemption is needed to keep trunk green. All 158 remain.
+

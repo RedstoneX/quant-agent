@@ -19,6 +19,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from src.sentinel.guarded import record_guarded_pass
+
 logger = logging.getLogger(__name__)
 
 FOUND = "found"
@@ -186,7 +188,9 @@ def read_stop(broker: Any, symbol: str, *, db: Any, run_id: str | None = None,
             _sleep(retry_pauses[attempt - 1])
         try:
             res = _classify(broker.get_current_stop_price(symbol))
+            record_guarded_pass((broker, db), "stop_read.per_symbol", context={"symbol": symbol})
         except Exception as exc:  # noqa: BLE001 - escalated below, never swallowed
+            record_guarded_pass((broker, db), "stop_read.per_symbol", exc, context={"symbol": symbol})
             last = str(exc) or type(exc).__name__
             continue
         if not res.unreadable:
@@ -194,12 +198,14 @@ def read_stop(broker: Any, symbol: str, *, db: Any, run_id: str | None = None,
         last = res.reason
     try:
         res = _classify(_bulk_stop(broker, symbol))
+        record_guarded_pass((broker, db), "stop_read.bulk", context={"symbol": symbol})
         if not res.unreadable:
             logger.warning("stop read for %s answered by the bulk open-orders "
                            "read after the per-symbol read failed (%s)", symbol, last)
             return res
         last = res.reason
     except Exception as exc:  # noqa: BLE001
+        record_guarded_pass((broker, db), "stop_read.bulk", exc, context={"symbol": symbol})
         last = f"{last}; bulk read also failed: {exc}"
     return _act(symbol, last, db=db, run_id=run_id, context=context,
                 establish=establish)
@@ -221,7 +227,9 @@ def _act(symbol: str, reason: str, *, db: Any, run_id: str | None,
     else:
         try:
             closed = establish(sym)
+            record_guarded_pass(db, "stop_read.establish", context={"symbol": sym})
         except Exception as exc:  # noqa: BLE001
+            record_guarded_pass(db, "stop_read.establish", exc, context={"symbol": sym})
             closed, why = False, f"placement raised: {exc}"
         else:
             why = "the repair refused or placed nothing"
@@ -249,5 +257,7 @@ def _report_unreadable(sym: str, reason: str, action: str, *, db: Any,
             _alerted.add(key)
         else:
             logger.warning("stop-read owner alert for %s was not delivered", sym)
+        record_guarded_pass(db, "stop_read.owner_alert", context={"symbol": sym})
     except Exception as exc:  # noqa: BLE001
+        record_guarded_pass(db, "stop_read.owner_alert", exc, context={"symbol": sym})
         logger.warning("stop-read owner alert for %s failed: %s", sym, exc)
