@@ -50,7 +50,7 @@ class TechReread:
         marked `read_state="carried_forward"`. Everything else is exactly
         `_analyze_batch_uncached`.
         """
-        from src.evidence_gate import READ_CARRIED
+        from src.evidence_freshness import READ_CARRIED
         from src.research_throttle import (
             carry_unchanged_tech_reads,
             tech_input_fingerprint,

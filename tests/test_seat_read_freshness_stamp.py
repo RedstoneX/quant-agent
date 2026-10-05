@@ -20,13 +20,36 @@ import json
 from src import evidence_gate
 
 
+from src.evidence_freshness import build_freshness_reader as _build_freshness_reader
+
+from src import evidence_freshness as _ef
+
+_ef_gate_label_carried = "carried"
+
+
+
+def _freshness(data_status):
+    """Build the reader from the gate's own tables, as production does."""
+    return _build_freshness_reader(
+        status_freshness=evidence_gate.STATUS_FRESHNESS,
+        expired_statuses=frozenset(
+            w for w, c in evidence_gate.STATUS_CATEGORY.items()
+            if c == evidence_gate.CATEGORY_EXPIRED
+        ),
+        fresh_label=evidence_gate.FRESHNESS_FRESH,
+        carried_label=_ef_gate_label_carried,
+        absent_label=evidence_gate.FRESHNESS_ABSENT,
+    ).read(data_status)
+
+
+
 MORNING_AT = "2026-10-01T09:30:00+00:00"
 INTRA_AT = "2026-10-01T12:00:00+00:00"
 
 
 def _morning():
     """Every analyst seat read fresh, as the morning run does."""
-    return evidence_gate.freshness({
+    return _freshness({
         "tech": "ok", "news": "ok", "macro": "ok",
         "earnings": "ok", "smart_money": "ok",
     }).stamped(run_id="morning-aaa", mode="morning", stamped_at=MORNING_AT)
@@ -35,7 +58,7 @@ def _morning():
 def _intra(prior):
     """The half-hourly tick: the technical seat is re-read, the rest are
     whatever the morning left behind."""
-    return evidence_gate.freshness({
+    return _freshness({
         "tech": "ok",
         "news": "carried_from_morning",
         "macro": "not_run_intraday",
@@ -65,13 +88,13 @@ def test_half_hourly_tick_refreshes_only_the_seat_that_ran():
     record = _intra(prior).to_evidence()
 
     tech = evidence_gate.seat_read_state(record, "tech", run_id="intra-bbb")
-    assert tech.state == evidence_gate.READ_REFRESHED
+    assert tech.state == _ef.READ_REFRESHED
     assert tech.age_seconds == 0
 
     for seat in ("news", "macro", "earnings"):
         state = evidence_gate.seat_read_state(record, seat,
                                               run_id="intra-bbb")
-        assert state.state == evidence_gate.READ_CARRIED, seat
+        assert state.state == _ef.READ_CARRIED, seat
         assert not state.refreshed_this_session
         # Two and a half hours between the morning read and this tick. The
         # age is REPORTED; nothing here judges it.
@@ -84,20 +107,20 @@ def test_absent_is_not_carried_and_carried_is_not_fresh():
     """The three states never collapse into each other."""
     record = _intra({}).to_evidence()
     assert evidence_gate.seat_read_state(
-        record, "smart_money").state == evidence_gate.READ_ABSENT
+        record, "smart_money").state == _ef.READ_ABSENT
     assert evidence_gate.seat_read_state(
-        record, "news").state == evidence_gate.READ_CARRIED
+        record, "news").state == _ef.READ_CARRIED
     assert evidence_gate.seat_read_state(
-        record, "tech").state == evidence_gate.READ_REFRESHED
+        record, "tech").state == _ef.READ_REFRESHED
     # A seat nobody ever recorded is absent, not stale.
     assert evidence_gate.seat_read_state(
-        record, "congress").state == evidence_gate.READ_ABSENT
+        record, "congress").state == _ef.READ_ABSENT
 
 
 def test_carried_with_no_known_earlier_read_says_unknown_not_fresh():
     record = _intra({}).to_evidence()
     state = evidence_gate.seat_read_state(record, "news")
-    assert state.state == evidence_gate.READ_CARRIED
+    assert state.state == _ef.READ_CARRIED
     assert state.age_seconds is None
     assert "age unknown" in state.summary
 
@@ -106,15 +129,15 @@ def test_a_stamp_from_another_run_is_not_this_session():
     """Read back later, a morning stamp is carried forward, not fresh."""
     record = _morning().to_evidence()
     state = evidence_gate.seat_read_state(record, "tech", run_id="intra-bbb")
-    assert state.state == evidence_gate.READ_CARRIED
+    assert state.state == _ef.READ_CARRIED
     assert not state.refreshed_this_session
 
 
 def test_an_unclassifiable_status_is_never_reported_as_read():
-    record = evidence_gate.freshness({"tech": "something_new"}).stamped(
+    record = _freshness({"tech": "something_new"}).stamped(
         run_id="r", mode="morning").to_evidence()
     assert evidence_gate.seat_read_state(
-        record, "tech").state == evidence_gate.READ_UNKNOWN
+        record, "tech").state == _ef.READ_UNKNOWN
 
 
 def test_a_record_written_before_stamping_existed_is_still_answerable():
@@ -123,19 +146,19 @@ def test_a_record_written_before_stamping_existed_is_still_answerable():
     legacy = {"fresh_seats": ["tech"], "carried_seats": ["news"],
               "absent_seats": ["macro"]}
     assert evidence_gate.seat_read_state(
-        legacy, "tech").state == evidence_gate.READ_REFRESHED
+        legacy, "tech").state == _ef.READ_REFRESHED
     assert evidence_gate.seat_read_state(legacy, "tech").run_id is None
     assert evidence_gate.seat_read_state(
-        legacy, "news").state == evidence_gate.READ_CARRIED
+        legacy, "news").state == _ef.READ_CARRIED
     assert evidence_gate.seat_read_state(
-        legacy, "macro").state == evidence_gate.READ_ABSENT
+        legacy, "macro").state == _ef.READ_ABSENT
 
 
 def test_the_predicate_never_raises_on_rubbish():
     for bad in (None, [], "", {"seat_stamps": "nope"},
                 {"seat_stamps": {"tech": 7}}):
         assert evidence_gate.seat_read_state(bad, "tech").state in (
-            evidence_gate.READ_ABSENT, evidence_gate.READ_UNKNOWN)
+            _ef.READ_ABSENT, _ef.READ_UNKNOWN)
 
 
 # --- the recording must actually record -------------------------------
@@ -180,7 +203,7 @@ def test_the_stamps_survive_a_real_round_trip_through_storage(tmp_path):
     assert evidence_gate.seat_read_state(
         stored, "tech", run_id="intra-bbb").refreshed_this_session
     news = evidence_gate.seat_read_state(stored, "news", run_id="intra-bbb")
-    assert news.state == evidence_gate.READ_CARRIED
+    assert news.state == _ef.READ_CARRIED
     assert news.age_seconds == 9000
 
 
@@ -217,8 +240,8 @@ def test_the_gate_stamps_what_it_persists(tmp_path):
     assert record["stamped_run_id"] == "intra-bbb"
     assert record["stamped_mode"] == "intra_check"
     tech = evidence_gate.seat_read_state(record, "tech", run_id="intra-bbb")
-    assert tech.state == evidence_gate.READ_REFRESHED
+    assert tech.state == _ef.READ_REFRESHED
     # The prior-read lookup ran: the carried seat names the morning run.
     news = evidence_gate.seat_read_state(record, "news", run_id="intra-bbb")
-    assert news.state == evidence_gate.READ_CARRIED
+    assert news.state == _ef.READ_CARRIED
     assert news.run_id == "morning-aaa"
